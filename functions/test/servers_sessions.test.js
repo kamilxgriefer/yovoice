@@ -103,7 +103,8 @@ async function fixture({ kind = "voice", mediaMode = null, held = false, runtime
     async revokeParticipant(roomName, userId) {
       calls.revoked.push({ roomName, userId });
       const result = revokeHook ? await revokeHook(roomName, userId) : { alreadyAbsent: false };
-      return { revokedBeforeMillis: (Math.floor(nowMs / 1000) + 1) * 1000, ...result };
+      return { revocationRequested: true,
+        revokedBeforeMillis: (Math.floor(nowMs / 1000) + 1) * 1000, ...result };
     },
     async endRoom(roomName) { calls.ended.push(roomName); return endHook ? await endHook(roomName) : {}; },
   };
@@ -278,9 +279,9 @@ emulatorTest("end revokes never-connected token recipients before delete and ret
   assert.equal((await db.doc(`clubs/${f.target.serverId}`).get()).exists, true);
 });
 
-emulatorTest("provider absence/failure retains durable barrier; retry closes old generation without touching new", async () => {
+emulatorTest("unproved provider absence retains durable barrier; retry closes old generation without touching new", async () => {
   const f = await fixture(); const { sessionId } = await f.start(); const token = await f.token(sessionId);
-  f.onRevoke(() => ({ alreadyAbsent: true }));
+  f.onRevoke(() => ({ alreadyAbsent: true, revocationRequested: false }));
   const requestId = randomUUID(); const pending = await f.end(sessionId, f.uid, requestId);
   assert.equal(pending.cleanupPending, true);
   assert.equal(f.calls.ended.length, 0);
@@ -721,7 +722,7 @@ emulatorTest("a successful DeleteRoom followed by failed final commit retries on
   assert.deepEqual((await reference.get()).data().terminalDelete, checkpoint);
 });
 
-emulatorTest("partial terminal failure awaits every started RPC and never commits a checkpoint or cursor", async () => {
+emulatorTest("partial terminal failure dispatches every bounded batch and never commits a checkpoint or cursor", async () => {
   const f = await fixture(); const { sessionId } = await f.start();
   const members = [await f.member(), await f.member(), await f.member(), await f.member(), await f.member()];
   for (const member of members) await f.token(sessionId, member);
@@ -738,9 +739,10 @@ emulatorTest("partial terminal failure awaits every started RPC and never commit
   try {
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(settled, false, "A failed first RPC must not abandon the other started provider calls.");
-    assert.equal(started, 4, "No later batch may start after a page failure.");
+    assert.equal(started, 4, "The current batch must settle before the next bounded batch starts.");
     release.resolve();
     const pending = await end;
+    assert.equal(started, 5, "A failure in the first batch must not shield later recipients.");
     assert.equal(pending.cleanupPending, true); assert.equal(f.calls.ended.length, 0);
     const job = (await db.doc(`serverControlOutbox/${pending.operationId}`).get()).data();
     assert.equal(job.cursor, null); assert.equal(Object.hasOwn(job, "terminalDelete"), false);
@@ -912,7 +914,7 @@ emulatorTest("terminal cleanup retires a projection stranded live once no genera
   const f = await fixture();
   const { sessionId } = await f.start();
   await f.token(sessionId);
-  f.onRevoke(() => ({ alreadyAbsent: true }));
+  f.onRevoke(() => ({ alreadyAbsent: true, revocationRequested: false }));
   const requestId = randomUUID();
   assert.equal((await f.end(sessionId, f.uid, requestId)).cleanupPending, true);
   // The authorized end already retired it; strand it the way an interrupted

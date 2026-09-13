@@ -542,7 +542,7 @@ emulatorTest("(h) held anchors, activated anchors and legacy lounges are exclude
   assert.deepEqual((await read(uid)).counts, { freeServersV1: 2, legacyRoomV1: 2, familyFreeV1: 0 });
 });
 
-emulatorTest("(h) characterization of the author-flagged residual risk: for an owner WITHOUT a room guard, activated anchors are not counted but still occupy the legacy bounded room read", async () => {
+emulatorTest("(h) activated anchors stay excluded from allocation count; a bounded bootstrap overflow still fails closed", async () => {
   const uid = await owner();
   const serverId = `srv-${uid}`;
   const ordinary = Array.from({ length: FREE_SERVER_LIMIT - 2 }, (_, index) => `ord-${String(index).padStart(2, "0")}-${uid}`);
@@ -555,8 +555,8 @@ emulatorTest("(h) characterization of the author-flagged residual risk: for an o
   // 18 rooms + 1 free root = 19 allocations: the anchors are never counted...
   assert.deepEqual(state.counts, { freeServersV1: 1, legacyRoomV1: FREE_SERVER_LIMIT - 2, familyFreeV1: 0 });
   assert.equal(state.free.count, FREE_SERVER_LIMIT - 1);
-  // ...but 21 rows in the hostId/status bounded read report the owner locked,
-  // exactly as legacy createRoom would. Revisit when activation is authorized.
+  // ...but 21 rows in the hostId/status bounded bootstrap still report the
+  // owner locked. Both writers now consume this same fail-closed state.
   assert.equal(state.free.locked, true);
   await capacityRejection(services().createServerV1(request(uid, input())));
   assert.equal(await exists(`privateRoomHostGuards/${uid}`), false);

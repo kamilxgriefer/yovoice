@@ -15,6 +15,11 @@ const {
 
 function createServerCreationService(dependencies) {
   const { db } = dependencies;
+  // This switch is an internal construction capability, never request data.
+  // The feature-gated registration runtime is the only production caller that
+  // supplies it. Direct factories and migration paths keep creating held roots,
+  // so enabling endpoints cannot activate a legacy or already-held graph.
+  const activationState = dependencies.activateNewServers === true ? "active" : "held";
   const operations = createServerOperations(dependencies);
 
   async function createServerV1(request) {
@@ -83,10 +88,11 @@ function createServerCreationService(dependencies) {
       const server = {
         serverSchemaVersion: 1, serverType: input.serverType, templateVersion: input.templateVersion,
         entitlementPolicyId: family ? "familyFreeV1" : "freeServersV1",
-        serverActivationState: "held", revision: 1,
+        serverActivationState: activationState, revision: 1,
         name: input.name, description: input.description, ownerId: auth.uid,
         ownerName: canonicalDisplayName(profile), avatarUrl: null, bannerUrl: null,
-        privacy: input.privacy, type: family ? "family" : "community", status: "preparing",
+        privacy: input.privacy, type: family ? "family" : "community",
+        status: activationState === "active" ? "active" : "preparing",
         defaultLanguage: input.defaultLanguage, memberCount: 1, onlineCount: 0,
         defaultChatChannelId: ids[chatIndex], defaultVoiceChannelId: ids[voiceIndex], loungeRoomId,
         announcementChannelId: announcementIndex === -1 ? null : ids[announcementIndex],

@@ -16,6 +16,9 @@ if (getApps().length === 0) initializeApp();
 const { moderateReport } = require("../moderation/reports");
 const { createReelService } = require("../reels/service");
 const { digest } = require("../integrity/guards");
+const {
+  reelVoiceCommentCleanupOutboxId,
+} = require("../reels/engagement");
 
 // ---------------------------------------------------------------------------
 // STAFF REMOVAL of a reported Reel comment, through moderateReport.
@@ -42,6 +45,7 @@ const GONE_REPORT_ID = "rcm-report-gone";
 const TOMBSTONE_REPORT_ID = "rcm-report-tombstone";
 const BROKEN_REPORT_ID = "rcm-report-broken";
 const COUNTER_REPORT_ID = "rcm-report-counter";
+const VOICE_REPORT_ID = "rcm-report-voice";
 const ALL_REPORT_IDS = [
   REPORT_ID,
   SECOND_REPORT_ID,
@@ -49,9 +53,17 @@ const ALL_REPORT_IDS = [
   TOMBSTONE_REPORT_ID,
   BROKEN_REPORT_ID,
   COUNTER_REPORT_ID,
+  VOICE_REPORT_ID,
 ];
 const NOW_MS = 1_820_000_000_000;
 const REPORTED_TEXT = "You are worthless and everyone knows it";
+const VOICE_COMMENT_ID = "fedcba9876543210fedcba9876543210fedcba98";
+const VOICE_PATH =
+  `reel_voice_comments/${COMMENT_AUTHOR}/${REEL_ID}/${VOICE_COMMENT_ID}.m4a`;
+const VOICE_OUTBOX_ID = reelVoiceCommentCleanupOutboxId(
+  REEL_ID,
+  VOICE_COMMENT_ID,
+);
 
 function request(reportId, requestId, overrides = {}) {
   return {
@@ -214,6 +226,7 @@ async function clear() {
     ...ALL_REPORT_IDS.map((id) => db.doc(`reports/${id}`).delete()),
     db.doc(`users/${MODERATOR}`).delete(),
     db.doc(`users/${REEL_AUTHOR}`).delete(),
+    db.doc(`reelCleanupOutbox/${VOICE_OUTBOX_ID}`).delete(),
     ...authorRemovalArtifacts(AUTHOR_REMOVAL_REQUEST_IDS)
       .map((reference) => reference.delete()),
   ]);
@@ -624,6 +637,163 @@ test("the moderator removing first leaves the author nothing to remove",
       (await db.doc(`reels/${REEL_ID}`).get()).data().commentCount,
       0,
       "a refused author removal must not decrement below zero",
+    );
+  });
+
+// A canonical VOICE comment, exactly as finalizeReelVoiceCommentDraft writes
+// it: the eight text keys plus the four media descriptors, and a caption that
+// may be empty.
+function reelVoiceComment(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    type: "voice",
+    reelId: REEL_ID,
+    authorId: COMMENT_AUTHOR,
+    authorName: "Comment author",
+    text: "",
+    durationSeconds: 14,
+    storagePath: VOICE_PATH,
+    mediaGeneration: "1770000000000001",
+    mediaSize: 40960,
+    mediaContentType: "audio/mp4",
+    createdAt: Timestamp.fromMillis(NOW_MS),
+    ...overrides,
+  };
+}
+
+/// Byte-for-byte the document createReelCommentReport writes for a voice
+/// target: an empty caption, and the recording's identity in its place.
+function reelVoiceCommentReport(overrides = {}) {
+  return {
+    schemaVersion: 2,
+    reporterId: REPORTER,
+    targetType: "reelComment",
+    targetId: VOICE_COMMENT_ID,
+    reportedUserId: COMMENT_AUTHOR,
+    contextPath: `reels/${REEL_ID}/comments/${VOICE_COMMENT_ID}`,
+    reelId: REEL_ID,
+    commentId: VOICE_COMMENT_ID,
+    reelAuthorId: REEL_AUTHOR,
+    targetTextSnapshot: "",
+    targetCommentType: "voice",
+    targetDurationSeconds: 14,
+    targetStoragePath: VOICE_PATH,
+    targetMediaGeneration: "1770000000000001",
+    note: "",
+    reason: "harassment",
+    status: "open",
+    createdAt: Timestamp.fromMillis(NOW_MS),
+    ...overrides,
+  };
+}
+
+test("removing a reported VOICE comment queues its audio in the same " +
+  "transaction", async () => {
+  await Promise.all([
+    db.doc(`reels/${REEL_ID}`).set(publishedReel({ commentCount: 1 })),
+    db.doc(`reels/${REEL_ID}/comments/${VOICE_COMMENT_ID}`)
+      .set(reelVoiceComment()),
+    db.doc(`reports/${VOICE_REPORT_ID}`).set(reelVoiceCommentReport()),
+  ]);
+
+  const result = await run(request(VOICE_REPORT_ID, "rcm-voice-0001"));
+  assert.equal(result.status, "resolved");
+  assert.equal(result.contentRemoved, true);
+  assert.equal(
+    (await db.doc(`reels/${REEL_ID}/comments/${VOICE_COMMENT_ID}`).get()).exists,
+    false,
+  );
+  assert.equal((await db.doc(`reels/${REEL_ID}`).get()).data().commentCount, 0);
+
+  // THE RECORDING IS QUEUED FOR DELETION, not left in the bucket with nothing
+  // in Firestore remembering it exists.
+  const outbox = await db.doc(`reelCleanupOutbox/${VOICE_OUTBOX_ID}`).get();
+  assert.equal(outbox.exists, true);
+  const row = outbox.data();
+  assert.equal(row.kind, "reelVoiceComment");
+  assert.equal(row.ownerId, COMMENT_AUTHOR);
+  assert.equal(row.reelId, REEL_ID);
+  assert.equal(row.commentId, VOICE_COMMENT_ID);
+  assert.equal(row.status, "pending");
+  assert.equal(row.phase, "delete");
+  assert.deepEqual(row.storageObjects, [
+    { path: VOICE_PATH, generation: "1770000000000001" },
+  ]);
+});
+
+test("a voice report whose evidence does not describe its own target is " +
+  "refused", async () => {
+  // `targetStoragePath` is re-derived from (reportedUserId, reelId,
+  // commentId). A report naming somebody else's object — or no object at all —
+  // is not actionable, because acting on it would delete the wrong recording.
+  let attempt = 0;
+  for (const overrides of [
+    {
+      targetStoragePath:
+        `reel_voice_comments/${REEL_AUTHOR}/${REEL_ID}/${VOICE_COMMENT_ID}.m4a`,
+    },
+    { targetStoragePath: `reels/${REEL_AUTHOR}/${REEL_ID}/media.jpg` },
+    { targetStoragePath: null },
+    { targetMediaGeneration: null },
+    { targetDurationSeconds: 0 },
+    { targetDurationSeconds: 61 },
+    { targetDurationSeconds: null },
+    { targetCommentType: "audio" },
+    // A TEXT report may not smuggle voice evidence, and vice versa.
+    { targetCommentType: "text", targetTextSnapshot: "words" },
+  ]) {
+    await db.doc(`reelCleanupOutbox/${VOICE_OUTBOX_ID}`).delete();
+    await Promise.all([
+      db.doc(`reels/${REEL_ID}`).set(publishedReel({ commentCount: 1 })),
+      db.doc(`reels/${REEL_ID}/comments/${VOICE_COMMENT_ID}`)
+        .set(reelVoiceComment()),
+      db.doc(`reports/${VOICE_REPORT_ID}`).set(
+        reelVoiceCommentReport(overrides),
+      ),
+    ]);
+    attempt += 1;
+    await assert.rejects(
+      run(request(VOICE_REPORT_ID, `rcm-voice-bad-${String(attempt).padStart(4, "0")}`)),
+      (error) => {
+        assert.equal(error.code, "failed-precondition", JSON.stringify(overrides));
+        return true;
+      },
+    );
+    assert.equal(
+      (await db.doc(`reels/${REEL_ID}/comments/${VOICE_COMMENT_ID}`).get())
+        .exists,
+      true,
+      JSON.stringify(overrides),
+    );
+    assert.equal(
+      (await db.doc(`reelCleanupOutbox/${VOICE_OUTBOX_ID}`).get()).exists,
+      false,
+    );
+  }
+});
+
+test("a report filed before voice comments existed is still actionable",
+  async () => {
+    // No `targetCommentType` at all: absent IS text, the same convention the
+    // engagement counters use. Every report already in the production queue
+    // has this shape.
+    const legacy = reelCommentReport();
+    delete legacy.targetCommentType;
+    await Promise.all([
+      db.doc(`reels/${REEL_ID}`).set(publishedReel({ commentCount: 1 })),
+      db.doc(`reels/${REEL_ID}/comments/${COMMENT_ID}`).set(reelComment()),
+      db.doc(`reports/${REPORT_ID}`).set(legacy),
+    ]);
+    const result = await run(request(REPORT_ID, "rcm-legacy-0001"));
+    assert.equal(result.contentRemoved, true);
+    assert.equal(
+      (await db.doc(`reels/${REEL_ID}/comments/${COMMENT_ID}`).get()).exists,
+      false,
+    );
+    // And no cleanup row: a text comment has no bytes.
+    assert.equal(
+      (await db.doc(`reelCleanupOutbox/${VOICE_OUTBOX_ID}`).get()).exists,
+      false,
     );
   });
 

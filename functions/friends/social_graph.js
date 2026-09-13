@@ -14,6 +14,7 @@ const {
   restrictionIsActive,
 } = require("../notifications/canonical");
 const {
+  paidCreatorAudienceEligibility,
   sourceProfileVisibleToCaller,
 } = require("../profile/public_profiles");
 
@@ -1762,6 +1763,7 @@ const setFollow = onCall(
     const targetRestrictionRef = db.doc(`restrictions/${targetUserId}`);
     const actorBlockRef = db.doc(`users/${auth.uid}/blocked/${targetUserId}`);
     const targetBlockRef = db.doc(`users/${targetUserId}/blocked/${auth.uid}`);
+    const targetEntitlementRef = db.doc(`entitlements/${targetUserId}`);
     const followingRef = followingReference(auth.uid, targetUserId);
     const followerRef = followerReference(targetUserId, auth.uid);
     const followNotificationId = newSocialNotificationId("follow", auth.uid);
@@ -1784,6 +1786,7 @@ const setFollow = onCall(
         targetBlock,
         followingEdge,
         followerEdge,
+        targetEntitlement,
       ] = await transaction.getAll(
         actorRef,
         targetRef,
@@ -1793,6 +1796,7 @@ const setFollow = onCall(
         targetBlockRef,
         followingRef,
         followerRef,
+        targetEntitlementRef,
       );
       const actor = profileData(actorSnapshot, "Your");
       if (followingEdge.exists !== followerEdge.exists) {
@@ -1830,6 +1834,18 @@ const setFollow = onCall(
               : {}),
           });
           return { changed: false, following: true };
+        }
+        if (!paidCreatorAudienceEligibility(
+          target,
+          targetEntitlement.exists ? (targetEntitlement.data() ?? {}) : null,
+          Date.now(),
+        ) || target.creatorAudienceEnabled !== true) {
+          // Do not disclose whether Premium, Creator state, age verification
+          // or the explicit audience opt-in is the missing authority.
+          throw new HttpsError(
+            "failed-precondition",
+            "This creator is not accepting followers.",
+          );
         }
         requireCapacity(
           actor,

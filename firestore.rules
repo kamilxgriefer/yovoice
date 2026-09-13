@@ -345,6 +345,45 @@ service cloud.firestore {
           );
     }
 
+    // Creator audience visibility never accepts the staff preview overlay.
+    // It is a public social capability and therefore needs current paid
+    // billing authority for the target user itself.
+    function userHasPaidCreatorPremium(userId) {
+      return exists(/databases/$(database)/documents/entitlements/$(userId)) &&
+          get(/databases/$(database)/documents/entitlements/$(userId))
+            .data.status in ['active', 'trialing', 'grace'] &&
+          get(/databases/$(database)/documents/entitlements/$(userId))
+            .data.get('isPremium', false) == true &&
+          get(/databases/$(database)/documents/entitlements/$(userId))
+            .data.get('premiumIdentityEnabled', false) == true &&
+          get(/databases/$(database)/documents/entitlements/$(userId))
+            .data.get('creatorEnabled', false) == true &&
+          request.time < get(/databases/$(database)/documents/entitlements/$(userId))
+            .data.currentPeriodEnd;
+    }
+
+    function canReadCreatorAudienceEdges(userId) {
+      let projectionPath = /databases/$(database)/documents/publicProfiles/$(userId);
+      let userPath = /databases/$(database)/documents/users/$(userId);
+      return canReadFullProfile(userId) &&
+          (
+            isOwner(userId) ||
+            (
+              exists(projectionPath) &&
+              get(projectionPath).data.get('uid', '') == userId &&
+              get(projectionPath).data.get('schemaVersion', 0) == 1 &&
+              get(projectionPath).data.get('accountType', 'personal') == 'creator' &&
+              get(projectionPath).data.get('premiumIdentity', false) == true &&
+              get(projectionPath).data.get('creatorAudienceVisible', false) == true &&
+              get(userPath).data.get('accountType', 'personal') == 'creator' &&
+              get(userPath).data.get('premiumIdentity', false) == true &&
+              get(userPath).data.get('creatorAgeVerified', false) == true &&
+              get(userPath).data.get('creatorAudienceEnabled', false) == true &&
+              userHasPaidCreatorPremium(userId)
+            )
+          );
+    }
+
     // accountType is client-writable ONLY within these transitions:
     // keeping it unchanged, or setting 'personal' (always allowed), or
     // setting 'creator' with active Premium. 'official' is never
@@ -1313,6 +1352,67 @@ service cloud.firestore {
           );
     }
 
+    function canModerateServerChannel(clubId, channelId, channel) {
+      let server = get(/databases/$(database)/documents/clubs/$(clubId)).data;
+      let member = get(/databases/$(database)/documents/clubs/$(clubId)/members/$(request.auth.uid)).data;
+      return canReadServerChannel(clubId, channelId, channel, false) &&
+          validServerMember(member, server) &&
+          member.role in ['owner', 'coOwner', 'admin', 'moderator'];
+    }
+
+    function validPodcastRecordingState(clubId, channelId, stateId, data) {
+      return stateId == 'main' &&
+          data.keys().hasOnly([
+            'schemaVersion', 'kind', 'serverId', 'studioChannelId',
+            'channelId', 'episodeId', 'sessionId', 'title', 'status',
+            'providerStatus', 'episodeRevision', 'updatedAt'
+          ]) &&
+          data.schemaVersion == 1 &&
+          data.kind == 'podcastRecordingState' &&
+          data.serverId == clubId && data.studioChannelId == channelId &&
+          data.channelId is string && data.channelId.size() > 0 &&
+          data.episodeId is string && data.episodeId.size() > 0 &&
+          data.sessionId is string && data.sessionId.size() > 0 &&
+          data.title is string && data.title.size() > 0 && data.title.size() <= 120 &&
+          data.status in ['recording', 'processing', 'ready', 'published', 'error'] &&
+          data.providerStatus in [
+            'pending', 'starting', 'active', 'ending', 'complete',
+            'failed', 'aborted', 'limitReached', 'unavailable'
+          ] &&
+          data.episodeRevision is int && data.episodeRevision > 0 &&
+          data.updatedAt is timestamp;
+    }
+
+    function validPodcastEpisode(clubId, channelId, episodeId, data) {
+      return data.keys().hasOnly([
+            'schemaVersion', 'episodeKind', 'serverId', 'clubId',
+            'channelId', 'studioChannelId', 'episodeId', 'sessionId',
+            'livekitRoomName', 'title', 'status', 'revision',
+            'createdById', 'createdByName', 'egressId', 'outputPath',
+            'providerStatus', 'media', 'failureCode', 'createdAt',
+            'updatedAt', 'stoppedAt', 'readyAt', 'publishedAt',
+            'publishedById'
+          ]) &&
+          data.schemaVersion == 1 && data.episodeKind == 'podcastEpisode' &&
+          data.serverId == clubId && data.clubId == clubId &&
+          data.channelId == channelId && data.episodeId == episodeId &&
+          data.studioChannelId is string && data.studioChannelId.size() > 0 &&
+          data.sessionId is string && data.sessionId.size() > 0 &&
+          data.livekitRoomName is string && data.livekitRoomName.size() > 0 &&
+          data.title is string && data.title.size() > 0 && data.title.size() <= 120 &&
+          data.status in ['recording', 'processing', 'ready', 'published', 'error'] &&
+          data.providerStatus in [
+            'pending', 'starting', 'active', 'ending', 'complete',
+            'failed', 'aborted', 'limitReached', 'unavailable'
+          ] &&
+          data.revision is int && data.revision > 0 &&
+          data.createdById is string && data.createdById.size() > 0 &&
+          data.createdByName is string && data.createdByName.size() > 0 &&
+          data.outputPath ==
+            'server_podcast_episodes/' + clubId + '/' + channelId + '/' + episodeId + '.mp3' &&
+          data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
     // Liveness is a SERVER-OWNED projection of the private channelSessions
     // generation onto the already-ACL-governed channel document. No client
     // writes any part of it: not a V1 member, not a manager holding the
@@ -1933,6 +2033,7 @@ service cloud.firestore {
             'usernameSearch', 'photoUrl', 'bannerUrl', 'bio', 'country',
             'nativeLanguage', 'spokenLanguages', 'learningLanguages',
             'website', 'statusMessage', 'accountType', 'premiumIdentity',
+            'creatorAudienceVisible',
             'friendCount', 'followerCount', 'followingCount',
             'schemaVersion', 'updatedAt'
           ]) &&
@@ -1941,6 +2042,7 @@ service cloud.firestore {
             'usernameSearch', 'photoUrl', 'bannerUrl', 'bio', 'country',
             'nativeLanguage', 'spokenLanguages', 'learningLanguages',
             'website', 'statusMessage', 'accountType', 'premiumIdentity',
+            'creatorAudienceVisible',
             'friendCount', 'followerCount', 'followingCount',
             'schemaVersion', 'updatedAt'
           ]) &&
@@ -1960,9 +2062,29 @@ service cloud.firestore {
           data.statusMessage is string &&
           data.accountType in ['personal', 'creator', 'official'] &&
           data.premiumIdentity is bool &&
+          data.creatorAudienceVisible is bool &&
+          (
+            data.creatorAudienceVisible == false ||
+            (
+              data.accountType == 'creator' &&
+              data.premiumIdentity == true &&
+              accountIsActive(userId) &&
+              get(/databases/$(database)/documents/users/$(userId))
+                .data.get('accountType', 'personal') == 'creator' &&
+              get(/databases/$(database)/documents/users/$(userId))
+                .data.get('premiumIdentity', false) == true &&
+              get(/databases/$(database)/documents/users/$(userId))
+                .data.get('creatorAgeVerified', false) == true &&
+              get(/databases/$(database)/documents/users/$(userId))
+                .data.get('creatorAudienceEnabled', false) == true &&
+              userHasPaidCreatorPremium(userId)
+            )
+          ) &&
           data.friendCount is int && data.friendCount >= 0 &&
           data.followerCount is int && data.followerCount >= 0 &&
           data.followingCount is int && data.followingCount >= 0 &&
+          (data.creatorAudienceVisible == true ||
+            (data.followerCount == 0 && data.followingCount == 0)) &&
           data.schemaVersion == 1 &&
           data.updatedAt is timestamp;
     }
@@ -2425,19 +2547,19 @@ service cloud.firestore {
         // bounded to the production query; edges are server-only and the
         // publicProfiles join omits inactive identities. Point reads and the
         // DM authorization boundary retain the exact schema check.
-        allow get: if canReadFullProfile(userId) &&
+        allow get: if canReadCreatorAudienceEdges(userId) &&
             accountIsActive(targetUserId) &&
             canonicalFollowEdgeData(resource.data, targetUserId);
-        allow list: if canReadFullProfile(userId) &&
+        allow list: if canReadCreatorAudienceEdges(userId) &&
             request.query.limit != null && request.query.limit <= 100;
         allow create, update, delete: if false;
       }
 
       match /followers/{followerId} {
-        allow get: if canReadFullProfile(userId) &&
+        allow get: if canReadCreatorAudienceEdges(userId) &&
             accountIsActive(followerId) &&
             canonicalFollowEdgeData(resource.data, followerId);
-        allow list: if canReadFullProfile(userId) &&
+        allow list: if canReadCreatorAudienceEdges(userId) &&
             request.query.limit != null && request.query.limit <= 100;
         allow create, update, delete: if false;
       }
@@ -2600,6 +2722,15 @@ service cloud.firestore {
       // clubs/{serverId}/invites/{uid}, whose rule rechecks the invitee; a
       // stale or forged pointer opens nothing.
       match /serverInviteRefs/{serverId} {
+        allow read: if isOwner(userId) && isActiveAccount();
+        allow write: if false;
+      }
+
+      // Private discovery preference written atomically with the matching
+      // clubs/{serverId}/followers/{uid} row by setCommunityServerFollowV1.
+      // It carries no server preview and grants no membership or channel
+      // access. Only the owner may list their own preferences.
+      match /serverFollows/{serverId} {
         allow read: if isOwner(userId) && isActiveAccount();
         allow write: if false;
       }
@@ -2957,6 +3088,44 @@ service cloud.firestore {
     // input to the Premium quota decision.
     match /clubOwnershipGuards/{userId} {
       allow read, write: if false;
+    }
+
+    // THE OLD-CLIENT GATE for the Club -> Servers migration.
+    //
+    // The installed client lists a Club's channels with a bare
+    // orderBy('position') and no equality filters. The V1 `list` rule under
+    // clubs/{id}/channels requires the query itself to pin
+    // accessMode == 'members' && status == 'active', and a list rule is
+    // evaluated against the QUERY'S CONSTRAINTS rather than against the
+    // documents that come back. So the old query is denied WHOLESALE the
+    // instant a root carries a server marker — not filtered down to the rows
+    // it may read, and NOT only once a restricted channel exists, because
+    // isLegacyClub() reads the ROOT, not the channel. No rule can make that
+    // query legal without also opening restricted documents, so the only
+    // correct enforcement is to refuse to version a root until the
+    // incompatible client cohort is gone; that refusal lives in
+    // functions/servers/migration_apply.js and is pinned to this document's
+    // revision at mutation time.
+    //
+    // This document publishes the minimum client build so a compatible client
+    // can render an honest "update required" state instead of an empty
+    // screen. It is server-written, holds no personal data, and is readable by
+    // any signed-in caller on purpose: a client too old to read anything else
+    // must still be able to learn why.
+    match /serverMigrationGates/{gateId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // The migration run ledger — stages, cursors and per-root progress for a
+    // resumable apply. It is operator state about other people's spaces, so
+    // no client reads it and no client writes it.
+    match /serverMigrationRuns/{runId} {
+      allow read, write: if false;
+
+      match /rootSteps/{stepId} {
+        allow read, write: if false;
+      }
     }
 
     // The holder may see WHAT restricts them and until when; nobody may
@@ -3530,6 +3699,18 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // The membership AUTHORIZATION ledger: the monotonic revision every
+      // grant, every issued media token and every convergence job is fenced
+      // against. It has always been server-only by falling through to the
+      // default deny; ADR-F makes it the record that a removal, a ban and a
+      // ban lift each advance, so the denial is stated OUT LOUD here rather
+      // than inherited — the same posture integrityOperationLedgers takes.
+      // A client that could write this could re-authorize itself after being
+      // removed or banned, which is the entire point of the fence.
+      match /memberAuthorizations/{userId} {
+        allow read, write: if false;
+      }
+
       match /invites/{inviteeId} {
         allow read: if isSignedIn() &&
             (
@@ -3600,6 +3781,183 @@ service cloud.firestore {
           // shows that something was removed rather than losing it.
           allow delete: if false;
         }
+
+        // Events V1 covers Friends/Community events, Family calendar entries
+        // and Podcast program entries. The callable factory derives the exact
+        // profile from the canonical root/channel pair and owns every event,
+        // RSVP and reminder-opt-in mutation. Reads inherit the exact parent
+        // channel ACL, including a current restricted-channel grant; a held
+        // root is deliberately not a readable module surface
+        // (`allowPreparation` is false).
+        match /events/{eventId} {
+          allow read: if canReadServerChannel(
+              clubId,
+              channelId,
+              get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data,
+              false
+            );
+          allow write: if false;
+
+          match /responses/{userId} {
+            allow read: if canReadServerChannel(
+                clubId,
+                channelId,
+                get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data,
+                false
+              );
+            allow write: if false;
+          }
+        }
+
+        // Podcast listener questions and vote aggregates are callable-owned.
+        // Members who can read the Questions channel can list questions. A
+        // vote row is private to that member: direct get is allowed only for
+        // its own UID and collection listing stays closed, so the aggregate
+        // count does not expose who voted.
+        match /questions/{questionId} {
+          allow read: if canReadServerChannel(
+              clubId,
+              channelId,
+              get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data,
+              false
+            );
+          allow write: if false;
+
+          match /votes/{userId} {
+            allow get: if isSignedIn() && request.auth.uid == userId &&
+              canReadServerChannel(
+                clubId,
+                channelId,
+                get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data,
+                false
+              );
+            allow list: if false;
+            allow create, update, delete: if false;
+          }
+        }
+
+        // Podcast recording state is a moderator-only operational projection.
+        // Episode descriptors are callable-owned. Members may list only the
+        // published archive; moderators can inspect the full lifecycle so the
+        // studio can recover a pending provider job. Audio bytes stay private
+        // and are granted only by getServerPodcastEpisodeAccessV1.
+        match /podcastRecordingState/{stateId} {
+          allow get: if validPodcastRecordingState(
+                clubId, channelId, stateId, resource.data
+              ) &&
+              canModerateServerChannel(
+                clubId,
+                channelId,
+                get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data
+              );
+          allow list, create, update, delete: if false;
+        }
+
+        match /episodes/{episodeId} {
+          allow get: if validPodcastEpisode(
+                clubId, channelId, episodeId, resource.data
+              ) &&
+              (
+                (resource.data.status == 'published' &&
+                  canReadServerChannel(
+                    clubId,
+                    channelId,
+                    get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data,
+                    false
+                  )) ||
+                canModerateServerChannel(
+                  clubId,
+                  channelId,
+                  get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data
+                )
+              );
+          // Rules are not filters. Ordinary listeners must pin published;
+          // moderators are authorized to query every canonical lifecycle row.
+          allow list: if
+              (
+                (resource.data.status == 'published' &&
+                  canReadServerChannel(
+                    clubId,
+                    channelId,
+                    get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data,
+                    false
+                  )) ||
+                canModerateServerChannel(
+                  clubId,
+                  channelId,
+                  get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data
+                )
+              );
+          allow create, update, delete: if false;
+        }
+
+        // Family shared-list items are callable-owned revisioned content.
+        // Reads use the same active parent-channel ACL; client writes stay
+        // closed so checked state, authorship and revisions cannot be forged.
+        match /listItems/{itemId} {
+          allow read: if canReadServerChannel(
+              clubId,
+              channelId,
+              get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data,
+              false
+            );
+          allow write: if false;
+        }
+
+        // Company whiteboard state and immutable strokes are callable-owned.
+        // Positions carry no separate discovery boundary: readers must still
+        // pass the exact active parent-channel ACL, including a current grant
+        // for a restricted whiteboard. Undo and clear stay Admin-SDK only.
+        match /whiteboardState/{stateId} {
+          allow read: if canReadServerChannel(
+              clubId,
+              channelId,
+              get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data,
+              false
+            );
+          allow write: if false;
+        }
+
+        match /whiteboardStrokes/{strokeId} {
+          allow read: if canReadServerChannel(
+              clubId,
+              channelId,
+              get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data,
+              false
+            );
+          allow write: if false;
+        }
+
+        // Company Files expose only a callable-finalized descriptor. The
+        // object itself remains private and is exchanged for a short-lived,
+        // generation-bound signed URL after the callable rechecks this ACL.
+        match /files/{fileId} {
+          allow get: if resource.data.get('schemaVersion', 0) == 1 &&
+              resource.data.get('fileKind', '') == 'companyFile' &&
+              resource.data.get('serverId', '') == clubId &&
+              resource.data.get('clubId', '') == clubId &&
+              resource.data.get('channelId', '') == channelId &&
+              resource.data.get('fileId', '') == fileId &&
+              resource.data.get('status', '') == 'published' &&
+              canReadServerChannel(
+                clubId,
+                channelId,
+                get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data,
+                false
+              );
+          // Firestore rules are not filters. The client query pins
+          // `status == published`; the remaining descriptor fields are
+          // callable-owned and cannot be influenced by a client, while the
+          // same exact parent ACL is still evaluated for every list request.
+          allow list: if resource.data.get('status', '') == 'published' &&
+              canReadServerChannel(
+                clubId,
+                channelId,
+                get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(channelId)).data,
+                false
+              );
+          allow write: if false;
+        }
       }
 
       // Family Moments. Deliberately NOT in the global `voiceMoments`
@@ -3609,7 +3967,48 @@ service cloud.firestore {
       // membership — leaving, removal, a block, account deletion —
       // removes the member document and with it every read below.
       match /moments/{momentId} {
-        allow read: if isLegacyClub(clubId) && isClubMember(clubId);
+        // V1 Family Memories are callable-finalized photo + short-voice
+        // descriptors. The document is readable only while published and
+        // only through its current Memories-channel ACL. Storage bytes stay
+        // private and are resolved through a short-lived signed grant.
+        allow get: if
+            (isLegacyClub(clubId) && isClubMember(clubId)) ||
+            (
+              !isLegacyClub(clubId) &&
+              resource.data.get('schemaVersion', 0) == 1 &&
+              resource.data.get('memoryKind', '') == 'familyMemory' &&
+              resource.data.get('serverId', '') == clubId &&
+              resource.data.get('clubId', '') == clubId &&
+              resource.data.get('memoryId', '') == momentId &&
+              resource.data.get('status', '') == 'published' &&
+              resource.data.get('channelId', null) is string &&
+              canReadServerChannel(
+                clubId,
+                resource.data.get('channelId', ''),
+                get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(resource.data.get('channelId', ''))).data,
+                false
+              ) &&
+              get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(resource.data.get('channelId', ''))).data.kind == 'memories'
+            );
+        // V1 creation starts from an empty moments collection and migration is
+        // refused while any legacy moment exists. All later V1 writes are
+        // callable-owned. That invariant lets the installed list query prove
+        // its read with the two fields it pins (channelId + published status),
+        // while point reads above retain the complete descriptor validation.
+        allow list: if
+            (isLegacyClub(clubId) && isClubMember(clubId)) ||
+            (
+              !isLegacyClub(clubId) &&
+              resource.data.get('status', '') == 'published' &&
+              resource.data.get('channelId', '') is string &&
+              canReadServerChannel(
+                clubId,
+                resource.data.get('channelId', ''),
+                get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(resource.data.get('channelId', ''))).data,
+                false
+              ) &&
+              get(/databases/$(database)/documents/clubs/$(clubId)/channels/$(resource.data.get('channelId', ''))).data.kind == 'memories'
+            );
         allow create: if isVerified() &&
             isLegacyClub(clubId) &&
             canCommunicate() &&
@@ -3629,11 +4028,15 @@ service cloud.firestore {
 
       // Quick check-ins: ordinary append-only status updates ("I'm home",
       // "On my way", ...). No location of any kind is accepted or stored,
-      // and each row is scoped to the account that wrote it. Immutable
-      // once written, so a check-in cannot be edited to say something the
-      // person never said.
+      // and each row is scoped to the account that wrote it. V1 Family reads
+      // retain this private member boundary while every V1 mutation moves to
+      // the two callable writers. Legacy client mutations remain unchanged.
       match /checkIns/{checkInId} {
-        allow read: if isLegacyClub(clubId) && isClubMember(clubId);
+        allow read: if isClubMember(clubId) &&
+            (
+              isLegacyClub(clubId) ||
+              get(/databases/$(database)/documents/clubs/$(clubId)).data.serverType == 'family'
+            );
         allow create: if isVerified() &&
             isLegacyClub(clubId) &&
             isClubMember(clubId) &&
@@ -3665,6 +4068,13 @@ service cloud.firestore {
               resource.data.userId == request.auth.uid ||
               canManageClub(clubId)
             );
+      }
+
+      // Community following is a member preference, never a public follower
+      // roster or an authority source. The callable owns this row and the
+      // user's private mirror as one transaction.
+      match /followers/{userId} {
+        allow read, write: if false;
       }
     }
 
@@ -4321,11 +4731,80 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // A voice-comment upload reservation. Written by
+    // reserveReelVoiceCommentDraft and deleted by
+    // finalizeReelVoiceCommentDraft or the abandoned-reservation sweep; a
+    // client never reads or writes it. It IS read by Storage Rules, through
+    // firestore.get() under the rules service's own authority, which is not a
+    // client read and is unaffected by this denial — the same arrangement
+    // voiceMomentUploadReservations has had since voice replies shipped.
+    match /reelVoiceCommentReservations/{commentId} {
+      allow read, write: if false;
+    }
+
     match /reelAvailability/{reelId} {
       allow read, write: if false;
     }
 
     match /reelCleanupOutbox/{outboxId} {
+      allow read, write: if false;
+    }
+
+    // Servers V1 durable control jobs: membership convergence, channel
+    // access, archive/delete, ownership transfer and — since ADR-F — a staff
+    // suspension and a server deletion. Written only by the reviewed factory
+    // transactions and drained only by the reviewed workers, both through the
+    // Admin SDK. A client that could write one could forge a session end, a
+    // grant sweep or a deletion; a client that could read one would learn the
+    // roster of everyone being removed. Stated explicitly for the same reason
+    // the ledger below is.
+    match /serverControlOutbox/{operationId} {
+      allow read, write: if false;
+    }
+
+    // Family Memory upload capabilities, owner leases, byte budgets and
+    // deletion jobs are server-owned. Storage Rules may inspect the live
+    // reservation to authorize one immutable upload; clients never read or
+    // mutate any of these Firestore documents directly.
+    match /serverFamilyMemoryUploadReservations/{memoryId} {
+      allow read, write: if false;
+    }
+
+    match /serverFamilyMemoryUploadLeases/{userId} {
+      allow read, write: if false;
+    }
+
+    match /serverFamilyMemoryUploadBudgets/{budgetId} {
+      allow read, write: if false;
+    }
+
+    match /serverFamilyMemoryDeletionJobs/{jobId} {
+      allow read, write: if false;
+    }
+
+    // Company File reservations are Storage upload capabilities. Descriptors
+    // are read through the channel ACL above; every capability, quota, lease
+    // and durable deletion job remains Admin-SDK-only.
+    match /serverCompanyFileUploadReservations/{fileId} {
+      allow read, write: if false;
+    }
+
+    match /serverCompanyFileUploadLeases/{userId} {
+      allow read, write: if false;
+    }
+
+    match /serverCompanyFileUploadBudgets/{budgetId} {
+      allow read, write: if false;
+    }
+
+    match /serverCompanyFileDeletionJobs/{jobId} {
+      allow read, write: if false;
+    }
+
+    // Remote LiveKit Egress jobs contain provider identifiers and private
+    // object paths. They are leased and reconciled exclusively by Admin SDK
+    // workers; no client may observe or mutate the queue.
+    match /serverPodcastEgressJobs/{episodeId} {
       allow read, write: if false;
     }
 

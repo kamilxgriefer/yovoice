@@ -6,6 +6,9 @@ const { assertSessionBinding, tokenRecipientId, validateRecipient } = require(".
 const { createServerSessionControlService } = require("./session_control");
 const { createServerConvergenceService } = require("./convergence");
 const { validateEndJob } = require("./convergence_lifecycle");
+const {
+  createServerContentCleanupService, validateContentCleanupShape,
+} = require("./content_cleanup");
 
 const LEASE_MS = 120_000;
 const RETRY_HINT_MS = 30_000;
@@ -13,9 +16,18 @@ const RETRY_HINT_MS = 30_000;
 // is the session-scoped member of this set: its single recipient target names
 // the generation whose participant document changed, and the same
 // per-identity reconcile re-derives the grant and revokes the old bearer.
-const MEMBER_KINDS = new Set(["memberJoined", "memberLeft", "memberRoleChanged", "sessionParticipantChanged"]);
-const END_KINDS = new Set(["channelArchive", "channelDelete", "ownershipTransferred"]);
+const MEMBER_KINDS = new Set(["memberJoined", "memberLeft", "memberRoleChanged",
+  "sessionParticipantChanged", "memberRemoved", "memberBanned", "memberBanLifted"]);
+// Server-scoped ends (ADR-F): a moderation suspension and a server deletion
+// end every live generation in the server through the same authorized writer
+// an archive or an ownership transfer uses, so their targets are `sessionEnd`
+// targets and belong in exactly this set.
+const END_KINDS = new Set(["channelArchive", "channelDelete", "ownershipTransferred",
+  "serverModeration", "serverDelete"]);
 const PROJECTION_KINDS = new Set(["channelAccess", "ownershipTransferred"]);
+// Kinds allowed to enter the bounded Firestore cleanup phase after every RTC
+// target has positively ended.
+const CONTENT_CLEANUP_KINDS = new Set(["channelDelete", "serverDelete"]);
 const grantComplete = (job) => ["completed", "superseded"].includes(job.grantStatus);
 
 function unsupported() { fail("failed-precondition", "The convergence job needs reconciliation."); }
@@ -38,6 +50,9 @@ function validateConvergenceJob(job, operationId) {
     requireUid(job.previousOwnerId); requireUid(job.newOwnerId);
   }
   if (["channelAccess", "channelArchive", "channelDelete"].includes(job.kind)) requireId(job.channelId, "channelId");
+  // A server-scoped job names no channel. Stating it positively keeps a
+  // forged `channelId` from narrowing the target-mode check below.
+  if (["serverModeration", "serverDelete"].includes(job.kind) && job.channelId !== undefined) unsupported();
   const seen = new Set();
   for (const target of job.rtcTargets) {
     if (!target || typeof target !== "object" || target.serverId !== job.serverId) unsupported();
@@ -57,8 +72,9 @@ function validateConvergenceJob(job, operationId) {
   if ((job.rtcStatus === "completed") !== (job.rtcTargetIndex === job.rtcTargets.length) ||
       (job.rtcStatus === "completed" && job.rtcRecipientCursor !== null) ||
       (job.status === "completed" && (!grantComplete(job) || job.rtcStatus !== "completed" || job.contentCleanupPending)) ||
-      (job.contentCleanupPending && job.kind !== "channelDelete") ||
+      (job.contentCleanupPending && !CONTENT_CLEANUP_KINDS.has(job.kind)) ||
       (!grantComplete(job) && !PROJECTION_KINDS.has(job.kind))) unsupported();
+  if (job.contentCleanupPending) validateContentCleanupShape(job);
   return job;
 }
 
@@ -67,7 +83,9 @@ function immutableJobFingerprint(job) {
     channelId: job.channelId ?? null, userId: job.userId ?? null,
     membershipRevision: job.membershipRevision ?? null, aclRevision: job.aclRevision ?? null,
     previousOwnerId: job.previousOwnerId ?? null, newOwnerId: job.newOwnerId ?? null,
-    rtcTargets: job.rtcTargets, contentCleanupPending: job.contentCleanupPending });
+    rtcTargets: job.rtcTargets, contentCleanupPending: job.contentCleanupPending,
+    deletionRevision: job.deletionRevision ?? null, ownerId: job.ownerId ?? null,
+    roomId: job.roomId ?? null });
 }
 
 function resultFor(job, processed = 0) {
@@ -78,10 +96,19 @@ function resultFor(job, processed = 0) {
 
 /** Explicit internal worker only. No callable, trigger, scheduler or SDK
  * invocation occurs on import or during held configuration mutations. */
-function createServerConvergenceRuntimeService({ db, Timestamp, livekit, clock = Date.now }) {
-  const dependencies = { db, Timestamp, livekit, clock };
+function createServerConvergenceRuntimeService({
+  db, Timestamp, FieldPath: FieldPathClass = FieldPath, livekit, clock = Date.now,
+  familyMemoryStorage = null,
+  companyFileStorage = null,
+  podcastEpisodeStorage = null,
+}) {
+  const dependencies = {
+    db, Timestamp, livekit, clock, familyMemoryStorage, companyFileStorage,
+    podcastEpisodeStorage,
+  };
   const media = createServerSessionControlService(dependencies);
   const projection = createServerConvergenceService(dependencies);
+  const content = createServerContentCleanupService({ ...dependencies, FieldPath: FieldPathClass });
 
   async function processServerConvergencePage({ operationId, pageSize = 20 }) {
     requireId(operationId, "operationId"); requireSafeInteger(pageSize, "pageSize", { min: 1, max: 20 });
@@ -91,7 +118,7 @@ function createServerConvergenceRuntimeService({ db, Timestamp, livekit, clock =
       const job = validateConvergenceJob(snapshot.exists ? snapshot.data() : null, operationId);
       if (job.status === "completed") return { settled: true, job };
       if (job.rtcStatus === "completed" && grantComplete(job)) {
-        if (job.contentCleanupPending) return { settled: true, job };
+        if (job.contentCleanupPending) return { content: true, job };
         transaction.update(reference, { status: "completed", completedAt: Timestamp.fromMillis(clock()),
           updatedAt: Timestamp.fromMillis(clock()) });
         return { settled: true, job: { ...job, status: "completed" } };
@@ -126,6 +153,7 @@ function createServerConvergenceRuntimeService({ db, Timestamp, livekit, clock =
       return { job, target, recipients, pageDone, fingerprint: immutableJobFingerprint(job) };
     });
     if (plan.busy || plan.settled) return resultFor(plan.job);
+    if (plan.content) return content.processServerContentCleanupPage({ operationId, pageSize });
 
     let pending = false; let recoveryRequired = false; let errorCode = null; let processed = 0;
     try {

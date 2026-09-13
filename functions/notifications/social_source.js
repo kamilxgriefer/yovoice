@@ -1,3 +1,7 @@
+const {
+  serverInviteNotificationSourceIsCurrent,
+} = require("./invites");
+
 function isLegacySocialNotificationId(notificationId, notification) {
   const actorId = notification?.actorId;
   return (
@@ -222,6 +226,17 @@ async function notificationSourceIsCurrent({
   }
   if (notification?.type === "liveStarted") {
     return liveRoomSourceIsCurrent({
+      notificationId,
+      notification,
+      reader,
+      firestore,
+    });
+  }
+  if (notification?.type === "clubInvite" &&
+      (notificationId?.startsWith?.("serverInvite_") ||
+        notification?.sourceGeneration !== undefined)) {
+    return serverInviteNotificationSourceIsCurrent({
+      recipientId,
       notificationId,
       notification,
       reader,

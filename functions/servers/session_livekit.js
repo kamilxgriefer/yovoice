@@ -110,13 +110,10 @@ function createServerLiveKitAdapter({ apiKey, apiSecret, serverUrl, client = nul
       // execute remotely: an automatic retry's ACK cannot prove the first
       // request will not later disconnect a freshly readmitted identity.
       const result = await getControl(() => cutoffTime, 1).revokeParticipant(roomName, uid);
-      // Unlike legacy best-effort cleanup, V1 cannot treat absence as proof
-      // that a never-joined bearer token was revoked. Cloud's explicit-cutoff
-      // API acknowledges offline revocation with success. Whole-generation
-      // cleanup may retry its terminal RTC target; per-identity convergence
-      // must retain its unresolved attempt instead of dispatching a retry.
-      if (result.alreadyAbsent) fail("unavailable", "Media token revocation is not yet confirmed.");
-      return { ...result, revokedBeforeMillis: (Math.floor(cutoffTime / 1000) + 1) * 1000 };
+      // NOT_FOUND is terminal only because createLiveKitControl proves that
+      // the same request carried revokeTokenTs. A generic provider absence
+      // without that proof remains fail-closed in confirmedCutoff().
+      return result;
     },
     endRoom,
     /**

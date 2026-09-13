@@ -22,6 +22,16 @@ const {
   hasStaffPreviewAccess,
   isActiveAccountProfile,
 } = require("../utils/premium_access");
+const {
+  assertLedgerReplay,
+  consumeRateLimit,
+  ledgerData,
+  operationIdentity,
+  rateLimitReference,
+  requireActor,
+  requireExactInput,
+  requireRequestId,
+} = require("../integrity/guards");
 const { normalizeProfileVisibility } = require("./profile_visibility");
 
 const REGION = "europe-west1";
@@ -34,6 +44,11 @@ const SEARCH_MINUTE_LIMIT = 30;
 const SEARCH_HOUR_LIMIT = 300;
 const SEARCH_MINUTE_MS = 60 * 1000;
 const SEARCH_HOUR_MS = 60 * 60 * 1000;
+const CREATOR_AUDIENCE_RATE_SCOPE = "profile.creatorAudience";
+const CREATOR_AUDIENCE_RATE_LIMIT = Object.freeze({
+  maxEvents: 20,
+  windowMs: 60 * 1000,
+});
 
 const PUBLIC_PROFILE_FIELDS = new Set([
   "uid",
@@ -52,6 +67,7 @@ const PUBLIC_PROFILE_FIELDS = new Set([
   "statusMessage",
   "accountType",
   "premiumIdentity",
+  "creatorAudienceVisible",
   "friendCount",
   "followerCount",
   "followingCount",
@@ -145,6 +161,22 @@ function safeCount(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
+function paidCreatorAudienceEligibility(source, entitlement, now = Date.now()) {
+  if (!isActiveAccountProfile(source) || source.accountType !== "creator" ||
+      source.premiumIdentity !== true || source.creatorAgeVerified !== true) {
+    return false;
+  }
+  const access = deriveEffectivePremiumAccess({ user: source, entitlement, now });
+  return access.paidActive === true && entitlement?.premiumIdentityEnabled === true &&
+    entitlement?.creatorEnabled === true;
+}
+
+function creatorAudienceVisibleFromSource(source) {
+  return isActiveAccountProfile(source) && source.accountType === "creator" &&
+    source.premiumIdentity === true && source.creatorAgeVerified === true &&
+    source.creatorAudienceEnabled === true;
+}
+
 function normalizeSearchText(value) {
   return safeString(value, MAX_SEARCH_LENGTH)
     .normalize("NFKC")
@@ -177,6 +209,12 @@ function derivePublicProfile(uid, source) {
           (paidPremiumIdentity || staffPreviewIdentity)
         ? "creator"
         : "personal";
+  // Staff preview may display Creator identity, but accepting followers is a
+  // paid, age-verified, explicit opt-in. Only a boolean projection leaves the
+  // private verification authority; no birth date or verification detail is
+  // copied to publicProfiles.
+  const creatorAudienceVisible = accountType === "creator" &&
+    creatorAudienceVisibleFromSource(source);
 
   return {
     uid,
@@ -197,9 +235,10 @@ function derivePublicProfile(uid, source) {
     statusMessage: safeString(source.statusMessage, 120),
     accountType,
     premiumIdentity: paidPremiumIdentity || staffPreviewIdentity,
+    creatorAudienceVisible,
     friendCount: safeCount(source.friendCount),
-    followerCount: safeCount(source.followerCount),
-    followingCount: safeCount(source.followingCount),
+    followerCount: creatorAudienceVisible ? safeCount(source.followerCount) : 0,
+    followingCount: creatorAudienceVisible ? safeCount(source.followingCount) : 0,
     schemaVersion: PUBLIC_PROFILE_SCHEMA_VERSION,
   };
 }
@@ -409,7 +448,10 @@ function searchResult(snapshot, authority = {}, relationshipStatus = "none") {
     statusMessage: safeString(data.statusMessage, 120),
     accountType,
     premiumIdentity: authority.premiumIdentity === true,
-    followerCount: safeCount(data.followerCount),
+    creatorAudienceVisible: authority.creatorAudienceVisible === true,
+    followerCount: authority.creatorAudienceVisible === true
+      ? safeCount(data.followerCount)
+      : 0,
     relationshipStatus,
     // This is an opaque cache revision, not a media URL. The client still
     // exchanges the uid for a short-lived viewer-authorized media grant.
@@ -751,6 +793,10 @@ const searchPublicProfiles = onCall(
       authorityByUid.set(snapshot.id, {
         accountType: canonicalAccountType,
         premiumIdentity: access.premiumIdentityEnabled,
+        creatorAudienceVisible:
+          canonicalAccountType === "creator" &&
+          source.creatorAudienceEnabled === true &&
+          paidCreatorAudienceEligibility(source, entitlement, nowMillis),
       });
     }
 
@@ -792,6 +838,121 @@ const searchPublicProfiles = onCall(
   },
 );
 
+async function setCreatorAudienceEnabledHandler(
+  request,
+  {
+    database = db,
+    now = Timestamp.now(),
+    rateLimit = CREATOR_AUDIENCE_RATE_LIMIT,
+  } = {},
+) {
+  const auth = requireActor(request);
+  requireExactInput(request.data, ["enabled", "requestId"], ["enabled", "requestId"]);
+  if (typeof request.data.enabled !== "boolean") {
+    throw new HttpsError("invalid-argument", "enabled must be a boolean.");
+  }
+  const enabled = request.data.enabled;
+  const requestId = requireRequestId(request.data.requestId);
+  const identity = operationIdentity(
+    "profile.creator.audience.v1",
+    auth.uid,
+    requestId,
+    { enabled },
+  );
+  const userRef = database.collection("users").doc(auth.uid);
+  const entitlementRef = database.collection("entitlements").doc(auth.uid);
+  const profileRef = database.collection("publicProfiles").doc(auth.uid);
+  const ledgerRef = database.collection("integrityOperationLedgers").doc(identity.id);
+  const rateRef = rateLimitReference(database, CREATOR_AUDIENCE_RATE_SCOPE, auth.uid);
+  const nowMs = timestampMillis(now, null);
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+    throw new TypeError("now must be a Firestore Timestamp.");
+  }
+  return database.runTransaction(async (transaction) => {
+    const [userSnapshot, entitlementSnapshot, profileSnapshot, ledgerSnapshot,
+      rateSnapshot] = await transaction.getAll(
+      userRef,
+      entitlementRef,
+      profileRef,
+      ledgerRef,
+      rateRef,
+    );
+    const source = userSnapshot.exists ? (userSnapshot.data() ?? {}) : null;
+    if (!isActiveAccountProfile(source)) {
+      throw new HttpsError("permission-denied", "The account is not active.");
+    }
+    const entitlement = entitlementSnapshot.exists
+      ? (entitlementSnapshot.data() ?? {})
+      : null;
+    if (enabled && !paidCreatorAudienceEligibility(source, entitlement, now)) {
+      // One deliberately generic refusal: neither Premium status nor private
+      // age-verification state is disclosed through the callable.
+      throw new HttpsError(
+        "failed-precondition",
+        "Creator audience is unavailable for this account.",
+      );
+    }
+    const prior = assertLedgerReplay(ledgerSnapshot, {
+      kind: "profile.creator.audience.v1",
+      uid: auth.uid,
+      inputHash: identity.inputHash,
+    });
+    if (prior) {
+      if (source.creatorAudienceEnabled !== prior.creatorAudienceEnabled) {
+        throw new HttpsError(
+          "aborted",
+          "Creator audience changed after the original request.",
+        );
+      }
+      return prior;
+    }
+    // The shared private rate-limit row and the operation ledger commit in
+    // the same transaction. A concurrent replay sees the ledger and is free;
+    // every distinct operation consumes one bounded slot before its receipt
+    // can be created.
+    consumeRateLimit(transaction, rateSnapshot, {
+      reference: rateRef,
+      scope: CREATOR_AUDIENCE_RATE_SCOPE,
+      uid: auth.uid,
+      now,
+      nowMs,
+      ...rateLimit,
+    });
+    const nextSource = { ...source, creatorAudienceEnabled: enabled };
+    const derived = derivePublicProfile(auth.uid, nextSource);
+    const result = {
+      creatorAudienceEnabled: enabled,
+      creatorAudienceVisible: derived?.creatorAudienceVisible === true,
+      changed: source.creatorAudienceEnabled !== enabled,
+    };
+    transaction.update(userRef, { creatorAudienceEnabled: enabled });
+    applyProjectionInTransaction(
+      transaction,
+      profileRef,
+      profileSnapshot,
+      derived,
+      PUBLIC_PROFILE_FIELDS,
+    );
+    transaction.create(ledgerRef, ledgerData({
+      kind: "profile.creator.audience.v1",
+      uid: auth.uid,
+      requestId,
+      inputHash: identity.inputHash,
+      result,
+      now,
+    }));
+    return result;
+  });
+}
+
+const setCreatorAudienceEnabled = onCall(
+  // App Check stays in rollout/metrics mode with the surrounding profile
+  // callables. The transactional quota is the immediate abuse boundary; a
+  // unilateral enforcement flip would reject currently released clients.
+  { region: REGION, enforceAppCheck: false },
+  (request) => setCreatorAudienceEnabledHandler(request),
+);
+
 module.exports = {
   DEFAULT_SEARCH_LIMIT,
   MAX_SEARCH_LIMIT,
@@ -800,12 +961,15 @@ module.exports = {
   SEARCH_HOUR_MS,
   SEARCH_MINUTE_LIMIT,
   SEARCH_MINUTE_MS,
+  CREATOR_AUDIENCE_RATE_LIMIT,
+  CREATOR_AUDIENCE_RATE_SCOPE,
   PUBLIC_PROFILE_FIELDS,
   PUBLIC_PROFILE_SCHEMA_VERSION,
   SOCIAL_PRESENCE_FIELDS,
   SOCIAL_PRESENCE_SCHEMA_VERSION,
   USER_AVAILABILITY_VALUES,
   canonicalUid,
+  creatorAudienceVisibleFromSource,
   derivePublicProfile,
   deriveSocialPresence,
   deriveVisibleAvailability,
@@ -819,5 +983,8 @@ module.exports = {
   handleAuthUserDeleted,
   onUserPrivacySourceChanged,
   onAuthUserDeleted,
+  paidCreatorAudienceEligibility,
   searchPublicProfiles,
+  setCreatorAudienceEnabled,
+  setCreatorAudienceEnabledHandler,
 };

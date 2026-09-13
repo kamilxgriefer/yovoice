@@ -72,7 +72,8 @@ async function fixture() {
     },
     async revokeParticipant(roomName, userId) {
       calls.revoke.push({ roomName, userId });
-      const receipt = { alreadyAbsent: false, revokedBeforeMillis: (Math.floor(clock() / 1000) + 1) * 1000 };
+      const receipt = { alreadyAbsent: false, revocationRequested: true,
+        revokedBeforeMillis: (Math.floor(clock() / 1000) + 1) * 1000 };
       return hooks.revoke ? hooks.revoke({ roomName, userId }, receipt) : receipt;
     },
     async endRoom(roomName) {

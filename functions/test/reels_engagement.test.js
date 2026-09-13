@@ -19,6 +19,8 @@ const AUTHOR = "creator-1";
 const VIEWER = "viewer-1";
 const OTHER = "viewer-2";
 const REEL_ID = "reel_1";
+const VOICE_ID = "a".repeat(40);
+const VOICE_PATH = `reel_voice_comments/${VIEWER}/${REEL_ID}/${VOICE_ID}.m4a`;
 
 function composition() {
   return {
@@ -1077,19 +1079,120 @@ test("the comment guard rejects every off-contract stored shape", () => {
     code: "not-found",
   });
   for (const bad of [
-    { ...canonical, type: "voice" },
     { ...canonical, reelId: "another_reel" },
     { ...canonical, authorName: "  padded  " },
     { ...canonical, authorName: "x".repeat(81) },
     { ...canonical, text: "" },
     { ...canonical, text: "x".repeat(MAX_REEL_COMMENT_LENGTH + 1) },
+    // A TEXT comment with a duration is still malformed — the two shapes are
+    // kept apart by exactly this assertion.
     { ...canonical, durationSeconds: 12 },
+    // The type is picked from a closed set before anything else is read.
+    { ...canonical, type: "audio" },
+    { ...canonical, type: null },
+    // A text comment carrying voice media keys is not a voice comment.
+    { ...canonical, storagePath: VOICE_PATH },
     { ...canonical, createdAt: null },
     { ...canonical, moderatorPinned: true },
   ]) {
     assert.throws(() => validateReelComment(snapshot(bad), REEL_ID), {
       code: "data-loss",
     });
+  }
+});
+
+test("the comment guard accepts a canonical voice comment and nothing near it", () => {
+  const canonicalVoice = {
+    schemaVersion: 1,
+    type: "voice",
+    reelId: REEL_ID,
+    authorId: VIEWER,
+    authorName: "Name",
+    // A caption MAY be empty on a voice comment: the content is the recording.
+    text: "",
+    durationSeconds: 12,
+    storagePath: VOICE_PATH,
+    mediaGeneration: "900001",
+    mediaSize: 4096,
+    mediaContentType: "audio/mp4",
+    createdAt: new Date(NOW_MS),
+  };
+  const snapshot = (data) => ({ exists: true, id: VOICE_ID, data: () => data });
+  const parsed = validateReelComment(snapshot(canonicalVoice), REEL_ID);
+  assert.equal(parsed.type, "voice");
+  assert.equal(parsed.durationSeconds, 12);
+  assert.equal(parsed.storagePath, VOICE_PATH);
+  for (const durationSeconds of [1, 60]) {
+    assert.equal(
+      validateReelComment(
+        snapshot({ ...canonicalVoice, durationSeconds }),
+        REEL_ID,
+      ).durationSeconds,
+      durationSeconds,
+    );
+  }
+  for (const bad of [
+    // A voice comment WITHOUT its media keys is malformed.
+    (() => {
+      const value = { ...canonicalVoice };
+      delete value.storagePath;
+      return value;
+    })(),
+    (() => {
+      const value = { ...canonicalVoice };
+      delete value.mediaGeneration;
+      return value;
+    })(),
+    (() => {
+      const value = { ...canonicalVoice };
+      delete value.mediaSize;
+      return value;
+    })(),
+    (() => {
+      const value = { ...canonicalVoice };
+      delete value.mediaContentType;
+      return value;
+    })(),
+    // Duration outside 1-60, or not an integer at all.
+    { ...canonicalVoice, durationSeconds: 0 },
+    { ...canonicalVoice, durationSeconds: 61 },
+    { ...canonicalVoice, durationSeconds: null },
+    { ...canonicalVoice, durationSeconds: 7.5 },
+    { ...canonicalVoice, durationSeconds: "12" },
+    // A caption longer than the recorder's limit.
+    { ...canonicalVoice, text: "x".repeat(141) },
+    // THE OBJECT PATH IS DERIVED, NOT TRUSTED: another author's object,
+    // another Reel's, another comment id's, or a path outside the prefix.
+    {
+      ...canonicalVoice,
+      storagePath: `reel_voice_comments/${OTHER}/${REEL_ID}/${VOICE_ID}.m4a`,
+    },
+    {
+      ...canonicalVoice,
+      storagePath: `reel_voice_comments/${VIEWER}/other_reel/${VOICE_ID}.m4a`,
+    },
+    {
+      ...canonicalVoice,
+      storagePath:
+        `reel_voice_comments/${VIEWER}/${REEL_ID}/${"b".repeat(40)}.m4a`,
+    },
+    { ...canonicalVoice, storagePath: `reels/${VIEWER}/${REEL_ID}/media.jpg` },
+    { ...canonicalVoice, storagePath: `voice_replies/${VIEWER}/x/y.m4a` },
+    // Media descriptors that disagree with what any object could be.
+    { ...canonicalVoice, mediaGeneration: "not-a-generation" },
+    { ...canonicalVoice, mediaGeneration: 900001 },
+    { ...canonicalVoice, mediaSize: 511 },
+    { ...canonicalVoice, mediaSize: 12 * 1024 * 1024 + 1 },
+    { ...canonicalVoice, mediaContentType: "audio/mpeg" },
+    { ...canonicalVoice, mediaContentType: "video/mp4" },
+    { ...canonicalVoice, schemaVersion: 2 },
+    { ...canonicalVoice, moderatorPinned: true },
+  ]) {
+    assert.throws(
+      () => validateReelComment(snapshot(bad), REEL_ID),
+      { code: "data-loss" },
+      JSON.stringify(bad),
+    );
   }
 });
 

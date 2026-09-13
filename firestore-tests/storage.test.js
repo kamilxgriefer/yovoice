@@ -122,6 +122,10 @@ const DIRECT_VIDEO_MESSAGE = `m_${"9".repeat(40)}`;
 const DIRECT_UNVERIFIED_MESSAGE = `m_${"f".repeat(40)}`;
 const DIRECT_EXPIRED_MESSAGE = `m_${"0".repeat(40)}`;
 const STORAGE_TEST_BUCKET = "demo-yovoice";
+const REEL_VOICE_REEL = "reel-voice-1";
+const REEL_VOICE_COMMENT = "0123456789abcdef0123456789abcdef01234567";
+const REEL_VOICE_CONTRACT = "89abcdef0123456789abcdef0123456789abcdef";
+const REEL_VOICE_ORPHAN = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const REEL_IMAGE = "reel-image-1";
 const REEL_VIDEO = "reel-video-1";
 const REEL_EXPIRED = "reel-expired-1";
@@ -153,6 +157,31 @@ function voiceReplyReservation(ownerId, momentId, commentId, overrides = {}) {
     text: "Reserved voice reply",
     authorName: "Reserved author",
     authorPhotoUrl: null,
+    status: "uploading",
+    createdAt: new Date(),
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    ...overrides,
+  };
+}
+
+function reelVoiceMetadata(authorId, reelId, commentId, extra = {}) {
+  return {
+    contentType: "audio/mp4",
+    customMetadata: { authorId, reelId, commentId, ...extra },
+  };
+}
+
+function reelVoiceReservation(ownerId, reelId, commentId, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    kind: "reelVoiceComment",
+    ownerId,
+    reelId,
+    commentId,
+    storagePath: `reel_voice_comments/${ownerId}/${reelId}/${commentId}.m4a`,
+    durationSeconds: 7,
+    text: "",
+    authorName: "Reserved author",
     status: "uploading",
     createdAt: new Date(),
     expiresAt: new Date(Date.now() + 10 * 60 * 1000),
@@ -2385,6 +2414,306 @@ async function main() {
           ),
           smallAudio,
           replyMetadata(ALICE, PARENT, LEGACY_REPLY_NEW),
+        ),
+      );
+    },
+  );
+
+  // --- Reel voice comments: the SAME contract the Voice reply block above
+  // enforces, on a Reel's own reservation collection. Every case below is the
+  // Voice reply case it was cloned from, re-aimed at reel_voice_comments/**.
+  const reelVoicePath =
+    `reel_voice_comments/${ALICE}/${REEL_VOICE_REEL}/${REEL_VOICE_COMMENT}.m4a`;
+  await check(
+    "a verified active commenter can upload an exactly reserved voice comment",
+    async () => {
+      await testEnv.withSecurityRulesDisabled((ctx) =>
+        setDoc(
+          doc(
+            ctx.firestore(),
+            `reelVoiceCommentReservations/${REEL_VOICE_COMMENT}`,
+          ),
+          reelVoiceReservation(ALICE, REEL_VOICE_REEL, REEL_VOICE_COMMENT),
+        ),
+      );
+      await assertSucceeds(
+        uploadBytes(
+          ref(alice, reelVoicePath),
+          smallAudio,
+          reelVoiceMetadata(ALICE, REEL_VOICE_REEL, REEL_VOICE_COMMENT),
+        ),
+      );
+    },
+  );
+
+  await check("a reel voice-comment overwrite is rejected", () =>
+    assertFails(
+      uploadBytes(
+        ref(alice, reelVoicePath),
+        smallAudio,
+        reelVoiceMetadata(ALICE, REEL_VOICE_REEL, REEL_VOICE_COMMENT),
+      ),
+    ),
+  );
+
+  await check(
+    "clients cannot delete a still-reserved reel voice comment",
+    async () => {
+      await assertFails(deleteObject(ref(alice, reelVoicePath)));
+      await assertFails(deleteObject(ref(bob, reelVoicePath)));
+    },
+  );
+
+  await check(
+    "a finalized reel voice comment is direct-read denied and delete-proof",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        // finalizeReelVoiceCommentDraft removes the reservation in the same
+        // transaction that publishes the comment. From that instant the only
+        // way to hear the audio is a short-lived callable grant — including
+        // for the person who recorded it.
+        await setDoc(
+          doc(
+            ctx.firestore(),
+            `reels/${REEL_VOICE_REEL}/comments/${REEL_VOICE_COMMENT}`,
+          ),
+          {
+            schemaVersion: 1,
+            type: "voice",
+            authorId: ALICE,
+            storagePath: reelVoicePath,
+          },
+        );
+        await deleteDoc(
+          doc(
+            ctx.firestore(),
+            `reelVoiceCommentReservations/${REEL_VOICE_COMMENT}`,
+          ),
+        );
+      });
+      await assertFails(getBytes(ref(alice, reelVoicePath)));
+      await assertFails(getBytes(ref(bob, reelVoicePath)));
+      await assertFails(getBytes(ref(anon, reelVoicePath)));
+      await assertFails(deleteObject(ref(alice, reelVoicePath)));
+      await assertFails(deleteObject(ref(bob, reelVoicePath)));
+    },
+  );
+
+  await check(
+    "a missing reservation cannot be used as an orphan voice-comment store",
+    () =>
+      assertFails(
+        uploadBytes(
+          ref(
+            alice,
+            `reel_voice_comments/${ALICE}/${REEL_VOICE_REEL}/${REEL_VOICE_ORPHAN}.m4a`,
+          ),
+          smallAudio,
+          reelVoiceMetadata(ALICE, REEL_VOICE_REEL, REEL_VOICE_ORPHAN),
+        ),
+      ),
+  );
+
+  const reelVoiceContractPath =
+    `reel_voice_comments/${ALICE}/${REEL_VOICE_REEL}/${REEL_VOICE_CONTRACT}.m4a`;
+  await check(
+    "reel voice-comment reservation identity and lifecycle are exact",
+    async () => {
+      const writeReservation = (overrides = {}) =>
+        testEnv.withSecurityRulesDisabled((ctx) =>
+          setDoc(
+            doc(
+              ctx.firestore(),
+              `reelVoiceCommentReservations/${REEL_VOICE_CONTRACT}`,
+            ),
+            reelVoiceReservation(
+              ALICE,
+              REEL_VOICE_REEL,
+              REEL_VOICE_CONTRACT,
+              overrides,
+            ),
+          ),
+        );
+      const canonicalUpload = () =>
+        uploadBytes(
+          ref(alice, reelVoiceContractPath),
+          smallAudio,
+          reelVoiceMetadata(ALICE, REEL_VOICE_REEL, REEL_VOICE_CONTRACT),
+        );
+
+      // Every field the rule reads off the reservation, falsified one at a
+      // time. A Voice MOMENT reservation is in the list on purpose: the two
+      // collections are separate, and one must never authorize the other.
+      for (const overrides of [
+        { schemaVersion: 2 },
+        { kind: "voiceMomentComment" },
+        { kind: "forgedKind" },
+        { status: "finalized" },
+        { ownerId: BOB },
+        { reelId: "another-reel" },
+        { commentId: REEL_VOICE_COMMENT },
+        {
+          storagePath:
+            `reel_voice_comments/${ALICE}/${REEL_VOICE_REEL}/different.m4a`,
+        },
+        { durationSeconds: 0 },
+        { durationSeconds: 61 },
+        { durationSeconds: "7" },
+        { expiresAt: new Date(Date.now() - 60 * 1000) },
+      ]) {
+        await writeReservation(overrides);
+        await assertFails(canonicalUpload());
+      }
+
+      await writeReservation();
+      // Metadata must be EXACTLY the three keys, with exactly these values.
+      await assertFails(
+        uploadBytes(
+          ref(alice, reelVoiceContractPath),
+          smallAudio,
+          reelVoiceMetadata(ALICE, REEL_VOICE_REEL, REEL_VOICE_CONTRACT, {
+            extra: "forged",
+          }),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, reelVoiceContractPath),
+          smallAudio,
+          reelVoiceMetadata(BOB, REEL_VOICE_REEL, REEL_VOICE_CONTRACT),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, reelVoiceContractPath),
+          smallAudio,
+          reelVoiceMetadata(ALICE, "another-reel", REEL_VOICE_CONTRACT),
+        ),
+      );
+      // A non-audio payload, and one below the 1 KiB floor.
+      await assertFails(
+        uploadBytes(ref(alice, reelVoiceContractPath), smallAudio, {
+          ...pdf,
+          customMetadata: reelVoiceMetadata(
+            ALICE,
+            REEL_VOICE_REEL,
+            REEL_VOICE_CONTRACT,
+          ).customMetadata,
+        }),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, reelVoiceContractPath),
+          tooSmallAudio,
+          reelVoiceMetadata(ALICE, REEL_VOICE_REEL, REEL_VOICE_CONTRACT),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(alice, reelVoiceContractPath),
+          oversizeAudio,
+          reelVoiceMetadata(ALICE, REEL_VOICE_REEL, REEL_VOICE_CONTRACT),
+        ),
+      );
+      // The legacy m4a content type is accepted, exactly as it is for replies.
+      await assertSucceeds(
+        uploadBytes(ref(alice, reelVoiceContractPath), smallAudio, {
+          ...legacyAudio,
+          customMetadata: reelVoiceMetadata(
+            ALICE,
+            REEL_VOICE_REEL,
+            REEL_VOICE_CONTRACT,
+          ).customMetadata,
+        }),
+      );
+      // Only the uploader may read it back, and only while reserved.
+      await assertSucceeds(getBytes(ref(alice, reelVoiceContractPath)));
+      await assertFails(getBytes(ref(bob, reelVoiceContractPath)));
+      await assertFails(getBytes(ref(anon, reelVoiceContractPath)));
+
+      // Delete stays denied through every reservation and finalize state.
+      await writeReservation({ ownerId: BOB });
+      await assertFails(deleteObject(ref(alice, reelVoiceContractPath)));
+      await writeReservation({ storagePath: "reel_voice_comments/wrong.m4a" });
+      await assertFails(deleteObject(ref(alice, reelVoiceContractPath)));
+      await writeReservation();
+      await assertFails(deleteObject(ref(alice, reelVoiceContractPath)));
+    },
+  );
+
+  await check(
+    "an unverified or inactive account cannot upload a reel voice comment",
+    async () => {
+      for (const [context, uid] of [
+        [newbie, NEWBIE],
+        [banned, BANNED],
+        [disabled, DISABLED],
+      ]) {
+        const commentId = REEL_VOICE_CONTRACT;
+        const path =
+          `reel_voice_comments/${uid}/${REEL_VOICE_REEL}/${commentId}.m4a`;
+        await testEnv.withSecurityRulesDisabled((ctx) =>
+          setDoc(
+            doc(
+              ctx.firestore(),
+              `reelVoiceCommentReservations/${commentId}`,
+            ),
+            reelVoiceReservation(uid, REEL_VOICE_REEL, commentId),
+          ),
+        );
+        await assertFails(
+          uploadBytes(
+            ref(context, path),
+            smallAudio,
+            reelVoiceMetadata(uid, REEL_VOICE_REEL, commentId),
+          ),
+        );
+      }
+    },
+  );
+
+  await check(
+    "one account cannot upload into another account's voice-comment prefix",
+    async () => {
+      await testEnv.withSecurityRulesDisabled((ctx) =>
+        setDoc(
+          doc(
+            ctx.firestore(),
+            `reelVoiceCommentReservations/${REEL_VOICE_ORPHAN}`,
+          ),
+          reelVoiceReservation(ALICE, REEL_VOICE_REEL, REEL_VOICE_ORPHAN),
+        ),
+      );
+      // Mallory holds Alice's reservation id but not her uid segment.
+      await assertFails(
+        uploadBytes(
+          ref(
+            mallory,
+            `reel_voice_comments/${ALICE}/${REEL_VOICE_REEL}/${REEL_VOICE_ORPHAN}.m4a`,
+          ),
+          smallAudio,
+          reelVoiceMetadata(ALICE, REEL_VOICE_REEL, REEL_VOICE_ORPHAN),
+        ),
+      );
+      // And a non-canonical file name under her own prefix is refused.
+      await assertFails(
+        uploadBytes(
+          ref(
+            alice,
+            `reel_voice_comments/${ALICE}/${REEL_VOICE_REEL}/${REEL_VOICE_ORPHAN}.mp3`,
+          ),
+          smallAudio,
+          reelVoiceMetadata(ALICE, REEL_VOICE_REEL, REEL_VOICE_ORPHAN),
+        ),
+      );
+      await assertFails(
+        uploadBytes(
+          ref(
+            alice,
+            `reel_voice_comments/${ALICE}/${REEL_VOICE_REEL}/not-a-digest.m4a`,
+          ),
+          smallAudio,
+          reelVoiceMetadata(ALICE, REEL_VOICE_REEL, "not-a-digest"),
         ),
       );
     },

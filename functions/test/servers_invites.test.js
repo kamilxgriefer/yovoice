@@ -131,6 +131,104 @@ emulatorTest("an inviter-capable member invites a friend: exact document, privat
   assert.equal((await rateLimitReference(db, "server.v1.invite", f.uid).get()).data().count, 2);
 });
 
+emulatorTest("accept re-proves friendship, blocks and restrictions while decline remains a safe escape", async () => {
+  const scenarios = [
+    ["unfriend", async (f, invitee) => Promise.all([
+      db.doc(`friendshipGuards/${f.uid}/friends/${invitee}`).delete(),
+      db.doc(`friendshipGuards/${invitee}/friends/${f.uid}`).delete(),
+    ])],
+    ["inviter blocks invitee", async (f, invitee) =>
+      db.doc(`users/${f.uid}/blocked/${invitee}`).set({ blockedAt: Timestamp.fromMillis(f.now()) })],
+    ["invitee blocks inviter", async (f, invitee) =>
+      db.doc(`users/${invitee}/blocked/${f.uid}`).set({ blockedAt: Timestamp.fromMillis(f.now()) })],
+    ["inviter becomes restricted", async (f) =>
+      db.doc(`restrictions/${f.uid}`).set({ type: "communicationMute", expiresAt: null })],
+    ["invitee becomes restricted", async (f, invitee) =>
+      db.doc(`restrictions/${invitee}`).set({ type: "communicationMute", expiresAt: null })],
+  ];
+
+  for (const [label, invalidate] of scenarios) {
+    const f = await fixture();
+    const invitee = await user(`policy-${label.replaceAll(" ", "-")}`);
+    await friends(f.uid, invitee);
+    await f.invite(f.uid, invitee);
+    const rootBefore = (await db.doc(`clubs/${f.serverId}`).get()).data();
+    const channels = await db.collection(`clubs/${f.serverId}/channels`).get();
+    await invalidate(f, invitee);
+
+    await assert.rejects(f.respond(invitee, "accept"), (error) => {
+      assert.equal(error.code, "permission-denied", label);
+      assert.equal(
+        error.message,
+        label === "invitee becomes restricted"
+          ? "Your account cannot communicate right now."
+          : "You do not have access to this server resource.",
+        label,
+      );
+      return true;
+    });
+
+    const [rootAfter, member, authorization, mirror, outbox] = await Promise.all([
+      db.doc(`clubs/${f.serverId}`).get(),
+      db.doc(`clubs/${f.serverId}/members/${invitee}`).get(),
+      db.doc(`clubs/${f.serverId}/memberAuthorizations/${invitee}`).get(),
+      db.doc(`users/${invitee}/clubs/${f.serverId}`).get(),
+      db.collection("serverControlOutbox").where("serverId", "==", f.serverId).get(),
+    ]);
+    assert.equal(member.exists, false, `${label}: no membership`);
+    assert.equal(authorization.exists, false, `${label}: no authorization grant`);
+    assert.equal(mirror.exists, false, `${label}: no membership mirror`);
+    assert.equal(rootAfter.data().memberCount, rootBefore.memberCount, `${label}: stable memberCount`);
+    assert.equal(rootAfter.data().revision, rootBefore.revision, `${label}: stable server revision`);
+    assert.equal(outbox.docs.some((doc) => doc.data()?.userId === invitee), false,
+      `${label}: no convergence grant`);
+    for (const channel of channels.docs) {
+      assert.equal((await channel.ref.collection("accessGrants").doc(invitee).get()).exists,
+        false, `${label}: no channel grant`);
+    }
+    assert.equal((await f.inviteDoc(invitee)).status, "pending", `${label}: invite stays pending`);
+    assert.equal((await f.pointer(invitee)).exists, true, `${label}: pointer stays until answer`);
+
+    const declined = await f.respond(invitee, "decline");
+    assert.equal(declined.response, "decline", `${label}: decline remains available`);
+    assert.equal((await f.inviteDoc(invitee)).status, "declined", label);
+    assert.equal((await f.pointer(invitee)).exists, false, label);
+  }
+});
+
+emulatorTest("public join retires an invite and a pre-departure generation can never become a private re-entry path", async () => {
+  const f = await fixture("community");
+  const invitee = await user("public-invitee");
+  await friends(f.uid, invitee);
+  await f.invite(f.uid, invitee);
+  const inviteReference = db.doc(`clubs/${f.serverId}/invites/${invitee}`);
+  const original = (await inviteReference.get()).data();
+
+  await f.joinServerV1(request(invitee, operation(f.serverId)));
+  assert.equal((await inviteReference.get()).data().status, "accepted");
+  assert.equal((await f.pointer(invitee)).exists, false);
+  await f.leaveServerV1(request(invitee, operation(f.serverId)));
+  await db.doc(`clubs/${f.serverId}`).update({ privacy: "inviteOnly" });
+
+  // Reconstruct the pre-fix residue: an old pending generation that predates
+  // the canonical `left` authorization ledger and its private pointer.
+  await inviteReference.set({ ...original, status: "pending",
+    createdAt: Timestamp.fromMillis(START_MS - 1), updatedAt: Timestamp.fromMillis(START_MS) });
+  await db.doc(serverInviteRefPath(invitee, f.serverId)).set({
+    serverId: f.serverId, generation: original.generation, expiresAt: original.expiresAt,
+  });
+  await rejection(f.respond(invitee, "accept"), "permission-denied");
+
+  // A manager's new request does not reuse that dead generation. The new
+  // createdAt is after departure, advances generation, and admits normally.
+  f.advance(1);
+  const fresh = await f.invite(f.uid, invitee);
+  assert.equal(fresh.generation, original.generation + 1);
+  assert.equal(fresh.alreadyExisted, false);
+  assert.equal((await inviteReference.get()).data().createdAt.toMillis(), START_MS + 1);
+  assert.equal((await f.respond(invitee, "accept")).inviteGeneration, fresh.generation);
+});
+
 emulatorTest("who may invite: moderator yes; member, guest, self, outsider and a held server's own owner no, and a refusal writes nothing", async () => {
   const f = await fixture("company");
   const moderator = await f.member("moderator");

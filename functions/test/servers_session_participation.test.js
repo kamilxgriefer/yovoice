@@ -47,7 +47,8 @@ async function fixture() {
     description: "", privacy: "public", defaultLanguage: "English",
   }));
   const root = db.doc(`clubs/${created.serverId}`);
-  // Isolated emulator activation only; there is no shipped activation path.
+  // This fixture uses the raw factory, which deliberately remains held; only
+  // the exact registered creation runtime may seed a new active graph.
   await root.update({ status: "active", serverActivationState: "active" });
   const channels = createServerChannelService(deps);
   const stageResult = await channels.createServerChannelV1(request(owner, {

@@ -100,9 +100,19 @@ function createLiveKitControl({
 
   async function revokeParticipant(roomId, identity) {
     const revokeTokenTs = revocationTimestamp(now);
-    return invoke("removeParticipant", () =>
+    const result = await invoke("removeParticipant", () =>
       client.removeParticipant(roomId, identity, { revokeTokenTs }),
     );
+    // LiveKit applies revokeTokenTs even when the identity is already
+    // offline and RemoveParticipant answers NOT_FOUND. Carry a positive,
+    // explicit proof that this exact cutoff was present on the request so a
+    // caller never mistakes a generic absence response for token revocation.
+    return {
+      ...result,
+      revocationRequested: true,
+      revokeTokenTs,
+      revokedBeforeMillis: Number(revokeTokenTs) * 1000,
+    };
   }
 
   async function setParticipantPermissions(roomId, identity, changes) {

@@ -12,11 +12,13 @@ const projectId = "demo-yovoice-servers-capacity";
 let db;
 let app;
 let Timestamp;
+let FieldValue;
 if (enabled) {
   process.env.GCLOUD_PROJECT = projectId;
   const adminApp = require("firebase-admin/app");
   const firestore = require("firebase-admin/firestore");
   Timestamp = firestore.Timestamp;
+  FieldValue = firestore.FieldValue;
   app = adminApp.getApps().length === 0 ? adminApp.initializeApp({ projectId }) : adminApp.getApp();
   db = firestore.getFirestore(app);
 }
@@ -27,6 +29,7 @@ const {
 const { FREE_SERVER_LIMIT } = require("../servers/contract");
 const { createServerCreationService } = require("../servers/creation");
 const { createServerMembershipService } = require("../servers/memberships");
+const { createRoomCreationService } = require("../rooms/creation");
 const { isActiveOrdinaryRoom } = require("../rooms/creation");
 
 const nowMs = 1_900_000_000_000;
@@ -35,6 +38,13 @@ const emulatorTest = (name, fn) => test(name, { skip: enabled ? false : "Require
 const request = (uid, data) => ({ auth: { uid, token: { email_verified: true } }, data });
 const input = (overrides = {}) => ({ requestId: randomUUID(), serverType: "friends", templateVersion: 1,
   name: "Trusted server", description: "", privacy: "inviteOnly", defaultLanguage: "English", ...overrides });
+const roomInput = () => ({
+  requestId: randomUUID(), name: "Shared capacity room", description: "", category: "talk",
+  visibility: "public", language: "English", maxParticipants: 50, roomType: "community",
+  targetAudience: "everyone", topicTags: [], roomGuidelines: "", conversationStyle: null,
+  newcomerFriendly: false, showFormat: null, experience: "community", topic: "",
+  audienceCanSpeak: true, handRaisingEnabled: false,
+});
 const rejection = (promise, code) => assert.rejects(promise, (error) => error.code === code);
 const capacityRejection = (promise) => assert.rejects(promise, (error) =>
   error.code === "resource-exhausted" && error.details?.reason === CAPACITY_DETAILS.reason &&
@@ -155,6 +165,31 @@ emulatorTest("the free allowance is exact at the 20/21 boundary and refuses with
   assert.equal(state.free.count, FREE_SERVER_LIMIT);
   await capacityRejection(service.createServerV1(request(uid, input())));
   assert.equal(await ownedRoots(uid), FREE_SERVER_LIMIT);
+});
+
+emulatorTest("legacy createRoom and V1 createServer serialize against one shared 20-allocation boundary", async () => {
+  const uid = await owner();
+  await seed(freeRoots(uid, FREE_SERVER_LIMIT - 1));
+  const server = services();
+  const rooms = createRoomCreationService({ db, FieldValue, Timestamp, clock: () => nowMs });
+
+  const settled = await Promise.allSettled([
+    rooms.createRoom(request(uid, roomInput())),
+    server.createServerV1(request(uid, input())),
+  ]);
+  assert.equal(settled.filter((result) => result.status === "fulfilled").length, 1);
+  const refusal = settled.find((result) => result.status === "rejected");
+  assert.equal(refusal.reason.code, "resource-exhausted");
+  const state = await read(uid);
+  assert.equal(state.free.count, FREE_SERVER_LIMIT);
+  assert.equal(state.counts.freeServersV1 + state.counts.legacyRoomV1, FREE_SERVER_LIMIT);
+  assert.equal((await db.doc(`privateServerOwnerGuards/${uid}`).get()).exists, true);
+  assert.equal((await db.doc(`clubOwnershipGuards/${uid}`).get()).exists, true);
+  assert.equal((await db.doc(`privateRoomHostGuards/${uid}`).get()).exists, true);
+
+  await rejection(rooms.createRoom(request(uid, roomInput())), "resource-exhausted");
+  await capacityRejection(server.createServerV1(request(uid, input())));
+  assert.equal((await read(uid)).free.count, FREE_SERVER_LIMIT);
 });
 
 emulatorTest("legacy Clubs, retained paid Clubs and a legacy family are never charged to the free allowance", async () => {

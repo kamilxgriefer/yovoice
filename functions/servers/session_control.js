@@ -33,7 +33,8 @@ function mirrorBelongsTo(data, binding, tokenEpoch = null) {
 }
 
 function confirmedCutoff(result) {
-  if (result?.alreadyAbsent === true || !Number.isSafeInteger(result?.revokedBeforeMillis) ||
+  if ((result?.alreadyAbsent === true && result?.revocationRequested !== true) ||
+      !Number.isSafeInteger(result?.revokedBeforeMillis) ||
       result.revokedBeforeMillis <= 0) fail("unavailable", "Offline token revocation is not confirmed.");
   return result.revokedBeforeMillis;
 }
@@ -185,6 +186,7 @@ function createServerSessionControlService({ db, Timestamp, livekit, clock = Dat
       let sdkDispatches = 0;
       if (checkpoint === null) {
         const revocationReceipts = new Map();
+        let firstRevocationFailure = null;
         // Issued-but-never-online identities are part of this ledger. Each
         // started RPC is awaited, including a failed batch's remaining calls.
         // The adapter makes one attempt and requires positive Cloud cutoff.
@@ -199,8 +201,13 @@ function createServerSessionControlService({ db, Timestamp, livekit, clock = Dat
             }
           }));
           const failed = outcomes.find((outcome) => outcome.status === "rejected");
-          if (failed) throw failed.reason;
+          if (failed && firstRevocationFailure === null) firstRevocationFailure = failed.reason;
         }
+        // Dispatch every recipient in the bounded page before surfacing a
+        // failure. A transient error for one identity must never shield the
+        // later batch from its token cutoff. No partial receipt is committed;
+        // the immutable generation remains fenced and retry-visible.
+        if (firstRevocationFailure !== null) throw firstRevocationFailure;
         const receipt = await db.runTransaction(async (transaction) => {
           const [currentSnapshot, sessionSnapshot] = await transactionGetAll(transaction, reference, plan.sessionRef);
           const current = currentSnapshot.data(); const session = sessionSnapshot.data();

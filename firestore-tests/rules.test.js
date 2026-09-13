@@ -1370,7 +1370,7 @@ async function main() {
   );
 
   await check(
-    "PRIVACY: follow lists inherit profile visibility and block boundaries",
+    "PRIVACY: ordinary follow lists stay private even when profile visibility or friendship is broader",
     async () => {
       const ownerId = "follow-privacy-owner";
       const readerId = "follow-privacy-reader";
@@ -1417,8 +1417,8 @@ async function main() {
           doc(context.firestore(), `users/${ownerId}/following/${endpointId}`),
         );
 
-      await assertSucceeds(listFor(reader));
-      await assertSucceeds(endpointFor(reader));
+      await assertFails(listFor(reader));
+      await assertFails(endpointFor(reader));
 
       await testEnv.withSecurityRulesDisabled(async (context) => {
         await updateDoc(doc(context.firestore(), `users/${ownerId}`), {
@@ -1454,7 +1454,7 @@ async function main() {
           );
         }
       });
-      await assertSucceeds(listFor(reader));
+      await assertFails(listFor(reader));
 
       await testEnv.withSecurityRulesDisabled(async (context) => {
         await setDoc(
@@ -10585,9 +10585,10 @@ async function main() {
         statusMessage: "Public vibe",
         accountType: "personal",
         premiumIdentity: false,
+        creatorAudienceVisible: false,
         friendCount: 1,
-        followerCount: 2,
-        followingCount: 3,
+        followerCount: 0,
+        followingCount: 0,
         schemaVersion: 1,
         updatedAt: Timestamp.now(),
       }),
@@ -10887,6 +10888,7 @@ async function main() {
             statusMessage: "",
             accountType: "personal",
             premiumIdentity: false,
+            creatorAudienceVisible: false,
             friendCount: 1,
             followerCount: 0,
             followingCount: 0,
@@ -13879,6 +13881,18 @@ async function main() {
             ownerId: "host-uid",
             status: "uploading",
           }),
+          // The voice-comment upload reservation. Storage Rules read it
+          // through firestore.get() under the rules service's own authority;
+          // no CLIENT may read, forge, extend or delete it, because doing so
+          // would be the capability to put arbitrary audio under somebody's
+          // uid or to keep an expired upload window open.
+          setDoc(doc(db, "reelVoiceCommentReservations/reel-security"), {
+            schemaVersion: 1,
+            kind: "reelVoiceComment",
+            ownerId: "host-uid",
+            reelId: "reel-security",
+            status: "uploading",
+          }),
           setDoc(doc(db, "reelAvailability/reel-security"), {
             ownerId: "host-uid",
             status: "published",
@@ -13896,6 +13910,7 @@ async function main() {
       for (const path of [
         "reels/reel-security",
         "reelUploadReservations/reel-security",
+        "reelVoiceCommentReservations/reel-security",
         "reelAvailability/reel-security",
         "reelCleanupOutbox/reel-security",
         "integrityOperationLedgers/reel-security",

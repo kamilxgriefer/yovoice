@@ -82,7 +82,7 @@ test("real installed SDK signs generation-bound explicit source grants using tes
   assert.deepEqual(JSON.parse(claims.metadata), { uid: "test-user", role: "host", ...metadataBinding });
 });
 
-test("offline participant NOT_FOUND is not accepted as a positive Cloud token-revocation receipt", async () => {
+test("offline participant NOT_FOUND is accepted only with the explicit Cloud token cutoff proof", async () => {
   const calls = [];
   let absent = true;
   let nowMs = 10_000;
@@ -93,12 +93,17 @@ test("offline participant NOT_FOUND is not accepted as a positive Cloud token-re
       if (absent) throw Object.assign(new Error("not online"), { code: "not_found" });
       return {};
     } } });
-  await assert.rejects(adapter.revokeParticipant("srv_fixture", "uid"), (error) => error.code === "unavailable");
+  const offline = await adapter.revokeParticipant("srv_fixture", "uid");
+  assert.equal(offline.alreadyAbsent, true);
+  assert.equal(offline.revocationRequested, true);
+  assert.equal(offline.revokeTokenTs, 11n);
+  assert.equal(offline.revokedBeforeMillis, 11_000);
   assert.equal(calls[0].options.revokeTokenTs, 11n);
   absent = false;
   nowMs = 100_000;
   const acknowledged = await adapter.revokeParticipant("srv_fixture", "uid");
   assert.equal(acknowledged.alreadyAbsent, false);
+  assert.equal(acknowledged.revocationRequested, true);
   assert.equal(calls[1].options.revokeTokenTs, 101n);
   assert.equal(acknowledged.revokedBeforeMillis, 101_000);
 });

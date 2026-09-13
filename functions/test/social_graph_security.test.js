@@ -85,6 +85,7 @@ async function reset() {
       remove(db.doc(`friendshipGuards/${uid}`)),
     ),
     ...[A, B, C].map((uid) => db.doc(`publicProfiles/${uid}`).delete()),
+    ...[A, B, C].map((uid) => db.doc(`entitlements/${uid}`).delete()),
     ...[A, B, C].map((uid) => db.doc(`restrictions/${uid}`).delete()),
     ...[A, B, C].flatMap((uid) =>
       ["read", "mutation"].map((kind) =>
@@ -119,6 +120,10 @@ async function seed(uid, overrides = {}) {
       friendCount: 0,
       followerCount: 0,
       followingCount: 0,
+      accountType: "creator",
+      premiumIdentity: true,
+      creatorAgeVerified: true,
+      creatorAudienceEnabled: true,
       ...overrides,
     }),
     db.doc(`publicProfiles/${uid}`).set({
@@ -126,6 +131,13 @@ async function seed(uid, overrides = {}) {
       displayName,
       username: uid,
       photoUrl: `https://example.invalid/${uid}.jpg`,
+    }),
+    db.doc(`entitlements/${uid}`).set({
+      status: "active",
+      isPremium: true,
+      premiumIdentityEnabled: true,
+      creatorEnabled: true,
+      currentPeriodEnd: Timestamp.fromMillis(Date.now() + 24 * 60 * 60_000),
     }),
   ]);
 }
@@ -430,6 +442,54 @@ test("follow and unfollow maintain paired mirrors and counters under replay", as
   assert.notEqual(secondGeneration[0].id, firstNotificationId);
   const secondEdge = await db.doc(`users/${A}/following/${B}`).get();
   assert.equal(secondEdge.data().notificationId, secondGeneration[0].id);
+});
+
+test("a new follow requires canonical paid Creator, age verification and audience opt-in", async () => {
+  const cases = [
+    async () => db.doc(`users/${B}`).update({ accountType: "personal" }),
+    async () => db.doc(`users/${B}`).update({ premiumIdentity: false }),
+    async () => db.doc(`users/${B}`).update({ creatorAgeVerified: false }),
+    async () => db.doc(`users/${B}`).update({ creatorAudienceEnabled: false }),
+    async () => db.doc(`entitlements/${B}`).delete(),
+    async () => db.doc(`entitlements/${B}`).update({ status: "canceled" }),
+    async () => db.doc(`entitlements/${B}`).update({
+      currentPeriodEnd: Timestamp.fromMillis(Date.now() - 1),
+    }),
+    async () => db.doc(`entitlements/${B}`).update({ creatorEnabled: false }),
+    async () => Promise.all([
+      db.doc(`users/${B}`).update({
+        role: "moderator",
+        premiumIdentity: false,
+      }),
+      db.doc(`entitlements/${B}`).delete(),
+    ]),
+  ];
+  for (const makeIneligible of cases) {
+    await seed(B);
+    await makeIneligible();
+    await assert.rejects(
+      runFollow(request(A, { targetUserId: B, following: true })),
+      (error) => error.code === "failed-precondition",
+    );
+    assert.equal((await db.doc(`users/${A}/following/${B}`).get()).exists, false);
+    assert.equal((await db.doc(`users/${B}/followers/${A}`).get()).exists, false);
+  }
+});
+
+test("unfollow always removes a legacy edge after Creator audience authority is lost", async () => {
+  await runFollow(request(A, { targetUserId: B, following: true }));
+  await Promise.all([
+    db.doc(`users/${B}`).update({
+      creatorAgeVerified: false,
+      creatorAudienceEnabled: false,
+      premiumIdentity: false,
+    }),
+    db.doc(`entitlements/${B}`).delete(),
+  ]);
+  const result = await runFollow(request(A, { targetUserId: B, following: false }));
+  assert.deepEqual(result, { changed: true, following: false });
+  assert.equal((await db.doc(`users/${A}/following/${B}`).get()).exists, false);
+  assert.equal((await db.doc(`users/${B}/followers/${A}`).get()).exists, false);
 });
 
 test("unfollow replay removes a stale activity row without a graph edge", async () => {
@@ -938,6 +998,8 @@ test("the complete callable surface is exported for deployment", () => {
     "sendClubInvite",
     "onClubInviteCreated",
     "onClubMemberCreated",
+    "onServerInviteWritten",
+    "sweepExpiredServerInvitesSchedule",
   ]) {
     assert.equal(typeof exports[name], "function", name);
   }

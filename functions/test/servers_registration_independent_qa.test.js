@@ -14,7 +14,10 @@ const { after, test } = require("node:test");
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const {
-  DISPATCHER_EXPORTS, OUTBOX_COLLECTION, SERVER_CALLABLE_METHODS, SERVERS_V1_EXPORT_NAMES, SWEEP_EXPORTS,
+  COMPANY_FILE_MEDIA_CALLABLES, DISPATCHER_EXPORTS,
+  FAMILY_MEMORY_MEDIA_CALLABLES, OUTBOX_COLLECTION,
+  PODCAST_EGRESS_CALLABLES, PODCAST_EPISODE_MEDIA_CALLABLES,
+  SERVER_CALLABLE_METHODS, SERVERS_V1_EXPORT_NAMES, SWEEP_EXPORTS,
   authBoundRequest, createServersV1Functions, createServersV1Runtime, describeOutboxJob, isTransientFailure,
 } = require("../servers/registration");
 
@@ -115,11 +118,11 @@ test("QA gate: only exactly `enabled` registers; case, spelling, boolean spellin
   }
 });
 
-test("QA gate on: the export delta is exactly the twenty-one documented callables plus the two dispatcher exports and the sweep, and every pre-existing export is structurally unchanged", () => {
+test("QA gate on: the export delta is exactly the fifty-four documented callables plus the two dispatcher exports and four sweeps, and every pre-existing export is structurally unchanged", () => {
   const off = coldStart({ YOVOICE_SERVERS_V1: undefined }).inspection;
   const on = coldStart({ YOVOICE_SERVERS_V1: "enabled" }).inspection;
   const documented = docsCallableNames();
-  assert.equal(documented.length, 21);
+  assert.equal(documented.length, 54);
   assert.deepEqual(CALLABLES, documented, "registration table must list the documented names in the documented order");
   const expected = [...documented, ...DISPATCHER_EXPORTS, ...SWEEP_EXPORTS].sort();
   assert.deepEqual(on.exportNames.filter((name) => !off.exportNames.includes(name)), expected);
@@ -182,6 +185,16 @@ function fakeRuntime({ methods = {}, workers = {}, documents = new Map(), reads 
   for (const [name, service] of Object.entries(SERVER_CALLABLE_METHODS)) {
     (services[service] ??= {})[name] = methods[name] ?? (async () => ({ ok: name }));
   }
+  services.familyMemories.expireServerFamilyMemoryUploadReservations =
+    workers.expireFamilyMemoryUploads ?? (async () => ({ processed: 0, hasMore: false, expired: [] }));
+  services.familyMemories.processPendingFamilyMemoryDeletionJobs =
+    workers.deleteFamilyMemoryMedia ?? (async () => ({ processed: 0, hasMore: false, completed: [] }));
+  services.companyFiles.expireServerCompanyFileUploadReservations =
+    workers.expireCompanyFileUploads ?? (async () => ({ processed: 0, hasMore: false, expired: [] }));
+  services.companyFiles.processPendingCompanyFileDeletionJobs =
+    workers.deleteCompanyFileMedia ?? (async () => ({ processed: 0, hasMore: false, completed: [] }));
+  services.podcastEpisodes.reconcileServerPodcastEgressJobs =
+    workers.reconcilePodcastEgress ?? (async () => ({ processed: [], scanned: 0, hasMore: false }));
   return {
     db: memoryDb(documents, reads),
     FieldPath: { documentId: () => "__name__" },
@@ -264,11 +277,11 @@ test("QA binding: every malformed or missing Auth context is `unauthenticated` b
   assert.equal(calls, 1);
 });
 
-test("QA binding: App Check enforcement and limited-use consumption flip together on the twenty-one callables only, and only for a boolean true", () => {
+test("QA binding: App Check enforcement and limited-use consumption flip together on the fifty-four callables only, and only for a boolean true", () => {
   for (const [value, expected] of [[true, true], [false, false], [undefined, false], ["true", false], [1, false]]) {
     const { list } = build({ enforceAppCheck: value });
     const callables = list.filter((entry) => entry.kind === "callable");
-    assert.equal(callables.length, 21);
+    assert.equal(callables.length, 54);
     for (const entry of callables) {
       assert.equal(entry.options.enforceAppCheck, expected, `enforceAppCheck=${String(value)}`);
       assert.equal(entry.options.consumeAppCheckToken, expected, `enforceAppCheck=${String(value)}`);
@@ -279,11 +292,11 @@ test("QA binding: App Check enforcement and limited-use consumption flip togethe
   }
 });
 
-test("QA binding: the registered map is exactly the twenty-four names with the documented options and secret bindings", () => {
+test("QA binding: the registered map is exactly the sixty names with the documented options and secret bindings", () => {
   const { functions, list } = build();
   assert.deepEqual(Object.keys(functions).sort(), [...SERVERS_V1_EXPORT_NAMES].sort());
   assert.ok(Object.isFrozen(functions));
-  assert.equal(list.length, 24);
+  assert.equal(list.length, 60);
   for (const entry of list) {
     assert.equal(entry.options.region, "europe-west1");
     assert.equal(typeof entry.handler, "function");
@@ -294,8 +307,22 @@ test("QA binding: the registered map is exactly the twenty-four names with the d
     assert.equal(entry.kind, "callable");
     assert.equal(entry.options.minInstances, 0);
     assert.equal(entry.options.maxInstances, 50);
-    if (name === "createServerChannelTokenV1" || name === "endServerChannelSessionV1") {
+    if (PODCAST_EGRESS_CALLABLES.includes(name)) {
+      assert.deepEqual(secretNames(entry), [
+        "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "PODCAST_EGRESS_GCP_CREDENTIALS",
+      ]);
+      assert.equal(entry.options.memory, "512MiB");
+      assert.equal(entry.options.timeoutSeconds, 120);
+    } else if (name === "createServerChannelTokenV1" || name === "endServerChannelSessionV1") {
       assert.deepEqual(secretNames(entry), ["LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"]);
+      assert.equal(entry.options.timeoutSeconds, 120);
+    } else if (
+      FAMILY_MEMORY_MEDIA_CALLABLES.includes(name) ||
+      COMPANY_FILE_MEDIA_CALLABLES.includes(name) ||
+      PODCAST_EPISODE_MEDIA_CALLABLES.includes(name)
+    ) {
+      assert.deepEqual(secretNames(entry), []);
+      assert.equal(entry.options.memory, "512MiB");
       assert.equal(entry.options.timeoutSeconds, 120);
     } else {
       assert.deepEqual(secretNames(entry), []);
@@ -310,6 +337,14 @@ test("QA binding: the registered map is exactly the twenty-four names with the d
   assert.equal(functions[SCHEDULE].options.maxInstances, 1);
   assert.equal(functions[TRIGGER].options.timeoutSeconds, 300);
   assert.equal(functions[SCHEDULE].options.timeoutSeconds, 300);
+  const podcastSweep = functions.reconcileServerPodcastEgressSchedule;
+  assert.equal(podcastSweep.options.schedule, "every 5 minutes");
+  assert.equal(podcastSweep.options.timeZone, "Etc/UTC");
+  assert.equal(podcastSweep.options.maxInstances, 1);
+  assert.equal(podcastSweep.options.timeoutSeconds, 300);
+  assert.deepEqual(secretNames(podcastSweep), [
+    "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "PODCAST_EGRESS_GCP_CREDENTIALS",
+  ]);
 });
 
 test("QA binding: construction refuses missing registrars, missing factory methods and out-of-range dispatch limits", () => {
@@ -572,6 +607,13 @@ emulatorTest("requestId replay returns the identical receipt; a different input 
   const data = creationInput();
   const first = await f.call("createServerV1", owner, data);
   assert.equal(first.alreadyExisted, false);
+  const root = (await f.db.doc(`clubs/${first.serverId}`).get()).data();
+  assert.equal(root.serverActivationState, "active");
+  assert.equal(root.status, "active");
+  const anchors = await f.db.collection("rooms").where("serverId", "==", first.serverId).get();
+  assert.ok(anchors.size > 0);
+  assert.ok(anchors.docs.every((doc) => doc.data().serverActivationState === "active" &&
+    doc.data().status === "active" && doc.data().hostId === owner));
   const replay = await f.call("createServerV1", owner, { ...data });
   assert.deepEqual(replay, { ...first, alreadyExisted: true });
   await assert.rejects(f.call("createServerV1", owner, { ...data, name: "Renamed" }), withCode("already-exists"));
@@ -649,14 +691,14 @@ emulatorTest("platform redelivery of a completed job is idempotent: the live doc
 emulatorTest("an unsupported schema, version or kind is reported, never dispatched, and the document is byte-identical afterwards", async () => {
   const f = await dispatchFixture();
   f.workers.convergence = async () => { throw new Error("must not be asked"); };
-  const variants = [pendingJob({ schemaVersion: 2 }), pendingJob({ convergenceVersion: 2 }), pendingJob({ kind: "memberBanned" }), pendingJob({ status: "failed" })];
+  const variants = [pendingJob({ schemaVersion: 2 }), pendingJob({ convergenceVersion: 2 }), pendingJob({ kind: "unsupportedKind" }), pendingJob({ status: "failed" })];
   for (const variant of variants) {
     const id = HEX64();
     await f.outbox.doc(id).set(variant);
     const before = await f.read(id);
     const line = await f.trigger(id);
     assert.equal(line.outcome, "unsupported", JSON.stringify(variant));
-    assert.equal(line.kind, variant.kind === "memberBanned" ? null : variant.kind);
+    assert.equal(line.kind, variant.kind === "unsupportedKind" ? null : variant.kind);
     assert.deepEqual(await f.read(id), before);
   }
   const missing = await f.trigger(HEX64());
@@ -665,7 +707,7 @@ emulatorTest("an unsupported schema, version or kind is reported, never dispatch
   assert.equal(f.log.lines.filter((line) => line.level === "error").length, 0);
 });
 
-emulatorTest("a lease held by another worker, an unexpired backoff, recoveryRequired and contentCleanupPending are all left exactly as found", async () => {
+emulatorTest("leases, backoff and recovery defer; content cleanup must visibly checkpoint progress", async () => {
   const f = await dispatchFixture();
   const leased = HEX64();
   const backed = HEX64();
@@ -690,7 +732,7 @@ emulatorTest("a lease held by another worker, an unexpired backoff, recoveryRequ
   assert.equal(recovered.outcome, "recoveryRequired");
   assert.equal(recovered.pages, 1);
   const cleanup = await f.trigger(content);
-  assert.equal(cleanup.outcome, "contentCleanupPending");
+  assert.equal(cleanup.outcome, "stalled");
   assert.equal(cleanup.pages, 1);
   assert.deepEqual(f.calls.map((call) => call.operationId), [recovery, content]);
   for (const id of [leased, backed, recovery, content]) assert.deepEqual(await f.read(id), snapshots[id], id);

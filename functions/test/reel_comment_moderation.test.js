@@ -249,7 +249,18 @@ test("a reported Reel comment reaches the queue with everything a " +
     "targetId",
     "targetTextSnapshot",
     "targetType",
+    // Additive, and always written so a moderator never has to guess whether
+    // an absent field means "text" or "an older server". On a TEXT report the
+    // three media fields are exactly null, below.
+    "targetCommentType",
+    "targetDurationSeconds",
+    "targetMediaGeneration",
+    "targetStoragePath",
   ].sort());
+  assert.equal(report.targetCommentType, "text");
+  assert.equal(report.targetDurationSeconds, null);
+  assert.equal(report.targetStoragePath, null);
+  assert.equal(report.targetMediaGeneration, null);
   assert.equal(report.schemaVersion, 2);
   assert.equal(report.targetType, "reelComment");
   assert.equal(report.targetId, commentId);

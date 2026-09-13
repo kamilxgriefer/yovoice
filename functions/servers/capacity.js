@@ -2,7 +2,7 @@ const { fail, requireUid, transactionGetAll } = require("../integrity/guards");
 const { HttpsError } = require("firebase-functions/v2/https");
 const {
   boundedLegacyRoomQuery, isActiveOrdinaryRoom, validatedGuardRoomIds,
-} = require("../rooms/creation");
+} = require("../rooms/capacity_contract");
 const { isVersionedServer } = require("../utils/server_access");
 const { FREE_SERVER_LIMIT } = require("./contract");
 

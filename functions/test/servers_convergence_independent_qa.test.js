@@ -46,7 +46,11 @@ const operationKinds = {
 async function fixture({ type = "community", activate = true } = {}) {
   let nowMs = Date.now();
   const clock = () => nowMs;
-  const owner = `qa-bridge-owner:${randomUUID()}`;
+  // Family keeps the historical `family_{uid}` document identity, whose
+  // path grammar is intentionally narrower than an arbitrary Auth UID.
+  const owner = type === "family"
+    ? `qa-family-owner-${randomUUID()}`
+    : `qa-bridge-owner:${randomUUID()}`;
   await db.doc(`users/${owner}`).set({ displayName: "Independent owner", status: "active" });
   const deps = { db, Timestamp, clock };
   const created = await createServerCreationService(deps).createServerV1(req(owner, {
@@ -59,7 +63,8 @@ async function fixture({ type = "community", activate = true } = {}) {
   const channel = sourceChannels.docs.find((doc) => doc.data().kind === "voice") ?? sourceChannels.docs.find((doc) => doc.data().roomId);
   const room = db.doc(`rooms/${channel.data().roomId}`);
   if (activate) {
-    // No production activation exists; this direct write is a test fixture.
+    // The raw factory deliberately remains held; only the exact registered
+    // creation runtime may seed a new active graph.
     await root.update({ status: "active", serverActivationState: "active" });
     for (const value of sourceChannels.docs.filter((doc) => doc.data().roomId)) {
       await db.doc(`rooms/${value.data().roomId}`).update({ status: "active", serverActivationState: "active", hostId: owner });
@@ -125,7 +130,7 @@ async function fixture({ type = "community", activate = true } = {}) {
   async function drain(ref, pageSize = 20) {
     for (let page = 0; page < 120; page += 1) {
       const result = await process(ref, pageSize);
-      if (!result.cleanupPending || result.recoveryRequired || result.contentCleanupPending) return result;
+      if (!result.cleanupPending || result.recoveryRequired) return result;
     }
     assert.fail("Independent convergence fixture did not settle in bounded pages.");
   }
@@ -315,20 +320,74 @@ qa("20-recipient archive reserves room teardown within the adapter-effect page b
   // deliberately makes no HTTP, latency or provider-cost boundedness claim.
 });
 
-qa("idle text deletion is idempotent but stays pending with content untouched", async () => {
-  const f = await fixture();
-  const textChannel = (await f.root.collection("channels").where("kind", "==", "text").get()).docs[0];
-  const history = textChannel.ref.collection("messages").doc("independent-history");
+qa("idle Friends event-channel deletion drains RSVP and history before completing", async () => {
+  const f = await fixture({ type: "friends" });
+  const eventChannel = (await f.root.collection("channels").where("kind", "==", "events").get()).docs[0];
+  const history = eventChannel.ref.collection("messages").doc("independent-history");
+  const event = eventChannel.ref.collection("events").doc("independent-event");
+  const response = event.collection("responses").doc(f.owner);
   const body = { content: "Independent retained private fixture", attachment: { generation: "123456789012345678" } };
   await history.set(body);
-  const deleted = await f.mutate("deleteServerChannelV1", { channelId: textChannel.id });
+  await event.set({
+    schemaVersion: 1, serverId: f.root.id, channelId: eventChannel.id,
+    eventId: event.id, eventKind: "friendsEvent", serverType: "friends",
+    channelKind: "events", rsvpEnabled: true, reminderOptInEnabled: false,
+    reminderCount: 0, title: "Independent event", description: "",
+    startsAt: Timestamp.fromMillis(f.clock() + 60_000),
+    endsAt: Timestamp.fromMillis(f.clock() + 120_000),
+    timeZone: "Europe/Amsterdam", status: "scheduled",
+    responseCounts: { going: 1, maybe: 0, declined: 0 },
+    authorId: f.owner, revision: 1,
+    createdAt: Timestamp.fromMillis(f.clock()), updatedAt: Timestamp.fromMillis(f.clock()),
+  });
+  await response.set({
+    schemaVersion: 1, serverId: f.root.id, channelId: eventChannel.id,
+    eventId: event.id, userId: f.owner, response: "going", reminderRequested: false,
+    eventRevision: 1, operationId: "a".repeat(64),
+    createdAt: Timestamp.fromMillis(f.clock()), updatedAt: Timestamp.fromMillis(f.clock()),
+  });
+  const deleted = await f.mutate("deleteServerChannelV1", { channelId: eventChannel.id });
   assert.deepEqual(await f.service.deleteServerChannelV1(req(f.owner, deleted.data)), deleted.result);
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const result = await f.process(deleted.ref);
-    assert.equal(result.rtcCleanupPending, false); assert.equal(result.contentCleanupPending, true);
-    assert.equal(result.cleanupPending, true); assert.equal(result.processed, 0);
-  }
-  assert.deepEqual((await history.get()).data(), body);
-  assert.equal((await deleted.ref.get()).data().status, "pending");
+  const result = await f.drain(deleted.ref, 1);
+  assert.equal(result.rtcCleanupPending, false); assert.equal(result.contentCleanupPending, false);
+  assert.equal(result.cleanupPending, false);
+  assert.equal((await history.get()).exists, false);
+  assert.equal((await event.get()).exists, false);
+  assert.equal((await response.get()).exists, false);
+  assert.equal((await eventChannel.ref.get()).exists, false);
+  assert.equal((await deleted.ref.get()).data().status, "completed");
+  assert.deepEqual(await f.service.deleteServerChannelV1(req(f.owner, deleted.data)), deleted.result);
+  assert.deepEqual(f.effects, { mint: [], remove: [], end: [] });
+});
+
+qa("idle Family list-channel deletion drains revisioned list items before completing", async () => {
+  const f = await fixture({ type: "family" });
+  const listChannel = (await f.root.collection("channels").where("kind", "==", "list").get()).docs[0];
+  const item = listChannel.ref.collection("listItems").doc("independent-list-item");
+  await item.set({
+    schemaVersion: 1,
+    serverId: f.root.id,
+    channelId: listChannel.id,
+    itemId: item.id,
+    text: "Milk",
+    checked: false,
+    checkedById: null,
+    createdById: f.owner,
+    revision: 1,
+    createdAt: Timestamp.fromMillis(f.clock()),
+    updatedAt: Timestamp.fromMillis(f.clock()),
+  });
+  const deleted = await f.mutate("deleteServerChannelV1", { channelId: listChannel.id });
+  assert.deepEqual(
+    await f.service.deleteServerChannelV1(req(f.owner, deleted.data)),
+    deleted.result,
+  );
+  const result = await f.drain(deleted.ref, 1);
+  assert.equal(result.rtcCleanupPending, false);
+  assert.equal(result.contentCleanupPending, false);
+  assert.equal(result.cleanupPending, false);
+  assert.equal((await item.get()).exists, false);
+  assert.equal((await listChannel.ref.get()).exists, false);
+  assert.equal((await deleted.ref.get()).data().status, "completed");
   assert.deepEqual(f.effects, { mint: [], remove: [], end: [] });
 });

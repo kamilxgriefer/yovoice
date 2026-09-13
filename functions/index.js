@@ -176,6 +176,8 @@ const {
   sendClubInvite,
   onClubInviteCreated,
   onClubMemberCreated,
+  onServerInviteWritten,
+  sweepExpiredServerInvitesSchedule,
 } = require("./notifications/invites");
 
 /*
@@ -305,6 +307,8 @@ exports.onRoomLiveChanged = onRoomLiveChanged;
 exports.sendClubInvite = sendClubInvite;
 exports.onClubInviteCreated = onClubInviteCreated;
 exports.onClubMemberCreated = onClubMemberCreated;
+exports.onServerInviteWritten = onServerInviteWritten;
+exports.sweepExpiredServerInvitesSchedule = sweepExpiredServerInvitesSchedule;
 
 /*
 |--------------------------------------------------------------------------
@@ -331,6 +335,7 @@ const {
   onAuthUserDeleted,
   onUserPrivacySourceChanged,
   searchPublicProfiles,
+  setCreatorAudienceEnabled,
 } = require("./profile/public_profiles");
 
 exports.onProfileIdentityChanged = onProfileIdentityChanged;
@@ -339,6 +344,7 @@ exports.setMyProfileVisibility = setMyProfileVisibility;
 exports.onAuthUserDeleted = onAuthUserDeleted;
 exports.onUserPrivacySourceChanged = onUserPrivacySourceChanged;
 exports.searchPublicProfiles = searchPublicProfiles;
+exports.setCreatorAudienceEnabled = setCreatorAudienceEnabled;
 
 // Private avatar/banner media. New uploads are reservation-bound and never
 // persist a Firebase download-token URL; readers receive a generation-bound
@@ -609,22 +615,22 @@ exports.receiveLiveKitAchievementWebhook = receiveLiveKitAchievementWebhook;
 | servers/capacity.js (from clubs/quota.js). They register nothing, write
 | nothing and load no SDK; that exact set is asserted by
 | test/cold_start_module_graph.test.js, so an eager require of the runtime
-| fails there rather than shipping. `enabled` registers the twenty-one V1
+| fails there rather than shipping. `enabled` registers the twenty-eight V1
 | callables of docs/Servers.md "Callable contract" plus the serverControlOutbox
 | trigger, its bounded retry schedule and the stale-generation sweep
 | (servers/registration.js). `disabled`
 | and absent are equivalent; any other value — including a case or whitespace
 | variant such as `enabled ` — fails deploy discovery and the cold start, so a
 | typo can never silently ship or silently hold the feature. The gate registers
-| endpoints only: every server created through them stays
-| `serverActivationState: held`, because no activation writer exists
-| (docs/Servers.md, "Sessions") — that is a separate reviewed slice, not a
-| value of this variable.
+| endpoints and gives only the newly-created V1 seed transaction permission to
+| land as `serverActivationState: active`. There is still no callable or worker
+| that activates an existing held/migrated root. With the flag absent, no
+| registration/runtime module is loaded and no creation capability exists.
 */
 
 function strictEnabledEnvironment(name) {
   // Deliberately no trim and no case folding, unlike strictBooleanEnvironment
-  // above: this switch decides whether twenty-four functions exist at all, so the
+  // above: this switch decides whether thirty-one functions exist at all, so the
   // value must be byte-for-byte `enabled`, `disabled`, empty or absent. A
   // whitespace or case variant such as `enabled ` is a typo in functions/.env,
   // never an authorization to ship the surface, and it fails deploy discovery

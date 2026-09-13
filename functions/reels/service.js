@@ -38,15 +38,26 @@ const {
 const {
   MAX_REEL_COMMENT_LENGTH,
   MAX_REEL_THREAD_COMMENTS,
+  MAX_REEL_VOICE_COMMENT_SECONDS,
+  MAX_REEL_VOICE_COMMENT_TEXT_LENGTH,
+  MIN_REEL_VOICE_COMMENT_SECONDS,
   REEL_COMMENT_SCHEMA_VERSION,
+  REEL_COMMENT_TYPES,
   REEL_LIKE_SCHEMA_VERSION,
   REEL_VIEW_SCHEMA_VERSION,
+  REEL_VOICE_COMMENT_GENERATION_PATTERN,
+  REEL_VOICE_COMMENT_ID_PATTERN,
   decodeReelCommentCursor,
   encodeReelCommentCursor,
+  isCanonicalReelVoiceCommentPath,
   reelCommentProjection,
+  reelVoiceCommentCleanupOutboxId,
+  reelVoiceCommentCleanupRow,
+  reelVoiceCommentStoragePath,
   storedEngagementCount,
   validateReelComment,
   validateReelLike,
+  validateReelVoiceCommentAudio,
 } = require("./engagement");
 const {
   FEED_RANKING,
@@ -119,6 +130,28 @@ const DEFAULT_LIMITS = Object.freeze({
   commentRemove: Object.freeze({ maxEvents: 60, windowMs: 10 * 60 * 1000 }),
   view: Object.freeze({ maxEvents: 60, windowMs: 60 * 1000 }),
 });
+
+// A voice comment is published exactly the way a Voice reply is: reserve,
+// upload straight to Storage under a reservation-bound rule, finalize. The
+// reservation's lifetime is the Voice reply's thirty minutes (RESERVATION_TTL_MS
+// above is already that value and is reused rather than re-declared), and the
+// abandoned ones are swept the same way abandoned Reel drafts are.
+//
+// THE DEFAULT THREAD IS TEXT-ONLY, ON PURPOSE. Every installed client throws
+// on a comment whose `type` is not "text" (lib/features/reels/.../reel.dart),
+// so a server that started returning voice comments to everybody would break
+// the thread on phones that cannot be updated. `getReelViewV2` therefore
+// withholds them unless the caller declares it understands them — the same
+// probe-the-flag pattern ADR-168 established. The aggregate commentCount is
+// deliberately NOT adjusted (a per-viewer count leaks what is hidden) and the
+// page cursor still advances past a withheld document.
+const DEFAULT_REEL_COMMENT_TYPES = Object.freeze(["text"]);
+const MAX_REEL_COMMENT_TYPES = 2;
+// The purge enumerates voice comments in bounded pages and DELETES EACH PAGE
+// IT HAS ALREADY ENQUEUED, so every pass makes durable progress and a retry
+// resumes from a strictly smaller set instead of rescanning from the start.
+const REEL_VOICE_COMMENT_PURGE_PAGE_SIZE = 50;
+const REEL_VOICE_COMMENT_PURGE_MAX_PAGES = 20;
 
 function createReelService({
   db,
@@ -1805,14 +1838,201 @@ function createReelService({
     }
   }
 
+  // WHO MAY HEAR A VOICE COMMENT IS EXACTLY WHO MAY WATCH THE REEL — plus the
+  // commenter's own privacy, which is an independent principal.
+  //
+  // A reply lives under somebody else's Reel but it is its author's voice, so
+  // BOTH authors are re-checked before a bearer URL exists: account active,
+  // not restricted, and neither block direction set, in both relationships.
+  // This is the Voice reply rule (functions/moments/integrity.js:2043-2058)
+  // expressed with the Reels audience predicate, because Reels have no
+  // profileVisibility concept to consult.
+  async function authorizeReelVoiceCommentAccess(uid, reelId, commentId) {
+    const [reelSnapshot, availabilitySnapshot, commentSnapshot] = await getAll(
+      reelReference(reelId),
+      availabilityReference(reelId),
+      reelCommentReference(reelId, commentId),
+    );
+    if (isPurgedExpiredReelSnapshot(reelSnapshot)) {
+      validatePurgedExpiredReel(reelSnapshot);
+      fail("failed-precondition", "The Reel has expired.");
+    }
+    const nowMs = timing().nowMs;
+    // The parent must still be live: published, visible and inside its
+    // availability window. A hidden or expired Reel plays nothing, and neither
+    // does a comment underneath it.
+    const { reel, availability } = engageableReel(
+      reelSnapshot,
+      availabilitySnapshot,
+      nowMs,
+    );
+    const comment = validateReelComment(commentSnapshot, reelId);
+    if (comment.type !== "voice") {
+      fail("failed-precondition", "This comment has no voice media.");
+    }
+    const [viewerProfile, viewerRestriction] = await getAll(
+      db.doc(`users/${uid}`),
+      db.doc(`restrictions/${uid}`),
+    );
+    assertReelViewerState(viewerProfile, viewerRestriction, nowMs);
+    const authors = [...new Set([reel.authorId, comment.authorId])];
+    const references = authors.flatMap((authorId) =>
+      reelAudienceReferences(uid, authorId));
+    if (references.length > 0) {
+      const snapshots = await getAll(...references);
+      let offset = 0;
+      for (const authorId of authors) {
+        if (reelAudienceReferences(uid, authorId).length === 0) continue;
+        assertReelAuthorAudience({
+          viewerId: uid,
+          authorId,
+          authorProfile: snapshots[offset],
+          authorRestriction: snapshots[offset + 1],
+          viewerBlock: snapshots[offset + 2],
+          authorBlock: snapshots[offset + 3],
+          nowMs,
+        });
+        offset += 4;
+      }
+    }
+    return {
+      authorId: comment.authorId,
+      reelAuthorId: reel.authorId,
+      commentId,
+      descriptor: {
+        storagePath: comment.storagePath,
+        generation: comment.mediaGeneration,
+        contentType: comment.mediaContentType,
+        size: comment.mediaSize,
+        durationSeconds: comment.durationSeconds,
+      },
+      checkedAtMs: nowMs,
+      availability,
+    };
+  }
+
+  function assertUnchangedVoiceCommentAccess(access, finalAccess, expiresAtMillis) {
+    if (
+      finalAccess.checkedAtMs >= expiresAtMillis ||
+      finalAccess.authorId !== access.authorId ||
+      finalAccess.reelAuthorId !== access.reelAuthorId ||
+      finalAccess.descriptor.storagePath !== access.descriptor.storagePath ||
+      finalAccess.descriptor.generation !== access.descriptor.generation ||
+      finalAccess.descriptor.contentType !== access.descriptor.contentType ||
+      finalAccess.descriptor.size !== access.descriptor.size ||
+      finalAccess.descriptor.durationSeconds !==
+        access.descriptor.durationSeconds ||
+      !sameAvailability(finalAccess.availability, access.availability)
+    ) {
+      fail("aborted", "Reel media authorization changed. Try again.");
+    }
+  }
+
+  async function mintVoiceCommentGrant(reelId, access) {
+    const path = access.descriptor.storagePath;
+    const metadata = await storage.getMetadata(path);
+    const media = validateReelVoiceCommentAudio(
+      metadata,
+      {
+        authorId: access.authorId,
+        commentId: access.commentId,
+        reelId,
+      },
+      access.descriptor.generation,
+    );
+    if (
+      media.contentType !== access.descriptor.contentType ||
+      media.size !== access.descriptor.size
+    ) {
+      fail("data-loss", "The Reel voice comment no longer matches its record.");
+    }
+    await storage.revokeDownloadTokens(path, metadata);
+    const grantTime = timing();
+    // TTL = min(90 s, the Reel's own content expiry). A copied URL dies
+    // quickly AND never outlives the Reel it belongs to — the same bound the
+    // Reel's own grant applies.
+    const expiresAtMillis = Math.min(
+      grantTime.nowMs + MEDIA_GRANT_TTL_MS,
+      access.availability.expiresAtMs ?? Number.MAX_SAFE_INTEGER,
+    );
+    if (expiresAtMillis <= grantTime.nowMs) {
+      fail("failed-precondition", "The Reel has expired.");
+    }
+    const url = await storage.getSignedReadUrl(path, {
+      expiresAtMs: expiresAtMillis,
+      generation: media.generation,
+    });
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      fail("failed-precondition", "The private Reel grant is unavailable.");
+    }
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname !== "storage.googleapis.com" ||
+      parsed.username ||
+      parsed.password ||
+      parsed.port
+    ) {
+      fail("failed-precondition", "The private Reel grant is unavailable.");
+    }
+    return { url, expiresAtMillis, generation: media.generation };
+  }
+
+  async function getReelVoiceCommentMediaAccess(auth, reelId, commentId) {
+    const access = await authorizeReelVoiceCommentAccess(
+      auth.uid,
+      reelId,
+      commentId,
+    );
+    const grant = await mintVoiceCommentGrant(reelId, access);
+    // Storage I/O and IAM signing happen outside any transaction. Re-authorize
+    // after signing and before the bearer URL leaves this process, so a block,
+    // a suspension, a deletion or an expiry that landed in between fails
+    // closed instead of handing out a freshly minted capability.
+    const finalAccess = await authorizeReelVoiceCommentAccess(
+      auth.uid,
+      reelId,
+      commentId,
+    );
+    assertUnchangedVoiceCommentAccess(access, finalAccess, grant.expiresAtMillis);
+    return {
+      schemaVersion: REEL_AVAILABILITY_SCHEMA_VERSION,
+      ...grant,
+      availabilityHours: access.availability.availabilityHours,
+      contentExpiresAtMillis: access.availability.expiresAtMs,
+      durationSeconds: access.descriptor.durationSeconds,
+    };
+  }
+
   async function getReelMediaAccessInternal(request, { version }) {
     const auth = requireActor(request, { verified: false });
+    // `commentId` is a V2-ONLY addition, and V1's exact input is untouched: an
+    // already-deployed client calling V1 cannot even name the field.
     const data = requireExactInput(
       request.data,
-      ["reelId", "asset"],
+      version === 1 ? ["reelId", "asset"] : ["reelId", "asset", "commentId"],
       ["reelId", "asset"],
     );
     const reelId = requireId(data.reelId, "reelId");
+    const commentId = data.commentId === undefined || data.commentId === null
+      ? null
+      : requireId(data.commentId, "commentId");
+    // `voiceComment` is its own asset value rather than an overload of
+    // `media`: the two never denote the same object, and a pair that disagrees
+    // (a commentId without the asset, or the asset without a commentId) is a
+    // malformed request rather than something to guess at.
+    if (data.asset === "voiceComment") {
+      if (version === 1 || commentId === null) {
+        fail("invalid-argument", "asset is invalid.");
+      }
+      await consumeReadLimit(auth.uid, "mediaAccess");
+      return getReelVoiceCommentMediaAccess(auth, reelId, commentId);
+    }
+    if (commentId !== null) {
+      fail("invalid-argument", "asset is invalid.");
+    }
     if (data.asset !== "media" && data.asset !== "backingAudio") {
       fail("invalid-argument", "asset is invalid.");
     }
@@ -1884,8 +2104,111 @@ function createReelService({
     }
     const reelRef = reelReference(reelId);
     await db.recursiveDelete(reelRef.collection("likes"));
+    // VOICE COMMENTS ARE ENUMERATED AND QUEUED BEFORE THE THREAD IS DELETED.
+    // recursiveDelete removes documents; it does not know these documents name
+    // objects in Storage. Once the comment is gone, nothing in the system
+    // remembers the path, and a person's recorded voice would sit in the
+    // bucket forever with no record that it exists. Enumerate first, delete
+    // the page that was queued, then let recursiveDelete finish the text ones.
+    const audio = await enqueueVoiceCommentCleanup(reelId);
+    if (audio.skipped > 0) {
+      // Bytes that could not be proven to belong to this Reel and comment.
+      // Never deleted on a guess; surfaced so an operator can look.
+      log?.warn?.("Reel voice-comment cleanup skipped unprovable objects", {
+        reelId,
+        queued: audio.queued,
+        skipped: audio.skipped,
+      });
+    }
     await db.recursiveDelete(reelRef.collection("comments"));
+    // The return value stays the three strings the worker and its tests
+    // already know: "unsupported", "liveRoot", "purged".
     return "purged";
+  }
+
+  // Pages through this Reel's voice comments, writing one cleanup row per
+  // comment AND DELETING THE COMMENT IN THE SAME BATCH. Deleting what was
+  // queued is what makes a retry safe and bounded: every pass shrinks the set,
+  // so a thread larger than one pass drains across the worker's own retries
+  // instead of needing an unbounded scan inside a single invocation.
+  //
+  // `skipped` counts documents whose stored shape no longer lets a canonical
+  // object path be derived. They are left in place for an operator rather than
+  // deleted blindly — recursiveDelete below removes them, but the count is
+  // returned so a caller can log that bytes may have been stranded.
+  async function enqueueVoiceCommentCleanup(reelId) {
+    const comments = reelReference(reelId).collection("comments");
+    let queued = 0;
+    let skipped = 0;
+    let truncated = false;
+    for (let page = 0; page < REEL_VOICE_COMMENT_PURGE_MAX_PAGES; page += 1) {
+      const snapshot = await comments
+        .where("type", "==", "voice")
+        .limit(REEL_VOICE_COMMENT_PURGE_PAGE_SIZE)
+        .get();
+      if (snapshot.empty) return { queued, skipped, truncated: false };
+      const time = timing();
+      const batch = db.batch();
+      let queuedInPage = 0;
+      for (const document of snapshot.docs) {
+        const raw = document.data() ?? {};
+        // The permissive read is deliberate: a document that fails the full
+        // comment contract can still carry a path this worker is able to prove
+        // canonical, and recovering those bytes matters more than insisting on
+        // a shape nothing will read again.
+        const ownerId = raw.authorId;
+        const generation =
+          typeof raw.mediaGeneration === "string" &&
+          REEL_VOICE_COMMENT_GENERATION_PATTERN.test(raw.mediaGeneration)
+            ? raw.mediaGeneration
+            : null;
+        if (
+          !isCanonicalReelVoiceCommentPath(
+            raw.storagePath,
+            ownerId,
+            reelId,
+            document.id,
+          )
+        ) {
+          skipped += 1;
+          continue;
+        }
+        batch.set(
+          db.doc(
+            `reelCleanupOutbox/${voiceCommentCleanupOutboxId(reelId, document.id)}`,
+          ),
+          voiceCommentCleanupRow({
+            ownerId,
+            reelId,
+            commentId: document.id,
+            storagePath: raw.storagePath,
+            generation,
+            time,
+          }),
+        );
+        batch.delete(document.ref);
+        queuedInPage += 1;
+      }
+      if (queuedInPage > 0) await batch.commit();
+      queued += queuedInPage;
+      // Every document in the page was unqueueable, so another identical query
+      // would return the same page forever. recursiveDelete clears them.
+      if (queuedInPage === 0) return { queued, skipped, truncated: false };
+      if (snapshot.size < REEL_VOICE_COMMENT_PURGE_PAGE_SIZE) {
+        return { queued, skipped, truncated: false };
+      }
+      truncated = true;
+    }
+    if (truncated) {
+      // Fail rather than fall through to recursiveDelete: the remaining voice
+      // comments still name objects nothing else records. The row retries with
+      // backoff and resumes against a strictly smaller thread.
+      fail(
+        "resource-exhausted",
+        "The Reel voice-comment cleanup scan is incomplete.",
+      );
+    }
+    return { queued, skipped, truncated };
   }
 
   function cleanupOutboxId(reelId) {
@@ -2405,6 +2728,25 @@ function createReelService({
         // account. Retention follows the report, not the comment — see the
         // open decision recorded with this change.
         targetTextSnapshot: comment.text,
+        // WHAT A MODERATOR ACTUALLY HAS TO JUDGE, WHEN THE EVIDENCE IS AUDIO.
+        //
+        // For a text comment these three are "text", null and null, and the
+        // report is exactly the shape it has always been. For a voice comment
+        // `targetTextSnapshot` is the caption, which MAY BE EMPTY — the
+        // content is the recording — so the report has to carry the recording's
+        // identity instead: how long it is, and the exact generation-bound
+        // object it is. A moderator cannot listen to it yet (see the deferred
+        // staff grant recorded with this change); without these fields they
+        // could not even be handed one later, because the comment document is
+        // deleted the moment the report is actioned.
+        targetCommentType: comment.type,
+        targetDurationSeconds: comment.durationSeconds,
+        targetStoragePath: comment.type === "voice"
+          ? comment.storagePath
+          : null,
+        targetMediaGeneration: comment.type === "voice"
+          ? comment.mediaGeneration
+          : null,
         note,
         reason,
         status: "open",
@@ -2436,6 +2778,142 @@ function createReelService({
 
   function reelCommentReference(reelId, commentId) {
     return reelReference(reelId).collection("comments").doc(commentId);
+  }
+
+  // ---------------------------------------------------------------------
+  // Voice comments: reservation, cleanup rows and the object identity that
+  // ties the two together.
+  //
+  // Every name below is derived from ids the server already owns. A client
+  // supplies a requestId and a duration; it never supplies a path, an owner,
+  // a comment id or a generation.
+  // ---------------------------------------------------------------------
+
+  function reelVoiceCommentReservationReference(commentId) {
+    return db.doc(`reelVoiceCommentReservations/${commentId}`);
+  }
+
+  // The exact stored reservation, checked the way validateVoiceReservation
+  // checks a Voice reply's (functions/moments/integrity.js:816): an exact key
+  // set, the owner/reel/comment/path all agreeing, status still `uploading`,
+  // the 1-60 s duration and a deadline that has not passed. Storage Rules read
+  // the SAME document and assert the same facts, so an upload cannot outlive
+  // the reservation that authorized it in either enforcement point.
+  function validateReelVoiceCommentReservation(
+    data,
+    { ownerId, reelId, commentId, storagePath, nowMs },
+  ) {
+    const expectedKeys = [
+      "authorName",
+      "commentId",
+      "createdAt",
+      "durationSeconds",
+      "expiresAt",
+      "kind",
+      "ownerId",
+      "reelId",
+      "schemaVersion",
+      "status",
+      "storagePath",
+      "text",
+    ];
+    const keys = isPlainObject(data) ? Object.keys(data).sort() : [];
+    if (
+      keys.length !== expectedKeys.length ||
+      keys.some((key, index) => key !== expectedKeys[index]) ||
+      data.schemaVersion !== 1 ||
+      data.kind !== "reelVoiceComment" ||
+      data.ownerId !== ownerId ||
+      data.reelId !== reelId ||
+      data.commentId !== commentId ||
+      data.storagePath !== storagePath ||
+      data.status !== "uploading" ||
+      !Number.isSafeInteger(data.durationSeconds) ||
+      data.durationSeconds < MIN_REEL_VOICE_COMMENT_SECONDS ||
+      data.durationSeconds > MAX_REEL_VOICE_COMMENT_SECONDS ||
+      typeof data.text !== "string" ||
+      data.text !== data.text.trim() ||
+      data.text.length > MAX_REEL_VOICE_COMMENT_TEXT_LENGTH ||
+      typeof data.authorName !== "string" ||
+      data.authorName !== data.authorName.trim() ||
+      data.authorName.length < 1 ||
+      data.authorName.length > 80 ||
+      timestampMillis(data.createdAt) === null ||
+      timestampMillis(data.expiresAt) === null ||
+      timestampMillis(data.expiresAt) <= nowMs
+    ) {
+      fail("failed-precondition", "The voice-comment reservation is invalid.");
+    }
+    return data;
+  }
+
+  // A voice comment's bytes get their OWN cleanup row, keyed by (reelId,
+  // commentId) through the shared builder in ./engagement.js. It cannot
+  // collide with the Reel-level row (`cleanupOutboxId`) or the expiry row
+  // (`expiryOutboxId`), which matters because those two are keyed by reelId
+  // alone and one of them may be in flight at the same time.
+  const voiceCommentCleanupOutboxId = reelVoiceCommentCleanupOutboxId;
+
+  function validVoiceCommentCleanupObjects(value, ownerId, reelId, commentId) {
+    return Array.isArray(value) &&
+      value.length === 1 &&
+      value.every((object) =>
+        isPlainObject(object) &&
+        Object.keys(object).length === 2 &&
+        Object.prototype.hasOwnProperty.call(object, "path") &&
+        Object.prototype.hasOwnProperty.call(object, "generation") &&
+        isCanonicalReelVoiceCommentPath(
+          object.path,
+          ownerId,
+          reelId,
+          commentId,
+        ) &&
+        (object.generation === null ||
+          (typeof object.generation === "string" &&
+            REEL_VOICE_COMMENT_GENERATION_PATTERN.test(object.generation))),
+      );
+  }
+
+  function voiceCommentCleanupRow({
+    ownerId,
+    reelId,
+    commentId,
+    storagePath,
+    generation,
+    time,
+  }) {
+    return reelVoiceCommentCleanupRow({
+      ownerId,
+      reelId,
+      commentId,
+      storagePath,
+      generation,
+      now: time.now,
+    });
+  }
+
+  // Enqueues the bytes of a voice comment that is being removed inside the
+  // caller's own transaction, so "the words are gone" and "the audio is queued
+  // for deletion" commit together or not at all.
+  function enqueueVoiceCommentCleanupInTransaction(
+    transaction,
+    { comment, reelId, commentId, time },
+  ) {
+    if (comment.type !== "voice") return false;
+    transaction.set(
+      db.doc(
+        `reelCleanupOutbox/${voiceCommentCleanupOutboxId(reelId, commentId)}`,
+      ),
+      voiceCommentCleanupRow({
+        ownerId: comment.authorId,
+        reelId,
+        commentId,
+        storagePath: comment.storagePath,
+        generation: comment.mediaGeneration,
+        time,
+      }),
+    );
+    return true;
   }
 
   // The per-user budget is charged in its own transaction BEFORE the
@@ -2757,6 +3235,382 @@ function createReelService({
     });
   }
 
+  // The finalize budget. `beginEngagementAttempt` charges `comment` for the
+  // reserve call; finalize charges the SAME scope, so publishing one voice
+  // comment costs a viewer exactly what publishing one text comment costs,
+  // twice — which is the honest price of a two-phase upload and is still far
+  // inside the twenty-per-minute budget. The preflight ledger is the Voice
+  // Moment/Reel-draft pattern verbatim: an existing preflight for a DIFFERENT
+  // input under the same requestId is `already-exists`, and every retry that
+  // may proceed to Storage is charged again — only a completed operation
+  // ledger replays free.
+  async function beginVoiceCommentPreflight({ identity, kind, uid, requestId }) {
+    return db.runTransaction(async (transaction) => {
+      const attemptTime = timing();
+      const ledgerRef = ledgerReference(identity);
+      const preflightRef = db.doc(`integrityPreflightLedgers/${identity.id}`);
+      const rateRef = limitReference("comment", uid);
+      const [ledger, priorPreflight, rate] = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        preflightRef,
+        rateRef,
+      );
+      const replay = assertLedgerReplay(ledger, {
+        kind,
+        uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return { replay };
+      if (priorPreflight.exists) {
+        const value = priorPreflight.data() ?? {};
+        if (
+          value.schemaVersion !== REEL_SCHEMA_VERSION ||
+          value.kind !== kind ||
+          value.ownerId !== uid ||
+          value.scope !== "comment" ||
+          value.inputHash !== identity.inputHash
+        ) {
+          fail("already-exists", "requestId was reused for another operation.");
+        }
+      }
+      consume(transaction, rate, rateRef, "comment", uid, attemptTime);
+      if (!priorPreflight.exists) {
+        transaction.create(preflightRef, {
+          schemaVersion: REEL_SCHEMA_VERSION,
+          kind,
+          ownerId: uid,
+          requestId,
+          scope: "comment",
+          inputHash: identity.inputHash,
+          createdAt: attemptTime.now,
+        });
+      }
+      return { replay: null };
+    });
+  }
+
+  // PHASE ONE of publishing a voice comment: prove the caller may comment on
+  // this Reel RIGHT NOW, then write the one reservation that lets their next
+  // request put bytes in Storage. Nothing is published yet and no counter
+  // moves; an abandoned reservation expires and is swept.
+  //
+  // Authorization is deliberately `engageableReel` + `assertReelAudienceInTransaction`
+  // — the exact pair `createReelComment` uses — and NOT the Voice Moment
+  // audience rule. Reels have no per-author profileVisibility concept; copying
+  // assertVoiceMomentAudience here would invent one. Who may leave a voice
+  // comment is therefore exactly who may leave a text comment.
+  async function reserveReelVoiceCommentDraft(request) {
+    const auth = requireActor(request);
+    const data = requireExactInput(
+      request.data,
+      ["durationSeconds", "reelId", "requestId", "text"],
+      ["durationSeconds", "reelId", "requestId", "text"],
+    );
+    const reelId = requireId(data.reelId, "reelId");
+    const requestId = requireRequestId(data.requestId);
+    const durationSeconds = requireSafeInteger(
+      data.durationSeconds,
+      "durationSeconds",
+      { min: MIN_REEL_VOICE_COMMENT_SECONDS, max: MAX_REEL_VOICE_COMMENT_SECONDS },
+    );
+    const text = normalizeText(
+      data.text,
+      MAX_REEL_VOICE_COMMENT_TEXT_LENGTH,
+      "text",
+      { allowEmpty: true },
+    );
+    // THE SAME CANONICAL ID A TEXT COMMENT WOULD HAVE GOT. One requestId
+    // therefore cannot produce both a text comment and a voice comment: the
+    // second attempt collides with the first document and is refused, instead
+    // of forking one user action into two entries in somebody's thread.
+    const commentId = reelCommentIdFor(auth.uid, reelId, requestId);
+    const storagePath = reelVoiceCommentStoragePath(auth.uid, reelId, commentId);
+    const identity = operationIdentity(
+      "reel.voiceComment.reserve",
+      auth.uid,
+      requestId,
+      { durationSeconds, reelId, text },
+    );
+    const attempt = await beginEngagementAttempt({
+      identity,
+      kind: "reel.voiceComment.reserve",
+      uid: auth.uid,
+      scope: "comment",
+    });
+    if (attempt.replay) return attempt.replay;
+
+    return db.runTransaction(async (transaction) => {
+      const attemptTime = timing();
+      const ledgerRef = ledgerReference(identity);
+      const reservationRef = reelVoiceCommentReservationReference(commentId);
+      const commentRef = reelCommentReference(reelId, commentId);
+      const [
+        ledger,
+        reelSnapshot,
+        availabilitySnapshot,
+        reservation,
+        existingComment,
+        viewerProfile,
+        publicProfile,
+        viewerRestriction,
+      ] = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        reelReference(reelId),
+        availabilityReference(reelId),
+        reservationRef,
+        commentRef,
+        db.doc(`users/${auth.uid}`),
+        db.doc(`publicProfiles/${auth.uid}`),
+        db.doc(`restrictions/${auth.uid}`),
+      );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "reel.voiceComment.reserve",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      const { reel } = engageableReel(
+        reelSnapshot,
+        availabilitySnapshot,
+        attemptTime.nowMs,
+      );
+      await assertReelAudienceInTransaction(transaction, {
+        viewerId: auth.uid,
+        authorId: reel.authorId,
+        viewerProfile,
+        viewerRestriction,
+        nowMs: attemptTime.nowMs,
+      });
+      if (reservation.exists) {
+        fail(
+          "data-loss",
+          "A Reel voice-comment reservation exists without its ledger.",
+        );
+      }
+      if (existingComment.exists) {
+        fail(
+          "data-loss",
+          "A Reel comment exists without its idempotency ledger.",
+        );
+      }
+      // Server-captured display identity, exactly as createReelComment and
+      // the Reel root itself capture it. A client never supplies a name.
+      const canonical = canonicalPublicProfile(publicProfile, auth.uid);
+      transaction.create(reservationRef, {
+        schemaVersion: 1,
+        kind: "reelVoiceComment",
+        ownerId: auth.uid,
+        reelId,
+        commentId,
+        storagePath,
+        durationSeconds,
+        text,
+        authorName: canonical.displayName,
+        status: "uploading",
+        createdAt: attemptTime.now,
+        expiresAt: Timestamp.fromMillis(attemptTime.nowMs + RESERVATION_TTL_MS),
+      });
+      const result = { reelId, commentId, storagePath, created: true };
+      transaction.create(
+        ledgerRef,
+        ledgerData({
+          kind: "reel.voiceComment.reserve",
+          uid: auth.uid,
+          requestId,
+          inputHash: identity.inputHash,
+          result,
+          now: attemptTime.now,
+        }),
+      );
+      return result;
+    });
+  }
+
+  // PHASE TWO: the bytes are in Storage, under a name only this caller's
+  // reservation could have authorized. Verify the object, revoke the download
+  // token Firebase minted during the upload, then publish the comment and
+  // advance the counter in ONE transaction that re-proves everything phase one
+  // proved. A Reel that expired, an author who blocked the caller in between,
+  // or an account that was suspended between the two calls all fail here.
+  //
+  // The response shape is byte-identical to createReelComment's, so a client
+  // that already knows how to finish a text comment needs no new result
+  // handling.
+  async function finalizeReelVoiceCommentDraft(request) {
+    const auth = requireActor(request);
+    const data = requireExactInput(
+      request.data,
+      ["commentId", "objectGeneration", "reelId", "requestId"],
+      ["commentId", "objectGeneration", "reelId", "requestId"],
+    );
+    const reelId = requireId(data.reelId, "reelId");
+    const commentId = requireId(data.commentId, "commentId");
+    if (!REEL_VOICE_COMMENT_ID_PATTERN.test(commentId)) {
+      fail("invalid-argument", "commentId is not a canonical reservation id.");
+    }
+    const requestId = requireRequestId(data.requestId);
+    const objectGeneration = validateGeneration(
+      data.objectGeneration,
+      "objectGeneration",
+    );
+    const identity = operationIdentity(
+      "reel.voiceComment.finalize",
+      auth.uid,
+      requestId,
+      { commentId, objectGeneration, reelId },
+    );
+    const preflight = await beginVoiceCommentPreflight({
+      identity,
+      kind: "reel.voiceComment.finalize",
+      uid: auth.uid,
+      requestId,
+    });
+    if (preflight.replay) return preflight.replay;
+
+    const storagePath = reelVoiceCommentStoragePath(auth.uid, reelId, commentId);
+    const reservationRef = reelVoiceCommentReservationReference(commentId);
+    const reservationSnapshot = await reservationRef.get();
+    const reservationBefore = reservationSnapshot.exists
+      ? (reservationSnapshot.data() ?? {})
+      : {};
+    validateReelVoiceCommentReservation(reservationBefore, {
+      ownerId: auth.uid,
+      reelId,
+      commentId,
+      storagePath,
+      nowMs: timing().nowMs,
+    });
+    const metadata = await storage.getMetadata(storagePath);
+    const media = validateReelVoiceCommentAudio(
+      metadata,
+      { authorId: auth.uid, commentId, reelId },
+      objectGeneration,
+    );
+    // The upload carried a Firebase download token. Revoke it before the
+    // comment is readable by anybody: from here on the only way to hear this
+    // audio is a short-lived, generation-bound grant that re-checks audience.
+    await storage.revokeDownloadTokens(storagePath, metadata);
+
+    return db.runTransaction(async (transaction) => {
+      const attemptTime = timing();
+      const ledgerRef = ledgerReference(identity);
+      const preflightRef = db.doc(`integrityPreflightLedgers/${identity.id}`);
+      const reelRef = reelReference(reelId);
+      const commentRef = reelCommentReference(reelId, commentId);
+      const [
+        ledger,
+        committedPreflight,
+        reelSnapshot,
+        availabilitySnapshot,
+        currentReservation,
+        existingComment,
+        viewerProfile,
+        viewerRestriction,
+      ] = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        preflightRef,
+        reelRef,
+        availabilityReference(reelId),
+        reservationRef,
+        commentRef,
+        db.doc(`users/${auth.uid}`),
+        db.doc(`restrictions/${auth.uid}`),
+      );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "reel.voiceComment.finalize",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      const preflightValue = committedPreflight.exists
+        ? (committedPreflight.data() ?? {})
+        : {};
+      if (
+        preflightValue.schemaVersion !== REEL_SCHEMA_VERSION ||
+        preflightValue.kind !== "reel.voiceComment.finalize" ||
+        preflightValue.ownerId !== auth.uid ||
+        preflightValue.scope !== "comment" ||
+        preflightValue.inputHash !== identity.inputHash
+      ) {
+        fail(
+          "failed-precondition",
+          "The Reel voice-comment preflight is not canonical.",
+        );
+      }
+      const { reel } = engageableReel(
+        reelSnapshot,
+        availabilitySnapshot,
+        attemptTime.nowMs,
+      );
+      const reservation = validateReelVoiceCommentReservation(
+        currentReservation.exists ? (currentReservation.data() ?? {}) : {},
+        {
+          ownerId: auth.uid,
+          reelId,
+          commentId,
+          storagePath,
+          nowMs: attemptTime.nowMs,
+        },
+      );
+      await assertReelAudienceInTransaction(transaction, {
+        viewerId: auth.uid,
+        authorId: reel.authorId,
+        viewerProfile,
+        viewerRestriction,
+        nowMs: attemptTime.nowMs,
+      });
+      if (existingComment.exists) {
+        fail(
+          "data-loss",
+          "A Reel voice comment exists without its finalize ledger.",
+        );
+      }
+      // THE CAPTION AND THE DURATION COME FROM THE RESERVATION, NOT FROM THIS
+      // REQUEST. They were bound when the caller was last proven eligible, and
+      // the finalize input carries no text at all, so there is nothing here to
+      // swap between the two calls.
+      transaction.create(commentRef, {
+        schemaVersion: REEL_COMMENT_SCHEMA_VERSION,
+        type: "voice",
+        reelId,
+        authorId: auth.uid,
+        authorName: reservation.authorName,
+        text: reservation.text,
+        durationSeconds: reservation.durationSeconds,
+        storagePath,
+        mediaGeneration: media.generation,
+        mediaSize: media.size,
+        mediaContentType: media.contentType,
+        createdAt: attemptTime.now,
+      });
+      const commentCount = incrementCanonicalCount(
+        reel.commentCount,
+        "Reel commentCount",
+      );
+      transaction.update(reelRef, {
+        commentCount,
+        updatedAt: attemptTime.now,
+      });
+      transaction.delete(reservationRef);
+      const result = { reelId, commentId, created: true, commentCount };
+      transaction.create(
+        ledgerRef,
+        ledgerData({
+          kind: "reel.voiceComment.finalize",
+          uid: auth.uid,
+          requestId,
+          inputHash: identity.inputHash,
+          result,
+          now: attemptTime.now,
+        }),
+      );
+      return result;
+    });
+  }
+
   async function deleteReelComment(request) {
     // Removing your own words is a cleanup/safety action, not publication.
     // It stays available to an authenticated active account whose email is
@@ -2833,6 +3687,22 @@ function createReelService({
       transaction.update(reelRef, {
         commentCount: currentCount - 1,
         updatedAt: attemptTime.now,
+      });
+      // A voice comment's bytes leave with its words, in the same transaction.
+      // The outbox row is the durable instruction; the trigger and the
+      // five-minute sweeper both drain it, with the existing backoff and dead
+      // letter behaviour.
+      //
+      // Whether a row was queued is deliberately NOT part of the result. The
+      // result's exact shape is parsed by a strict reader in every client
+      // built before voice comments existed, and the ledger replays it
+      // verbatim, so an additive key here would make those clients report a
+      // committed deletion as a failure (ADR-187). Nothing consumes the flag.
+      enqueueVoiceCommentCleanupInTransaction(transaction, {
+        comment: commentData,
+        reelId,
+        commentId,
+        time: attemptTime,
       });
       const result = {
         reelId,
@@ -2979,6 +3849,17 @@ function createReelService({
         commentCount: currentCount - 1,
         updatedAt: attemptTime.now,
       });
+      // The removed comment's audio is queued with it. `ownerId` on the row is
+      // the COMMENT's author, not the Reel author doing the removing — the
+      // object lives under the commenter's uid and no other path is canonical.
+      // As in deleteReelComment, the result carries no queued-audio flag: the
+      // shape is frozen by installed strict readers (ADR-187).
+      enqueueVoiceCommentCleanupInTransaction(transaction, {
+        comment: commentData,
+        reelId,
+        commentId,
+        time: attemptTime,
+      });
       const result = {
         reelId,
         commentId,
@@ -3010,14 +3891,34 @@ function createReelService({
     });
   }
 
+  // The caller's declaration of which comment shapes its renderer can
+  // actually draw. Absent means "text only", which is what every client
+  // installed before voice comments existed can handle.
+  function validateCommentTypes(value) {
+    if (value === undefined || value === null) {
+      return new Set(DEFAULT_REEL_COMMENT_TYPES);
+    }
+    if (
+      !Array.isArray(value) ||
+      value.length < 1 ||
+      value.length > MAX_REEL_COMMENT_TYPES ||
+      value.some((entry) => !REEL_COMMENT_TYPES.has(entry)) ||
+      new Set(value).size !== value.length
+    ) {
+      fail("invalid-argument", "commentTypes is invalid.");
+    }
+    return new Set(value);
+  }
+
   async function getReelViewV2(request) {
     const auth = requireActor(request, { verified: false });
     const data = requireExactInput(
       request.data,
-      ["commentCursor", "commentLimit", "reelId"],
+      ["commentCursor", "commentLimit", "commentTypes", "reelId"],
       ["reelId"],
     );
     const reelId = requireId(data.reelId, "reelId");
+    const commentTypes = validateCommentTypes(data.commentTypes);
     const commentLimit = data.commentLimit === undefined ||
         data.commentLimit === null
       ? MAX_REEL_THREAD_COMMENTS
@@ -3036,6 +3937,7 @@ function createReelService({
         attemptTime,
         commentLimit,
         commentCursor,
+        commentTypes,
       });
     } catch (error) {
       // One envelope for every refusal, mirroring getVoiceMomentViewV2.
@@ -3059,6 +3961,7 @@ function createReelService({
     attemptTime,
     commentLimit,
     commentCursor,
+    commentTypes = new Set(DEFAULT_REEL_COMMENT_TYPES),
   }) {
     const reelRef = reelReference(reelId);
     const [reelSnapshot, availabilitySnapshot, callerLike] = await getAll(
@@ -3194,6 +4097,13 @@ function createReelService({
       }),
       comments: comments
         .filter(({ data: value }) => visibleCommenters.has(value.authorId))
+        // A shape this caller did not declare is WITHHELD, not an error and
+        // not a reason to shorten the page: `commentCount` above still counts
+        // it and `nextCommentCursor` below still steps past it, exactly as a
+        // blocked commenter's comment is handled a few lines up. That is what
+        // makes the flag safe to add to a deployed callable — an old client
+        // sees the thread it always saw.
+        .filter(({ data: value }) => commentTypes.has(value.type))
         .map(({ id, data: value }) => reelCommentProjection(id, value)),
       commentsTruncated,
       // The cursor advances past the last document actually scanned, not the
@@ -3258,6 +4168,30 @@ function createReelService({
         fail("data-loss", "The Reel cleanup request is malformed.");
       }
       storageObjects = raw.storageObjects;
+    } else if (raw.kind === "reelVoiceComment") {
+      // ONE COMMENT'S AUDIO, AND NOTHING ELSE. The row names a commentId, the
+      // object path is re-derived from (ownerId, reelId, commentId) and must
+      // match exactly, and the outbox id is the digest of the pair — so a
+      // forged or mis-keyed row cannot point this worker at another person's
+      // object, and it can never reach the Reel-level engagement purge below.
+      if (
+        raw.schemaVersion !== REEL_SCHEMA_VERSION ||
+        typeof raw.commentId !== "string" ||
+        !REEL_VOICE_COMMENT_ID_PATTERN.test(raw.commentId) ||
+        voiceCommentCleanupOutboxId(raw.reelId, raw.commentId) !== outboxId ||
+        !validVoiceCommentCleanupObjects(
+          raw.storageObjects,
+          raw.ownerId,
+          raw.reelId,
+          raw.commentId,
+        )
+      ) {
+        fail(
+          "data-loss",
+          "The Reel voice-comment cleanup request is malformed.",
+        );
+      }
+      storageObjects = raw.storageObjects;
     } else if (raw.kind === "reelMediaCleanup") {
       if (
         raw.schemaVersion !== REEL_SCHEMA_VERSION ||
@@ -3279,6 +4213,7 @@ function createReelService({
       fail("data-loss", "The Reel cleanup request is malformed.");
     }
 
+    const isVoiceComment = raw.kind === "reelVoiceComment";
     const defaultPhase = isExpiry ? "retain" : "delete";
     const phase = raw.phase ?? defaultPhase;
     if (
@@ -3312,6 +4247,7 @@ function createReelService({
     return {
       ...raw,
       isExpiry,
+      isVoiceComment,
       phase,
       storageObjects,
       createdAtMs,
@@ -3883,7 +4819,14 @@ function createReelService({
       // Storage made another person's comment text durably stored, with the
       // comment's own author already locked out of deleting it (the root is a
       // tombstone by then), on a failure that has nothing to do with them.
-      const engagement = await purgeReelEngagement(claim.value.reelId);
+      // A VOICE-COMMENT ROW NEVER TOUCHES THE THREAD. Its comment document is
+      // already gone — deleted in the same transaction that wrote this row, or
+      // by the enumeration in purgeReelEngagement — and the Reel it hangs
+      // under is usually still live. Running the Reel-level engagement purge
+      // here would strip every other person's comment off a published Reel.
+      const engagement = claim.value.isVoiceComment
+        ? "voiceComment"
+        : await purgeReelEngagement(claim.value.reelId);
       await Promise.all(claim.value.storageObjects.map(({ path, generation }) =>
         storage.deleteObject(
           path,
@@ -4142,6 +5085,78 @@ function createReelService({
     return { expired, hasMore: snapshot.size === limit };
   }
 
+  // A reservation whose upload never arrived, or arrived and was never
+  // finalized. Thirty minutes after it was issued this removes the row AND
+  // queues the object for deletion — because a client CAN have uploaded the
+  // bytes and then lost the finalize call, and an object with no reservation
+  // and no comment is unreachable by every read path in the product. Nothing
+  // else would ever remember it exists.
+  //
+  // The generation is unknown here (only finalize learns it), so the cleanup
+  // row carries `generation: null` and deletes unconditionally — exactly what
+  // `reelMediaCleanup` does for an abandoned Reel draft.
+  async function expireAbandonedReelVoiceCommentDrafts({ limit = 100 } = {}) {
+    requireSafeInteger(limit, "limit", { min: 1, max: 100 });
+    const queryTime = timing();
+    const snapshot = await db
+      .collection("reelVoiceCommentReservations")
+      .where("expiresAt", "<=", queryTime.now)
+      .orderBy("expiresAt")
+      .limit(limit)
+      .get();
+    const expired = [];
+    const malformed = [];
+    for (const document of snapshot.docs) {
+      try {
+        const didExpire = await db.runTransaction(async (transaction) => {
+          const attemptTime = timing();
+          const current = await transaction.get(document.ref);
+          if (!current.exists) return false;
+          const raw = current.data() ?? {};
+          if (timestampMillis(raw.expiresAt) === null) return "malformed";
+          if (timestampMillis(raw.expiresAt) > attemptTime.nowMs) return false;
+          // The path is re-derived and must match what the row claims. A row
+          // that cannot prove its own object is deleted WITHOUT queueing a
+          // deletion — this sweep must never be usable to aim the cleanup
+          // worker at an arbitrary path.
+          if (
+            !isCanonicalReelVoiceCommentPath(
+              raw.storagePath,
+              raw.ownerId,
+              raw.reelId,
+              document.id,
+            ) ||
+            raw.commentId !== document.id
+          ) {
+            transaction.delete(document.ref);
+            return "malformed";
+          }
+          transaction.set(
+            db.doc(
+              `reelCleanupOutbox/${voiceCommentCleanupOutboxId(raw.reelId, document.id)}`,
+            ),
+            voiceCommentCleanupRow({
+              ownerId: raw.ownerId,
+              reelId: raw.reelId,
+              commentId: document.id,
+              storagePath: raw.storagePath,
+              generation: null,
+              time: attemptTime,
+            }),
+          );
+          transaction.delete(document.ref);
+          return true;
+        });
+        if (didExpire === true) expired.push(document.id);
+        else if (didExpire === "malformed") malformed.push(document.id);
+      } catch (_) {
+        // Malformed state is preserved for explicit operator investigation,
+        // exactly as expireAbandonedReelDrafts treats it.
+      }
+    }
+    return { expired, malformed, hasMore: snapshot.size === limit };
+  }
+
   async function processReadyCleanupOutbox({ limit = 20 } = {}) {
     requireSafeInteger(limit, "limit", { min: 1, max: 50 });
     const time = timing();
@@ -4240,9 +5255,11 @@ function createReelService({
     deleteReel,
     deleteReelComment,
     expireAbandonedReelDrafts,
+    expireAbandonedReelVoiceCommentDrafts,
     expirePublishedReels,
     finalizeReelDraft,
     finalizeReelDraftV2,
+    finalizeReelVoiceCommentDraft,
     getReelMediaAccess,
     getReelMediaAccessV2,
     getReelViewV2,
@@ -4253,6 +5270,7 @@ function createReelService({
     removeReelComment,
     reserveReelDraft,
     reserveReelDraftV2,
+    reserveReelVoiceCommentDraft,
     setReelLike,
   });
 }

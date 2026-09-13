@@ -310,10 +310,14 @@ service firebase.storage {
           canManageExistingClub();
     }
 
-    // No shipping client currently implements Family Moment uploads. Keep
-    // existing member-only reads, but fail closed on client writes until a
-    // server-issued upload session can bind object, author and Firestore row
-    // without exceeding Storage Rules' two cross-service document reads.
+    // Family media shares the historical namespace so migration never
+    // duplicates private bytes. Legacy families retain their member reads.
+    // Servers V1 may create only the two immutable objects named by one live,
+    // server-issued reservation. The caller's active profile and that
+    // reservation consume Storage Rules' two cross-service reads; current
+    // Family membership is rechecked by finalize before any moment becomes
+    // visible. Published playback uses generation-bound V4 grants, so a
+    // completed reservation leaves no direct object-read surface.
     match /family_moments/{clubId}/{userId}/{fileName} {
       function isActiveFamilyMember() {
         let familyPath = /databases/(default)/documents/clubs/$(clubId);
@@ -331,8 +335,176 @@ service firebase.storage {
             firestore.get(membershipPath).data.get('banned', false) != true;
       }
 
-      allow read: if isActiveFamilyMember();
-      allow create, update, delete: if false;
+      function v1ReservationPath(metadata) {
+        return /databases/(default)/documents/serverFamilyMemoryUploadReservations/$(metadata.get('yovoiceMemoryId', ''));
+      }
+
+      function exactV1Metadata(metadata, assetKind) {
+        return metadata.keys().hasOnly([
+              'yovoiceServerId', 'yovoiceChannelId', 'yovoiceOwnerUid',
+              'yovoiceMemoryId', 'yovoiceAssetKind'
+            ]) &&
+            metadata.get('yovoiceServerId', '') == clubId &&
+            metadata.get('yovoiceOwnerUid', '') == userId &&
+            metadata.get('yovoiceMemoryId', '').matches('fm_[a-f0-9]{40}') &&
+            metadata.get('yovoiceChannelId', '').matches('[A-Za-z0-9_-]{1,128}') &&
+            metadata.get('yovoiceAssetKind', '') == assetKind;
+      }
+
+      function liveV1Reservation(metadata) {
+        let path = v1ReservationPath(metadata);
+        let reservation = firestore.get(path).data;
+        return firestore.exists(path) &&
+            reservation.keys().hasOnly([
+              'schemaVersion', 'kind', 'serverId', 'channelId', 'memoryId',
+              'ownerId', 'requestId', 'caption', 'photoStoragePath',
+              'photoContentType', 'photoSize', 'voiceStoragePath',
+              'voiceContentType', 'voiceSize', 'voiceDurationMs', 'status',
+              'createdAt', 'expiresAt'
+            ]) &&
+            reservation.schemaVersion == 1 &&
+            reservation.kind == 'serverFamilyMemory' &&
+            reservation.serverId == clubId &&
+            reservation.channelId == metadata.get('yovoiceChannelId', '') &&
+            reservation.memoryId == metadata.get('yovoiceMemoryId', '') &&
+            reservation.ownerId == userId &&
+            reservation.status == 'uploading' &&
+            reservation.expiresAt is timestamp &&
+            reservation.expiresAt > request.time;
+      }
+
+      function reservedV1Photo(size, contentType, metadata) {
+        let reservation = firestore.get(v1ReservationPath(metadata)).data;
+        let memoryId = metadata.get('yovoiceMemoryId', '');
+        return exactV1Metadata(metadata, 'photo') &&
+            liveV1Reservation(metadata) &&
+            reservation.photoStoragePath ==
+              'family_moments/' + clubId + '/' + userId + '/' + fileName &&
+            reservation.photoContentType == contentType &&
+            reservation.photoSize == size &&
+            size >= 128 && size <= 8 * 1024 * 1024 &&
+            (
+              (fileName == memoryId + '_photo.jpg' && contentType == 'image/jpeg') ||
+              (fileName == memoryId + '_photo.png' && contentType == 'image/png') ||
+              (fileName == memoryId + '_photo.webp' && contentType == 'image/webp')
+            );
+      }
+
+      function reservedV1Voice(size, contentType, metadata) {
+        let reservation = firestore.get(v1ReservationPath(metadata)).data;
+        let memoryId = metadata.get('yovoiceMemoryId', '');
+        return exactV1Metadata(metadata, 'voice') &&
+            liveV1Reservation(metadata) &&
+            reservation.voiceStoragePath ==
+              'family_moments/' + clubId + '/' + userId + '/' + fileName &&
+            reservation.voiceContentType == contentType &&
+            reservation.voiceSize == size &&
+            reservation.voiceDurationMs is int &&
+            reservation.voiceDurationMs >= 1000 &&
+            reservation.voiceDurationMs <= 30000 &&
+            size >= 1024 && size <= 8 * 1024 * 1024 &&
+            fileName == memoryId + '_voice.m4a' &&
+            contentType == 'audio/mp4';
+      }
+
+      function reservedV1Asset(size, contentType, metadata) {
+        return reservedV1Photo(size, contentType, metadata) ||
+            reservedV1Voice(size, contentType, metadata);
+      }
+
+      allow get: if isActiveFamilyMember() ||
+          (isActiveUser(userId) && resource != null &&
+            reservedV1Asset(resource.size, resource.contentType, resource.metadata));
+      allow list: if isActiveFamilyMember();
+      allow create: if resource == null && isVerified() &&
+          isActiveUser(userId) &&
+          reservedV1Asset(
+            request.resource.size,
+            request.resource.contentType,
+            request.resource.metadata
+          );
+      allow update, delete: if false;
+    }
+
+    // Company Files use one server-issued reservation per immutable object.
+    // The reservation is the upload capability; channel membership and the
+    // Company/files-channel shape are checked by the reserving callable and
+    // checked again before finalization. Published playback never uses this
+    // direct rule surface: it receives a short, generation-bound V4 grant.
+    match /server_company_files/{serverId}/{channelId}/{userId}/{fileName} {
+      function reservationPath(metadata) {
+        return /databases/(default)/documents/serverCompanyFileUploadReservations/$(metadata.get('yovoiceFileId', ''));
+      }
+
+      function exactMetadata(metadata) {
+        return metadata.keys().hasOnly([
+              'yovoiceServerId', 'yovoiceChannelId', 'yovoiceOwnerUid',
+              'yovoiceFileId', 'yovoiceAssetKind'
+            ]) &&
+            metadata.get('yovoiceServerId', '') == serverId &&
+            metadata.get('yovoiceChannelId', '') == channelId &&
+            metadata.get('yovoiceOwnerUid', '') == userId &&
+            metadata.get('yovoiceFileId', '').matches('cf_[a-f0-9]{40}') &&
+            metadata.get('yovoiceAssetKind', '') == 'companyFile';
+      }
+
+      function liveReservation(metadata, size, contentType) {
+        let path = reservationPath(metadata);
+        let reservation = firestore.get(path).data;
+        let fileId = metadata.get('yovoiceFileId', '');
+        return firestore.exists(path) &&
+            reservation.keys().hasOnly([
+              'schemaVersion', 'kind', 'serverId', 'channelId', 'fileId',
+              'ownerId', 'requestId', 'displayName', 'storagePath',
+              'contentType', 'size', 'status', 'createdAt', 'expiresAt'
+            ]) &&
+            reservation.schemaVersion == 1 &&
+            reservation.kind == 'serverCompanyFile' &&
+            reservation.serverId == serverId &&
+            reservation.channelId == channelId &&
+            reservation.fileId == fileId &&
+            reservation.ownerId == userId &&
+            reservation.storagePath ==
+              'server_company_files/' + serverId + '/' + channelId + '/' + userId + '/' + fileName &&
+            reservation.contentType == contentType &&
+            reservation.size == size &&
+            reservation.status == 'uploading' &&
+            reservation.expiresAt is timestamp &&
+            reservation.expiresAt > request.time;
+      }
+
+      function exactReservedFile(size, contentType, metadata) {
+        let fileId = metadata.get('yovoiceFileId', '');
+        return exactMetadata(metadata) &&
+            liveReservation(metadata, size, contentType) &&
+            size >= 1 && size <= 25 * 1024 * 1024 &&
+            (
+              (fileName == fileId + '.pdf' && contentType == 'application/pdf') ||
+              (fileName == fileId + '.jpg' && contentType == 'image/jpeg') ||
+              (fileName == fileId + '.png' && contentType == 'image/png') ||
+              (fileName == fileId + '.webp' && contentType == 'image/webp') ||
+              (fileName == fileId + '.txt' && contentType == 'text/plain')
+            );
+      }
+
+      allow get: if isActiveUser(userId) && resource != null &&
+          exactReservedFile(resource.size, resource.contentType, resource.metadata);
+      allow list: if false;
+      allow create: if resource == null && isVerified() && isActiveUser(userId) &&
+          exactReservedFile(
+            request.resource.size,
+            request.resource.contentType,
+            request.resource.metadata
+          );
+      allow update, delete: if false;
+    }
+
+    // Podcast Egress writes directly through its dedicated, least-privilege
+    // GCS service account. Firebase clients never upload or read these MP3s;
+    // playback is a short-lived, generation-bound signed URL issued only
+    // after getServerPodcastEpisodeAccessV1 rechecks membership and channel ACL.
+    match /server_podcast_episodes/{serverId}/{channelId}/{fileName} {
+      allow read, write: if false;
     }
 
     // Private direct-message attachments are immutable, server-reserved
@@ -681,6 +853,93 @@ service firebase.storage {
           validReservedVoiceReplyUpload();
       // Existing media is immutable to clients. Cleanup remains scheduler/Admin
       // authority outside Storage Rules, including still-reserved uploads.
+      allow update, delete: if false;
+    }
+
+    // A VOICE COMMENT ON A REEL. Structurally identical to the Voice reply
+    // block above and deliberately so — same reservation-bound create, same
+    // exact three metadata keys, same 1-60 s bound read off the reservation,
+    // same "the uploader alone may read it back, and only while the
+    // reservation is alive", same immutability.
+    //
+    // It is a SEPARATE block rather than a widening of that one because the
+    // Voice reply's reservation collection is keyed by momentId and this one
+    // by reelId: the two documents live in different collections and describe
+    // different parents, so one rule cannot answer for both without accepting
+    // a Moment reservation as authority for a Reel object.
+    match /reel_voice_comments/{userId}/{reelId}/{fileName} {
+      function voiceCommentReservationPath() {
+        let commentId = request.resource.metadata.get('commentId', '');
+        return /databases/(default)/documents/reelVoiceCommentReservations/$(commentId);
+      }
+
+      function validReservedReelVoiceCommentUpload() {
+        let commentId = request.resource.metadata.get('commentId', '');
+        let reservation = firestore.get(voiceCommentReservationPath()).data;
+        return request.resource.metadata.keys().hasOnly([
+              'authorId', 'reelId', 'commentId'
+            ]) &&
+            request.resource.metadata.get('authorId', '') == userId &&
+            request.resource.metadata.get('reelId', '') == reelId &&
+            commentId.matches('[a-f0-9]{40}') &&
+            fileName == commentId + '.m4a' &&
+            firestore.exists(voiceCommentReservationPath()) &&
+            reservation.schemaVersion == 1 &&
+            reservation.kind == 'reelVoiceComment' &&
+            reservation.status == 'uploading' &&
+            reservation.ownerId == userId &&
+            reservation.reelId == reelId &&
+            reservation.commentId == commentId &&
+            reservation.storagePath ==
+                'reel_voice_comments/' + userId + '/' + reelId + '/' + fileName &&
+            reservation.durationSeconds is int &&
+            reservation.durationSeconds >= 1 &&
+            reservation.durationSeconds <= 60 &&
+            reservation.expiresAt is timestamp &&
+            reservation.expiresAt > request.time;
+      }
+
+      function canReadReservedReelVoiceComment() {
+        let commentId = resource.metadata.get('commentId', '');
+        let reservationPath =
+            /databases/(default)/documents/reelVoiceCommentReservations/$(commentId);
+        let reservation = firestore.get(reservationPath).data;
+        return isSignedIn() &&
+            request.auth.uid == userId &&
+            resource.metadata.keys().hasOnly([
+              'authorId', 'reelId', 'commentId'
+            ]) &&
+            resource.metadata.get('authorId', '') == userId &&
+            resource.metadata.get('reelId', '') == reelId &&
+            commentId.matches('[a-f0-9]{40}') &&
+            fileName == commentId + '.m4a' &&
+            firestore.exists(reservationPath) &&
+            reservation.schemaVersion == 1 &&
+            reservation.kind == 'reelVoiceComment' &&
+            reservation.status == 'uploading' &&
+            reservation.ownerId == userId &&
+            reservation.reelId == reelId &&
+            reservation.commentId == commentId &&
+            reservation.storagePath ==
+                'reel_voice_comments/' + userId + '/' + reelId + '/' + fileName &&
+            reservation.expiresAt is timestamp &&
+            reservation.expiresAt > request.time;
+      }
+
+      // Once finalizeReelVoiceCommentDraft deletes the reservation, EVERY
+      // direct read dies with it — including the uploader's own. Playback from
+      // then on is a short-lived, generation-bound V4 grant minted by
+      // getReelMediaAccessV2, which re-checks the Reel's audience AND the
+      // commenter's, in both block directions, on every single request.
+      allow read: if canReadReservedReelVoiceComment();
+      allow create: if resource == null &&
+          isVerified() &&
+          isActiveUser(userId) &&
+          isValidAudioPayload() &&
+          validReservedReelVoiceCommentUpload();
+      // Existing media is immutable to clients. Deletion is the cleanup
+      // worker's Admin-SDK authority, never a client's — a commenter revoking
+      // their words goes through deleteReelComment, which queues the object.
       allow update, delete: if false;
     }
   }

@@ -21,6 +21,11 @@ function fakeRuntime(calls = []) {
     };
   }
   service.expireAbandonedReelDrafts = async () => ({ expired: [] });
+  service.expireAbandonedReelVoiceCommentDrafts = async () => ({
+    expired: [],
+    malformed: [],
+    hasMore: false,
+  });
   service.expirePublishedReels = async () => ({ expired: [] });
   service.processCleanupOutbox = async (outboxId) => ({
     outboxId,
@@ -76,6 +81,7 @@ test("Reel export map registers bounded callables and private maintenance", () =
     [
       ...Object.keys(REEL_CALLABLE_METHODS),
       "expireAbandonedReelDraftsSchedule",
+      "expireAbandonedReelVoiceCommentDraftsSchedule",
       "expirePublishedReelsSchedule",
       "processPendingReelCleanupSchedule",
       "onReelCleanupOutboxCreated",

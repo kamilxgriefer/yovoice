@@ -13,6 +13,7 @@ const { createServerOperations } = require("./operations");
 const { channelDocument, channelRoomDocument, membershipMirror, writeChannelGrant } = require("./documents");
 const { capturedRecipientTargets, convergenceState, readConvergenceBindings,
   stageConvergenceSessionEnd } = require("./convergence_lifecycle");
+const { deletionCleanupState } = require("./content_cleanup");
 
 function mutationInput(data, extras = [], { channel = false } = {}) {
   const fields = ["serverId", "requestId", ...(channel ? ["channelId"] : []), ...extras];
@@ -244,6 +245,20 @@ function createServerChannelService(dependencies) {
     return operations.execute(request, kind, input, async ({ transaction, auth, prior, now, identity }) => {
       const parent = requireServerManager(await readServerAccess({ db, transaction, uid: auth.uid,
         serverId: input.serverId, allowHeld: true }));
+      if (deleting && prior) {
+        const channelReference = parent.reference.collection("channels").doc(input.channelId);
+        const channelSnapshot = await transaction.get(channelReference);
+        if (!channelSnapshot.exists) {
+          const outbox = await transaction.get(db.doc(`serverControlOutbox/${identity.id}`));
+          const job = outbox.exists ? outbox.data() : null;
+          if (job?.schemaVersion === 1 && job.kind === "channelDelete" &&
+              job.operationId === identity.id && job.serverId === input.serverId &&
+              job.channelId === input.channelId && job.requestedBy === auth.uid &&
+              job.status === "completed" && job.contentCleanupPending === false &&
+              job.deletionRevision === prior.deletionRevision) return prior;
+          denied();
+        }
+      }
       const access = await readChannelAccess({ db, transaction, uid: auth.uid, ...input,
         capability: "manage", allowHeld: true, allowArchived: true,
         allowDeleting: deleting && prior !== null, serverAccess: parent });
@@ -256,6 +271,7 @@ function createServerChannelService(dependencies) {
       const ending = item ? stageConvergenceSessionEnd({ db, transaction, item, identity, now })
         : { target: null, roomPatch: {}, channelPatch: {} };
       const status = deleting ? "deleting" : "archived";
+      const nextRevision = access.channel.revision + 1;
       // An archived or deleting channel is never live. The projection is
       // retired unconditionally here, exactly as the room below is set
       // isLive: false regardless of what the ending patch carries, so a
@@ -264,7 +280,9 @@ function createServerChannelService(dependencies) {
       transaction.update(access.channelReference, {
         status, activeSessionId: null, liveness: channelLiveness(),
         aclRevision: access.channel.aclRevision + 1,
-        revision: access.channel.revision + 1, updatedAt: now,
+        revision: nextRevision,
+        ...(deleting ? { deletionOperationId: identity.id } : {}),
+        updatedAt: now,
       });
       writeChannelGrant({ db, transaction, serverId: input.serverId, channelId: input.channelId,
         channel: { ...access.channel, status, aclRevision: access.channel.aclRevision + 1 },
@@ -272,6 +290,7 @@ function createServerChannelService(dependencies) {
       if (roomReference) transaction.update(roomReference, {
         status: deleting ? "deleting" : "archived", isLive: false,
         voiceSessionId: null, livekitRoomName: null, ...ending.roomPatch, updatedAt: now,
+        ...(deleting ? { deletionOperationId: identity.id } : {}),
       });
       const defaults = {};
       if (access.server.defaultChatChannelId === input.channelId) defaults.defaultChatChannelId = null;
@@ -284,11 +303,16 @@ function createServerChannelService(dependencies) {
       transaction.create(db.doc(`serverControlOutbox/${identity.id}`), {
         schemaVersion: 1, kind: deleting ? "channelDelete" : "channelArchive",
         serverId: input.serverId, channelId: input.channelId, roomId: access.channel.roomId,
-        sessionId, operationId: identity.id, aclRevision: access.channel.aclRevision + 1,
+        sessionId, operationId: identity.id, requestedBy: auth.uid,
+        aclRevision: access.channel.aclRevision + 1,
         status: "pending", cursor: null, createdAt: now, updatedAt: now,
         ...convergenceState(ending.target ? [ending.target] : [], { contentCleanupPending: deleting }),
+        ...(deleting ? deletionCleanupState("channelDelete", {
+          deletionRevision: nextRevision, ownerId: access.server.ownerId, roomId: access.channel.roomId,
+        }) : {}),
       });
-      return { serverId: input.serverId, channelId: input.channelId, status, cleanupPending: true };
+      return { serverId: input.serverId, channelId: input.channelId, status,
+        cleanupPending: true, ...(deleting ? { deletionRevision: nextRevision } : {}) };
     });
   }
 

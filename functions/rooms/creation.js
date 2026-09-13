@@ -18,6 +18,13 @@ const {
   timestampMillis,
   transactionGetAll,
 } = require("../integrity/guards");
+const {
+  ROOM_TYPES, boundedLegacyRoomQuery, isActiveOrdinaryRoom,
+  validatedGuardRoomIds,
+} = require("./capacity_contract");
+const {
+  readOwnerAllocations, writeCapacityGuards,
+} = require("../servers/capacity");
 
 const DEFAULT_ROOM_CREATION_POLICY = Object.freeze({
   maxActiveRooms: 20,
@@ -43,7 +50,6 @@ const ROOM_CATEGORIES = new Set([
   "talk",
 ]);
 const ROOM_VISIBILITIES = new Set(["private", "public"]);
-const ROOM_TYPES = new Set(["community", "temporary"]);
 const ROOM_EXPERIENCES = new Set(["broadcast", "community"]);
 const TARGET_AUDIENCES = new Set([
   "enthusiasts",
@@ -268,50 +274,6 @@ function validatePolicy(policy) {
   requireSafeInteger(policy.startWindowMs, "startWindowMs", { min: 1000 });
   requireSafeInteger(policy.windowMs, "windowMs", { min: 1000 });
   return Object.freeze({ ...policy });
-}
-
-function validatedGuardRoomIds(snapshot, uid, maxActiveRooms) {
-  if (!snapshot?.exists) return null;
-  const data = snapshot.data() ?? {};
-  const ids = data.activeRoomIds;
-  if (
-    ![1, 2].includes(data.schemaVersion) ||
-    data.ownerId !== uid ||
-    !Array.isArray(ids) ||
-    ids.length > maxActiveRooms ||
-    new Set(ids).size !== ids.length ||
-    ids.some((id) =>
-      typeof id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/u.test(id))
-  ) {
-    fail("data-loss", "The room-capacity guard is malformed.");
-  }
-  if (
-    data.schemaVersion === 2 &&
-    typeof data.capacityLocked !== "boolean"
-  ) {
-    fail("data-loss", "The room-capacity guard is malformed.");
-  }
-  return {
-    activeRoomIds: ids,
-    capacityLocked: data.schemaVersion === 2 && data.capacityLocked === true,
-  };
-}
-
-function isActiveOrdinaryRoom(snapshot, uid) {
-  if (!snapshot?.exists) return false;
-  const room = snapshot.data() ?? {};
-  return room.hostId === uid &&
-    room.status === "active" &&
-    !room.clubId &&
-    room.roomKind !== "clubLounge" &&
-    ROOM_TYPES.has(room.roomType);
-}
-
-function boundedLegacyRoomQuery(db, uid, maxActiveRooms) {
-  return db.collection("rooms")
-    .where("hostId", "==", uid)
-    .where("status", "==", "active")
-    .limit(maxActiveRooms + 1);
 }
 
 function roomDocument(input, uid, hostName, now) {
@@ -551,14 +513,12 @@ function createRoomCreationService({
     }
 
     const outcome = await db.runTransaction(async (transaction) => {
-      const guardRef = db.doc(`privateRoomHostGuards/${auth.uid}`);
       const roomRef = db.doc(`rooms/${roomId}`);
-      const [ledger, attempt, guard, profileSnapshot, restriction, existingRoom] =
+      const [ledger, attempt, profileSnapshot, restriction, existingRoom] =
         await transactionGetAll(
           transaction,
           ledgerRef,
           attemptRef,
-          guardRef,
           profileRef,
           restrictionRef,
           roomRef,
@@ -588,62 +548,21 @@ function createRoomCreationService({
         fail("data-loss", "A room exists without its idempotency ledger.");
       }
 
-      const guardState = validatedGuardRoomIds(
-        guard,
-        auth.uid,
-        creationPolicy.maxActiveRooms,
-      );
-      let activeRoomIds;
-      let capacityLocked = guardState?.capacityLocked === true;
-      if (guardState === null) {
-        // A legacy account can contain an attacker-sized room collection.
-        // Never scan it. `limit(cap + 1)` proves either that the result is
-        // exhaustive, or that capacity cannot safely be established. The
-        // latter becomes a fail-closed guard, so subsequent attempts do not
-        // repeat even this bounded bootstrap read until an admin migration
-        // reconciles the account.
-        const query = boundedLegacyRoomQuery(
-          db,
-          auth.uid,
-          creationPolicy.maxActiveRooms,
-        );
-        const activeSnapshot = await transaction.get(query);
-        activeRoomIds = activeSnapshot.docs
-          .filter((document) => isActiveOrdinaryRoom(document, auth.uid))
-          .map((document) => document.id)
-          .slice(0, creationPolicy.maxActiveRooms);
-        capacityLocked = activeSnapshot.size > creationPolicy.maxActiveRooms;
-      } else if (capacityLocked) {
-        activeRoomIds = guardState.activeRoomIds;
-      } else {
-        const guardedIds = guardState.activeRoomIds;
-        const snapshots = guardedIds.length === 0
-          ? []
-          : await transactionGetAll(
-            transaction,
-            ...guardedIds.map((id) => db.doc(`rooms/${id}`)),
-          );
-        activeRoomIds = snapshots
-          .filter((snapshot) => isActiveOrdinaryRoom(snapshot, auth.uid))
-          .map((snapshot) => snapshot.id);
-      }
-      activeRoomIds = [...new Set(activeRoomIds)].sort();
+      // The legacy room writer and Servers V1 now acquire the same three
+      // owner locks and count the same canonical allocation set. Creating a
+      // server can no longer leave createRoom with a separate free allowance.
+      const capacity = await readOwnerAllocations({ db, transaction, uid: auth.uid });
+      const effectiveLimit = Math.min(creationPolicy.maxActiveRooms, capacity.free.limit);
 
       if (
-        capacityLocked ||
-        activeRoomIds.length >= creationPolicy.maxActiveRooms
+        !capacity.free.exhaustive || capacity.free.locked ||
+        capacity.free.count >= effectiveLimit
       ) {
         const result = {
           schemaVersion: 1,
           denied: "capacity",
         };
-        transaction.set(guardRef, {
-          schemaVersion: 2,
-          ownerId: auth.uid,
-          activeRoomIds,
-          capacityLocked,
-          updatedAt: timing.now,
-        });
+        writeCapacityGuards(transaction, capacity, auth.uid, timing.now);
         transaction.create(ledgerRef, ledgerData({
           kind: "room.create",
           uid: auth.uid,
@@ -677,13 +596,8 @@ function createRoomCreationService({
           updatedAt: timing.now,
         });
       }
-      transaction.set(guardRef, {
-        schemaVersion: 2,
-        ownerId: auth.uid,
-        activeRoomIds: [...activeRoomIds, roomId].sort(),
-        capacityLocked: false,
-        updatedAt: timing.now,
-      });
+      capacity.activeRoomIds = [...capacity.activeRoomIds, roomId].sort();
+      writeCapacityGuards(transaction, capacity, auth.uid, timing.now);
       const result = {
         schemaVersion: 1,
         roomId,

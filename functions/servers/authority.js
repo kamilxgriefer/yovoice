@@ -1,5 +1,5 @@
 const {
-  activeProfile, fail, requireId, requireUid, transactionGetAll,
+  activeProfile, fail, requireId, requireUid, timestampMillis, transactionGetAll,
 } = require("../integrity/guards");
 const {
   CHANNEL_KINDS, MEDIA_KINDS, ROLES, SERVER_TYPES, accessPolicy,
@@ -15,6 +15,19 @@ function denied() {
 
 function validRevision(value) {
   return Number.isSafeInteger(value) && value > 0 && value < Number.MAX_SAFE_INTEGER;
+}
+
+function invitePredatesDeparture(invite, authorizationSnapshot, uid) {
+  if (!authorizationSnapshot?.exists) return false;
+  const state = authorizationSnapshot.data() ?? {};
+  if (state.schemaVersion !== 1 || state.userId !== uid ||
+      !validRevision(state.revision) || !["member", "left"].includes(state.status) ||
+      timestampMillis(state.updatedAt) === null) {
+    fail("data-loss", "The membership authorization record needs reconciliation.");
+  }
+  if (state.status !== "left") return false;
+  const createdAt = timestampMillis(invite?.createdAt);
+  return createdAt === null || createdAt <= timestampMillis(state.updatedAt);
 }
 
 function canonicalMember(snapshot, uid, server) {
@@ -171,6 +184,6 @@ async function readBoundSessionAccess({ db, transaction, uid, serverId, channelI
 module.exports = {
   MANAGER_ROLES, MODERATOR_ROLES, canonicalChannel, canonicalMember,
   canonicalServer, capabilitiesFor, denied, grantDocument, grantMatches,
-  policyAllowsMember, readBoundSessionAccess, readChannelAccess,
+  invitePredatesDeparture, policyAllowsMember, readBoundSessionAccess, readChannelAccess,
   readServerAccess, requireServerManager, validRevision,
 };

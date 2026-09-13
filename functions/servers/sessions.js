@@ -49,8 +49,9 @@ function authorizedTokenReplay(snapshot, identity, authority, uid, nowMs) {
   return result;
 }
 
-/** Source-only factories. No onCall/index export, held activation, legacy
- * RoomExperience change, provider secret discovery, or billing mutation. */
+/** Factory only: registration.js owns the gated onCall/index export. No
+ * activation transition, legacy RoomExperience change, eager provider secret
+ * discovery, or billing mutation occurs here. */
 function createServerSessionService(dependencies) {
   const { db, Timestamp, livekit, clock = Date.now } = dependencies;
   if (!livekit || !["assertSupported", "mintToken", "revokeParticipant", "endRoom"]

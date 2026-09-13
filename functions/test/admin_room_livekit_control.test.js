@@ -174,6 +174,8 @@ describe("LiveKit control helper", () => {
 
       const result = await control.revokeParticipant("room", "user");
       assert.equal(result.attempts, 2);
+      assert.equal(result.revocationRequested, true);
+      assert.equal(result.revokedBeforeMillis, 11_000);
       assert.equal(calls.length, 2);
       assert.equal(calls[0].options.revokeTokenTs, 11n);
     });
@@ -193,6 +195,8 @@ describe("LiveKit control helper", () => {
       });
       const absentResult = await absent.revokeParticipant("room", "user");
       assert.equal(absentResult.alreadyAbsent, true);
+      assert.equal(absentResult.revocationRequested, true);
+      assert.ok(absentResult.revokedBeforeMillis > 0);
 
       const failed = createLiveKitControl({
         client: {

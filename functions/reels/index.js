@@ -40,6 +40,13 @@ const REEL_CALLABLE_METHODS = Object.freeze({
   // the state machine and writes the audit record.
   createReelCommentReport: "createReelCommentReport",
   removeReelComment: "removeReelComment",
+  // Voice comments (2026-09). Two phases, the same pair the Voice reply path
+  // has had since it shipped: reserve a bounded upload, then finalize the
+  // object that landed under it. They are registered through the SAME callable
+  // options as every other Reel entry point, so region, memory, instance
+  // ceiling and the staged App Check switch stay identical across the surface.
+  reserveReelVoiceCommentDraft: "reserveReelVoiceCommentDraft",
+  finalizeReelVoiceCommentDraft: "finalizeReelVoiceCommentDraft",
 });
 // The two callables on the Reel publish path keep one warm instance each;
 // every other Reel callable scales to zero. Pinned by
@@ -158,6 +165,23 @@ function createReelFunctions({
     { ...scheduleOptions, schedule: "every 10 minutes" },
     () => resolved.service.expireAbandonedReelDrafts({ limit: 100 }),
   );
+  // An upload reservation whose finalize never arrived. Same cadence as the
+  // draft sweep: a reservation lives thirty minutes, so ten-minute scans bound
+  // an orphaned object's life to roughly forty.
+  exportsMap.expireAbandonedReelVoiceCommentDraftsSchedule =
+    registrars.onSchedule(
+      { ...scheduleOptions, schedule: "every 10 minutes" },
+      async () => {
+        const result = await resolved.service
+          .expireAbandonedReelVoiceCommentDrafts({ limit: 100 });
+        if ((result.malformed?.length ?? 0) > 0) {
+          log.warn?.("Reel voice-comment reservations were malformed", {
+            malformed: result.malformed.length,
+          });
+        }
+        return result;
+      },
+    );
   exportsMap.expirePublishedReelsSchedule = registrars.onSchedule(
     { ...scheduleOptions, schedule: "every 10 minutes" },
     async () => {

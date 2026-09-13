@@ -4,7 +4,7 @@ const { FieldValue } = require("firebase-admin/firestore");
 const { getStorage } = require("firebase-admin/storage");
 
 const { ROOM_MANAGEMENT_ROLES } = require("../utils/roles");
-const { assertLegacyClubData } = require("../utils/server_access");
+const { assertLegacyClubData, isVersionedServer } = require("../utils/server_access");
 const { isVersionedAnchor } = require("../servers/rtc_binding");
 
 const {
@@ -51,6 +51,31 @@ const REGION = "europe-west1";
 const VERSIONED_ANCHOR_SKIP_REASON = "versioned-anchor";
 let clubLiveKitControlForTests = null;
 let clubStorageBucketForTests = null;
+let serverManagementForTests = null;
+
+/**
+ * The V1 management adapters (ADR-F, R4). Required LAZILY and only on the
+ * branch that has already established the target is a versioned root, so a
+ * legacy-only staff action never loads the server domain — the same posture
+ * utils/server_access.js takes for assertServerChannelAccessIfVersioned.
+ *
+ * Staff authority, step-up and the audit log stay HERE. The adapter owns only
+ * the V1 invariants a raw admin `set()` would silently skip: the
+ * authorizationRevision bump, its memberAuthorizations record, the private
+ * grant and discovery-pointer sweep, and the outbox job that actually ends
+ * the person's live session. A moderator can do on a versioned root exactly
+ * what they can do on a Club, and no more.
+ */
+function serverManagement() {
+  if (serverManagementForTests) return serverManagementForTests;
+  const { Timestamp } = require("firebase-admin/firestore");
+  const { createServerManagementService } = require("../servers/management");
+  return createServerManagementService({ db, Timestamp });
+}
+
+function setServerManagementForTests(service) {
+  serverManagementForTests = service ?? null;
+}
 
 function setClubLiveKitControlForTests(control) {
   clubLiveKitControlForTests = control ?? null;
@@ -313,6 +338,45 @@ const setClubModerationStatus = onCall(
     );
 
     const club = clubSnapshot.data() ?? {};
+    // A VERSIONED ROOT. Trust & Safety keeps its suspension here; the V1
+    // adapter performs it, because a suspension that leaves the voice channel
+    // running suspends nothing — the adapter ends every live generation
+    // through the same reviewed writer an archive uses, and the legacy
+    // per-room batch below could not (an `srv_` generation's LiveKit
+    // namespace is not the anchor's document id).
+    if (isVersionedServer(club)) {
+      const outcome = await serverManagement().staffSetServerModerationStatus({
+        serverId: clubId,
+        suspended,
+        reason: suspended ? reason : null,
+        actorUid: caller.uid,
+      });
+      await writeClubAuditLog({
+        caller,
+        action: suspended ? "suspend_club" : "restore_club",
+        clubId,
+        clubName: club.name ?? null,
+        details: {
+          ownerId: club.ownerId ?? null,
+          previousStatus: club.status ?? null,
+          newStatus: outcome.status,
+          reason: suspended ? reason : null,
+          affectedRooms: 0,
+          versionedServer: true,
+          changed: outcome.changed,
+          cleanupPending: outcome.cleanupPending === true,
+        },
+      });
+      return {
+        success: true,
+        clubId,
+        status: outcome.status,
+        affectedRooms: 0,
+        versionedServer: true,
+        changed: outcome.changed,
+        cleanupPending: outcome.cleanupPending === true,
+      };
+    }
     assertLegacyClubData(club);
 
     await db.runTransaction(async (transaction) => {
@@ -478,6 +542,43 @@ const removeClubMember = onCall(
     let member;
     let alreadyRemoved = false;
 
+    // A VERSIONED ROOT (ADR-F, R1/R4). The legacy transaction below cannot be
+    // reused: it deletes the membership without bumping authorizationRevision
+    // or writing memberAuthorizations, so every issued media token and every
+    // private channel grant would survive the removal and the person would
+    // stay in the room. The adapter does both and stages the revocation.
+    const versionedPreflight = await clubReference.get();
+    if (isVersionedServer(versionedPreflight.exists ? versionedPreflight.data() : null)) {
+      const root = versionedPreflight.data() ?? {};
+      const outcome = await serverManagement().staffRemoveServerMember({
+        serverId: clubId,
+        memberId: userId,
+        actorUid: caller.uid,
+      });
+      await writeClubAuditLog({
+        caller,
+        action: "remove_club_member",
+        clubId,
+        clubName: root.name ?? null,
+        details: {
+          removedUserId: userId,
+          removedUserName: null,
+          reason: reason || "Administrative action",
+          versionedServer: true,
+          changed: outcome.changed,
+          membershipRevision: outcome.membershipRevision ?? null,
+        },
+      });
+      return {
+        success: true,
+        alreadyExisted: outcome.alreadyRemoved === true,
+        clubId,
+        userId,
+        versionedServer: true,
+        cleanupPending: outcome.cleanupPending === true,
+      };
+    }
+
     await db.runTransaction(async (transaction) => {
       const [clubSnapshot, memberSnapshot] = await transaction.getAll(
         clubReference,
@@ -593,6 +694,43 @@ const setClubMemberBan = onCall(
     );
 
     const club = clubSnapshot.data() ?? {};
+    // A VERSIONED ROOT (ADR-F, R2/R4). V1 already HONOURED `member.banned`
+    // (servers/authority.js canonicalMember) and nothing anywhere could set
+    // it — a moderation model that is honoured but never applied. This is the
+    // writer, in both directions, with the revision bump and the revocation
+    // the legacy merge-set below has no way to perform.
+    if (isVersionedServer(club)) {
+      const outcome = await serverManagement().staffSetServerMemberBan({
+        serverId: clubId,
+        memberId: userId,
+        banned,
+        reason: banned ? reason || "Administrative action" : null,
+        actorUid: caller.uid,
+      });
+      await writeClubAuditLog({
+        caller,
+        action: banned ? "ban_club_member" : "unban_club_member",
+        clubId,
+        clubName: club.name ?? null,
+        details: {
+          userId,
+          banned,
+          reason: banned ? reason || "Administrative action" : null,
+          versionedServer: true,
+          changed: outcome.changed,
+          membershipRevision: outcome.membershipRevision ?? null,
+        },
+      });
+      return {
+        success: true,
+        clubId,
+        userId,
+        banned,
+        versionedServer: true,
+        changed: outcome.changed,
+        cleanupPending: outcome.cleanupPending === true,
+      };
+    }
     assertLegacyClubData(club);
 
     if (club.ownerId === userId) {
@@ -1012,6 +1150,46 @@ const adminDeleteClub = onCall(
       "The selected club was not found.",
     );
     const preflightClub = preflightSnapshot.data() ?? {};
+    // A VERSIONED ROOT (ADR-F, R3/R4). The legacy sweep below is NOT reused:
+    // it would recursively delete the root while V1 channel sessions,
+    // generations, grants and private pointers are still live, with no
+    // revocation and no reciprocal-binding teardown. The adapter instead
+    // ends every live generation through the reviewed writer, marks
+    // `deletionInProgress` (which every canonical V1 read already treats as
+    // closed) and PARKS content deletion on the outbox exactly as
+    // deleteServerChannelV1 parks a channel's — the dispatcher reports that
+    // state and never settles it. No V1 content-cleanup worker exists yet;
+    // inventing one inside a staff callable is precisely the uncertain work
+    // this surface refuses to do.
+    if (isVersionedServer(preflightClub)) {
+      const outcome = await serverManagement().staffDeleteServer({
+        serverId: clubId,
+        actorUid: caller.uid,
+      });
+      await writeClubAuditLog({
+        caller,
+        action: "delete_club",
+        clubId,
+        clubName: preflightClub.name ?? null,
+        details: {
+          ownerId: preflightClub.ownerId ?? null,
+          reason,
+          versionedServer: true,
+          changed: outcome.changed,
+          endedSessions: outcome.endedSessions ?? 0,
+          contentCleanupPending: true,
+        },
+      });
+      return {
+        success: true,
+        clubId,
+        versionedServer: true,
+        changed: outcome.changed,
+        deletionMarked: true,
+        contentCleanupPending: true,
+        endedSessions: outcome.endedSessions ?? 0,
+      };
+    }
     assertLegacyClubData(preflightClub);
     let club;
 
@@ -1162,4 +1340,5 @@ module.exports = {
   adminDeleteClub,
   setClubLiveKitControlForTests,
   setClubStorageBucketForTests,
+  setServerManagementForTests,
 };

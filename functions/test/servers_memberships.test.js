@@ -46,11 +46,20 @@ async function fixture(serverType = "community") {
 }
 async function invite(fixture, inviteeId, changes = {}) {
   const owner = (await db.doc(`clubs/${fixture.serverId}/members/${fixture.uid}`).get()).data();
-  await db.doc(`clubs/${fixture.serverId}/invites/${inviteeId}`).set({
-    serverSchemaVersion: 1, serverId: fixture.serverId, inviteeId, inviterId: fixture.uid,
-    inviterAuthorizationRevision: owner.authorizationRevision, generation: 1, status: "pending",
-    expiresAt: Timestamp.fromMillis(nowMs + 60_000), ...changes,
-  });
+  const establishedAt = Timestamp.fromMillis(nowMs - 1);
+  await Promise.all([
+    db.doc(`clubs/${fixture.serverId}/invites/${inviteeId}`).set({
+      serverSchemaVersion: 1, serverId: fixture.serverId, inviteeId, inviterId: fixture.uid,
+      inviterAuthorizationRevision: owner.authorizationRevision, generation: 1, status: "pending",
+      expiresAt: Timestamp.fromMillis(nowMs + 60_000), ...changes,
+    }),
+    db.doc(`friendshipGuards/${fixture.uid}/friends/${inviteeId}`).set({
+      schemaVersion: 1, ownerId: fixture.uid, friendId: inviteeId, establishedAt,
+    }),
+    db.doc(`friendshipGuards/${inviteeId}/friends/${fixture.uid}`).set({
+      schemaVersion: 1, ownerId: inviteeId, friendId: fixture.uid, establishedAt,
+    }),
+  ]);
 }
 const getAccess = (uid, serverId, channelId) => db.runTransaction((transaction) =>
   readChannelAccess({ db, transaction, uid, serverId, channelId }));

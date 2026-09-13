@@ -21,6 +21,13 @@ const {
 // believes is a comment while the engagement contract does not.
 const {
   MAX_REEL_COMMENT_LENGTH,
+  MAX_REEL_VOICE_COMMENT_SECONDS,
+  MAX_REEL_VOICE_COMMENT_TEXT_LENGTH,
+  MIN_REEL_VOICE_COMMENT_SECONDS,
+  REEL_VOICE_COMMENT_GENERATION_PATTERN,
+  isCanonicalReelVoiceCommentPath,
+  reelVoiceCommentCleanupOutboxId,
+  reelVoiceCommentCleanupRow,
   storedEngagementCount,
   validateReelComment,
 } = require("../reels/engagement");
@@ -270,9 +277,61 @@ function canonicalReelCommentReportTarget(report) {
     !isValidOpaqueUid(report.reelAuthorId) ||
     report.contextPath !== `reels/${reelId}/comments/${commentId}` ||
     typeof report.targetTextSnapshot !== "string" ||
-    report.targetTextSnapshot.length === 0 ||
     report.targetTextSnapshot.length > MAX_REEL_COMMENT_LENGTH
   ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "The reported Reel comment reference is invalid.",
+    );
+  }
+  // `targetCommentType` is ABSENT on every report filed before voice comments
+  // existed, and absent means text — the same "absent IS the old value"
+  // convention the engagement counters use. A report that names an unknown
+  // type is refused rather than defaulted, because defaulting would let an
+  // unrecognised shape be judged under text's rules.
+  const commentType = report.targetCommentType === undefined
+    ? "text"
+    : report.targetCommentType;
+  if (commentType === "text") {
+    // UNCHANGED: a text report without the words is not something anybody
+    // could have judged honestly.
+    if (
+      report.targetTextSnapshot.length === 0 ||
+      (report.targetDurationSeconds !== undefined &&
+        report.targetDurationSeconds !== null) ||
+      (report.targetStoragePath !== undefined &&
+        report.targetStoragePath !== null) ||
+      (report.targetMediaGeneration !== undefined &&
+        report.targetMediaGeneration !== null)
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "The reported Reel comment reference is invalid.",
+      );
+    }
+  } else if (commentType === "voice") {
+    // A VOICE REPORT'S EVIDENCE IS THE RECORDING, SO THE CAPTION MAY BE EMPTY
+    // and the recording's identity is required in its place.
+    if (
+      report.targetTextSnapshot.length > MAX_REEL_VOICE_COMMENT_TEXT_LENGTH ||
+      !Number.isSafeInteger(report.targetDurationSeconds) ||
+      report.targetDurationSeconds < MIN_REEL_VOICE_COMMENT_SECONDS ||
+      report.targetDurationSeconds > MAX_REEL_VOICE_COMMENT_SECONDS ||
+      !isCanonicalReelVoiceCommentPath(
+        report.targetStoragePath,
+        report.reportedUserId,
+        reelId,
+        commentId,
+      ) ||
+      typeof report.targetMediaGeneration !== "string" ||
+      !REEL_VOICE_COMMENT_GENERATION_PATTERN.test(report.targetMediaGeneration)
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "The reported Reel comment reference is invalid.",
+      );
+    }
+  } else {
     throw new HttpsError(
       "failed-precondition",
       "The reported Reel comment reference is invalid.",
@@ -283,7 +342,12 @@ function canonicalReelCommentReportTarget(report) {
   // reported comment sat under; it carries no authority, and making it a
   // precondition would let an unrelated root inconsistency strand a report
   // that is otherwise fully actionable.
-  return { reelId, commentId, reportedUserId: report.reportedUserId };
+  return {
+    reelId,
+    commentId,
+    reportedUserId: report.reportedUserId,
+    commentType,
+  };
 }
 
 // A GIF report is SELF-CONTAINED and server-written: `reportGifAsset` is the
@@ -657,6 +721,30 @@ const moderateReport = onCall(
               throw new HttpsError(
                 "failed-precondition",
                 "The reported Reel comment author is inconsistent.",
+              );
+            }
+            // THE AUDIO GOES WITH THE WORDS, on every branch below. A staff
+            // removal that deleted the document but left the recording in the
+            // bucket would be the worst of the three outcomes: the reported
+            // content survives, and nothing in Firestore remembers where.
+            // Queued in this same transaction, so "removed" and "queued for
+            // deletion" commit together.
+            if (comment.type === "voice") {
+              transaction.set(
+                db.doc(
+                  `reelCleanupOutbox/${reelVoiceCommentCleanupOutboxId(
+                    target.reelId,
+                    target.commentId,
+                  )}`,
+                ),
+                reelVoiceCommentCleanupRow({
+                  ownerId: comment.authorId,
+                  reelId: target.reelId,
+                  commentId: target.commentId,
+                  storagePath: comment.storagePath,
+                  generation: comment.mediaGeneration,
+                  now,
+                }),
               );
             }
             const reel = reelSnapshot.exists

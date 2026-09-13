@@ -10,6 +10,7 @@ const PUBLIC_PROFILE_KEYS = Object.freeze([
   "bannerUrl",
   "bio",
   "country",
+  "creatorAudienceVisible",
   "displayName",
   "displayNameSearch",
   "followerCount",
@@ -28,6 +29,9 @@ const PUBLIC_PROFILE_KEYS = Object.freeze([
   "usernameSearch",
   "website",
 ]);
+const LEGACY_PUBLIC_PROFILE_KEYS = Object.freeze(
+  PUBLIC_PROFILE_KEYS.filter((key) => key !== "creatorAudienceVisible"),
+);
 
 function fail(code, message) {
   throw new HttpsError(code, message);
@@ -215,11 +219,15 @@ function canonicalPublicProfile(publicSnapshot, expectedUid) {
   }
   const publicProfile = publicSnapshot.data() ?? {};
   const keys = Object.keys(publicProfile).sort();
+  const exactCurrent = keys.length === PUBLIC_PROFILE_KEYS.length &&
+    keys.every((key, index) => key === PUBLIC_PROFILE_KEYS[index]);
+  const exactLegacy = keys.length === LEGACY_PUBLIC_PROFILE_KEYS.length &&
+    keys.every((key, index) => key === LEGACY_PUBLIC_PROFILE_KEYS[index]);
   if (
-    keys.length !== PUBLIC_PROFILE_KEYS.length ||
-    keys.some((key, index) => key !== PUBLIC_PROFILE_KEYS[index]) ||
+    (!exactCurrent && !exactLegacy) ||
     publicProfile.schemaVersion !== 1 ||
     publicProfile.uid !== expectedUid ||
+    (exactCurrent && typeof publicProfile.creatorAudienceVisible !== "boolean") ||
     timestampMillis(publicProfile.updatedAt) === null ||
     typeof publicProfile.displayName !== "string" ||
     publicProfile.displayName !== publicProfile.displayName.trim() ||

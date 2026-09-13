@@ -41,7 +41,8 @@ async function fixture(serverType = "community") {
     description: "", privacy: serverType === "community" ? "public" : "inviteOnly", defaultLanguage: "English",
   }));
   const root = db.doc(`clubs/${created.serverId}`);
-  // Isolated emulator activation only. There is no shipped activation path.
+  // This fixture uses the raw factory, which deliberately remains held; only
+  // the exact registered creation runtime may seed a new active graph.
   await root.update({ status: "active", serverActivationState: "active" });
   const anchors = await db.collection("rooms").where("serverId", "==", created.serverId).get();
   for (const anchor of anchors.docs) await anchor.ref.update({ status: "active", serverActivationState: "active", hostId: owner });
@@ -110,7 +111,7 @@ async function fixture(serverType = "community") {
     let result;
     for (let page = 0; page < 150; page += 1) {
       result = await process(reference);
-      if (!result.cleanupPending || result.recoveryRequired || result.contentCleanupPending) return result;
+      if (!result.cleanupPending || result.recoveryRequired) return result;
     }
     assert.fail("The bounded bridge fixture did not settle.");
   }
@@ -216,13 +217,74 @@ emulatorTest("archive atomically stages teardown and keeps its barrier during pr
   assert.equal((await f.channel.ref.collection("messages").doc("test-history").get()).exists, true);
 });
 
-emulatorTest("delete completes RTC only and never claims missing content cleanup is done", async () => {
+emulatorTest("delete ends RTC, then removes channel content in bounded resumable pages", async () => {
   const f = await fixture(); const { sessionId } = await f.start(); await f.token(sessionId);
+  const history = f.channel.ref.collection("messages").doc("delete-history");
+  const participant = db.doc(`rooms/${f.roomId}/participants/${f.owner}`);
+  const mirror = db.doc(`activeVoiceSessions/${f.owner}/rooms/${f.roomId}`);
+  const recipient = f.recipient(sessionId);
+  await history.set({ content: "Emulator-only deletion history" });
   const job = await f.mutate("deleteServerChannelV1", { channelId: f.channel.id });
+  // An inconclusive provider answer keeps both the deletion barrier and every
+  // byte of Firestore content. Content deletion starts only after a positive
+  // terminal RTC acknowledgement.
+  f.hooks.remove = () => ({ alreadyAbsent: true });
+  const blocked = await f.process(job.reference);
+  assert.equal(blocked.rtcCleanupPending, true);
+  assert.equal(blocked.contentCleanupPending, true);
+  assert.equal((await f.channel.ref.get()).exists, true);
+  assert.equal((await history.get()).exists, true);
+  assert.equal((await db.doc(`rooms/${f.roomId}`).get()).exists, true);
+  f.hooks.remove = null;
   const result = await f.drain(job.reference);
-  assert.equal(result.rtcCleanupPending, false); assert.equal(result.contentCleanupPending, true); assert.equal(result.cleanupPending, true);
-  assert.equal((await job.reference.get()).data().status, "pending");
-  const calls = f.calls.removed.length; await f.process(job.reference); assert.equal(f.calls.removed.length, calls);
+  assert.equal(result.rtcCleanupPending, false); assert.equal(result.contentCleanupPending, false);
+  assert.equal(result.cleanupPending, false);
+  assert.equal((await job.reference.get()).data().status, "completed");
+  for (const reference of [f.channel.ref, db.doc(`rooms/${f.roomId}`), history, participant, mirror, recipient]) {
+    assert.equal((await reference.get()).exists, false, reference.path);
+  }
+  const calls = f.calls.removed.length;
+  assert.deepEqual(await f.deleteServerChannelV1(request(f.owner, job.data)), job.result);
+  assert.equal((await f.process(job.reference)).cleanupPending, false);
+  assert.equal(f.calls.removed.length, calls);
+});
+
+emulatorTest("content cleanup rechecks owner, operation and deletion revision in every destructive transaction", async () => {
+  const f = await fixture();
+  const history = f.channel.ref.collection("messages").doc("fenced-history");
+  await history.set({ content: "Must survive every failed fence." });
+  const job = await f.mutate("deleteServerChannelV1", { channelId: f.channel.id });
+
+  // First finish the non-destructive grant/RTC phases. The next page would be
+  // the first content page, so each mutation below exercises that page's own
+  // transaction-time fence rather than only the staging callable.
+  const prepared = await f.process(job.reference);
+  assert.equal(prepared.contentCleanupPending, true);
+  const staged = (await job.reference.get()).data();
+  assert.equal(staged.grantStatus, "completed");
+  assert.equal(staged.rtcStatus, "completed");
+
+  await f.root.update({ ownerId: "foreign-owner" });
+  await denied(f.process(job.reference), "failed-precondition");
+  assert.equal((await history.get()).exists, true);
+  assert.equal((await f.channel.ref.get()).exists, true);
+  await f.root.update({ ownerId: f.owner });
+
+  const deletionRevision = (await f.channel.ref.get()).data().revision;
+  await f.channel.ref.update({ revision: deletionRevision + 1 });
+  await denied(f.process(job.reference), "failed-precondition");
+  assert.equal((await history.get()).exists, true);
+  await f.channel.ref.update({ revision: deletionRevision });
+
+  const operationId = (await f.channel.ref.get()).data().deletionOperationId;
+  await f.channel.ref.update({ deletionOperationId: "foreign-operation" });
+  await denied(f.process(job.reference), "failed-precondition");
+  assert.equal((await history.get()).exists, true);
+  await f.channel.ref.update({ deletionOperationId: operationId });
+
+  assert.equal((await f.drain(job.reference)).cleanupPending, false);
+  assert.equal((await history.get()).exists, false);
+  assert.equal((await f.channel.ref.get()).exists, false);
 });
 
 emulatorTest("expired bridge progress lease never reclaims provider work and late completion cannot advance progress", async () => {

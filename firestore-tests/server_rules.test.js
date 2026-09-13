@@ -10,7 +10,7 @@ const {
   collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, limit,
   orderBy, query, serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } = require("firebase/firestore");
-const { getBytes, listAll, ref, uploadBytes } = require("firebase/storage");
+const { deleteObject, getBytes, listAll, ref, uploadBytes } = require("firebase/storage");
 
 const PROJECT = "demo-yovoice-server-acl";
 const OWNER = "server-owner";
@@ -205,9 +205,246 @@ async function main() {
     fixtures[`rooms/legacy-public`] = { hostId: OWNER, visibility: "public", status: "active", name: "Legacy" };
     await seed(fixtures);
 
+    await check("Server event listing has both committed scheduled-event composites", async () => {
+      const indexes = JSON.parse(fs.readFileSync(
+        path.join(__dirname, "../firestore.indexes.json"),
+        "utf8",
+      )).indexes;
+      const eventIndexes = indexes.filter((index) => index.collectionGroup === "events");
+      assert.deepEqual(eventIndexes, [
+        {
+          collectionGroup: "events",
+          queryScope: "COLLECTION",
+          fields: [
+            { fieldPath: "status", order: "ASCENDING" },
+            { fieldPath: "startsAt", order: "ASCENDING" },
+          ],
+        },
+        {
+          collectionGroup: "events",
+          queryScope: "COLLECTION",
+          fields: [
+            { fieldPath: "status", order: "ASCENDING" },
+            { fieldPath: "endsAt", order: "ASCENDING" },
+          ],
+        },
+      ]);
+    });
+    await check("Podcast question listing has the committed status plus createdAt composite index", async () => {
+      const indexes = JSON.parse(fs.readFileSync(
+        path.join(__dirname, "../firestore.indexes.json"),
+        "utf8",
+      )).indexes;
+      const questionIndexes = indexes.filter((index) => index.collectionGroup === "questions");
+      assert.deepEqual(questionIndexes, [{
+        collectionGroup: "questions",
+        queryScope: "COLLECTION",
+        fields: [
+          { fieldPath: "status", order: "ASCENDING" },
+          { fieldPath: "createdAt", order: "DESCENDING" },
+        ],
+      }]);
+    });
+    await check("Podcast episode archive, cleanup and Egress worker composites are committed", async () => {
+      const indexes = JSON.parse(fs.readFileSync(
+        path.join(__dirname, "../firestore.indexes.json"),
+        "utf8",
+      )).indexes;
+      assert.deepEqual(indexes.filter((index) => index.collectionGroup === "episodes"), [
+        {
+          collectionGroup: "episodes",
+          queryScope: "COLLECTION",
+          fields: [
+            { fieldPath: "status", order: "ASCENDING" },
+            { fieldPath: "publishedAt", order: "DESCENDING" },
+          ],
+        },
+        {
+          collectionGroup: "episodes",
+          queryScope: "COLLECTION_GROUP",
+          fields: [
+            { fieldPath: "serverId", order: "ASCENDING" },
+            { fieldPath: "studioChannelId", order: "ASCENDING" },
+          ],
+        },
+      ]);
+      assert.deepEqual(indexes.filter(
+        (index) => index.collectionGroup === "serverPodcastEgressJobs",
+      ), [{
+        collectionGroup: "serverPodcastEgressJobs",
+        queryScope: "COLLECTION",
+        fields: [
+          { fieldPath: "status", order: "ASCENDING" },
+          { fieldPath: "nextAttemptAt", order: "ASCENDING" },
+        ],
+      }]);
+    });
+    await check("Company whiteboard listing has the committed generation plus sequence composite index", async () => {
+      const indexes = JSON.parse(fs.readFileSync(
+        path.join(__dirname, "../firestore.indexes.json"),
+        "utf8",
+      )).indexes;
+      const whiteboardIndexes = indexes.filter(
+        (index) => index.collectionGroup === "whiteboardStrokes",
+      );
+      assert.deepEqual(whiteboardIndexes, [{
+        collectionGroup: "whiteboardStrokes",
+        queryScope: "COLLECTION",
+        fields: [
+          { fieldPath: "generation", order: "ASCENDING" },
+          { fieldPath: "sequence", order: "ASCENDING" },
+        ],
+      }]);
+    });
+    await check("Family Memory listing has the committed channel, status and createdAt composite index", async () => {
+      const indexes = JSON.parse(fs.readFileSync(
+        path.join(__dirname, "../firestore.indexes.json"),
+        "utf8",
+      )).indexes;
+      const memoryIndexes = indexes.filter((index) => index.collectionGroup === "moments");
+      assert.deepEqual(memoryIndexes, [{
+        collectionGroup: "moments",
+        queryScope: "COLLECTION",
+        fields: [
+          { fieldPath: "channelId", order: "ASCENDING" },
+          { fieldPath: "status", order: "ASCENDING" },
+          { fieldPath: "createdAt", order: "DESCENDING" },
+        ],
+      }]);
+    });
+
     await check("legacy public GET and broad legacy channel query remain available", async () => {
       await assertSucceeds(read(OUTSIDER, "clubs/legacy-public"));
       await assertSucceeds(getDocs(query(collection(db(OWNER), "clubs/legacy-public/channels"), orderBy("position"))));
+    });
+
+    // THE OLD-CLIENT GATE, measured rather than assumed.
+    //
+    // ClubService.watchChannels() issues a bare orderBy('position') with no
+    // equality filters. The migrated fixture below is the EXACT post-image
+    // functions/servers/migration_apply.js writes, with the activation pair
+    // set to active/active so that what is being measured is the QUERY SHAPE
+    // and nothing else. Note what the fixture deliberately does NOT contain:
+    // a restricted channel. The folklore says the old query breaks "once a
+    // channel collection holds restricted documents"; it breaks the moment the
+    // ROOT carries a server marker, because isLegacyClub() reads the root.
+    const MIGRATED = "gate-migrated";
+    const migratedChannel = (position, name, kind, type, changes = {}) => ({
+      serverSchemaVersion: 1, serverId: MIGRATED, kind, name, type, position,
+      isPrivate: false, accessMode: "members",
+      accessPolicy: { accessMode: "members", roleIds: [], userIds: [] },
+      categoryId: null, status: "active", roomId: null, activeSessionId: null,
+      liveness: idle(), experience: null, mediaMode: null, aclRevision: 1, revision: 1,
+      historySource: { kind: "channelMessages" }, createdBy: OWNER, createdAt: new Date(0), ...changes,
+    });
+    await seed({
+      [`clubs/${MIGRATED}`]: {
+        serverSchemaVersion: 1, serverType: "community", templateVersion: 1,
+        entitlementPolicyId: "legacyCommunityPremiumV1", serverActivationState: "active",
+        status: "active", revision: 1, type: "community", ownerId: OWNER, ownerName: OWNER,
+        name: "Migrated", description: "", privacy: "public", avatarUrl: null, bannerUrl: null,
+        defaultLanguage: "English", memberCount: 2, onlineCount: 0,
+        migration: { version: 1, sourceKind: "club", sourceId: MIGRATED, state: "complete" },
+      },
+      [`clubs/${MIGRATED}/members/${OWNER}`]: member(OWNER, "owner"),
+      [`clubs/${MIGRATED}/members/${MEMBER}`]: member(MEMBER, "member"),
+      [`clubs/${MIGRATED}/channels/general`]: migratedChannel(0, "general", "text", "chat"),
+      [`clubs/${MIGRATED}/channels/announcements`]: migratedChannel(1, "announcements", "announcements", "announcement"),
+      // The legacy twin: identical channels, root NOT versioned.
+      [`clubs/gate-legacy`]: { type: "community", privacy: "public", status: "active",
+        ownerId: OWNER, name: "Legacy twin", memberCount: 2, onlineCount: 0 },
+      [`clubs/gate-legacy/members/${OWNER}`]: member(OWNER, "owner"),
+      [`clubs/gate-legacy/members/${MEMBER}`]: member(MEMBER, "member"),
+      [`clubs/gate-legacy/channels/general`]: { name: "general", type: "chat", position: 0, isPrivate: false },
+      [`clubs/gate-legacy/channels/announcements`]: { name: "announcements", type: "announcement", position: 1, isPrivate: false },
+    });
+    const bareChannelQuery = (uid, sid) =>
+      getDocs(query(collection(db(uid), `clubs/${sid}/channels`), orderBy("position")));
+
+    await check("old-client gate: the installed bare orderBy(position) query dies on a migrated root with NO restricted channel", async () => {
+      // The legacy twin still answers, for owner and ordinary member alike.
+      await assertSucceeds(bareChannelQuery(OWNER, "gate-legacy"));
+      await assertSucceeds(bareChannelQuery(MEMBER, "gate-legacy"));
+      // The migrated root denies the same query WHOLESALE — not a shorter list.
+      await assertFails(bareChannelQuery(OWNER, MIGRATED));
+      await assertFails(bareChannelQuery(MEMBER, MIGRATED));
+      // Rules are not filters: pinning only ONE of the two equalities is still
+      // the whole query denied.
+      await assertFails(getDocs(query(collection(db(MEMBER), `clubs/${MIGRATED}/channels`),
+        where("accessMode", "==", "members"), orderBy("position"))));
+      await assertFails(getDocs(query(collection(db(MEMBER), `clubs/${MIGRATED}/channels`),
+        where("status", "==", "active"), orderBy("position"))));
+      // The compatible client's pinned query is the one that works, and it
+      // needs BOTH equalities plus membership.
+      const pinned = await assertSucceeds(directory(MEMBER, MIGRATED));
+      assert.deepEqual(pinned.docs.map((item) => item.id).sort(), ["announcements", "general"]);
+      await assertFails(directory(OUTSIDER, MIGRATED));
+    });
+
+    await check("old-client gate: adding a restricted channel changes nothing about the denial and nothing about the pinned query", async () => {
+      await seed({ [`clubs/${MIGRATED}/channels/hr`]: migratedChannel(2, "HR", "text", "chat", {
+        isPrivate: true, accessMode: "restricted",
+        accessPolicy: { accessMode: "restricted", roleIds: ["owner"], userIds: [] },
+      }) });
+      await assertFails(bareChannelQuery(OWNER, MIGRATED));
+      await assertFails(bareChannelQuery(MEMBER, MIGRATED));
+      const pinned = await assertSucceeds(directory(MEMBER, MIGRATED));
+      assert.equal(pinned.docs.some((item) => item.id === "hr"), false);
+      await seed({ [`clubs/${MIGRATED}/channels/hr`]: null });
+    });
+
+    await check("old-client gate: a migrated root that is still HELD is owner-only, which is why activation is its own step", async () => {
+      await seed({ [`clubs/${MIGRATED}`]: {
+        serverSchemaVersion: 1, serverType: "community", templateVersion: 1,
+        entitlementPolicyId: "legacyCommunityPremiumV1", serverActivationState: "held",
+        status: "preparing", revision: 1, type: "community", ownerId: OWNER, ownerName: OWNER,
+        name: "Migrated", description: "", privacy: "public", avatarUrl: null, bannerUrl: null,
+        defaultLanguage: "English", memberCount: 2, onlineCount: 0,
+        migration: { version: 1, sourceKind: "club", sourceId: MIGRATED, state: "complete" },
+      } });
+      await assertSucceeds(read(OWNER, `clubs/${MIGRATED}`));
+      await assertSucceeds(directory(OWNER, MIGRATED));
+      for (const uid of [MEMBER, OUTSIDER]) {
+        await assertFails(read(uid, `clubs/${MIGRATED}`));
+        await assertFails(directory(uid, MIGRATED));
+        await assertFails(bareChannelQuery(uid, MIGRATED));
+      }
+    });
+
+    await check("the published client gate is world-readable to a signed-in caller and writable by nobody", async () => {
+      const gatePath = "serverMigrationGates/clientCompatibilityV1";
+      await seed({ [gatePath]: { schemaVersion: 1, gateId: "clientCompatibilityV1",
+        minimumClientVersion: "1.9.0", minimumClientBuild: 42,
+        platformMinimumBuild: { android: 42, ios: 42, web: 42, macos: 42, windows: 42, linux: 42 },
+        status: "open", attestedBy: null, attestedAt: null, revision: 1, updatedAt: new Date(0) } });
+      for (const uid of [OWNER, MEMBER, OUTSIDER, BANNED]) {
+        const gate = await assertSucceeds(read(uid, gatePath));
+        assert.equal(gate.data().minimumClientBuild, 42);
+      }
+      for (const uid of [OWNER, MEMBER, OUTSIDER]) {
+        await assertFails(updateDoc(doc(db(uid), gatePath), { status: "satisfied" }));
+        await assertFails(updateDoc(doc(db(uid), gatePath), { minimumClientBuild: 1 }));
+        await assertFails(setDoc(doc(db(uid), gatePath), { schemaVersion: 1 }));
+        await assertFails(deleteDoc(doc(db(uid), gatePath)));
+        await assertFails(setDoc(doc(db(uid), "serverMigrationGates/forged"), { schemaVersion: 1 }));
+      }
+      // The gate is still exactly what the server published.
+      const after = await assertSucceeds(read(OUTSIDER, gatePath));
+      assert.equal(after.data().status, "open");
+      assert.equal(after.data().revision, 1);
+    });
+
+    await check("the migration run ledger is invisible and unwritable from every client", async () => {
+      await seed({ "serverMigrationRuns/run-1": { schemaVersion: 1, runId: "run-1", status: "completed" },
+        "serverMigrationRuns/run-1/rootSteps/club_gate-migrated": { schemaVersion: 1, stage: "complete" } });
+      for (const uid of [OWNER, MEMBER, OUTSIDER]) {
+        await assertFails(read(uid, "serverMigrationRuns/run-1"));
+        await assertFails(read(uid, "serverMigrationRuns/run-1/rootSteps/club_gate-migrated"));
+        await assertFails(getDocs(collection(db(uid), "serverMigrationRuns")));
+        await assertFails(setDoc(doc(db(uid), "serverMigrationRuns/forged"), { schemaVersion: 1 }));
+        await assertFails(updateDoc(doc(db(uid), "serverMigrationRuns/run-1"), { status: "open" }));
+        await assertFails(deleteDoc(doc(db(uid), "serverMigrationRuns/run-1")));
+      }
     });
     await check("legacy Family remains private", async () => {
       await assertSucceeds(read(OWNER, "clubs/legacy-family"));
@@ -441,6 +678,718 @@ async function main() {
       // The seeded server value is untouched by every refused write above.
       assert.equal((await assertSucceeds(read(MEMBER, `clubs/${ACTIVE}/channels/general`))).data().liveness.isLive, true);
     });
+    await check("all Server event profiles inherit exact channel ACLs and remain server-written", async () => {
+      const profiles = [
+        ["rules-event-friends", "friends", "events", "friendsEvent", false],
+        ["rules-event-community", "community", "events", "communityEvent", false],
+        ["rules-event-family", "family", "calendar", "familyCalendarEvent", true],
+        ["rules-event-podcast", "podcast", "events", "podcastProgramEvent", true],
+      ];
+      const event = (serverId, channelId, eventId, eventKind, reminderEnabled) => ({
+        schemaVersion: 1, serverId, channelId, eventId, eventKind,
+        serverType: profiles.find(([id]) => id === serverId)[1], channelKind: channelId,
+        rsvpEnabled: true, reminderOptInEnabled: reminderEnabled, reminderCount: 1,
+        title: "Dinner", description: "At seven",
+        startsAt: new Date(Date.now() + 60_000), endsAt: new Date(Date.now() + 120_000),
+        timeZone: "Europe/Amsterdam", status: "scheduled",
+        responseCounts: { going: 1, maybe: 0, declined: 0 },
+        authorId: OWNER, revision: 1, createdAt: new Date(0), updatedAt: new Date(0),
+      });
+      const response = (serverId, channelId, eventId, reminderEnabled) => ({
+        schemaVersion: 1, serverId, channelId, eventId,
+        userId: MEMBER, response: "going", reminderRequested: reminderEnabled,
+        eventRevision: 1, operationId: "a".repeat(64),
+        createdAt: new Date(0), updatedAt: new Date(0),
+      });
+      const entries = {};
+      const cleanup = {};
+      for (const [serverId, serverType, channelKind, eventKind, reminderEnabled] of profiles) {
+        const eventId = `event-${serverType}`;
+        const eventPath = `clubs/${serverId}/channels/${channelKind}/events/${eventId}`;
+        const responsePath = `${eventPath}/responses/${MEMBER}`;
+        entries[`clubs/${serverId}`] = server(serverId, {
+          serverType,
+          type: serverType === "family" ? "family" : "community",
+          privacy: serverType === "community" ? "public" : "inviteOnly",
+        });
+        entries[`clubs/${serverId}/members/${OWNER}`] = member(OWNER, "owner");
+        entries[`clubs/${serverId}/members/${MEMBER}`] = member(MEMBER);
+        entries[`clubs/${serverId}/members/${ADMIN}`] = member(ADMIN, "admin");
+        entries[`clubs/${serverId}/channels/${channelKind}`] = channel(serverId, false, {
+          kind: channelKind, name: `${serverType} module`,
+        });
+        entries[eventPath] = event(serverId, channelKind, eventId, eventKind, reminderEnabled);
+        entries[responsePath] = response(serverId, channelKind, eventId, reminderEnabled);
+        for (const location of Object.keys(entries)) cleanup[location] = null;
+      }
+      const restrictedServer = "rules-event-restricted";
+      const restrictedEvent = `clubs/${restrictedServer}/channels/events/events/event-private`;
+      const restrictedResponse = `${restrictedEvent}/responses/${MEMBER}`;
+      entries[`clubs/${restrictedServer}`] = server(restrictedServer, { serverType: "friends" });
+      entries[`clubs/${restrictedServer}/members/${OWNER}`] = member(OWNER, "owner");
+      entries[`clubs/${restrictedServer}/members/${MEMBER}`] = member(MEMBER);
+      entries[`clubs/${restrictedServer}/members/${ADMIN}`] = member(ADMIN, "admin");
+      entries[`clubs/${restrictedServer}/channels/events`] = channel(restrictedServer, true, {
+        kind: "events", name: "Restricted events",
+      });
+      entries[`clubs/${restrictedServer}/channels/events/accessGrants/${OWNER}`] =
+        grant(restrictedServer, "events", OWNER);
+      entries[`clubs/${restrictedServer}/channels/events/accessGrants/${MEMBER}`] =
+        grant(restrictedServer, "events", MEMBER);
+      entries[restrictedEvent] = {
+        ...event(profiles[0][0], "events", "event-private", "friendsEvent", false),
+        serverId: restrictedServer,
+      };
+      entries[restrictedResponse] = response(restrictedServer, "events", "event-private", false);
+
+      const heldServer = "rules-event-held";
+      const heldEvent = `clubs/${heldServer}/channels/events/events/event-held`;
+      entries[`clubs/${heldServer}`] = server(heldServer, {
+        held: true, serverType: "friends",
+      });
+      entries[`clubs/${heldServer}/members/${OWNER}`] = member(OWNER, "owner");
+      entries[`clubs/${heldServer}/channels/events`] = channel(heldServer, false, { kind: "events" });
+      entries[heldEvent] = {
+        ...event(profiles[0][0], "events", "event-held", "friendsEvent", false),
+        serverId: heldServer,
+      };
+      for (const location of Object.keys(entries)) cleanup[location] = null;
+      await seed(entries);
+
+      for (const [serverId, serverType, channelKind] of profiles) {
+        const eventId = `event-${serverType}`;
+        const eventPath = `clubs/${serverId}/channels/${channelKind}/events/${eventId}`;
+        const responsePath = `${eventPath}/responses/${MEMBER}`;
+        await assertSucceeds(read(MEMBER, eventPath));
+        await assertSucceeds(read(MEMBER, responsePath));
+        const scheduled = await assertSucceeds(getDocs(query(
+          collection(db(MEMBER), `clubs/${serverId}/channels/${channelKind}/events`),
+          where("status", "==", "scheduled"), orderBy("startsAt"),
+        )));
+        assert.deepEqual(scheduled.docs.map((item) => item.id), [eventId]);
+        await assertFails(read(OUTSIDER, eventPath));
+        await assertFails(read(OUTSIDER, responsePath));
+        for (const uid of [OWNER, MEMBER, ADMIN, OUTSIDER]) {
+          await assertFails(setDoc(doc(db(uid), eventPath), entries[eventPath]));
+          await assertFails(updateDoc(doc(db(uid), eventPath), { title: "Forged" }));
+          await assertFails(deleteDoc(doc(db(uid), eventPath)));
+          await assertFails(setDoc(doc(db(uid), responsePath), entries[responsePath]));
+          await assertFails(updateDoc(doc(db(uid), responsePath), { response: "declined" }));
+          await assertFails(deleteDoc(doc(db(uid), responsePath)));
+        }
+      }
+
+      // Restricted content needs the same current grant as the channel.
+      await assertSucceeds(read(MEMBER, restrictedEvent));
+      await assertSucceeds(read(MEMBER, restrictedResponse));
+      await assertFails(read(ADMIN, restrictedEvent));
+      await assertFails(read(ADMIN, restrictedResponse));
+      // Preparation metadata never opens module content, even to its owner.
+      await assertFails(read(OWNER, heldEvent));
+
+      await seed(cleanup);
+    });
+    await check("Podcast questions inherit channel ACLs while each member sees only their own vote", async () => {
+      const podcastId = "rules-podcast-questions";
+      const restrictedId = "rules-podcast-questions-restricted";
+      const heldId = "rules-podcast-questions-held";
+      const question = (serverId, questionId, status = "queued") => ({
+        schemaVersion: 1,
+        serverId,
+        channelId: "questions",
+        questionId,
+        questionKind: "podcastQuestion",
+        authorId: MEMBER,
+        authorName: MEMBER,
+        body: "How did you choose the guest?",
+        status,
+        voteCount: 1,
+        revision: 1,
+        onAirAt: status === "onAir" ? new Date(0) : null,
+        onAirById: status === "onAir" ? OWNER : null,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      });
+      const vote = (serverId, questionId, uid) => ({
+        schemaVersion: 1,
+        serverId,
+        channelId: "questions",
+        questionId,
+        userId: uid,
+        active: true,
+        questionRevision: 1,
+        operationId: "b".repeat(64),
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      });
+      const ordinaryQuestion = `clubs/${podcastId}/channels/questions/questions/question-one`;
+      const restrictedQuestion = `clubs/${restrictedId}/channels/questions/questions/question-private`;
+      const heldQuestion = `clubs/${heldId}/channels/questions/questions/question-held`;
+      const entries = {
+        [`clubs/${podcastId}`]: server(podcastId, {
+          serverType: "podcast", privacy: "inviteOnly",
+        }),
+        [`clubs/${podcastId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${podcastId}/members/${MEMBER}`]: member(MEMBER),
+        [`clubs/${podcastId}/members/${ADMIN}`]: member(ADMIN, "admin"),
+        [`clubs/${podcastId}/channels/questions`]: channel(podcastId, false, {
+          kind: "questions", name: "Listener questions",
+        }),
+        [ordinaryQuestion]: question(podcastId, "question-one", "onAir"),
+        [`${ordinaryQuestion}/votes/${OWNER}`]: vote(podcastId, "question-one", OWNER),
+        [`${ordinaryQuestion}/votes/${MEMBER}`]: vote(podcastId, "question-one", MEMBER),
+        [`${ordinaryQuestion}/votes/${ADMIN}`]: vote(podcastId, "question-one", ADMIN),
+        [`${ordinaryQuestion}/votes/${OUTSIDER}`]: vote(podcastId, "question-one", OUTSIDER),
+
+        [`clubs/${restrictedId}`]: server(restrictedId, {
+          serverType: "podcast", privacy: "inviteOnly",
+        }),
+        [`clubs/${restrictedId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${restrictedId}/members/${MEMBER}`]: member(MEMBER),
+        [`clubs/${restrictedId}/members/${ADMIN}`]: member(ADMIN, "admin"),
+        [`clubs/${restrictedId}/channels/questions`]: channel(restrictedId, true, {
+          kind: "questions", name: "Private questions",
+        }),
+        [`clubs/${restrictedId}/channels/questions/accessGrants/${OWNER}`]:
+          grant(restrictedId, "questions", OWNER),
+        [`clubs/${restrictedId}/channels/questions/accessGrants/${MEMBER}`]:
+          grant(restrictedId, "questions", MEMBER),
+        [restrictedQuestion]: question(restrictedId, "question-private"),
+        [`${restrictedQuestion}/votes/${MEMBER}`]: vote(restrictedId, "question-private", MEMBER),
+
+        [`clubs/${heldId}`]: server(heldId, {
+          held: true, serverType: "podcast", privacy: "inviteOnly",
+        }),
+        [`clubs/${heldId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${heldId}/channels/questions`]: channel(heldId, false, {
+          kind: "questions", name: "Held questions",
+        }),
+        [heldQuestion]: question(heldId, "question-held"),
+      };
+      await seed(entries);
+
+      await assertSucceeds(read(MEMBER, ordinaryQuestion));
+      const visible = await assertSucceeds(getDocs(query(
+        collection(db(MEMBER), `clubs/${podcastId}/channels/questions/questions`),
+        where("status", "in", ["queued", "onAir"]), orderBy("createdAt", "desc"),
+      )));
+      assert.deepEqual(visible.docs.map((row) => row.id), ["question-one"]);
+      await assertFails(read(OUTSIDER, ordinaryQuestion));
+      await assertSucceeds(read(MEMBER, `${ordinaryQuestion}/votes/${MEMBER}`));
+      await assertFails(read(MEMBER, `${ordinaryQuestion}/votes/${ADMIN}`));
+      await assertSucceeds(read(ADMIN, `${ordinaryQuestion}/votes/${ADMIN}`));
+      await assertFails(getDocs(collection(db(MEMBER), `${ordinaryQuestion}/votes`)));
+
+      // Restricted questions need the same current grant as the channel.
+      await assertSucceeds(read(MEMBER, restrictedQuestion));
+      await assertSucceeds(read(MEMBER, `${restrictedQuestion}/votes/${MEMBER}`));
+      await assertFails(read(ADMIN, restrictedQuestion));
+      await assertFails(read(ADMIN, `${restrictedQuestion}/votes/${MEMBER}`));
+      // A held root exposes neither questions nor votes, including to owner.
+      await assertFails(read(OWNER, heldQuestion));
+
+      for (const uid of [OWNER, MEMBER, ADMIN, OUTSIDER]) {
+        await assertFails(setDoc(doc(db(uid), ordinaryQuestion), question(podcastId, "question-one")));
+        await assertFails(updateDoc(doc(db(uid), ordinaryQuestion), { status: "queued" }));
+        await assertFails(deleteDoc(doc(db(uid), ordinaryQuestion)));
+        const ownVote = `${ordinaryQuestion}/votes/${uid}`;
+        await assertFails(setDoc(doc(db(uid), ownVote), vote(podcastId, "question-one", uid)));
+        await assertFails(updateDoc(doc(db(uid), ownVote), { active: false }));
+        await assertFails(deleteDoc(doc(db(uid), ownVote)));
+      }
+
+      await seed(Object.fromEntries(Object.keys(entries).map((location) => [location, null])));
+    });
+    await check("Podcast recording state is moderator-only while members list only published canonical episodes", async () => {
+      const podcastId = "rules-podcast-episodes";
+      const heldId = "rules-podcast-episodes-held";
+      const publishedId = "episode-published";
+      const readyId = "episode-ready";
+      const episode = (serverId, episodeId, status) => ({
+        schemaVersion: 1,
+        episodeKind: "podcastEpisode",
+        serverId,
+        clubId: serverId,
+        channelId: "episodes",
+        studioChannelId: "studio",
+        episodeId,
+        sessionId: `session-${episodeId}`,
+        livekitRoomName: `srv_${episodeId}`,
+        title: status === "published" ? "Published show" : "Moderator preview",
+        status,
+        revision: status === "published" ? 4 : 3,
+        createdById: OWNER,
+        createdByName: OWNER,
+        egressId: `egress-${episodeId}`,
+        outputPath: `server_podcast_episodes/${serverId}/episodes/${episodeId}.mp3`,
+        providerStatus: "complete",
+        media: {
+          storagePath: `server_podcast_episodes/${serverId}/episodes/${episodeId}.mp3`,
+          generation: "501",
+          contentType: "audio/mpeg",
+          size: 4096,
+          durationMillis: 60_000,
+        },
+        failureCode: null,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+        stoppedAt: new Date(0),
+        readyAt: new Date(0),
+        publishedAt: status === "published" ? new Date(0) : null,
+        publishedById: status === "published" ? OWNER : null,
+      });
+      const state = (serverId) => ({
+        schemaVersion: 1,
+        kind: "podcastRecordingState",
+        serverId,
+        studioChannelId: "studio",
+        channelId: "episodes",
+        episodeId: readyId,
+        sessionId: `session-${readyId}`,
+        title: "Moderator preview",
+        status: "ready",
+        providerStatus: "complete",
+        episodeRevision: 3,
+        updatedAt: new Date(0),
+      });
+      const publishedPath =
+        `clubs/${podcastId}/channels/episodes/episodes/${publishedId}`;
+      const readyPath = `clubs/${podcastId}/channels/episodes/episodes/${readyId}`;
+      const statePath =
+        `clubs/${podcastId}/channels/studio/podcastRecordingState/main`;
+      const heldPublishedPath =
+        `clubs/${heldId}/channels/episodes/episodes/${publishedId}`;
+      const entries = {
+        [`clubs/${podcastId}`]: server(podcastId, {
+          serverType: "podcast", privacy: "inviteOnly",
+        }),
+        [`clubs/${podcastId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${podcastId}/members/${MEMBER}`]: member(MEMBER),
+        [`clubs/${podcastId}/members/${ADMIN}`]: member(ADMIN, "admin"),
+        [`clubs/${podcastId}/channels/studio`]: channel(podcastId, false, {
+          kind: "stage", name: "Studio", experience: "broadcast", mediaMode: "audio",
+        }),
+        [`clubs/${podcastId}/channels/episodes`]: channel(podcastId, false, {
+          kind: "episodes", name: "Episodes",
+        }),
+        [publishedPath]: episode(podcastId, publishedId, "published"),
+        [readyPath]: episode(podcastId, readyId, "ready"),
+        [statePath]: state(podcastId),
+        [`serverPodcastEgressJobs/${readyId}`]: {
+          schemaVersion: 1, kind: "podcastEgressJob", serverId: podcastId,
+        },
+        [`clubs/${heldId}`]: server(heldId, {
+          held: true, serverType: "podcast", privacy: "inviteOnly",
+        }),
+        [`clubs/${heldId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${heldId}/channels/episodes`]: channel(heldId, false, {
+          kind: "episodes", name: "Episodes",
+        }),
+        [heldPublishedPath]: episode(heldId, publishedId, "published"),
+      };
+      await seed(entries);
+
+      await assertSucceeds(read(MEMBER, publishedPath));
+      await assertFails(read(MEMBER, readyPath));
+      await assertFails(read(MEMBER, statePath));
+      const memberArchive = await assertSucceeds(getDocs(query(
+        collection(db(MEMBER), `clubs/${podcastId}/channels/episodes/episodes`),
+        where("status", "==", "published"),
+        orderBy("publishedAt", "desc"),
+      )));
+      assert.deepEqual(memberArchive.docs.map((row) => row.id), [publishedId]);
+      await assertFails(getDocs(query(
+        collection(db(MEMBER), `clubs/${podcastId}/channels/episodes/episodes`),
+        orderBy("createdAt", "desc"),
+      )));
+
+      await assertSucceeds(read(ADMIN, publishedPath));
+      await assertSucceeds(read(ADMIN, readyPath));
+      await assertSucceeds(read(ADMIN, statePath));
+      const moderatorArchive = await assertSucceeds(getDocs(query(
+        collection(db(ADMIN), `clubs/${podcastId}/channels/episodes/episodes`),
+        orderBy("createdAt", "desc"),
+      )));
+      assert.deepEqual(new Set(moderatorArchive.docs.map((row) => row.id)),
+        new Set([publishedId, readyId]));
+      for (const pathValue of [publishedPath, readyPath, statePath,
+        `serverPodcastEgressJobs/${readyId}`]) {
+        await assertFails(read(OUTSIDER, pathValue));
+        await assertFails(read(MEMBER, pathValue === publishedPath ?
+          `serverPodcastEgressJobs/${readyId}` : pathValue));
+      }
+      await assertFails(read(OWNER, heldPublishedPath));
+
+      for (const uid of [OWNER, MEMBER, ADMIN, OUTSIDER]) {
+        await assertFails(setDoc(doc(db(uid), publishedPath),
+          episode(podcastId, publishedId, "published")));
+        await assertFails(updateDoc(doc(db(uid), publishedPath), { title: "Forged" }));
+        await assertFails(deleteDoc(doc(db(uid), publishedPath)));
+        await assertFails(setDoc(doc(db(uid), statePath), state(podcastId)));
+        await assertFails(deleteDoc(doc(db(uid), statePath)));
+        await assertFails(setDoc(doc(db(uid), `serverPodcastEgressJobs/forged-${uid}`), {
+          schemaVersion: 1, kind: "podcastEgressJob", serverId: podcastId,
+        }));
+      }
+
+      const corruptPath = `clubs/${podcastId}/channels/episodes/episodes/corrupt`;
+      await seed({ [corruptPath]: {
+        ...episode(podcastId, "corrupt", "published"),
+        outputPath: "server_podcast_episodes/another/path.mp3",
+      } });
+      await assertFails(read(MEMBER, corruptPath));
+      await assertFails(read(ADMIN, corruptPath));
+
+      await seed(Object.fromEntries(Object.keys(entries)
+        .concat(corruptPath).map((location) => [location, null])));
+    });
+    await check("Family shared-list rows inherit the channel ACL and remain server-written", async () => {
+      const familyId = "rules-family-list";
+      const heldFamilyId = "rules-family-list-held";
+      const itemPath = `clubs/${familyId}/channels/list/listItems/item-one`;
+      const heldItemPath = `clubs/${heldFamilyId}/channels/list/listItems/item-held`;
+      const item = (serverId, itemId) => ({
+        schemaVersion: 1,
+        serverId,
+        channelId: "list",
+        itemId,
+        text: "Milk",
+        checked: false,
+        checkedById: null,
+        createdById: MEMBER,
+        revision: 1,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      });
+      const entries = {
+        [`clubs/${familyId}`]: server(familyId, {
+          serverType: "family", type: "family", privacy: "inviteOnly",
+        }),
+        [`clubs/${familyId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${familyId}/members/${MEMBER}`]: member(MEMBER),
+        [`clubs/${familyId}/members/${ADMIN}`]: member(ADMIN, "admin"),
+        [`clubs/${familyId}/channels/list`]: channel(familyId, false, {
+          kind: "list", name: "Shopping list",
+        }),
+        [itemPath]: item(familyId, "item-one"),
+        [`clubs/${heldFamilyId}`]: server(heldFamilyId, {
+          held: true, serverType: "family", type: "family", privacy: "inviteOnly",
+        }),
+        [`clubs/${heldFamilyId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${heldFamilyId}/channels/list`]: channel(heldFamilyId, false, {
+          kind: "list", name: "Shopping list",
+        }),
+        [heldItemPath]: item(heldFamilyId, "item-held"),
+      };
+      await seed(entries);
+
+      await assertSucceeds(read(MEMBER, itemPath));
+      const visible = await assertSucceeds(getDocs(
+        collection(db(MEMBER), `clubs/${familyId}/channels/list/listItems`),
+      ));
+      assert.deepEqual(visible.docs.map((row) => row.id), ["item-one"]);
+      await assertFails(read(OUTSIDER, itemPath));
+      await assertFails(read(OWNER, heldItemPath));
+      for (const uid of [OWNER, MEMBER, ADMIN, OUTSIDER]) {
+        await assertFails(setDoc(doc(db(uid), itemPath), item(familyId, "item-one")));
+        await assertFails(updateDoc(doc(db(uid), itemPath), { checked: true }));
+        await assertFails(deleteDoc(doc(db(uid), itemPath)));
+      }
+
+      await seed(Object.fromEntries(Object.keys(entries).map((location) => [location, null])));
+    });
+    await check("Company whiteboards inherit their channel ACL and every mutation stays callable-owned", async () => {
+      const companyId = "rules-company-whiteboard";
+      const restrictedId = "rules-company-whiteboard-private";
+      const heldId = "rules-company-whiteboard-held";
+      const state = (serverId) => ({
+        schemaVersion: 1,
+        serverId,
+        channelId: "whiteboard",
+        stateId: "main",
+        generation: 1,
+        revision: 1,
+        strokeCount: 1,
+        nextSequence: 2,
+        clearedAt: null,
+        clearedById: null,
+        updatedAt: new Date(0),
+      });
+      const stroke = (serverId, strokeId) => ({
+        schemaVersion: 1,
+        serverId,
+        channelId: "whiteboard",
+        strokeId,
+        strokeKind: "polyline",
+        authorId: MEMBER,
+        generation: 1,
+        sequence: 1,
+        revision: 1,
+        color: "blue",
+        lineWidth: 5,
+        points: [{ x: .1, y: .2 }, { x: .8, y: .7 }],
+        createdAt: new Date(0),
+      });
+      const ordinaryState =
+        `clubs/${companyId}/channels/whiteboard/whiteboardState/main`;
+      const ordinaryStroke =
+        `clubs/${companyId}/channels/whiteboard/whiteboardStrokes/stroke-one`;
+      const restrictedState =
+        `clubs/${restrictedId}/channels/whiteboard/whiteboardState/main`;
+      const restrictedStroke =
+        `clubs/${restrictedId}/channels/whiteboard/whiteboardStrokes/stroke-private`;
+      const heldState =
+        `clubs/${heldId}/channels/whiteboard/whiteboardState/main`;
+      const entries = {
+        [`clubs/${companyId}`]: server(companyId),
+        [`clubs/${companyId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${companyId}/members/${MEMBER}`]: member(MEMBER),
+        [`clubs/${companyId}/channels/whiteboard`]: channel(companyId, false, {
+          kind: "whiteboard", name: "Whiteboard",
+        }),
+        [ordinaryState]: state(companyId),
+        [ordinaryStroke]: stroke(companyId, "stroke-one"),
+
+        [`clubs/${restrictedId}`]: server(restrictedId),
+        [`clubs/${restrictedId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${restrictedId}/members/${MEMBER}`]: member(MEMBER),
+        [`clubs/${restrictedId}/members/${ADMIN}`]: member(ADMIN, "admin"),
+        [`clubs/${restrictedId}/channels/whiteboard`]: channel(restrictedId, true, {
+          kind: "whiteboard", name: "Private whiteboard",
+        }),
+        [`clubs/${restrictedId}/channels/whiteboard/accessGrants/${MEMBER}`]:
+          grant(restrictedId, "whiteboard", MEMBER),
+        [restrictedState]: state(restrictedId),
+        [restrictedStroke]: stroke(restrictedId, "stroke-private"),
+
+        [`clubs/${heldId}`]: server(heldId, { held: true }),
+        [`clubs/${heldId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${heldId}/channels/whiteboard`]: channel(heldId, false, {
+          kind: "whiteboard", name: "Held whiteboard",
+        }),
+        [heldState]: state(heldId),
+      };
+      await seed(entries);
+
+      await assertSucceeds(read(MEMBER, ordinaryState));
+      await assertSucceeds(read(MEMBER, ordinaryStroke));
+      const visible = await assertSucceeds(getDocs(query(
+        collection(db(MEMBER), `clubs/${companyId}/channels/whiteboard/whiteboardStrokes`),
+        where("generation", "==", 1),
+        orderBy("sequence"),
+      )));
+      assert.deepEqual(visible.docs.map((row) => row.id), ["stroke-one"]);
+      await assertFails(read(OUTSIDER, ordinaryState));
+      await assertFails(read(OUTSIDER, ordinaryStroke));
+
+      await assertSucceeds(read(MEMBER, restrictedState));
+      await assertSucceeds(read(MEMBER, restrictedStroke));
+      await assertFails(read(ADMIN, restrictedState));
+      await assertFails(read(ADMIN, restrictedStroke));
+      await assertFails(read(OWNER, heldState));
+
+      for (const uid of [OWNER, MEMBER, ADMIN, OUTSIDER]) {
+        await assertFails(setDoc(doc(db(uid), ordinaryState), state(companyId)));
+        await assertFails(updateDoc(doc(db(uid), ordinaryState), { revision: 2 }));
+        await assertFails(deleteDoc(doc(db(uid), ordinaryState)));
+        await assertFails(setDoc(
+          doc(db(uid), ordinaryStroke),
+          stroke(companyId, "stroke-one"),
+        ));
+        await assertFails(updateDoc(doc(db(uid), ordinaryStroke), { color: "red" }));
+        await assertFails(deleteDoc(doc(db(uid), ordinaryStroke)));
+      }
+
+      await seed(Object.fromEntries(Object.keys(entries).map((location) => [location, null])));
+    });
+    await check("V1 Family check-ins stay member-private, location-free and callable-written", async () => {
+      const familyId = "rules-family-checkins";
+      const heldFamilyId = "rules-family-checkins-held";
+      const checkInPath = `clubs/${familyId}/checkIns/check-one`;
+      const heldCheckInPath = `clubs/${heldFamilyId}/checkIns/check-held`;
+      const checkIn = (serverId, checkInId) => ({
+        schemaVersion: 1,
+        serverId,
+        clubId: serverId,
+        checkInId,
+        userId: MEMBER,
+        displayName: MEMBER,
+        photoUrl: null,
+        status: "allGood",
+        createdAt: new Date(0),
+      });
+      const entries = {
+        [`clubs/${familyId}`]: server(familyId, {
+          serverType: "family", type: "family", privacy: "inviteOnly",
+        }),
+        [`clubs/${familyId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${familyId}/members/${MEMBER}`]: member(MEMBER),
+        [`clubs/${familyId}/members/${ADMIN}`]: member(ADMIN, "admin"),
+        [checkInPath]: checkIn(familyId, "check-one"),
+        [`clubs/${heldFamilyId}`]: server(heldFamilyId, {
+          held: true, serverType: "family", type: "family", privacy: "inviteOnly",
+        }),
+        [`clubs/${heldFamilyId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [heldCheckInPath]: checkIn(heldFamilyId, "check-held"),
+      };
+      await seed(entries);
+
+      await assertSucceeds(read(MEMBER, checkInPath));
+      const visible = await assertSucceeds(getDocs(
+        collection(db(MEMBER), `clubs/${familyId}/checkIns`),
+      ));
+      assert.deepEqual(visible.docs.map((row) => row.id), ["check-one"]);
+      await assertFails(read(OUTSIDER, checkInPath));
+      await assertFails(read(OWNER, heldCheckInPath));
+      // The existing active Company fixture cannot expose a row through the
+      // V1 Family-only branch, even to one of its own members.
+      await assertFails(read(MEMBER, `clubs/${ACTIVE}/checkIns/one`));
+      for (const uid of [OWNER, MEMBER, ADMIN, OUTSIDER]) {
+        await assertFails(setDoc(doc(db(uid), checkInPath), checkIn(familyId, "check-one")));
+        await assertFails(updateDoc(doc(db(uid), checkInPath), { status: "callMe" }));
+        await assertFails(deleteDoc(doc(db(uid), checkInPath)));
+      }
+
+      await seed(Object.fromEntries(Object.keys(entries).map((location) => [location, null])));
+    });
+    await check("V1 Family Memories inherit the Memories-channel ACL and stay callable-written", async () => {
+      const familyId = "rules-family-memories";
+      const heldFamilyId = "rules-family-memories-held";
+      const memoryId = "fm_0123456789abcdef0123456789abcdef01234567";
+      const memoryPath = `clubs/${familyId}/moments/${memoryId}`;
+      const heldPath = `clubs/${heldFamilyId}/moments/${memoryId}`;
+      const memory = (serverId, changes = {}) => ({
+        schemaVersion: 1,
+        memoryKind: "familyMemory",
+        serverId,
+        clubId: serverId,
+        channelId: "memories",
+        memoryId,
+        authorId: MEMBER,
+        authorDisplayName: MEMBER,
+        authorPhotoUrl: null,
+        caption: "A private family memory",
+        status: "published",
+        photo: {
+          storagePath: `family_moments/${serverId}/${MEMBER}/${memoryId}_photo.jpg`,
+          generation: "1",
+          contentType: "image/jpeg",
+          size: 128,
+        },
+        voice: {
+          storagePath: `family_moments/${serverId}/${MEMBER}/${memoryId}_voice.m4a`,
+          generation: "2",
+          contentType: "audio/mp4",
+          size: 1024,
+          durationMs: 1000,
+        },
+        revision: 1,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+        ...changes,
+      });
+      const entries = {
+        [`clubs/${familyId}`]: server(familyId, {
+          serverType: "family", type: "family", privacy: "inviteOnly",
+        }),
+        [`clubs/${familyId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${familyId}/members/${MEMBER}`]: member(MEMBER),
+        [`clubs/${familyId}/members/${ADMIN}`]: member(ADMIN, "admin"),
+        [`clubs/${familyId}/channels/memories`]: channel(familyId, false, {
+          kind: "memories", name: "Memories",
+        }),
+        [memoryPath]: memory(familyId),
+        [`clubs/${heldFamilyId}`]: server(heldFamilyId, {
+          held: true, serverType: "family", type: "family", privacy: "inviteOnly",
+        }),
+        [`clubs/${heldFamilyId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${heldFamilyId}/channels/memories`]: channel(heldFamilyId, false, {
+          kind: "memories", name: "Memories",
+        }),
+        [heldPath]: memory(heldFamilyId),
+      };
+      await seed(entries);
+
+      await assertSucceeds(read(MEMBER, memoryPath));
+      const visible = await assertSucceeds(getDocs(query(
+        collection(db(MEMBER), `clubs/${familyId}/moments`),
+        where("channelId", "==", "memories"),
+        where("status", "==", "published"),
+        orderBy("createdAt", "desc"),
+      )));
+      assert.deepEqual(visible.docs.map((row) => row.id), [memoryId]);
+      await assertFails(read(OUTSIDER, memoryPath));
+      await assertFails(read(BANNED, memoryPath));
+      await assertFails(read(OWNER, heldPath));
+      await seed({ [memoryPath]: memory(familyId, { status: "deleting" }) });
+      await assertFails(read(MEMBER, memoryPath));
+      await seed({ [memoryPath]: memory(familyId) });
+      for (const uid of [OWNER, MEMBER, ADMIN, OUTSIDER]) {
+        await assertFails(setDoc(doc(db(uid), memoryPath), memory(familyId)));
+        await assertFails(updateDoc(doc(db(uid), memoryPath), { caption: "forged" }));
+        await assertFails(deleteDoc(doc(db(uid), memoryPath)));
+      }
+
+      await seed(Object.fromEntries(Object.keys(entries).map((location) => [location, null])));
+    });
+    await check("Community follow projections are private, owner-readable only and server-written", async () => {
+      const communityId = "rules-community-follow";
+      const follow = (uid) => ({
+        schemaVersion: 1,
+        serverId: communityId,
+        userId: uid,
+        following: true,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      });
+      const primary = `clubs/${communityId}/followers/${MEMBER}`;
+      const mirror = `users/${MEMBER}/serverFollows/${communityId}`;
+      const entries = {
+        [`clubs/${communityId}`]: server(communityId, {
+          serverType: "community", type: "community", privacy: "public",
+        }),
+        [`clubs/${communityId}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${communityId}/members/${MEMBER}`]: member(MEMBER),
+        [primary]: follow(MEMBER),
+        [mirror]: follow(MEMBER),
+        [`serverFamilyMemoryUploadReservations/fm_private`]: { serverId: communityId },
+        [`serverFamilyMemoryUploadLeases/${MEMBER}`]: { serverId: communityId },
+        [`serverFamilyMemoryUploadBudgets/private`]: { ownerId: MEMBER },
+        [`serverFamilyMemoryDeletionJobs/private`]: { serverId: communityId },
+      };
+      await seed(entries);
+
+      await assertSucceeds(read(MEMBER, mirror));
+      const own = await assertSucceeds(getDocs(
+        collection(db(MEMBER), `users/${MEMBER}/serverFollows`),
+      ));
+      assert.deepEqual(own.docs.map((row) => row.id), [communityId]);
+      for (const uid of [OWNER, OUTSIDER, BANNED]) {
+        await assertFails(read(uid, mirror));
+        await assertFails(getDocs(collection(db(uid), `users/${MEMBER}/serverFollows`)));
+      }
+      for (const uid of [OWNER, MEMBER, OUTSIDER]) {
+        await assertFails(read(uid, primary));
+        await assertFails(getDocs(collection(db(uid), `clubs/${communityId}/followers`)));
+        await assertFails(setDoc(doc(db(uid), primary), follow(MEMBER)));
+        await assertFails(setDoc(doc(db(uid), mirror), follow(MEMBER)));
+        await assertFails(updateDoc(doc(db(uid), mirror), { following: false }));
+        await assertFails(deleteDoc(doc(db(uid), mirror)));
+      }
+      for (const location of [
+        "serverFamilyMemoryUploadReservations/fm_private",
+        `serverFamilyMemoryUploadLeases/${MEMBER}`,
+        "serverFamilyMemoryUploadBudgets/private",
+        "serverFamilyMemoryDeletionJobs/private",
+      ]) {
+        await assertFails(read(MEMBER, location));
+        await assertFails(setDoc(doc(db(MEMBER), location), { forged: true }));
+        await assertFails(updateDoc(doc(db(MEMBER), location), { forged: true }));
+        await assertFails(deleteDoc(doc(db(MEMBER), location)));
+      }
+
+      await seed(Object.fromEntries(Object.keys(entries).map((location) => [location, null])));
+    });
     await check("a legacy manager keeps ordinary channel writes but cannot forge liveness on one", async () => {
       await assertSucceeds(updateDoc(doc(db(OWNER), "clubs/legacy-public/channels/chat"), { name: "Renamed chat" }));
       await assertSucceeds(setDoc(doc(db(OWNER), "clubs/legacy-public/channels/plain"), { name: "Plain", type: "chat", position: 8 }));
@@ -458,8 +1407,36 @@ async function main() {
       await seed({ "clubs/legacy-public/channels/tainted": { name: "Tainted", type: "chat", position: 7, liveness: live() } });
       await assertFails(updateDoc(doc(db(OWNER), "clubs/legacy-public/channels/tainted"), { name: "Renamed" }));
     });
-    await check("unsupported channel modules remain denied, not generic client writable", async () => {
-      for (const moduleName of ["events", "questions", "episodes", "boards", "files", "listItems"]) {
+    await check("a migration-STAGED legacy channel is still fully manageable, which is why liveness is written with the root", async () => {
+      // This is the property functions/servers/migration_apply.js depends on.
+      // Its channels stage writes every V1 field onto a channel whose ROOT is
+      // still unversioned, and that window has to be invisible to the Club
+      // sitting in it. The field that would have broken it is `liveness` —
+      // see the check above — so the engine writes that one with the root
+      // instead. Everything else the stage writes is inert here, proven by
+      // exercising the real manager write against a really staged document.
+      await seed({ "clubs/legacy-public/channels/staged": {
+        name: "Staged", type: "chat", position: 10, isPrivate: false, createdBy: OWNER,
+        serverSchemaVersion: 1, serverId: "legacy-public", kind: "text",
+        accessMode: "members", accessPolicy: { accessMode: "members", roleIds: [], userIds: [] },
+        categoryId: null, status: "active", roomId: null, activeSessionId: null,
+        experience: null, mediaMode: null, aclRevision: 1, revision: 1,
+        historySource: { kind: "channelMessages" },
+      } });
+      await assertSucceeds(updateDoc(doc(db(OWNER), "clubs/legacy-public/channels/staged"), { name: "Renamed while staged" }));
+      await assertSucceeds(updateDoc(doc(db(OWNER), "clubs/legacy-public/channels/staged"), { position: 11 }));
+      // The broad legacy channel query still answers for a member of that
+      // Club: the ROOT is what decides, and it is not versioned yet. (Only
+      // OWNER is a member of the legacy-public fixture.)
+      await assertSucceeds(read(OWNER, "clubs/legacy-public/channels/staged"));
+      await assertSucceeds(getDocs(query(collection(db(OWNER), "clubs/legacy-public/channels"), orderBy("position"))));
+      await assertFails(getDocs(query(collection(db(OUTSIDER), "clubs/legacy-public/channels"), orderBy("position"))));
+      // The forgery guard is unchanged on a staged channel.
+      await assertFails(updateDoc(doc(db(OWNER), "clubs/legacy-public/channels/staged"), { liveness: live() }));
+      await assertSucceeds(deleteDoc(doc(db(OWNER), "clubs/legacy-public/channels/staged")));
+    });
+    await check("unfinished channel modules remain denied, not generic client writable", async () => {
+      for (const moduleName of ["questions", "episodes", "boards", "files", "listItems"]) {
         await assertFails(setDoc(doc(db(OWNER), `clubs/${ACTIVE}/channels/general/${moduleName}/one`), { title: "forged" }));
       }
     });
@@ -734,6 +1711,203 @@ async function main() {
       assert.equal((await assertSucceeds(read(OWNER, own(OWNER)).catch(() => ({ exists: () => false })))).exists(), false);
     });
 
+    // ---------------------------------------------------------------------
+    // Management parity (ADR-F). Every write removeServerMemberV1,
+    // setServerMemberBanV1, deleteServerV1 and the four staff adapters make
+    // is an Admin SDK write onto a path no client may touch — and each of
+    // those writes is then HONOURED by these same rules. Both halves are
+    // proven here: the deny, and the enforcement it produces.
+    // ---------------------------------------------------------------------
+    const PARITY = "server-parity";
+    const PARITY_BANNED = "server-parity-banned";
+    await seed({
+      [`users/${PARITY_BANNED}`]: { displayName: PARITY_BANNED, banned: false, disabled: false },
+      [`clubs/${PARITY}`]: server(PARITY),
+      [`clubs/${PARITY}/members/${OWNER}`]: member(OWNER, "owner"),
+      [`clubs/${PARITY}/members/${MEMBER}`]: member(MEMBER, "member"),
+      [`clubs/${PARITY}/members/${ADMIN}`]: member(ADMIN, "admin"),
+      [`clubs/${PARITY}/members/${PARITY_BANNED}`]: member(PARITY_BANNED, "member"),
+      [`clubs/${PARITY}/channels/general`]: channel(PARITY),
+      [`clubs/${PARITY}/memberAuthorizations/${MEMBER}`]: {
+        schemaVersion: 1, userId: MEMBER, revision: 1, status: "member", updatedAt: new Date(0),
+      },
+      [`serverControlOutbox/parity-job`]: {
+        schemaVersion: 1, kind: "memberRemoved", serverId: PARITY, userId: MEMBER,
+        membershipRevision: 2, operationId: "parity-job", status: "pending",
+      },
+    });
+
+    await check("the authorization ledger a removal/ban advances is unreadable and unwritable by every client", async () => {
+      const location = `clubs/${PARITY}/memberAuthorizations/${MEMBER}`;
+      for (const uid of [OWNER, ADMIN, MEMBER, OUTSIDER]) {
+        await assertFails(read(uid, location));
+        await assertFails(setDoc(doc(db(uid), location), { schemaVersion: 1, userId: uid, revision: 99, status: "member" }));
+        await assertFails(updateDoc(doc(db(uid), location), { revision: 99 }));
+        await assertFails(deleteDoc(doc(db(uid), location)));
+      }
+      // Not even the subject may mint their own revision — that is the fence
+      // every grant and every issued media token is checked against.
+      await assertFails(setDoc(doc(db(MEMBER), `clubs/${PARITY}/memberAuthorizations/${MEMBER}`),
+        { schemaVersion: 1, userId: MEMBER, revision: 2, status: "member" }));
+    });
+
+    await check("the control outbox that revokes a removed or banned member is closed to every client", async () => {
+      for (const uid of [OWNER, ADMIN, MEMBER, OUTSIDER]) {
+        await assertFails(read(uid, "serverControlOutbox/parity-job"));
+        await assertFails(setDoc(doc(db(uid), "serverControlOutbox/forged"), {
+          schemaVersion: 1, kind: "serverDelete", serverId: PARITY, operationId: "forged", status: "pending",
+        }));
+        await assertFails(updateDoc(doc(db(uid), "serverControlOutbox/parity-job"), { status: "completed" }));
+        await assertFails(deleteDoc(doc(db(uid), "serverControlOutbox/parity-job")));
+      }
+      await assertFails(getDocs(query(collection(db(OWNER), "serverControlOutbox"), limit(1))));
+    });
+
+    await check("no client can remove a member, ban one, lift a ban, suspend a root or mark it deleted", async () => {
+      const target = `clubs/${PARITY}/members/${MEMBER}`;
+      // Removal: member delete is closed for EVERY role, on a versioned root
+      // and on a legacy one — removeServerMemberV1 is the only writer.
+      for (const uid of [OWNER, ADMIN, MEMBER, OUTSIDER]) {
+        await assertFails(deleteDoc(doc(db(uid), target)));
+        await assertFails(deleteDoc(doc(db(uid), `clubs/${PARITY}/members/${uid}`)));
+      }
+      // Ban and lift: `banned` is not in any client field allowlist.
+      for (const uid of [OWNER, ADMIN, MEMBER]) {
+        await assertFails(updateDoc(doc(db(uid), target), { banned: true }));
+        await assertFails(updateDoc(doc(db(uid), target), { banned: false }));
+        await assertFails(updateDoc(doc(db(uid), target), { banned: true, banReason: "x", bannedBy: uid }));
+        await assertFails(updateDoc(doc(db(uid), target), { authorizationRevision: 99 }));
+      }
+      // Moderation status and the deletion mark are root fields no client
+      // may write on a versioned root, and the root itself is undeletable.
+      for (const uid of [OWNER, ADMIN, MEMBER, OUTSIDER]) {
+        await assertFails(updateDoc(doc(db(uid), `clubs/${PARITY}`), { status: "suspended" }));
+        await assertFails(updateDoc(doc(db(uid), `clubs/${PARITY}`), { status: "active", moderationReason: null }));
+        await assertFails(updateDoc(doc(db(uid), `clubs/${PARITY}`), { deletionInProgress: true }));
+        await assertFails(updateDoc(doc(db(uid), `clubs/${PARITY}`), { memberCount: 1 }));
+        await assertFails(deleteDoc(doc(db(uid), `clubs/${PARITY}`)));
+      }
+      // Nothing above moved anything.
+      const after = (await assertSucceeds(read(OWNER, target))).data();
+      assert.equal(after.banned, undefined);
+      assert.equal(after.authorizationRevision, 1);
+    });
+
+    await check("a server ban, a suspension and a deletion mark are each HONOURED by these rules", async () => {
+      // Baseline: the member can read the root and list channels.
+      await assertSucceeds(read(PARITY_BANNED, `clubs/${PARITY}`));
+      await assertSucceeds(directory(PARITY_BANNED, PARITY));
+
+      await seed({ [`clubs/${PARITY}/members/${PARITY_BANNED}`]: member(PARITY_BANNED, "member", { banned: true }) });
+      await assertFails(directory(PARITY_BANNED, PARITY));
+      await assertFails(read(PARITY_BANNED, `clubs/${PARITY}/channels/general`));
+      await assertFails(read(PARITY_BANNED, `clubs/${PARITY}/channels/general/messages/one`));
+      // Lifting the ban restores exactly what it removed.
+      await seed({ [`clubs/${PARITY}/members/${PARITY_BANNED}`]: member(PARITY_BANNED, "member", { banned: false }) });
+      await assertSucceeds(directory(PARITY_BANNED, PARITY));
+
+      // A staff suspension freezes the root for everyone, owner included.
+      await seed({ [`clubs/${PARITY}`]: server(PARITY, { status: "suspended" }) });
+      for (const uid of [OWNER, ADMIN, MEMBER]) await assertFails(directory(uid, PARITY));
+      await seed({ [`clubs/${PARITY}`]: server(PARITY) });
+      await assertSucceeds(directory(MEMBER, PARITY));
+
+      // The deletion mark does the same, and it is what deleteServerV1 and
+      // the staff adapter write.
+      await seed({ [`clubs/${PARITY}`]: server(PARITY, { deletionInProgress: true }) });
+      for (const uid of [OWNER, ADMIN, MEMBER]) await assertFails(directory(uid, PARITY));
+      await seed({ [`clubs/${PARITY}`]: server(PARITY) });
+    });
+
+    const MEMORY_UPLOAD_SERVER = "rules-family-upload";
+    const MEMORY_UPLOAD_ID = "fm_89abcdef0123456789abcdef0123456789abcdef";
+    const MEMORY_PHOTO = `family_moments/${MEMORY_UPLOAD_SERVER}/${OWNER}/${MEMORY_UPLOAD_ID}_photo.jpg`;
+    const MEMORY_VOICE = `family_moments/${MEMORY_UPLOAD_SERVER}/${OWNER}/${MEMORY_UPLOAD_ID}_voice.m4a`;
+    const memoryMetadata = (assetKind) => ({
+      yovoiceServerId: MEMORY_UPLOAD_SERVER,
+      yovoiceChannelId: "memories",
+      yovoiceOwnerUid: OWNER,
+      yovoiceMemoryId: MEMORY_UPLOAD_ID,
+      yovoiceAssetKind: assetKind,
+    });
+    await seed({
+      [`clubs/${MEMORY_UPLOAD_SERVER}`]: server(MEMORY_UPLOAD_SERVER, {
+        serverType: "family", type: "family", privacy: "inviteOnly",
+      }),
+      [`clubs/${MEMORY_UPLOAD_SERVER}/members/${OWNER}`]: member(OWNER, "owner"),
+      [`clubs/${MEMORY_UPLOAD_SERVER}/members/${MEMBER}`]: member(MEMBER),
+      [`clubs/${MEMORY_UPLOAD_SERVER}/channels/memories`]: channel(MEMORY_UPLOAD_SERVER, false, {
+        kind: "memories", name: "Memories",
+      }),
+      [`serverFamilyMemoryUploadReservations/${MEMORY_UPLOAD_ID}`]: {
+        schemaVersion: 1,
+        kind: "serverFamilyMemory",
+        serverId: MEMORY_UPLOAD_SERVER,
+        channelId: "memories",
+        memoryId: MEMORY_UPLOAD_ID,
+        ownerId: OWNER,
+        requestId: "memory-upload-request",
+        caption: "",
+        photoStoragePath: MEMORY_PHOTO,
+        photoContentType: "image/jpeg",
+        photoSize: 128,
+        voiceStoragePath: MEMORY_VOICE,
+        voiceContentType: "audio/mp4",
+        voiceSize: 1024,
+        voiceDurationMs: 1000,
+        status: "uploading",
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 60 * 60_000),
+      },
+    });
+    await check("a live Family Memory reservation accepts only its two exact immutable objects", async () => {
+      await assertSucceeds(uploadBytes(
+        ref(storage(OWNER), MEMORY_PHOTO),
+        new Uint8Array(128),
+        { contentType: "image/jpeg", customMetadata: memoryMetadata("photo") },
+      ));
+      await assertFails(uploadBytes(
+        ref(storage(OWNER), MEMORY_VOICE),
+        new Uint8Array(1024),
+        { contentType: "audio/mp4", customMetadata: {
+          ...memoryMetadata("voice"), forged: "true",
+        } },
+      ));
+      await assertSucceeds(uploadBytes(
+        ref(storage(OWNER), MEMORY_VOICE),
+        new Uint8Array(1024),
+        { contentType: "audio/mp4", customMetadata: memoryMetadata("voice") },
+      ));
+      await assertFails(uploadBytes(
+        ref(storage(OWNER), MEMORY_PHOTO),
+        new Uint8Array(128),
+        { contentType: "image/jpeg", customMetadata: memoryMetadata("photo") },
+      ));
+      await assertFails(deleteObject(ref(storage(OWNER), MEMORY_PHOTO)));
+      await assertFails(uploadBytes(
+        ref(storage(MEMBER),
+          `family_moments/${MEMORY_UPLOAD_SERVER}/${MEMBER}/${MEMORY_UPLOAD_ID}_photo.jpg`),
+        new Uint8Array(128),
+        { contentType: "image/jpeg", customMetadata: memoryMetadata("photo") },
+      ));
+      await assertFails(uploadBytes(
+        ref(storage(OWNER),
+          `family_moments/${MEMORY_UPLOAD_SERVER}/${OWNER}/${MEMORY_UPLOAD_ID}_photo.png`),
+        new Uint8Array(128),
+        { contentType: "image/png", customMetadata: memoryMetadata("photo") },
+      ));
+    });
+    await check("Family Memory direct reads exist only for the owner while the upload reservation is live", async () => {
+      await assertSucceeds(getBytes(ref(storage(OWNER), MEMORY_PHOTO)));
+      await assertFails(getBytes(ref(storage(MEMBER), MEMORY_PHOTO)));
+      await assertFails(getBytes(ref(storage(OUTSIDER), MEMORY_PHOTO)));
+      await assertFails(listAll(ref(storage(OWNER),
+        `family_moments/${MEMORY_UPLOAD_SERVER}/${OWNER}`)));
+      await seed({ [`serverFamilyMemoryUploadReservations/${MEMORY_UPLOAD_ID}`]: null });
+      await assertFails(getBytes(ref(storage(OWNER), MEMORY_PHOTO)));
+      await assertFails(getBytes(ref(storage(MEMBER), MEMORY_VOICE)));
+    });
+
     await env.withSecurityRulesDisabled(async (ctx) => {
       for (const location of [`clubs/${OWNER}/${HELD}/avatar`, `clubs/${OWNER}/${ACTIVE}/avatar`,
         `clubs/${OWNER}/legacy-public/avatar`, `family_moments/legacy-family/${OWNER}/one.m4a`]) {
@@ -744,6 +1918,22 @@ async function main() {
       await assertSucceeds(getBytes(ref(storage(null), `clubs/${OWNER}/legacy-public/avatar`)));
       await assertSucceeds(getBytes(ref(storage(OWNER), `family_moments/legacy-family/${OWNER}/one.m4a`)));
       await assertFails(getBytes(ref(storage(OUTSIDER), `family_moments/legacy-family/${OWNER}/one.m4a`)));
+    });
+    await check("Podcast episode MP3s have no Firebase client read, list, upload or delete path", async () => {
+      const pathValue = `server_podcast_episodes/${ACTIVE}/episodes/episode-one.mp3`;
+      await env.withSecurityRulesDisabled(async (ctx) => {
+        await uploadBytes(ref(ctx.storage(PROJECT), pathValue), new Uint8Array(1024), {
+          contentType: "audio/mpeg",
+        });
+      });
+      for (const uid of [OWNER, MEMBER, ADMIN, OUTSIDER]) {
+        await assertFails(getBytes(ref(storage(uid), pathValue)));
+        await assertFails(listAll(ref(storage(uid), `server_podcast_episodes/${ACTIVE}`)));
+        await assertFails(uploadBytes(ref(storage(uid), pathValue), new Uint8Array(1024), {
+          contentType: "audio/mpeg",
+        }));
+        await assertFails(deleteObject(ref(storage(uid), pathValue)));
+      }
     });
     await check("held and active V1 artwork cannot use legacy public Storage path", async () => {
       for (const sid of [HELD, ACTIVE]) for (const uid of [null, OWNER, MEMBER, OUTSIDER]) {

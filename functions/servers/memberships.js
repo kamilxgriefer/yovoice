@@ -1,18 +1,19 @@
 const {
-  activeProfile, fail, requireUid, timestampMillis, transactionGetAll,
+  activeProfile, assertNotRestricted, fail, requireUid, timestampMillis, transactionGetAll,
 } = require("../integrity/guards");
 const {
   MAX_SERVER_CHANNELS, ROLE_POWER, ROLES, requireEnum, serverChannelRefId, serverInviteRefPath,
 } = require("./contract");
 const {
   MODERATOR_ROLES, canonicalChannel, canonicalMember, canonicalServer, denied,
-  readServerAccess, validRevision,
+  invitePredatesDeparture, readServerAccess, validRevision,
 } = require("./authority");
 const {
   hasFamilyServerCapacity, readOwnerAllocations, readServerOwnerGuards, requireFreeServerCapacity,
   writeCapacityGuards, writeOwnerGuards,
 } = require("./capacity");
 const { createServerOperations } = require("./operations");
+const { friendshipGuardMatches } = require("./invites");
 const { canonicalDisplayName, memberDocument, membershipMirror, writeChannelGrant } = require("./documents");
 const { mutationInput } = require("./channels");
 const { capturedRecipientTargets, convergenceState, readConvergenceBindings,
@@ -70,21 +71,73 @@ function membershipOutbox({ db, transaction, identity, serverId, uid, revision, 
   });
 }
 
-async function pendingInvitation({ db, transaction, reference, server, uid, nowMs }) {
+function lifecycleInvitation(snapshot, serverId, uid) {
+  const invite = snapshot?.exists ? snapshot.data() : null;
+  if (!invite || invite.serverSchemaVersion !== 1 || invite.serverId !== serverId ||
+      invite.inviteeId !== uid || invite.status !== "pending" ||
+      !validRevision(invite.generation)) return null;
+  return invite;
+}
+
+function retireMembershipInvitation({ db, transaction, reference, serverId, uid,
+  snapshot, now, status, actorUid = null }) {
+  transaction.delete(db.doc(serverInviteRefPath(uid, serverId)));
+  const invite = lifecycleInvitation(snapshot, serverId, uid);
+  if (!invite) return null;
+  if (status === "accepted") {
+    transaction.update(reference.collection("invites").doc(uid), {
+      status: "accepted", respondedAt: now, updatedAt: now,
+    });
+  } else if (status === "revoked") {
+    transaction.update(reference.collection("invites").doc(uid), {
+      status: "revoked", revokedAt: now, revokedById: requireUid(actorUid, "actorUid"), updatedAt: now,
+    });
+  } else {
+    throw new TypeError("A terminal invitation status is required.");
+  }
+  return invite;
+}
+
+async function pendingInvitation({ db, transaction, reference, server, uid, nowMs,
+  snapshot, authorization, requireAdmissionPolicy = true }) {
   const inviteReference = reference.collection("invites").doc(uid);
-  const snapshot = await transaction.get(inviteReference);
   const invite = snapshot.exists ? snapshot.data() : null;
   if (!invite || invite.serverSchemaVersion !== 1 || invite.serverId !== reference.id ||
       invite.inviteeId !== uid || invite.status !== "pending" ||
       !validRevision(invite.generation) || !validRevision(invite.inviterAuthorizationRevision) ||
       timestampMillis(invite.expiresAt) === null || timestampMillis(invite.expiresAt) <= nowMs ||
       typeof invite.inviterId !== "string") denied();
+  // A pending document from before the most recent departure can never be a
+  // re-entry capability. New invitations remain possible because every
+  // re-issue receives a fresh createdAt after the canonical `left` ledger.
+  if (invitePredatesDeparture(invite, authorization, uid)) denied();
   requireUid(invite.inviterId);
-  const [inviterSnapshot, inviterProfile] = await transactionGetAll(transaction,
-    reference.collection("members").doc(invite.inviterId), db.doc(`users/${invite.inviterId}`));
+  // Declining only narrows access and must stay available after either party
+  // blocks, unfriends or becomes communication-restricted. Accepting (and the
+  // implicit private join path) re-proves the complete issuance policy so a
+  // seven-day-old capability cannot outlive the relationship that allowed it.
+  if (!requireAdmissionPolicy) return { invite, inviteReference };
+  const [inviterSnapshot, inviterProfile, inviterRestriction,
+    inviterBlock, inviteeBlock, inviterGuard, inviteeGuard] =
+    await transactionGetAll(transaction,
+      reference.collection("members").doc(invite.inviterId),
+      db.doc(`users/${invite.inviterId}`),
+      db.doc(`restrictions/${invite.inviterId}`),
+      db.doc(`users/${invite.inviterId}/blocked/${uid}`),
+      db.doc(`users/${uid}/blocked/${invite.inviterId}`),
+      db.doc(`friendshipGuards/${invite.inviterId}/friends/${uid}`),
+      db.doc(`friendshipGuards/${uid}/friends/${invite.inviterId}`));
   const inviter = canonicalMember(inviterSnapshot, invite.inviterId, server);
   if (!MODERATOR_ROLES.includes(inviter.role) || inviter.authorizationRevision !== invite.inviterAuthorizationRevision) denied();
-  activeProfile(inviterProfile, "Inviting");
+  try {
+    activeProfile(inviterProfile, "Inviting");
+    assertNotRestricted(inviterRestriction, "Inviting", nowMs);
+  } catch {
+    denied();
+  }
+  if (inviterBlock.exists || inviteeBlock.exists ||
+      !friendshipGuardMatches(inviterGuard, invite.inviterId, uid) ||
+      !friendshipGuardMatches(inviteeGuard, uid, invite.inviterId)) denied();
   return { invite, inviteReference };
 }
 
@@ -101,8 +154,9 @@ function createServerMembershipService(dependencies) {
       const reference = db.doc(`clubs/${input.serverId}`);
       const memberReference = reference.collection("members").doc(auth.uid);
       const revisionReference = authorizationReference(reference, auth.uid);
-      const [rootSnapshot, existing, revisionSnapshot] = await transactionGetAll(transaction,
-        reference, memberReference, revisionReference);
+      const inviteReference = reference.collection("invites").doc(auth.uid);
+      const [rootSnapshot, existing, revisionSnapshot, inviteSnapshot] = await transactionGetAll(transaction,
+        reference, memberReference, revisionReference, inviteReference);
       const server = canonicalServer(rootSnapshot);
       if (existing.exists) {
         const member = canonicalMember(existing, auth.uid, server);
@@ -123,6 +177,8 @@ function createServerMembershipService(dependencies) {
       const publicJoin = !respond && ["community", "podcast"].includes(server.serverType) && server.privacy === "public";
       const invitation = publicJoin ? null : await pendingInvitation({
         db, transaction, reference, server, uid: auth.uid, nowMs,
+        snapshot: inviteSnapshot, authorization: revisionSnapshot,
+        requireAdmissionPolicy: !(respond && input.response === "decline"),
       });
       if (respond && input.response === "decline") {
         transaction.update(invitation.inviteReference, { status: "declined", respondedAt: now, updatedAt: now });
@@ -144,6 +200,12 @@ function createServerMembershipService(dependencies) {
       if (invitation) {
         transaction.update(invitation.inviteReference, { status: "accepted", respondedAt: now, updatedAt: now });
         transaction.delete(db.doc(serverInviteRefPath(auth.uid, input.serverId)));
+      } else if (publicJoin) {
+        // Public admission supersedes an outstanding invitation. Retiring it
+        // prevents that old generation from becoming a private re-entry path
+        // after the member later leaves or is removed.
+        retireMembershipInvitation({ db, transaction, reference, serverId: input.serverId,
+          uid: auth.uid, snapshot: inviteSnapshot, now, status: "accepted" });
       }
       transaction.update(reference, { memberCount: memberCount + 1, revision: server.revision + 1, updatedAt: now });
       membershipOutbox({ db, transaction, identity, serverId: input.serverId, uid: auth.uid, revision: nextRevision,
@@ -159,8 +221,9 @@ function createServerMembershipService(dependencies) {
       const reference = db.doc(`clubs/${input.serverId}`);
       const memberReference = reference.collection("members").doc(auth.uid);
       const revisionReference = authorizationReference(reference, auth.uid);
-      const [rootSnapshot, existing, revisionSnapshot] = await transactionGetAll(transaction,
-        reference, memberReference, revisionReference);
+      const inviteReference = reference.collection("invites").doc(auth.uid);
+      const [rootSnapshot, existing, revisionSnapshot, inviteSnapshot] = await transactionGetAll(transaction,
+        reference, memberReference, revisionReference, inviteReference);
       const server = canonicalServer(rootSnapshot);
       if (prior) {
         if (!existing.exists && authorizationRevision(revisionSnapshot, auth.uid) === prior.membershipRevision) return prior;
@@ -176,6 +239,8 @@ function createServerMembershipService(dependencies) {
       if (memberCount < 2) fail("data-loss", "Membership count needs reconciliation.");
       transaction.delete(memberReference);
       transaction.delete(db.doc(`users/${auth.uid}/clubs/${input.serverId}`));
+      retireMembershipInvitation({ db, transaction, reference, serverId: input.serverId,
+        uid: auth.uid, snapshot: inviteSnapshot, now, status: "revoked", actorUid: auth.uid });
       writeAuthorization(transaction, revisionReference, auth.uid, nextRevision, "left", now);
       refreshMemberGrants({ db, transaction, serverId: input.serverId, channels, member, now, remove: true });
       transaction.update(reference, { memberCount: memberCount - 1, revision: server.revision + 1, updatedAt: now });
@@ -331,5 +396,7 @@ function createServerMembershipService(dependencies) {
 
 module.exports = {
   authorizationReference, authorizationRevision, createServerMembershipService,
-  pendingInvitation, readGrantChannels, refreshMemberGrants,
+  lifecycleInvitation, membershipOutbox, pendingInvitation, readGrantChannels,
+  refreshMemberGrants, retireMembershipInvitation,
+  writeAuthorization,
 };

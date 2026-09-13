@@ -3,7 +3,8 @@ const {
 } = require("../integrity/guards");
 const { SERVER_INVITE_TTL_MS, serverInviteRefPath } = require("./contract");
 const {
-  MODERATOR_ROLES, canonicalMember, denied, readServerAccess, validRevision,
+  MODERATOR_ROLES, canonicalMember, denied, invitePredatesDeparture,
+  readServerAccess, validRevision,
 } = require("./authority");
 const { createServerOperations } = require("./operations");
 const { canonicalDisplayName } = require("./documents");
@@ -71,11 +72,12 @@ function createServerInviteService(dependencies) {
       if (!INVITER_ROLES.includes(access.member.role)) denied();
       const inviteReference = access.reference.collection("invites").doc(input.inviteeId);
       const [
-        inviteSnapshot, memberSnapshot, inviteeProfile, inviteeRestriction,
+        inviteSnapshot, memberSnapshot, inviteeAuthorization, inviteeProfile, inviteeRestriction,
         inviterBlock, inviteeBlock, inviterGuard, inviteeGuard,
       ] = await transactionGetAll(transaction,
         inviteReference,
         access.reference.collection("members").doc(input.inviteeId),
+        access.reference.collection("memberAuthorizations").doc(input.inviteeId),
         db.doc(`users/${input.inviteeId}`),
         db.doc(`restrictions/${input.inviteeId}`),
         db.doc(`users/${auth.uid}/blocked/${input.inviteeId}`),
@@ -105,7 +107,8 @@ function createServerInviteService(dependencies) {
           !friendshipGuardMatches(inviteeGuard, input.inviteeId, auth.uid)) denied();
       const currentlyPending = canonicalInvite(existing, input.serverId, input.inviteeId) &&
         existing.status === "pending" && validRevision(existing.inviterAuthorizationRevision) &&
-        (timestampMillis(existing.expiresAt) ?? 0) > nowMs;
+        (timestampMillis(existing.expiresAt) ?? 0) > nowMs &&
+        !invitePredatesDeparture(existing, inviteeAuthorization, input.inviteeId);
       if (currentlyPending) {
         // A pending invitation is reused only while its own inviter can still
         // stand behind it at acceptance time; otherwise it is dead on arrival

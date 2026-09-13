@@ -560,6 +560,7 @@ describe("public profile search", () => {
       statusMessage: "",
       accountType: "personal",
       premiumIdentity: false,
+      creatorAudienceVisible: false,
       followerCount: 0,
       relationshipStatus: "none",
       profileUpdatedAtMillis: 1_780_000_000_000,
@@ -707,6 +708,9 @@ describe("public profile search", () => {
         displayName: "Voice Creator",
         username: "voice.creator",
         accountType: "creator",
+        premiumIdentity: true,
+        creatorAgeVerified: true,
+        creatorAudienceEnabled: true,
         banned: false,
       }),
       db.collection("users").doc(`${P}official`).set({
@@ -730,6 +734,8 @@ describe("public profile search", () => {
           username: "voice.creator",
           accountType: "creator",
           premiumIdentity: true,
+          creatorAgeVerified: true,
+          creatorAudienceEnabled: true,
           bio: "Makes rooms about design.",
           followerCount: 12,
         }),
@@ -764,6 +770,7 @@ describe("public profile search", () => {
       (profile) => profile.uid === `${P}creator`,
     );
     assert.equal(creator.bio, "Makes rooms about design.");
+    assert.equal(creator.creatorAudienceVisible, true);
     assert.equal(creator.followerCount, 12);
 
     await assert.rejects(

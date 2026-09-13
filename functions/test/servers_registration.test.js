@@ -11,29 +11,38 @@ const { after, test } = require("node:test");
 //   2. the registration boundary with fake registrars and a fake runtime:
 //      export map, options, Auth binding, error mapping, dispatch outcomes;
 //   3. the real reviewed factories against an explicitly selected localhost
-//      emulator: a held server written through the registered callable, the
+//      emulator: an active new server written through the registered callable, the
 //      structured denials, and the dispatcher driving real outbox jobs under
 //      the workers' own leases.
-// Nothing here activates a server for production: the one emulator-only
-// activation below is the same isolated fixture step the convergence suite
-// uses, because a membership job needs an active server to exist at all.
+// The production export flag remains outside this test; the runtime-level
+// activation capability is exercised only against the local emulator.
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const {
   DEFAULT_DISPATCH_LIMITS, DISPATCHER_EXPORTS, OUTBOX_COLLECTION, REGION,
-  SECRET_BOUND_CALLABLES, SERVER_CALLABLE_METHODS, SERVERS_V1_EXPORT_NAMES, SWEEP_EXPORTS,
+  COMPANY_FILE_MEDIA_CALLABLES, FAMILY_MEMORY_MEDIA_CALLABLES,
+  PODCAST_EGRESS_CALLABLES, PODCAST_EPISODE_MEDIA_CALLABLES,
+  SECRET_BOUND_CALLABLES, SERVER_CALLABLE_METHODS,
+  SERVERS_V1_EXPORT_NAMES, SWEEP_EXPORTS,
   authBoundRequest, createServersV1Dispatcher, createServersV1Functions,
   createServersV1Runtime, describeOutboxJob, isTransientFailure,
 } = require("../servers/registration");
 const { canonicalServerId } = require("../servers/contract");
+const { createServerCreationService } = require("../servers/creation");
 const { operationIdentity } = require("../integrity/guards");
 
 const FUNCTIONS_DIR = path.resolve(__dirname, "..");
 const CALLABLE_NAMES = Object.keys(SERVER_CALLABLE_METHODS);
 const LIVEKIT_SECRETS = ["LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"];
+const PODCAST_SECRETS = [
+  "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "PODCAST_EGRESS_GCP_CREDENTIALS",
+];
 const TRIGGER = "onServerControlOutboxCreated";
 const SCHEDULE = "processPendingServerControlOutboxSchedule";
 const SWEEP = "sweepStaleServerChannelSessionsSchedule";
+const FAMILY_MEMORY_SWEEP = "sweepServerFamilyMemoryMaintenanceSchedule";
+const COMPANY_FILE_SWEEP = "sweepServerCompanyFileMaintenanceSchedule";
+const PODCAST_EGRESS_SWEEP = "reconcileServerPodcastEgressSchedule";
 const NOW = 1_900_000_000_000;
 
 /*
@@ -103,9 +112,9 @@ function coldStart(gate) {
 // check) so that old callables can refuse V1 targets; those are pinned
 // separately below and are not this gate's doing.
 const REGISTRATION_MODULES = Object.freeze([
-  "registration.js", "creation.js", "channels.js", "invites.js", "memberships.js", "sessions.js", "session_participation.js", "operations.js",
+  "registration.js", "creation.js", "channels.js", "events.js", "podcast_questions.js", "podcast_episodes.js", "shared_list.js", "family_checkins.js", "family_memories.js", "follows.js", "whiteboard.js", "company_files.js", "invites.js", "memberships.js", "sessions.js", "session_participation.js", "operations.js",
   "convergence.js", "convergence_runtime.js", "convergence_lifecycle.js", "session_control.js",
-  "session_staleness.js", "session_livekit.js", "session_contract.js", "session_authority.js", "authority.js",
+  "content_cleanup.js", "session_staleness.js", "session_livekit.js", "session_contract.js", "session_authority.js", "authority.js",
   "documents.js", "templates.js",
 ]);
 const LEGACY_BOUNDARY_MODULES = Object.freeze(["capacity.js", "contract.js", "rtc_binding.js"]);
@@ -122,16 +131,16 @@ test("Registration: `disabled` is byte-for-byte the same cold start as absent", 
   assert.deepEqual(coldStart("disabled"), coldStart(undefined));
 });
 
-test("Registration: `enabled` adds exactly the twenty-one callables, two dispatcher exports and the sweep, and nothing else", () => {
+test("Registration: `enabled` adds exactly fifty-four callables, two dispatcher exports and four sweeps, and nothing else", () => {
   const off = coldStart(undefined);
   const on = coldStart("enabled");
   assert.deepEqual(on.exportNames, [...off.exportNames, ...SERVERS_V1_EXPORT_NAMES].sort());
-  assert.equal(SERVERS_V1_EXPORT_NAMES.length, 24);
-  assert.equal(Object.keys(SERVER_CALLABLE_METHODS).length, 21);
+  assert.equal(SERVERS_V1_EXPORT_NAMES.length, 60);
+  assert.equal(Object.keys(SERVER_CALLABLE_METHODS).length, 54);
   assert.ok(on.serversModules.includes("registration.js"));
   for (const factory of [
-    "creation.js", "channels.js", "invites.js", "memberships.js", "sessions.js", "session_participation.js", "convergence.js",
-    "convergence_runtime.js", "convergence_lifecycle.js", "session_control.js", "session_staleness.js", "operations.js",
+    "creation.js", "channels.js", "events.js", "podcast_questions.js", "podcast_episodes.js", "shared_list.js", "family_checkins.js", "family_memories.js", "follows.js", "whiteboard.js", "company_files.js", "invites.js", "memberships.js", "sessions.js", "session_participation.js", "convergence.js",
+    "convergence_runtime.js", "convergence_lifecycle.js", "content_cleanup.js", "session_control.js", "session_staleness.js", "operations.js",
   ]) assert.ok(on.serversModules.includes(factory), factory);
   // The LiveKit SDK stays a first-use require even with the gate on.
   assert.equal(on.livekitSdk, 0);
@@ -144,7 +153,10 @@ test("Registration: `enabled` adds exactly the twenty-one callables, two dispatc
     assert.deepEqual(endpoint.region, [REGION], name);
     assert.equal(endpoint.minInstances, 0, `${name} must scale to zero`);
     assert.equal(endpoint.callable, true, name);
-    assert.deepEqual(endpoint.secrets, SECRET_BOUND_CALLABLES.includes(name) ? LIVEKIT_SECRETS : [], name);
+    assert.deepEqual(endpoint.secrets,
+      PODCAST_EGRESS_CALLABLES.includes(name)
+        ? PODCAST_SECRETS
+        : SECRET_BOUND_CALLABLES.includes(name) ? LIVEKIT_SECRETS : [], name);
   }
   assert.deepEqual(on.endpoints[TRIGGER], {
     region: [REGION], minInstances: null, secrets: LIVEKIT_SECRETS, callable: false,
@@ -160,11 +172,23 @@ test("Registration: `enabled` adds exactly the twenty-one callables, two dispatc
     region: [REGION], minInstances: null, secrets: LIVEKIT_SECRETS, callable: false,
     document: null, retry: null, schedule: "every 5 minutes", timeZone: "Etc/UTC",
   });
+  assert.deepEqual(on.endpoints[FAMILY_MEMORY_SWEEP], {
+    region: [REGION], minInstances: null, secrets: [], callable: false,
+    document: null, retry: null, schedule: "every 10 minutes", timeZone: "Etc/UTC",
+  });
+  assert.deepEqual(on.endpoints[COMPANY_FILE_SWEEP], {
+    region: [REGION], minInstances: null, secrets: [], callable: false,
+    document: null, retry: null, schedule: "every 10 minutes", timeZone: "Etc/UTC",
+  });
+  assert.deepEqual(on.endpoints[PODCAST_EGRESS_SWEEP], {
+    region: [REGION], minInstances: null, secrets: PODCAST_SECRETS, callable: false,
+    document: null, retry: null, schedule: "every 5 minutes", timeZone: "Etc/UTC",
+  });
 });
 
 test("Registration: any other gate value fails the cold start loudly", () => {
   // Whitespace and case variants are values too: nothing is trimmed or folded,
-  // so `enabled ` is a typo that must fail the load rather than ship twenty-four
+  // so `enabled ` is a typo that must fail the load rather than ship thirty-nine
   // functions (functions/index.js strictEnabledEnvironment).
   for (const gate of [
     "true", "Enabled", "yes", "1", "on",
@@ -227,6 +251,16 @@ function fakeRuntime({ calls = [], documents = new Map(), workers = {}, clock = 
       return { name };
     });
   }
+  services.familyMemories.expireServerFamilyMemoryUploadReservations =
+    workers.expireFamilyMemoryUploads ?? (async () => ({ processed: 0, hasMore: false, expired: [] }));
+  services.familyMemories.processPendingFamilyMemoryDeletionJobs =
+    workers.deleteFamilyMemoryMedia ?? (async () => ({ processed: 0, hasMore: false, completed: [] }));
+  services.companyFiles.expireServerCompanyFileUploadReservations =
+    workers.expireCompanyFileUploads ?? (async () => ({ processed: 0, hasMore: false, expired: [] }));
+  services.companyFiles.processPendingCompanyFileDeletionJobs =
+    workers.deleteCompanyFileMedia ?? (async () => ({ processed: 0, hasMore: false, completed: [] }));
+  services.podcastEpisodes.reconcileServerPodcastEgressJobs =
+    workers.reconcilePodcastEgress ?? (async () => ({ processed: [], scanned: 0, hasMore: false }));
   return {
     db: fakeDb(documents),
     FieldPath: { documentId: () => "__name__" },
@@ -255,17 +289,19 @@ function convergenceJob(overrides = {}) {
 const request = (uid, data, extra = {}) => ({ auth: { uid, token: { email_verified: true } }, data, ...extra });
 const rejects = (promise, code) => assert.rejects(promise, (error) => error instanceof HttpsError && error.code === code);
 
-test("Registration: the export map is exactly twenty-four names with the callable and worker options", () => {
+test("Registration: the export map is exactly sixty names with the callable and worker options", () => {
   const registrations = [];
   const functions = createServersV1Functions({
     runtime: fakeRuntime(), registrars: fakeRegistrars(registrations), log: recordingLog(),
   });
   assert.deepEqual(Object.keys(functions).sort(), [...SERVERS_V1_EXPORT_NAMES].sort());
   assert.deepEqual(DISPATCHER_EXPORTS, [TRIGGER, SCHEDULE]);
-  assert.deepEqual(SWEEP_EXPORTS, [SWEEP]);
-  assert.equal(registrations.filter((item) => item.kind === "callable").length, 21);
+  assert.deepEqual(SWEEP_EXPORTS, [
+    SWEEP, FAMILY_MEMORY_SWEEP, COMPANY_FILE_SWEEP, PODCAST_EGRESS_SWEEP,
+  ]);
+  assert.equal(registrations.filter((item) => item.kind === "callable").length, 54);
   assert.equal(registrations.filter((item) => item.kind === "created").length, 1);
-  assert.equal(registrations.filter((item) => item.kind === "schedule").length, 2);
+  assert.equal(registrations.filter((item) => item.kind === "schedule").length, 5);
   for (const name of CALLABLE_NAMES) {
     const { options } = functions[name];
     assert.equal(options.region, REGION, name);
@@ -273,9 +309,21 @@ test("Registration: the export map is exactly twenty-four names with the callabl
     assert.equal(options.maxInstances, 50, name);
     assert.equal(options.enforceAppCheck, false, name);
     assert.equal(options.consumeAppCheckToken, false, name);
-    if (SECRET_BOUND_CALLABLES.includes(name)) {
+    if (PODCAST_EGRESS_CALLABLES.includes(name)) {
+      assert.equal(options.timeoutSeconds, 120, name);
+      assert.equal(options.memory, "512MiB", name);
+      assert.deepEqual(options.secrets.map((secret) => secret.name), PODCAST_SECRETS, name);
+    } else if (SECRET_BOUND_CALLABLES.includes(name)) {
       assert.equal(options.timeoutSeconds, 120, name);
       assert.deepEqual(options.secrets.map((secret) => secret.name), LIVEKIT_SECRETS, name);
+    } else if (
+      FAMILY_MEMORY_MEDIA_CALLABLES.includes(name) ||
+      COMPANY_FILE_MEDIA_CALLABLES.includes(name) ||
+      PODCAST_EPISODE_MEDIA_CALLABLES.includes(name)
+    ) {
+      assert.equal(options.timeoutSeconds, 120, name);
+      assert.equal(options.memory, "512MiB", name);
+      assert.equal("secrets" in options, false, name);
     } else {
       assert.equal(options.timeoutSeconds, 60, name);
       assert.equal("secrets" in options, false, name);
@@ -303,6 +351,32 @@ test("Registration: the export map is exactly twenty-four names with the callabl
   assert.equal(sweep.maxInstances, 1);
   assert.equal(sweep.timeoutSeconds, 300);
   assert.deepEqual(sweep.secrets.map((secret) => secret.name), LIVEKIT_SECRETS);
+  const familyMemorySweep = functions[FAMILY_MEMORY_SWEEP].options;
+  assert.equal(familyMemorySweep.schedule, "every 10 minutes");
+  assert.equal(familyMemorySweep.timeZone, "Etc/UTC");
+  assert.equal(familyMemorySweep.region, REGION);
+  assert.equal(familyMemorySweep.maxInstances, 1);
+  assert.equal(familyMemorySweep.timeoutSeconds, 300);
+  assert.equal("secrets" in familyMemorySweep, false);
+  const companyFileSweep = functions[COMPANY_FILE_SWEEP].options;
+  assert.equal(companyFileSweep.schedule, "every 10 minutes");
+  assert.equal(companyFileSweep.timeZone, "Etc/UTC");
+  assert.equal(companyFileSweep.region, REGION);
+  assert.equal(companyFileSweep.maxInstances, 1);
+  assert.equal(companyFileSweep.timeoutSeconds, 300);
+  assert.equal(companyFileSweep.memory, "512MiB");
+  assert.equal("secrets" in companyFileSweep, false);
+  const podcastEgressSweep = functions[PODCAST_EGRESS_SWEEP].options;
+  assert.equal(podcastEgressSweep.schedule, "every 5 minutes");
+  assert.equal(podcastEgressSweep.timeZone, "Etc/UTC");
+  assert.equal(podcastEgressSweep.region, REGION);
+  assert.equal(podcastEgressSweep.maxInstances, 1);
+  assert.equal(podcastEgressSweep.timeoutSeconds, 300);
+  assert.equal(podcastEgressSweep.memory, "512MiB");
+  assert.deepEqual(
+    podcastEgressSweep.secrets.map((secret) => secret.name),
+    PODCAST_SECRETS,
+  );
   // The time budget always leaves the worker deadline room for one more page.
   assert.ok(DEFAULT_DISPATCH_LIMITS.timeBudgetMs < trigger.timeoutSeconds * 1000 - 60_000);
 });
@@ -333,6 +407,47 @@ test("Registration: the sweep schedule asks the staleness worker once and logs i
   });
   await unavailable[SWEEP].handler();
   assert.deepEqual(warned.lines.map((entry) => entry.level), ["warn"]);
+});
+
+test("Registration: the Podcast Egress schedule invokes the registered worker with the bounded page and reports backlog", async () => {
+  const log = recordingLog();
+  const invocations = [];
+  const settled = { processed: ["job-1"], scanned: 1, hasMore: false };
+  const functions = createServersV1Functions({
+    runtime: fakeRuntime({
+      workers: {
+        reconcilePodcastEgress: async (input) => {
+          invocations.push(input);
+          return settled;
+        },
+      },
+    }),
+    registrars: fakeRegistrars([]),
+    log,
+  });
+  assert.deepEqual(await functions[PODCAST_EGRESS_SWEEP].handler(), settled);
+  assert.deepEqual(invocations, [{ limit: 20 }]);
+  assert.deepEqual(log.lines, [{
+    level: "info",
+    message: "servers.podcast_egress_sweep",
+    payload: settled,
+  }]);
+
+  const warned = recordingLog();
+  const backlog = { processed: [], scanned: 20, hasMore: true };
+  const backlogged = createServersV1Functions({
+    runtime: fakeRuntime({
+      workers: { reconcilePodcastEgress: async () => backlog },
+    }),
+    registrars: fakeRegistrars([]),
+    log: warned,
+  });
+  assert.deepEqual(await backlogged[PODCAST_EGRESS_SWEEP].handler(), backlog);
+  assert.deepEqual(warned.lines, [{
+    level: "warn",
+    message: "servers.podcast_egress_sweep",
+    payload: backlog,
+  }]);
 });
 
 test("Registration: the App Check switch flips enforcement and consumption together on every callable", () => {
@@ -546,7 +661,8 @@ test("Registration: the trigger loop stops at a stalled document, at its page bu
   const report = await timed.onServerControlOutboxCreated({ params: { operationId } });
   assert.equal(report.outcome, "exhausted");
   assert.equal(report.pages, 1);
-  // Deferred outcomes are reported verbatim and never repaired.
+  // Recovery is deferred. Content workers must visibly checkpoint each page;
+  // a fake worker that claims pending without a write is stalled.
   documents = new Map([[key, convergenceJob({ operationId, rtcStatus: "recoveryRequired", rtcTargets: [{}], rtcTargetIndex: 0 })]]);
   const recovery = createServersV1Dispatcher({
     runtime: fakeRuntime({ documents, workers: { convergence: async () => ({ cleanupPending: true, recoveryRequired: true, processed: 1 }) } }),
@@ -559,7 +675,7 @@ test("Registration: the trigger loop stops at a stalled document, at its page bu
     }) } }),
     log: recordingLog(),
   });
-  assert.equal((await content.onServerControlOutboxCreated({ params: { operationId } })).outcome, "contentCleanupPending");
+  assert.equal((await content.onServerControlOutboxCreated({ params: { operationId } })).outcome, "stalled");
 });
 
 test("Registration: a worker result without a work-remaining boolean is refused, never completed", async () => {
@@ -758,12 +874,7 @@ async function fixture() {
     const owner = await user("owner");
     const created = await call("createServerV1", owner, creationInput());
     const root = db.doc(`clubs/${created.serverId}`);
-    // Isolated emulator activation only. There is no shipped activation path.
-    await root.update({ status: "active", serverActivationState: "active" });
-    const anchors = await db.collection("rooms").where("serverId", "==", created.serverId).get();
-    for (const anchor of anchors.docs) {
-      await anchor.ref.update({ status: "active", serverActivationState: "active", hostId: owner });
-    }
+    assert.equal((await root.get()).data().serverActivationState, "active");
     return { owner, serverId: created.serverId, root };
   }
   async function joinJob(serverId) {
@@ -783,20 +894,20 @@ async function fixture() {
   };
 }
 
-emulatorTest("createServerV1 through the registered callable writes the held server exactly as creation.js does, bound to the Auth uid", async () => {
+emulatorTest("createServerV1 through the registered boundary atomically lands a usable active server", async () => {
   const f = await fixture();
   const owner = await f.user("owner");
   const data = creationInput({ serverType: "friends", privacy: "inviteOnly", defaultLanguage: "Polish" });
   const result = await f.call("createServerV1", owner, data);
   assert.deepEqual(Object.keys(result).sort(), ["alreadyExisted", "channelIds", "defaultChannelId", "serverId"]);
   assert.equal(result.alreadyExisted, false);
-  // The identity comes from Auth, not from the payload, and the graph is the
-  // canonical held shape of docs/Servers.md "Sessions".
+  // The identity comes from Auth, not from the payload. Activation is part of
+  // this absent-root seed transaction and never a second mutable transition.
   assert.equal(result.serverId, canonicalServerId(owner, data.requestId, "friends"));
   const root = (await db.doc(`clubs/${result.serverId}`).get()).data();
   assert.equal(root.serverSchemaVersion, 1);
-  assert.equal(root.status, "preparing");
-  assert.equal(root.serverActivationState, "held");
+  assert.equal(root.status, "active");
+  assert.equal(root.serverActivationState, "active");
   assert.equal(root.ownerId, owner);
   assert.equal(root.ownerName, "Registration owner");
   assert.equal(root.memberCount, 1);
@@ -806,11 +917,11 @@ emulatorTest("createServerV1 through the registered callable writes the held ser
   assert.ok(anchors.size > 0);
   for (const anchor of anchors.docs) {
     const room = anchor.data();
-    assert.equal(room.status, "preparing");
-    assert.equal(room.serverActivationState, "held");
+    assert.equal(room.status, "active");
+    assert.equal(room.serverActivationState, "active");
     assert.equal(room.visibility, "private");
     assert.equal(room.isLive, false);
-    assert.equal(room.hostId, null);
+    assert.equal(room.hostId, owner);
     assert.equal(room.serverOwnerId, owner);
   }
   // Replaying the same request through the boundary and through the raw
@@ -820,6 +931,23 @@ emulatorTest("createServerV1 through the registered callable writes the held ser
   const raw = await f.real.creation.createServerV1(request(owner, data));
   assert.deepEqual(raw, { ...result, alreadyExisted: true });
   assert.equal(f.log.lines.length, 0);
+});
+
+emulatorTest("the registered creation capability never activates an existing held graph", async () => {
+  const f = await fixture();
+  const owner = await f.user("held-owner");
+  const data = creationInput({ serverType: "company", privacy: "inviteOnly" });
+  const held = await createServerCreationService({ db, Timestamp, clock: f.clock })
+    .createServerV1(request(owner, data));
+  const root = db.doc(`clubs/${held.serverId}`);
+  assert.equal((await root.get()).data().serverActivationState, "held");
+  const replay = await f.call("createServerV1", owner, data);
+  assert.deepEqual(replay, { ...held, alreadyExisted: true });
+  const current = (await root.get()).data();
+  assert.equal(current.serverActivationState, "held");
+  assert.equal(current.status, "preparing");
+  const anchors = await db.collection("rooms").where("serverId", "==", held.serverId).get();
+  assert.ok(anchors.docs.every((doc) => doc.data().serverActivationState === "held" && doc.data().hostId === null));
 });
 
 emulatorTest("denied paths keep the factories' structured codes: unauthenticated, invalid-argument and permission-denied", async () => {
@@ -832,9 +960,9 @@ emulatorTest("denied paths keep the factories' structured codes: unauthenticated
   await rejects(f.call("createServerV1", owner, forged), "invalid-argument");
   assert.equal((await db.doc(`clubs/${canonicalServerId(owner, forged.requestId, "community")}`).get()).exists, false);
   await rejects(f.call("createServerV1", owner, creationInput({ templateVersion: 2 })), "invalid-argument");
-  const created = await f.call("createServerV1", owner, creationInput());
+  const created = await f.call("createServerV1", owner, creationInput({ privacy: "inviteOnly" }));
   const patch = { requestId: randomUUID(), expectedRevision: 1, patch: { name: "Renamed by a stranger" } };
-  // A held private target and a missing one deny identically: authorization
+  // A private target and a missing one deny identically: authorization
   // precedes existence disclosure.
   await rejects(f.call("updateServerV1", stranger, { serverId: created.serverId, ...patch }), "permission-denied");
   await rejects(f.call("updateServerV1", stranger, { serverId: "missing-server", ...patch }), "permission-denied");

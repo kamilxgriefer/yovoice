@@ -58,11 +58,11 @@ function inspectColdStart() {
   // reportGifAsset and must extend EXPORT_NAMES deliberately.
   delete env.GIF_PROVIDER;
   // And for Servers V1 (ADR-176): functions/.env has no YOVOICE_SERVERS_V1, so
-  // the map below has none of the twenty-one V1 callables, the two
-  // serverControlOutbox dispatcher exports nor the stale-generation sweep. The
+  // the map below has none of the fifty-four V1 callables, the two
+  // serverControlOutbox dispatcher exports nor the four maintenance sweeps. The
   // registration module and the V1 runtime stay off the cold-start graph; the
   // three consumer-shared modules below are on it by design and are asserted
-  // by name. `enabled` adds exactly those twenty-four names
+  // by name. `enabled` adds exactly those sixty names
   // (test/servers_registration.test.js) and must extend EXPORT_NAMES
   // deliberately.
   delete env.YOVOICE_SERVERS_V1;
@@ -87,7 +87,7 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 181 names.
+// Every export of functions/index.js, sorted. 183 names.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
@@ -124,6 +124,7 @@ const EXPORT_NAMES = Object.freeze([
   "expireAbandonedDirectMessageAttachmentsSchedule",
   "expireAbandonedMomentDraftsSchedule",
   "expireAbandonedReelDraftsSchedule",
+  "expireAbandonedReelVoiceCommentDraftsSchedule",
   "expireAbandonedVoiceCommentDraftsSchedule",
   "expireDirectCallsSchedule",
   "expirePremiumIdentity",
@@ -136,6 +137,7 @@ const EXPORT_NAMES = Object.freeze([
   "finalizeProfileMediaUpload",
   "finalizeReelDraft",
   "finalizeReelDraftV2",
+  "finalizeReelVoiceCommentDraft",
   "finalizeRoomCoverUpload",
   "finalizeVoiceCommentDraft",
   "forceEndRoom",
@@ -212,6 +214,7 @@ const EXPORT_NAMES = Object.freeze([
   "onReelCleanupOutboxCreated",
   "onRoomLiveChanged",
   "onRoomLiveFanoutOutboxWritten",
+  "onServerInviteWritten",
   "onUserBadgeSourceChanged",
   "onUserPrivacySourceChanged",
   "onVipGrantChanged",
@@ -233,6 +236,7 @@ const EXPORT_NAMES = Object.freeze([
   "reserveProfileMediaUpload",
   "reserveReelDraft",
   "reserveReelDraftV2",
+  "reserveReelVoiceCommentDraft",
   "reserveRoomCoverUpload",
   "reserveVoiceCommentDraft",
   "respondToFriendRequest",
@@ -253,6 +257,7 @@ const EXPORT_NAMES = Object.freeze([
   "sendRoomMessage",
   "setClubMemberBan",
   "setClubModerationStatus",
+  "setCreatorAudienceEnabled",
   "setCreatorPinnedPost",
   "setDirectConversationPreference",
   "setDirectMessageReaction",
@@ -270,6 +275,7 @@ const EXPORT_NAMES = Object.freeze([
   "setUserBlock",
   "startDirectCall",
   "startRoomVoice",
+  "sweepExpiredServerInvitesSchedule",
   "sweepStrandedLiveRoomsSchedule",
   "transferClubOwnership",
   "transferClubOwnershipSelf",
@@ -361,7 +367,7 @@ test("no functions/.env file activates the Servers V1 gate", () => {
   // the function environment (firebase-tools lib/functions/env.js). Every
   // other test in this file deletes YOVOICE_SERVERS_V1 from the child
   // environment, so none of them can see a value delivered that way: a single
-  // committed `.env.yovoice-ec54a` line would register the twenty-four Servers V1
+  // committed `.env.yovoice-ec54a` line would register the forty-eight Servers V1
   // functions (ADR-176) on the next deploy while this file still passed. This
   // is the only check that reads the files themselves.
   const names = fs.readdirSync(FUNCTIONS_DIR)

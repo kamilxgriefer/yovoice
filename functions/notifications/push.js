@@ -158,11 +158,11 @@ const PUSH_TITLES = {
   friendAccepted: (actor) => `${actor} accepted your friend request`,
   follow: (actor) => `${actor} started following you`,
   clubInvite: (actor, label) =>
-    label ? `${actor} invited you to ${label}` : `${actor} invited you to a club`,
+    label ? `${actor} invited you to ${label}` : `${actor} invited you to a server`,
   clubInviteAccepted: (actor, label) =>
-    label ? `${actor} joined ${label}` : `${actor} accepted your club invitation`,
+    label ? `${actor} joined ${label}` : `${actor} accepted your server invitation`,
   roomInvite: (actor, label) =>
-    label ? `${actor} invited you to ${label}` : `${actor} invited you to a room`,
+    label ? `${actor} invited you to ${label}` : `${actor} invited you to a conversation`,
   broadcastInvite: (actor, label) =>
     label ? `${actor} invited you to ${label}` : `${actor} invited you to a broadcast`,
   liveStarted: (actor, label) =>

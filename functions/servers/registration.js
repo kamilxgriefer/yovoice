@@ -15,12 +15,14 @@
 //     factory method; the dispatcher only reads `serverControlOutbox/{id}` to
 //     decide whether asking a worker is worthwhile, and every worker takes
 //     its own lease and revalidates the job inside its own transaction;
-//   - it never completes uncertain work. A worker outcome of pending,
-//     recoveryRequired or contentCleanupPending is reported, not repaired;
-//   - it has no activation writer. `serverActivationState: held` stays held
-//     (docs/Servers.md, "Sessions"); activation is a separate reviewed slice.
+//   - it never completes uncertain work. Worker outcomes are checkpointed and
+//     retried only through the reviewed bounded workers;
+//   - it has no general activation writer. The exact registration boundary may
+//     create a brand-new V1 graph active in its seed transaction; an existing
+//     held or migrated root is never changed by that capability.
 
 const { FieldPath, Timestamp, getFirestore } = require("firebase-admin/firestore");
+const { getStorage } = require("firebase-admin/storage");
 const { randomBytes } = require("node:crypto");
 const { logger } = require("firebase-functions/v2");
 const { defineSecret, defineString } = require("firebase-functions/params");
@@ -29,10 +31,32 @@ const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 
 const { requireActor, requireId, requireSafeInteger } = require("../integrity/guards");
+const { createTrustedGcsMediaProbe } = require("../reels/probe");
+const { createLazyBucket } = require("../utils/lazy_bucket");
 const { createServerCreationService } = require("./creation");
 const { createServerChannelService } = require("./channels");
+const { createServerEventService } = require("./events");
+const { createServerPodcastQuestionService } = require("./podcast_questions");
+const {
+  createLiveKitPodcastEgressAdapter,
+  createPodcastEpisodeStorageAdapter,
+  createServerPodcastEpisodeService,
+} = require("./podcast_episodes");
+const { createServerSharedListService } = require("./shared_list");
+const { createServerFamilyCheckInService } = require("./family_checkins");
+const {
+  createFamilyMemoryStorageAdapter,
+  createServerFamilyMemoryService,
+} = require("./family_memories");
+const { createServerFollowService } = require("./follows");
+const { createServerWhiteboardService } = require("./whiteboard");
+const {
+  createCompanyFileStorageAdapter,
+  createServerCompanyFileService,
+} = require("./company_files");
 const { createServerInviteService } = require("./invites");
 const { createServerMembershipService } = require("./memberships");
+const { createServerManagementService } = require("./management");
 const { createServerSessionService } = require("./sessions");
 const { createServerSessionParticipationService } = require("./session_participation");
 const { createServerSessionStalenessService } = require("./session_staleness");
@@ -44,7 +68,7 @@ const { createServerLiveKitAdapter } = require("./session_livekit");
 const REGION = "europe-west1";
 const OUTBOX_COLLECTION = "serverControlOutbox";
 
-// The twenty-one V1 callables of docs/Servers.md "Callable contract", in that
+// The fifty-four V1 callables of docs/Servers.md "Callable contract", in that
 // order, each bound to the reviewed factory that implements it. The export
 // name and the factory method name are deliberately identical, so a typo in
 // this table is a TypeError at deploy discovery, never a NOT_FOUND in a client.
@@ -53,18 +77,51 @@ const OUTBOX_COLLECTION = "serverControlOutbox";
 const SERVER_CALLABLE_METHODS = Object.freeze({
   createServerV1: "creation",
   updateServerV1: "channels",
+  deleteServerV1: "management",
   createServerChannelV1: "channels",
   updateServerChannelV1: "channels",
   reorderServerChannelsV1: "channels",
   setServerChannelAccessV1: "channels",
   archiveServerChannelV1: "channels",
   deleteServerChannelV1: "channels",
+  createServerEventV1: "events",
+  updateServerEventV1: "events",
+  cancelServerEventV1: "events",
+  respondToServerEventV1: "events",
+  createServerPodcastQuestionV1: "podcastQuestions",
+  setServerPodcastQuestionVoteV1: "podcastQuestions",
+  setServerPodcastQuestionOnAirV1: "podcastQuestions",
+  startServerPodcastRecordingV1: "podcastEpisodes",
+  stopServerPodcastRecordingV1: "podcastEpisodes",
+  finalizeServerPodcastEpisodeV1: "podcastEpisodes",
+  retryServerPodcastRecordingV1: "podcastEpisodes",
+  publishServerPodcastEpisodeV1: "podcastEpisodes",
+  getServerPodcastEpisodeAccessV1: "podcastEpisodes",
+  createServerListItemV1: "sharedList",
+  updateServerListItemV1: "sharedList",
+  deleteServerListItemV1: "sharedList",
+  createServerFamilyCheckInV1: "familyCheckIns",
+  deleteServerFamilyCheckInV1: "familyCheckIns",
+  reserveServerFamilyMemoryV1: "familyMemories",
+  finalizeServerFamilyMemoryV1: "familyMemories",
+  getServerFamilyMemoryMediaAccessV1: "familyMemories",
+  deleteServerFamilyMemoryV1: "familyMemories",
+  setCommunityServerFollowV1: "follows",
+  createServerWhiteboardStrokeV1: "whiteboard",
+  undoServerWhiteboardStrokeV1: "whiteboard",
+  clearServerWhiteboardV1: "whiteboard",
+  reserveServerCompanyFileV1: "companyFiles",
+  finalizeServerCompanyFileV1: "companyFiles",
+  getServerCompanyFileAccessV1: "companyFiles",
+  deleteServerCompanyFileV1: "companyFiles",
   joinServerV1: "memberships",
   createServerInviteV1: "invites",
   revokeServerInviteV1: "invites",
   respondToServerInviteV1: "memberships",
   leaveServerV1: "memberships",
   setServerMemberRoleV1: "memberships",
+  removeServerMemberV1: "management",
+  setServerMemberBanV1: "management",
   transferServerOwnershipV1: "memberships",
   startServerChannelSessionV1: "sessions",
   createServerChannelTokenV1: "sessions",
@@ -87,6 +144,32 @@ const SECRET_BOUND_CALLABLES = Object.freeze([
   "endServerChannelSessionV1",
 ]);
 
+const FAMILY_MEMORY_MEDIA_CALLABLES = Object.freeze([
+  "finalizeServerFamilyMemoryV1",
+  "getServerFamilyMemoryMediaAccessV1",
+  "deleteServerFamilyMemoryV1",
+]);
+
+const COMPANY_FILE_MEDIA_CALLABLES = Object.freeze([
+  "finalizeServerCompanyFileV1",
+  "getServerCompanyFileAccessV1",
+  "deleteServerCompanyFileV1",
+]);
+
+// These four endpoints can create, inspect or stop a remote Egress job. They
+// need both LiveKit credentials and the dedicated service-account JSON that
+// LiveKit receives to write the MP3 directly to the canonical private bucket.
+const PODCAST_EGRESS_CALLABLES = Object.freeze([
+  "startServerPodcastRecordingV1",
+  "stopServerPodcastRecordingV1",
+  "finalizeServerPodcastEpisodeV1",
+  "retryServerPodcastRecordingV1",
+]);
+
+const PODCAST_EPISODE_MEDIA_CALLABLES = Object.freeze([
+  "getServerPodcastEpisodeAccessV1",
+]);
+
 const DISPATCHER_EXPORTS = Object.freeze([
   "onServerControlOutboxCreated",
   "processPendingServerControlOutboxSchedule",
@@ -98,6 +181,9 @@ const DISPATCHER_EXPORTS = Object.freeze([
 // and the dispatcher above then drains what it staged.
 const SWEEP_EXPORTS = Object.freeze([
   "sweepStaleServerChannelSessionsSchedule",
+  "sweepServerFamilyMemoryMaintenanceSchedule",
+  "sweepServerCompanyFileMaintenanceSchedule",
+  "reconcileServerPodcastEgressSchedule",
 ]);
 
 const SERVERS_V1_EXPORT_NAMES = Object.freeze([
@@ -112,6 +198,11 @@ const SERVERS_V1_EXPORT_NAMES = Object.freeze([
 const CONVERGENCE_KINDS = Object.freeze([
   "memberJoined", "memberLeft", "memberRoleChanged", "sessionParticipantChanged", "channelAccess",
   "channelArchive", "channelDelete", "ownershipTransferred",
+  // The management parity slice (ADR-F): a manager's removal, a ban and its
+  // lift, a staff suspension and a server deletion. All five converge through
+  // the same reviewed worker — a removal or ban that only edited a document
+  // would leave the person connected to the room they were removed from.
+  "memberRemoved", "memberBanned", "memberBanLifted", "serverModeration", "serverDelete",
 ]);
 const OUTBOX_KINDS = Object.freeze([...CONVERGENCE_KINDS, "sessionEnd", "serverMetadata"]);
 
@@ -134,6 +225,9 @@ const TRANSIENT_GRPC_CODES = Object.freeze(new Set([1, 2, 4, 8, 10, 14]));
 const PROGRESS_FIELDS = Object.freeze([
   "status", "grantStatus", "grantCursor", "rtcStatus", "rtcTargetIndex",
   "rtcRecipientCursor", "cursor", "lastErrorCode", "retryAfterMillis",
+  "contentCleanupPending", "contentCleanupPhase", "contentCleanupStep",
+  "contentCleanupChannelId", "contentCleanupChannelPhase",
+  "contentCleanupRoomId", "contentCleanupRoomPhase",
 ]);
 
 const DEFAULT_DISPATCH_LIMITS = Object.freeze({
@@ -156,8 +250,13 @@ const DEFAULT_DISPATCH_LIMITS = Object.freeze({
 // secrets are read inside a request, never at module load.
 const livekitApiKey = defineSecret("LIVEKIT_API_KEY");
 const livekitApiSecret = defineSecret("LIVEKIT_API_SECRET");
+const podcastEgressGcpCredentials = defineSecret("PODCAST_EGRESS_GCP_CREDENTIALS");
 const livekitUrl = defineString("LIVEKIT_URL");
 const LIVEKIT_SECRET_PARAMS = Object.freeze([livekitApiKey, livekitApiSecret]);
+const PODCAST_EGRESS_SECRET_PARAMS = Object.freeze([
+  ...LIVEKIT_SECRET_PARAMS,
+  podcastEgressGcpCredentials,
+]);
 
 function defaultRegistrars() {
   return { onCall, onDocumentCreated, onSchedule };
@@ -174,6 +273,12 @@ function createServersV1Runtime({
   FieldPath: FieldPathClass = FieldPath,
   clock = Date.now,
   livekit = null,
+  bucket = null,
+  familyMemoryStorage = null,
+  familyMemoryProbe = null,
+  companyFileStorage = null,
+  podcastEgress = null,
+  podcastEpisodeStorage = null,
 } = {}) {
   if (typeof clock !== "function") throw new TypeError("clock must be a function.");
   if (typeof FieldPathClass?.documentId !== "function") throw new TypeError("FieldPath is required.");
@@ -184,15 +289,60 @@ function createServersV1Runtime({
     serverUrl: () => livekitUrl.value(),
     clock,
   });
-  const dependencies = { db: database, Timestamp: TimestampClass, livekit: adapter, clock };
+  const resolvedBucket = bucket ?? createLazyBucket(() => getStorage().bucket());
+  const privateFamilyMemoryStorage = familyMemoryStorage ??
+    createFamilyMemoryStorageAdapter(resolvedBucket);
+  const probeFamilyMemory = familyMemoryProbe ??
+    createTrustedGcsMediaProbe(resolvedBucket);
+  const privateCompanyFileStorage = companyFileStorage ??
+    createCompanyFileStorageAdapter(resolvedBucket);
+  const privatePodcastEpisodeStorage = podcastEpisodeStorage ??
+    createPodcastEpisodeStorageAdapter(resolvedBucket);
+  const privatePodcastEgress = podcastEgress ?? createLiveKitPodcastEgressAdapter({
+    apiKey: () => livekitApiKey.value(),
+    apiSecret: () => livekitApiSecret.value(),
+    serverUrl: () => livekitUrl.value(),
+    gcpCredentials: () => podcastEgressGcpCredentials.value(),
+    bucketName: () => resolvedBucket.name,
+  });
+  const dependencies = {
+    db: database, Timestamp: TimestampClass, FieldPath: FieldPathClass,
+    livekit: adapter, clock, familyMemoryStorage: privateFamilyMemoryStorage,
+    companyFileStorage: privateCompanyFileStorage,
+    podcastEpisodeStorage: privatePodcastEpisodeStorage,
+  };
   return Object.freeze({
     db: database,
     FieldPath: FieldPathClass,
     clock,
-    creation: createServerCreationService(dependencies),
+    // This runtime is constructed only by the module that index.js requires
+    // behind exact `YOVOICE_SERVERS_V1=enabled`. Activation applies solely to
+    // the absent-root creation branch and is not accepted from callable input.
+    creation: createServerCreationService({ ...dependencies, activateNewServers: true }),
     channels: createServerChannelService(dependencies),
+    events: createServerEventService(dependencies),
+    podcastQuestions: createServerPodcastQuestionService(dependencies),
+    podcastEpisodes: createServerPodcastEpisodeService({
+      ...dependencies,
+      egress: privatePodcastEgress,
+      episodeStorage: privatePodcastEpisodeStorage,
+    }),
+    sharedList: createServerSharedListService(dependencies),
+    familyCheckIns: createServerFamilyCheckInService(dependencies),
+    familyMemories: createServerFamilyMemoryService({
+      ...dependencies,
+      storage: privateFamilyMemoryStorage,
+      probeMedia: probeFamilyMemory,
+    }),
+    follows: createServerFollowService(dependencies),
+    whiteboard: createServerWhiteboardService(dependencies),
+    companyFiles: createServerCompanyFileService({
+      ...dependencies,
+      storage: privateCompanyFileStorage,
+    }),
     invites: createServerInviteService(dependencies),
     memberships: createServerMembershipService(dependencies),
+    management: createServerManagementService(dependencies),
     sessions: createServerSessionService(dependencies),
     participation: createServerSessionParticipationService(dependencies),
     projection: createServerConvergenceService(dependencies),
@@ -308,9 +458,9 @@ function isTransientFailure(error) {
  * the job, stop unless it is eligible, ask its reviewed worker for one page,
  * then continue only while the worker reports remaining work AND the job
  * document visibly advanced AND it is still eligible AND the page and time
- * budgets allow. A page that ends busy, backed off, recovery-required or
- * content-cleanup-pending stops the loop with that outcome; the schedule
- * revisits the job later under the same rules. Two outcomes exist so that a
+ * budgets allow. A page that ends busy, backed off or recovery-required stops
+ * the loop; content cleanup advances under the same page budget and resumes
+ * on the schedule. Two outcomes exist so that a
  * page is never reported as work it did not do: `busy`, when another lease
  * holder settled the job during this invocation, and `rejected` with
  * `invalid-worker-result`, when a worker returned no work-remaining boolean.
@@ -393,10 +543,6 @@ function createServersV1Dispatcher({
       }
       if (remaining === false) { report.outcome = "completed"; break; }
       if (result?.recoveryRequired === true) { report.outcome = "recoveryRequired"; break; }
-      if (result?.contentCleanupPending === true && result?.rtcCleanupPending === false) {
-        report.outcome = "contentCleanupPending";
-        break;
-      }
     }
     return report;
   }
@@ -501,8 +647,8 @@ function createServersV1Dispatcher({
 }
 
 /**
- * Builds the complete Servers V1 export map: the twenty-one callables plus the
- * outbox trigger, its bounded retry schedule and the stale-generation sweep.
+ * Builds the complete Servers V1 export map: the fifty-four callables plus the
+ * outbox trigger and its bounded schedules.
  * functions/index.js merges the result into `exports` only behind
  * `YOVOICE_SERVERS_V1=enabled`.
  */
@@ -538,6 +684,7 @@ function createServersV1Functions({
   // One eager teardown page (at most 20 provider requests, four at a time,
   // four-second request timeouts) must fit inside the deadline.
   const securedOptions = { ...callableOptions, timeoutSeconds: 120, secrets: [...LIVEKIT_SECRET_PARAMS] };
+  const mediaOptions = { ...callableOptions, memory: "512MiB", timeoutSeconds: 120 };
   const exportsMap = {};
   for (const [name, serviceName] of Object.entries(SERVER_CALLABLE_METHODS)) {
     const method = resolved?.[serviceName]?.[name];
@@ -545,10 +692,19 @@ function createServersV1Functions({
       throw new TypeError(`Missing Servers V1 method ${serviceName}.${name}.`);
     }
     const handler = callableHandler(name, method, log);
-    exportsMap[name] = registrars.onCall(
-      SECRET_BOUND_CALLABLES.includes(name) ? { ...securedOptions } : { ...callableOptions },
-      handler,
-    );
+    const options = PODCAST_EGRESS_CALLABLES.includes(name)
+      ? {
+          ...mediaOptions,
+          secrets: [...PODCAST_EGRESS_SECRET_PARAMS],
+        }
+      : SECRET_BOUND_CALLABLES.includes(name)
+      ? { ...securedOptions }
+      : FAMILY_MEMORY_MEDIA_CALLABLES.includes(name) ||
+          COMPANY_FILE_MEDIA_CALLABLES.includes(name) ||
+          PODCAST_EPISODE_MEDIA_CALLABLES.includes(name)
+        ? { ...mediaOptions }
+        : { ...callableOptions };
+    exportsMap[name] = registrars.onCall(options, handler);
   }
 
   const dispatcher = createServersV1Dispatcher({ runtime: resolved, log, ...dispatch });
@@ -587,15 +743,77 @@ function createServersV1Functions({
       return line;
     },
   );
+  exportsMap.sweepServerFamilyMemoryMaintenanceSchedule = registrars.onSchedule(
+    {
+      region: REGION,
+      memory: "256MiB",
+      timeoutSeconds: 300,
+      schedule: "every 10 minutes",
+      timeZone: "Etc/UTC",
+      maxInstances: 1,
+    },
+    async () => {
+      const [uploads, deletions] = await Promise.all([
+        resolved.familyMemories.expireServerFamilyMemoryUploadReservations({ limit: 20 }),
+        resolved.familyMemories.processPendingFamilyMemoryDeletionJobs({ limit: 20 }),
+      ]);
+      const line = { uploads, deletions };
+      if (uploads.hasMore || deletions.hasMore) log.warn("servers.family_memory_sweep", line);
+      else log.info("servers.family_memory_sweep", line);
+      return line;
+    },
+  );
+  exportsMap.sweepServerCompanyFileMaintenanceSchedule = registrars.onSchedule(
+    {
+      region: REGION,
+      memory: "512MiB",
+      timeoutSeconds: 300,
+      schedule: "every 10 minutes",
+      timeZone: "Etc/UTC",
+      maxInstances: 1,
+    },
+    async () => {
+      const [uploads, deletions] = await Promise.all([
+        resolved.companyFiles.expireServerCompanyFileUploadReservations({ limit: 20 }),
+        resolved.companyFiles.processPendingCompanyFileDeletionJobs({ limit: 20 }),
+      ]);
+      const line = { uploads, deletions };
+      if (uploads.hasMore || deletions.hasMore) log.warn("servers.company_file_sweep", line);
+      else log.info("servers.company_file_sweep", line);
+      return line;
+    },
+  );
+  exportsMap.reconcileServerPodcastEgressSchedule = registrars.onSchedule(
+    {
+      region: REGION,
+      memory: "512MiB",
+      timeoutSeconds: 300,
+      schedule: "every 5 minutes",
+      timeZone: "Etc/UTC",
+      maxInstances: 1,
+      secrets: [...PODCAST_EGRESS_SECRET_PARAMS],
+    },
+    async () => {
+      const line = await resolved.podcastEpisodes.reconcileServerPodcastEgressJobs({ limit: 20 });
+      if (line.hasMore) log.warn("servers.podcast_egress_sweep", line);
+      else log.info("servers.podcast_egress_sweep", line);
+      return line;
+    },
+  );
   return Object.freeze(exportsMap);
 }
 
 module.exports = {
   CONVERGENCE_KINDS,
+  COMPANY_FILE_MEDIA_CALLABLES,
   DEFAULT_DISPATCH_LIMITS,
   DISPATCHER_EXPORTS,
+  FAMILY_MEMORY_MEDIA_CALLABLES,
   OUTBOX_COLLECTION,
   OUTBOX_KINDS,
+  PODCAST_EGRESS_CALLABLES,
+  PODCAST_EGRESS_SECRET_PARAMS,
+  PODCAST_EPISODE_MEDIA_CALLABLES,
   REGION,
   SECRET_BOUND_CALLABLES,
   SERVER_CALLABLE_METHODS,
