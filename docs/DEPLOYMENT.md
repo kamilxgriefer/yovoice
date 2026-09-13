@@ -4,6 +4,50 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## 2.0.0 (26) internal tester build — 2026-09-13
+
+Build 26 was produced from exact source commit
+`d1c036b75fea16e8962e7af932166cf95aa8f0ab` and released only to the existing
+internal tester channels. No public-store, external TestFlight, tester-list,
+release-note or **What to Test** change was made.
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --no-pub` | clean |
+| full serial Flutter | **4734 / 4734**, zero failures/skips |
+| performance regression slice | **11 / 11** |
+| Functions with Auth + Firestore emulators | **2166 / 2166**, zero failures/skips/cancellations |
+| focused Yeels media-first + composer matrix | **177 / 177** |
+| GitHub Actions on `d1c036b7` | Hosting verification, browser smoke and CodeQL all successful |
+
+The Android artifact is package `app.yovoice`, version `2.0.0`, version code
+`26`; 123,814,453 B; SHA-256
+`d3c042316d4ebdc1e19a9794767db29145f492780a19ff7f26d2d329204ddec8`.
+ZIP integrity, manifest identity, upload-key signature and signer fingerprint
+were verified before upload. Google Play Internal accepted it as release id
+`21` and reported **26 (2.0.0) available to internal testers** at 16:29 CEST.
+The existing `YO Voice Internal Testers` list remained at fifteen accounts.
+Production was untouched.
+
+The iOS artifact is bundle `app.yovoice`, `2.0.0 (26)`; 74,980,810 B;
+SHA-256 `4023c94d91ba0c80427f8af65828a7ac86c6a553502d8a088605dbb77a2e2829`.
+IPA integrity, the Apple Distribution signature and the `YO Voice App Store`
+profile were verified before one upload. App Store Connect reported the upload
+**Complete**, the binary **Validated**, and the existing internal group
+`YO Voice Internal Testers` **Testing** with Build 26. No external group or
+individual tester was assigned. Apple's upload emitted a non-blocking warning
+that `WebRTC.framework` supplied no dSYM; validation and internal distribution
+completed successfully.
+
+This release carries the new Servers UI and the five templates, Yeels'
+media-first presentation, clearer Chats/Friends entry points, full-screen
+private media and the client-side call lifecycle corrections. It does **not**
+activate Servers in production: `YOVOICE_SERVERS_V1` and the Servers V1
+Functions remain absent, required indexes/rules are not deployed, and Podcast
+Egress remains disabled. The proposed warm `acceptDirectCall` instance is also
+source-only until a separate Functions deployment. Those backend operations
+retain their own explicit deployment, provider-canary and rollback gates.
+
 ## September 11 working tree — release still held
 
 The approved Home/Voice/Reels redesign and held Servers work are uncommitted
