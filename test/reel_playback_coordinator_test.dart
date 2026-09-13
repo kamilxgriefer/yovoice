@@ -93,6 +93,46 @@ void main() {
     );
 
     test(
+      'a detached attach operation cannot seek after its volume call returns',
+      () async {
+        final first = _FakeVideoPlayback();
+        final replacement = _FakeVideoPlayback();
+        final coordinator = ReelPlaybackCoordinator(
+          reel: _videoReel(),
+          resolveBackingAudioUri: () async =>
+              Uri.parse('https://storage.googleapis.com/yovoice/audio.mp3'),
+          audioPlaybackFactory: _FakeAudioPlayback.new,
+        );
+        addTearDown(coordinator.dispose);
+
+        final blockedVolume = first.blockNextVolume();
+        final firstAttach = coordinator.attachVideo(first);
+        await blockedVolume.started.future;
+
+        coordinator.detachVideo(first);
+        final replacementAttach = coordinator.attachVideo(replacement);
+        blockedVolume.release.complete();
+        await firstAttach;
+        await replacementAttach;
+
+        expect(blockedVolume.returned.isCompleted, isTrue);
+        expect(
+          first.seekPositions,
+          isEmpty,
+          reason: 'the stale queued attach must stop after its awaited call',
+        );
+        expect(replacement.volume, .35);
+        expect(replacement.seekPositions, <Duration>[
+          const Duration(seconds: 5),
+        ]);
+
+        await coordinator.toggle();
+        expect(first.playCount, 0);
+        expect(replacement.playCount, 1);
+      },
+    );
+
+    test(
       'corrects only material backing-track drift inside a bounded window',
       () async {
         var now = DateTime.utc(2026, 9, 3, 4);
@@ -510,6 +550,13 @@ class _FakeVideoPlayback implements ReelVideoPlayback {
   int playCount = 0;
   int pauseCount = 0;
   final List<Duration> seekPositions = <Duration>[];
+  _BlockedVolume? _nextBlockedVolume;
+
+  _BlockedVolume blockNextVolume() {
+    final blocked = _BlockedVolume();
+    _nextBlockedVolume = blocked;
+    return blocked;
+  }
 
   @override
   bool get isPlaying => playing;
@@ -533,7 +580,22 @@ class _FakeVideoPlayback implements ReelVideoPlayback {
   }
 
   @override
-  Future<void> setVolume(double value) async => volume = value;
+  Future<void> setVolume(double value) async {
+    final blocked = _nextBlockedVolume;
+    _nextBlockedVolume = null;
+    if (blocked != null) {
+      blocked.started.complete();
+      await blocked.release.future;
+    }
+    volume = value;
+    if (blocked != null) blocked.returned.complete();
+  }
+}
+
+class _BlockedVolume {
+  final Completer<void> started = Completer<void>();
+  final Completer<void> release = Completer<void>();
+  final Completer<void> returned = Completer<void>();
 }
 
 class _FakeAudioPlayback implements ReelAudioPlayback {
