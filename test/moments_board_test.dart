@@ -1036,25 +1036,39 @@ void main() {
         find.byKey(const ValueKey('moments-filter-mostEngaged')),
       );
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      // The selected compact-chrome chip centres itself over 140 ms. Let that
+      // reveal finish before asking the same horizontal scroller to expose a
+      // different chip.
+      await tester.pump(const Duration(milliseconds: 200));
       expect(at('pool-liked').dy, lessThan(at('pool-new').dy));
 
       // Recent: back to createdAt descending.
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('moments-filter-recent')),
+      final recentFilter = find.byKey(const ValueKey('moments-filter-recent'));
+      final filterScroller = find.ancestor(
+        of: recentFilter,
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is SingleChildScrollView &&
+              widget.scrollDirection == Axis.horizontal,
+        ),
       );
+      expect(filterScroller, findsOneWidget);
+      await tester.drag(filterScroller, const Offset(-800, 0));
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('moments-filter-recent')));
+      expect(recentFilter.hitTestable(), findsOneWidget);
+      await tester.tap(recentFilter);
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 200));
       expect(at('pool-new').dy, lessThan(at('pool-liked').dy));
 
       // Following: the personal slice, not the pool.
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('moments-filter-following')),
+      final followingFilter = find.byKey(
+        const ValueKey('moments-filter-following'),
       );
+      await tester.drag(filterScroller, const Offset(800, 0));
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('moments-filter-following')));
+      expect(followingFilter.hitTestable(), findsOneWidget);
+      await tester.tap(followingFilter);
       for (var i = 0; i < 4; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
