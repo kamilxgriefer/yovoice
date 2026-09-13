@@ -78,8 +78,8 @@ class ReelsToolbar extends StatelessWidget {
     final palette = context.appPalette;
     final textScaler = MediaQuery.textScalerOf(context);
     final discoverLabel = copy.text('Discover', 'Odkrywaj');
-    final ownLabel = copy.text('Your Reels', 'Twoje Reels');
-    final createLabel = copy.text('Create Reel', 'Utwórz Reel');
+    final ownLabel = copy.text('Your Yeels', 'Twoje Yeels');
+    final createLabel = copy.text('Create Yeel', 'Utwórz Yeel');
     final refreshLabel = copy.text('Refresh', 'Odśwież');
 
     // Measured with the very style each control renders in — family, fallback

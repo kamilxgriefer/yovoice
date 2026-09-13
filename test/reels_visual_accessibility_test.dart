@@ -22,7 +22,7 @@ import 'package:yovoice/shared/widgets/inputs/yo_segmented_pill.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 const _feedCaption =
-    'The full Reel caption remains readable in its details at large text.';
+    'The full Yeel caption remains readable in its details at large text.';
 
 void _useViewport(WidgetTester tester, Size size, {double textScale = 1}) {
   tester.view.physicalSize = size;
@@ -90,7 +90,7 @@ double _contrast(Color first, Color second) {
 }
 
 void main() {
-  group('canonical Reel renderer', () {
+  group('canonical Yeel renderer', () {
     testWidgets('scaled canonical frame keeps real link targets at least44px', (
       tester,
     ) async {
@@ -417,9 +417,9 @@ void main() {
             captionSemantics.getSemanticsData().flagsCollection.isTextField,
             isFalse,
           );
-          await tester.ensureVisible(find.text('Report Reel'));
+          await tester.ensureVisible(find.text('Report Yeel'));
           await tester.pumpAndSettle();
-          await tester.tap(find.text('Report Reel'));
+          await tester.tap(find.text('Report Yeel'));
           await tester.pumpAndSettle();
           expect(find.byType(YoModalSheetChrome), findsOneWidget);
           expect(
@@ -529,17 +529,17 @@ void main() {
             // must still say its own name when it is reduced to a glyph.
             final labelled = find.descendant(
               of: find.byKey(create),
-              matching: find.text('Create Reel'),
+              matching: find.text('Create Yeel'),
             );
             if (labelled.evaluate().isEmpty) {
-              expect(find.byTooltip('Create Reel'), findsOneWidget);
+              expect(find.byTooltip('Create Yeel'), findsOneWidget);
               final icon = tester.widget<Icon>(
                 find.descendant(
                   of: find.byKey(create),
                   matching: find.byType(Icon),
                 ),
               );
-              expect(icon.semanticLabel, 'Create Reel');
+              expect(icon.semanticLabel, 'Create Yeel');
             }
           });
         }

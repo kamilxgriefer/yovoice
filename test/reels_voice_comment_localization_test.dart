@@ -48,7 +48,7 @@ const _inheritedEnglishFallback = <String>{
   'No comments yet',
   'Post comment',
   'Remove',
-  'Remove from my Reel',
+  'Remove from my Yeel',
   'Remove this comment?',
   'Report again',
   'Report comment',
@@ -60,7 +60,7 @@ const _inheritedEnglishFallback = <String>{
   'You already reported this comment. It is still with our team.',
   'Your comment will be removed for everyone. This cannot be undone.',
   'Your report is confidential. Our team reviews it — the comment stays up until they decide.',
-  "{author}'s comment will be removed from your Reel for everyone. This cannot be undone. To have it reviewed instead, report it.",
+  "{author}'s comment will be removed from your Yeel for everyone. This cannot be undone. To have it reviewed instead, report it.",
   // Reused, not minted: 'Reply with voice' already lives in the Moments
   // overview catalog and the mic points at that entry.
   'Reply with voice',

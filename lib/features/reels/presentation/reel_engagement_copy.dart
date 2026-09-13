@@ -95,8 +95,8 @@ String reelEngagementMessage(
         'Ten komentarz jest już niedostępny.',
       ),
       _ => copy.text(
-        'This Reel is unavailable right now.',
-        'Ten Reel jest teraz niedostępny.',
+        'This Yeel is unavailable right now.',
+        'Ten Yeel jest teraz niedostępny.',
       ),
     },
     ReelEngagementFailure.offline => copy.text(

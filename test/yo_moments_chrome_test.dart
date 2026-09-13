@@ -74,13 +74,17 @@ void main() {
     'moments-filter-recent',
   ];
 
-  testWidgets('one title, Głos/Reels switch with a selected segment, no '
-      'search, chips below 1100', (tester) async {
+  testWidgets('Voice uses the same compact two-level chrome as Yeels below '
+      '1100', (tester) async {
     await pumpScreen(tester, size: const Size(390, 844));
 
-    expect(find.text('YO Moments'), findsOneWidget);
+    expect(find.text('YO Moments'), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('voice-immersive-chrome')),
+      findsOneWidget,
+    );
     expect(find.text('Głos'), findsOneWidget);
-    expect(find.text('Reels'), findsOneWidget);
+    expect(find.text('Yeels'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
     expect(find.textContaining('Szukaj'), findsNothing);
     expect(
@@ -95,10 +99,14 @@ void main() {
     final semantics = tester.ensureSemantics();
     try {
       final voice = tester
-          .getSemantics(find.byKey(const ValueKey<String>('yo-moments-format-voice')))
+          .getSemantics(
+            find.byKey(const ValueKey<String>('yo-moments-format-voice')),
+          )
           .getSemanticsData();
       final reels = tester
-          .getSemantics(find.byKey(const ValueKey<String>('yo-moments-format-reels')))
+          .getSemantics(
+            find.byKey(const ValueKey<String>('yo-moments-format-reels')),
+          )
           .getSemanticsData();
       expect(voice.flagsCollection.isSelected, Tristate.isTrue);
       expect(reels.flagsCollection.isSelected, isNot(Tristate.isTrue));
@@ -109,9 +117,50 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    '768 px keeps the compact chrome while switching Voice and Yeels',
+    (tester) async {
+      await pumpScreen(
+        tester,
+        size: const Size(768, 900),
+        reelService: emptyReels(),
+      );
+
+      expect(
+        find.byKey(const ValueKey('voice-immersive-chrome')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('yo-moments-title')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('yo-moments-format-reels')));
+      await settleOverview(tester);
+
+      expect(find.byKey(const ValueKey('reels-chrome')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('reels-discover-filter')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('yo-moments-title')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('yo-moments-format-voice')));
+      await settleOverview(tester);
+
+      expect(
+        find.byKey(const ValueKey('voice-immersive-chrome')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('yo-moments-title')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('the English label is Voice and the four filters keep their '
       'English copy', (tester) async {
-    await pumpScreen(tester, size: const Size(390, 844), locale: const Locale('en'));
+    await pumpScreen(
+      tester,
+      size: const Size(390, 844),
+      locale: const Locale('en'),
+    );
     expect(find.text('Voice'), findsOneWidget);
     expect(find.text('Discover'), findsOneWidget);
     expect(find.text('Following'), findsOneWidget);
@@ -147,8 +196,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('the Reels format keeps both Reels filters reachable at 1280',
-      (tester) async {
+  testWidgets('the Yeels format keeps both Yeels filters reachable at 1280', (
+    tester,
+  ) async {
     await pumpScreen(
       tester,
       size: const Size(1280, 900),
@@ -157,7 +207,7 @@ void main() {
     );
     expect(find.text('YO Moments'), findsOneWidget);
     expect(find.text('Odkrywaj'), findsWidgets);
-    expect(find.text('Twoje Reels'), findsOneWidget);
+    expect(find.text('Twoje Yeels'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
   });
 
@@ -206,8 +256,12 @@ void main() {
       }
     }
     expect(order, isNotEmpty);
-    final firstFilter = order.indexWhere((k) => k.startsWith('moments-filter-'));
-    final firstSwitch = order.indexWhere((k) => k.startsWith('yo-moments-format-'));
+    final firstFilter = order.indexWhere(
+      (k) => k.startsWith('moments-filter-'),
+    );
+    final firstSwitch = order.indexWhere(
+      (k) => k.startsWith('yo-moments-format-'),
+    );
     expect(firstSwitch, greaterThanOrEqualTo(0));
     if (firstFilter >= 0) expect(firstSwitch, lessThan(firstFilter));
   });
@@ -219,9 +273,11 @@ void main() {
     final create = tester.getRect(
       find.byKey(const ValueKey<String>('moments-create-cta')),
     );
-    final title = tester.getRect(find.text('YO Moments'));
+    final switcher = tester.getRect(
+      find.byKey(const ValueKey<String>('yo-moments-format-tabs')),
+    );
     expect(create.center.dx, lessThan(195));
-    expect(title.center.dx, greaterThan(195));
+    expect(switcher.center.dx, greaterThan(create.center.dx));
     final discover = tester.getRect(
       find.byKey(const ValueKey<String>('moments-filter-discover')),
     );
@@ -239,20 +295,22 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('200 % text at 320 keeps the title and both segments laid out',
-      (tester) async {
-    await pumpScreen(tester, size: const Size(320, 1400), textScale: 2);
-    for (final finder in <Finder>[
-      find.byKey(const ValueKey<String>('yo-moments-title')),
-      find.text('Głos'),
-      find.text('Reels'),
-    ]) {
-      final paragraph = tester.renderObject<RenderParagraph>(finder);
-      expect(paragraph.didExceedMaxLines, isFalse, reason: '$finder');
-      final rect = tester.getRect(finder);
-      expect(rect.left, greaterThanOrEqualTo(-0.5), reason: '$finder');
-      expect(rect.right, lessThanOrEqualTo(320.5), reason: '$finder');
-    }
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    '200 % text at 320 keeps compact Voice and Yeels segments laid out',
+    (tester) async {
+      await pumpScreen(tester, size: const Size(320, 1400), textScale: 2);
+      expect(
+        find.byKey(const ValueKey<String>('yo-moments-title')),
+        findsNothing,
+      );
+      for (final finder in <Finder>[find.text('Głos'), find.text('Yeels')]) {
+        final paragraph = tester.renderObject<RenderParagraph>(finder);
+        expect(paragraph.didExceedMaxLines, isFalse, reason: '$finder');
+        final rect = tester.getRect(finder);
+        expect(rect.left, greaterThanOrEqualTo(-0.5), reason: '$finder');
+        expect(rect.right, lessThanOrEqualTo(320.5), reason: '$finder');
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

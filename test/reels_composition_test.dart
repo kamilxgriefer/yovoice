@@ -8,7 +8,7 @@ ReelComposition _videoComposition({
   List<ReelLinkOverlay> links = const <ReelLinkOverlay>[],
 }) {
   return ReelComposition(
-    caption: 'A short Reel',
+    caption: 'A short Yeel',
     trimStartMs: 1000,
     trimEndMs: 15 * 1000,
     linkOverlays: links,

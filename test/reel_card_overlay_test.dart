@@ -145,20 +145,20 @@ void main() {
     expect(like.dy, greaterThan(frame.center.dy));
   });
 
-  testWidgets('your own Reel offers delete where a stranger offers report', (
+  testWidgets('your own Yeel offers delete where a stranger offers report', (
     tester,
   ) async {
     await _pumpFeed(tester, authorId: 'viewer');
 
-    expect(find.text('Delete Reel'), findsNothing);
-    expect(find.text('Report Reel'), findsNothing);
+    expect(find.text('Delete Yeel'), findsNothing);
+    expect(find.text('Report Yeel'), findsNothing);
     final like = tester.getCenter(_inCard(find.byKey(_like)));
     final more = tester.getCenter(_inCard(find.byKey(_more)));
     expect(more.dx, greaterThan(like.dx));
     await tester.tap(_inCard(find.byKey(_more)));
     await tester.pumpAndSettle();
-    expect(find.text('Delete Reel'), findsOneWidget);
-    expect(find.text('Report Reel'), findsNothing);
+    expect(find.text('Delete Yeel'), findsOneWidget);
+    expect(find.text('Report Yeel'), findsNothing);
   });
 
   testWidgets('each count belongs to the control it counts', (tester) async {

@@ -100,7 +100,7 @@ void main() {
       );
 
       expect(find.byKey(reelNextKey), findsOneWidget);
-      expect(find.bySemanticsLabel('Next Reel'), findsOneWidget);
+      expect(find.bySemanticsLabel('Next Yeel'), findsOneWidget);
       final target = tester.getSize(find.byKey(reelNextKey));
       expect(target.width, greaterThanOrEqualTo(48));
       expect(target.height, greaterThanOrEqualTo(48));
@@ -114,7 +114,7 @@ void main() {
       expect(players.of('reel_1').playing, isFalse);
     });
 
-    testWidgets('is absent on the last loaded Reel', (tester) async {
+    testWidgets('is absent on the last loaded Yeel', (tester) async {
       final players = FakeReelPlayers();
       await pumpReelStage(
         tester,

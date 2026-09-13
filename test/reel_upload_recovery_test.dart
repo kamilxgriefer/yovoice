@@ -360,7 +360,7 @@ void main() {
       },
     );
 
-    test('never accepts an object belonging to another Reel', () async {
+    test('never accepts an object belonging to another Yeel', () async {
       final payload = await _evictedVideoPayload();
       final reference = _FakeReference(
         onGetMetadata: () async => _committed(

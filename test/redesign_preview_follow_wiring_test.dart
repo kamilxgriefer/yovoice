@@ -7,7 +7,7 @@ import 'package:yovoice/features/moments/presentation/widgets/moments_follow_pan
 
 void main() {
   testWidgets(
-    'live preview keeps its signed-in follow fixture from Voice into Reels',
+    'live preview keeps its signed-in follow fixture from Voice into Yeels',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;

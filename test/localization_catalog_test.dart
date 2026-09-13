@@ -100,8 +100,8 @@ void main() {
 
     test('creation stages preserve the reviewed English and Polish copy', () {
       const copyPairs = <String, String>{
-        "This draft belongs to a previous session. Discard it and create a new Reel.":
-            "Ten szkic pochodzi z poprzedniej sesji. Odrzuć go i utwórz nowego Reela.",
+        "This draft belongs to a previous session. Discard it and create a new Yeel.":
+            "Ten szkic pochodzi z poprzedniej sesji. Odrzuć go i utwórz nowego Yeela.",
         'Record': 'Nagraj',
         'Review': 'Sprawdź',
         'Your recording': 'Twoje nagranie',
@@ -115,7 +115,7 @@ void main() {
             'Uszczypnij, aby powiększyć, i przeciągnij, aby ustawić kadr.',
         'Zoom in to reposition the frame.':
             'Powiększ, aby zmienić położenie kadru.',
-        'Preview Reel': 'Podgląd Reela',
+        'Preview Yeel': 'Podgląd Yeela',
         'Retry preview': 'Ponów podgląd',
         'Play preview': 'Odtwórz podgląd',
         'Pause preview': 'Wstrzymaj podgląd',
@@ -124,9 +124,9 @@ void main() {
         'Use your own MP3, M4A or WAV: 1 second – 5 minutes, up to 15 MB.':
             'Dodaj własny plik MP3, M4A lub WAV: od 1 sekundy do 5 minut, do 15 MB.',
         'Preparing audio': 'Przygotowywanie dźwięku',
-        'Your Reels': 'Twoje Reels',
-        'No Reels of your own yet': 'Nie masz jeszcze własnych Reels',
-        'More Reels are available to check.': 'Możesz sprawdzić kolejne Reels.',
+        'Your Yeels': 'Twoje Yeels',
+        'No Yeels of your own yet': 'Nie masz jeszcze własnych Yeels',
+        'More Yeels are available to check.': 'Możesz sprawdzić kolejne Yeels.',
         'Load more': 'Wczytaj więcej',
         'Replace media?': 'Zmienić multimedia?',
         'Your caption, audio and overlays stay. Crop and video trim will reset.':
@@ -147,9 +147,9 @@ void main() {
             'Sprawdź połączenie i ponów próbę. Twój szkic został zachowany.',
         'Confirm that you may use the backing audio.':
             'Potwierdź, że masz prawo użyć podkładu dźwiękowego.',
-        'The Reel could not be prepared. Try again.':
-            'Nie udało się przygotować Reela. Spróbuj ponownie.',
-        "Choose Reel media": "Wybierz multimedia Reela",
+        'The Yeel could not be prepared. Try again.':
+            'Nie udało się przygotować Yeela. Spróbuj ponownie.',
+        "Choose Yeel media": "Wybierz multimedia Yeela",
         "Enter a label and a public HTTPS link.":
             "Wpisz nazwę i publiczny link HTTPS.",
         "Text size": "Rozmiar tekstu",
@@ -166,8 +166,8 @@ void main() {
         "{hours} hours": "{hours} godz.",
         "Availability is locked for this retry.":
             "Dostępność jest zablokowana dla tej ponownej próby.",
-        "Choose how long this Reel remains available.":
-            "Wybierz, jak długo ten Reel ma być dostępny.",
+        "Choose how long this Yeel remains available.":
+            "Wybierz, jak długo ten Yeel ma być dostępny.",
         "Available for": "Dostępny przez",
         "Custom": "Własny czas",
         "Custom · {hours}h": "Własny · {hours} godz.",
@@ -1106,7 +1106,7 @@ void main() {
       const naturallyUnchangedValues = <String>{
         '{destination}, {unread}',
         // Reels is a stable product destination name, like Premium and VIBE.
-        'Reels',
+        'Yeels',
         // Video is an established loanword in several supported languages.
         'Video',
         // A medium acronym plus an untrusted title contains no English prose.

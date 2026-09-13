@@ -300,8 +300,8 @@ class _ReelLinkDestinationScreenState extends State<ReelLinkDestinationScreen>
     final copy = AppLocalizations.of(context);
     if (!_sameViewer) {
       return copy.text(
-        'Sign in to open this Reel.',
-        'Zaloguj się, aby otworzyć ten Reel.',
+        'Sign in to open this Yeel.',
+        'Zaloguj się, aby otworzyć ten Yeel.',
       );
     }
     if (_error is ReelEngagementException &&
@@ -313,8 +313,8 @@ class _ReelLinkDestinationScreenState extends State<ReelLinkDestinationScreen>
       );
     }
     return copy.text(
-      'This Reel is unavailable right now.',
-      'Ten Reel jest teraz niedostępny.',
+      'This Yeel is unavailable right now.',
+      'Ten Yeel jest teraz niedostępny.',
     );
   }
 
@@ -337,11 +337,11 @@ class _ReelLinkDestinationScreenState extends State<ReelLinkDestinationScreen>
     return Scaffold(
       backgroundColor: context.appPalette.background,
       appBar: AppBar(
-        title: Text(copy.text('Reels', 'Reels')),
+        title: Text(copy.text('Yeels', 'Yeels')),
         actions: [
           IconButton(
             key: const ValueKey('reel-link-share'),
-            tooltip: copy.text('Share Reel', 'Udostępnij Reel'),
+            tooltip: copy.text('Share Yeel', 'Udostępnij Yeel'),
             onPressed: canPresent
                 ? () => showReelShareSheet(
                     context,
@@ -397,8 +397,8 @@ class _ReelLinkDestinationScreenState extends State<ReelLinkDestinationScreen>
                     child: _loading
                         ? YoLoadingIndicator(
                             message: copy.text(
-                              'Loading Reel',
-                              'Ładowanie Reela',
+                              'Loading Yeel',
+                              'Ładowanie Yeela',
                             ),
                           )
                         : YoErrorState(
@@ -611,20 +611,20 @@ class _ReelLinkCommentsHostState extends State<_ReelLinkCommentsHost>
                             child: _loading
                                 ? YoLoadingIndicator(
                                     message: copy.text(
-                                      'Loading Reel',
-                                      'Ładowanie Reela',
+                                      'Loading Yeel',
+                                      'Ładowanie Yeela',
                                     ),
                                   )
                                 : YoErrorState(
                                     compact: true,
                                     message: _sameViewer
                                         ? copy.text(
-                                            'This Reel is unavailable right now.',
-                                            'Ten Reel jest teraz niedostępny.',
+                                            'This Yeel is unavailable right now.',
+                                            'Ten Yeel jest teraz niedostępny.',
                                           )
                                         : copy.text(
-                                            'Sign in to open this Reel.',
-                                            'Zaloguj się, aby otworzyć ten Reel.',
+                                            'Sign in to open this Yeel.',
+                                            'Zaloguj się, aby otworzyć ten Yeel.',
                                           ),
                                     onRetry: _sameViewer && _foreground
                                         ? _load

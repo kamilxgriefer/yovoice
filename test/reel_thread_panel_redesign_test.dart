@@ -99,7 +99,7 @@ void main() {
     );
   });
 
-  testWidgets('the Reel’s author gets the ⋯ menu with both actions', (
+  testWidgets('the Yeel’s author gets the ⋯ menu with both actions', (
     tester,
   ) async {
     final players = FakeReelPlayers();
@@ -127,7 +127,7 @@ void main() {
     await tester.tap(menu);
     await tester.pumpAndSettle();
     expect(find.text('Report comment'), findsOneWidget);
-    expect(find.text('Remove from my Reel'), findsOneWidget);
+    expect(find.text('Remove from my Yeel'), findsOneWidget);
   });
 
   testWidgets('the composer posts text and now carries the voice mic', (

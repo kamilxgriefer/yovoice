@@ -273,9 +273,9 @@ void main() {
     );
   }
 
-  group('Voice ↔ Reels switching', () {
+  group('Voice ↔ Yeels switching', () {
     testWidgets(
-      'switching to Reels releases the Voice transport, and switching back '
+      'switching to Yeels releases the Voice transport, and switching back '
       'keeps the loaded pool instead of falling back to loading',
       (tester) async {
         final reelCalls = <String>[];
@@ -293,11 +293,11 @@ void main() {
           reelCalls,
           isEmpty,
           reason:
-              'a viewer who stays on Voice never starts the Reels network '
+              'a viewer who stays on Voice never starts the Yeels network '
               'request',
         );
 
-        await tester.tap(find.text('Reels'));
+        await tester.tap(find.text('Yeels'));
         await settleOverview(tester);
 
         expect(
@@ -347,7 +347,7 @@ void main() {
     );
 
     testWidgets(
-      'the Reels half is never built for a session that stays on Voice',
+      'the Yeels half is never built for a session that stays on Voice',
       (tester) async {
         final reelCalls = <String>[];
         await pumpDestination(
@@ -362,7 +362,7 @@ void main() {
             skipOffstage: false,
           ),
           findsOneWidget,
-          reason: 'the Reels slot is a placeholder until it is opened',
+          reason: 'the Yeels slot is a placeholder until it is opened',
         );
         expect(reelCalls, isEmpty);
       },

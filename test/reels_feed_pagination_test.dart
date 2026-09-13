@@ -60,7 +60,7 @@ void main() {
     await _pumpFeed(tester, service, onCreate: () async {});
     await tester.tap(find.byKey(const ValueKey('reels-own-filter')));
     await tester.pumpAndSettle();
-    expect(find.text('No Reels of your own yet'), findsOneWidget);
+    expect(find.text('No Yeels of your own yet'), findsOneWidget);
     expect(
       tester
           .widget<FilledButton>(
@@ -86,7 +86,7 @@ void main() {
     pending.complete(_page([_reelWire(1)], null));
     await tester.pumpAndSettle();
     expect(find.text('Creator 1'), findsNothing);
-    expect(find.text('No Reels of your own yet'), findsOneWidget);
+    expect(find.text('No Yeels of your own yet'), findsOneWidget);
   });
 
   testWidgets('account switch clears old feed before next account loads', (
@@ -130,7 +130,7 @@ void main() {
     await _pumpFeed(tester, service);
 
     expect(listCalls, 2);
-    expect(find.text('No Reels yet'), findsNothing);
+    expect(find.text('No Yeels yet'), findsNothing);
     expect(find.text('Creator 1'), findsOneWidget);
   });
 
@@ -190,9 +190,9 @@ void main() {
 
     // The bounded scan gave up with a cursor still in hand. Nothing is
     // loading, so nothing may say it is.
-    expect(find.text('Loading Reels'), findsNothing);
-    expect(find.text('No Reels yet'), findsOneWidget);
-    expect(find.text('More Reels are available to check.'), findsOneWidget);
+    expect(find.text('Loading Yeels'), findsNothing);
+    expect(find.text('No Yeels yet'), findsOneWidget);
+    expect(find.text('More Yeels are available to check.'), findsOneWidget);
     expect(find.text('Load more'), findsOneWidget);
   });
 
@@ -219,7 +219,7 @@ void main() {
     expect(
       find.descendant(
         of: toast,
-        matching: find.text('More Reels are available to check.'),
+        matching: find.text('More Yeels are available to check.'),
       ),
       findsOneWidget,
     );
@@ -230,10 +230,10 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.text('Loading Reels'), findsNothing);
+    expect(find.text('Loading Yeels'), findsNothing);
   });
 
-  testWidgets('host visibility suspends rather than deselects the Reel', (
+  testWidgets('host visibility suspends rather than deselects the Yeel', (
     tester,
   ) async {
     final visible = ValueNotifier<bool>(true);
@@ -305,7 +305,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('Creator 1'), findsNothing);
-      expect(find.text('No Reels yet'), findsOneWidget);
+      expect(find.text('No Yeels yet'), findsOneWidget);
       expect(audio.stopCount, 1);
       expect(audio.disposeCount, 1);
     },
@@ -339,7 +339,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Creator 2'), findsNothing);
-    expect(find.text('No Reels yet'), findsOneWidget);
+    expect(find.text('No Yeels yet'), findsOneWidget);
   });
 
   testWidgets('app resume revalidates an elapsed deadline', (tester) async {
@@ -367,7 +367,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Creator 3'), findsNothing);
-    expect(find.text('No Reels yet'), findsOneWidget);
+    expect(find.text('No Yeels yet'), findsOneWidget);
   });
 
   testWidgets('30-day expiry is chunked at the real browser timer limit', (
@@ -418,7 +418,7 @@ void main() {
     timers.last.fire();
     await tester.pump();
     expect(find.text('Creator 4'), findsNothing);
-    expect(find.text('No Reels yet'), findsOneWidget);
+    expect(find.text('No Yeels yet'), findsOneWidget);
   });
 }
 

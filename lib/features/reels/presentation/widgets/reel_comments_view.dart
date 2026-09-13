@@ -711,10 +711,10 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
           title: Text(copy.text('Remove this comment?', 'Usunąć komentarz?')),
           content: Text(
             copy.template(
-              "{author}'s comment will be removed from your Reel for "
+              "{author}'s comment will be removed from your Yeel for "
                   'everyone. This cannot be undone. To have it reviewed '
                   'instead, report it.',
-              'Komentarz od {author} zniknie z Twojego Reela dla wszystkich. '
+              'Komentarz od {author} zniknie z Twojego Yeela dla wszystkich. '
                   'Tej operacji nie można cofnąć. Jeśli wolisz, aby ocenił go '
                   'nasz zespół, zgłoś go zamiast usuwać.',
               values: <String, Object>{'author': comment.authorName},
@@ -1198,7 +1198,7 @@ class _CommentTile extends StatelessWidget {
               color: palette.dangerForeground,
             ),
             title: Text(
-              copy.text('Remove from my Reel', 'Usuń z mojego Reela'),
+              copy.text('Remove from my Yeel', 'Usuń z mojego Yeela'),
               style: TextStyle(color: palette.dangerForeground),
             ),
           ),

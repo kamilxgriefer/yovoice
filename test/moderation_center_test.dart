@@ -299,29 +299,29 @@ void main() {
       expect(find.text('Open'), findsWidgets);
     });
 
-    testWidgets('a Reel report has a human label, filter and hide action', (
+    testWidgets('a Yeel report has a human label, filter and hide action', (
       tester,
     ) async {
       await seedReport(id: 'reel-report', targetType: 'reel');
       await openAsStaff(tester);
 
-      expect(rowsWithTarget('Reel'), findsOneWidget);
+      expect(rowsWithTarget('Yeel'), findsOneWidget);
 
       await tester.tap(find.textContaining('Filters'));
       await tester.pumpAndSettle();
-      expect(find.text('Reel'), findsNWidgets(2));
+      expect(find.text('Yeel'), findsNWidgets(2));
 
-      await tester.tap(find.text('Reel').last);
+      await tester.tap(find.text('Yeel').last);
       await tester.pump();
       await tester.tap(find.text('Apply filters'));
       await tester.pumpAndSettle();
 
-      expect(rowsWithTarget('Reel'), findsNWidgets(2));
+      expect(rowsWithTarget('Yeel'), findsNWidgets(2));
       await tester.tap(
         find.bySemanticsLabel(RegExp(r'Harassment or bullying, Open')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Hide Reel and resolve'), findsOneWidget);
+      expect(find.text('Hide Yeel and resolve'), findsOneWidget);
       expect(find.text('Remove message and resolve'), findsNothing);
     });
 
@@ -764,7 +764,7 @@ void main() {
     });
 
     test(
-      'a canonical Reel target remains typed in the moderation queue',
+      'a canonical Yeel target remains typed in the moderation queue',
       () async {
         await db.collection('reports').doc('reel').set({
           'reporterId': 'reporter-uid',

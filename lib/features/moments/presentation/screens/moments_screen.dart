@@ -364,7 +364,7 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                 constraints.maxWidth,
                 textScale: MediaQuery.textScalerOf(context).scale(1),
               );
-              final immersiveReels = layout.isNarrow;
+              final immersiveReels = !layout.showsLocalPanel;
               final showBack =
                   !widget.isRootTab && Navigator.of(context).canPop();
               return Column(
@@ -414,6 +414,13 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                             onOpenFindCreators: () =>
                                 unawaited(_openFindCreators()),
                             headerBuilder: _voiceHeader,
+                            immersiveHeader: buildImmersiveMomentsHeader(
+                              context,
+                              showBack: showBack,
+                              selectedFormat: _format,
+                              onFormatSelected: _selectFormat,
+                              onCreate: () => unawaited(_showCreateChooser()),
+                            ),
                           )
                         else
                           const SizedBox.shrink(
@@ -490,9 +497,13 @@ ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
       onSelected: (index) => onFormatSelected(YoMomentsFormat.values[index]),
       segments: <ImmersiveChromeOption>[
         ImmersiveChromeOption(
+          key: const ValueKey<String>('yo-moments-format-voice'),
           label: copy.contextualText('yoMoments.voiceFormat', 'Voice', 'Głos'),
         ),
-        const ImmersiveChromeOption(label: 'Reels'),
+        const ImmersiveChromeOption(
+          key: ValueKey<String>('yo-moments-format-reels'),
+          label: 'Yeels',
+        ),
       ],
     ),
     leading: showBack
@@ -521,7 +532,7 @@ class _YoMomentsCreateSheet extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final voiceLabel = copy.text('Create Voice Moment', 'Nagraj Voice Moment');
-    final reelLabel = copy.text('Create Reel', 'Utwórz Reel');
+    final reelLabel = copy.text('Create Yeel', 'Utwórz Yeel');
 
     return Material(
       key: const ValueKey<String>('yo-moments-create-sheet'),

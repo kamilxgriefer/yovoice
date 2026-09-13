@@ -43,6 +43,8 @@ import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
+import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -89,6 +91,7 @@ class MomentsFeedView extends StatefulWidget {
     this.expiryClock,
     this.expiryTimerFactory,
     this.headerBuilder,
+    this.immersiveHeader,
     this.onCreate,
     this.onOpenFindCreators,
     this.friendService,
@@ -105,6 +108,11 @@ class MomentsFeedView extends StatefulWidget {
   /// from its slot so the header and the columns can never disagree.
   final Widget Function(BuildContext context, YoMomentsLayout layout)?
   headerBuilder;
+
+  /// Reels-style compact chrome supplied by the YO Moments host. On phone
+  /// and tablet it keeps Voice and Reels in the same two-row visual shell
+  /// while the Voice cards, playback and filters keep their own behaviour.
+  final ImmersiveFeedHeaderSlots? immersiveHeader;
 
   /// The create chooser, for the local panel's "Utwórz" at ≥ 1100. Absent,
   /// the panel draws no create action.
@@ -1769,6 +1777,9 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
           'Filtry Voice Momentów',
         );
         final header = widget.headerBuilder?.call(context, layout);
+        final immersiveHeader = widget.immersiveHeader;
+        final usesImmersiveChrome =
+            !layout.showsLocalPanel && immersiveHeader != null;
         final body = _filter == MomentsFilter.following
             ? _buildFollowing(layout)
             : _buildPool(layout);
@@ -1776,8 +1787,32 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
         Widget mainColumn = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            ?header,
-            if (!layout.showsLocalPanel)
+            if (usesImmersiveChrome)
+              ImmersiveFeedChrome(
+                key: const ValueKey<String>('voice-immersive-chrome'),
+                gutter: layout.gutter,
+                formatSwitch: immersiveHeader.formatSwitch,
+                leading: immersiveHeader.leading,
+                trailing: immersiveHeader.trailing,
+                filters: <ImmersiveChromeOption>[
+                  for (final option in options)
+                    ImmersiveChromeOption(key: option.key, label: option.label),
+                ],
+                selectedFilterIndex: _filter.index,
+                onFilterSelected: (index) =>
+                    _setFilter(MomentsFilter.values[index]),
+                filterGroupLabel: groupLabel,
+                filterTrailing: OverlayPlateButton(
+                  key: const ValueKey('moments-discovery-refresh'),
+                  icon: Icons.refresh_rounded,
+                  semanticLabel: copy.text('Reload Moments', 'Odśwież Momenty'),
+                  focusNode: _expiryRecoveryFocus,
+                  onTap: _refreshAll,
+                ),
+              )
+            else
+              ?header,
+            if (!layout.showsLocalPanel && !usesImmersiveChrome)
               Padding(
                 padding: const EdgeInsets.only(top: AppRhythm.tight),
                 child: YoMomentsFilterChips(

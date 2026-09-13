@@ -254,7 +254,7 @@ void main() {
       ]);
     });
 
-    testWidgets('is absent on your own Reel', (tester) async {
+    testWidgets('is absent on your own Yeel', (tester) async {
       final follows = reelFollowService(viewerUid: 'creator_1');
       final players = FakeReelPlayers();
       await pumpReelStage(

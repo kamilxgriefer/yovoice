@@ -46,6 +46,7 @@ class OverlayPlateButton extends StatefulWidget {
     required this.onTap,
     this.tooltip,
     this.glyphColor = Colors.white,
+    this.focusNode,
     super.key,
   });
 
@@ -54,6 +55,7 @@ class OverlayPlateButton extends StatefulWidget {
   final VoidCallback? onTap;
   final String? tooltip;
   final Color glyphColor;
+  final FocusNode? focusNode;
 
   @override
   State<OverlayPlateButton> createState() => _OverlayPlateButtonState();
@@ -76,6 +78,7 @@ class _OverlayPlateButtonState extends State<OverlayPlateButton> {
         borderRadius: 24,
         minimumSize: const Size(48, 48),
         focusContrastColor: Colors.black,
+        focusNode: widget.focusNode,
         onHover: (value) => setState(() => _hovered = value),
         child: OverlayPlate(
           icon: widget.icon,

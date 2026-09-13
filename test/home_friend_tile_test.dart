@@ -39,13 +39,14 @@ void main() {
     expiresAt: expiresAt ?? DateTime(2026, 9, 13, 10),
   );
 
-  Widget host(Widget child, {Locale locale = const Locale('pl')}) => MaterialApp(
-    locale: locale,
-    localizationsDelegates: _delegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    theme: AppTheme.darkTheme,
-    home: Scaffold(body: Center(child: child)),
-  );
+  Widget host(Widget child, {Locale locale = const Locale('pl')}) =>
+      MaterialApp(
+        locale: locale,
+        localizationsDelegates: _delegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: AppTheme.darkTheme,
+        home: Scaffold(body: Center(child: child)),
+      );
 
   group('homeFriendVoiceByAuthor', () {
     final now = DateTime(2026, 9, 12, 12);
@@ -167,7 +168,7 @@ void main() {
     // The badge glyph is the waveform; a Reel play badge must never appear.
     expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
     expect(find.byIcon(Icons.play_arrow_rounded), findsNothing);
-    expect(find.text('Reel 0:45'), findsNothing);
+    expect(find.text('Yeel 0:45'), findsNothing);
   });
 
   testWidgets('no content: presence word only, no ring and no badge', (

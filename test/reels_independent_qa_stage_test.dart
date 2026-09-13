@@ -145,7 +145,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(engine.playing, isTrue, reason: 'unmuting is not a transport');
         expect(engine.volume, greaterThan(0));
-        expect(engine.playCount, 1, reason: 'and it never restarts the Reel');
+        expect(engine.playCount, 1, reason: 'and it never restarts the Yeel');
 
         // 2. Pause while the sound is on.
         await tester.tap(
@@ -165,7 +165,7 @@ void main() {
         expect(
           engine.playing,
           isFalse,
-          reason: 'muting a paused Reel must not start it',
+          reason: 'muting a paused Yeel must not start it',
         );
         expect(engine.volume, 0);
         expect(engine.playCount, 1);
@@ -201,18 +201,18 @@ void main() {
         players.of('reel_2').volume,
         greaterThan(0),
         reason:
-            'one preference for the destination — the next Reel does not ask '
+            'one preference for the destination — the next Yeel does not ask '
             'for sound again',
       );
       expect(
         players.of('reel_1').playing,
         isFalse,
-        reason: 'the Reel that left the stage stops',
+        reason: 'the Yeel that left the stage stops',
       );
     });
 
     testWidgets(
-      'a photo Reel offers no mute, because its track is its content',
+      'a photo Yeel offers no mute, because its track is its content',
       (tester) async {
         final players = FakeReelPlayers();
         await _pumpFeed(
@@ -225,7 +225,7 @@ void main() {
     );
   });
 
-  group('one decoder per Reel', () {
+  group('one decoder per Yeel', () {
     testWidgets(
       'a responsive reflow and an opened conversation leave exactly one '
       'engine playing',
@@ -273,7 +273,7 @@ void main() {
 
   group('coexistence with a live room or call', () {
     testWidgets(
-      'the host hiding the destination suspends the Reel, and returning '
+      'the host hiding the destination suspends the Yeel, and returning '
       'resumes it without restarting the decoder',
       (tester) async {
         final visible = ValueNotifier<bool>(true);
@@ -290,7 +290,7 @@ void main() {
           engine.playing,
           isFalse,
           reason:
-              'a Reel must not keep decoding, or sounding, into a live room',
+              'a Yeel must not keep decoding, or sounding, into a live room',
         );
         expect(engine.pauseCount, greaterThanOrEqualTo(1));
 
@@ -308,7 +308,7 @@ void main() {
 
   group('account change', () {
     testWidgets(
-      'an identity change clears the loaded Reels, closes the conversation '
+      'an identity change clears the loaded Yeels, closes the conversation '
       'and leaves no engine playing for the previous account',
       (tester) async {
         final auth = MockFirebaseAuth(
@@ -350,7 +350,7 @@ void main() {
           find.byType(ReelCard),
           findsNothing,
           reason:
-              'the previous account\'s Reels are cleared, not left on screen '
+              'the previous account\'s Yeels are cleared, not left on screen '
               'for the next viewer',
         );
         expect(
@@ -399,13 +399,13 @@ void main() {
         players.of('reel_1').playCount,
         1,
         reason:
-            'a Reel that scrolled away is not restarted by the arrival of a '
+            'a Yeel that scrolled away is not restarted by the arrival of a '
             'later page',
       );
     });
 
     testWidgets(
-      'a refused second page keeps the loaded Reels on screen and offers one '
+      'a refused second page keeps the loaded Yeels on screen and offers one '
       'retry',
       (tester) async {
         final calls = <String>[];

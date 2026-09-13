@@ -127,12 +127,12 @@ class _ReelPrivateOverlayGuardState extends State<ReelPrivateOverlayGuard>
       content: Text(
         _sameViewer
             ? copy.text(
-                'This Reel is unavailable right now.',
-                'Ten Reel jest teraz niedostępny.',
+                'This Yeel is unavailable right now.',
+                'Ten Yeel jest teraz niedostępny.',
               )
             : copy.text(
-                'Sign in to open this Reel.',
-                'Zaloguj się, aby otworzyć ten Reel.',
+                'Sign in to open this Yeel.',
+                'Zaloguj się, aby otworzyć ten Yeel.',
               ),
       ),
       actions: [

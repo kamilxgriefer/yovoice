@@ -423,7 +423,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
         requestCursor = nextCursor;
         if (loaded.isNotEmpty || nextCursor == null) break;
         if (!seenCursors.add(nextCursor)) {
-          throw const FormatException('Reel feed cursor did not advance.');
+          throw const FormatException('Yeel feed cursor did not advance.');
         }
       }
       // A drained unseen feed is different from an empty catalogue. The
@@ -499,8 +499,8 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
             behavior: SnackBarBehavior.floating,
             content: Text(
               copy.text(
-                'Thanks. The Reel was sent for review.',
-                'Dziękujemy. Reel został wysłany do sprawdzenia.',
+                'Thanks. The Yeel was sent for review.',
+                'Dziękujemy. Yeel został wysłany do sprawdzenia.',
               ),
             ),
           ),
@@ -704,11 +704,11 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(copy.text('Delete Reel?', 'Usunąć Reel?')),
+        title: Text(copy.text('Delete Yeel?', 'Usunąć Yeel?')),
         content: Text(
           copy.text(
-            'This removes the Reel from the feed. This action cannot be undone.',
-            'Reel zniknie z kanału. Tej operacji nie można cofnąć.',
+            'This removes the Yeel from the feed. This action cannot be undone.',
+            'Yeel zniknie z kanału. Tej operacji nie można cofnąć.',
           ),
         ),
         actions: <Widget>[
@@ -747,7 +747,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
         ..showSnackBar(
           SnackBar(
             behavior: SnackBarBehavior.floating,
-            content: Text(copy.text('Reel deleted.', 'Reel został usunięty.')),
+            content: Text(copy.text('Yeel deleted.', 'Yeel został usunięty.')),
           ),
         );
     } catch (_) {
@@ -759,8 +759,8 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
             behavior: SnackBarBehavior.floating,
             content: Text(
               copy.text(
-                'The Reel could not be deleted. Try again.',
-                'Nie udało się usunąć Reela. Spróbuj ponownie.',
+                'The Yeel could not be deleted. Try again.',
+                'Nie udało się usunąć Yeela. Spróbuj ponownie.',
               ),
             ),
           ),
@@ -822,7 +822,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
           ),
           scrollableState(
             YoLoadingIndicator(
-              message: copy.text('Loading Reels', 'Ładowanie Reels'),
+              message: copy.text('Loading Yeels', 'Ładowanie Yeels'),
             ),
           ),
         ],
@@ -834,10 +834,10 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
       return scrollableState(
         YoEmptyState(
           icon: Icons.travel_explore_rounded,
-          title: copy.text('No Reels yet', 'Nie ma jeszcze Reels'),
+          title: copy.text('No Yeels yet', 'Nie ma jeszcze Yeels'),
           subtitle: copy.text(
-            'More Reels are available to check.',
-            'Możesz sprawdzić kolejne Reels.',
+            'More Yeels are available to check.',
+            'Możesz sprawdzić kolejne Yeels.',
           ),
           actionLabel: copy.text('Load more', 'Wczytaj więcej'),
           onAction: () => _load(reset: false),
@@ -856,8 +856,8 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
             copy: copy,
             fallback: copy.contextualText(
               'reels.feedUnavailable',
-              'Reels could not be loaded. Try again.',
-              'Nie udało się wczytać Reels. Spróbuj ponownie.',
+              'Yeels could not be loaded. Try again.',
+              'Nie udało się wczytać Yeels. Spróbuj ponownie.',
             ),
           ),
           onRetry: () => _load(reset: _cursor == null),
@@ -870,16 +870,16 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
           icon: Icons.smart_display_rounded,
           title: _ownOnly
               ? copy.text(
-                  'No Reels of your own yet',
-                  'Nie masz jeszcze własnych Reels',
+                  'No Yeels of your own yet',
+                  'Nie masz jeszcze własnych Yeels',
                 )
               : _hasWatchedReels
               ? copy.text('You’re all caught up', 'Wszystko obejrzane')
-              : copy.text('No Reels yet', 'Nie ma jeszcze Reels'),
+              : copy.text('No Yeels yet', 'Nie ma jeszcze Yeels'),
           subtitle: _hasWatchedReels
               ? copy.text(
-                  'Watch Reels again or come back later.',
-                  'Obejrzyj Reels ponownie lub wróć później.',
+                  'Watch Yeels again or come back later.',
+                  'Obejrzyj Yeels ponownie lub wróć później.',
                 )
               : copy.text(
                   'Published photos and short videos will appear here.',
@@ -889,7 +889,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
               ? copy.text('Watch again', 'Obejrzyj ponownie')
               : widget.onCreate == null
               ? null
-              : copy.text('Create Reel', 'Utwórz Reel'),
+              : copy.text('Create Yeel', 'Utwórz Yeel'),
           onAction: _hasWatchedReels
               ? () {
                   setState(() => _includeSeen = true);
@@ -1010,7 +1010,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                 icon: Directionality.of(context) == TextDirection.rtl
                     ? Icons.chevron_left_rounded
                     : Icons.chevron_right_rounded,
-                semanticLabel: copy.text('Next Reel', 'Następny Reel'),
+                semanticLabel: copy.text('Next Yeel', 'Następny Yeel'),
                 onTap: _showNext,
               ),
             ),
@@ -1052,8 +1052,8 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final discoverLabel = copy.text('Discover', 'Odkrywaj');
-    final ownLabel = copy.text('Your Reels', 'Twoje Reels');
-    final createLabel = copy.text('Create Reel', 'Utwórz Reel');
+    final ownLabel = copy.text('Your Yeels', 'Twoje Yeels');
+    final createLabel = copy.text('Create Yeel', 'Utwórz Yeel');
     final refreshLabel = copy.text('Refresh', 'Odśwież');
     final filtersLabel = copy.text('Filters', 'Filtry');
     final palette = context.appPalette;
@@ -1071,6 +1071,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
               constraints.maxWidth,
               textScale: MediaQuery.textScalerOf(context).scale(1),
             );
+            final compactChrome = widget.immersive && !layout.showsLocalPanel;
             final immersive = widget.immersive && layout.isNarrow;
             final metrics = _StageMetrics.of(
               constraints.maxWidth,
@@ -1162,7 +1163,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                         setState(() => _chromeHeight = size.height);
                       }
                     },
-                    child: immersive
+                    child: compactChrome
                         ? ImmersiveFeedChrome(
                             gutter: metrics.toolbarGutter,
                             formatSwitch: widget.immersiveHeader?.formatSwitch,
@@ -1242,12 +1243,12 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     return Scaffold(
       backgroundColor: palette.background,
       appBar: AppBar(
-        title: Text(copy.text('Reels', 'Reels')),
+        title: Text(copy.text('Yeels', 'Yeels')),
         actions: widget.onCreate == null
             ? null
             : <Widget>[
                 IconButton(
-                  tooltip: copy.text('Create Reel', 'Utwórz Reel'),
+                  tooltip: copy.text('Create Yeel', 'Utwórz Yeel'),
                   onPressed: _creating ? null : _create,
                   icon: const Icon(Icons.add_rounded),
                 ),
@@ -1525,8 +1526,8 @@ class _FeedLoadMoreError extends StatelessWidget {
     // read held nothing for this viewer, and there is more to check.
     final message = scanPaused
         ? copy.text(
-            'More Reels are available to check.',
-            'Możesz sprawdzić kolejne Reels.',
+            'More Yeels are available to check.',
+            'Możesz sprawdzić kolejne Yeels.',
           )
         : copy.text(
             'Something went wrong. Please try again.',
@@ -1644,7 +1645,7 @@ class _ReelReportSheet extends StatelessWidget {
         Icons.more_horiz_rounded,
       ),
     ];
-    final sheetLabel = copy.text('Report Reel', 'Zgłoś Reel');
+    final sheetLabel = copy.text('Report Yeel', 'Zgłoś Yeel');
     return Material(
       color: palette.surfaceRaised,
       clipBehavior: Clip.antiAlias,
@@ -1669,8 +1670,8 @@ class _ReelReportSheet extends StatelessWidget {
                   children: <Widget>[
                     Text(
                       copy.template(
-                        'Why are you reporting {author}\'s Reel?',
-                        'Dlaczego zgłaszasz Reel użytkownika {author}?',
+                        'Why are you reporting {author}\'s Yeel?',
+                        'Dlaczego zgłaszasz Yeel użytkownika {author}?',
                         values: <String, Object>{'author': authorName},
                       ),
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -1939,8 +1940,8 @@ class _NextReelCard extends StatelessWidget {
     // "Reel by {author}" phrasing is the honest name for it.
     final title = caption.isEmpty
         ? copy.template(
-            'Reel by {author}',
-            'Reel użytkownika {author}',
+            'Yeel by {author}',
+            'Yeel użytkownika {author}',
             values: <String, Object>{'author': reel.authorName},
           )
         : caption;
@@ -1948,8 +1949,8 @@ class _NextReelCard extends StatelessWidget {
       container: true,
       button: true,
       label: copy.template(
-        'Next Reel: {caption}, {author}',
-        'Następny Reel: {caption}, {author}',
+        'Next Yeel: {caption}, {author}',
+        'Następny Yeel: {caption}, {author}',
         values: <String, Object>{'caption': title, 'author': reel.authorName},
       ),
       onTap: onOpen,
@@ -2107,7 +2108,7 @@ class _ReelsLocalPanel extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final refreshLabel = copy.text('Refresh', 'Odśwież');
-    final createLabel = copy.text('Create Reel', 'Utwórz Reel');
+    final createLabel = copy.text('Create Yeel', 'Utwórz Yeel');
     return YoMomentsLocalPanel(
       options: <YoMomentsFilterOption>[
         YoMomentsFilterOption(
@@ -2117,7 +2118,7 @@ class _ReelsLocalPanel extends StatelessWidget {
         ),
         YoMomentsFilterOption(
           key: const ValueKey<String>('reels-own-filter'),
-          label: copy.text('Your Reels', 'Twoje Reels'),
+          label: copy.text('Your Yeels', 'Twoje Yeels'),
           icon: Icons.person_outline_rounded,
         ),
       ],

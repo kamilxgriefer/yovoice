@@ -630,7 +630,7 @@ void main() {
         find.text('Sharing is unavailable here. Copy the link instead.'),
         findsNothing,
       );
-      expect(find.text('Reel link copied.'), findsNothing);
+      expect(find.text('Yeel link copied.'), findsNothing);
       expect(copied, isEmpty);
       expect(
         tester
@@ -676,7 +676,7 @@ void main() {
       expect(shares, 0);
       expect(copies, 0);
       expect(find.byKey(const ValueKey('reel-share-platform')), findsNothing);
-      expect(find.text('Sign in to open this Reel.'), findsOneWidget);
+      expect(find.text('Sign in to open this Yeel.'), findsOneWidget);
       _noPrivateText();
     },
   );
@@ -714,7 +714,7 @@ void main() {
       await tester.pump(const Duration(seconds: 10));
       expect(find.byKey(const ValueKey('reel-share-platform')), findsNothing);
       expect(find.byKey(const ValueKey('reel-share-copy')), findsNothing);
-      expect(find.text('This Reel is unavailable right now.'), findsOneWidget);
+      expect(find.text('This Yeel is unavailable right now.'), findsOneWidget);
     },
   );
 
@@ -740,7 +740,7 @@ void main() {
       pending.complete(f.view());
       await _settle(tester);
       expect(find.byKey(const ValueKey('reel-share-platform')), findsNothing);
-      expect(find.text('Sign in to open this Reel.'), findsOneWidget);
+      expect(find.text('Sign in to open this Yeel.'), findsOneWidget);
       expect(effects, 0);
       _noPrivateText();
     },
@@ -788,7 +788,7 @@ void main() {
         f.calls.where((call) => call.name == 'getReelMediaAccessV2'),
         isEmpty,
       );
-      expect(find.text('Sign in to open this Reel.'), findsOneWidget);
+      expect(find.text('Sign in to open this Yeel.'), findsOneWidget);
       _noPrivateText();
     },
   );
@@ -812,7 +812,7 @@ void main() {
         hasLength(2),
       );
       expect(find.byType(ReelCard, skipOffstage: false), findsNothing);
-      expect(find.text('This Reel is unavailable right now.'), findsOneWidget);
+      expect(find.text('This Yeel is unavailable right now.'), findsOneWidget);
       expect(f.videos.every((video) => !video.isPlaying), isTrue);
       _noPrivateText();
     },

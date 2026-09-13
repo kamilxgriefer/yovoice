@@ -351,7 +351,7 @@ void main() {
     });
   });
 
-  group('board 08 — the Reels stage', () {
+  group('board 08 — the Yeels stage', () {
     testWidgets('the "Następny moment" card advances from the bridge', (
       tester,
     ) async {
@@ -370,12 +370,12 @@ void main() {
       expect(
         find.text('Creator 2'),
         findsWidgets,
-        reason: 'the bridge paged to the next Reel, as the chevron does',
+        reason: 'the bridge paged to the next Yeel, as the chevron does',
       );
       handle.dispose();
     });
 
-    testWidgets('every enabled button on the Reels stage is operable', (
+    testWidgets('every enabled button on the Yeels stage is operable', (
       tester,
     ) async {
       final handle = tester.ensureSemantics();
@@ -391,7 +391,7 @@ void main() {
         );
         _expectEveryEnabledButtonIsOperable(
           tester,
-          'the Reels stage at ${size.width.toInt()}',
+          'the Yeels stage at ${size.width.toInt()}',
         );
       }
       handle.dispose();

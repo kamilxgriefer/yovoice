@@ -138,7 +138,7 @@ void main() {
     );
   });
 
-  testWidgets('the Reel queue filter has deliberate Polish copy', (
+  testWidgets('the Yeel queue filter has deliberate Polish copy', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1440, 1200);
@@ -159,7 +159,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Rolka'), findsOneWidget);
-    expect(find.text('Reel'), findsNothing);
+    expect(find.text('Yeel'), findsNothing);
   });
 
   testWidgets('the audit trail localizes actions, states and accessibility', (

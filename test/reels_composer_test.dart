@@ -146,8 +146,8 @@ void main() {
     final after = tester.getCenter(
       find.byKey(ValueKey('reel-text-overlay-handle-${overlay.id}')),
     );
-    expect(after.dx, greaterThan(before.dx));
-    expect(after.dy, greaterThan(before.dy));
+    expect(after.dx - before.dx, closeTo(40, 2));
+    expect(after.dy - before.dy, closeTo(60, 2));
     // A far drag clamps at the edge and the recipe stays publishable.
     final far = await tester.startGesture(after);
     await far.moveBy(const Offset(5000, 5000));
@@ -174,6 +174,71 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('link overlays drag by touch and persist their final position', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReelComposerScreen(
+          service: _composerService(),
+          imagePicker: _ImagePickerStub(),
+        ),
+      ),
+    );
+    await _choosePhoto(tester);
+    await tester.ensureVisible(find.byKey(const ValueKey('reel-tool-text')));
+    await tester.tap(find.byKey(const ValueKey('reel-tool-text')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Add link'));
+    await tester.tap(find.text('Add link'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).at(0), 'Go');
+    await tester.enterText(
+      find.byType(TextField).at(1),
+      'https://example.com/portfolio',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+
+    ReelDraftPreview preview() =>
+        tester.widget<ReelDraftPreview>(find.byType(ReelDraftPreview));
+    final overlay = preview().composition.linkOverlays.single;
+    expect((overlay.x, overlay.y), (.5, .62));
+    final handle = find.byKey(
+      ValueKey<String>('reel-link-overlay-handle-${overlay.id}'),
+    );
+    await tester.ensureVisible(find.byType(ReelDraftPreview));
+    expect(handle, findsOneWidget);
+    final before = tester.getCenter(handle);
+    final gesture = await tester.startGesture(before);
+    await gesture.moveBy(const Offset(-45, 55));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    final moved = preview().composition.linkOverlays.single;
+    expect(moved.x, lessThan(.5));
+    expect(moved.y, greaterThan(.62));
+    expect(moved.label, 'Go');
+    expect(moved.uri, Uri.parse('https://example.com/portfolio'));
+    final decoded = ReelComposition.fromWire(
+      preview().composition.toWire(),
+      mediaKind: ReelMediaKind.image,
+      durationMs: 0,
+      hasBackingAudio: false,
+    ).linkOverlays.single;
+    expect(decoded.x, closeTo(moved.x, .001));
+    expect(decoded.y, closeTo(moved.y, .001));
+    expect(decoded.uri, moved.uri);
+    final after = tester.getCenter(handle);
+    expect(after.dx - before.dx, closeTo(-45, 2));
+    expect(after.dy - before.dy, closeTo(55, 2));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'steps preserve caption and compatible edits on confirmed replacement',
     (tester) async {
@@ -189,7 +254,7 @@ void main() {
         ),
       );
       expect(find.text('Caption'), findsNothing);
-      expect(find.text('Publish Reel'), findsNothing);
+      expect(find.text('Publish Yeel'), findsNothing);
       await _choosePhoto(tester);
       expect(find.byType(ReelDraftPreview), findsOneWidget);
       expect(
@@ -448,7 +513,7 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Create Reel'), findsOneWidget);
+    expect(find.text('Create Yeel'), findsOneWidget);
     await _choosePhoto(tester);
     expect(find.text('Caption'), findsNothing);
     await _review(tester);
@@ -601,7 +666,7 @@ void main() {
     );
     await tester.ensureVisible(permanent);
     await tester.tap(permanent);
-    await tester.ensureVisible(find.text('Publish Reel'));
+    await tester.ensureVisible(find.text('Publish Yeel'));
     final publishButton = tester.widget<YoButton>(
       find.byKey(const ValueKey('reel-publish')),
     );
@@ -619,8 +684,8 @@ void main() {
     expect(find.text('Availability is locked for this retry.'), findsOneWidget);
     expect(tester.widget<TextField>(caption).readOnly, isTrue);
 
-    await tester.ensureVisible(find.text('Publish Reel'));
-    await tester.tap(find.text('Publish Reel'));
+    await tester.ensureVisible(find.text('Publish Yeel'));
+    await tester.tap(find.text('Publish Yeel'));
     await tester.pumpAndSettle();
 
     expect(publishedId, 'retry_reel');

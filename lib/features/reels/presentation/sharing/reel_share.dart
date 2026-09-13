@@ -16,7 +16,7 @@ import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
 typedef ReelShareInvoker = Future<ShareResult> Function(ShareParams params);
 typedef ReelLinkClipboardWriter = Future<void> Function(String text);
 
-final _shareFlights = Expando<Future<void>>('Reel share sheets');
+final _shareFlights = Expando<Future<void>>('Yeel share sheets');
 
 /// Authorizes first, then offers a fresh user gesture for platform sharing.
 /// In particular, a web share call after an awaited network read can lose the
@@ -255,8 +255,8 @@ class _ReelShareSheetState extends State<_ReelShareSheet> {
     final copy = AppLocalizations.of(context);
     return switch (feedback) {
       _ShareFeedback.copied => copy.text(
-        'Reel link copied.',
-        'Link do Reela skopiowany.',
+        'Yeel link copied.',
+        'Link do Yeela skopiowany.',
       ),
       _ShareFeedback.unconfirmed => copy.text(
         'Sharing could not be confirmed. You can copy the link.',
@@ -285,7 +285,7 @@ class _ReelShareSheetState extends State<_ReelShareSheet> {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final title = copy.text('Share Reel', 'Udostępnij Reel');
+    final title = copy.text('Share Yeel', 'Udostępnij Yeel');
     final feedback = _feedback == null ? null : _feedbackMessage(_feedback!);
     return Material(
       key: const ValueKey('reel-share-sheet'),
@@ -313,18 +313,18 @@ class _ReelShareSheetState extends State<_ReelShareSheet> {
                     const SizedBox(height: 16),
                     if (_loading)
                       YoLoadingIndicator(
-                        message: copy.text('Loading Reel', 'Ładowanie Reela'),
+                        message: copy.text('Loading Yeel', 'Ładowanie Yeela'),
                       )
                     else if (!_authorized) ...[
                       Text(
                         _sameViewer
                             ? copy.text(
-                                'This Reel is unavailable right now.',
-                                'Ten Reel jest teraz niedostępny.',
+                                'This Yeel is unavailable right now.',
+                                'Ten Yeel jest teraz niedostępny.',
                               )
                             : copy.text(
-                                'Sign in to open this Reel.',
-                                'Zaloguj się, aby otworzyć ten Reel.',
+                                'Sign in to open this Yeel.',
+                                'Zaloguj się, aby otworzyć ten Yeel.',
                               ),
                       ),
                       if (_sameViewer && isSafeReelLinkId(widget.reelId)) ...[
@@ -339,8 +339,8 @@ class _ReelShareSheetState extends State<_ReelShareSheet> {
                     ] else ...[
                       Text(
                         copy.text(
-                          'Only people with access can view this Reel.',
-                          'Ten Reel mogą obejrzeć tylko osoby z dostępem.',
+                          'Only people with access can view this Yeel.',
+                          'Ten Yeel mogą obejrzeć tylko osoby z dostępem.',
                         ),
                       ),
                       const SizedBox(height: 20),
@@ -364,7 +364,7 @@ class _ReelShareSheetState extends State<_ReelShareSheet> {
                         onPressed: _busy ? null : _copy,
                         icon: const Icon(Icons.copy_outlined),
                         label: Text(
-                          copy.text('Copy Reel link', 'Skopiuj link do Reela'),
+                          copy.text('Copy Yeel link', 'Skopiuj link do Yeela'),
                         ),
                       ),
                     ],

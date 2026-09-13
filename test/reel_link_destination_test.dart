@@ -309,7 +309,7 @@ void main() {
         expect(find.byType(ReelCard), findsNothing);
         expect(find.text('PRIVATE AUTHOR'), findsNothing);
         expect(
-          find.text('This Reel is unavailable right now.'),
+          find.text('This Yeel is unavailable right now.'),
           findsOneWidget,
         );
         expect(calls, ['getReelViewV2']);
@@ -370,7 +370,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ReelCard), findsNothing);
       expect(find.text('PRIVATE AUTHOR'), findsNothing);
-      expect(find.text('Sign in to open this Reel.'), findsOneWidget);
+      expect(find.text('Sign in to open this Yeel.'), findsOneWidget);
       expect(calls, ['getReelViewV2']);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
@@ -581,7 +581,7 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
       expect(find.byType(ReelCard), findsNothing);
       expect(find.text('PRIVATE AUTHOR'), findsNothing);
-      expect(find.text('This Reel is unavailable right now.'), findsOneWidget);
+      expect(find.text('This Yeel is unavailable right now.'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
       await auth.close();
     },
@@ -607,7 +607,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
     expect(find.byType(ReelCommentsView), findsNothing);
-    expect(find.text('This Reel is unavailable right now.'), findsNothing);
+    expect(find.text('This Yeel is unavailable right now.'), findsNothing);
     auth.change('viewer-b');
     pending.complete(_view(withComment: true));
     await tester.pumpAndSettle();
@@ -616,7 +616,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('reel-link-comments-host')),
-        matching: find.text('Sign in to open this Reel.'),
+        matching: find.text('Sign in to open this Yeel.'),
       ),
       findsOneWidget,
     );
@@ -670,7 +670,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('reel-link-comments-host')),
-          matching: find.text('This Reel is unavailable right now.'),
+          matching: find.text('This Yeel is unavailable right now.'),
         ),
         findsOneWidget,
       );
@@ -722,7 +722,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('reel-link-comments-host')),
-          matching: find.text('This Reel is unavailable right now.'),
+          matching: find.text('This Yeel is unavailable right now.'),
         ),
         findsOneWidget,
       );
@@ -964,7 +964,7 @@ void main() {
   });
 
   testWidgets(
-    'single-Reel destination fits 200% text in Polish/RTL and can render review fixtures',
+    'single-Yeel destination fits 200% text in Polish/RTL and can render review fixtures',
     (tester) async {
       for (final locale in const [Locale('pl'), Locale('ar')]) {
         for (final size in const [

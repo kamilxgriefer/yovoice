@@ -31,7 +31,7 @@ void main() {
     await loader.load();
   });
 
-  testWidgets('YO Moments unifies Voice and Reels and routes create choice', (
+  testWidgets('YO Moments unifies Voice and Yeels and routes create choice', (
     tester,
   ) async {
     var reelCreates = 0;
@@ -46,14 +46,14 @@ void main() {
       ),
     );
 
-    expect(find.text('YO Moments'), findsOneWidget);
+    expect(find.text('YO Moments'), findsNothing);
     expect(find.text('Głos'), findsOneWidget);
-    expect(find.text('Reels'), findsOneWidget);
+    expect(find.text('Yeels'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('yo-moments-format-tabs')),
       findsOneWidget,
     );
-    expect(find.text('Nie ma jeszcze Reels'), findsOneWidget);
+    expect(find.text('Nie ma jeszcze Yeels'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('moments-create-cta')));
     await tester.pumpAndSettle();
@@ -66,7 +66,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey<String>('create-reel-choice')),
-        matching: find.text('Utwórz Reel'),
+        matching: find.text('Utwórz Yeel'),
       ),
       findsOneWidget,
     );
@@ -74,7 +74,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('create-reel-choice')));
     await tester.pumpAndSettle();
     expect(reelCreates, 1);
-    expect(find.text('YO Moments'), findsOneWidget);
+    expect(find.text('YO Moments'), findsNothing);
   });
 
   testWidgets('create choices expose one named button each to assistive tech', (
@@ -98,7 +98,7 @@ void main() {
 
       for (final (key, label) in <(String, String)>[
         ('create-voice-moment-choice', 'Nagraj Voice Moment'),
-        ('create-reel-choice', 'Utwórz Reel'),
+        ('create-reel-choice', 'Utwórz Yeel'),
       ]) {
         final data = tester
             .getSemantics(find.byKey(ValueKey<String>(key)))
@@ -145,20 +145,24 @@ void main() {
 
         expect(
           find.text('YO Moments'),
-          size.width < 600 ? findsNothing : findsOneWidget,
+          size.width < 1100 ? findsNothing : findsOneWidget,
         );
-        // Mobile Reels has compact format controls over the media. Its full
-        // title belongs to Voice, where it must still reflow at 200%.
-        if (size.width < 600) {
+        // Both phone and tablet formats share the same compact top chrome.
+        if (size.width < 1100) {
           _expectTextFullyLaidOut(tester, find.text('Voice'));
-          _expectTextFullyLaidOut(tester, find.text('Reels'));
+          _expectTextFullyLaidOut(tester, find.text('Yeels'));
           await tester.tap(find.text('Voice'));
           await tester.pumpAndSettle();
-          final title = find.byKey(const ValueKey<String>('yo-moments-title'));
-          final text = tester.widget<Text>(title);
-          expect(text.maxLines, isNull);
-          expect(text.overflow, TextOverflow.visible);
-          _expectTextFullyLaidOut(tester, title);
+          expect(
+            find.byKey(const ValueKey<String>('voice-immersive-chrome')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey<String>('yo-moments-title')),
+            findsNothing,
+          );
+          _expectTextFullyLaidOut(tester, find.text('Voice'));
+          _expectTextFullyLaidOut(tester, find.text('Yeels'));
         }
         expect(tester.takeException(), isNull);
       }
@@ -212,7 +216,7 @@ void main() {
   });
 
   testWidgets(
-    'Reel playback follows host, format and pushed route visibility',
+    'Yeel playback follows host, format and pushed route visibility',
     (tester) async {
       final hostVisible = ValueNotifier<bool>(true);
       addTearDown(hostVisible.dispose);
@@ -242,12 +246,16 @@ void main() {
       await tester.pump();
       expect(tester.widget<ReelCard>(reel).isActive, isTrue);
       expect(tester.widget<ReelCard>(reel).isHostVisible, isFalse);
-      await tester.tap(find.text('Reels'));
+      await tester.tap(find.text('Yeels'));
       await tester.pump();
       expect(tester.widget<ReelCard>(reel).isActive, isTrue);
       expect(tester.widget<ReelCard>(reel).isHostVisible, isTrue);
 
-      final navigator = Navigator.of(tester.element(find.text('YO Moments')));
+      final navigator = Navigator.of(
+        tester.element(
+          find.byKey(const ValueKey<String>('yo-moments-format-stack')),
+        ),
+      );
       unawaited(
         navigator.push<void>(
           MaterialPageRoute<void>(
@@ -265,7 +273,7 @@ void main() {
     },
   );
 
-  testWidgets('the embedded Reels stage paints no canvas of its own', (
+  testWidgets('the embedded Yeels stage paints no canvas of its own', (
     tester,
   ) async {
     for (final theme in <ThemeData>[AppTheme.darkTheme, AppTheme.lightTheme]) {
@@ -305,7 +313,7 @@ void main() {
     }
   });
 
-  testWidgets('legacy Reels destination opens unified route-aware screen', (
+  testWidgets('legacy Yeels destination opens unified route-aware screen', (
     tester,
   ) async {
     await _pump(
@@ -315,8 +323,8 @@ void main() {
         reelService: _emptyReelService(),
       ),
     );
-    expect(find.text('YO Moments'), findsOneWidget);
-    expect(find.text('Reels'), findsOneWidget);
+    expect(find.text('YO Moments'), findsNothing);
+    expect(find.text('Yeels'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('yo-moments-format-stack')),
       findsOneWidget,

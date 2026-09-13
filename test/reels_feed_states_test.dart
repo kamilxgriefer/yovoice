@@ -36,7 +36,7 @@ void main() {
       expect(find.byType(ReelCardSkeleton), findsOneWidget);
       // Exactly one polite live region for the state.
       expect(find.byType(YoLoadingIndicator), findsOneWidget);
-      expect(find.text('Loading Reels'), findsOneWidget);
+      expect(find.text('Loading Yeels'), findsOneWidget);
 
       // Refreshing while a load is already running is not an action.
       final refresh = tester.widget<IconButton>(
@@ -83,14 +83,14 @@ void main() {
       await _pump(tester, service, onCreate: () async => creates += 1);
 
       expect(find.byType(YoEmptyState), findsOneWidget);
-      expect(find.text('No Reels yet'), findsOneWidget);
+      expect(find.text('No Yeels yet'), findsOneWidget);
       expect(find.byType(ReelCardSkeleton), findsNothing);
-      expect(find.text('Loading Reels'), findsNothing);
+      expect(find.text('Loading Yeels'), findsNothing);
 
       await tester.tap(
         find.descendant(
           of: find.byType(YoEmptyState),
-          matching: find.text('Create Reel'),
+          matching: find.text('Create Yeel'),
         ),
       );
       await tester.pumpAndSettle();
@@ -103,7 +103,7 @@ void main() {
       await _pump(tester, service);
 
       expect(find.byType(YoEmptyState), findsOneWidget);
-      expect(find.text('Create Reel'), findsNothing);
+      expect(find.text('Create Yeel'), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
@@ -142,7 +142,7 @@ void main() {
       await _pump(tester, service);
 
       expect(find.byType(YoErrorState), findsOneWidget);
-      expect(find.text('Loading Reels'), findsNothing);
+      expect(find.text('Loading Yeels'), findsNothing);
 
       await tester.tap(find.text('Try again'));
       await tester.pumpAndSettle();

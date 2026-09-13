@@ -63,7 +63,7 @@ void main() {
           plateRect.right,
           lessThanOrEqualTo(card.right),
           reason:
-              'the plate must be ON the Reel it advances, not in the open '
+              'the plate must be ON the Yeel it advances, not in the open '
               'background beside it',
         );
         expect(
@@ -102,7 +102,7 @@ void main() {
           closeTo(card.width, 1),
           reason:
               'a footer wider than its own media reads as a ledge around the '
-              'Reel; the board has them flush',
+              'Yeel; the board has them flush',
         );
         // One identity row plus a two-line caption plus the action row, at
         // 16/16 padding — never the extra 48-px run an unnecessary wrap adds.
@@ -204,7 +204,7 @@ void main() {
             reason:
                 'the media letterboxed inside a band that kept the card\'s '
                 'width: ${((card.width - media.width) / 2).toStringAsFixed(1)} '
-                'px of `surfaceSunken` down each side of the Reel',
+                'px of `surfaceSunken` down each side of the Yeel',
           );
           _expectSameRect(
             band,
@@ -252,7 +252,7 @@ void main() {
       expect(
         band.width / band.height,
         closeTo(9 / 16, 0.01),
-        reason: 'and it is still a 9:16 Reel',
+        reason: 'and it is still a 9:16 Yeel',
       );
       expect(
         band.center.dx,

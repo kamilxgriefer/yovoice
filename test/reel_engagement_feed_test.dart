@@ -306,7 +306,7 @@ void main() {
 
     expect(_countIn(tester, _inCard(_likeAction)), '9');
     expect(_likeIsFilled(tester), isTrue);
-    expect(find.text('This Reel is unavailable right now.'), findsOneWidget);
+    expect(find.text('This Yeel is unavailable right now.'), findsOneWidget);
   });
 
   testWidgets('a second tap cannot race the first', (tester) async {

@@ -36,7 +36,7 @@ void main() {
     };
   }
 
-  group('Reel duration cap', () {
+  group('Yeel duration cap', () {
     test('every client enforcement point reads one five-minute constant', () {
       expect(maxReelDurationMs, 5 * 60 * 1000);
       expect(minReelDurationMs, 1000);
@@ -90,7 +90,7 @@ void main() {
 
     test('a five-minute trim selection validates, longer does not', () {
       const composition = ReelComposition(
-        caption: 'A five-minute Reel',
+        caption: 'A five-minute Yeel',
         trimStartMs: 0,
         trimEndMs: maxReelDurationMs,
       );
@@ -141,7 +141,7 @@ void main() {
     });
   });
 
-  group('Reel limit copy', () {
+  group('Yeel limit copy', () {
     test('states five minutes and keeps the unchanged byte limits', () {
       const media =
           'Photos up to 10 MB. Videos: 1 second – 5 minutes, up to 100 MB.';

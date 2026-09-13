@@ -367,7 +367,7 @@ void main() {
       expect(harness.players.single.playCalls, 1);
     });
 
-    testWidgets('a voice comment takes the floor from the Reel', (
+    testWidgets('a voice comment takes the floor from the Yeel', (
       tester,
     ) async {
       final arbiter = ReplyPlaybackArbiter();

@@ -174,7 +174,6 @@ class ReelCompositionCanvas extends StatelessWidget {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
         final scale = composition.crop.scale.clamp(1.0, 8.0).toDouble();
         final pan = reelCropTranslation(size, composition.crop);
-
         return ClipRect(
           child: Stack(
             fit: StackFit.expand,
@@ -304,7 +303,7 @@ class _EditableOverlayState extends State<_EditableOverlay> {
     _startX = widget.x;
     _startY = widget.y;
     _startScale = widget.scale;
-    _startFocal = details.focalPoint;
+    _startFocal = details.localFocalPoint;
     setState(() => _active = true);
   }
 
@@ -315,7 +314,7 @@ class _EditableOverlayState extends State<_EditableOverlay> {
       startX: startX,
       startY: startY,
       startFocalPoint: startFocal,
-      focalPoint: details.focalPoint,
+      focalPoint: details.localFocalPoint,
       canvas: widget.canvas,
       safeInsets: widget.safeInsets,
     );
@@ -460,7 +459,7 @@ class _ReelTextOverlayPill extends StatelessWidget {
         key: ValueKey<String>('reel-text-overlay-${overlay.id}'),
         label: copy.template(
           'Text overlay: {text}',
-          'Tekst na Reelu: {text}',
+          'Tekst na Yeelu: {text}',
           values: <String, Object>{'text': overlay.text},
         ),
         child: Container(

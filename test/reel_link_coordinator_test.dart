@@ -118,7 +118,7 @@ void main() {
     },
   );
 
-  testWidgets('verification route is never covered by pending Reel', (
+  testWidgets('verification route is never covered by pending Yeel', (
     tester,
   ) async {
     final controller = ReelLinkIntentController(
@@ -140,7 +140,7 @@ void main() {
                   controller: controller,
                   userId: 'viewer',
                   destinationBuilder: (_, id) =>
-                      Scaffold(body: Text('Reel $id')),
+                      Scaffold(body: Text('Yeel $id')),
                   child: const Scaffold(body: Text('Shell')),
                 )
               : const Scaffold(body: Text('Provisioning')),
@@ -158,10 +158,10 @@ void main() {
     ready.value = true;
     await tester.pumpAndSettle();
     expect(find.text('Verify email'), findsOneWidget);
-    expect(find.text('Reel target'), findsNothing);
+    expect(find.text('Yeel target'), findsNothing);
     navigator.currentState!.pop();
     await tester.pumpAndSettle();
-    expect(find.text('Reel target'), findsOneWidget);
+    expect(find.text('Yeel target'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }

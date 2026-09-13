@@ -199,11 +199,11 @@ void main() {
         isEmpty,
         reason: 'Dismissing share must not overwrite the clipboard.',
       );
-      expect(find.text('Reel link copied.'), findsNothing);
+      expect(find.text('Yeel link copied.'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('reel-share-copy')));
       await tester.pump();
       expect(copied, ['https://app.yovoice.app/?reel=reel_1']);
-      expect(find.text('Reel link copied.'), findsOneWidget);
+      expect(find.text('Yeel link copied.'), findsOneWidget);
       expect(calls, ['getReelViewV2']);
       await tester.pumpWidget(const SizedBox.shrink());
       await auth.close();
@@ -241,7 +241,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(
-          find.text('This Reel is unavailable right now.'),
+          find.text('This Yeel is unavailable right now.'),
           findsOneWidget,
         );
         expect(find.byKey(const ValueKey('reel-share-platform')), findsNothing);
@@ -285,7 +285,7 @@ void main() {
       }
       ready.complete(_view());
       await tester.pumpAndSettle();
-      expect(find.text('Sign in to open this Reel.'), findsOneWidget);
+      expect(find.text('Sign in to open this Yeel.'), findsOneWidget);
       expect(find.byKey(const ValueKey('reel-share-platform')), findsNothing);
       expect(shared, 0);
       expect(tester.takeException(), isNull);
@@ -405,11 +405,11 @@ void main() {
         reason: 'An unknown outcome is neutral, not an assertive failure.',
       );
       expect(copied, isEmpty);
-      expect(find.text('Reel link copied.'), findsNothing);
+      expect(find.text('Yeel link copied.'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('reel-share-copy')));
       await tester.pumpAndSettle();
       expect(copied, ['https://app.yovoice.app/?reel=reel_1']);
-      expect(find.text('Reel link copied.'), findsOneWidget);
+      expect(find.text('Yeel link copied.'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
       await auth.close();
       semantics.dispose();
@@ -482,7 +482,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         tester
-            .getSemantics(find.text('Reel link copied.'))
+            .getSemantics(find.text('Yeel link copied.'))
             .getSemanticsData()
             .flagsCollection
             .isLiveRegion,

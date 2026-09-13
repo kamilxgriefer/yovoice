@@ -12,7 +12,7 @@ import 'reel_stage_test_support.dart';
 /// grant the neighbour prefetch already minted. A video gets a tile and a play
 /// glyph rather than a second decoder spun up to steal one frame.
 void main() {
-  testWidgets('names the next Reel from loaded data and pages to it', (
+  testWidgets('names the next Yeel from loaded data and pages to it', (
     tester,
   ) async {
     final players = FakeReelPlayers();
@@ -40,7 +40,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.bySemanticsLabel(RegExp('Next Reel: ')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('Next Yeel: ')), findsOneWidget);
 
     await tester.tap(find.byKey(reelNextCardKey));
     await tester.pumpAndSettle();
@@ -49,7 +49,7 @@ void main() {
     expect(players.of('reel_1').playing, isFalse);
   });
 
-  testWidgets('is absent when there is nothing loaded after this Reel', (
+  testWidgets('is absent when there is nothing loaded after this Yeel', (
     tester,
   ) async {
     final players = FakeReelPlayers();

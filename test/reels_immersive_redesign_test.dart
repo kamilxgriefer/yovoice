@@ -421,7 +421,7 @@ void main() {
       expect(frame.bottom, dock.top);
       expect(find.byKey(const ValueKey('yo-moments-title')), findsNothing);
       expect(find.text('Voice'), findsOneWidget);
-      expect(find.text('Reels'), findsOneWidget);
+      expect(find.text('Yeels'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -462,7 +462,7 @@ void main() {
       await _settle(tester);
       expect(tester.widget<ReelCard>(card).isActive, isTrue);
       expect(tester.widget<ReelCard>(card).isHostVisible, isFalse);
-      await tester.tap(find.text('Reels'));
+      await tester.tap(find.text('Yeels'));
       await _settle(tester);
       expect(identical(tester.state(card), first), isTrue);
       expect(tester.widget<ReelCard>(card).isActive, isTrue);
@@ -499,9 +499,9 @@ void main() {
       await tester.tap(find.byKey(_more));
       await _settle(tester);
       expect(player.isPlaying, isFalse);
-      expect(find.text('Report Reel'), findsOneWidget);
-      expect(find.text('Delete Reel'), findsNothing);
-      Navigator.of(tester.element(find.text('Report Reel'))).pop();
+      expect(find.text('Report Yeel'), findsOneWidget);
+      expect(find.text('Delete Yeel'), findsNothing);
+      Navigator.of(tester.element(find.text('Report Yeel'))).pop();
       await _settle(tester);
       expect(player.isPlaying, isTrue);
       visible.value = false;

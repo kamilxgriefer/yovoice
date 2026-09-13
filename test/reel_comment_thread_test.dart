@@ -708,7 +708,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('switching to another Reel reloads the thread from scratch', (
+  testWidgets('switching to another Yeel reloads the thread from scratch', (
     tester,
   ) async {
     final harness = _Harness();

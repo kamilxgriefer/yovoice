@@ -81,7 +81,7 @@ void main() {
     expect(
       players.of('reel_1').playing,
       isFalse,
-      reason: 'turning sound on must never restart a deliberately paused Reel',
+      reason: 'turning sound on must never restart a deliberately paused Yeel',
     );
     expect(players.of('reel_1').playCount, 1);
   });
@@ -110,7 +110,7 @@ void main() {
     expect(players.of('reel_1').playing, isFalse);
   });
 
-  testWidgets('a photo Reel has no mute, because its track is the content', (
+  testWidgets('a photo Yeel has no mute, because its track is the content', (
     tester,
   ) async {
     final players = FakeReelPlayers();

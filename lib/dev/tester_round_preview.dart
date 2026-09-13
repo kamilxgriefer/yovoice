@@ -106,7 +106,7 @@ class _Gallery extends StatelessWidget {
         (_) => const _ProfileHeaderDemo(),
       ),
       (
-        'Reels — przycinanie na filmie',
+        'Yeels — przycinanie na filmie',
         'Uchwyty na materiale zamiast suwaka pod spodem.',
         (_) => const _TrimDemo(),
       ),

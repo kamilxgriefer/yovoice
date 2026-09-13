@@ -70,7 +70,7 @@ class _PreviewState extends State<_Preview> {
                   ),
                 ),
               ),
-              child: const Text('Reel · sample photo'),
+              child: const Text('Yeel · sample photo'),
             ),
             OutlinedButton(
               onPressed: () => Navigator.of(context).push(

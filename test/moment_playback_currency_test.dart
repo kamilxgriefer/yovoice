@@ -286,7 +286,7 @@ void main() {
         harness.main.stopCalls,
         greaterThan(0),
         reason:
-            'the Voice feed and every Reel card already stop on didPushNext; '
+            'the Voice feed and every Yeel card already stop on didPushNext; '
             'this surface owns board 07 transport and must agree',
       );
       expect(

@@ -378,7 +378,7 @@ void main() {
   tearDown(() => VideoPlayerPlatform.instance = original);
 
   testWidgets(
-    'independent actual decoder retains selected second Reel and position across widths',
+    'independent actual decoder retains selected second Yeel and position across widths',
     (tester) async {
       final f = _Fixture();
       await _mount(tester, f, const Size(320, 844));
@@ -421,7 +421,7 @@ void main() {
       await _pump(tester);
       expect(player.playing, isFalse);
       expect(player.position, const Duration(seconds: 6));
-      await tester.tap(find.text('Reels'));
+      await tester.tap(find.text('Yeels'));
       await _pump(tester);
       expect(identical(_engine(platform, f, 1), player), isTrue);
       expect(player.position, const Duration(seconds: 6));
@@ -691,7 +691,7 @@ void main() {
       final f = _Fixture()..denied = true;
       await _mount(tester, f, const Size(390, 844));
       expect(find.textContaining('QA_PRIVATE_ERROR'), findsNothing);
-      expect(find.text('No Reels yet'), findsNothing);
+      expect(find.text('No Yeels yet'), findsNothing);
       expect(platform.engines, isEmpty);
       f.denied = false;
       await tester.tap(find.text('Try again'));
@@ -712,7 +712,7 @@ void main() {
       final f = _Fixture()..feedGate = gate;
       await _mount(tester, f, const Size(390, 844));
       expect(platform.engines, isEmpty);
-      expect(find.text('No Reels yet'), findsNothing);
+      expect(find.text('No Yeels yet'), findsNothing);
       expect(find.byKey(const ValueKey('moments-create-cta')), findsOneWidget);
       gate.complete();
       await _pump(tester);

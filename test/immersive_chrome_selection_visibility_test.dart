@@ -45,7 +45,7 @@ Widget _host({
   required double scale,
   required int selectedFormat,
   required int selectedFilter,
-  List<String> formatLabels = const <String>['Voice', 'Reels'],
+  List<String> formatLabels = const <String>['Voice', 'Yeels'],
   List<String> filterLabels = _polishFilters,
 }) {
   final formatKeys = <Key>[_formatA, _formatB];
@@ -203,10 +203,10 @@ void main() {
       // Pairs whose rendered widths differ. The last is the English pair that
       // happens to measure alike, which is exactly why the bug survived.
       const pairs = <List<String>>[
-        <String>['Głos', 'Reels'],
-        <String>['音声', 'Reels'],
-        <String>['Stimme', 'Reels'],
-        <String>['Voice', 'Reels'],
+        <String>['Głos', 'Yeels'],
+        <String>['音声', 'Yeels'],
+        <String>['Stimme', 'Yeels'],
+        <String>['Voice', 'Yeels'],
       ];
       for (final pair in pairs) {
         for (final scale in _scales) {

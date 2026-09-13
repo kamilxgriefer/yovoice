@@ -1541,6 +1541,74 @@ void main() {
   });
 
   testWidgets(
+    'compact unified Voice recovers expiry focus to its immersive refresh',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final clock = _FakeExpiryClock(_anchor);
+      final player = _FakeAudioPlayer();
+      final expiring = _moment(
+        'compact',
+        expiresAt: _anchor.add(const Duration(seconds: 10)),
+      );
+      final db = FakeFirebaseFirestore();
+      await db.collection('voiceMoments').doc(expiring.id).set(_doc(expiring));
+      final moments = _privateMomentService(auth: auth, firestore: db);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MomentsScreen(
+            isRootTab: true,
+            auth: auth,
+            momentService: moments,
+            discoveryService: _StaticDiscovery([expiring], auth),
+            feedService: _QuietFeed(auth),
+            playerFactory: () => player,
+            expiryClock: () => clock.now,
+            expiryTimerFactory: clock.create,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final row = find.byKey(const ValueKey('moment-row-compact'));
+      final play = find.byKey(const ValueKey('moment-row-play-compact'));
+      final refresh = find.byKey(const ValueKey('moments-discovery-refresh'));
+      expect(row, findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('voice-immersive-chrome')),
+        findsOneWidget,
+      );
+      expect(refresh, findsOneWidget);
+
+      await tester.tap(play);
+      await tester.pump();
+      final playbackFocus = Focus.of(
+        tester.element(
+          find.descendant(of: play, matching: find.byIcon(Icons.pause_rounded)),
+        ),
+      );
+      playbackFocus.requestFocus();
+      await tester.pump();
+      expect(playbackFocus.hasFocus, isTrue);
+
+      clock.advance(const Duration(seconds: 10));
+      await tester.pump();
+      await tester.pump();
+
+      expect(row, findsNothing);
+      final refreshInk = tester.widget<InkWell>(
+        find.descendant(of: refresh, matching: find.byType(InkWell)),
+      );
+      expect(refreshInk.focusNode, isNotNull);
+      expect(refreshInk.focusNode!.hasFocus, isTrue);
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(milliseconds: 1));
+    },
+  );
+
+  testWidgets(
     'cached IndexedStack expiry stays silent and does not reclaim focus',
     (tester) async {
       final semantics = tester.ensureSemantics();

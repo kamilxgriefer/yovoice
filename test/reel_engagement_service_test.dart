@@ -319,7 +319,7 @@ void main() {
       }
     });
 
-    test('a response about another Reel is refused', () async {
+    test('a response about another Yeel is refused', () async {
       final service = _service(
         calls: <_Call>[],
         respond: (_) async => _likeResponse(reelId: 'reel_2'),
@@ -657,7 +657,7 @@ void main() {
       );
       expect(
         english[ReelEngagementFailure.unavailable],
-        'This Reel is unavailable right now.',
+        'This Yeel is unavailable right now.',
       );
       expect(
         english[ReelEngagementFailure.offline],

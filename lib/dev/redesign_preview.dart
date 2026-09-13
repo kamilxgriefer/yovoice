@@ -1202,7 +1202,7 @@ class _ReelsFixture {
       _ => (
         _me,
         'Aleksandra',
-        'Own Reel — owner actions live in More.',
+        'Own Yeel — owner actions live in More.',
         0,
         false,
       ),
@@ -1905,7 +1905,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     widget.onSelectTab(_momentsSlot, reels: true);
                     Navigator.of(context).pop();
                   },
-                  child: const Text('Reels'),
+                  child: const Text('Yeels'),
                 ),
                 FilledButton(
                   onPressed: () => Navigator.of(context).pop(),

@@ -176,7 +176,7 @@ void main() {
       data.flagsCollection.isSelected,
       isNot(Tristate.none),
       reason:
-          'the glyph swap alone never announced the liked state; Reels has '
+          'the glyph swap alone never announced the liked state; Yeels has '
           'carried it since board 08',
     );
     // The row itself draws the number, which is what the board shows.

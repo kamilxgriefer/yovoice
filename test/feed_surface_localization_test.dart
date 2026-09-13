@@ -58,7 +58,7 @@ const _expected = <String, Map<String, String>>{
     'share': 'Share',
     'soundOn': 'Turn sound on',
     'soundOff': 'Turn sound off',
-    'shareReel': 'Share Reel',
+    'shareReel': 'Share Yeel',
     'viewAll': 'View all',
     'error': 'Moments could not load',
   },
@@ -78,7 +78,7 @@ const _expected = <String, Map<String, String>>{
     'share': 'Udostępnij',
     'soundOn': 'Włącz dźwięk',
     'soundOff': 'Wyłącz dźwięk',
-    'shareReel': 'Udostępnij Reel',
+    'shareReel': 'Udostępnij Yeel',
     'viewAll': 'Zobacz wszystkie',
     'error': 'Nie udało się wczytać Momentów',
   },
@@ -98,7 +98,7 @@ const _expected = <String, Map<String, String>>{
     'share': 'Teilen',
     'soundOn': 'Ton einschalten',
     'soundOff': 'Ton ausschalten',
-    'shareReel': 'Reel teilen',
+    'shareReel': 'Yeel teilen',
     'viewAll': 'Alle anzeigen',
     'error': 'Momente konnten nicht geladen werden',
   },
@@ -118,7 +118,7 @@ const _expected = <String, Map<String, String>>{
     'share': 'Delen',
     'soundOn': 'Geluid aanzetten',
     'soundOff': 'Geluid uitzetten',
-    'shareReel': 'Reel delen',
+    'shareReel': 'Yeel delen',
     'viewAll': 'Alles bekijken',
     'error': 'Momenten konden niet worden geladen',
   },
@@ -138,7 +138,7 @@ const _expected = <String, Map<String, String>>{
     'share': 'مشاركة',
     'soundOn': 'تشغيل الصوت',
     'soundOff': 'إيقاف الصوت',
-    'shareReel': 'مشاركة Reel',
+    'shareReel': 'مشاركة Yeel',
     'viewAll': 'عرض الكل',
     'error': 'تعذّر تحميل اللحظات',
   },
@@ -951,7 +951,7 @@ void main() {
   for (final locale in ['de', 'nl', 'ar']) {
     final expected = _expected[locale]!;
     testWidgets(
-      '$locale actual Reel rail has localized counts, share and sound actions',
+      '$locale actual Yeel rail has localized counts, share and sound actions',
       (tester) async {
         final semantics = tester.ensureSemantics();
         try {

@@ -20,6 +20,7 @@ class AccessibleTapRegion extends StatefulWidget {
     this.selectedBorderColor,
     this.onHover,
     this.focusContrastColor,
+    this.focusNode,
     super.key,
   });
 
@@ -39,6 +40,10 @@ class AccessibleTapRegion extends StatefulWidget {
   /// state without a second visual.
   final Color? selectedBorderColor;
   final ValueChanged<bool>? onHover;
+
+  /// Optional externally-owned focus target for flows that must restore
+  /// keyboard focus after replacing content.
+  final FocusNode? focusNode;
 
   /// Optional outer focus color for artwork whose luminance is unknown.
   ///
@@ -84,6 +89,7 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
       child: Material(
         type: MaterialType.transparency,
         child: InkWell(
+          focusNode: widget.focusNode,
           onTap: widget.onTap,
           onHover: (value) {
             if (_hovered != value) setState(() => _hovered = value);

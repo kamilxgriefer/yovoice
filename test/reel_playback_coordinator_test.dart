@@ -15,7 +15,7 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordi
 void main() {
   group('ReelPlaybackCoordinator', () {
     test(
-      'local draft uses published trim, mix and loop semantics without a Reel',
+      'local draft uses published trim, mix and loop semantics without a Yeel',
       () async {
         final audio = _FakeAudioPlayback();
         final video = _FakeVideoPlayback();
@@ -210,7 +210,7 @@ void main() {
     expect(toggles, 2);
   });
 
-  testWidgets('photo Reel exposes a clear finite play and pause action', (
+  testWidgets('photo Yeel exposes a clear finite play and pause action', (
     tester,
   ) async {
     final audio = _FakeAudioPlayback();

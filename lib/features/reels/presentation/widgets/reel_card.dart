@@ -296,7 +296,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                       if (includeActions && widget.onReport != null)
                         ListTile(
                           leading: const Icon(Icons.flag_outlined),
-                          title: Text(copy.text('Report Reel', 'Zgłoś Reel')),
+                          title: Text(copy.text('Report Yeel', 'Zgłoś Yeel')),
                           onTap: () {
                             if (current()) Navigator.pop(context, 'report');
                           },
@@ -307,7 +307,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                             Icons.delete_outline_rounded,
                             color: Theme.of(context).colorScheme.error,
                           ),
-                          title: Text(copy.text('Delete Reel', 'Usuń Reel')),
+                          title: Text(copy.text('Delete Yeel', 'Usuń Yeel')),
                           onTap: () {
                             if (current()) Navigator.pop(context, 'delete');
                           },
@@ -637,8 +637,8 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         if (snapshot.hasError) {
           return YoErrorState(
             message: copy.text(
-              'This Reel is unavailable right now.',
-              'Ten Reel jest teraz niedostępny.',
+              'This Yeel is unavailable right now.',
+              'Ten Yeel jest teraz niedostępny.',
             ),
             onRetry: _refreshMedia,
             compact: true,
@@ -647,7 +647,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         final uri = snapshot.data;
         if (uri == null) {
           return YoLoadingIndicator(
-            message: copy.text('Loading Reel', 'Ładowanie Reela'),
+            message: copy.text('Loading Yeel', 'Ładowanie Yeela'),
           );
         }
         final videoPlaybackFactory = widget.videoPlaybackFactory;
@@ -722,8 +722,8 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
     return Semantics(
       container: true,
       label: copy.template(
-        'Reel by {author}',
-        'Reel użytkownika {author}',
+        'Yeel by {author}',
+        'Yeel użytkownika {author}',
         values: <String, Object>{'author': widget.reel.authorName},
       ),
       child: widget.fillViewport
@@ -1039,8 +1039,8 @@ class _ReelPhoto extends StatelessWidget {
         return YoErrorState(
           compact: true,
           message: AppLocalizations.of(context).text(
-            'This Reel is unavailable right now.',
-            'Ten Reel jest teraz niedostępny.',
+            'This Yeel is unavailable right now.',
+            'Ten Yeel jest teraz niedostępny.',
           ),
           onRetry: onRetry,
         );
@@ -1372,7 +1372,7 @@ class ReelStageFooterBar extends StatelessWidget {
         ReelFooterAction(
           actionKey: const ValueKey('reel-share-action'),
           icon: Icons.send_outlined,
-          semanticLabel: copy.text('Share Reel', 'Udostępnij Reel'),
+          semanticLabel: copy.text('Share Yeel', 'Udostępnij Yeel'),
           onTap: () => unawaited(onShare()),
         ),
       ],
@@ -2085,7 +2085,7 @@ class _OverlayFooter extends StatelessWidget {
         ReelOverlayPlateButton(
           key: const ValueKey('reel-share-action'),
           icon: Icons.send_outlined,
-          semanticLabel: copy.text('Share Reel', 'Udostępnij Reel'),
+          semanticLabel: copy.text('Share Yeel', 'Udostępnij Yeel'),
           onTap: () => unawaited(onShare()),
         ),
       ],

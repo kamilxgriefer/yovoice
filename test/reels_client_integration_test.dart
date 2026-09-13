@@ -248,7 +248,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('You’re all caught up'), findsOneWidget);
-      expect(find.text('No Reels yet'), findsNothing);
+      expect(find.text('No Yeels yet'), findsNothing);
       await tester.tap(find.text('Watch again'));
       await tester.pumpAndSettle();
       expect(find.byType(ReelCard), findsOneWidget);

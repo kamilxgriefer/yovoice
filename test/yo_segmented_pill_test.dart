@@ -44,7 +44,7 @@ Future<List<int>> _pump(
                 ),
                 YoSegmentedPillSegment(
                   key: _second,
-                  label: 'Your Reels',
+                  label: 'Your Yeels',
                   icon: Icons.person_outline_rounded,
                 ),
               ],
@@ -73,7 +73,7 @@ void main() {
     expect(first.flagsCollection.isSelected, ui.Tristate.isTrue);
 
     final second = tester.getSemantics(find.byKey(_second)).getSemanticsData();
-    expect(second.label, 'Your Reels');
+    expect(second.label, 'Your Yeels');
     expect(second.flagsCollection.isButton, isTrue);
     expect(second.flagsCollection.isSelected, ui.Tristate.isFalse);
     // A selected-looking button that assistive technology cannot press is not
@@ -90,7 +90,7 @@ void main() {
     final semantics = tester.ensureSemantics();
     final taps = await _pump(tester);
 
-    tester.semantics.tap(find.semantics.byLabel('Your Reels'));
+    tester.semantics.tap(find.semantics.byLabel('Your Yeels'));
     await tester.pumpAndSettle();
 
     expect(taps, <int>[1]);

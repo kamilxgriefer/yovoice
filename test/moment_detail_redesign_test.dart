@@ -43,7 +43,7 @@ void main() {
     expect(find.byKey(const ValueKey('moment-detail-back')), findsOneWidget);
     expect(find.text('Voice Moment'), findsWidgets);
     // A pushed detail cannot switch the destination's format.
-    expect(find.text('Reels'), findsNothing);
+    expect(find.text('Yeels'), findsNothing);
     expect(find.text('Voice'), findsNothing);
     // And no search field exists anywhere in Moments.
     expect(find.textContaining('Search'), findsNothing);

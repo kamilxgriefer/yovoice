@@ -250,7 +250,7 @@ void main() {
       },
     );
 
-    test('a reservation for another Reel is refused, unuploaded', () async {
+    test('a reservation for another Yeel is refused, unuploaded', () async {
       final harness = _Harness();
       harness.responders['reserveReelVoiceCommentDraft'] = (_) async =>
           _reservation(reelId: 'reel_2');
@@ -468,7 +468,7 @@ void main() {
       );
     });
 
-    test('two comments on one Reel never share a grant', () async {
+    test('two comments on one Yeel never share a grant', () async {
       const other = 'c0mment0000000000000000000000000000000002';
       final harness = _Harness();
       harness.responders['getReelMediaAccessV2'] = (_) async => grant();

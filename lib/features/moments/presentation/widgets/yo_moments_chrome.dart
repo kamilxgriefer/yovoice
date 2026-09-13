@@ -270,7 +270,7 @@ class YoMomentsFormatSwitch extends StatelessWidget {
         ),
         const ImmersiveChromeOption(
           key: ValueKey<String>('yo-moments-format-reels'),
-          label: 'Reels',
+          label: 'Yeels',
         ),
       ],
     );

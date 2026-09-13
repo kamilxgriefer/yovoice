@@ -544,7 +544,7 @@ void main() {
     });
   });
 
-  group("a Reel author removing somebody else's comment", () {
+  group("a Yeel author removing somebody else's comment", () {
     _Harness removeHarness({
       Future<Map<Object?, Object?>> Function(Map<String, Object?>)? onRemove,
     }) {
@@ -581,7 +581,7 @@ void main() {
           reel: _reel(commentCount: 2, authorId: _viewer),
         );
 
-    testWidgets('a viewer who does not own the Reel is offered no Remove', (
+    testWidgets('a viewer who does not own the Yeel is offered no Remove', (
       tester,
     ) async {
       final harness = _Harness();
@@ -601,7 +601,7 @@ void main() {
       expect(find.byIcon(Icons.more_vert_rounded), findsNothing);
     });
 
-    testWidgets('the Reel author gets both Report and Remove in one menu', (
+    testWidgets('the Yeel author gets both Report and Remove in one menu', (
       tester,
     ) async {
       await pumpOwnReel(tester, removeHarness());
@@ -612,7 +612,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Report comment'), findsOneWidget);
-      expect(find.text('Remove from my Reel'), findsOneWidget);
+      expect(find.text('Remove from my Yeel'), findsOneWidget);
     });
 
     testWidgets('cancelling the confirmation keeps the comment', (

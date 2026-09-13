@@ -27,7 +27,7 @@ import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
 /// and never starts a platform decoder.
 void main() {
   group('coordinator', () {
-    test('a video Reel starts itself on attach, silently', () async {
+    test('a video Yeel starts itself on attach, silently', () async {
       final video = _FakeVideoPlayback();
       final audio = _FakeAudioPlayback();
       final coordinator = _coordinator(
@@ -80,7 +80,7 @@ void main() {
       },
     );
 
-    test('a photo Reel never starts itself and is never muted', () async {
+    test('a photo Yeel never starts itself and is never muted', () async {
       final audio = _FakeAudioPlayback();
       final coordinator = _coordinator(
         _photoReel(),
@@ -194,7 +194,7 @@ void main() {
   });
 
   group('feed', () {
-    testWidgets('the first Reel plays on open with no tap at all', (
+    testWidgets('the first Yeel plays on open with no tap at all', (
       tester,
     ) async {
       final players = _Players();
@@ -213,7 +213,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('scrolling to the next Reel plays it and stops the last one', (
+    testWidgets('scrolling to the next Yeel plays it and stops the last one', (
       tester,
     ) async {
       final players = _Players();
@@ -233,7 +233,7 @@ void main() {
       expect(players.of('reel_1').playing, isFalse);
     });
 
-    testWidgets('leaving the Reels tab stops playback', (tester) async {
+    testWidgets('leaving the Yeels tab stops playback', (tester) async {
       final visible = ValueNotifier<bool>(true);
       addTearDown(visible.dispose);
       final players = _Players();
@@ -297,7 +297,7 @@ void main() {
     // stands beside it and covers nothing. Reading the conversation while the
     // Reel keeps playing is the entire reason the wide layout has a column
     // for it.
-    testWidgets('the docked wide panel keeps the Reel playing', (tester) async {
+    testWidgets('the docked wide panel keeps the Yeel playing', (tester) async {
       final players = _Players();
       await _pumpFeed(
         tester,
@@ -327,7 +327,7 @@ void main() {
     });
 
     testWidgets('the phone sheet still suspends playback while it covers the '
-        'Reel', (tester) async {
+        'Yeel', (tester) async {
       final players = _Players();
       await _pumpFeed(
         tester,
@@ -378,7 +378,7 @@ void main() {
       expect(players.of('reel_1').playing, isTrue);
     });
 
-    testWidgets('sound is turned on once and carries to the next Reel', (
+    testWidgets('sound is turned on once and carries to the next Yeel', (
       tester,
     ) async {
       final players = _Players();
@@ -506,7 +506,7 @@ void main() {
         grant: _Grant.bad,
         idPrefix: 'bad',
       );
-      expect(find.text('This Reel is unavailable right now.'), findsOneWidget);
+      expect(find.text('This Yeel is unavailable right now.'), findsOneWidget);
       expect(failed.playing, 0);
       // A Reel that cannot be fetched must not pretend to be playing.
       expect(
@@ -520,7 +520,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a photo Reel in the feed still waits to be asked', (
+    testWidgets('a photo Yeel in the feed still waits to be asked', (
       tester,
     ) async {
       final players = _Players();
@@ -556,7 +556,7 @@ Future<void> _swipeToNextReel(WidgetTester tester, _Players players) async {
     expect(
       players.playing,
       lessThanOrEqualTo(1),
-      reason: 'only one Reel may hold the player, mid-scroll included',
+      reason: 'only one Yeel may hold the player, mid-scroll included',
     );
   }
   await gesture.up();

@@ -175,7 +175,7 @@ void main() {
     });
 
     test(
-      'only a Reel comment report can be a Reel voice comment report',
+      'only a Yeel comment report can be a Yeel voice comment report',
       () async {
         await db.collection('reports').doc('moment-reply').set({
           'targetType': 'voiceMomentComment',
@@ -199,7 +199,7 @@ void main() {
       await openCenter(tester);
 
       // The queue row already says it is a recording.
-      expect(find.text('Reel comment · Voice comment · 0:42'), findsOneWidget);
+      expect(find.text('Yeel comment · Voice comment · 0:42'), findsOneWidget);
 
       await tester.tap(
         find.bySemanticsLabel(RegExp(r'Harassment or bullying, Open')),
@@ -246,8 +246,8 @@ void main() {
       );
       expect(find.text('Reported comment'), findsNothing);
       // The target identity and the removal action are unchanged.
-      expect(find.text('Reported Reel comment'), findsOneWidget);
-      expect(find.text('Remove Reel comment and resolve'), findsOneWidget);
+      expect(find.text('Reported Yeel comment'), findsOneWidget);
+      expect(find.text('Remove Yeel comment and resolve'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -298,7 +298,7 @@ void main() {
       },
     );
 
-    testWidgets('a text Reel comment report renders exactly as before', (
+    testWidgets('a text Yeel comment report renders exactly as before', (
       tester,
     ) async {
       useSize(tester, const Size(1440, 1200));
@@ -310,7 +310,7 @@ void main() {
       );
 
       await openCenter(tester);
-      expect(find.text('Reel comment'), findsWidgets);
+      expect(find.text('Yeel comment'), findsWidgets);
       expect(find.textContaining('Voice comment'), findsNothing);
 
       await tester.tap(
@@ -324,7 +324,7 @@ void main() {
         find.byKey(const ValueKey<String>('moderation-voice-comment-target')),
         findsNothing,
       );
-      expect(find.text('Remove Reel comment and resolve'), findsOneWidget);
+      expect(find.text('Remove Yeel comment and resolve'), findsOneWidget);
     });
 
     testWidgets('a pre-voice report with no type field stays a text report', (

@@ -253,8 +253,8 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
               children: <Widget>[
                 YoModalSheetChrome(
                   sheetLabel: copy.text(
-                    'Choose Reel media',
-                    'Wybierz multimedia Reela',
+                    'Choose Yeel media',
+                    'Wybierz multimedia Yeela',
                   ),
                   surfaceColor: palette.surfaceRaised,
                 ),
@@ -923,7 +923,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(copy.text('Create Reel', 'Utwórz Reel')),
+          title: Text(copy.text('Create Yeel', 'Utwórz Yeel')),
           leading: IconButton(
             tooltip: MaterialLocalizations.of(context).backButtonTooltip,
             onPressed: busy ? null : _back,
@@ -1395,7 +1395,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
                     'Publikowanie {percent}%',
                     values: {'percent': (_progress * 100).round()},
                   )
-                : copy.text('Publish Reel', 'Opublikuj Reel'),
+                : copy.text('Publish Yeel', 'Opublikuj Yeel'),
             onPressed: _media == null || busy ? null : _publish,
             isLoading: _publishing,
             icon: const Icon(Icons.publish_rounded),
@@ -1403,7 +1403,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
         : YoButton(
             key: const ValueKey('reel-next-step'),
             label: _step == _ComposerStep.edit
-                ? copy.text('Preview Reel', 'Podgląd Reela')
+                ? copy.text('Preview Yeel', 'Podgląd Yeela')
                 : copy.text('Next', 'Dalej'),
             onPressed: _media == null || busy
                 ? null
@@ -1668,8 +1668,8 @@ class _Editor extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 copy.text(
-                  'Drag the handles on the video to set where the Reel starts and ends.',
-                  'Przeciągnij uchwyty na filmie, aby ustawić, gdzie Reel się zaczyna i kończy.',
+                  'Drag the handles on the video to set where the Yeel starts and ends.',
+                  'Przeciągnij uchwyty na filmie, aby ustawić, gdzie Yeel się zaczyna i kończy.',
                 ),
               ),
               const SizedBox(height: 8),
@@ -1916,8 +1916,8 @@ class _ReelAvailabilityPicker extends StatelessWidget {
             'Dostępność jest zablokowana dla tej ponownej próby.',
           )
         : copy.text(
-            'Choose how long this Reel remains available.',
-            'Wybierz, jak długo ten Reel ma być dostępny.',
+            'Choose how long this Yeel remains available.',
+            'Wybierz, jak długo ten Yeel ma być dostępny.',
           );
     return Semantics(
       key: const ValueKey<String>('reel-availability-picker'),
@@ -2312,8 +2312,8 @@ String _friendly(BuildContext context, Object error) {
   if (error is StateError &&
       error.message == 'This Reel draft belongs to an ended sign-in session.') {
     return copy.text(
-      'This draft belongs to a previous session. Discard it and create a new Reel.',
-      'Ten szkic pochodzi z poprzedniej sesji. Odrzuć go i utwórz nowego Reela.',
+      'This draft belongs to a previous session. Discard it and create a new Yeel.',
+      'Ten szkic pochodzi z poprzedniej sesji. Odrzuć go i utwórz nowego Yeela.',
     );
   }
   if (error is FirebaseFunctionsException) {
@@ -2385,7 +2385,7 @@ String _friendly(BuildContext context, Object error) {
     );
   }
   return copy.text(
-    'The Reel could not be prepared. Try again.',
-    'Nie udało się przygotować Reela. Spróbuj ponownie.',
+    'The Yeel could not be prepared. Try again.',
+    'Nie udało się przygotować Yeela. Spróbuj ponownie.',
   );
 }
