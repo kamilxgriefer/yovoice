@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
 import 'package:yovoice/features/servers/data/models/server_channel.dart';
+import 'package:yovoice/features/servers/data/models/server_member_role.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_media_connector.dart';
 import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
@@ -134,6 +137,64 @@ void main() {
       expect(repository.watchChannelsCalls, 0);
       expect(repository.calls, isEmpty);
     });
+
+    testWidgets(
+      'a fresh membership generation receives a fresh public join id',
+      (tester) async {
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final roles = StreamController<ServerMemberRole?>.broadcast();
+        addTearDown(roles.close);
+        final repository = TestServerRepository()
+          ..servers = [
+            _server(ServerType.community, privacy: ServerPrivacy.public),
+          ]
+          ..channels = const [_textChannel]
+          ..myRole = null
+          ..roleStream = roles.stream;
+
+        await pumpServers(
+          tester,
+          ServerWorkspaceScreen(
+            serverId: 'server',
+            repository: repository,
+            isRootTab: true,
+            channelBuilder: (_, _, channel) => Text('opened-${channel.id}'),
+          ),
+          settle: false,
+        );
+        roles.add(null);
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const ValueKey('server-public-join')));
+        await tester.pumpAndSettle();
+        roles.add(ServerMemberRole.member);
+        await tester.pumpAndSettle();
+        final firstId = repository.calls.single.$2['requestId'];
+        expect(find.text('opened-general'), findsOneWidget);
+
+        repository.myRole = null;
+        roles.add(null);
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('server-public-admission')),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(const ValueKey('server-public-join')));
+        await tester.pumpAndSettle();
+        roles.add(ServerMemberRole.member);
+        await tester.pumpAndSettle();
+
+        final joins = repository.calls
+            .where((call) => call.$1 == 'joinServerV1')
+            .toList();
+        expect(joins, hasLength(2));
+        expect(joins[0].$2['requestId'], firstId);
+        expect(joins[1].$2['requestId'], isNot(firstId));
+        expect(find.text('opened-general'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 
   testWidgets(

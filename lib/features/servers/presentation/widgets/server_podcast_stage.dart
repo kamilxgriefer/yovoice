@@ -1274,15 +1274,20 @@ class _StagePerson extends StatelessWidget {
           ? null
           : Icon(Icons.mic_off_rounded, size: 14, color: palette.textTertiary),
     );
-    return Semantics(
-      label: [
-        name,
-        role,
-        if (live) speaking else if (!person.isMicrophoneEnabled) silent,
-      ].join(', '),
-      child: ExcludeSemantics(
-        child: listed
-            ? Row(
+    final semanticsLabel = [
+      name,
+      role,
+      if (live) speaking else if (!person.isMicrophoneEnabled) silent,
+    ].join(', ');
+    if (listed) {
+      return Row(
+        children: [
+          Expanded(
+            child: Semantics(
+              container: true,
+              label: semanticsLabel,
+              excludeSemantics: true,
+              child: Row(
                 children: [
                   avatar,
                   const SizedBox(width: 14),
@@ -1311,36 +1316,51 @@ class _StagePerson extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (action != null) ...[const SizedBox(width: 4), action!],
                 ],
-              )
-            : SizedBox(
-                width: size + 16,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    avatar,
-                    const SizedBox(height: 6),
-                    state,
-                    const SizedBox(height: 4),
-                    Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: nameStyle,
-                    ),
-                    Text(
-                      role,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: roleStyle,
-                    ),
-                    ?action,
-                  ],
-                ),
               ),
+            ),
+          ),
+          if (action != null) ...[const SizedBox(width: 4), action!],
+        ],
+      );
+    }
+    return SizedBox(
+      width: size + 16,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Semantics(
+            container: true,
+            label: semanticsLabel,
+            excludeSemantics: true,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                avatar,
+                const SizedBox(height: 6),
+                state,
+                const SizedBox(height: 4),
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: nameStyle,
+                ),
+                Text(
+                  role,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: roleStyle,
+                ),
+              ],
+            ),
+          ),
+          // Keep the named 48 px moderation action outside the descriptive
+          // node, so assistive technology can focus and activate it.
+          ?action,
+        ],
       ),
     );
   }

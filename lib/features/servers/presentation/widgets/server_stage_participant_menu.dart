@@ -61,6 +61,7 @@ class ServerStageParticipantMenu extends StatefulWidget {
 
 class _ServerStageParticipantMenuState
     extends State<ServerStageParticipantMenu> {
+  final _menuKey = GlobalKey<PopupMenuButtonState<_StageParticipantAction>>();
   bool _busy = false;
 
   bool get _canGovern =>
@@ -201,19 +202,30 @@ class _ServerStageParticipantMenuState
         ),
       );
     }
-    return SizedBox.square(
-      dimension: size,
-      child: PopupMenuButton<_StageParticipantAction>(
+    final label = copy.serverStageManageParticipant(widget.participantName);
+    return Semantics(
+      button: true,
+      enabled: true,
+      label: label,
+      onTap: () => _menuKey.currentState?.showButtonMenu(),
+      excludeSemantics: true,
+      child: SizedBox.square(
         key: ValueKey('server-stage-participant-menu-${widget.participantId}'),
-        tooltip: copy.serverStageManageParticipant(widget.participantName),
-        padding: EdgeInsets.zero,
-        iconSize: widget.compact ? 18 : 22,
-        icon: Icon(
-          Icons.more_horiz_rounded,
-          color: context.appPalette.textSecondary,
+        dimension: size,
+        child: PopupMenuButton<_StageParticipantAction>(
+          key: _menuKey,
+          tooltip: label,
+          padding: EdgeInsets.zero,
+          iconSize: widget.compact ? 18 : 22,
+          icon: Icon(
+            Icons.more_horiz_rounded,
+            color: context.appPalette.textSecondary,
+          ),
+          onSelected: (action) => unawaited(_run(action)),
+          itemBuilder: (_) => [
+            for (final action in actions) _item(action, copy),
+          ],
         ),
-        onSelected: (action) => unawaited(_run(action)),
-        itemBuilder: (_) => [for (final action in actions) _item(action, copy)],
       ),
     );
   }

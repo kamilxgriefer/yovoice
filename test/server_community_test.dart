@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -556,6 +558,7 @@ void main() {
     'the community host can move a listener on stage and moderate their mic',
     (tester) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
+      final semantics = tester.ensureSemantics();
       final repository = TestServerRepository()
         ..servers = [communityServer()]
         ..channels = communityChannels(
@@ -599,7 +602,21 @@ void main() {
       );
       expect(menu, findsOneWidget);
       expect(tester.getSize(menu), const Size.square(48));
-      await tester.tap(menu);
+      final menuButton = find.descendant(
+        of: menu,
+        matching: find.byType(IconButton),
+      );
+      expect(menuButton, findsOneWidget);
+      final accessibleMenu = tester.getSemantics(menuButton);
+      expect(accessibleMenu.getSemanticsData().label, 'Zarządzaj: Bartek');
+      expect(
+        accessibleMenu.getSemanticsData().hasAction(ui.SemanticsAction.tap),
+        isTrue,
+      );
+      accessibleMenu.owner!.performAction(
+        accessibleMenu.id,
+        ui.SemanticsAction.tap,
+      );
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('server-stage-mute-u2')),
@@ -646,6 +663,7 @@ void main() {
         find.text('Wyciszenie moderatora zastosowane dla: Bartek.'),
         findsOneWidget,
       );
+      semantics.dispose();
     },
   );
 

@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -362,6 +364,7 @@ void main() {
     'a podcast moderator can return a guest to the audience and release a mute',
     (tester) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
+      final semantics = tester.ensureSemantics();
       final repository = TestServerRepository()
         ..servers = [podcastServer()]
         ..channels = podcastChannels(studio: live, activeSessionId: 'gen-7')
@@ -389,7 +392,22 @@ void main() {
         const ValueKey('server-stage-participant-menu-kamil'),
       );
       expect(guestMenu, findsOneWidget);
-      await tester.tap(guestMenu);
+      expect(tester.getSize(guestMenu), const Size.square(48));
+      final menuButton = find.descendant(
+        of: guestMenu,
+        matching: find.byType(IconButton),
+      );
+      expect(menuButton, findsOneWidget);
+      final accessibleMenu = tester.getSemantics(menuButton);
+      expect(accessibleMenu.getSemanticsData().label, 'Zarządzaj: Kamil');
+      expect(
+        accessibleMenu.getSemanticsData().hasAction(ui.SemanticsAction.tap),
+        isTrue,
+      );
+      accessibleMenu.owner!.performAction(
+        accessibleMenu.id,
+        ui.SemanticsAction.tap,
+      );
       await tester.pumpAndSettle();
       await tester.tap(
         find.byKey(const ValueKey('server-stage-audience-kamil')),
@@ -444,6 +462,7 @@ void main() {
         find.text('Cofnięto Twoje wyciszenie dla: Kamil.'),
         findsOneWidget,
       );
+      semantics.dispose();
     },
   );
 

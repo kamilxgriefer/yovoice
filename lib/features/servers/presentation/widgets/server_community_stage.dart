@@ -1201,30 +1201,35 @@ class _PersonChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    return Semantics(
-      label: person.isSpeaking ? '${person.name}, $speaking' : person.name,
-      excludeSemantics: true,
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 220),
-        padding: const EdgeInsets.fromLTRB(6, 5, 12, 5),
-        decoration: BoxDecoration(
-          color: palette.surfaceMuted,
-          borderRadius: AppRadius.pill,
-          border: Border.all(
-            color: person.isSpeaking ? palette.audioAccent : palette.border,
-          ),
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 220),
+      padding: const EdgeInsets.fromLTRB(6, 5, 12, 5),
+      decoration: BoxDecoration(
+        color: palette.surfaceMuted,
+        borderRadius: AppRadius.pill,
+        border: Border.all(
+          color: person.isSpeaking ? palette.audioAccent : palette.border,
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            UserAvatar(
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ExcludeSemantics(
+            child: UserAvatar(
               radius: 13,
               userId: person.identity,
               displayName: person.name,
               backgroundColor: colors.iconSurface,
             ),
-            const SizedBox(width: 8),
-            Flexible(
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Semantics(
+              container: true,
+              label: person.isSpeaking
+                  ? '${person.name}, $speaking'
+                  : person.name,
+              excludeSemantics: true,
               child: Text(
                 person.name,
                 maxLines: 1,
@@ -1234,17 +1239,16 @@ class _PersonChip extends StatelessWidget {
                 ),
               ),
             ),
-            if (!person.isMicrophoneEnabled) ...[
-              const SizedBox(width: 6),
-              Icon(
-                Icons.mic_off_rounded,
-                size: 14,
-                color: palette.textTertiary,
-              ),
-            ],
-            if (action != null) ...[const SizedBox(width: 2), action!],
+          ),
+          if (!person.isMicrophoneEnabled) ...[
+            const SizedBox(width: 6),
+            Icon(Icons.mic_off_rounded, size: 14, color: palette.textTertiary),
           ],
-        ),
+          // The participant description and moderation button are sibling
+          // nodes. Excluding only the decorative identity avoids duplicate
+          // names without deleting the button's tap action.
+          if (action != null) ...[const SizedBox(width: 2), action!],
+        ],
       ),
     );
   }

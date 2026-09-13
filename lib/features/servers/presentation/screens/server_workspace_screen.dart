@@ -489,6 +489,11 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
       if (!mounted || widget.serverId != server.id) return;
       setState(() {
         _joining = false;
+        // A completed operation id belongs to the membership generation it
+        // created. If that membership is later revoked while this retained
+        // workspace stays mounted, a new public admission needs a new id.
+        // Ambiguous failures deliberately keep the old id in the catch path.
+        _joinRequestId = null;
         // Re-subscribe explicitly for repositories whose role stream is a
         // point-in-time test/preview stream. Firestore's live stream would
         // update on its own, and the second subscription sees the same
