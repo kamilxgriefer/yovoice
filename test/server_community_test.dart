@@ -552,6 +552,103 @@ void main() {
     expect(find.textContaining(fabricated), findsNothing);
   });
 
+  testWidgets(
+    'the community host can move a listener on stage and moderate their mic',
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = TestServerRepository()
+        ..servers = [communityServer()]
+        ..channels = communityChannels(
+          stage: ServerChannelLiveness(
+            isLive: true,
+            startedAt: DateTime(2026, 9, 12, 19, 40),
+          ),
+          activeSessionId: 'gen-7',
+        )
+        ..sessionRole = 'host';
+      final connector = FakeServerMediaConnector();
+      await pumpServers(
+        tester,
+        communityWorkspace(repository, connector: connector),
+        size: const Size(1440, 900),
+      );
+      await tester.tap(join);
+      await tester.pumpAndSettle();
+      connector.links.single.setRoster(const [
+        ServerMediaParticipant(
+          identity: 'owner',
+          name: 'Maja',
+          isLocal: true,
+          sessionRole: 'host',
+        ),
+        ServerMediaParticipant(
+          identity: 'u2',
+          name: 'Bartek',
+          isLocal: false,
+          sessionRole: 'listener',
+        ),
+      ]);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('server-stage-participant-menu-owner')),
+        findsNothing,
+      );
+      final menu = find.byKey(
+        const ValueKey('server-stage-participant-menu-u2'),
+      );
+      expect(menu, findsOneWidget);
+      expect(tester.getSize(menu), const Size.square(48));
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('server-stage-mute-u2')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('server-stage-release-mute-u2')),
+        findsOneWidget,
+        reason: 'the provider roster does not expose either authority flag',
+      );
+      await tester.tap(find.byKey(const ValueKey('server-stage-stage-u2')));
+      await tester.pumpAndSettle();
+      expect(repository.calls.last.$1, 'setServerSessionParticipantRoleV1');
+      expect(repository.calls.last.$2, {
+        'serverId': 's',
+        'channelId': 'stage',
+        'sessionId': 'gen-7',
+        'participantId': 'u2',
+        'role': 'guest',
+        'requestId': 'request-2',
+      });
+      expect(
+        find.textContaining('Zmieniono rolę osoby Bartek.'),
+        findsOneWidget,
+      );
+      ScaffoldMessenger.of(tester.element(menu)).removeCurrentSnackBar();
+      await tester.pumpAndSettle();
+
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('server-stage-mute-u2')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(repository.calls.last.$1, 'setServerSessionMuteV1');
+      expect(repository.calls.last.$2, {
+        'serverId': 's',
+        'channelId': 'stage',
+        'sessionId': 'gen-7',
+        'participantId': 'u2',
+        'muted': true,
+        'requestId': 'request-3',
+      });
+      expect(
+        find.text('Wyciszenie moderatora zastosowane dla: Bartek.'),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('Moderator badges come from the roster and from nothing else', (
     tester,
   ) async {

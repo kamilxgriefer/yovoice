@@ -26,6 +26,7 @@ import 'server_local_tabs.dart';
 import 'server_module_card.dart';
 import 'server_panel.dart';
 import 'server_scrolling_details.dart';
+import 'server_stage_participant_menu.dart';
 
 /// `Scena LIVE` — board 02's centre, the community template's broadcast.
 ///
@@ -56,6 +57,10 @@ import 'server_scrolling_details.dart';
 /// anybody without a participant document and refuses the generation's host.
 /// The answer to that call is the only state shown — the participant document
 /// itself is not readable, so nothing here guesses at a queue.
+/// A joined host or server moderator can also move a reported participant
+/// between stage and audience or send an explicit moderator-mute command. The
+/// backend re-proves hierarchy, and the client never infers either stored mute
+/// flag from provider audio state.
 ///
 /// The ordinary `Salon głosowy` of the same server is **not** this scene: it
 /// is a `voice` channel and stays the conversation the shell already draws.
@@ -159,6 +164,35 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
       if (person.hasCamera) return person;
     }
     return null;
+  }
+
+  String? _roleOf(ServerMediaParticipant person) => person.isLocal
+      ? (widget.session.connection?.sessionRole ?? person.sessionRole)
+      : person.sessionRole;
+
+  Widget? _participantMenu(
+    ServerMediaParticipant person, {
+    bool compact = false,
+  }) {
+    final sessionId = _sessionId;
+    final viewerSessionRole = widget.session.connection?.sessionRole;
+    if (sessionId == null ||
+        (viewerSessionRole != 'host' && !(widget.role?.canModerate ?? false))) {
+      return null;
+    }
+    return ServerStageParticipantMenu(
+      repository: widget.session.repository,
+      serverId: widget.server.id,
+      channelId: widget.channel.id,
+      sessionId: sessionId,
+      participantId: person.identity,
+      participantName: person.name,
+      participantRole: _roleOf(person),
+      isLocal: person.isLocal,
+      viewerSessionRole: viewerSessionRole,
+      viewerCanModerate: widget.role?.canModerate ?? false,
+      compact: compact,
+    );
   }
 
   Future<void> _toggleHand() async {
@@ -287,6 +321,7 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
               colors: colors,
               label: copy.serverStageOnAir,
               speaking: copy.serverSpeaking,
+              actionBuilder: _participantMenu,
             ),
           ],
           const SizedBox(height: 20),
@@ -363,6 +398,8 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
                     colors: colors,
                     label: copy.serverStageOnAir,
                     speaking: copy.serverSpeaking,
+                    actionBuilder: (person) =>
+                        _participantMenu(person, compact: true),
                   ),
                   const SizedBox(height: 10),
                 ],
@@ -1110,11 +1147,13 @@ class _OnAir extends StatelessWidget {
     required this.colors,
     required this.label,
     required this.speaking,
+    this.actionBuilder,
   });
   final List<ServerMediaParticipant> participants;
   final ServerIdentityVisuals colors;
   final String label;
   final String speaking;
+  final Widget? Function(ServerMediaParticipant person)? actionBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -1134,7 +1173,12 @@ class _OnAir extends StatelessWidget {
           runSpacing: 8,
           children: [
             for (final person in participants)
-              _PersonChip(person: person, colors: colors, speaking: speaking),
+              _PersonChip(
+                person: person,
+                colors: colors,
+                speaking: speaking,
+                action: actionBuilder?.call(person),
+              ),
           ],
         ),
       ],
@@ -1147,10 +1191,12 @@ class _PersonChip extends StatelessWidget {
     required this.person,
     required this.colors,
     required this.speaking,
+    this.action,
   });
   final ServerMediaParticipant person;
   final ServerIdentityVisuals colors;
   final String speaking;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -1196,6 +1242,7 @@ class _PersonChip extends StatelessWidget {
                 color: palette.textTertiary,
               ),
             ],
+            if (action != null) ...[const SizedBox(width: 2), action!],
           ],
         ),
       ),

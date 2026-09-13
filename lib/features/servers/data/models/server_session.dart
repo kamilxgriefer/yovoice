@@ -141,6 +141,98 @@ class ServerSessionHandResult {
   }
 }
 
+/// The common receipt returned by `setServerSessionParticipantRoleV1` and
+/// `setServerSessionMuteV1`.
+///
+/// A participation change invalidates the target's current media token. The
+/// backend reports [cleanupPending] while the outbox revokes that bearer; the
+/// client therefore acknowledges the accepted moderation action without
+/// pretending the provider roster has already converged.
+@immutable
+class ServerSessionParticipationResult {
+  const ServerSessionParticipationResult({
+    required this.serverId,
+    required this.channelId,
+    required this.sessionId,
+    required this.participantId,
+    required this.role,
+    required this.hostMuted,
+    required this.serverMuted,
+    required this.participantRevision,
+    required this.changed,
+    required this.cleanupPending,
+    this.requestedMuted,
+  });
+
+  final String serverId;
+  final String channelId;
+  final String sessionId;
+  final String participantId;
+  final String role;
+  final bool hostMuted;
+  final bool serverMuted;
+  final int participantRevision;
+  final bool changed;
+  final bool cleanupPending;
+
+  /// Present only on a mute receipt and equal to the requested outcome. The
+  /// two stored flags may legitimately differ because a host can clear only a
+  /// host mute and a server moderator can clear only a server mute.
+  final bool? requestedMuted;
+
+  bool get isMuted => hostMuted || serverMuted;
+
+  factory ServerSessionParticipationResult.fromMap(Map<Object?, Object?> data) {
+    String requiredString(String key) =>
+        serverString(data[key]) ??
+        (throw FormatException('Incomplete participation receipt: $key.'));
+    bool requiredBool(String key) {
+      final value = data[key];
+      if (value is! bool) {
+        throw FormatException('Incomplete participation receipt: $key.');
+      }
+      return value;
+    }
+
+    final role = requiredString('role');
+    final revision = data['participantRevision'];
+    if (role != 'host' && role != 'guest' && role != 'listener') {
+      throw const FormatException('Invalid participation receipt role.');
+    }
+    if (revision is! int || revision < 1) {
+      throw const FormatException('Invalid participant revision.');
+    }
+    final muted = data['muted'];
+    if (muted != null && muted is! bool) {
+      throw const FormatException('Invalid participation mute receipt.');
+    }
+    return ServerSessionParticipationResult(
+      serverId: requiredString('serverId'),
+      channelId: requiredString('channelId'),
+      sessionId: requiredString('sessionId'),
+      participantId: requiredString('participantId'),
+      role: role,
+      hostMuted: requiredBool('hostMuted'),
+      serverMuted: requiredBool('serverMuted'),
+      participantRevision: revision,
+      changed: requiredBool('changed'),
+      cleanupPending: requiredBool('cleanupPending'),
+      requestedMuted: muted as bool?,
+    );
+  }
+
+  bool matches({
+    required String expectedServerId,
+    required String expectedChannelId,
+    required String expectedSessionId,
+    required String expectedParticipantId,
+  }) =>
+      serverId == expectedServerId &&
+      channelId == expectedChannelId &&
+      sessionId == expectedSessionId &&
+      participantId == expectedParticipantId;
+}
+
 /// `createServerInviteV1`'s receipt.
 @immutable
 class ServerInviteResult {

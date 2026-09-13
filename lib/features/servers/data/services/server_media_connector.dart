@@ -87,7 +87,8 @@ abstract class ServerMediaLink extends ChangeNotifier {
   ///
   /// This is the board's `Słuchawki` control and it is purely local: nothing
   /// is written, nobody else is told, and it is not the moderator mute of
-  /// contract G5 (which has no readable state and is therefore not drawn).
+  /// contract G5. Stage controls send that explicit server command without
+  /// deriving its state from this local playback flag.
   bool get isDeafened;
 
   /// Explicit capture control. Never called by a connect; the person

@@ -111,6 +111,30 @@ abstract interface class ServerRepository {
     required bool raised,
     required String requestId,
   });
+
+  /// Moves one admitted participant between the stage and its audience. The
+  /// callable accepts only `guest` and `listener`; `host` belongs to the
+  /// generation starter and cannot be assigned by a client.
+  Future<ServerSessionParticipationResult> setSessionParticipantRole({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String participantId,
+    required String role,
+    required String requestId,
+  });
+
+  /// Applies or releases the caller's own moderation-mute dimension for one
+  /// admitted participant. A participant's local microphone control remains
+  /// separate from this server authority.
+  Future<ServerSessionParticipationResult> setSessionParticipantMute({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String participantId,
+    required bool muted,
+    required String requestId,
+  });
 }
 
 /// Mutations and roster reads used by the server settings surface.
@@ -519,6 +543,80 @@ class ServerService
         'raised': raised,
       }),
     );
+  }
+
+  @override
+  Future<ServerSessionParticipationResult> setSessionParticipantRole({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String participantId,
+    required String role,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    _requireId(sessionId);
+    _requireId(participantId);
+    if (role != 'guest' && role != 'listener') {
+      throw ArgumentError.value(role, 'role', 'Must be guest or listener.');
+    }
+    final result = ServerSessionParticipationResult.fromMap(
+      await _invoke('setServerSessionParticipantRoleV1', {
+        'serverId': serverId,
+        'channelId': channelId,
+        'sessionId': sessionId,
+        'participantId': participantId,
+        'role': role,
+        'requestId': requestId,
+      }),
+    );
+    if (!result.matches(
+          expectedServerId: serverId,
+          expectedChannelId: channelId,
+          expectedSessionId: sessionId,
+          expectedParticipantId: participantId,
+        ) ||
+        result.role != role ||
+        result.requestedMuted != null) {
+      throw const FormatException('Mismatched participant role receipt.');
+    }
+    return result;
+  }
+
+  @override
+  Future<ServerSessionParticipationResult> setSessionParticipantMute({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String participantId,
+    required bool muted,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    _requireId(sessionId);
+    _requireId(participantId);
+    final result = ServerSessionParticipationResult.fromMap(
+      await _invoke('setServerSessionMuteV1', {
+        'serverId': serverId,
+        'channelId': channelId,
+        'sessionId': sessionId,
+        'participantId': participantId,
+        'muted': muted,
+        'requestId': requestId,
+      }),
+    );
+    if (!result.matches(
+          expectedServerId: serverId,
+          expectedChannelId: channelId,
+          expectedSessionId: sessionId,
+          expectedParticipantId: participantId,
+        ) ||
+        result.requestedMuted != muted) {
+      throw const FormatException('Mismatched participant mute receipt.');
+    }
+    return result;
   }
 
   /// The roles `capabilitiesFor` grants `moderate` to. Anything else — an

@@ -258,6 +258,7 @@ class TestServerRepository
   /// The answer `setServerSessionHandV1` gives, or null for the plain
   /// "the hand is now where you asked" receipt.
   ServerSessionHandResult? handResult;
+  ServerSessionParticipationResult? participationResult;
 
   @override
   Future<ServerSessionHandResult> setSessionHand({
@@ -282,6 +283,75 @@ class TestServerRepository
           raised: raised,
           changed: true,
           sessionRole: 'listener',
+        ),
+  );
+
+  @override
+  Future<ServerSessionParticipationResult> setSessionParticipantRole({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String participantId,
+    required String role,
+    required String requestId,
+  }) => _answer(
+    'setServerSessionParticipantRoleV1',
+    {
+      'serverId': serverId,
+      'channelId': channelId,
+      'sessionId': sessionId,
+      'participantId': participantId,
+      'role': role,
+      'requestId': requestId,
+    },
+    () =>
+        participationResult ??
+        ServerSessionParticipationResult(
+          serverId: serverId,
+          channelId: channelId,
+          sessionId: sessionId,
+          participantId: participantId,
+          role: role,
+          hostMuted: false,
+          serverMuted: false,
+          participantRevision: 2,
+          changed: true,
+          cleanupPending: true,
+        ),
+  );
+
+  @override
+  Future<ServerSessionParticipationResult> setSessionParticipantMute({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String participantId,
+    required bool muted,
+    required String requestId,
+  }) => _answer(
+    'setServerSessionMuteV1',
+    {
+      'serverId': serverId,
+      'channelId': channelId,
+      'sessionId': sessionId,
+      'participantId': participantId,
+      'muted': muted,
+      'requestId': requestId,
+    },
+    () =>
+        participationResult ??
+        ServerSessionParticipationResult(
+          serverId: serverId,
+          channelId: channelId,
+          sessionId: sessionId,
+          participantId: participantId,
+          role: 'guest',
+          hostMuted: muted,
+          serverMuted: false,
+          participantRevision: 2,
+          changed: true,
+          cleanupPending: true,
+          requestedMuted: muted,
         ),
   );
 

@@ -9,6 +9,7 @@ import 'package:yovoice/features/servers/data/models/server.dart';
 import 'package:yovoice/features/servers/data/models/server_channel.dart';
 import 'package:yovoice/features/servers/data/models/server_member_role.dart';
 import 'package:yovoice/features/servers/data/models/server_podcast_episode.dart';
+import 'package:yovoice/features/servers/data/models/server_session.dart';
 import 'package:yovoice/features/servers/data/models/server_template.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_media_connector.dart';
@@ -293,7 +294,101 @@ void main() {
     // The listeners are the audience and are never named on the stage.
     expect(audience, findsOneWidget);
     expect(find.textContaining(fabricated), findsNothing);
+    expect(
+      find.byKey(const ValueKey('server-stage-participant-menu-bartek')),
+      findsNothing,
+      reason: 'a regular listener gets no moderation affordance',
+    );
   });
+
+  testWidgets(
+    'a podcast moderator can return a guest to the audience and release a mute',
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = TestServerRepository()
+        ..servers = [podcastServer()]
+        ..channels = podcastChannels(studio: live, activeSessionId: 'gen-7')
+        ..myRole = ServerMemberRole.moderator
+        ..sessionRole = 'listener'
+        ..permittedTrackSources = const [];
+      final connector = FakeServerMediaConnector();
+      await pumpServers(
+        tester,
+        podcastWorkspace(repository, connector: connector),
+        size: const Size(1440, 900),
+      );
+      await tester.tap(join);
+      await tester.pumpAndSettle();
+      connector.links.single.setRoster(broadcast);
+      await tester.pumpAndSettle();
+
+      // A server moderator may promote themselves when they joined an existing
+      // stage as a listener; self-mute remains absent by backend contract.
+      expect(
+        find.byKey(const ValueKey('server-stage-participant-menu-owner')),
+        findsOneWidget,
+      );
+      final guestMenu = find.byKey(
+        const ValueKey('server-stage-participant-menu-kamil'),
+      );
+      expect(guestMenu, findsOneWidget);
+      await tester.tap(guestMenu);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('server-stage-audience-kamil')),
+      );
+      await tester.pumpAndSettle();
+      expect(repository.calls.last.$1, 'setServerSessionParticipantRoleV1');
+      expect(repository.calls.last.$2, {
+        'serverId': 's',
+        'channelId': 'studio',
+        'sessionId': 'gen-7',
+        'participantId': 'kamil',
+        'role': 'listener',
+        'requestId': 'request-2',
+      });
+      expect(
+        find.textContaining('Zmieniono rolę osoby Kamil.'),
+        findsOneWidget,
+      );
+      ScaffoldMessenger.of(tester.element(guestMenu)).removeCurrentSnackBar();
+      await tester.pumpAndSettle();
+
+      repository.participationResult = const ServerSessionParticipationResult(
+        serverId: 's',
+        channelId: 'studio',
+        sessionId: 'gen-7',
+        participantId: 'kamil',
+        role: 'guest',
+        hostMuted: false,
+        serverMuted: false,
+        participantRevision: 3,
+        changed: true,
+        cleanupPending: true,
+        requestedMuted: false,
+      );
+      await tester.tap(guestMenu);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('server-stage-release-mute-kamil')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(repository.calls.last.$1, 'setServerSessionMuteV1');
+      expect(repository.calls.last.$2, {
+        'serverId': 's',
+        'channelId': 'studio',
+        'sessionId': 'gen-7',
+        'participantId': 'kamil',
+        'muted': false,
+        'requestId': 'request-3',
+      });
+      expect(
+        find.text('Cofnięto Twoje wyciszenie dla: Kamil.'),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('a role the server did not sign never reaches the stage', (
     tester,

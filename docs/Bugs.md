@@ -18,6 +18,19 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
+## FIXED IN SOURCE — Podcast and Community stage moderation had no Flutter path (2026-09-13)
+
+The backend already enforced generation-bound participant role changes and
+separate host/server mute authority, including hierarchy and token revocation,
+but the Flutter repository exposed neither callable and both stage surfaces had
+no moderator controls. Joined Podcast and Community hosts/moderators can now
+move reported participants between stage and audience and explicitly apply or
+release their own mute dimension. The client validates the receipt binding,
+does not infer the two mute flags from provider audio state, and leaves the
+backend to re-prove target hierarchy. Focused repository and widget tests cover
+the exact callable payloads, unauthorized UI absence, both explicit mute
+commands and success receipts.
+
 ## FIXED IN SOURCE — the Reels details caption was empty to screen readers (2026-09-13)
 
 At 200% text the immersive Reel stage intentionally moves the full caption to

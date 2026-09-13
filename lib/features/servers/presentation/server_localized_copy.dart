@@ -830,6 +830,39 @@ extension ServerLocalizedCopy on AppLocalizations {
     'Nie udało się wysłać prośby. Spróbuj ponownie.',
   );
 
+  /// Participant actions backed by the two generation-bound moderation
+  /// callables. The mute wording is deliberately scoped to moderation: it does
+  /// not claim to turn on somebody else's local microphone.
+  String serverStageManageParticipant(String name) =>
+      text('Manage $name', 'Zarządzaj: $name');
+  String get serverStageMoveToStage => text('Move to stage', 'Dodaj na scenę');
+  String get serverStageMoveToAudience =>
+      text('Move to audience', 'Przenieś do publiczności');
+  String get serverStageMuteParticipant =>
+      text('Apply moderator mute', 'Wycisz jako moderator');
+  String get serverStageReleaseMute =>
+      text('Release your mute', 'Cofnij swoje wyciszenie');
+  String serverStageRoleChanged(String name) => text(
+    'Updated $name\'s stage role. They will reconnect with the new access.',
+    'Zmieniono rolę osoby $name. Połączy się ponownie z nowym dostępem.',
+  );
+  String serverStageMuteApplied(String name) => text(
+    'Moderator mute applied to $name.',
+    'Wyciszenie moderatora zastosowane dla: $name.',
+  );
+  String serverStageMuteReleased(String name) => text(
+    'Your mute was released for $name.',
+    'Cofnięto Twoje wyciszenie dla: $name.',
+  );
+  String serverStageMuteStillActive(String name) => text(
+    '$name is still muted by another stage authority.',
+    '$name nadal ma wyciszenie nadane przez inną osobę uprawnioną.',
+  );
+  String get serverStageModerationFailed => text(
+    'The participant could not be updated. Try again.',
+    'Nie udało się zaktualizować uczestnika. Spróbuj ponownie.',
+  );
+
   /// The stage's own description line when the server has none of its own.
   String get serverCommunityStageBody => text(
     'Live conversations for this community happen here.',

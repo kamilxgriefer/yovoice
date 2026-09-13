@@ -187,4 +187,103 @@ void main() {
       expect(await service.watchInviteCandidates().first, isEmpty);
     },
   );
+
+  test(
+    'stage moderation uses the exact generation-bound callable contracts',
+    () async {
+      final calls = <(String, Map<String, Object?>)>[];
+      final service = ServerService(
+        call: (name, data) async {
+          calls.add((name, data));
+          final role = name == 'setServerSessionParticipantRoleV1'
+              ? data['role']
+              : 'guest';
+          return {
+            'serverId': 's',
+            'channelId': 'stage',
+            'sessionId': 'gen-7',
+            'participantId': 'guest-1',
+            'role': role,
+            'hostMuted': name == 'setServerSessionMuteV1',
+            'serverMuted': false,
+            'participantRevision': 2,
+            'changed': true,
+            'cleanupPending': true,
+            if (name == 'setServerSessionMuteV1') 'muted': data['muted'],
+          };
+        },
+      );
+
+      final role = await service.setSessionParticipantRole(
+        serverId: 's',
+        channelId: 'stage',
+        sessionId: 'gen-7',
+        participantId: 'guest-1',
+        role: 'listener',
+        requestId: 'role-request',
+      );
+      final mute = await service.setSessionParticipantMute(
+        serverId: 's',
+        channelId: 'stage',
+        sessionId: 'gen-7',
+        participantId: 'guest-1',
+        muted: true,
+        requestId: 'mute-request',
+      );
+
+      expect(calls.map((call) => call.$1), [
+        'setServerSessionParticipantRoleV1',
+        'setServerSessionMuteV1',
+      ]);
+      expect(calls[0].$2, {
+        'serverId': 's',
+        'channelId': 'stage',
+        'sessionId': 'gen-7',
+        'participantId': 'guest-1',
+        'role': 'listener',
+        'requestId': 'role-request',
+      });
+      expect(calls[1].$2, {
+        'serverId': 's',
+        'channelId': 'stage',
+        'sessionId': 'gen-7',
+        'participantId': 'guest-1',
+        'muted': true,
+        'requestId': 'mute-request',
+      });
+      expect(role.role, 'listener');
+      expect(role.requestedMuted, isNull);
+      expect(mute.requestedMuted, isTrue);
+      expect(mute.isMuted, isTrue);
+    },
+  );
+
+  test('stage moderation refuses a receipt for another participant', () async {
+    final service = ServerService(
+      call: (_, _) async => {
+        'serverId': 's',
+        'channelId': 'stage',
+        'sessionId': 'gen-7',
+        'participantId': 'somebody-else',
+        'role': 'guest',
+        'hostMuted': false,
+        'serverMuted': false,
+        'participantRevision': 2,
+        'changed': true,
+        'cleanupPending': true,
+      },
+    );
+
+    await expectLater(
+      service.setSessionParticipantRole(
+        serverId: 's',
+        channelId: 'stage',
+        sessionId: 'gen-7',
+        participantId: 'guest-1',
+        role: 'guest',
+        requestId: 'role-request',
+      ),
+      throwsFormatException,
+    );
+  });
 }

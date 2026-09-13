@@ -20,6 +20,7 @@ import 'server_channel_scene.dart';
 import 'server_module_card.dart';
 import 'server_panel.dart';
 import 'server_scrolling_details.dart';
+import 'server_stage_participant_menu.dart';
 
 /// `Studio LIVE` — board 05's centre, the podcast template's audio stage.
 ///
@@ -47,7 +48,10 @@ import 'server_scrolling_details.dart';
 /// only from inside a joined generation, and never for that generation's own
 /// host. `Zadaj pytanie` opens the server's persisted Q&A: each member has one
 /// vote per question and a moderator can select the single question currently
-/// marked `Na antenie`.
+/// marked `Na antenie`. A joined host or server moderator can move participants
+/// between the stage and audience and explicitly apply or release their own
+/// moderation-mute dimension. Hierarchy and both mute flags remain backend
+/// authority.
 class ServerPodcastStage extends StatefulWidget {
   const ServerPodcastStage({
     required this.server,
@@ -152,6 +156,31 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
       for (final person in widget.session.participants)
         if (!_onStage(person)) person,
   ];
+
+  Widget? _participantMenu(
+    ServerMediaParticipant person, {
+    bool compact = false,
+  }) {
+    final sessionId = _sessionId;
+    final viewerSessionRole = widget.session.connection?.sessionRole;
+    if (sessionId == null ||
+        (viewerSessionRole != 'host' && !(widget.role?.canModerate ?? false))) {
+      return null;
+    }
+    return ServerStageParticipantMenu(
+      repository: widget.session.repository,
+      serverId: widget.server.id,
+      channelId: widget.channel.id,
+      sessionId: sessionId,
+      participantId: person.identity,
+      participantName: person.name,
+      participantRole: _roleOf(person),
+      isLocal: person.isLocal,
+      viewerSessionRole: viewerSessionRole,
+      viewerCanModerate: widget.role?.canModerate ?? false,
+      compact: compact,
+    );
+  }
 
   Future<void> _toggleHand() async {
     final sessionId = _sessionId;
@@ -445,6 +474,8 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
               people: audience,
               colors: colors,
               label: copy.serverPodcastAudience,
+              actionBuilder: (person) =>
+                  _participantMenu(person, compact: true),
             ),
           ],
         ],
@@ -497,6 +528,7 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
               you: copy.serverYou,
               size: people[index].$3,
               listed: true,
+              action: _participantMenu(people[index].$1),
             ),
           ],
         ],
@@ -510,6 +542,7 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
       silent: copy.serverMicrophoneOff,
       you: copy.serverYou,
       size: people.first.$3,
+      action: _participantMenu(host),
     );
     final guestTiles = [
       for (var index = 0; index < guests.length; index++)
@@ -521,6 +554,7 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
           silent: copy.serverMicrophoneOff,
           you: copy.serverYou,
           size: people[index + 1].$3,
+          action: _participantMenu(guests[index]),
         ),
     ];
     if (widget.compact) {
@@ -1179,6 +1213,7 @@ class _StagePerson extends StatelessWidget {
     required this.you,
     required this.size,
     this.listed = false,
+    this.action,
   });
 
   final ServerMediaParticipant person;
@@ -1195,6 +1230,7 @@ class _StagePerson extends StatelessWidget {
   /// the role move beside it where they have the whole card's width. Stacked
   /// under an avatar they would both be cut to an ellipsis.
   final bool listed;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -1275,6 +1311,7 @@ class _StagePerson extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (action != null) ...[const SizedBox(width: 4), action!],
                 ],
               )
             : SizedBox(
@@ -1300,6 +1337,7 @@ class _StagePerson extends StatelessWidget {
                       textAlign: TextAlign.center,
                       style: roleStyle,
                     ),
+                    ?action,
                   ],
                 ),
               ),
@@ -1350,11 +1388,13 @@ class _AudienceStrip extends StatelessWidget {
     required this.people,
     required this.colors,
     required this.label,
+    this.actionBuilder,
   });
 
   final List<ServerMediaParticipant> people;
   final ServerIdentityVisuals colors;
   final String label;
+  final Widget? Function(ServerMediaParticipant person)? actionBuilder;
 
   static const _avatar = 36.0;
   static const _gap = 8.0;
@@ -1373,8 +1413,10 @@ class _AudienceStrip extends StatelessWidget {
         const SizedBox(height: 10),
         LayoutBuilder(
           builder: (context, constraints) {
+            final participantWidth = _avatar + (actionBuilder == null ? 0 : 48);
             final slots = constraints.maxWidth.isFinite
-                ? ((constraints.maxWidth + _gap) / (_avatar + _gap)).floor()
+                ? ((constraints.maxWidth + _gap) / (participantWidth + _gap))
+                      .floor()
                 : people.length;
             final room = slots.clamp(1, people.length);
             final shown = room < people.length ? room - 1 : room;
@@ -1382,15 +1424,26 @@ class _AudienceStrip extends StatelessWidget {
             return Row(
               children: [
                 for (final person in people.take(shown)) ...[
-                  Semantics(
-                    label: person.name,
-                    excludeSemantics: true,
-                    child: UserAvatar(
-                      radius: _avatar / 2,
-                      userId: person.identity,
-                      displayName: person.name,
-                      backgroundColor: colors.iconSurface,
-                    ),
+                  Builder(
+                    builder: (_) {
+                      final action = actionBuilder?.call(person);
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Semantics(
+                            label: person.name,
+                            excludeSemantics: true,
+                            child: UserAvatar(
+                              radius: _avatar / 2,
+                              userId: person.identity,
+                              displayName: person.name,
+                              backgroundColor: colors.iconSurface,
+                            ),
+                          ),
+                          ?action,
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(width: _gap),
                 ],
