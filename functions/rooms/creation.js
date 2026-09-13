@@ -25,10 +25,11 @@ const {
 const {
   readOwnerAllocations, writeCapacityGuards,
 } = require("../servers/capacity");
+const { PREMIUM_SERVER_LIMIT } = require("../servers/contract");
 const { assertLegacyRoomAccess } = require("../utils/server_access");
 
 const DEFAULT_ROOM_CREATION_POLICY = Object.freeze({
-  maxActiveRooms: 20,
+  maxActiveRooms: PREMIUM_SERVER_LIMIT,
   maxEvents: 6,
   startCooldownMs: 60_000,
   startMaxEvents: 12,
@@ -253,6 +254,17 @@ function canonicalDisplayName(profile) {
     fail("failed-precondition", "Your canonical display name is unavailable.");
   }
   return name;
+}
+
+function failCapacityOutcome(outcome) {
+  const limit = outcome?.limit;
+  if (limit === undefined && outcome?.schemaVersion === 1) {
+    // Capacity ledgers created before Build 27 did not retain the effective
+    // entitlement limit. Keep those retries denied without inventing a number.
+    fail("resource-exhausted", "Your Server creation limit has been reached.");
+  }
+  requireSafeInteger(limit, "stored capacity limit", { min: 1, max: 100 });
+  fail("resource-exhausted", `You can own up to ${limit} Servers.`);
 }
 
 function validatePolicy(policy) {
@@ -505,10 +517,7 @@ function createRoomCreationService({
     });
     if (admission.replay) {
       if (admission.replay.denied === "capacity") {
-        fail(
-          "resource-exhausted",
-          `You can keep up to ${creationPolicy.maxActiveRooms} active rooms.`,
-        );
+        failCapacityOutcome(admission.replay);
       }
       return admission.replay;
     }
@@ -564,6 +573,7 @@ function createRoomCreationService({
         const result = {
           schemaVersion: 1,
           denied: "capacity",
+          limit: effectiveLimit,
         };
         writeCapacityGuards(transaction, capacity, auth.uid, timing.now);
         transaction.create(ledgerRef, ledgerData({
@@ -618,10 +628,7 @@ function createRoomCreationService({
       return result;
     });
     if (outcome?.denied === "capacity") {
-      fail(
-        "resource-exhausted",
-        `You can keep up to ${creationPolicy.maxActiveRooms} active rooms.`,
-      );
+      failCapacityOutcome(outcome);
     }
     return outcome;
   }

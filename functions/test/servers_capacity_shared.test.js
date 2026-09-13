@@ -47,6 +47,11 @@ const roomInput = () => ({
   audienceCanSpeak: true, handRaisingEnabled: false,
 });
 const rejection = (promise, code) => assert.rejects(promise, (error) => error.code === code);
+const roomCapacityRejection = (promise, limit) => assert.rejects(
+  promise,
+  (error) => error.code === "resource-exhausted" &&
+    error.message === `You can own up to ${limit} Servers.`,
+);
 const capacityRejection = (promise, limit = FREE_SERVER_LIMIT) => assert.rejects(promise, (error) =>
   error.code === "resource-exhausted" && error.details?.reason === CAPACITY_REASON &&
   error.details?.limit === limit);
@@ -378,6 +383,39 @@ emulatorTest("legacy createRoom and V1 createServer serialize against one shared
   await rejection(rooms.createRoom(request(uid, roomInput())), "resource-exhausted");
   await capacityRejection(server.createServerV1(request(uid, input())));
   assert.equal((await read(uid)).free.count, FREE_SERVER_LIMIT);
+});
+
+emulatorTest("legacy createRoom reports and honors the shared 5/30 owned-Server limits", async () => {
+  const freeUid = await owner();
+  const freeRooms = createRoomCreationService({
+    db, FieldValue, Timestamp, clock: () => nowMs,
+  });
+  await seed(freeRoots(freeUid, FREE_SERVER_LIMIT));
+  const freeAttempt = roomInput();
+  await roomCapacityRejection(
+    freeRooms.createRoom(request(freeUid, freeAttempt)),
+    FREE_SERVER_LIMIT,
+  );
+  await roomCapacityRejection(
+    freeRooms.createRoom(request(freeUid, freeAttempt)),
+    FREE_SERVER_LIMIT,
+  );
+
+  const premiumUid = await owner();
+  await db.doc(`entitlements/${premiumUid}`).set(entitlement());
+  await seed(freeRoots(premiumUid, PREMIUM_SERVER_LIMIT - 1));
+  const boundary = await freeRooms.createRoom(request(premiumUid, roomInput()));
+  assert.equal(typeof boundary.roomId, "string");
+  assert.equal((await read(premiumUid)).free.count, PREMIUM_SERVER_LIMIT);
+  const premiumAttempt = roomInput();
+  await roomCapacityRejection(
+    freeRooms.createRoom(request(premiumUid, premiumAttempt)),
+    PREMIUM_SERVER_LIMIT,
+  );
+  await roomCapacityRejection(
+    freeRooms.createRoom(request(premiumUid, premiumAttempt)),
+    PREMIUM_SERVER_LIMIT,
+  );
 });
 
 emulatorTest("legacy paid Clubs stay separate while a legacy family consumes one owned-server slot", async () => {

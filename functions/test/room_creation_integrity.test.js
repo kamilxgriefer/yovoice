@@ -72,6 +72,12 @@ function service(overrides = {}) {
   });
 }
 
+const capacityRejection = (promise, limit) => assert.rejects(
+  promise,
+  (error) => error.code === "resource-exhausted" &&
+    error.message === `You can own up to ${limit} Servers.`,
+);
+
 async function deleteQuery(query) {
   const snapshot = await query.get();
   await Promise.all(snapshot.docs.map(async (document) => {
@@ -246,18 +252,35 @@ test("active cap denies atomically, charges attempts, and prunes a closed room",
   const create = service({ maxActiveRooms: 2, maxEvents: 6 });
   const first = await create.createRoom(request(HOST, input("cap-room-0001")));
   await create.createRoom(request(HOST, input("cap-room-0002")));
-  await assert.rejects(
+  await capacityRejection(
     create.createRoom(request(HOST, input("cap-room-0003"))),
-    (error) => error.code === "resource-exhausted",
+    2,
   );
-  await assert.rejects(
+  await capacityRejection(
     create.createRoom(request(HOST, input("cap-room-0003"))),
-    (error) => error.code === "resource-exhausted",
+    2,
   );
   assert.equal((await db.collection("rooms").where("hostId", "==", HOST).get()).size, 2);
   let rate = (await db.collection("privateRateLimits")
     .where("ownerId", "==", HOST).get()).docs[0].data();
   assert.equal(rate.count, 3, "a replayed capacity denial is not charged twice");
+  const denialDocument = (await db.collection("integrityOperationLedgers")
+    .where("ownerId", "==", HOST)
+    .where("kind", "==", "room.create")
+    .get()).docs.find((document) => document.data().result.denied === "capacity");
+  assert.deepEqual(denialDocument.data().result, {
+    schemaVersion: 1,
+    denied: "capacity",
+    limit: 2,
+  });
+  await denialDocument.ref.update({
+    result: { schemaVersion: 1, denied: "capacity" },
+  });
+  await assert.rejects(
+    create.createRoom(request(HOST, input("cap-room-0003"))),
+    (error) => error.code === "resource-exhausted" &&
+      error.message === "Your Server creation limit has been reached.",
+  );
   await db.doc(`rooms/${first.roomId}`).update({ status: "closed" });
   const replacement = await create.createRoom(request(HOST, input("cap-room-0004")));
   assert.ok((await db.doc(`rooms/${replacement.roomId}`).get()).exists);
