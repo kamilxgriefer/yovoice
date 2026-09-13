@@ -281,26 +281,28 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   bool _isCurrentVideo(ReelVideoPlayback video) =>
       !_disposed && identical(_video, video);
 
-  void detachVideo(ReelVideoPlayback video) {
-    if (!identical(_video, video)) return;
+  Future<void> detachVideo(ReelVideoPlayback video) {
+    if (!identical(_video, video)) return Future<void>.value();
     _video = null;
     _commandVersion += 1;
     _desiredPlaying = false;
     _setPlaying(false);
     _publishPosition(Duration.zero);
     _cancelPhotoEndTimer();
-    // Straight to the player, not through the queue: a page being scrolled
-    // away is detached and then disposed in the same frame, and a queued
-    // command is dropped by disposal. Nothing else can reach this player any
-    // more — every queued operation revalidates its captured player before
-    // each mutation, and `_video` is already null.
-    unawaited(video.pause().catchError((Object _) {}));
-    unawaited(
-      _enqueue(() async {
+    // Serialize the final pause behind any attach mutation already in flight.
+    // The owner awaits this future before disposing the native controller, so
+    // no platform call can finish against an already released decoder.
+    final detachment = _enqueue(() async {
+      try {
+        await video.pause();
+      } finally {
+        // A decoder can reject pause while it is failing. Backing audio still
+        // has to stop independently instead of leaking past the detached card.
         if (_audioLoaded) await _audio?.pause();
-      }).catchError((Object _) {}),
-    );
+      }
+    });
     _notify();
+    return detachment;
   }
 
   /// Becoming the active page starts an autoplaying Reel and nothing else: a

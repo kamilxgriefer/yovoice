@@ -106,16 +106,26 @@ void main() {
         addTearDown(coordinator.dispose);
 
         final blockedVolume = first.blockNextVolume();
+        final blockedPause = first.blockNextPause();
         final firstAttach = coordinator.attachVideo(first);
         await blockedVolume.started.future;
 
-        coordinator.detachVideo(first);
+        final firstDetachment = coordinator.detachVideo(first);
         final replacementAttach = coordinator.attachVideo(replacement);
         blockedVolume.release.complete();
         await firstAttach;
+        await blockedPause.started.future;
+        expect(
+          replacement.volume,
+          1,
+          reason: 'replacement attach must wait for the old decoder to pause',
+        );
+        blockedPause.release.complete();
+        await firstDetachment;
         await replacementAttach;
 
         expect(blockedVolume.returned.isCompleted, isTrue);
+        expect(blockedPause.returned.isCompleted, isTrue);
         expect(
           first.seekPositions,
           isEmpty,
@@ -129,6 +139,30 @@ void main() {
         await coordinator.toggle();
         expect(first.playCount, 0);
         expect(replacement.playCount, 1);
+      },
+    );
+
+    test(
+      'a rejected video pause still stops backing audio on detach',
+      () async {
+        final audio = _FakeAudioPlayback();
+        final video = _FakeVideoPlayback();
+        final coordinator = ReelPlaybackCoordinator(
+          reel: _videoReel(),
+          resolveBackingAudioUri: () async =>
+              Uri.parse('https://storage.googleapis.com/yovoice/audio.mp3'),
+          audioPlaybackFactory: () => audio,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.attachVideo(video);
+        await coordinator.toggle();
+        final audioPausesBeforeDetach = audio.pauseCount;
+        video.pauseError = StateError('decoder rejected pause');
+
+        await expectLater(coordinator.detachVideo(video), throwsStateError);
+
+        expect(audio.pauseCount, audioPausesBeforeDetach + 1);
       },
     );
 
@@ -549,12 +583,20 @@ class _FakeVideoPlayback implements ReelVideoPlayback {
   double volume = 1;
   int playCount = 0;
   int pauseCount = 0;
+  Object? pauseError;
   final List<Duration> seekPositions = <Duration>[];
   _BlockedVolume? _nextBlockedVolume;
+  _BlockedPause? _nextBlockedPause;
 
   _BlockedVolume blockNextVolume() {
     final blocked = _BlockedVolume();
     _nextBlockedVolume = blocked;
+    return blocked;
+  }
+
+  _BlockedPause blockNextPause() {
+    final blocked = _BlockedPause();
+    _nextBlockedPause = blocked;
     return blocked;
   }
 
@@ -564,7 +606,17 @@ class _FakeVideoPlayback implements ReelVideoPlayback {
   @override
   Future<void> pause() async {
     pauseCount += 1;
+    final blocked = _nextBlockedPause;
+    _nextBlockedPause = null;
+    if (blocked != null) {
+      blocked.started.complete();
+      await blocked.release.future;
+    }
+    final error = pauseError;
+    pauseError = null;
+    if (error != null) throw error;
     playing = false;
+    if (blocked != null) blocked.returned.complete();
   }
 
   @override
@@ -593,6 +645,12 @@ class _FakeVideoPlayback implements ReelVideoPlayback {
 }
 
 class _BlockedVolume {
+  final Completer<void> started = Completer<void>();
+  final Completer<void> release = Completer<void>();
+  final Completer<void> returned = Completer<void>();
+}
+
+class _BlockedPause {
   final Completer<void> started = Completer<void>();
   final Completer<void> release = Completer<void>();
   final Completer<void> returned = Completer<void>();

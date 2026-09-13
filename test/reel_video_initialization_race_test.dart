@@ -135,6 +135,7 @@ void main() {
       final first = _ControlledVideoController(
         'attaching-first',
         blockVolumeCall: 2,
+        failPause: true,
       );
       final second = _ControlledVideoController('replacement-second');
       VideoPlayerController firstFactory(Uri _) => first;
@@ -182,6 +183,7 @@ void main() {
       expect(first.disposed, isTrue);
       expect(first.disposeCount, 1);
       expect(first.mutationsAfterDispose, isEmpty);
+      expect(first.calls, contains('pause-error'));
       expect(find.byType(VideoPlayer), findsOneWidget);
       expect(
         tester.widget<VideoPlayer>(find.byType(VideoPlayer)).controller,
@@ -229,10 +231,15 @@ Reel _videoReel() => Reel(
 );
 
 class _ControlledVideoController implements VideoPlayerController {
-  _ControlledVideoController(this.name, {this.blockVolumeCall});
+  _ControlledVideoController(
+    this.name, {
+    this.blockVolumeCall,
+    this.failPause = false,
+  });
 
   final String name;
   final int? blockVolumeCall;
+  final bool failPause;
   final Completer<void> initializeStarted = Completer<void>();
   final Completer<void> _initializeGate = Completer<void>();
   final Completer<void> blockedVolumeStarted = Completer<void>();
@@ -303,6 +310,11 @@ class _ControlledVideoController implements VideoPlayerController {
 
   @override
   Future<void> pause() async {
+    if (failPause) {
+      calls.add('pause-error');
+      if (disposed) mutationsAfterDispose.add('pause-error');
+      throw StateError('$name pause failed');
+    }
     _mutate('pause', _value.copyWith(isPlaying: false));
   }
 

@@ -2081,7 +2081,9 @@ class _HostedReelVideoPlayerState extends State<_HostedReelVideoPlayer> {
   void _detach(ReelPlaybackCoordinator playback) {
     final driver = _driver;
     _driver = null;
-    if (driver != null) playback.detachVideo(driver);
+    if (driver != null) {
+      unawaited(playback.detachVideo(driver).catchError((Object _) {}));
+    }
   }
 
   @override
@@ -2304,7 +2306,13 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
       // A controller replacement can happen from didUpdateWidget while an
       // ancestor is still building. Detach on the next microtask so the
       // coordinator cannot synchronously notify that ancestor during build.
-      if (detachment != null) await detachment;
+      if (detachment != null) {
+        try {
+          await detachment;
+        } catch (_) {
+          // A failed native pause must not prevent decoder disposal.
+        }
+      }
       // `attachVideo` owns queued setVolume/seek work for this controller.
       // Detach makes every not-yet-started step stale; waiting here also
       // lets a platform call that had already started finish before disposal.
