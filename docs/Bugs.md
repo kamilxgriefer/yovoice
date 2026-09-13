@@ -18,6 +18,52 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
+## FIXED IN SOURCE — Yeels chrome masked too much of the footage (2026-09-13)
+
+The immersive phone layout now gives the footage the full available stage and
+keeps reactions in one narrow trailing rail. Sound remains a separate top-edge
+target; author, follow and one-line caption stay in the lower safe zone; and the
+progress bar sits at the media edge. Large counts cannot widen the rail, authored
+links avoid every chrome zone, short landscape screens use a shallow fallback,
+and desktop keeps its responsive card presentation. The revised legacy
+contracts and the focused geometry, accessibility, playback and composer matrix
+pass **177/177**, including touch-drag placement for text and link overlays.
+The 319 x 723 dark phone render was inspected in the live browser preview. The
+shared Hub dock was not changed.
+
+## FIXED IN SOURCE — private chat media lacked a full-screen viewer and queued slowly (2026-09-13)
+
+Received photos and videos now open in a full-screen viewer with close, retry,
+scrub and rotation handling. The viewer reuses the authenticated bytes or
+controller already owned by the message instead of downloading the same private
+object again. Sending streams the selected file into a persistent outbox, returns
+the conversation UI before network completion, and drains independent text and
+media work concurrently. Account changes, late playback and upload generations
+are fenced so one session cannot adopt another account's result. Focused private
+media, outbox and account-lifecycle verification passes **97/97**. Incoming
+private video still buffers a bounded file of up to 64 MB before local playback;
+real-device weak-network startup remains an acceptance check.
+
+## FIXED IN SOURCE — Chats and Friends hid the path to adding a friend (2026-09-13)
+
+Chats now shows separate, visible actions for **Add friend** and **New message**.
+Add friend opens the existing retained Friends destination without changing the
+Hub dock. Friends has a clearer search-first flow, simpler invitation states and
+filters for existing connections, backed by lazy responsive lists. The combined
+Chats/Friends widget and navigation slice passes **72/72** focused cases.
+
+## FIXED IN SOURCE — direct calls raced setup, teardown and retry (2026-09-13)
+
+Direct voice and video calls now serialize join lifecycle changes, bound provider
+and Firestore waits, recover from canonical snapshot timeouts, and reconcile
+manual microphone and camera commands with the current session. The client slice
+passes **150/150** focused cases; the callable configuration passes **8/8** and
+the Firestore-emulator direct-call slice passes **47/47**. A proposed warm
+`acceptDirectCall` instance takes effect only if Functions is deployed and may
+add roughly USD 8/month. No physical two-device call was available in this
+source round, so device-to-device media quality remains an explicit release
+acceptance check.
+
 ## FIXED IN SOURCE — Podcast and Community stage moderation had no Flutter path (2026-09-13)
 
 The backend already enforced generation-bound participant role changes and
