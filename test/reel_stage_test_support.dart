@@ -42,15 +42,17 @@ Map<String, Object?> reelWire(
   int index, {
   bool photo = false,
   String authorId = 'creator',
+  String? authorName,
   String caption = reelStageCaption,
   int likeCount = 12,
   int commentCount = 3,
+  List<ReelLinkOverlay> linkOverlays = const <ReelLinkOverlay>[],
 }) {
   final millis = 1725000000000 + index;
   return <String, Object?>{
     'id': 'reel_$index',
     'authorId': '${authorId}_$index',
-    'authorName': 'Creator $index',
+    'authorName': authorName ?? 'Creator $index',
     'media': <String, Object?>{
       'kind': photo ? 'image' : 'video',
       'contentType': photo ? 'image/jpeg' : 'video/mp4',
@@ -74,12 +76,14 @@ Map<String, Object?> reelWire(
                     audioTrimStartMs: 0,
                     audioRightsAttested: true,
                     caption: caption,
+                    linkOverlays: linkOverlays,
                   )
                 : ReelComposition(
                     trimStartMs: 0,
                     trimEndMs: 18000,
                     originalAudioVolume: 100,
                     caption: caption,
+                    linkOverlays: linkOverlays,
                   ))
             .toWire(),
     'publishedAtMillis': millis,
@@ -101,8 +105,12 @@ ReelService reelStageService({
   bool photo = false,
   String viewerUid = 'viewer',
   String authorId = 'creator',
+  String? authorName,
+  int likeCount = 12,
+  int commentCount = 3,
   List<Map<String, Object?>> comments = const <Map<String, Object?>>[],
   List<String>? calls,
+  List<ReelLinkOverlay> linkOverlays = const <ReelLinkOverlay>[],
 }) => ReelService(
   auth: MockFirebaseAuth(
     signedIn: true,
@@ -116,7 +124,15 @@ ReelService reelStageService({
           'schemaVersion': 2,
           'items': <Object?>[
             for (var index = 1; index <= count; index++)
-              reelWire(index, photo: photo, authorId: authorId),
+              reelWire(
+                index,
+                photo: photo,
+                authorId: authorId,
+                authorName: authorName,
+                likeCount: likeCount,
+                commentCount: commentCount,
+                linkOverlays: linkOverlays,
+              ),
           ],
           'nextCursor': null,
         };
@@ -138,7 +154,15 @@ ReelService reelStageService({
       case 'getReelViewV2':
         return <Object?, Object?>{
           'schemaVersion': 2,
-          'reel': reelWire(1, photo: photo, authorId: authorId),
+          'reel': reelWire(
+            1,
+            photo: photo,
+            authorId: authorId,
+            authorName: authorName,
+            likeCount: likeCount,
+            commentCount: commentCount,
+            linkOverlays: linkOverlays,
+          ),
           'comments': <Object?>[...comments],
           'commentsTruncated': false,
           'nextCommentCursor': null,

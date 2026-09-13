@@ -127,29 +127,32 @@ void main() {
     expect(find.byTooltip('Play backing audio'), findsOneWidget);
   });
 
-  testWidgets('the pill keeps its 48 target and its key on the phone stage', (
-    tester,
-  ) async {
-    final players = FakeReelPlayers();
-    await pumpReelStage(
-      tester,
-      players: players,
-      size: const Size(390, 844),
-      immersive: true,
-    );
+  testWidgets(
+    'the compact phone sound control keeps its target and semantics',
+    (tester) async {
+      final players = FakeReelPlayers();
+      await pumpReelStage(
+        tester,
+        players: players,
+        size: const Size(390, 844),
+        immersive: true,
+      );
 
-    final pill = find.byKey(reelSoundKey);
-    expect(pill, findsOneWidget);
-    final size = tester.getSize(pill);
-    expect(size.width, greaterThanOrEqualTo(48));
-    expect(size.height, greaterThanOrEqualTo(48));
-    expect(find.text('Sound off'), findsOneWidget);
+      final pill = find.byKey(reelSoundKey);
+      expect(pill, findsOneWidget);
+      final size = tester.getSize(pill);
+      expect(size.width, greaterThanOrEqualTo(48));
+      expect(size.height, greaterThanOrEqualTo(48));
+      expect(find.text('Sound off'), findsNothing);
+      expect(find.bySemanticsLabel('Turn sound on'), findsOneWidget);
 
-    await tester.tap(pill);
-    await tester.pumpAndSettle();
-    expect(find.text('Sound on'), findsOneWidget);
-    expect(players.of('reel_1').volume, 1);
-  });
+      await tester.tap(pill);
+      await tester.pumpAndSettle();
+      expect(find.text('Sound on'), findsNothing);
+      expect(find.bySemanticsLabel('Turn sound off'), findsOneWidget);
+      expect(players.of('reel_1').volume, 1);
+    },
+  );
 
   testWidgets('a card is not a second sound preference', (tester) async {
     // Two cards are alive in the pager at once; the preference is the feed's,

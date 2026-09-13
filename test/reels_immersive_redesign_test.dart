@@ -250,7 +250,7 @@ void main() {
   });
 
   testWidgets(
-    'authored links stay tappable between measured chrome and footer at 200%',
+    'authored links clear chrome, trailing rail and identity at 200%',
     (tester) async {
       addTearDown(tester.view.reset);
       await _size(tester, const Size(320, 844));
@@ -272,15 +272,19 @@ void main() {
       );
       await _settle(tester);
       final chrome = tester.getRect(find.byKey(const ValueKey('reels-chrome')));
-      final footer = tester.getRect(
-        find.byKey(const ValueKey('reel-footer')).first,
+      final rail = tester.getRect(
+        find.byKey(const ValueKey('reel-action-rail')).first,
+      );
+      final identity = tester.getRect(
+        find.byKey(const ValueKey('reel-identity-block')).first,
       );
       for (final label in ['Top link', 'Bottom link']) {
         final link = find.text(label).hitTestable();
         expect(link, findsOneWidget);
         final rect = tester.getRect(link);
         expect(rect.top, greaterThanOrEqualTo(chrome.bottom));
-        expect(rect.bottom, lessThanOrEqualTo(footer.top));
+        expect(rect.right, lessThanOrEqualTo(rail.left));
+        expect(rect.bottom, lessThanOrEqualTo(identity.top));
       }
       expect(tester.takeException(), isNull);
     },
