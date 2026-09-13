@@ -182,11 +182,10 @@ void main() {
 
   group('navigation remains frozen through the copy/destination cutover', () {
     test('mobile dock geometry and destination order are unchanged', () {
-      expect(YoFloatingNavigationDock.horizontalMargin, 0);
-      expect(YoFloatingNavigationDock.topClearance, 0);
-      expect(YoFloatingNavigationDock.visualHeight, 64);
-      expect(YoFloatingNavigationDock.activeIndicatorWidth, 64);
-      expect(YoFloatingNavigationDock.activeIndicatorHeight, 56);
+      expect(YoFloatingNavigationDock.horizontalMargin, 14);
+      expect(YoFloatingNavigationDock.topClearance, 4);
+      expect(YoFloatingNavigationDock.visualHeight, 92);
+      expect(YoFloatingNavigationDock.bodyTop, 28);
       expect([0, 13, 1, 5].map(MainShell.mobileNavigationOrder).toList(), [
         0,
         1,

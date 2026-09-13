@@ -8,25 +8,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
-import 'package:yovoice/core/theme/app_palette.dart';
-import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_preserving_tab_transition.dart';
 
-/// Start · Serwery · Czaty · Momenty · Więcej, in English here.
 const _labels = ['Home', 'Servers', 'Chats', 'Moments', 'More'];
-
-/// The Servers destination owns content slot 13; the harness passes it as
-/// `roomsTabIndex`, exactly as both shells do.
 const _serversTab = 13;
 Finder _target(int slot) => find.byKey(ValueKey('yo-destination-$slot'));
-
-/// The rounded violet wash under the accepted destination — the flat bar's
-/// one moving part, where the Meniscus bead used to be.
-Finder get _wash => find.byKey(const ValueKey('yo-dock-active-indicator'));
+Finder get _bead => find.byKey(const ValueKey('yo-meniscus-bead'));
 Finder get _dock => find.byKey(const ValueKey('yo-floating-navigation-dock'));
 bool _selected(WidgetTester tester, String label) => tester
     .widgetList<Semantics>(
@@ -177,31 +167,29 @@ class _DockHarnessState extends State<_DockHarness> {
   );
 }
 
-/// The wash is centred on the accepted (or previewed) cell, is never taller
-/// than the bar and never wider than one cell.
-void _expectWashAt(WidgetTester tester, int slot) {
-  expect(_wash, findsOneWidget);
-  final wash = tester.getRect(_wash);
-  final dock = tester.getRect(_dock);
-  expect(wash.center.dx, closeTo(tester.getCenter(_target(slot)).dx, .6));
-  expect(wash.height, YoFloatingNavigationDock.activeIndicatorHeight);
+YoMeniscusPainter _painter(WidgetTester tester) =>
+    tester
+            .widget<CustomPaint>(
+              find.byKey(const ValueKey('yo-meniscus-surface')),
+            )
+            .painter!
+        as YoMeniscusPainter;
+void _expectBeadAt(WidgetTester tester, int slot) {
   expect(
-    wash.width,
-    lessThanOrEqualTo(YoFloatingNavigationDock.activeIndicatorWidth),
+    tester.getCenter(_bead).dx,
+    closeTo(tester.getCenter(_target(slot)).dx, .6),
   );
   expect(
-    wash.width,
-    lessThanOrEqualTo(tester.getSize(_target(slot)).width + .001),
+    _painter(tester).center,
+    closeTo(tester.getCenter(_bead).dx - tester.getRect(_dock).left, .6),
   );
-  expect(wash.top, greaterThanOrEqualTo(dock.top - .001));
-  expect(wash.bottom, lessThanOrEqualTo(dock.bottom + .001));
 }
 
-Future<TestGesture> _startWashDrag(
+Future<TestGesture> _startBeadDrag(
   WidgetTester tester, {
   double direction = 1,
 }) async {
-  final gesture = await tester.startGesture(tester.getCenter(_wash));
+  final gesture = await tester.startGesture(tester.getCenter(_bead));
   await gesture.moveBy(Offset(20 * direction, 0));
   await tester.pump();
   return gesture;
@@ -211,29 +199,6 @@ void main() {
   test(
     'visual order maps to stable domain destinations without renumbering',
     () {
-      expect(
-        [0, 3, 1, 5].map(
-          (tab) => YoFloatingNavigationDock.visualSlotForTab(
-            tab,
-            momentsTabIndex: 5,
-          ),
-        ),
-        [0, 1, 2, 3],
-      );
-      expect(
-        YoFloatingNavigationDock.visualSlotForTab(2, momentsTabIndex: 5),
-        isNull,
-      );
-      expect(
-        YoFloatingNavigationDock.visualSlotForTab(
-          8,
-          momentsTabIndex: 9,
-          roomsTabIndex: 8,
-        ),
-        1,
-      );
-      // Foundation: slot 1 is Servers (content slot 13). Discover keeps its
-      // retained slot 3 but no longer owns a cell, exactly like Friends.
       expect(
         [0, _serversTab, 1, 5].map(
           (tab) => YoFloatingNavigationDock.visualSlotForTab(
@@ -251,6 +216,14 @@ void main() {
           roomsTabIndex: _serversTab,
         ),
         isNull,
+      );
+      expect(
+        YoFloatingNavigationDock.visualSlotForTab(
+          8,
+          momentsTabIndex: 9,
+          roomsTabIndex: 8,
+        ),
+        1,
       );
     },
   );
@@ -282,18 +255,20 @@ void main() {
             previousX = rect.center.dx;
             expect(find.bySemanticsLabel(_labels[slot]), findsOneWidget);
           }
-          expect(
-            tester.getSize(_dock).width,
-            width,
-            reason: 'the flat bar is full-bleed: no floating side margin',
-          );
+          expect(tester.getSize(_dock).width, lessThanOrEqualTo(460));
           expect(find.text('Home'), findsOneWidget);
-          expect(find.text('Servers'), findsOneWidget);
           expect(find.text('Rooms'), findsNothing);
-          expect(find.text('Your Moments'), findsNothing);
+          expect(
+            tester
+                .widget<Icon>(
+                  find.descendant(of: _target(1), matching: find.byType(Icon)),
+                )
+                .icon,
+            Icons.hub_outlined,
+          );
           expect(find.byKey(const ValueKey('dock-logo')), findsNothing);
           expect(find.bySemanticsLabel('Open voice actions'), findsNothing);
-          _expectWashAt(tester, 0);
+          _expectBeadAt(tester, 0);
           expect(tester.takeException(), isNull);
           semantics.dispose();
         },
@@ -315,7 +290,7 @@ void main() {
         await tester.tap(_target(slot));
         await tester.pump();
         expect(_selected(tester, _labels[slot]), isTrue);
-        _expectWashAt(tester, slot);
+        _expectBeadAt(tester, slot);
       }
       expect(requests, [_serversTab, 1, 5, 0]);
       await tester.tap(_target(3));
@@ -323,11 +298,11 @@ void main() {
       await tester.tap(_target(4));
       await tester.pump();
       expect(_selected(tester, 'More'), isTrue);
-      _expectWashAt(tester, 4);
+      _expectBeadAt(tester, 4);
       await tester.tap(find.text('Close More'));
       await tester.pump();
       expect(_selected(tester, 'Moments'), isTrue);
-      _expectWashAt(tester, 3);
+      _expectBeadAt(tester, 3);
       expect(key.currentState!.voiceActions, 0);
       expect(key.currentState!.moreActions, 1);
       semantics.dispose();
@@ -363,7 +338,7 @@ void main() {
         0,
       ], reason: 'A same-tab tap still lets hosted routes return home.');
       expect(_selected(tester, 'Home'), isTrue);
-      _expectWashAt(tester, 0);
+      _expectBeadAt(tester, 0);
       await tester.tap(_target(1));
       await tester.pump();
       expect(calls.map((call) => call.arguments), [
@@ -387,11 +362,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(requests, [1]);
     expect(_selected(tester, 'Home'), isTrue);
-    _expectWashAt(tester, 0);
+    _expectBeadAt(tester, 0);
     key.currentState!.acceptDestination(1);
     await tester.pumpAndSettle();
     expect(_selected(tester, 'Chats'), isTrue);
-    _expectWashAt(tester, 2);
+    _expectBeadAt(tester, 2);
     semantics.dispose();
   });
   testWidgets(
@@ -399,22 +374,22 @@ void main() {
     (tester) async {
       final requests = <int>[];
       final semantics = await _pumpDock(tester, onRequested: requests.add);
-      final homeX = tester.getCenter(_wash).dx;
+      final homeX = tester.getCenter(_bead).dx;
       await tester.tap(_target(3));
       await tester.pump();
       // The first tick establishes the simulation clock after post-frame
       // acceptance settlement. Sample actual elapsed animation on the next.
       await tester.pump(const Duration(milliseconds: 16));
       await tester.pump(const Duration(milliseconds: 80));
-      final movingX = tester.getCenter(_wash).dx;
+      final movingX = tester.getCenter(_bead).dx;
       expect(movingX, greaterThan(homeX + 1));
       await tester.tap(_target(1));
       await tester.pump();
-      expect(tester.getCenter(_wash).dx, closeTo(movingX, 1));
+      expect(tester.getCenter(_bead).dx, closeTo(movingX, 1));
       await tester.tap(_target(2));
       await tester.pumpAndSettle();
       expect(requests, [5, _serversTab, 1]);
-      _expectWashAt(tester, 2);
+      _expectBeadAt(tester, 2);
       expect(_selected(tester, 'Chats'), isTrue);
       semantics.dispose();
     },
@@ -424,20 +399,20 @@ void main() {
     (tester) async {
       final requests = <int>[];
       final semantics = await _pumpDock(tester, onRequested: requests.add);
-      final gesture = await _startWashDrag(tester);
-      final y = tester.getCenter(_wash).dy;
+      final gesture = await _startBeadDrag(tester);
+      final y = tester.getCenter(_bead).dy;
       for (final slot in [1, 2, 3]) {
         await gesture.moveTo(Offset(tester.getCenter(_target(slot)).dx, y));
         await tester.pump();
         expect(requests, isEmpty);
         expect(_selected(tester, 'Home'), isTrue);
-        _expectWashAt(tester, slot);
+        _expectBeadAt(tester, slot);
       }
       await gesture.up();
       await tester.pumpAndSettle();
       expect(requests, [5]);
       expect(_selected(tester, 'Moments'), isTrue);
-      _expectWashAt(tester, 3);
+      _expectBeadAt(tester, 3);
       semantics.dispose();
     },
   );
@@ -446,16 +421,16 @@ void main() {
   ) async {
     final requests = <int>[];
     final semantics = await _pumpDock(tester, onRequested: requests.add);
-    final gesture = await _startWashDrag(tester);
+    final gesture = await _startBeadDrag(tester);
     await gesture.moveTo(
-      Offset(tester.getCenter(_target(3)).dx, tester.getCenter(_wash).dy),
+      Offset(tester.getCenter(_target(3)).dx, tester.getCenter(_bead).dy),
     );
     await tester.pump();
     await gesture.cancel();
     await tester.pumpAndSettle();
     expect(requests, isEmpty);
     expect(_selected(tester, 'Home'), isTrue);
-    _expectWashAt(tester, 0);
+    _expectBeadAt(tester, 0);
     semantics.dispose();
   });
 
@@ -464,8 +439,8 @@ void main() {
   ) async {
     final requests = <int>[];
     final semantics = await _pumpDock(tester, onRequested: requests.add);
-    final gesture = await _startWashDrag(tester);
-    final y = tester.getCenter(_wash).dy;
+    final gesture = await _startBeadDrag(tester);
+    final y = tester.getCenter(_bead).dy;
     await gesture.moveTo(Offset(tester.getCenter(_target(2)).dx, y));
     await tester.pump();
     await gesture.moveTo(Offset(tester.getCenter(_target(0)).dx, y));
@@ -474,7 +449,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(requests, isEmpty, reason: 'A returned drag is not a same-tab tap.');
     expect(_selected(tester, 'Home'), isTrue);
-    _expectWashAt(tester, 0);
+    _expectBeadAt(tester, 0);
     semantics.dispose();
   });
   testWidgets('denied drag snaps back; delayed acceptance later updates once', (
@@ -488,19 +463,19 @@ void main() {
       onRequested: requests.add,
       harnessKey: key,
     );
-    final gesture = await _startWashDrag(tester);
+    final gesture = await _startBeadDrag(tester);
     await gesture.moveTo(
-      Offset(tester.getCenter(_target(2)).dx, tester.getCenter(_wash).dy),
+      Offset(tester.getCenter(_target(2)).dx, tester.getCenter(_bead).dy),
     );
     await tester.pump();
     await gesture.up();
     await tester.pumpAndSettle();
     expect(requests, [1]);
     expect(_selected(tester, 'Home'), isTrue);
-    _expectWashAt(tester, 0);
+    _expectBeadAt(tester, 0);
     key.currentState!.acceptDestination(1);
     await tester.pumpAndSettle();
-    _expectWashAt(tester, 2);
+    _expectBeadAt(tester, 2);
     expect(requests, [1]);
     semantics.dispose();
   });
@@ -511,14 +486,14 @@ void main() {
       initialSelected: 1,
       harnessKey: key,
     );
-    final gesture = await _startWashDrag(tester);
-    final y = tester.getCenter(_wash).dy;
+    final gesture = await _startBeadDrag(tester);
+    final y = tester.getCenter(_bead).dy;
     await gesture.moveTo(Offset(900, y));
     await tester.pump();
-    _expectWashAt(tester, 4);
+    _expectBeadAt(tester, 4);
     await gesture.moveTo(Offset(-500, y));
     await tester.pump();
-    _expectWashAt(tester, 0);
+    _expectBeadAt(tester, 0);
     await gesture.up();
     await tester.pumpAndSettle();
     expect(key.currentState!.selected, 0);
@@ -526,12 +501,12 @@ void main() {
     semantics.dispose();
   });
 
-  testWidgets('fast first drag movement retains the original wash hit target', (
+  testWidgets('fast first drag movement retains the original bead hit target', (
     tester,
   ) async {
     final requests = <int>[];
     final semantics = await _pumpDock(tester, onRequested: requests.add);
-    final origin = tester.getCenter(_wash);
+    final origin = tester.getCenter(_bead);
     final gesture = await tester.startGesture(origin);
     await gesture.moveTo(Offset(tester.getCenter(_target(2)).dx, origin.dy));
     await tester.pump();
@@ -539,7 +514,7 @@ void main() {
     await tester.pump();
     expect(requests, isEmpty);
     expect(
-      tester.getCenter(_wash).dx,
+      tester.getCenter(_bead).dx,
       closeTo(tester.getCenter(_target(2)).dx, 2),
     );
     await gesture.up();
@@ -547,7 +522,7 @@ void main() {
     expect(requests, [1]);
     semantics.dispose();
   });
-  testWidgets('inactive icon swipe does not initiate wash navigation', (
+  testWidgets('inactive icon swipe does not initiate bead navigation', (
     tester,
   ) async {
     final requests = <int>[];
@@ -555,7 +530,7 @@ void main() {
     await tester.drag(_target(3), const Offset(-100, 0));
     await tester.pumpAndSettle();
     expect(requests, isEmpty);
-    _expectWashAt(tester, 0);
+    _expectBeadAt(tester, 0);
     semantics.dispose();
   });
 
@@ -569,9 +544,9 @@ void main() {
       onRequested: requests.add,
       harnessKey: key,
     );
-    final gesture = await _startWashDrag(tester);
+    final gesture = await _startBeadDrag(tester);
     await gesture.moveTo(
-      Offset(tester.getCenter(_target(3)).dx, tester.getCenter(_wash).dy),
+      Offset(tester.getCenter(_target(3)).dx, tester.getCenter(_bead).dy),
     );
     await tester.pump();
     key.currentState!.acceptDestination(_serversTab);
@@ -580,7 +555,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(requests, isEmpty);
     expect(_selected(tester, 'Servers'), isTrue);
-    _expectWashAt(tester, 1);
+    _expectBeadAt(tester, 1);
     semantics.dispose();
   });
 
@@ -593,9 +568,9 @@ void main() {
       autoAccept: false,
       harnessKey: key,
     );
-    final gesture = await _startWashDrag(tester);
+    final gesture = await _startBeadDrag(tester);
     await gesture.moveTo(
-      Offset(tester.getCenter(_target(4)).dx, tester.getCenter(_wash).dy),
+      Offset(tester.getCenter(_target(4)).dx, tester.getCenter(_bead).dy),
     );
     await tester.pump();
     await gesture.up();
@@ -603,113 +578,48 @@ void main() {
     expect(key.currentState!.moreActions, 1);
     expect(key.currentState!.voiceActions, 0);
     expect(_selected(tester, 'More'), isFalse);
-    _expectWashAt(tester, 0);
+    _expectBeadAt(tester, 0);
     semantics.dispose();
   });
   testWidgets(
-    'the active wash follows the selection and stays inside the flat bar',
+    'socket follows bead as one closed continuous concave bounded path',
     (tester) async {
       final semantics = await _pumpDock(tester, reduceMotion: true);
-      final palette = AppTheme.darkTheme.extension<AppPalette>()!;
       for (var slot = 0; slot < 5; slot++) {
         await tester.tap(_target(slot));
         await tester.pump();
-        _expectWashAt(tester, slot);
-        final decoration =
-            tester.widget<DecoratedBox>(_wash).decoration as BoxDecoration;
+        final painter = _painter(tester),
+            size = tester.getSize(_dock),
+            path = painter.pathFor(size);
+        final metrics = path.computeMetrics().toList();
+        expect(metrics, hasLength(1));
+        expect(metrics.single.isClosed, isTrue);
+        expect(path.getBounds().left, greaterThanOrEqualTo(-.001));
+        expect(path.getBounds().right, lessThanOrEqualTo(size.width + .001));
         expect(
-          decoration.color,
-          AppColors.navigationPrimary.withValues(alpha: .14),
-          reason: 'the reference wash is the navigation violet at 14%',
-        );
-        expect(decoration.borderRadius, AppRadius.md);
-        // Paint only: the wash never takes a pointer or a semantics node.
-        expect(
-          find.ancestor(of: _wash, matching: find.byType(IgnorePointer)),
-          findsWidgets,
+          path.contains(
+            Offset(
+              painter.center!,
+              YoFloatingNavigationDock.bodyTop + painter.radius - 1,
+            ),
+          ),
+          isFalse,
         );
         expect(
-          find.ancestor(of: _wash, matching: find.byType(ExcludeSemantics)),
-          findsWidgets,
+          path.contains(
+            Offset(
+              painter.center!,
+              YoFloatingNavigationDock.bodyTop + painter.radius + 1,
+            ),
+          ),
+          isTrue,
         );
+        expect(path.contains(Offset(size.width / 2, size.height - 2)), isTrue);
+        _expectBeadAt(tester, slot);
       }
-      // The bar itself: flat, one hairline on top, no bead and no socket.
-      final surface =
-          tester
-                  .widget<DecoratedBox>(
-                    find.byKey(const ValueKey('yo-dock-surface')),
-                  )
-                  .decoration
-              as BoxDecoration;
-      expect(surface.color, palette.navigationSurface);
-      expect(surface.border!.top.color, palette.navigationOutline);
-      expect(surface.border!.top.width, 1);
-      expect(surface.borderRadius, isNull);
-      expect(find.byKey(const ValueKey('yo-meniscus-bead')), findsNothing);
-      expect(find.byKey(const ValueKey('yo-meniscus-surface')), findsNothing);
       semantics.dispose();
     },
   );
-
-  testWidgets('flat bar: reserved height, safe area and cell metrics', (
-    tester,
-  ) async {
-    final semantics = await _pumpDock(
-      tester,
-      safeBottom: 34,
-      reduceMotion: true,
-    );
-    final palette = AppTheme.darkTheme.extension<AppPalette>()!;
-    // The widget's API is unchanged; every host reserves through one formula.
-    expect(YoFloatingNavigationDock.visualHeight, 64);
-    expect(YoFloatingNavigationDock.horizontalMargin, 0);
-    expect(YoFloatingNavigationDock.topClearance, 0);
-    expect(YoFloatingNavigationDock.reservedHeightFor(safeBottom: 34), 98);
-    expect(YoFloatingNavigationDock.reservedHeightFor(safeBottom: 0), 74);
-    final surface = tester.getRect(
-      find.byKey(const ValueKey('yo-dock-surface')),
-    );
-    final dock = tester.getRect(_dock);
-    expect(surface.width, 390);
-    expect(
-      surface.bottom,
-      844,
-      reason: 'the surface paints under the home indicator: no fake bar',
-    );
-    expect(dock.bottom, 844 - 34, reason: 'cells sit above the safe inset');
-    expect(dock.height, 64);
-    expect(surface.height, 64 + 34);
-    for (var slot = 0; slot < 5; slot++) {
-      final cell = tester.getRect(_target(slot));
-      expect(cell.width, closeTo(390 / 5, .01), reason: 'five equal cells');
-      expect(cell.height, 64);
-    }
-    // 24 px glyph over an 11 / w700 label; active lavender, resting
-    // navigation-inactive — both against the navigation surface.
-    final activeIcon = tester.widget<Icon>(
-      find.descendant(of: _target(0), matching: find.byType(Icon)),
-    );
-    expect(activeIcon.size, 24);
-    expect(activeIcon.color, palette.interactiveForeground);
-    final restingIcon = tester.widget<Icon>(
-      find.descendant(of: _target(1), matching: find.byType(Icon)),
-    );
-    expect(restingIcon.icon, Icons.hub_outlined);
-    expect(restingIcon.color, palette.navigationInactive);
-    final activeLabel = tester.widget<Text>(
-      find.byKey(const ValueKey('yo-destination-label-0')),
-    );
-    expect(activeLabel.style!.fontSize, 11);
-    expect(activeLabel.style!.fontWeight, FontWeight.w700);
-    expect(activeLabel.style!.color, palette.interactiveForeground);
-    final restingLabel = tester.widget<Text>(
-      find.byKey(const ValueKey('yo-destination-label-1')),
-    );
-    expect(restingLabel.data, 'Servers');
-    expect(restingLabel.style!.color, palette.navigationInactive);
-    expect(tester.takeException(), isNull);
-    semantics.dispose();
-  });
   for (final count in [0, 1, 99, 100, 1234]) {
     testWidgets('badge $count caps visual count but announces full count', (
       tester,
@@ -852,7 +762,7 @@ void main() {
         expect(captionRect.right, lessThanOrEqualTo(dockRect.right));
         expect(captionRect.bottom, lessThanOrEqualTo(dockRect.bottom));
         expect(_selected(tester, expectedLabels[slot]), isTrue);
-        _expectWashAt(tester, slot);
+        _expectBeadAt(tester, slot);
         expect(tester.takeException(), isNull);
         painter.dispose();
       }
@@ -895,7 +805,7 @@ void main() {
             reason: 'Badge placement follows the logical trailing edge.',
           );
           expect(find.text('99+'), findsOneWidget);
-          _expectWashAt(tester, 2);
+          _expectBeadAt(tester, 2);
           expect(tester.takeException(), isNull);
           semantics.dispose();
         },
@@ -905,7 +815,7 @@ void main() {
   for (final locale in ['en', 'ar']) {
     for (final selected in [_serversTab, 5]) {
       testWidgets(
-        'inactive Chats badge stays clear of adjacent wash: $locale tab$selected',
+        'inactive Chats badge stays clear of adjacent bead: $locale tab$selected',
         (tester) async {
           final semantics = await _pumpDock(
             tester,
@@ -921,7 +831,7 @@ void main() {
           final chatsSlot = tester.getRect(_target(2));
           expect(badge.left, greaterThanOrEqualTo(chatsSlot.left));
           expect(badge.right, lessThanOrEqualTo(chatsSlot.right));
-          expect(badge.overlaps(tester.getRect(_wash)), isFalse);
+          expect(badge.overlaps(tester.getRect(_bead)), isFalse);
           expect(tester.takeException(), isNull);
           semantics.dispose();
         },
@@ -929,7 +839,7 @@ void main() {
     }
   }
 
-  testWidgets('RTL mirrors visual ordering, drag and wash', (tester) async {
+  testWidgets('RTL mirrors visual ordering, drag and socket', (tester) async {
     final requests = <int>[];
     final semantics = await _pumpDock(
       tester,
@@ -942,17 +852,17 @@ void main() {
         greaterThan(tester.getCenter(_target(slot + 1)).dx),
       );
     }
-    final gesture = await _startWashDrag(tester, direction: -1);
+    final gesture = await _startBeadDrag(tester, direction: -1);
     await gesture.moveTo(
-      Offset(tester.getCenter(_target(2)).dx, tester.getCenter(_wash).dy),
+      Offset(tester.getCenter(_target(2)).dx, tester.getCenter(_bead).dy),
     );
     await tester.pump();
     expect(requests, isEmpty);
-    _expectWashAt(tester, 2);
+    _expectBeadAt(tester, 2);
     await gesture.up();
     await tester.pumpAndSettle();
     expect(requests, [1]);
-    _expectWashAt(tester, 2);
+    _expectBeadAt(tester, 2);
     semantics.dispose();
   });
 
@@ -1027,24 +937,22 @@ void main() {
     await tester.pump(const Duration(milliseconds: 16));
     await tester.pump(const Duration(milliseconds: 70));
     expect(
-      tester.getCenter(_wash).dx,
+      tester.getCenter(_bead).dx,
       greaterThan(tester.getCenter(_target(0)).dx),
     );
     expect(
-      tester.getCenter(_wash).dx,
+      tester.getCenter(_bead).dx,
       lessThan(tester.getCenter(_target(3)).dx),
     );
     disabled.value = true;
     await tester.pump();
-    _expectWashAt(tester, 3);
-    // Nothing keeps moving once motion is reduced.
-    await tester.pump(const Duration(seconds: 1));
-    _expectWashAt(tester, 3);
+    _expectBeadAt(tester, 3);
+    expect(_painter(tester).velocity, 0);
     await tester.tap(_target(2));
     await tester.pump();
-    _expectWashAt(tester, 2);
+    _expectBeadAt(tester, 2);
     await tester.pump(const Duration(seconds: 2));
-    _expectWashAt(tester, 2);
+    _expectBeadAt(tester, 2);
     semantics.dispose();
   });
   testWidgets('hidden Friends tab has no false selection; resizing is safe', (
@@ -1056,7 +964,7 @@ void main() {
       initialSelected: 2,
       harnessKey: key,
     );
-    expect(_wash, findsNothing);
+    expect(_bead, findsNothing);
     for (final label in _labels) {
       expect(_selected(tester, label), isFalse);
     }
@@ -1064,7 +972,7 @@ void main() {
     await tester.pump();
     key.currentState!.acceptDestination(_serversTab);
     await tester.pumpAndSettle();
-    _expectWashAt(tester, 1);
+    _expectBeadAt(tester, 1);
     expect(tester.takeException(), isNull);
     semantics.dispose();
   });
@@ -1080,14 +988,14 @@ void main() {
         reduceMotionListenable: disabled,
         onRequested: requests.add,
       );
-      final gesture = await _startWashDrag(tester);
+      final gesture = await _startBeadDrag(tester);
       await gesture.moveTo(
-        Offset(tester.getCenter(_target(3)).dx, tester.getCenter(_wash).dy),
+        Offset(tester.getCenter(_target(3)).dx, tester.getCenter(_bead).dy),
       );
       await tester.pump();
       disabled.value = true;
       await tester.pump();
-      _expectWashAt(tester, 0);
+      _expectBeadAt(tester, 0);
       await gesture.up();
       await tester.pumpAndSettle();
       expect(requests, isEmpty);
@@ -1119,16 +1027,12 @@ void main() {
         reduceMotion: true,
       );
       expect(tester.getRect(_dock).bottom, 676);
-      expect(
-        tester.getSize(_dock).width,
-        768,
-        reason: 'the flat bar spans the tablet width',
-      );
+      expect(tester.getSize(_dock).width, 460);
       expect(tester.takeException(), isNull);
       semantics.dispose();
     },
   );
-  testWidgets('disposing mid-slide does not leak callbacks or tickers', (
+  testWidgets('disposing during spring does not leak callbacks or tickers', (
     tester,
   ) async {
     final semantics = await _pumpDock(tester);

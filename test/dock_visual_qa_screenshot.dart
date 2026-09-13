@@ -10,6 +10,7 @@
 // PNGs land in test/.screenshots/ (git-ignored).
 
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -64,7 +65,8 @@ class _DockPreview extends StatelessWidget {
     return Scaffold(
       body: const SizedBox.expand(),
       bottomNavigationBar: YoFloatingNavigationDock(
-        selectedTabIndex: 0,
+        selectedTabIndex: _momentsTabIndex,
+        roomsTabIndex: 13,
         momentsTabIndex: _momentsTabIndex,
         unreadConversationCount: unreadConversationCount,
         onDestinationSelected: (_) {},
@@ -167,9 +169,7 @@ void main() {
         final dockSize = tester.getSize(
           find.byKey(const ValueKey('yo-floating-navigation-dock')),
         );
-        // The reference bar is full-bleed: no floating side margin
-        // (`horizontalMargin` is 0), so the dock spans the whole width.
-        expect(dockSize.width, closeTo(width, .01));
+        expect(dockSize.width, closeTo(math.min(460, width - 28), .01));
         expect(dockSize.height, YoFloatingNavigationDock.visualHeight);
 
         final file = await _shoot(tester, captureKey: captureKey, name: label);
@@ -190,11 +190,11 @@ void main() {
       );
 
       expect(find.text('99+'), findsOneWidget);
-      expect(find.text('Home'), findsOneWidget);
+      expect(find.text('Moments'), findsOneWidget);
       final dockSize = tester.getSize(
         find.byKey(const ValueKey('yo-floating-navigation-dock')),
       );
-      expect(dockSize.width, closeTo(320, .01));
+      expect(dockSize.width, closeTo(292, .01));
       expect(dockSize.height, YoFloatingNavigationDock.accessibleVisualHeight);
 
       final file = await _shoot(tester, captureKey: captureKey, name: label);
