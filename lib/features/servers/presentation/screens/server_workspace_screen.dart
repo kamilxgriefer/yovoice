@@ -55,6 +55,14 @@ export '../widgets/server_panel.dart' show serverChannelIcon;
 typedef ServerChannelBuilder =
     Widget Function(BuildContext context, Server server, ServerChannel channel);
 
+/// Podcast recording and its durable episode archive need the production
+/// egress provider as one capability. Keep both surfaces unavailable unless
+/// the release was built after that provider, its credentials and IAM were
+/// verified. Tests and previews can still inject an explicit repository.
+const _podcastRecordingAndArchiveEnabled = bool.fromEnvironment(
+  'YOVOICE_PODCAST_RECORDING_ENABLED',
+);
+
 /// The in-server shell.
 ///
 /// Anatomy at every width: server panel (cover, name, subtitle, `Zaproś`,
@@ -192,6 +200,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
   ServerPodcastEpisodeRepository? get _podcastEpisodes {
     final supplied = widget.podcastEpisodeRepository;
     if (supplied != null) return supplied;
+    if (!_podcastRecordingAndArchiveEnabled) return null;
     final repository = _repository;
     return repository is ServerPodcastEpisodeRepository
         ? repository as ServerPodcastEpisodeRepository
@@ -1007,7 +1016,10 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
       final repository = _podcastEpisodes;
       if (repository == null) {
         return Center(
-          child: Text(AppLocalizations.of(context).serverActionUnavailable),
+          child: Text(
+            AppLocalizations.of(context).serverActionUnavailable,
+            key: const ValueKey('server-podcast-episodes-unavailable'),
+          ),
         );
       }
       return ServerPodcastEpisodesBoard(

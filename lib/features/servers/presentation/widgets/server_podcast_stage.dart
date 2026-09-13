@@ -1042,7 +1042,7 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
           primaryIcon: Icons.play_arrow_rounded,
           channel: episodes,
           onOpenChannel: widget.onOpenChannel,
-          available: true,
+          available: widget.episodeRepository != null,
         ),
     ];
     if (cards.isEmpty) return const SizedBox.shrink();

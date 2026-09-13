@@ -102,6 +102,7 @@ Widget podcastWorkspace(
   initialChannelId: channelId,
   chatService: chat ?? podcastChat(),
   connector: connector ?? FakeServerMediaConnector(),
+  podcastEpisodeRepository: repository,
 );
 
 /// Any phrasing that could only come from a presence count, which does not
@@ -204,6 +205,62 @@ Future<FakeServerMediaLink> joinAsListener(
 }
 
 void main() {
+  testWidgets(
+    'recording and episode archive stay unavailable in a default release',
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = TestServerRepository()
+        ..servers = [podcastServer()]
+        ..channels = podcastChannels(studio: live)
+        ..myRole = ServerMemberRole.moderator;
+
+      Widget workspace(String channelId) => ServerWorkspaceScreen(
+        key: UniqueKey(),
+        serverId: 's',
+        repository: repository,
+        isRootTab: true,
+        initialChannelId: channelId,
+        chatService: podcastChat(),
+        connector: FakeServerMediaConnector(),
+      );
+
+      await pumpServers(
+        tester,
+        workspace('studio'),
+        size: const Size(1440, 900),
+      );
+      expect(
+        find.byKey(const ValueKey('server-podcast-start-recording')),
+        findsNothing,
+      );
+      final recent = find.byKey(
+        const ValueKey('server-podcast-recent-episodes'),
+      );
+      expect(
+        find.descendant(of: recent, matching: find.text('Wkrótce')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.descendant(of: recent, matching: find.byType(FilledButton)),
+            )
+            .onPressed,
+        isNull,
+      );
+
+      await pumpServers(
+        tester,
+        workspace('episodes'),
+        size: const Size(1440, 900),
+      );
+      expect(
+        find.byKey(const ValueKey('server-podcast-episodes-unavailable')),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('the desktop studio is an audio stage, never a video player', (
     tester,
   ) async {

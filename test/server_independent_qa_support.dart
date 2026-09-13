@@ -190,6 +190,7 @@ Widget qaWorkspace(
   chatService: chat ?? qaChat(),
   connector: connector ?? FakeServerMediaConnector(),
   anotherVoiceSessionActive: anotherVoiceSessionActive,
+  podcastEpisodeRepository: repository,
 );
 
 Finder get qaJoin => find.byKey(const ValueKey('server-join'));
