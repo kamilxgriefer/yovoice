@@ -1,4 +1,4 @@
-package app.yo_voice
+package app.yovoice
 
 import android.content.Intent
 import android.os.Build

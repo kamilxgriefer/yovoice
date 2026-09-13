@@ -9,6 +9,7 @@ void main() {
     final manifest = File(
       'android/app/src/main/AndroidManifest.xml',
     ).readAsStringSync();
+    final gradle = File('android/app/build.gradle.kts').readAsStringSync();
 
     test('declares the permissions a connected voice session needs', () {
       // Without these a backgrounded process is silenced and then frozen,
@@ -44,12 +45,11 @@ void main() {
     });
 
     test('the service and its channel strings exist', () {
-      expect(
-        File(
-          'android/app/src/main/kotlin/app/yo_voice/VoiceSessionService.kt',
-        ).existsSync(),
-        isTrue,
+      final service = File(
+        'android/app/src/main/kotlin/app/yovoice/VoiceSessionService.kt',
       );
+      expect(service.existsSync(), isTrue);
+      expect(service.readAsStringSync(), startsWith('package app.yovoice'));
       final strings = File(
         'android/app/src/main/res/values/strings.xml',
       ).readAsStringSync();
@@ -62,6 +62,35 @@ void main() {
         expect(strings, contains('name="$name"'));
       }
     });
+
+    test(
+      'manifest components resolve to the one active application package',
+      () {
+        expect(gradle, contains('namespace = "app.yovoice"'));
+        expect(gradle, contains('applicationId = "app.yovoice"'));
+        expect(manifest, contains('android:name=".MainActivity"'));
+        expect(manifest, contains('android:name=".VoiceSessionService"'));
+
+        final kotlinRoot = Directory('android/app/src/main/kotlin');
+        final mainActivities = kotlinRoot
+            .listSync(recursive: true)
+            .whereType<File>()
+            .where((file) => file.path.endsWith('/MainActivity.kt'))
+            .toList(growable: false);
+        expect(
+          mainActivities,
+          hasLength(1),
+          reason:
+              'A second MainActivity can satisfy the manifest while silently '
+              'dropping the voice-session MethodChannel.',
+        );
+        final activity = mainActivities.single.readAsStringSync();
+        expect(activity, startsWith('package app.yovoice'));
+        expect(activity, contains('override fun configureFlutterEngine'));
+        expect(activity, contains('app.yo_voice/voice_session'));
+        expect(activity, contains('VoiceSessionService::class.java'));
+      },
+    );
   });
 
   group('iOS background audio', () {
