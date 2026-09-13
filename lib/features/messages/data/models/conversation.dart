@@ -118,6 +118,29 @@ class Conversation {
     );
   }
 
+  /// Applies the owner-only unread projection used after an incognito read.
+  /// The participant-readable conversation root intentionally retains its
+  /// previous counter so the peer cannot infer that the thread was opened.
+  Conversation withUnreadCountFor(String userId, int unreadCount) {
+    return Conversation(
+      id: id,
+      participantIds: participantIds,
+      participantNames: participantNames,
+      participantEmails: participantEmails,
+      participantPhotoUrls: participantPhotoUrls,
+      unreadCounts: {...unreadCounts, userId: unreadCount},
+      lastMessage: lastMessage,
+      lastMessageType: lastMessageType,
+      lastMessageSenderId: lastMessageSenderId,
+      updatedAt: updatedAt,
+      createdAt: createdAt,
+      archivedBy: archivedBy,
+      mutedBy: mutedBy,
+      deletedBy: deletedBy,
+      deletedSequences: deletedSequences,
+    );
+  }
+
   String previewFor(String currentUserId) {
     if (lastMessage.isEmpty) {
       return 'Start a conversation';

@@ -4,6 +4,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 
+import 'package:yovoice/core/audio/call_tone.dart';
+import 'package:yovoice/core/audio/call_tone_service.dart';
+import 'package:yovoice/core/audio/ui_sound.dart';
+import 'package:yovoice/core/audio/ui_sound_service.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
@@ -11,6 +15,7 @@ import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/calls/presentation/direct_call_route_registry.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -21,6 +26,8 @@ class DirectCallScreen extends StatefulWidget {
     required this.callId,
     this.callService,
     this.voiceService,
+    this.toneService,
+    this.soundService,
     this.currentUserId,
     this.participantName,
     super.key,
@@ -29,6 +36,8 @@ class DirectCallScreen extends StatefulWidget {
   final String callId;
   final DirectCallGateway? callService;
   final VoiceCallService? voiceService;
+  final CallToneService? toneService;
+  final UiSoundService? soundService;
   final String? currentUserId;
   final String? participantName;
 
@@ -42,6 +51,10 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       widget.callService ?? DirectCallService();
   late final VoiceCallService _voice =
       widget.voiceService ?? VoiceCallService.instance;
+  late final CallToneService _tones =
+      widget.toneService ?? defaultCallToneService;
+  late final UiSoundService _sounds =
+      widget.soundService ?? UiSoundService.instance;
   late Stream<DirectCall> _call = _calls.watchCall(widget.callId);
   late final AnimationController _pulse;
 
@@ -58,6 +71,8 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   bool _connectionInterrupted = false;
   bool _terminalDisconnectPending = false;
   bool _cameraPausedInBackground = false;
+  bool _terminalCuePlayed = false;
+  String? _tonePermissionWaitCallId;
   int _elapsedSeconds = 0;
   int _callWatchGeneration = 0;
   late VoiceCallStatus _lastVoiceStatus;
@@ -100,6 +115,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       // A route may be created from a notification while the app is still
       // inactive. Record that state before any accepted-call join can request
       // camera permission.
+      unawaited(_tones.stop());
       unawaited(_pauseCameraForBackground());
     }
     _lastVoiceStatus = _voice.status;
@@ -112,6 +128,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
     // A route can also be removed by auth/navigation while a permission or
     // Answer Future is pending. Its continuation must not start local media.
     _finishRequested = true;
+    unawaited(_tones.stop());
     if (_voice.directCallId == widget.callId) {
       unawaited(_stopLocalMedia());
     }
@@ -128,6 +145,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       case AppLifecycleState.inactive:
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
+        unawaited(_tones.stop());
         if (_voice.isVideoCall || _latest?.isVideo == true) {
           _cameraPausedInBackground =
               _voice.isCameraEnabled ||
@@ -140,6 +158,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
         unawaited(_pauseCameraForBackground());
       case AppLifecycleState.resumed:
         _voice.resumeAfterBackground();
+        _restartRingingTone();
         if (_cameraPausedInBackground) {
           _cameraPausedInBackground = false;
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -154,7 +173,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
           });
         }
       case AppLifecycleState.detached:
-        break;
+        unawaited(_tones.stop());
     }
   }
 
@@ -232,33 +251,22 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       if (!mounted) return;
       switch (call.status) {
         case DirectCallStatus.active:
-          if (_finishRequested) {
-            // A remote Answer can arrive while the caller's Cancel request is
-            // pending. The local finishing intent is authoritative for media:
-            // never join or reopen mic/camera after that user gesture.
-            if (_voice.directCallId == call.id) {
-              unawaited(_voice.disconnect(playSound: false));
-            }
-            return;
-          }
-          if (call.isIncomingFor(_currentUserId) && !_locallyAccepted) {
-            // Another installation of this account may have answered. Never
-            // auto-join it (and therefore never open this device's mic) without
-            // the local Answer gesture that created the server binding.
-            _startClock(call);
-            return;
-          }
-          _startClock(call);
-          if (!_joinRequested) unawaited(_connect(call));
+          unawaited(_handleActiveCall(call));
         case DirectCallStatus.ringing:
-          break;
+          _restartRingingTone();
         case DirectCallStatus.declined:
         case DirectCallStatus.cancelled:
         case DirectCallStatus.ended:
         case DirectCallStatus.missed:
+          unawaited(_tones.stop());
           _clock?.cancel();
           if (_voice.directCallId == call.id) {
             unawaited(_voice.disconnect(playSound: true));
+          } else if (call.status == DirectCallStatus.declined &&
+              call.callerId == _currentUserId &&
+              !_terminalCuePlayed) {
+            _terminalCuePlayed = true;
+            unawaited(_sounds.play(UiSound.callDeclined));
           }
           _closeTimer ??= Timer(const Duration(milliseconds: 1500), () {
             if (mounted && Navigator.of(context).canPop()) {
@@ -267,6 +275,69 @@ class _DirectCallScreenState extends State<DirectCallScreen>
           });
       }
     });
+  }
+
+  Future<void> _handleActiveCall(DirectCall call) async {
+    // Release ringing audio focus before LiveKit opens its call audio session.
+    final mustAwaitToneRelease = _tones.mayHoldAudioFocus;
+    final toneStop = _tones.stop();
+    if (_finishRequested) {
+      // A remote Answer can arrive while the caller's Cancel request is
+      // pending. The local finishing intent is authoritative for media: never
+      // join or reopen mic/camera after that user gesture.
+      if (_voice.directCallId == call.id) {
+        unawaited(_voice.disconnect(playSound: false));
+      }
+      return;
+    }
+    if (call.isIncomingFor(_currentUserId) && !_locallyAccepted) {
+      // Another installation of this account may have answered. Never
+      // auto-join it (and therefore never open this device's mic) without the
+      // local Answer gesture that created the server binding.
+      _startClock(call);
+      return;
+    }
+    _startClock(call);
+    if (!_joinRequested) {
+      if (mustAwaitToneRelease) await toneStop;
+      if (!mounted || _latest?.status != DirectCallStatus.active) return;
+      unawaited(_connect(call));
+    }
+  }
+
+  void _restartRingingTone() {
+    final call = _latest;
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    final foreground =
+        lifecycle == null || lifecycle == AppLifecycleState.resumed;
+    if (!mounted ||
+        !foreground ||
+        _finishRequested ||
+        _actionBusy ||
+        _locallyAccepted ||
+        call?.status != DirectCallStatus.ringing) {
+      return;
+    }
+    if (!DirectCallAlertRegistry.allowsInAppTone(call!.id)) {
+      _waitForInAppTonePermission(call.id);
+      return;
+    }
+    _tonePermissionWaitCallId = null;
+    final tone = call.isIncomingFor(_currentUserId)
+        ? CallTone.incoming
+        : CallTone.outgoing;
+    unawaited(_tones.start(tone));
+  }
+
+  void _waitForInAppTonePermission(String callId) {
+    if (_tonePermissionWaitCallId == callId) return;
+    _tonePermissionWaitCallId = callId;
+    unawaited(() async {
+      await DirectCallAlertRegistry.whenInAppToneAllowed(callId);
+      if (!mounted || _tonePermissionWaitCallId != callId) return;
+      _tonePermissionWaitCallId = null;
+      _restartRingingTone();
+    }());
   }
 
   void _startClock(DirectCall call) {
@@ -326,10 +397,14 @@ class _DirectCallScreenState extends State<DirectCallScreen>
     if (call == null) return;
     setState(() => _actionBusy = true);
     try {
+      final mustAwaitToneRelease = _tones.mayHoldAudioFocus;
+      final toneStop = _tones.stop();
       final acceptedMedia = await _prepareMediaPermissions(
         includeCamera: call.isVideo,
       );
       if (acceptedMedia == null || _finishRequested) return;
+      if (mustAwaitToneRelease) await toneStop;
+      if (_finishRequested || !mounted) return;
       final acceptedStatus = await _calls.accept(
         widget.callId,
         mediaType: acceptedMedia,
@@ -381,6 +456,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       }
     } finally {
       _completeBusyAction();
+      _restartRingingTone();
     }
   }
 
@@ -393,6 +469,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
     // Finish is an interrupt, not another mutually exclusive call action.
     // Revoke the local session synchronously before any network/SDK await.
     _finishRequested = true;
+    unawaited(_tones.stop());
     _clock?.cancel();
     _closeTimer?.cancel();
     final canEndActive =
@@ -635,6 +712,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
 
   void _retryCallWatch() {
     if (_finishRequested || !mounted) return;
+    unawaited(_tones.stop());
     setState(() {
       _callWatchGeneration++;
       // A provisional cache row may have been handled before its canonical
@@ -682,7 +760,11 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       stream: _call,
       builder: (context, snapshot) {
         final call = snapshot.data;
-        if (call != null) _handleCall(call);
+        if (snapshot.hasError) {
+          unawaited(_tones.stop());
+        } else if (call != null) {
+          _handleCall(call);
+        }
         final passiveIncoming =
             call != null && _needsExplicitIncomingJoin(call);
         final canPop =

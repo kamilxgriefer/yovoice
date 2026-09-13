@@ -33,6 +33,9 @@ const {
   requireRequestId,
 } = require("../integrity/guards");
 const { normalizeProfileVisibility } = require("./profile_visibility");
+const {
+  cleanupPremiumMessagingPrivacyForDeletedUser,
+} = require("../messaging/privacy_cleanup");
 
 const REGION = "europe-west1";
 const PUBLIC_PROFILE_SCHEMA_VERSION = 1;
@@ -49,6 +52,13 @@ const CREATOR_AUDIENCE_RATE_LIMIT = Object.freeze({
   maxEvents: 20,
   windowMs: 60 * 1000,
 });
+const CREATOR_AGE_CONFIRMATION_RATE_SCOPE = "profile.creatorAgeConfirmation";
+const CREATOR_AGE_CONFIRMATION_RATE_LIMIT = Object.freeze({
+  maxEvents: 5,
+  windowMs: 24 * 60 * 60 * 1000,
+});
+const CREATOR_MINIMUM_AGE_YEARS = 18;
+const CREATOR_MAXIMUM_AGE_YEARS = 120;
 
 const PUBLIC_PROFILE_FIELDS = new Set([
   "uid",
@@ -183,6 +193,40 @@ function normalizeSearchText(value) {
     .replace(/^@+/u, "")
     .trim()
     .toLocaleLowerCase("en-US");
+}
+
+function requireAdultBirthDate(value, nowMs) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
+    throw new HttpsError(
+      "invalid-argument",
+      "birthDate must use the YYYY-MM-DD format.",
+    );
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  const candidateMillis = Date.UTC(year, month - 1, day);
+  const candidate = new Date(candidateMillis);
+  if (
+    candidate.getUTCFullYear() !== year ||
+    candidate.getUTCMonth() !== month - 1 ||
+    candidate.getUTCDate() !== day
+  ) {
+    throw new HttpsError("invalid-argument", "birthDate is not a real date.");
+  }
+  const today = new Date(nowMs);
+  let age = today.getUTCFullYear() - year;
+  const birthdayPending =
+    today.getUTCMonth() < month - 1 ||
+    (today.getUTCMonth() === month - 1 && today.getUTCDate() < day);
+  if (birthdayPending) age -= 1;
+  if (age < CREATOR_MINIMUM_AGE_YEARS) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Creator audience requires an adult account holder.",
+    );
+  }
+  if (age > CREATOR_MAXIMUM_AGE_YEARS) {
+    throw new HttpsError("invalid-argument", "birthDate is outside the allowed range.");
+  }
 }
 
 function derivePublicProfile(uid, source) {
@@ -411,6 +455,10 @@ async function handleAuthUserDeleted(uid, { database = db } = {}) {
           disabled: true,
           isOnline: false,
           premiumIdentity: false,
+          creatorAudienceEnabled: FieldValue.delete(),
+          creatorAgeVerified: FieldValue.delete(),
+          creatorAgeVerifiedAt: FieldValue.delete(),
+          creatorAgeVerificationMethod: FieldValue.delete(),
           authDeletedAt: FieldValue.serverTimestamp(),
         },
         { merge: true },
@@ -421,6 +469,26 @@ async function handleAuthUserDeleted(uid, { database = db } = {}) {
   return { outcome: "retired" };
 }
 
+/**
+ * Runs the account-deletion boundary in a strict order.
+ *
+ * Retiring the private source profile first makes every direct-message
+ * transaction that depends on an active account retry or fail. Only then is
+ * owner-indexed privacy state erased. A retry repeats both idempotent steps.
+ */
+async function handleAuthUserDeletionLifecycle(
+  uid,
+  {
+    database = db,
+    retireIdentity = handleAuthUserDeleted,
+    cleanupPrivacy = cleanupPremiumMessagingPrivacyForDeletedUser,
+  } = {},
+) {
+  const retirement = await retireIdentity(uid, { database });
+  const privacyCleanup = await cleanupPrivacy(uid, { database });
+  return { retirement, privacyCleanup };
+}
+
 // Auth deletion has no Firestore source event of its own. This trigger closes
 // that lifecycle gap immediately; the bounded backfill remains the recovery
 // path for accounts deleted before this trigger was deployed.
@@ -429,7 +497,7 @@ const onAuthUserDeleted = functionsV1
   .region(REGION)
   .auth.user()
   .onDelete(async (user) => {
-    await handleAuthUserDeleted(user.uid);
+    await handleAuthUserDeletionLifecycle(user.uid);
   });
 
 function searchResult(snapshot, authority = {}, relationshipStatus = "none") {
@@ -945,12 +1013,138 @@ async function setCreatorAudienceEnabledHandler(
   });
 }
 
+async function confirmCreatorAdultEligibilityHandler(
+  request,
+  {
+    database = db,
+    now = Timestamp.now(),
+    rateLimit = CREATOR_AGE_CONFIRMATION_RATE_LIMIT,
+  } = {},
+) {
+  const auth = requireActor(request);
+  requireExactInput(
+    request.data,
+    ["birthDate", "requestId"],
+    ["birthDate", "requestId"],
+  );
+  const requestId = requireRequestId(request.data.requestId);
+  const nowMs = timestampMillis(now, null);
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+    throw new TypeError("now must be a Firestore Timestamp.");
+  }
+  // The date is used only for this calculation. It is never written to
+  // Firestore, an operation ledger, a public projection or a log entry.
+  requireAdultBirthDate(request.data.birthDate, nowMs);
+
+  const identity = operationIdentity(
+    "profile.creator.ageConfirmation.v1",
+    auth.uid,
+    requestId,
+    { adultEligibility: true },
+  );
+  const userRef = database.collection("users").doc(auth.uid);
+  const entitlementRef = database.collection("entitlements").doc(auth.uid);
+  const profileRef = database.collection("publicProfiles").doc(auth.uid);
+  const ledgerRef = database.collection("integrityOperationLedgers").doc(identity.id);
+  const rateRef = rateLimitReference(
+    database,
+    CREATOR_AGE_CONFIRMATION_RATE_SCOPE,
+    auth.uid,
+  );
+
+  return database.runTransaction(async (transaction) => {
+    const [userSnapshot, entitlementSnapshot, profileSnapshot, ledgerSnapshot,
+      rateSnapshot] = await transaction.getAll(
+      userRef,
+      entitlementRef,
+      profileRef,
+      ledgerRef,
+      rateRef,
+    );
+    const source = userSnapshot.exists ? (userSnapshot.data() ?? {}) : null;
+    if (!isActiveAccountProfile(source)) {
+      throw new HttpsError("permission-denied", "The account is not active.");
+    }
+    const entitlement = entitlementSnapshot.exists
+      ? (entitlementSnapshot.data() ?? {})
+      : null;
+    const access = deriveEffectivePremiumAccess({
+      user: source,
+      entitlement,
+      now: nowMs,
+    });
+    if (
+      source.accountType !== "creator" ||
+      source.premiumIdentity !== true ||
+      access.paidActive !== true ||
+      entitlement?.premiumIdentityEnabled !== true ||
+      entitlement?.creatorEnabled !== true
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Age confirmation is unavailable for this account.",
+      );
+    }
+    const prior = assertLedgerReplay(ledgerSnapshot, {
+      kind: "profile.creator.ageConfirmation.v1",
+      uid: auth.uid,
+      inputHash: identity.inputHash,
+    });
+    if (prior) return prior;
+
+    consumeRateLimit(transaction, rateSnapshot, {
+      reference: rateRef,
+      scope: CREATOR_AGE_CONFIRMATION_RATE_SCOPE,
+      uid: auth.uid,
+      now,
+      nowMs,
+      ...rateLimit,
+    });
+    const changed = source.creatorAgeVerified !== true;
+    const result = { creatorAgeVerified: true, changed };
+    if (changed) {
+      const nextSource = {
+        ...source,
+        creatorAgeVerified: true,
+        creatorAgeVerifiedAt: now,
+        creatorAgeVerificationMethod: "self_declared_birth_date",
+      };
+      transaction.update(userRef, {
+        creatorAgeVerified: true,
+        creatorAgeVerifiedAt: now,
+        creatorAgeVerificationMethod: "self_declared_birth_date",
+      });
+      applyProjectionInTransaction(
+        transaction,
+        profileRef,
+        profileSnapshot,
+        derivePublicProfile(auth.uid, nextSource),
+        PUBLIC_PROFILE_FIELDS,
+      );
+    }
+    transaction.create(ledgerRef, ledgerData({
+      kind: "profile.creator.ageConfirmation.v1",
+      uid: auth.uid,
+      requestId,
+      inputHash: identity.inputHash,
+      result,
+      now,
+    }));
+    return result;
+  });
+}
+
 const setCreatorAudienceEnabled = onCall(
   // App Check stays in rollout/metrics mode with the surrounding profile
   // callables. The transactional quota is the immediate abuse boundary; a
   // unilateral enforcement flip would reject currently released clients.
   { region: REGION, enforceAppCheck: false },
   (request) => setCreatorAudienceEnabledHandler(request),
+);
+
+const confirmCreatorAdultEligibility = onCall(
+  { region: REGION, enforceAppCheck: false },
+  (request) => confirmCreatorAdultEligibilityHandler(request),
 );
 
 module.exports = {
@@ -963,6 +1157,10 @@ module.exports = {
   SEARCH_MINUTE_MS,
   CREATOR_AUDIENCE_RATE_LIMIT,
   CREATOR_AUDIENCE_RATE_SCOPE,
+  CREATOR_AGE_CONFIRMATION_RATE_LIMIT,
+  CREATOR_AGE_CONFIRMATION_RATE_SCOPE,
+  CREATOR_MAXIMUM_AGE_YEARS,
+  CREATOR_MINIMUM_AGE_YEARS,
   PUBLIC_PROFILE_FIELDS,
   PUBLIC_PROFILE_SCHEMA_VERSION,
   SOCIAL_PRESENCE_FIELDS,
@@ -974,6 +1172,7 @@ module.exports = {
   deriveSocialPresence,
   deriveVisibleAvailability,
   normalizeSearchText,
+  requireAdultBirthDate,
   projectionMatches,
   fetchAuthUserOrNull,
   consumeSearchRateLimit,
@@ -981,10 +1180,13 @@ module.exports = {
   sourceProfileVisibleToCaller,
   syncPrivacyProjectionsForUser,
   handleAuthUserDeleted,
+  handleAuthUserDeletionLifecycle,
   onUserPrivacySourceChanged,
   onAuthUserDeleted,
   paidCreatorAudienceEligibility,
   searchPublicProfiles,
   setCreatorAudienceEnabled,
   setCreatorAudienceEnabledHandler,
+  confirmCreatorAdultEligibility,
+  confirmCreatorAdultEligibilityHandler,
 };

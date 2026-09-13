@@ -91,6 +91,7 @@ void main() {
 
   test('calls stay native-first without a second app alert', () async {
     final calls = <String>[];
+    var nativeCallPresented = false;
     final accepted = await presentForegroundNotificationSurface(
       isWeb: false,
       isCall: true,
@@ -98,14 +99,17 @@ void main() {
         calls.add('app');
         return true;
       },
+      onNativeCallPresented: () => nativeCallPresented = true,
       presentNative: () async => calls.add('native'),
     );
     expect(accepted, isTrue);
     expect(calls, ['native']);
+    expect(nativeCallPresented, isTrue);
   });
 
   test('failed native call alert keeps the existing in-app fallback', () async {
     final calls = <String>[];
+    var nativeCallPresented = false;
     final accepted = await presentForegroundNotificationSurface(
       isWeb: false,
       isCall: true,
@@ -113,28 +117,54 @@ void main() {
         calls.add('app');
         return true;
       },
+      presentInAppCallSound: () async {
+        calls.add('sound');
+        return true;
+      },
+      onNativeCallPresented: () => nativeCallPresented = true,
       presentNative: () async {
         calls.add('native');
         throw StateError('platform unavailable');
       },
     );
     expect(accepted, isTrue);
-    expect(calls, ['native', 'app']);
+    expect(calls, ['native', 'app', 'sound']);
+    expect(nativeCallPresented, isFalse);
   });
 
   for (final isCall in [false, true]) {
     test('web uses only in-app surface (call: $isCall)', () async {
       var nativeCalls = 0;
+      var callSoundCalls = 0;
       final accepted = await presentForegroundNotificationSurface(
         isWeb: true,
         isCall: isCall,
         presentInApp: () => true,
+        presentInAppCallSound: isCall
+            ? () async {
+                callSoundCalls++;
+                return true;
+              }
+            : null,
         presentNative: () async => nativeCalls++,
       );
       expect(accepted, isTrue);
       expect(nativeCalls, 0);
+      expect(callSoundCalls, isCall ? 1 : 0);
     });
   }
+
+  test('web call releases ownership when its audible cue fails', () async {
+    final accepted = await presentForegroundNotificationSurface(
+      isWeb: true,
+      isCall: true,
+      presentInApp: () => true,
+      presentInAppCallSound: () async => false,
+      presentNative: () async => fail('web must not use a native surface'),
+    );
+
+    expect(accepted, isFalse);
+  });
 
   test('unready web host releases rather than consuming delivery', () async {
     final outcomes = <bool>[];

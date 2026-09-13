@@ -32,6 +32,14 @@ const {
   messageInput,
   resolveMessageGif,
 } = require("./gif_message");
+const {
+  PREMIUM_MESSAGING_PREFERENCES,
+  canonicalPremiumMessagingPrivacy,
+  premiumMessagingPrivacy,
+  storedPremiumMessagingPrivacy,
+  validatePrivateReadState,
+  validatePrivateUnreadState,
+} = require("./premium_privacy");
 
 const DEFAULT_LIMITS = Object.freeze({
   open: { maxEvents: 12, windowMs: 60_000 },
@@ -42,6 +50,7 @@ const DEFAULT_LIMITS = Object.freeze({
   delete: { maxEvents: 20, windowMs: 60_000 },
   conversationDelete: { maxEvents: 10, windowMs: 60_000 },
   preference: { maxEvents: 60, windowMs: 60_000 },
+  premiumPrivacy: { maxEvents: 20, windowMs: 60_000 },
   reaction: { maxEvents: 60, windowMs: 60_000 },
   read: { maxEvents: 120, windowMs: 60_000 },
   typing: { maxEvents: 120, windowMs: 60_000 },
@@ -747,6 +756,48 @@ function createDirectMessagingService({
     return rateLimitReference(db, `direct.attempt.${scope}`, uid);
   }
 
+  function premiumPrivacyReference(uid) {
+    return db.doc(`directPrivacyPreferences/${uid}`);
+  }
+
+  function privateReadStateReference(uid, conversationId) {
+    return db.doc(`directPrivateReadStates/${digest(
+      "direct-private-read-state",
+      uid,
+      conversationId,
+    )}`);
+  }
+
+  function privateUnreadStateReference(uid, conversationId) {
+    return db.doc(`directConversationUnreadStates/${digest(
+      "direct-private-unread-state",
+      uid,
+      conversationId,
+    )}`);
+  }
+
+  function privateUnreadState(snapshot, uid, conversationId) {
+    try {
+      return validatePrivateUnreadState(snapshot, uid, conversationId);
+    } catch (error) {
+      fail("data-loss", error.message);
+    }
+  }
+
+  function writePrivateUnreadState(
+    transaction,
+    reference,
+    { uid, conversationId, unreadCount, now },
+  ) {
+    transaction.set(reference, {
+      schemaVersion: 1,
+      ownerId: uid,
+      conversationId,
+      unreadCount,
+      updatedAt: now,
+    });
+  }
+
   function consume(transaction, snapshot, reference, scope, uid, timing) {
     const config = limits[scope];
     if (!config) throw new TypeError(`Missing direct.${scope} rate limit.`);
@@ -1048,6 +1099,14 @@ function createDirectMessagingService({
 
       const preliminary = conversationParticipants(conversation, auth.uid);
       const recipientId = preliminary.participants.find((uid) => uid !== auth.uid);
+      const actorUnreadStateRef = privateUnreadStateReference(
+        auth.uid,
+        conversationId,
+      );
+      const recipientUnreadStateRef = privateUnreadStateReference(
+        recipientId,
+        conversationId,
+      );
       const refs = [
         db.doc(`users/${auth.uid}`),
         db.doc(`users/${recipientId}`),
@@ -1059,6 +1118,8 @@ function createDirectMessagingService({
           ...preliminary.participants,
         )}`),
         ...directMessagePrivacyReferences(db, auth.uid, recipientId),
+        actorUnreadStateRef,
+        recipientUnreadStateRef,
       ];
       if (replyToMessageId) {
         refs.push(conversationRef.collection("messages").doc(replyToMessageId));
@@ -1066,8 +1127,18 @@ function createDirectMessagingService({
       const related = await transactionGetAll(transaction, ...refs);
       const [actorProfile, recipientProfile, actorRestriction,
         recipientRestriction, actorBlock, recipientBlock, pairGuard,
-        recipientFollowsActor, actorFriendGuard, recipientFriendGuard,
-        replySnapshot] = related;
+        recipientFollowsActor, actorFriendGuard, recipientFriendGuard] = related;
+      const actorUnreadState = privateUnreadState(
+        related[10],
+        auth.uid,
+        conversationId,
+      );
+      const recipientUnreadState = privateUnreadState(
+        related[11],
+        recipientId,
+        conversationId,
+      );
+      const replySnapshot = replyToMessageId ? related[12] : undefined;
       const context = validateConversation(
         conversation,
         conversationId,
@@ -1139,7 +1210,9 @@ function createDirectMessagingService({
         ...reply,
       });
       const unreadCounts = { ...context.data.unreadCounts };
-      unreadCounts[auth.uid] = 0;
+      if (actorUnreadState === null) {
+        unreadCounts[auth.uid] = 0;
+      }
       unreadCounts[recipientId] = incrementCanonicalCount(
         unreadCounts[recipientId],
         "Recipient unread count",
@@ -1162,6 +1235,25 @@ function createDirectMessagingService({
         unreadCounts,
         typing,
       });
+      if (actorUnreadState !== null) {
+        writePrivateUnreadState(transaction, actorUnreadStateRef, {
+          uid: auth.uid,
+          conversationId,
+          unreadCount: 0,
+          now: timing.now,
+        });
+      }
+      if (recipientUnreadState !== null) {
+        writePrivateUnreadState(transaction, recipientUnreadStateRef, {
+          uid: recipientId,
+          conversationId,
+          unreadCount: incrementCanonicalCount(
+            recipientUnreadState.unreadCount,
+            "Private recipient unread count",
+          ),
+          now: timing.now,
+        });
+      }
       const result = { conversationId, messageId, recipientId, created: true };
       transaction.create(ledgerRef, ledgerData({
         kind: "direct.send",
@@ -1578,6 +1670,14 @@ function createDirectMessagingService({
       if (current.recipientId !== recipientId) {
         fail("aborted", "The attachment recipient changed. Try again.");
       }
+      const actorUnreadStateRef = privateUnreadStateReference(
+        auth.uid,
+        conversationId,
+      );
+      const recipientUnreadStateRef = privateUnreadStateReference(
+        recipientId,
+        conversationId,
+      );
       const related = await transactionGetAll(
         transaction,
         db.doc(`users/${auth.uid}`),
@@ -1590,6 +1690,8 @@ function createDirectMessagingService({
           ...preliminary.participants,
         )}`),
         ...directMessagePrivacyReferences(db, auth.uid, recipientId),
+        actorUnreadStateRef,
+        recipientUnreadStateRef,
       );
       const context = validateConversation(
         conversation,
@@ -1609,6 +1711,16 @@ function createDirectMessagingService({
         related,
         offset: 7,
       });
+      const actorUnreadState = privateUnreadState(
+        related[10],
+        auth.uid,
+        conversationId,
+      );
+      const recipientUnreadState = privateUnreadState(
+        related[11],
+        recipientId,
+        conversationId,
+      );
       const sequence = incrementCanonicalCount(
         context.data.lastMessageSequence,
         "lastMessageSequence",
@@ -1639,7 +1751,9 @@ function createDirectMessagingService({
         replyToContent: null,
       });
       const unreadCounts = { ...context.data.unreadCounts };
-      unreadCounts[auth.uid] = 0;
+      if (actorUnreadState === null) {
+        unreadCounts[auth.uid] = 0;
+      }
       unreadCounts[recipientId] = incrementCanonicalCount(
         unreadCounts[recipientId],
         "Recipient unread count",
@@ -1655,6 +1769,25 @@ function createDirectMessagingService({
         ...reviveDeletedBy(context.data),
         unreadCounts,
       });
+      if (actorUnreadState !== null) {
+        writePrivateUnreadState(transaction, actorUnreadStateRef, {
+          uid: auth.uid,
+          conversationId,
+          unreadCount: 0,
+          now: finalTiming.now,
+        });
+      }
+      if (recipientUnreadState !== null) {
+        writePrivateUnreadState(transaction, recipientUnreadStateRef, {
+          uid: recipientId,
+          conversationId,
+          unreadCount: incrementCanonicalCount(
+            recipientUnreadState.unreadCount,
+            "Private recipient unread count",
+          ),
+          now: finalTiming.now,
+        });
+      }
       transaction.delete(reservationRef);
       const result = {
         conversationId,
@@ -1878,12 +2011,18 @@ function createDirectMessagingService({
       const ledgerRef = ledgerReference(identity);
       const rateRef = limitReference("preference", auth.uid);
       const conversationRef = db.doc(`conversations/${conversationId}`);
-      const [ledger, rate, conversation, profile] = await transactionGetAll(
+      const privateUnreadStateRef = privateUnreadStateReference(
+        auth.uid,
+        conversationId,
+      );
+      const [ledger, rate, conversation, profile, privateUnreadSnapshot] =
+        await transactionGetAll(
         transaction,
         ledgerRef,
         rateRef,
         conversationRef,
         db.doc(`users/${auth.uid}`),
+        privateUnreadStateRef,
       );
       const replay = assertLedgerReplay(ledger, {
         kind: "direct.preference",
@@ -1902,18 +2041,141 @@ function createDirectMessagingService({
         auth.uid,
         pairGuard,
       );
+      const unreadState = privateUnreadState(
+        privateUnreadSnapshot,
+        auth.uid,
+        conversationId,
+      );
       consume(transaction, rate, rateRef, "preference", auth.uid, timing);
       const field = data.preference === "muted" ? "mutedBy" : "archivedBy";
       const update = {
         [field]: setMembership(context.data[field], auth.uid, enabled),
       };
       if (field === "archivedBy" && enabled) {
-        update.unreadCounts = { ...context.data.unreadCounts, [auth.uid]: 0 };
+        if (unreadState === null) {
+          update.unreadCounts = { ...context.data.unreadCounts, [auth.uid]: 0 };
+        } else {
+          writePrivateUnreadState(transaction, privateUnreadStateRef, {
+            uid: auth.uid,
+            conversationId,
+            unreadCount: 0,
+            now: timing.now,
+          });
+        }
       }
       transaction.update(conversationRef, update);
       const result = { conversationId, preference: data.preference, enabled };
       transaction.create(ledgerRef, ledgerData({
         kind: "direct.preference",
+        uid: auth.uid,
+        requestId,
+        inputHash: identity.inputHash,
+        result,
+        now: timing.now,
+      }));
+      return result;
+    });
+  }
+
+  async function setPremiumMessagingPrivacyV1(request) {
+    const auth = requireActor(request, { verified: false });
+    const data = requireExactInput(
+      request.data,
+      ["enabled", "preference", "requestId"],
+      ["enabled", "preference", "requestId"],
+    );
+    const requestId = requireRequestId(data.requestId);
+    const enabled = requireBoolean(data.enabled, "enabled");
+    if (!PREMIUM_MESSAGING_PREFERENCES.includes(data.preference)) {
+      fail(
+        "invalid-argument",
+        "preference must be hideReadReceipts or hideTyping.",
+      );
+    }
+    const input = { enabled, preference: data.preference };
+    const identity = operationIdentity(
+      "direct.premiumPrivacy",
+      auth.uid,
+      requestId,
+      input,
+    );
+    const timing = time();
+    const preflight = await beginAttemptPreflight({
+      identity,
+      kind: "direct.premiumPrivacy",
+      uid: auth.uid,
+      requestId,
+      scope: "premiumPrivacy",
+      timing,
+    });
+    if (preflight.replay) return preflight.replay;
+
+    return db.runTransaction(async (transaction) => {
+      const ledgerRef = ledgerReference(identity);
+      const rateRef = limitReference("premiumPrivacy", auth.uid);
+      const preferenceRef = premiumPrivacyReference(auth.uid);
+      const [ledger, rate, profile, entitlement, preference] =
+        await transactionGetAll(
+          transaction,
+          ledgerRef,
+          rateRef,
+          db.doc(`users/${auth.uid}`),
+          db.doc(`entitlements/${auth.uid}`),
+          preferenceRef,
+        );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "direct.premiumPrivacy",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      // Every preference mutation requires a live account. This prevents a
+      // valid token from recreating privacy state after Auth deletion cleanup.
+      // An active account may still turn the switches off after Premium ends.
+      activeProfile(profile, "Your");
+      const effective = premiumMessagingPrivacy(
+        preference,
+        entitlement,
+        timing.nowMs,
+        auth.uid,
+      );
+      // Turning privacy off remains available after Premium expiry. Turning it
+      // on additionally requires a time-valid server entitlement.
+      if (enabled) {
+        if (!effective.premiumActive) {
+          fail(
+            "failed-precondition",
+            "An active YO Voice Premium subscription is required.",
+          );
+        }
+      }
+      const stored = storedPremiumMessagingPrivacy(preference, auth.uid);
+      const next = {
+        ...stored,
+        [data.preference]: enabled,
+      };
+      consume(
+        transaction,
+        rate,
+        rateRef,
+        "premiumPrivacy",
+        auth.uid,
+        timing,
+      );
+      transaction.set(preferenceRef, canonicalPremiumMessagingPrivacy({
+        ownerId: auth.uid,
+        hideReadReceipts: next.hideReadReceipts,
+        hideTyping: next.hideTyping,
+        updatedAt: timing.now,
+      }));
+      const result = {
+        preference: data.preference,
+        enabled,
+        hideReadReceipts: next.hideReadReceipts,
+        hideTyping: next.hideTyping,
+      };
+      transaction.create(ledgerRef, ledgerData({
+        kind: "direct.premiumPrivacy",
         uid: auth.uid,
         requestId,
         inputHash: identity.inputHash,
@@ -1972,12 +2234,18 @@ function createDirectMessagingService({
       const ledgerRef = ledgerReference(identity);
       const rateRef = limitReference("conversationDelete", auth.uid);
       const conversationRef = db.doc(`conversations/${conversationId}`);
-      const [ledger, rate, conversation, profile] = await transactionGetAll(
+      const privateUnreadStateRef = privateUnreadStateReference(
+        auth.uid,
+        conversationId,
+      );
+      const [ledger, rate, conversation, profile, privateUnreadSnapshot] =
+        await transactionGetAll(
         transaction,
         ledgerRef,
         rateRef,
         conversationRef,
         db.doc(`users/${auth.uid}`),
+        privateUnreadStateRef,
       );
       const replay = assertLedgerReplay(ledger, {
         kind: "direct.conversationDelete",
@@ -1995,6 +2263,11 @@ function createDirectMessagingService({
         conversationId,
         auth.uid,
         pairGuard,
+      );
+      const unreadState = privateUnreadState(
+        privateUnreadSnapshot,
+        auth.uid,
+        conversationId,
       );
       consume(
         transaction,
@@ -2043,7 +2316,9 @@ function createDirectMessagingService({
         // changes and no notification is raised. `deletedBy` itself does sit
         // on a root both participants may read — exactly as `mutedBy` and
         // `archivedBy` already do — and no surface renders it.
-        unreadCounts: { ...context.data.unreadCounts, [auth.uid]: 0 },
+        ...(unreadState === null
+          ? { unreadCounts: { ...context.data.unreadCounts, [auth.uid]: 0 } }
+          : {}),
         // `readSequences` is deliberately NOT advanced. It drives the peer's
         // read receipts, so moving it would tell them their messages had been
         // read at the moment this user walked away from the thread.
@@ -2053,6 +2328,14 @@ function createDirectMessagingService({
           ),
         ),
       });
+      if (unreadState !== null) {
+        writePrivateUnreadState(transaction, privateUnreadStateRef, {
+          uid: auth.uid,
+          conversationId,
+          unreadCount: 0,
+          now: timing.now,
+        });
+      }
       const result = {
         conversationId,
         deletedThroughSequence: deletedSequences[auth.uid],
@@ -2094,12 +2377,34 @@ function createDirectMessagingService({
       const ledgerRef = ledgerReference(identity);
       const rateRef = limitReference("read", auth.uid);
       const conversationRef = db.doc(`conversations/${conversationId}`);
-      const [ledger, rate, conversation, profile] = await transactionGetAll(
+      const preferenceRef = premiumPrivacyReference(auth.uid);
+      const privateStateRef = privateReadStateReference(
+        auth.uid,
+        conversationId,
+      );
+      const privateUnreadStateRef = privateUnreadStateReference(
+        auth.uid,
+        conversationId,
+      );
+      const [
+        ledger,
+        rate,
+        conversation,
+        profile,
+        entitlement,
+        preference,
+        privateStateSnapshot,
+        privateUnreadStateSnapshot,
+      ] = await transactionGetAll(
         transaction,
         ledgerRef,
         rateRef,
         conversationRef,
         db.doc(`users/${auth.uid}`),
+        db.doc(`entitlements/${auth.uid}`),
+        preferenceRef,
+        privateStateRef,
+        privateUnreadStateRef,
       );
       const replay = assertLedgerReplay(ledger, {
         kind: "direct.read",
@@ -2118,7 +2423,7 @@ function createDirectMessagingService({
         auth.uid,
         pairGuard,
       );
-      const currentSequence = nonNegativeCount(
+      const publicReadSequence = nonNegativeCount(
         context.data.readSequences[auth.uid],
         "Current read sequence",
       );
@@ -2126,9 +2431,75 @@ function createDirectMessagingService({
         context.data.lastMessageSequence,
         "Last message sequence",
       );
-      if (currentSequence > targetSequence) {
+      if (publicReadSequence > targetSequence) {
         fail("data-loss", "The read cursor is ahead of the conversation.");
       }
+      let privateState;
+      try {
+        privateState = validatePrivateReadState(
+          privateStateSnapshot,
+          auth.uid,
+          conversationId,
+        );
+      } catch (error) {
+        fail("data-loss", error.message);
+      }
+      const unreadState = privateUnreadState(
+        privateUnreadStateSnapshot,
+        auth.uid,
+        conversationId,
+      );
+      if ((privateState === null) !== (unreadState === null)) {
+        fail("data-loss", "The private read state is incomplete.");
+      }
+      const privacy = premiumMessagingPrivacy(
+        preference,
+        entitlement,
+        timing.nowMs,
+        auth.uid,
+      );
+      const currentSequence = privateState?.processedThroughSequence ??
+        publicReadSequence;
+      if (currentSequence < publicReadSequence ||
+          currentSequence > targetSequence) {
+        fail("data-loss", "The private read cursor conflicts with the conversation.");
+      }
+
+      if (privacy.hideReadReceipts) {
+        consume(transaction, rate, rateRef, "read", auth.uid, timing);
+        transaction.set(privateStateRef, {
+          schemaVersion: 1,
+          ownerId: auth.uid,
+          conversationId,
+          processedThroughSequence: targetSequence,
+          hiddenThroughSequence: targetSequence,
+          updatedAt: timing.now,
+        });
+        writePrivateUnreadState(transaction, privateUnreadStateRef, {
+          uid: auth.uid,
+          conversationId,
+          unreadCount: 0,
+          now: timing.now,
+        });
+        const result = {
+          conversationId,
+          completed: true,
+          markedCount: 0,
+          nextReadSequence: targetSequence,
+          unreadCount: 0,
+          readReceiptHidden: true,
+        };
+        transaction.create(ledgerRef, ledgerData({
+          kind: "direct.read",
+          uid: auth.uid,
+          requestId,
+          inputHash: identity.inputHash,
+          result,
+          now: timing.now,
+        }));
+        return result;
+      }
+
       const messageQuery = conversationRef
         .collection("messages")
         .where("sequence", ">", currentSequence)
@@ -2161,25 +2532,52 @@ function createDirectMessagingService({
       }
       const processedSequence = page.at(-1)?.data().sequence ?? targetSequence;
       const completed = messagePage.size <= readPageSize;
-      const rootUpdate = {
-        readSequences: {
+      const nextReadSequence = completed ? targetSequence : processedSequence;
+      const rootUpdate = {};
+      if (privateState === null) {
+        rootUpdate.readSequences = {
           ...context.data.readSequences,
-          [auth.uid]: completed ? targetSequence : processedSequence,
-        },
-      };
-      if (completed) {
+          [auth.uid]: nextReadSequence,
+        };
+      } else {
+        // Once an account has used incognito, its public root cursor stays at
+        // the last sequence published before incognito. The server-only cursor
+        // advances instead. New messages read after incognito is disabled get
+        // ordinary message-level receipts, while the hidden interval can never
+        // be inferred from a retroactive jump on the participant-readable root.
+        transaction.set(privateStateRef, {
+          schemaVersion: 1,
+          ownerId: auth.uid,
+          conversationId,
+          processedThroughSequence: nextReadSequence,
+          hiddenThroughSequence: privateState.hiddenThroughSequence,
+          updatedAt: timing.now,
+        });
+        writePrivateUnreadState(transaction, privateUnreadStateRef, {
+          uid: auth.uid,
+          conversationId,
+          unreadCount: completed ? 0 : unreadState.unreadCount,
+          now: timing.now,
+        });
+      }
+      if (completed && privateState === null) {
         rootUpdate.unreadCounts = {
           ...context.data.unreadCounts,
           [auth.uid]: 0,
         };
       }
-      transaction.update(conversationRef, rootUpdate);
+      if (Object.keys(rootUpdate).length > 0) {
+        transaction.update(conversationRef, rootUpdate);
+      }
       const result = {
         conversationId,
         completed,
         markedCount,
-        nextReadSequence: rootUpdate.readSequences[auth.uid],
-        unreadCount: completed ? 0 : context.data.unreadCounts[auth.uid],
+        nextReadSequence,
+        unreadCount: completed
+          ? 0
+          : unreadState?.unreadCount ?? context.data.unreadCounts[auth.uid],
+        readReceiptHidden: false,
       };
       transaction.create(ledgerRef, ledgerData({
         kind: "direct.read",
@@ -2364,6 +2762,8 @@ function createDirectMessagingService({
         db.doc(`directConversationPairs/${canonicalPairKey(
           ...preliminary.participants,
         )}`),
+        db.doc(`entitlements/${auth.uid}`),
+        premiumPrivacyReference(auth.uid),
       );
       const context = validateConversation(
         conversation,
@@ -2376,14 +2776,34 @@ function createDirectMessagingService({
       assertNotRestricted(related[2], "Your", timing.nowMs);
       assertNotRestricted(related[3], "The recipient", timing.nowMs);
       assertNotBlocked(related[4], related[5]);
+      const privacy = premiumMessagingPrivacy(
+        related[8],
+        related[7],
+        timing.nowMs,
+        auth.uid,
+      );
+      const effectiveIsTyping = privacy.hideTyping ? false : isTyping;
+      const typing = { ...context.data.typing };
+      if (privacy.hideTyping) {
+        // Remove any previous heartbeat as well as refusing this one. A
+        // modified client can keep asking for `true`; every request converges
+        // the participant-readable state back to no entry for this account.
+        delete typing[auth.uid];
+      } else {
+        typing[auth.uid] = {
+          isTyping: effectiveIsTyping,
+          updatedAt: timing.now,
+        };
+      }
       consume(transaction, rate, rateRef, "typing", auth.uid, timing);
       transaction.update(conversationRef, {
-        typing: {
-          ...context.data.typing,
-          [auth.uid]: { isTyping, updatedAt: timing.now },
-        },
+        typing,
       });
-      const result = { conversationId, isTyping };
+      const result = {
+        conversationId,
+        isTyping: effectiveIsTyping,
+        suppressed: privacy.hideTyping && isTyping,
+      };
       transaction.create(ledgerRef, ledgerData({
         kind: "direct.typing",
         uid: auth.uid,
@@ -2471,6 +2891,7 @@ function createDirectMessagingService({
     sendDirectMessage,
     setDirectConversationPreference,
     setDirectMessageReaction,
+    setPremiumMessagingPrivacyV1,
     setDirectTyping,
   };
 }

@@ -1,3 +1,52 @@
+const SOUND_PROFILES = Object.freeze({
+  message: Object.freeze({
+    channelId: "yovoice_messages_v1",
+    androidSound: "yovoice_message_v1",
+    iosSound: "yovoice_message_v1.wav",
+  }),
+  social: Object.freeze({
+    channelId: "yovoice_social_v1",
+    androidSound: "yovoice_social_v1",
+    iosSound: "yovoice_social_v1.wav",
+  }),
+  achievement: Object.freeze({
+    channelId: "yovoice_achievements_v1",
+    androidSound: "yovoice_achievement_v1",
+    iosSound: "yovoice_achievement_v1.wav",
+  }),
+  alert: Object.freeze({
+    channelId: "yovoice_alerts_v1",
+    androidSound: "yovoice_alert_v1",
+    iosSound: "yovoice_alert_v1.wav",
+  }),
+  call: Object.freeze({
+    channelId: "yovoice_calls_v2",
+    androidSound: "yovoice_call_v2",
+    iosSound: "yovoice_call_v2.wav",
+  }),
+});
+
+function soundProfileForNotification(type) {
+  if (["directMessage", "mention", "reply"].includes(type)) {
+    return SOUND_PROFILES.message;
+  }
+  if ([
+    "friendRequest",
+    "friendAccepted",
+    "follow",
+    "clubInvite",
+    "clubInviteAccepted",
+    "roomInvite",
+    "broadcastInvite",
+    "liveStarted",
+  ].includes(type)) {
+    return SOUND_PROFILES.social;
+  }
+  if (type === "achievementUnlocked") return SOUND_PROFILES.achievement;
+  if (type === "directCall") return SOUND_PROFILES.call;
+  return SOUND_PROFILES.alert;
+}
+
 function buildPushMessage({
   tokens,
   type,
@@ -13,6 +62,7 @@ function buildPushMessage({
   }
   const isIncomingCall = type === "directCall";
   const isPrivateCallNotice = isIncomingCall || type === "missedCall";
+  const soundProfile = soundProfileForNotification(type);
   const defaultBody = "Tap to open YO Voice";
   const publicTitle = isIncomingCall
     ? "Incoming YO Voice call"
@@ -41,10 +91,8 @@ function buildPushMessage({
       collapseKey: collapseId,
       notification: {
         tag: collapseId,
-        channelId: isIncomingCall
-          ? "yovoice_calls_v1"
-          : "yovoice_activity_v3",
-        sound: "yovoice_notification",
+        channelId: soundProfile.channelId,
+        sound: soundProfile.androidSound,
         defaultVibrateTimings: true,
         // Keep caller details out of Android's public lock-screen surface.
         // The full incoming-call UI is shown only after the device applies
@@ -60,7 +108,7 @@ function buildPushMessage({
       headers: { "apns-collapse-id": collapseId },
       payload: {
         aps: {
-          sound: "yovoice_notification.wav",
+          sound: soundProfile.iosSound,
           interruptionLevel: isIncomingCall ? "time-sensitive" : "active",
           ...(isIncomingCall ? { category: "YOVOICE_DIRECT_CALL" } : {}),
           ...(isPrivateCallNotice ? {
@@ -82,4 +130,4 @@ function buildPushMessage({
   };
 }
 
-module.exports = { buildPushMessage };
+module.exports = { SOUND_PROFILES, buildPushMessage, soundProfileForNotification };

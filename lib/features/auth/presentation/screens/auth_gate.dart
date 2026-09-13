@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -15,12 +16,20 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/reels/presentation/navigation/reel_link_coordinator.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
-class AuthGate extends ConsumerWidget {
+/// The shortest a normal cold launch keeps the app-owned startup surface.
+///
+/// Authentication and profile bootstrap continue concurrently. Explicit
+/// session boundaries and failures release this hold immediately.
+const authGateInitialStartupMinimumVisibility = Duration(milliseconds: 1400);
+
+class AuthGate extends ConsumerStatefulWidget {
   const AuthGate({
     super.key,
     this.initiallySignedOut = false,
     this.initialAuthError,
     this.reelLinkIntent,
+    this.initialStartupMinimumVisibility =
+        authGateInitialStartupMinimumVisibility,
   });
 
   /// A route-stack reset after logout already knows the session is gone. Show
@@ -33,25 +42,118 @@ class AuthGate extends ConsumerWidget {
   final Object? initialAuthError;
   final ReelLinkIntentController? reelLinkIntent;
 
+  /// Minimum app-owned startup visibility for a normal initial launch.
+  ///
+  /// [Duration.zero] is used by already-resolved privacy-boundary routes. The
+  /// hold never applies to [initiallySignedOut], [initialAuthError], stream
+  /// failures, a later principal change or an in-progress auth operation.
+  final Duration initialStartupMinimumVisibility;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends ConsumerState<AuthGate> {
+  late final Completer<void> _initialStartupReady;
+  Timer? _initialStartupTimer;
+  bool _initialStartupPending = false;
+  bool _hasInitialAuthResult = false;
+  String? _initialUserId;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialStartupReady = Completer<void>();
+    final duration = widget.initialStartupMinimumVisibility;
+    if (widget.initiallySignedOut ||
+        widget.initialAuthError != null ||
+        duration <= Duration.zero) {
+      _initialStartupReady.complete();
+      return;
+    }
+    _initialStartupPending = true;
+    _initialStartupTimer = Timer(duration, _finishInitialStartupHold);
+  }
+
+  @override
+  void didUpdateWidget(covariant AuthGate oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initiallySignedOut || widget.initialAuthError != null) {
+      _releaseInitialStartupHold();
+    } else if (widget.initialStartupMinimumVisibility <= Duration.zero) {
+      _releaseInitialStartupHold();
+    }
+  }
+
+  void _finishInitialStartupHold() {
+    _initialStartupTimer = null;
+    if (!_initialStartupPending) return;
+    _initialStartupPending = false;
+    if (!_initialStartupReady.isCompleted) _initialStartupReady.complete();
+    if (mounted) setState(() {});
+  }
+
+  void _releaseInitialStartupHold() {
+    _initialStartupTimer?.cancel();
+    _initialStartupTimer = null;
+    _initialStartupPending = false;
+    if (!_initialStartupReady.isCompleted) _initialStartupReady.complete();
+  }
+
+  void _observeBoundary(
+    AsyncValue<User?> authState, {
+    required bool authOperationLoading,
+  }) {
+    if (authState case AsyncError<User?>()) {
+      _releaseInitialStartupHold();
+      return;
+    }
+    if (authOperationLoading) {
+      // Login and registration are later user-driven flows. Their own loading
+      // state stays visible only as long as the operation actually needs it.
+      _releaseInitialStartupHold();
+    }
+    if (authState case AsyncData<User?>(:final value)) {
+      final userId = value?.uid;
+      if (!_hasInitialAuthResult) {
+        _hasInitialAuthResult = true;
+        _initialUserId = userId;
+      } else if (_initialUserId != userId) {
+        // Never keep an old principal's startup presentation above a new
+        // privacy boundary. The app-level route reset also replaces the stack.
+        _releaseInitialStartupHold();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _initialStartupTimer?.cancel();
+    _initialStartupTimer = null;
+    if (!_initialStartupReady.isCompleted) _initialStartupReady.complete();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final authState = ref.watch(authStateChangesProvider);
     final authOperationLoading = ref.watch(authLoadingProvider);
+    _observeBoundary(authState, authOperationLoading: authOperationLoading);
     void setRegistrationLoading(bool loading) {
       ref.read(authLoadingProvider.notifier).state = loading;
     }
 
     final immediateBoundary = switch (authState) {
-      AsyncLoading() when initiallySignedOut => KeyedSubtree(
+      AsyncLoading() when widget.initiallySignedOut => KeyedSubtree(
         key: const ValueKey('auth-signed-out'),
         child: LoginScreen(
           onRegistrationLoadingChanged: setRegistrationLoading,
         ),
       ),
-      AsyncLoading() when initialAuthError != null => KeyedSubtree(
+      AsyncLoading() when widget.initialAuthError != null => KeyedSubtree(
         key: const ValueKey('auth-error'),
         child: _AuthErrorScreen(
-          error: initialAuthError!,
+          error: widget.initialAuthError!,
           onRetry: () => ref.invalidate(authStateChangesProvider),
         ),
       ),
@@ -77,6 +179,12 @@ class AuthGate extends ConsumerWidget {
           },
           data: (user) {
             if (user == null) {
+              if (_initialStartupPending) {
+                return const KeyedSubtree(
+                  key: ValueKey('auth-loading'),
+                  child: StartupLoadingScreen(),
+                );
+              }
               return KeyedSubtree(
                 key: const ValueKey('auth-signed-out'),
                 child: LoginScreen(
@@ -106,7 +214,8 @@ class AuthGate extends ConsumerWidget {
               key: ValueKey('auth-user-${user.uid}'),
               child: _AuthenticatedEntry(
                 userId: user.uid,
-                reelLinkIntent: reelLinkIntent,
+                reelLinkIntent: widget.reelLinkIntent,
+                initialStartupReady: _initialStartupReady.future,
               ),
             );
           },
@@ -137,9 +246,14 @@ class AuthGate extends ConsumerWidget {
 }
 
 class _AuthenticatedEntry extends StatefulWidget {
-  const _AuthenticatedEntry({required this.userId, this.reelLinkIntent});
+  const _AuthenticatedEntry({
+    required this.userId,
+    required this.initialStartupReady,
+    this.reelLinkIntent,
+  });
 
   final String userId;
+  final Future<void> initialStartupReady;
   final ReelLinkIntentController? reelLinkIntent;
 
   @override
@@ -149,6 +263,7 @@ class _AuthenticatedEntry extends StatefulWidget {
 class _AuthenticatedEntryState extends State<_AuthenticatedEntry> {
   late Future<void> _profileBootstrap;
   Future<void> _pushOnboardingReadiness = Future<void>.value();
+  bool _isProfileRetry = false;
 
   @override
   void initState() {
@@ -171,6 +286,10 @@ class _AuthenticatedEntryState extends State<_AuthenticatedEntry> {
 
   void _retryProfileBootstrap() {
     setState(() {
+      // The 1.4 s hold belongs only to the first launch attempt. A manual
+      // retry stays on its natural profile-loading boundary and proceeds as
+      // soon as that retry succeeds.
+      _isProfileRetry = true;
       _profileBootstrap = _bootstrapProfile();
     });
   }
@@ -193,20 +312,33 @@ class _AuthenticatedEntryState extends State<_AuthenticatedEntry> {
           );
         }
 
-        final intent = widget.reelLinkIntent;
-        final shell = MainShell(
-          onboardingReadiness: intent == null
-              ? _pushOnboardingReadiness
-              : Future.wait<void>([
-                  _pushOnboardingReadiness,
-                  intent.initialVisitCompleted,
-                ]),
-        );
-        if (intent == null) return shell;
-        return ReelLinkEntryCoordinator(
-          controller: intent,
-          userId: widget.userId,
-          child: shell,
+        Widget buildShell() {
+          final intent = widget.reelLinkIntent;
+          final shell = MainShell(
+            onboardingReadiness: intent == null
+                ? _pushOnboardingReadiness
+                : Future.wait<void>([
+                    _pushOnboardingReadiness,
+                    intent.initialVisitCompleted,
+                  ]),
+          );
+          if (intent == null) return shell;
+          return ReelLinkEntryCoordinator(
+            controller: intent,
+            userId: widget.userId,
+            child: shell,
+          );
+        }
+
+        if (_isProfileRetry) return buildShell();
+        return FutureBuilder<void>(
+          future: widget.initialStartupReady,
+          builder: (context, startupSnapshot) {
+            if (startupSnapshot.connectionState != ConnectionState.done) {
+              return const StartupLoadingScreen();
+            }
+            return buildShell();
+          },
         );
       },
     );

@@ -1,14 +1,15 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/features/servers/data/models/server_creation.dart';
 
 import 'server_localized_copy.dart';
 
 /// Product copy for a failed shell action (invite, channel creation, join).
 ///
-/// A missing export (`not-found` / `unimplemented`) means the V1 callables
-/// are held, which is the honest "still being prepared" state — not "we
-/// couldn't find that", which is what the generic helper would say. Every
+/// A missing export or a server-owned rollout refusal means this Servers
+/// surface is still being prepared for the account, which is the honest
+/// availability state. Every
 /// invitee-state refusal is one `permission-denied` by design, so it gets
 /// the invite-specific sentence when [invite] is set.
 String serverActionFailureCopy(
@@ -17,6 +18,9 @@ String serverActionFailureCopy(
   bool invite = false,
   String? fallback,
 }) {
+  if (isServerActivationUnavailableFailure(error)) {
+    return copy.serverActionUnavailable;
+  }
   if (error is FirebaseFunctionsException) {
     switch (error.code) {
       case 'not-found':

@@ -40,13 +40,17 @@ class DirectCallAlertClaim {
 
 class _DirectCallAlertEntry {
   _DirectCallAlertEntry(this.owner, this.claimedAt)
-    : result = Completer<bool>();
+    : result = Completer<bool>(),
+      inAppTonePermission = Completer<void>();
 
   final DirectCallAlertOwner owner;
   final DateTime claimedAt;
   final Completer<bool> result;
+  final Completer<void> inAppTonePermission;
   final Object token = Object();
   Timer? activeTimeout;
+  Timer? toneHandoffTimer;
+  DateTime? toneOwnershipUntil;
   DateTime? completedAt;
 }
 
@@ -99,7 +103,42 @@ class DirectCallAlertRegistry {
     );
   }
 
-  static void complete(DirectCallAlertClaim claim, {required bool presented}) {
+  /// Whether an in-app ringing loop may own this call right now.
+  ///
+  /// A foreground FCM delivery can already be playing the native call sound.
+  /// The call screen still opens in that race, but it must not start a second
+  /// audio player over the native alert. Calls without an alert reservation
+  /// (for example a notification tap after process launch) remain eligible.
+  static bool allowsInAppTone(String callId) {
+    final now = _clock();
+    _prune(now);
+    final entry = _entries[callId];
+    if (entry == null || entry.owner == DirectCallAlertOwner.coordinator) {
+      return true;
+    }
+    _releaseElapsedToneOwnership(callId, entry, now);
+    return entry.inAppTonePermission.isCompleted;
+  }
+
+  /// Completes when a native push sound no longer overlaps an in-app loop.
+  static Future<void> whenInAppToneAllowed(String callId) {
+    final now = _clock();
+    _prune(now);
+    final entry = _entries[callId];
+    if (entry == null || entry.owner == DirectCallAlertOwner.coordinator) {
+      return Future<void>.value();
+    }
+    _releaseElapsedToneOwnership(callId, entry, now);
+    return entry.inAppTonePermission.isCompleted
+        ? Future<void>.value()
+        : entry.inAppTonePermission.future;
+  }
+
+  static void complete(
+    DirectCallAlertClaim claim, {
+    required bool presented,
+    Duration toneOwnership = Duration.zero,
+  }) {
     if (!claim.ownsAlert) return;
     final current = _entries[claim.callId];
     if (current == null ||
@@ -112,7 +151,22 @@ class DirectCallAlertRegistry {
     current.activeTimeout = null;
     current.result.complete(presented);
     current.completedAt = _clock();
-    if (!presented) _entries.remove(claim.callId);
+    if (!presented) {
+      _evict(claim.callId, expectedToken: claim._token);
+      return;
+    }
+    if (current.owner != DirectCallAlertOwner.push ||
+        toneOwnership <= Duration.zero) {
+      _releaseToneOwnership(current);
+      return;
+    }
+    current.toneOwnershipUntil = _clock().add(toneOwnership);
+    current.toneHandoffTimer?.cancel();
+    current.toneHandoffTimer = Timer(toneOwnership, () {
+      final entry = _entries[claim.callId];
+      if (entry == null || !identical(entry.token, claim._token)) return;
+      _releaseToneOwnership(entry);
+    });
   }
 
   static void release(String callId) => _evict(callId);
@@ -121,6 +175,7 @@ class DirectCallAlertRegistry {
     for (final entry in _entries.values) {
       entry.activeTimeout?.cancel();
       if (!entry.result.isCompleted) entry.result.complete(false);
+      _releaseToneOwnership(entry);
     }
     _entries.clear();
   }
@@ -167,8 +222,33 @@ class DirectCallAlertRegistry {
     }
     final removed = _entries.remove(callId);
     removed?.activeTimeout?.cancel();
+    removed?.toneHandoffTimer?.cancel();
     if (removed != null && !removed.result.isCompleted) {
       removed.result.complete(false);
+    }
+    if (removed != null) _releaseToneOwnership(removed);
+  }
+
+  static void _releaseElapsedToneOwnership(
+    String callId,
+    _DirectCallAlertEntry entry,
+    DateTime now,
+  ) {
+    final until = entry.toneOwnershipUntil;
+    if (until != null && !until.isAfter(now)) {
+      final current = _entries[callId];
+      if (current != null && identical(current.token, entry.token)) {
+        _releaseToneOwnership(current);
+      }
+    }
+  }
+
+  static void _releaseToneOwnership(_DirectCallAlertEntry entry) {
+    entry.toneHandoffTimer?.cancel();
+    entry.toneHandoffTimer = null;
+    entry.toneOwnershipUntil = null;
+    if (!entry.inAppTonePermission.isCompleted) {
+      entry.inAppTonePermission.complete();
     }
   }
 

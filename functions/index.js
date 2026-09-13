@@ -332,6 +332,7 @@ const { onProfileIdentityChanged } = require("./profile/fanout");
 const { updateMyDisplayName } = require("./profile/display_name");
 const { setMyProfileVisibility } = require("./profile/profile_visibility");
 const {
+  confirmCreatorAdultEligibility,
   onAuthUserDeleted,
   onUserPrivacySourceChanged,
   searchPublicProfiles,
@@ -339,6 +340,7 @@ const {
 } = require("./profile/public_profiles");
 
 exports.onProfileIdentityChanged = onProfileIdentityChanged;
+exports.confirmCreatorAdultEligibility = confirmCreatorAdultEligibility;
 exports.updateMyDisplayName = updateMyDisplayName;
 exports.setMyProfileVisibility = setMyProfileVisibility;
 exports.onAuthUserDeleted = onAuthUserDeleted;
@@ -463,6 +465,9 @@ const stripeBillingEnabled =
   process.env.STRIPE_BILLING_EXPORTS === "enabled";
 const { createStageBFunctions } = require("./integrity/stage_b_functions");
 const {
+  createStageBIntegrityRuntime,
+} = require("./integrity/stage_b_runtime");
+const {
   onAchievementClubMemberCreated,
   onAchievementClubMessageCreated,
   onAchievementDirectMessageCreated,
@@ -555,15 +560,16 @@ Object.assign(exports, createReelFunctions({
   ),
 }));
 
-// GIFs in the composer (ADR-167). `getGifCatalog` binds no secret and is
-// always registered, so a client can be told the feature is unavailable
-// instead of guessing; `searchGifs` and `reportGifAsset` bind GIPHY_API_KEY
-// and therefore register only when functions/.env names a real provider —
-// the same shape as the Stripe rollout above, and for the same reason:
-// defineSecret requires the secret to exist at deploy time, and deploy
-// discovery has to keep working before the key does.
+// GIFs in the composer (ADR-167). Firebase CLI discovers the export map before
+// it loads functions/.env, so an environment-controlled registration silently
+// omitted searchGifs/reportGifAsset from a real deploy. The bundled provider is
+// therefore selected in source and all three endpoints are static. Firestore's
+// appConfig/gif switch remains the immediate, fail-closed operational control.
 const { createGifFunctions } = require("./media/gif/catalog");
+const { GIF_PROVIDERS } = require("./media/gif/gif_ref");
+const deployedGifProvider = GIF_PROVIDERS.yovoice;
 Object.assign(exports, createGifFunctions({
+  providerName: deployedGifProvider,
   // Clients attach App Check tokens already. Enforcement follows the staged
   // project-wide rollout used by Reels and Stage B.
   enforceAppCheck: strictBooleanEnvironment(
@@ -572,6 +578,13 @@ Object.assign(exports, createGifFunctions({
 }));
 
 const stageBFunctions = createStageBFunctions({
+  // Message publication uses the exact same source-owned provider as catalog
+  // discovery. This prevents a search result from being selectable while the
+  // authoritative direct/room/server send path captured a missing env value.
+  runtime: createStageBIntegrityRuntime({
+    directOptions: { gifProviderName: deployedGifProvider },
+    communityOptions: { gifProviderName: deployedGifProvider },
+  }),
   // Rollout switch: clients already attach App Check tokens, but production
   // enforcement must only flip after Android/iOS/Web attestation telemetry
   // is healthy. Invalid configuration fails the deployment instead of
@@ -603,55 +616,27 @@ exports.receiveLiveKitAchievementWebhook = receiveLiveKitAchievementWebhook;
 
 /*
 |--------------------------------------------------------------------------
-| Servers V1 — registration and durable dispatch gate (ADR-176)
+| Servers V1 — static registration, runtime activation
 |--------------------------------------------------------------------------
-| YOVOICE_SERVERS_V1 is absent from functions/.env today, so nothing in this
-| block runs: the registration module and the whole V1 runtime stay OFF the
-| cold-start module graph, and the export map stays exactly the one pinned by
-| test/cold_start_module_graph.test.js. Three functions/servers modules are on
-| that graph by design, and always were: servers/rtc_binding.js (required by
-| livekit/sessions.js, staff/voice_enforcement.js, achievements/livekit_http.js
-| and rooms/liveness_sweeper.js), servers/contract.js (from rtc_binding.js) and
-| servers/capacity.js (from clubs/quota.js). They register nothing, write
-| nothing and load no SDK; that exact set is asserted by
-| test/cold_start_module_graph.test.js, so an eager require of the runtime
-| fails there rather than shipping. `enabled` registers the twenty-eight V1
-| callables of docs/Servers.md "Callable contract" plus the serverControlOutbox
-| trigger, its bounded retry schedule and the stale-generation sweep
-| (servers/registration.js). `disabled`
-| and absent are equivalent; any other value — including a case or whitespace
-| variant such as `enabled ` — fails deploy discovery and the cold start, so a
-| typo can never silently ship or silently hold the feature. The gate registers
-| endpoints and gives only the newly-created V1 seed transaction permission to
-| land as `serverActivationState: active`. There is still no callable or worker
-| that activates an existing held/migrated root. With the flag absent, no
-| registration/runtime module is loaded and no creation capability exists.
+| Firebase discovers exports before it loads functions/.env, so an environment
+| variable cannot safely decide which function names exist. The base fifty-three
+| Servers exports are always discoverable and can therefore be deployed by the
+| reviewed phase selectors. Every callable then reads the server-owned
+| appConfig/serversV1 document and fails closed until an operator enables its
+| exact account cohort. Workers have a separate runtime bit so rollout can hold
+| them before activation and keep them draining during rollback. Podcast Egress
+| remains source-disabled: none of its seven exports, service construction or
+| missing credential is part of this registration.
 */
-
-function strictEnabledEnvironment(name) {
-  // Deliberately no trim and no case folding, unlike strictBooleanEnvironment
-  // above: this switch decides whether thirty-one functions exist at all, so the
-  // value must be byte-for-byte `enabled`, `disabled`, empty or absent. A
-  // whitespace or case variant such as `enabled ` is a typo in functions/.env,
-  // never an authorization to ship the surface, and it fails deploy discovery
-  // and the cold start instead of silently loading.
-  const value = String(process.env[name] ?? "");
-  if (value === "" || value === "disabled") return false;
-  if (value === "enabled") return true;
-  throw new Error(`${name} must be exactly enabled or disabled.`);
-}
-
-if (strictEnabledEnvironment("YOVOICE_SERVERS_V1")) {
-  const { createServersV1Functions } = require("./servers/registration");
-  Object.assign(exports, createServersV1Functions({
-    // Staged App Check enforcement, same rollout convention as Reels, GIFs
-    // and Stage B. Read only inside the gate: the switch has no meaning while
-    // the endpoints are not registered, and an unset value stays false.
-    enforceAppCheck: strictBooleanEnvironment(
-      "YOVOICE_ENFORCE_SERVERS_APP_CHECK",
-    ),
-  }));
-}
+const { createServersV1Functions } = require("./servers/registration");
+Object.assign(exports, createServersV1Functions({
+  // App Check remains in telemetry mode for this first internal rollout. A
+  // later source-reviewed revision may set it true after platform telemetry.
+  enforceAppCheck: false,
+  // A later source-reviewed revision may register the seven Egress exports
+  // only after its dedicated credential exists and the provider drill passes.
+  enablePodcastRecording: false,
+}));
 
 // Cold-start observability. Emitted once per instance start, only inside the
 // Cloud Run / Functions runtime (K_SERVICE and FUNCTION_TARGET are set there

@@ -34,6 +34,7 @@ Map<String, Object?> _reelWire({
   int likeCount = 4,
   int commentCount = 2,
   bool callerLiked = false,
+  bool photo = false,
 }) {
   const millis = 1725000000000;
   return <String, Object?>{
@@ -41,18 +42,23 @@ Map<String, Object?> _reelWire({
     'authorId': authorId,
     'authorName': 'Creator One',
     'media': <String, Object?>{
-      'kind': 'video',
-      'contentType': 'video/mp4',
+      'kind': photo ? 'image' : 'video',
+      'contentType': photo ? 'image/jpeg' : 'video/mp4',
       'size': 4096,
       'generation': '7',
-      'durationMs': 10000,
+      'durationMs': photo ? 0 : 10000,
     },
     'backingAudio': null,
-    'composition': const ReelComposition(
-      trimStartMs: 0,
-      trimEndMs: 10000,
-      caption: 'Night shift stories.',
-    ).toWire(),
+    'composition': photo
+        ? const ReelComposition(
+            originalAudioVolume: 0,
+            caption: 'Night shift stories.',
+          ).toWire()
+        : const ReelComposition(
+            trimStartMs: 0,
+            trimEndMs: 10000,
+            caption: 'Night shift stories.',
+          ).toWire(),
     'publishedAtMillis': millis,
     'sortKey': '${millis}_$id',
     'availability': <String, Object?>{
@@ -105,11 +111,12 @@ Map<String, Object?> _commentWire(
 class _Harness {
   _Harness({bool emailVerified = true, Map<String, Object?>? reel})
     : reel = reel ?? _reelWire() {
+    auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'viewer', isEmailVerified: emailVerified),
+    );
     service = ReelService(
-      auth: MockFirebaseAuth(
-        signedIn: true,
-        mockUser: MockUser(uid: 'viewer', isEmailVerified: emailVerified),
-      ),
+      auth: auth,
       callableInvoker: (name, payload) {
         calls.add((name: name, payload: payload));
         final responder = responders[name];
@@ -144,6 +151,7 @@ class _Harness {
     Future<Map<Object?, Object?>> Function(Map<String, Object?>)
   >
   responders = {};
+  late final MockFirebaseAuth auth;
   late final ReelService service;
 
   List<_Call> callsTo(String name) =>
@@ -154,6 +162,7 @@ Future<void> _pumpFeed(
   WidgetTester tester,
   _Harness harness, {
   Size size = const Size(390, 844),
+  bool disableAnimations = false,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -163,16 +172,28 @@ Future<void> _pumpFeed(
       theme: AppTheme.darkTheme,
       // The desktop shell and the mobile route both provide the Scaffold an
       // embedded feed announces through.
-      home: Scaffold(
-        body: ReelsFeedScreen(
-          embedded: true,
-          service: harness.service,
-          videoBuilder: (_, _, _) => const ColoredBox(color: Colors.black),
+      home: MediaQuery(
+        data: MediaQueryData(disableAnimations: disableAnimations),
+        child: Scaffold(
+          body: ReelsFeedScreen(
+            embedded: true,
+            service: harness.service,
+            videoBuilder: (_, _, _) => const ColoredBox(color: Colors.black),
+          ),
         ),
       ),
     ),
   );
   await tester.pumpAndSettle();
+}
+
+Future<void> _doubleTapMedia(WidgetTester tester) async {
+  final media = find.byKey(const ValueKey<String>('reel-media-like-surface'));
+  expect(media, findsOneWidget);
+  await tester.tap(media);
+  await tester.pump(const Duration(milliseconds: 50));
+  await tester.tap(media);
+  await tester.pump(const Duration(milliseconds: 50));
 }
 
 /// The count rendered inside one engagement control.
@@ -331,6 +352,100 @@ void main() {
     expect(_countIn(tester, _inCard(_likeAction)), '5');
   });
 
+  testWidgets('double-tapping the media sends one one-way like', (
+    tester,
+  ) async {
+    final harness = _Harness();
+    final pending = Completer<Map<Object?, Object?>>();
+    harness.responders['setReelLike'] = (_) => pending.future;
+    await _pumpFeed(tester, harness);
+
+    await _doubleTapMedia(tester);
+
+    expect(harness.callsTo('setReelLike'), hasLength(1));
+    expect(harness.callsTo('setReelLike').single.payload['liked'], isTrue);
+    expect(_countIn(tester, _inCard(_likeAction)), '5');
+    expect(_likeIsFilled(tester), isTrue);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('reel-media-like-heart-effect')),
+        matching: find.byIcon(Icons.favorite_rounded),
+      ),
+      findsOneWidget,
+    );
+
+    // A repeated media gesture cannot turn the like off or duplicate it.
+    await _doubleTapMedia(tester);
+    expect(harness.callsTo('setReelLike'), hasLength(1));
+    expect(_likeIsFilled(tester), isTrue);
+    pending.complete(<Object?, Object?>{
+      'reelId': 'reel_1',
+      'liked': true,
+      'changed': true,
+      'likeCount': 5,
+    });
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+  });
+
+  testWidgets(
+    'an already-liked media double-tap only acknowledges with heart',
+    (tester) async {
+      final harness = _Harness(
+        reel: _reelWire(callerLiked: true, likeCount: 9),
+      );
+      await _pumpFeed(tester, harness);
+
+      await _doubleTapMedia(tester);
+
+      expect(harness.callsTo('setReelLike'), isEmpty);
+      expect(_countIn(tester, _inCard(_likeAction)), '9');
+      expect(_likeIsFilled(tester), isTrue);
+      expect(
+        find.descendant(
+          of: find.byKey(
+            const ValueKey<String>('reel-media-like-heart-effect'),
+          ),
+          matching: find.byIcon(Icons.favorite_rounded),
+        ),
+        findsOneWidget,
+      );
+      await tester.pumpAndSettle(const Duration(milliseconds: 100));
+    },
+  );
+
+  testWidgets(
+    'photo media likes too and Reduce Motion removes only the tween',
+    (tester) async {
+      final harness = _Harness(reel: _reelWire(photo: true));
+      harness.responders['setReelLike'] = (_) async => <Object?, Object?>{
+        'reelId': 'reel_1',
+        'liked': true,
+        'changed': true,
+        'likeCount': 5,
+      };
+      await _pumpFeed(tester, harness, disableAnimations: true);
+
+      await _doubleTapMedia(tester);
+
+      expect(harness.callsTo('setReelLike'), hasLength(1));
+      expect(_likeIsFilled(tester), isTrue);
+      final effect = tester.widget<AnimatedSwitcher>(
+        find.byKey(const ValueKey<String>('reel-media-like-heart-effect')),
+      );
+      expect(effect.duration, Duration.zero);
+      expect(
+        find.descendant(
+          of: find.byKey(
+            const ValueKey<String>('reel-media-like-heart-effect'),
+          ),
+          matching: find.byIcon(Icons.favorite_rounded),
+        ),
+        findsOneWidget,
+      );
+      await tester.pumpAndSettle(const Duration(milliseconds: 100));
+    },
+  );
+
   testWidgets('an unverified account is told what unlocks liking', (
     tester,
   ) async {
@@ -347,6 +462,40 @@ void main() {
     expect(harness.callsTo('setReelLike'), isEmpty);
     expect(_countIn(tester, _inCard(_likeAction)), '4');
   });
+
+  testWidgets(
+    'media-like preflight refusal does not latch future double-taps',
+    (tester) async {
+      final harness = _Harness(emailVerified: false);
+      harness.responders['setReelLike'] = (_) async => <Object?, Object?>{
+        'reelId': 'reel_1',
+        'liked': true,
+        'changed': true,
+        'likeCount': 5,
+      };
+      await _pumpFeed(tester, harness);
+
+      await _doubleTapMedia(tester);
+      await tester.pumpAndSettle();
+      expect(harness.callsTo('setReelLike'), isEmpty);
+      expect(
+        find.text('Verify your email to like or comment.'),
+        findsOneWidget,
+      );
+
+      // The same mounted card must become actionable as soon as the service
+      // sees the refreshed verification claim. Rebuilding the whole feed
+      // would hide the stale-card latch this regression protects against.
+      harness.auth.mockUser = MockUser(uid: 'viewer', isEmailVerified: true);
+      await _doubleTapMedia(tester);
+      await tester.pumpAndSettle();
+
+      expect(harness.callsTo('setReelLike'), hasLength(1));
+      expect(harness.callsTo('setReelLike').single.payload['liked'], isTrue);
+      expect(_likeIsFilled(tester), isTrue);
+      expect(_countIn(tester, _inCard(_likeAction)), '5');
+    },
+  );
 
   testWidgets('the comment control opens the thread over a narrow feed', (
     tester,

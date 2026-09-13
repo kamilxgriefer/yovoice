@@ -449,6 +449,8 @@ class _CreatorStudioContentState extends State<_CreatorStudioContent> {
             ownerEnabled: profile.creatorAudienceEnabled,
             publicVisible: audience.visible,
             canEnable: creatorAudienceCanEnable(profile, entitlements),
+            ageVerified: profile.creatorAgeVerified,
+            canConfirmAge: creatorAudienceCanConfirmAge(profile, entitlements),
             service: widget.creatorAudienceService,
             onSaved: _handleAudienceSaved,
           ),

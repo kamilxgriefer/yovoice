@@ -2,7 +2,7 @@ name: yovoice
 description: "A new Flutter project."
 publish_to: "none"
 
-version: 2.0.0+26
+version: 2.0.0+27
 
 environment:
   sdk: ^3.9.0
@@ -95,8 +95,9 @@ flutter:
   assets:
     - assets/images/
     - assets/images/atmospheres/
+    - assets/gifs/yovoice/
     - assets/icons/
-    - assets/audio/ui/v4/
+    - assets/audio/ui/v5/
 
   fonts:
     - family: Inter

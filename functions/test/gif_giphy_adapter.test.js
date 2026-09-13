@@ -14,6 +14,9 @@ const { test } = require("node:test");
 
 const {
   createGiphyProvider,
+  GIPHY_MAX_SEARCH_OFFSET,
+  GIPHY_MAX_SEARCH_QUERY_LENGTH,
+  GIPHY_MAX_TRENDING_OFFSET,
   normalizeGiphyItem,
   REQUEST_TIMEOUT_MS,
 } = require("../media/gif/giphy_provider");
@@ -68,6 +71,31 @@ test("rating=g is sent on every provider request and is not caller-controlled", 
     [...search.searchParams.keys()].sort(),
     ["api_key", "bundle", "lang", "limit", "offset", "q", "rating"],
   );
+});
+
+test("search and trending enforce their distinct documented input ceilings", async () => {
+  const fetchImpl = recordingFetch(FIXTURE);
+  const giphy = provider(fetchImpl);
+  const longQuery = "🙂".repeat(GIPHY_MAX_SEARCH_QUERY_LENGTH + 10);
+
+  const searchEnd = await giphy.search({
+    query: longQuery,
+    cursor: String(GIPHY_MAX_SEARCH_OFFSET),
+  });
+  const trendingEnd = await giphy.trending({
+    cursor: String(GIPHY_MAX_TRENDING_OFFSET),
+  });
+  await giphy.trending({ cursor: String(GIPHY_MAX_TRENDING_OFFSET + 1) });
+
+  const searchUrl = new URL(fetchImpl.calls[0].url);
+  assert.equal([...searchUrl.searchParams.get("q")].length, GIPHY_MAX_SEARCH_QUERY_LENGTH);
+  assert.equal(searchUrl.searchParams.get("offset"), String(GIPHY_MAX_SEARCH_OFFSET));
+  assert.equal(searchEnd.nextCursor, null);
+
+  const trendingUrl = new URL(fetchImpl.calls[1].url);
+  assert.equal(trendingUrl.searchParams.get("offset"), String(GIPHY_MAX_TRENDING_OFFSET));
+  assert.equal(trendingEnd.nextCursor, null);
+  assert.equal(new URL(fetchImpl.calls[2].url).searchParams.get("offset"), "0");
 });
 
 test("the stored URL is derived from the pin, never copied from the response", () => {

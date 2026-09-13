@@ -12,6 +12,7 @@ import 'package:yovoice/features/moments/data/services/moment_views_service.dart
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
+import 'package:yovoice/features/premium/presentation/premium_localized_copy.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -984,14 +985,10 @@ class MobilePremiumCard extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        copy.text(
-                          PremiumPlans.benefits[i].$1,
-                          const [
-                            'Zostań twórcą',
-                            'Twórz własne kluby',
-                            'Wyróżnij się',
-                          ][i],
-                        ),
+                        localizedPremiumBenefit(
+                          copy,
+                          PremiumPlans.benefits[i],
+                        ).$1,
                         style: TextStyle(
                           color: palette.textPrimary,
                           fontSize: 13,
@@ -999,14 +996,10 @@ class MobilePremiumCard extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        copy.text(
-                          PremiumPlans.benefits[i].$2,
-                          const [
-                            'Odblokuj pełne narzędzia dla twórców',
-                            'Buduj przestrzenie dla swojej społeczności',
-                            'Zyskaj wygląd Premium w całym YO Voice',
-                          ][i],
-                        ),
+                        localizedPremiumBenefit(
+                          copy,
+                          PremiumPlans.benefits[i],
+                        ).$2,
                         style: TextStyle(
                           color: palette.textSecondary,
                           fontSize: 11.5,

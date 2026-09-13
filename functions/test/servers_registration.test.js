@@ -7,21 +7,21 @@ const { after, test } = require("node:test");
 // Servers V1 registration and durable dispatch (servers/registration.js,
 // ADR-176). Three layers, deliberately separate:
 //   1. the cold-start contract of functions/index.js, observed the only way
-//      it can be — by requiring the module in a fresh process per gate value;
+//      it can be — by requiring the module in fresh processes;
 //   2. the registration boundary with fake registrars and a fake runtime:
 //      export map, options, Auth binding, error mapping, dispatch outcomes;
 //   3. the real reviewed factories against an explicitly selected localhost
 //      emulator: an active new server written through the registered callable, the
 //      structured denials, and the dispatcher driving real outbox jobs under
 //      the workers' own leases.
-// The production export flag remains outside this test; the runtime-level
-// activation capability is exercised only against the local emulator.
+// Export discovery is static; the runtime activation capability is exercised
+// only against the local emulator or an injected in-memory gate.
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const {
   DEFAULT_DISPATCH_LIMITS, DISPATCHER_EXPORTS, OUTBOX_COLLECTION, REGION,
   COMPANY_FILE_MEDIA_CALLABLES, FAMILY_MEMORY_MEDIA_CALLABLES,
-  PODCAST_EGRESS_CALLABLES, PODCAST_EPISODE_MEDIA_CALLABLES,
+  PODCAST_EGRESS_CALLABLES, PODCAST_EPISODE_MEDIA_CALLABLES, PODCAST_RECORDING_EXPORTS,
   SECRET_BOUND_CALLABLES, SERVER_CALLABLE_METHODS,
   SERVERS_V1_EXPORT_NAMES, SWEEP_EXPORTS,
   authBoundRequest, createServersV1Dispatcher, createServersV1Functions,
@@ -44,6 +44,10 @@ const FAMILY_MEMORY_SWEEP = "sweepServerFamilyMemoryMaintenanceSchedule";
 const COMPANY_FILE_SWEEP = "sweepServerCompanyFileMaintenanceSchedule";
 const PODCAST_EGRESS_SWEEP = "reconcileServerPodcastEgressSchedule";
 const NOW = 1_900_000_000_000;
+const ENABLED_ACTIVATION_GATE = Object.freeze({
+  requireCallable: async () => ({ callableAccess: "all" }),
+  workersEnabled: async () => true,
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -83,6 +87,7 @@ function coldStartEnvironment(gate) {
   // provider and no Servers gate. The shell must not leak any of them in.
   for (const name of [
     "STRIPE_BILLING_EXPORTS", "GIF_PROVIDER", "YOVOICE_SERVERS_V1", "YOVOICE_ENFORCE_SERVERS_APP_CHECK",
+    "YOVOICE_PODCAST_RECORDING_ENABLED",
     "K_SERVICE", "FUNCTION_TARGET", "FIREBASE_STORAGE_BUCKET", "STORAGE_BUCKET", "GCLOUD_STORAGE_BUCKET",
   ]) delete env[name];
   env.GCLOUD_PROJECT = "yovoice-module-graph-test";
@@ -95,11 +100,15 @@ function coldStartEnvironment(gate) {
 }
 
 const inspections = new Map();
-function coldStart(gate) {
-  const key = gate ?? "";
+function coldStart(gate, podcastRecordingEnabled) {
+  const key = `${gate ?? ""}:${podcastRecordingEnabled ?? ""}`;
   if (!inspections.has(key)) {
+    const env = coldStartEnvironment(gate);
+    if (podcastRecordingEnabled !== undefined) {
+      env.YOVOICE_PODCAST_RECORDING_ENABLED = podcastRecordingEnabled;
+    }
     inspections.set(key, JSON.parse(execFileSync(process.execPath, ["-e", INSPECT], {
-      cwd: FUNCTIONS_DIR, encoding: "utf8", env: coldStartEnvironment(gate), stdio: ["ignore", "pipe", "ignore"],
+      cwd: FUNCTIONS_DIR, encoding: "utf8", env, stdio: ["ignore", "pipe", "ignore"],
     })));
   }
   return inspections.get(key);
@@ -119,11 +128,12 @@ const REGISTRATION_MODULES = Object.freeze([
 ]);
 const LEGACY_BOUNDARY_MODULES = Object.freeze(["capacity.js", "contract.js", "rtc_binding.js"]);
 
-test("Registration: an absent gate registers no Servers V1 name and loads no registration module", () => {
+test("Registration: the base Servers map is statically discoverable with Podcast recording excluded", () => {
   const off = coldStart(undefined);
-  assert.deepEqual(off.exportNames.filter((name) => SERVERS_V1_EXPORT_NAMES.includes(name)), []);
-  assert.deepEqual(off.serversModules.filter((name) => REGISTRATION_MODULES.includes(name)), []);
-  assert.deepEqual(off.serversModules, [...LEGACY_BOUNDARY_MODULES]);
+  const expected = SERVERS_V1_EXPORT_NAMES.filter((name) => !PODCAST_RECORDING_EXPORTS.includes(name)).sort();
+  assert.deepEqual(off.exportNames.filter((name) => SERVERS_V1_EXPORT_NAMES.includes(name)), expected);
+  assert.ok(off.serversModules.includes("registration.js"));
+  for (const name of LEGACY_BOUNDARY_MODULES) assert.ok(off.serversModules.includes(name));
   assert.equal(off.livekitSdk, 0);
 });
 
@@ -131,24 +141,30 @@ test("Registration: `disabled` is byte-for-byte the same cold start as absent", 
   assert.deepEqual(coldStart("disabled"), coldStart(undefined));
 });
 
-test("Registration: `enabled` adds exactly fifty-four callables, two dispatcher exports and four sweeps, and nothing else", () => {
+test("Registration: the obsolete environment gate cannot change the static base export map", () => {
   const off = coldStart(undefined);
   const on = coldStart("enabled");
-  assert.deepEqual(on.exportNames, [...off.exportNames, ...SERVERS_V1_EXPORT_NAMES].sort());
+  const baseServerExports = SERVERS_V1_EXPORT_NAMES.filter(
+    (name) => !PODCAST_RECORDING_EXPORTS.includes(name),
+  );
+  assert.deepEqual(on.exportNames, off.exportNames);
   assert.equal(SERVERS_V1_EXPORT_NAMES.length, 60);
+  assert.equal(baseServerExports.length, 53);
   assert.equal(Object.keys(SERVER_CALLABLE_METHODS).length, 54);
   assert.ok(on.serversModules.includes("registration.js"));
   for (const factory of [
     "creation.js", "channels.js", "events.js", "podcast_questions.js", "podcast_episodes.js", "shared_list.js", "family_checkins.js", "family_memories.js", "follows.js", "whiteboard.js", "company_files.js", "invites.js", "memberships.js", "sessions.js", "session_participation.js", "convergence.js",
     "convergence_runtime.js", "convergence_lifecycle.js", "content_cleanup.js", "session_control.js", "session_staleness.js", "operations.js",
   ]) assert.ok(on.serversModules.includes(factory), factory);
-  // The LiveKit SDK stays a first-use require even with the gate on.
+  // The LiveKit SDK stays a first-use require with static registration.
   assert.equal(on.livekitSdk, 0);
   // Enabling the gate changes nothing about the endpoints deployed today.
   for (const [name, endpoint] of Object.entries(off.endpoints)) {
     assert.deepEqual(on.endpoints[name], endpoint, name);
   }
-  for (const name of CALLABLE_NAMES) {
+  for (const name of CALLABLE_NAMES.filter(
+    (candidate) => !PODCAST_RECORDING_EXPORTS.includes(candidate),
+  )) {
     const endpoint = on.endpoints[name];
     assert.deepEqual(endpoint.region, [REGION], name);
     assert.equal(endpoint.minInstances, 0, `${name} must scale to zero`);
@@ -180,30 +196,25 @@ test("Registration: `enabled` adds exactly fifty-four callables, two dispatcher 
     region: [REGION], minInstances: null, secrets: [], callable: false,
     document: null, retry: null, schedule: "every 10 minutes", timeZone: "Etc/UTC",
   });
-  assert.deepEqual(on.endpoints[PODCAST_EGRESS_SWEEP], {
-    region: [REGION], minInstances: null, secrets: PODCAST_SECRETS, callable: false,
-    document: null, retry: null, schedule: "every 5 minutes", timeZone: "Etc/UTC",
-  });
+  for (const name of PODCAST_RECORDING_EXPORTS) {
+    assert.equal(on.endpoints[name], undefined, name);
+  }
 });
 
-test("Registration: any other gate value fails the cold start loudly", () => {
-  // Whitespace and case variants are values too: nothing is trimmed or folded,
-  // so `enabled ` is a typo that must fail the load rather than ship thirty-nine
-  // functions (functions/index.js strictEnabledEnvironment).
+test("Registration: Podcast recording cannot be enabled by a late-loaded environment variable", () => {
+  const off = coldStart(undefined);
+  const on = coldStart("enabled", "true");
+  assert.deepEqual(on, off);
+  for (const name of PODCAST_RECORDING_EXPORTS) assert.equal(on.endpoints[name], undefined, name);
+});
+
+test("Registration: every obsolete gate spelling leaves the static export map unchanged", () => {
+  const baseline = coldStart(undefined);
   for (const gate of [
     "true", "Enabled", "yes", "1", "on",
     "enabled ", " enabled", "enabled\n", "enabled\t", "ENABLED", "disabled ", " disabled",
   ]) {
-    assert.throws(
-      () => execFileSync(process.execPath, ["-e", "require('./index.js');"], {
-        cwd: FUNCTIONS_DIR, encoding: "utf8", env: coldStartEnvironment(gate), stdio: ["ignore", "ignore", "pipe"],
-      }),
-      (error) => {
-        assert.match(error.stderr, /YOVOICE_SERVERS_V1 must be exactly enabled or disabled\./u, gate);
-        return true;
-      },
-      gate,
-    );
+    assert.deepEqual(coldStart(gate), baseline, gate);
   }
 });
 
@@ -292,6 +303,8 @@ const rejects = (promise, code) => assert.rejects(promise, (error) => error inst
 test("Registration: the export map is exactly sixty names with the callable and worker options", () => {
   const registrations = [];
   const functions = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true,
     runtime: fakeRuntime(), registrars: fakeRegistrars(registrations), log: recordingLog(),
   });
   assert.deepEqual(Object.keys(functions).sort(), [...SERVERS_V1_EXPORT_NAMES].sort());
@@ -386,6 +399,8 @@ test("Registration: the sweep schedule asks the staleness worker once and logs i
   let invocations = 0;
   const staged = [{ serverId: "clubs/private", channelId: "c", roomId: "r", sessionId: "s", endOperationId: "e" }];
   const functions = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true,
     runtime: fakeRuntime({ workers: { staleness: async () => { invocations += 1; return {
       scanned: 3, truncated: false, skippedLegacy: 1, skippedUnbound: 0, skippedYoung: 1,
       skippedOccupied: 0, providerUnavailable: 0, changed: 0, staged,
@@ -399,6 +414,8 @@ test("Registration: the sweep schedule asks the staleness worker once and logs i
   assert.equal(JSON.stringify(log.lines).includes("clubs/private"), false);
   const warned = recordingLog();
   const unavailable = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true,
     runtime: fakeRuntime({ workers: { staleness: async () => ({
       scanned: 1, truncated: false, skippedLegacy: 0, skippedUnbound: 0, skippedYoung: 0,
       skippedOccupied: 0, providerUnavailable: 1, changed: 0, staged: [],
@@ -414,6 +431,8 @@ test("Registration: the Podcast Egress schedule invokes the registered worker wi
   const invocations = [];
   const settled = { processed: ["job-1"], scanned: 1, hasMore: false };
   const functions = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true,
     runtime: fakeRuntime({
       workers: {
         reconcilePodcastEgress: async (input) => {
@@ -436,6 +455,8 @@ test("Registration: the Podcast Egress schedule invokes the registered worker wi
   const warned = recordingLog();
   const backlog = { processed: [], scanned: 20, hasMore: true };
   const backlogged = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true,
     runtime: fakeRuntime({
       workers: { reconcilePodcastEgress: async () => backlog },
     }),
@@ -452,6 +473,8 @@ test("Registration: the Podcast Egress schedule invokes the registered worker wi
 
 test("Registration: the App Check switch flips enforcement and consumption together on every callable", () => {
   const functions = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true,
     runtime: fakeRuntime(), registrars: fakeRegistrars([]), enforceAppCheck: true, log: recordingLog(),
   });
   for (const name of CALLABLE_NAMES) {
@@ -464,6 +487,8 @@ test("Registration: the App Check switch flips enforcement and consumption toget
 test("Registration: a registered callable keeps the Auth uid, discards transport identity and passes the payload through untouched", async () => {
   const calls = [];
   const functions = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true,
     runtime: fakeRuntime({ calls }), registrars: fakeRegistrars([]), log: recordingLog(),
   });
   const data = { requestId: "r-1", serverId: "server-1", ownerId: "attacker" };
@@ -486,6 +511,8 @@ test("Registration: a registered callable keeps the Auth uid, discards transport
 test("Registration: an unauthenticated or malformed identity is refused before any factory runs", async () => {
   const calls = [];
   const functions = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true,
     runtime: fakeRuntime({ calls }), registrars: fakeRegistrars([]), log: recordingLog(),
   });
   await rejects(functions.createServerV1.handler({ data: {} }), "unauthenticated");
@@ -499,6 +526,8 @@ test("Registration: factory HttpsErrors reach the caller unchanged and anything 
   const log = recordingLog();
   const structured = new HttpsError("permission-denied", "clubs/private-server is not yours");
   const functions = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true,
     runtime: fakeRuntime({
       methods: {
         updateServerV1: async () => { throw structured; },
@@ -528,18 +557,24 @@ test("Registration: a missing factory method or registrar fails at construction,
   const runtime = fakeRuntime();
   delete runtime.sessions.endServerChannelSessionV1;
   assert.throws(
-    () => createServersV1Functions({ runtime, registrars: fakeRegistrars([]), log: recordingLog() }),
+    () => createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true, runtime, registrars: fakeRegistrars([]), log: recordingLog() }),
     /Missing Servers V1 method sessions\.endServerChannelSessionV1\./u,
   );
   const withoutSweep = fakeRuntime();
   delete withoutSweep.staleness;
   assert.throws(
-    () => createServersV1Functions({ runtime: withoutSweep, registrars: fakeRegistrars([]), log: recordingLog() }),
+    () => createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true, runtime: withoutSweep, registrars: fakeRegistrars([]), log: recordingLog() }),
     /Missing Servers V1 worker staleness\.stageStaleServerChannelSessions\./u,
   );
   const { onSchedule, ...partial } = fakeRegistrars([]);
   assert.throws(
-    () => createServersV1Functions({ runtime: fakeRuntime(), registrars: partial, log: recordingLog() }),
+    () => createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true, runtime: fakeRuntime(), registrars: partial, log: recordingLog() }),
     /Missing Cloud Functions registrar: onSchedule\./u,
   );
   assert.throws(() => createServersV1Dispatcher({ runtime: { db: {} } }), TypeError);
@@ -860,7 +895,9 @@ async function fixture() {
     },
   };
   const log = recordingLog();
-  const functions = createServersV1Functions({ runtime, registrars: fakeRegistrars([]), log });
+  const functions = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: false, runtime, registrars: fakeRegistrars([]), log });
   const call = (name, uid, data) => functions[name].handler({
     auth: { uid, token: { email_verified: true } }, data,
     rawRequest: { headers: { "x-forged-uid": "attacker" } },

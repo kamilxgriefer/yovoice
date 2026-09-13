@@ -7,7 +7,7 @@
 //       height-bound frame it landed ~157 px of open background to the right
 //       of the Reel it advances (~370 px at 1920);
 //   S6  the footer bar took ~246 px against a budget of 88, because the
-//       author row and the follow control took a line each even at ×1;
+//       author row and the friend control took a line each even at ×1;
 //   S13 the footer panel was therefore wider than the media above it — the
 //       frame shrank to fit the height the over-tall footer left, while the
 //       card kept the width the footer had been budgeted for.
@@ -125,7 +125,7 @@ void main() {
       });
     }
 
-    testWidgets('at 200 % text the author and the follow control take a line '
+    testWidgets('at 200 % text the author and the friend control take a line '
         'each again', (tester) async {
       final players = FakeReelPlayers();
       await pumpReelStage(
@@ -168,9 +168,9 @@ void main() {
             size: size,
             textScale: textScale,
             count: 2,
-            // The board has the inline follow control on the footer; a
+            // The board has the inline friend control on the footer; a
             // footer measured without it is a row shorter than production's.
-            followService: stageFollowService(),
+            friendService: stageFriendService(),
           );
 
           final card = tester.getRect(
@@ -224,7 +224,7 @@ void main() {
         size: const Size(1440, 900),
         textScale: 2,
         count: 2,
-        followService: stageFollowService(),
+        friendService: stageFriendService(),
       );
 
       // The one case no closed-form budget can predict: the reader expands

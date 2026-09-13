@@ -151,6 +151,7 @@ void main() {
         await tester.tap(
           find.byKey(const ValueKey<String>('reel-video-playback-surface')),
         );
+        await tester.pump(const Duration(milliseconds: 350));
         await tester.pumpAndSettle();
         expect(engine.playing, isFalse);
         expect(
@@ -174,6 +175,7 @@ void main() {
         await tester.tap(
           find.byKey(const ValueKey<String>('reel-video-playback-surface')),
         );
+        await tester.pump(const Duration(milliseconds: 350));
         await tester.pumpAndSettle();
         expect(engine.playing, isTrue);
         expect(

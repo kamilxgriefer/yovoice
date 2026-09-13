@@ -1574,9 +1574,9 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('Become a Creator'), findsOneWidget);
-      expect(find.text('Build your own Servers'), findsOneWidget);
-      expect(find.text('Stand out'), findsOneWidget);
+      expect(find.text('Creator account & studio'), findsOneWidget);
+      expect(find.text('30 owned Servers'), findsOneWidget);
+      expect(find.text('Premium presence & privacy'), findsOneWidget);
       // The retired card's crown/bullets/Upgrade Now must not come back.
       expect(find.text('Upgrade Now'), findsNothing);
 

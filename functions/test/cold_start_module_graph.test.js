@@ -1,6 +1,5 @@
 const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
-const fs = require("node:fs");
 const path = require("node:path");
 const { test } = require("node:test");
 
@@ -9,8 +8,8 @@ const { test } = require("node:test");
 // of a cold start is invisible once anything else in this process has loaded
 // an SDK, and the export map is what `firebase deploy` reads — a renamed or
 // dropped export is a NOT_FOUND on every client that calls it. The fourth is
-// the functions/servers set on that graph: the V1 runtime must stay off it
-// while the gate is held.
+// the source-static functions/servers graph: its exact cost and its 53 base
+// exports must change only in a deliberate, reviewed revision.
 
 const FUNCTIONS_DIR = path.resolve(__dirname, "..");
 
@@ -23,6 +22,11 @@ const INSPECT = [
   "const serversRoot = path.join(process.cwd(), 'servers') + path.sep;",
   "const servers = cache.filter((key) => key.startsWith(serversRoot))",
   "  .map((key) => path.relative(process.cwd(), key)).sort();",
+  "const registration = require('./servers/registration');",
+  "const serverExports = registration.SERVERS_V1_EXPORT_NAMES",
+  "  .filter((name) => Object.prototype.hasOwnProperty.call(exported, name)).sort();",
+  "const podcastRecordingExports = registration.PODCAST_RECORDING_EXPORTS",
+  "  .filter((name) => Object.prototype.hasOwnProperty.call(exported, name)).sort();",
   "const warm = [];",
   "for (const name of Object.keys(exported)) {",
   "  const endpoint = exported[name]?.__endpoint;",
@@ -32,6 +36,8 @@ const INSPECT = [
   "}",
   "process.stdout.write(JSON.stringify({",
   "  exportNames: Object.keys(exported).sort(),",
+  "  serverExports,",
+  "  podcastRecordingExports,",
   "  servers,",
   "  warm: warm.sort((a, b) => a[0].localeCompare(b[0])),",
   "  sdk: {",
@@ -45,27 +51,18 @@ const INSPECT = [
 
 let inspection = null;
 
-function inspectColdStart() {
-  if (inspection) return inspection;
+function inspectColdStartWith(overrides = {}) {
   const env = { ...process.env };
   // The map below is the one deployed with functions/.env as it is today:
   // STRIPE_BILLING_EXPORTS unset. Enabling that rollout adds four Stripe
   // exports (functions/index.js) and must extend EXPORT_NAMES deliberately.
   delete env.STRIPE_BILLING_EXPORTS;
-  // Same reasoning for the GIF rollout: the map below is the one deployed
-  // with functions/.env as it is today (GIF_PROVIDER=none), which registers
-  // getGifCatalog alone. Naming a provider adds searchGifs and
-  // reportGifAsset and must extend EXPORT_NAMES deliberately.
+  // GIF and Servers export discovery is source-static. Delete obsolete or
+  // late-loaded values for the baseline; a separate test proves that adding
+  // them cannot change the exported names or Server module graph.
   delete env.GIF_PROVIDER;
-  // And for Servers V1 (ADR-176): functions/.env has no YOVOICE_SERVERS_V1, so
-  // the map below has none of the fifty-four V1 callables, the two
-  // serverControlOutbox dispatcher exports nor the four maintenance sweeps. The
-  // registration module and the V1 runtime stay off the cold-start graph; the
-  // three consumer-shared modules below are on it by design and are asserted
-  // by name. `enabled` adds exactly those sixty names
-  // (test/servers_registration.test.js) and must extend EXPORT_NAMES
-  // deliberately.
   delete env.YOVOICE_SERVERS_V1;
+  delete env.YOVOICE_PODCAST_RECORDING_ENABLED;
   // Never pretend to be the Cloud Run runtime: index.js emits its cold-start
   // log only there, and this child's stdout must stay pure JSON.
   delete env.K_SERVICE;
@@ -78,16 +75,22 @@ function inspectColdStart() {
     projectId: "yovoice-module-graph-test",
     storageBucket: "yovoice-module-graph-test.firebasestorage.app",
   });
-  inspection = JSON.parse(execFileSync(process.execPath, ["-e", INSPECT], {
+  Object.assign(env, overrides);
+  return JSON.parse(execFileSync(process.execPath, ["-e", INSPECT], {
     cwd: FUNCTIONS_DIR,
     encoding: "utf8",
     env,
     stdio: ["ignore", "pipe", "ignore"],
   }));
+}
+
+function inspectColdStart() {
+  if (inspection) return inspection;
+  inspection = inspectColdStartWith();
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 183 names.
+// Every export of functions/index.js, sorted. 245 names.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
@@ -95,11 +98,15 @@ const EXPORT_NAMES = Object.freeze([
   "adminDeleteRoom",
   "adminSetPremiumEntitlements",
   "applySanction",
+  "archiveServerChannelV1",
   "assignUserRole",
   "bootstrapSuperAdmin",
   "cancelDirectCall",
   "cancelFriendRequest",
+  "cancelServerEventV1",
   "cleanupProfileMediaUploads",
+  "clearServerWhiteboardV1",
+  "confirmCreatorAdultEligibility",
   "createCommunityClub",
   "createContentReport",
   "createDirectCallToken",
@@ -109,6 +116,15 @@ const EXPORT_NAMES = Object.freeze([
   "createReelCommentReport",
   "createReelReport",
   "createRoom",
+  "createServerChannelTokenV1",
+  "createServerChannelV1",
+  "createServerEventV1",
+  "createServerFamilyCheckInV1",
+  "createServerInviteV1",
+  "createServerListItemV1",
+  "createServerPodcastQuestionV1",
+  "createServerV1",
+  "createServerWhiteboardStrokeV1",
   "declineDirectCall",
   "deleteClubSelf",
   "deleteDirectConversationForMe",
@@ -118,9 +134,16 @@ const EXPORT_NAMES = Object.freeze([
   "deleteReel",
   "deleteReelComment",
   "deleteRoomSelf",
+  "deleteServerChannelV1",
+  "deleteServerCompanyFileV1",
+  "deleteServerFamilyCheckInV1",
+  "deleteServerFamilyMemoryV1",
+  "deleteServerListItemV1",
+  "deleteServerV1",
   "editDirectMessage",
   "endDirectCall",
   "endRoomVoiceSelf",
+  "endServerChannelSessionV1",
   "expireAbandonedDirectMessageAttachmentsSchedule",
   "expireAbandonedMomentDraftsSchedule",
   "expireAbandonedReelDraftsSchedule",
@@ -139,6 +162,8 @@ const EXPORT_NAMES = Object.freeze([
   "finalizeReelDraftV2",
   "finalizeReelVoiceCommentDraft",
   "finalizeRoomCoverUpload",
+  "finalizeServerCompanyFileV1",
+  "finalizeServerFamilyMemoryV1",
   "finalizeVoiceCommentDraft",
   "forceEndRoom",
   "getAdminAuditLog",
@@ -147,11 +172,6 @@ const EXPORT_NAMES = Object.freeze([
   "getAdminRoom",
   "getAuditLogFilters",
   "getFriendSuggestions",
-  // getGifCatalog binds NO secret, so it is registered whatever GIF_PROVIDER
-  // says. searchGifs and reportGifAsset are absent from this list on purpose:
-  // they bind GIPHY_API_KEY and register only once functions/.env names a real
-  // provider, exactly like the four Stripe exports. Enabling that rollout must
-  // extend this list deliberately.
   "getGifCatalog",
   "getMutualFriends",
   "getMyStaffCapabilities",
@@ -162,13 +182,17 @@ const EXPORT_NAMES = Object.freeze([
   "getReelMediaAccessV2",
   "getReelViewV2",
   "getRoomCoverMediaAccess",
+  "getServerCompanyFileAccessV1",
+  "getServerFamilyMemoryMediaAccessV1",
   "getStaffOverview",
   "getUserRole",
   "getVoiceMomentMediaAccess",
   "getVoiceMomentViewV2",
   "getVoiceMomentsFeedV2",
   "inventoryProfileMediaObjects",
+  "joinServerV1",
   "leaveRoomSelf",
+  "leaveServerV1",
   "listAdminAuditLogs",
   "listAdminClubs",
   "listAdminRooms",
@@ -214,6 +238,7 @@ const EXPORT_NAMES = Object.freeze([
   "onReelCleanupOutboxCreated",
   "onRoomLiveChanged",
   "onRoomLiveFanoutOutboxWritten",
+  "onServerControlOutboxCreated",
   "onServerInviteWritten",
   "onUserBadgeSourceChanged",
   "onUserPrivacySourceChanged",
@@ -221,6 +246,7 @@ const EXPORT_NAMES = Object.freeze([
   "openDirectConversation",
   "processPendingContentCleanupSchedule",
   "processPendingReelCleanupSchedule",
+  "processPendingServerControlOutboxSchedule",
   "publishPublicShowcaseSchedule",
   "publishPublicStatsSchedule",
   "receiveLiveKitAchievementWebhook",
@@ -231,6 +257,9 @@ const EXPORT_NAMES = Object.freeze([
   "removeReelComment",
   "removeRoomParticipant",
   "removeRoomParticipantSelf",
+  "removeServerMemberV1",
+  "reorderServerChannelsV1",
+  "reportGifAsset",
   "reserveDirectMessageAttachment",
   "reserveMomentDraft",
   "reserveProfileMediaUpload",
@@ -238,15 +267,21 @@ const EXPORT_NAMES = Object.freeze([
   "reserveReelDraftV2",
   "reserveReelVoiceCommentDraft",
   "reserveRoomCoverUpload",
+  "reserveServerCompanyFileV1",
+  "reserveServerFamilyMemoryV1",
   "reserveVoiceCommentDraft",
   "respondToFriendRequest",
+  "respondToServerEventV1",
+  "respondToServerInviteV1",
   "revokeMyRefreshTokens",
+  "revokeServerInviteV1",
   "scanDirectIntegrityMigration",
   "scanMomentIntegrityMigration",
   "scanProfileMediaMigration",
   "scanRoomCoverIntegrityMigration",
   "scanRoomCoverObjectInventory",
   "scrubProfileIdentitySnapshots",
+  "searchGifs",
   "searchPublicProfiles",
   "searchUserDirectory",
   "selectMyAchievementTitle",
@@ -257,6 +292,7 @@ const EXPORT_NAMES = Object.freeze([
   "sendRoomMessage",
   "setClubMemberBan",
   "setClubModerationStatus",
+  "setCommunityServerFollowV1",
   "setCreatorAudienceEnabled",
   "setCreatorPinnedPost",
   "setDirectConversationPreference",
@@ -267,19 +303,38 @@ const EXPORT_NAMES = Object.freeze([
   "setMyProfileVisibility",
   "setOwnRoomParticipantMute",
   "setParticipantMute",
+  "setPremiumMessagingPrivacyV1",
   "setReelLike",
   "setRoomModerationStatus",
   "setRoomStatusSelf",
   "setRoomVisibilitySelf",
+  "setServerChannelAccessV1",
+  "setServerMemberBanV1",
+  "setServerMemberRoleV1",
+  "setServerPodcastQuestionOnAirV1",
+  "setServerPodcastQuestionVoteV1",
+  "setServerSessionHandV1",
+  "setServerSessionMuteV1",
+  "setServerSessionParticipantRoleV1",
   "setUserBan",
   "setUserBlock",
   "startDirectCall",
   "startRoomVoice",
+  "startServerChannelSessionV1",
   "sweepExpiredServerInvitesSchedule",
+  "sweepServerCompanyFileMaintenanceSchedule",
+  "sweepServerFamilyMemoryMaintenanceSchedule",
+  "sweepStaleServerChannelSessionsSchedule",
   "sweepStrandedLiveRoomsSchedule",
   "transferClubOwnership",
   "transferClubOwnershipSelf",
+  "transferServerOwnershipV1",
+  "undoServerWhiteboardStrokeV1",
   "updateMyDisplayName",
+  "updateServerChannelV1",
+  "updateServerEventV1",
+  "updateServerListItemV1",
+  "updateServerV1",
   "verifyPurchase",
 ]);
 
@@ -306,29 +361,47 @@ const WARM_SET = Object.freeze([
   ["startRoomVoice", 1],
 ]);
 
-// The ONLY functions/servers modules a held cold start may load, and the
-// reason each is there. They are consumer-shared leaves: pure, registering
-// nothing and writing nothing, required at module scope by legacy consumers
-// that must understand the V1 boundary.
-//   servers/rtc_binding.js — livekit/sessions.js, staff/voice_enforcement.js,
-//     achievements/livekit_http.js, rooms/liveness_sweeper.js, and the
-//     per-room versioned-anchor guards in admin/clubs.js, clubs/deletion.js,
-//     clubs/members.js and clubs/voice.js
-//   servers/contract.js    — required by servers/rtc_binding.js
-//   servers/capacity.js    — required by clubs/quota.js
-// servers/registration.js and the V1 session runtime it pulls in are NOT on
-// this list and must not join it: the gate in functions/index.js is what
-// decides whether they load at all (ADR-176).
+// Static Servers registration deliberately loads this exact reviewed graph on
+// every cold start. Pinning the file set makes an accidental eager provider SDK
+// or a new Server subsystem visible here; the separate SDK assertion below
+// protects the expensive/credentialed dependency boundary.
 const COLD_START_SERVERS_MODULES = Object.freeze([
+  "servers/authority.js",
   "servers/capacity.js",
+  "servers/channels.js",
+  "servers/company_files.js",
+  "servers/content_cleanup.js",
   "servers/contract.js",
+  "servers/convergence.js",
+  "servers/convergence_lifecycle.js",
+  "servers/convergence_runtime.js",
+  "servers/creation.js",
+  "servers/documents.js",
+  "servers/events.js",
+  "servers/family_checkins.js",
+  "servers/family_memories.js",
+  "servers/follows.js",
+  "servers/invites.js",
+  "servers/management.js",
+  "servers/memberships.js",
+  "servers/operations.js",
+  "servers/podcast_episodes.js",
+  "servers/podcast_questions.js",
+  "servers/registration.js",
   "servers/rtc_binding.js",
+  "servers/session_authority.js",
+  "servers/session_contract.js",
+  "servers/session_control.js",
+  "servers/session_livekit.js",
+  "servers/session_participation.js",
+  "servers/session_staleness.js",
+  "servers/sessions.js",
+  "servers/shared_list.js",
+  "servers/templates.js",
+  "servers/whiteboard.js",
 ]);
 
-test("exactly three functions/servers modules are on a held cold start", () => {
-  // An eager require of the V1 runtime — a top-level require of
-  // servers/registration.js, servers/sessions.js or servers/session_control.js
-  // from anything index.js loads — fails HERE, before it can ship.
+test("the source-static Servers cold-start module set is exactly pinned", () => {
   assert.deepEqual(inspectColdStart().servers, [...COLD_START_SERVERS_MODULES]);
 });
 
@@ -353,48 +426,30 @@ test("the deployed export map is exactly the pinned name list", () => {
   assert.deepEqual(inspectColdStart().exportNames, [...EXPORT_NAMES]);
 });
 
+test("Servers exposes exactly 53 base exports and no Podcast recording surface", () => {
+  assert.equal(inspectColdStart().serverExports.length, 53);
+  assert.deepEqual(inspectColdStart().podcastRecordingExports, []);
+});
+
 test("exactly the intended callables keep a warm instance", () => {
   assert.deepEqual(inspectColdStart().warm, WARM_SET.map((entry) => [...entry]));
 });
 
-// Whether a single dotenv line assigns `name`. Comments are not assignments;
-// `export NAME=` and padded names are.
-function assignsEnvironment(line, name) {
-  return new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=`, "u").test(line);
-}
-
-test("no functions/.env file activates the Servers V1 gate", () => {
-  // firebase-tools loads functions/.env, .env.<projectId>, .env.<projectAlias>
-  // and — for the emulator only — .env.local, then deploys their contents as
-  // the function environment (firebase-tools lib/functions/env.js). Every
-  // other test in this file deletes YOVOICE_SERVERS_V1 from the child
-  // environment, so none of them can see a value delivered that way: a single
-  // committed `.env.yovoice-ec54a` line would register the forty-eight Servers V1
-  // functions (ADR-176) on the next deploy while this file still passed. This
-  // is the only check that reads the files themselves.
-  const names = fs.readdirSync(FUNCTIONS_DIR)
-    .filter((name) => name === ".env" || name.startsWith(".env."))
-    .sort();
-  assert.ok(names.includes(".env"), "functions/.env must exist for this guard to mean anything");
-
-  const offenders = [];
-  for (const name of names) {
-    const lines = fs.readFileSync(path.join(FUNCTIONS_DIR, name), "utf8").split(/\r?\n/u);
-    for (const [index, line] of lines.entries()) {
-      if (assignsEnvironment(line, "YOVOICE_SERVERS_V1")) offenders.push(`${name}:${index + 1}: ${line.trim()}`);
-    }
+test("late environment values cannot change the static Servers or GIF surface", () => {
+  const baseline = inspectColdStart();
+  for (const overrides of [
+    { YOVOICE_SERVERS_V1: "enabled" },
+    { YOVOICE_SERVERS_V1: "disabled" },
+    { YOVOICE_SERVERS_V1: "enabled ", YOVOICE_PODCAST_RECORDING_ENABLED: "true" },
+    { GIF_PROVIDER: "none" },
+    { GIF_PROVIDER: "giphy", YOVOICE_SERVERS_V1: "true" },
+  ]) {
+    const changed = inspectColdStartWith(overrides);
+    assert.deepEqual(changed.exportNames, baseline.exportNames, JSON.stringify(overrides));
+    assert.deepEqual(changed.servers, baseline.servers, JSON.stringify(overrides));
+    assert.deepEqual(changed.serverExports, baseline.serverExports, JSON.stringify(overrides));
+    assert.deepEqual(changed.podcastRecordingExports, [], JSON.stringify(overrides));
   }
-  assert.deepEqual(offenders, [], `Servers V1 is a held feature: ${offenders.join(", ")}`);
-
-  // The matcher must actually be able to find an assignment, or the empty
-  // result above proves nothing at all.
-  assert.equal(assignsEnvironment("YOVOICE_SERVERS_V1=enabled", "YOVOICE_SERVERS_V1"), true);
-  assert.equal(assignsEnvironment("  export YOVOICE_SERVERS_V1 = enabled", "YOVOICE_SERVERS_V1"), true);
-  assert.equal(assignsEnvironment("# YOVOICE_SERVERS_V1=enabled", "YOVOICE_SERVERS_V1"), false);
-  assert.equal(assignsEnvironment("YOVOICE_SERVERS_V1_EXTRA=enabled", "YOVOICE_SERVERS_V1"), false);
-  // ...and it finds the switches functions/.env really does set today.
-  const dotenv = fs.readFileSync(path.join(FUNCTIONS_DIR, ".env"), "utf8").split(/\r?\n/u);
-  assert.ok(dotenv.some((line) => assignsEnvironment(line, "GIF_PROVIDER")), "functions/.env sets GIF_PROVIDER");
 });
 
 test("a missing Storage bucket still fails at load, not at the first upload", () => {

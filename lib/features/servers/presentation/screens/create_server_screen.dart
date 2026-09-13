@@ -377,8 +377,8 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
             )
           : Text(switch (failure) {
               null => _resumed ? copy.serverResend : copy.serverCreateAction,
-              // The gate can only be opened server-side, so the honest action
-              // is to look again rather than to "try" the same dead endpoint.
+              // Availability can only change server-side, so the honest action
+              // is to look again rather than to repeat a rejected creation.
               ServerCreationFailure.unavailable => copy.serverCheckAgain,
               ServerCreationFailure.offline => copy.serverResend,
               ServerCreationFailure.unknown => copy.serverTryAgain,
@@ -427,8 +427,8 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
     );
     final startingPoint = _StartingPointCard(type: type);
     final allowance = Text(
-      // FREE_SERVER_LIMIT is 20 for four templates; a family server is
-      // charged to `familyFreeV1`, one per owner, and never to that 20.
+      // Every template consumes the 5-Free / 30-Premium owned-Server limit.
+      // Family keeps the additional one-per-owner constraint.
       type == ServerType.family
           ? copy.serverCreationFamilyAllowanceBody
           : copy.serverCreationAllowanceBody,
@@ -765,10 +765,10 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
   };
 }
 
-/// The truthful state when `createServerV1` is not registered.
+/// The truthful state when Servers V1 is unavailable to this account.
 ///
 /// It is deliberately not a red error: nothing failed and nothing was lost —
-/// the endpoint this build calls does not exist in this environment yet
+/// the backend export is missing or the runtime rollout is still closed
 /// (ADR-176). Saying "something went wrong, try again" would be a lie that
 /// sends people around a loop that cannot close.
 class _UnavailableNotice extends StatelessWidget {

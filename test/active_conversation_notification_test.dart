@@ -97,6 +97,36 @@ void main() {
     expect(await latePush.result, isTrue);
   });
 
+  test('push ownership suppresses the call screen loop', () {
+    final push = DirectCallAlertRegistry.claim(
+      'call-with-native-sound',
+      DirectCallAlertOwner.push,
+    );
+    expect(push.ownsAlert, isTrue);
+    expect(
+      DirectCallAlertRegistry.allowsInAppTone('call-with-native-sound'),
+      isFalse,
+    );
+
+    DirectCallAlertRegistry.complete(
+      push,
+      presented: true,
+      toneOwnership: const Duration(seconds: 1),
+    );
+    expect(
+      DirectCallAlertRegistry.allowsInAppTone('call-with-native-sound'),
+      isFalse,
+    );
+    expect(DirectCallAlertRegistry.allowsInAppTone('unclaimed-call'), isTrue);
+
+    final coordinator = DirectCallAlertRegistry.claim(
+      'coordinator-call',
+      DirectCallAlertOwner.coordinator,
+    );
+    expect(coordinator.ownsAlert, isTrue);
+    expect(DirectCallAlertRegistry.allowsInAppTone('coordinator-call'), isTrue);
+  });
+
   test('push can take over when coordinator audio fails', () async {
     final coordinator = DirectCallAlertRegistry.claim(
       'call-2',

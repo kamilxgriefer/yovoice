@@ -14,6 +14,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/models/premium_messaging_privacy.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_delivery_progress.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_payload_source.dart';
@@ -21,6 +22,7 @@ import 'package:yovoice/features/messages/data/services/direct_attachment_payloa
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 
 class ChatPresence {
   const ChatPresence({
@@ -61,6 +63,115 @@ class SharedMediaPage {
   /// the first-page boundary without resurrecting a deleted attachment from
   /// its pagination cache.
   final Set<String> hiddenMessageIds;
+}
+
+class _DirectConversationUnreadState {
+  const _DirectConversationUnreadState({
+    required this.conversationId,
+    required this.unreadCount,
+  });
+
+  final String conversationId;
+  final int unreadCount;
+
+  factory _DirectConversationUnreadState.fromFirestore(
+    DocumentSnapshot<Map<String, dynamic>> snapshot, {
+    required String ownerId,
+  }) {
+    final data = snapshot.data();
+    const expected = <String>{
+      'schemaVersion',
+      'ownerId',
+      'conversationId',
+      'unreadCount',
+      'updatedAt',
+    };
+    final keys = data?.keys.toSet() ?? const <String>{};
+    final conversationId = data?['conversationId'];
+    final unreadCount = data?['unreadCount'];
+    final canonical =
+        data != null &&
+        keys.length == expected.length &&
+        keys.containsAll(expected) &&
+        data['schemaVersion'] == 1 &&
+        data['ownerId'] == ownerId &&
+        conversationId is String &&
+        conversationId.isNotEmpty &&
+        unreadCount is int &&
+        unreadCount >= 0 &&
+        data['updatedAt'] is Timestamp;
+    if (!canonical) {
+      throw const FormatException(
+        'Malformed private direct-message unread projection.',
+      );
+    }
+    return _DirectConversationUnreadState(
+      conversationId: conversationId,
+      unreadCount: unreadCount,
+    );
+  }
+}
+
+Stream<R> _combineLatest2<A, B, R>(
+  Stream<A> first,
+  Stream<B> second,
+  R Function(A first, B second) combine,
+) {
+  late final StreamController<R> controller;
+  StreamSubscription<A>? firstSubscription;
+  StreamSubscription<B>? secondSubscription;
+  A? latestFirst;
+  B? latestSecond;
+  var hasFirst = false;
+  var hasSecond = false;
+  var firstDone = false;
+  var secondDone = false;
+
+  void emit() {
+    if (!controller.isClosed && hasFirst && hasSecond) {
+      controller.add(combine(latestFirst as A, latestSecond as B));
+    }
+  }
+
+  void closeIfDone() {
+    if (!controller.isClosed && firstDone && secondDone) {
+      unawaited(controller.close());
+    }
+  }
+
+  controller = StreamController<R>(
+    onListen: () {
+      firstSubscription = first.listen(
+        (value) {
+          latestFirst = value;
+          hasFirst = true;
+          emit();
+        },
+        onError: controller.addError,
+        onDone: () {
+          firstDone = true;
+          closeIfDone();
+        },
+      );
+      secondSubscription = second.listen(
+        (value) {
+          latestSecond = value;
+          hasSecond = true;
+          emit();
+        },
+        onError: controller.addError,
+        onDone: () {
+          secondDone = true;
+          closeIfDone();
+        },
+      );
+    },
+    onCancel: () async {
+      await firstSubscription?.cancel();
+      await secondSubscription?.cancel();
+    },
+  );
+  return controller.stream;
 }
 
 class _DirectAttachmentReservation {
@@ -129,6 +240,7 @@ class MessageService {
     DirectAttachmentOutbox? attachmentOutbox,
     DirectAttachmentPayloadStore? attachmentPayloadStore,
     Connectivity? connectivity,
+    Stream<Map<String, int>>? directUnreadOverridesForTesting,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _legacyNotificationService = notificationService,
@@ -138,6 +250,7 @@ class MessageService {
        _attachmentOutboxOverride = attachmentOutbox,
        _attachmentPayloadStoreOverride = attachmentPayloadStore,
        _connectivityOverride = connectivity,
+       _directUnreadOverridesForTesting = directUnreadOverridesForTesting,
        _useSharedLiveOutbox =
            firestore == null &&
            auth == null &&
@@ -147,7 +260,8 @@ class MessageService {
            outbox == null &&
            attachmentOutbox == null &&
            attachmentPayloadStore == null &&
-           connectivity == null;
+           connectivity == null &&
+           directUnreadOverridesForTesting == null;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
@@ -158,6 +272,7 @@ class MessageService {
   final DirectAttachmentOutbox? _attachmentOutboxOverride;
   final DirectAttachmentPayloadStore? _attachmentPayloadStoreOverride;
   final Connectivity? _connectivityOverride;
+  final Stream<Map<String, int>>? _directUnreadOverridesForTesting;
   final bool _useSharedLiveOutbox;
   MessageOutbox? _outbox;
   String? _outboxOwnerId;
@@ -372,6 +487,41 @@ class MessageService {
     }
   }
 
+  /// Retries one idempotent callable only when its first acknowledgement is
+  /// ambiguous: the server may already have committed the operation, but the
+  /// response did not reach the client.
+  ///
+  /// [data] is deliberately reused unchanged so its request id reaches the
+  /// backend ledger again. A refusal such as permission-denied or
+  /// invalid-argument is never retried. If the endpoint appears absent on the
+  /// second attempt, the original transport error wins instead of dropping
+  /// into a client write after the server may already have committed.
+  Future<bool> _tryIdempotentCallableAfterAmbiguousTransport(
+    String name,
+    Map<String, Object?> data,
+  ) async {
+    try {
+      return await _tryCallable(name, data);
+    } catch (error, stackTrace) {
+      if (!_isAmbiguousTransportFailure(error)) {
+        rethrow;
+      }
+
+      try {
+        final retried = await _tryCallable(name, data);
+        if (retried) {
+          return true;
+        }
+      } catch (_) {
+        // The second result is definitive (or still ambiguous), so preserve
+        // it for the caller's existing actionable error presentation.
+        rethrow;
+      }
+
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
   String get _currentUserId {
     final user = _auth.currentUser;
 
@@ -386,27 +536,168 @@ class MessageService {
     bool includeArchived = false,
   }) {
     final currentUserId = _currentUserId;
-
-    return _conversations
+    final conversations = _conversations
         .where('participantIds', arrayContains: currentUserId)
         .snapshots()
-        .map((snapshot) {
-          final items = snapshot.docs
-              .map(Conversation.fromFirestore)
-              // A conversation this account deleted is gone from every list,
-              // archived included — `includeArchived` is about a tab, not
-              // about seeing everything.
-              .where(
-                (conversation) =>
-                    !conversation.isDeletedFor(currentUserId) &&
-                    (includeArchived ||
-                        !conversation.isArchivedFor(currentUserId)),
-              )
-              .toList(growable: false);
+        .map(
+          (snapshot) => snapshot.docs.map(Conversation.fromFirestore).toList(),
+        );
+    final privateUnread = _watchDirectUnreadOverrides(currentUserId);
 
-          items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-          return items;
-        });
+    return _combineLatest2(conversations, privateUnread, (roots, overrides) {
+      final items = roots
+          .map(
+            (conversation) => overrides.containsKey(conversation.id)
+                ? conversation.withUnreadCountFor(
+                    currentUserId,
+                    overrides[conversation.id]!,
+                  )
+                : conversation,
+          )
+          // A conversation this account deleted is gone from every list,
+          // archived included — `includeArchived` is about a tab, not about
+          // seeing everything.
+          .where(
+            (conversation) =>
+                !conversation.isDeletedFor(currentUserId) &&
+                (includeArchived || !conversation.isArchivedFor(currentUserId)),
+          )
+          .toList(growable: false);
+
+      items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return items;
+    });
+  }
+
+  Stream<Map<String, int>> _watchDirectUnreadOverrides(String currentUserId) {
+    final override = _directUnreadOverridesForTesting;
+    if (override != null) return _unreadOverridesFailSoft(override);
+
+    late final StreamController<Map<String, int>> controller;
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? subscription;
+    Timer? retryTimer;
+    var retryScheduled = false;
+    var disposed = false;
+    late void Function() subscribe;
+
+    Map<String, int> parse(QuerySnapshot<Map<String, dynamic>> snapshot) {
+      final states = snapshot.docs.map(
+        (document) => _DirectConversationUnreadState.fromFirestore(
+          document,
+          ownerId: currentUserId,
+        ),
+      );
+      return <String, int>{
+        for (final state in states) state.conversationId: state.unreadCount,
+      };
+    }
+
+    void scheduleRetry() {
+      if (disposed || retryScheduled) return;
+      retryScheduled = true;
+      retryTimer = Timer(const Duration(seconds: 30), () {
+        retryScheduled = false;
+        subscribe();
+      });
+    }
+
+    subscribe = () {
+      if (disposed) return;
+      unawaited(subscription?.cancel());
+      try {
+        subscription = _firestore
+            .collection('directConversationUnreadStates')
+            .where('ownerId', isEqualTo: currentUserId)
+            .snapshots()
+            .listen(
+              (snapshot) {
+                if (controller.isClosed) return;
+                try {
+                  controller.add(parse(snapshot));
+                } catch (_) {
+                  // Malformed owner projections must never blank the public
+                  // conversation list. The backend refuses to trust them and
+                  // a later canonical rewrite naturally repairs this stream.
+                  controller.add(const <String, int>{});
+                }
+              },
+              onError: (Object _, StackTrace __) {
+                // Tester builds can precede the new Rules deploy. Legacy
+                // counters keep chat lists usable, and this listener retries
+                // until the owner-only projection becomes readable.
+                if (!controller.isClosed) {
+                  controller.add(const <String, int>{});
+                }
+                scheduleRetry();
+              },
+              onDone: scheduleRetry,
+            );
+      } catch (_) {
+        if (!controller.isClosed) controller.add(const <String, int>{});
+        scheduleRetry();
+      }
+    };
+
+    controller = StreamController<Map<String, int>>(
+      onListen: subscribe,
+      onCancel: () async {
+        disposed = true;
+        retryTimer?.cancel();
+        await subscription?.cancel();
+      },
+    );
+    return controller.stream;
+  }
+
+  Stream<Map<String, int>> _unreadOverridesFailSoft(
+    Stream<Map<String, int>> source,
+  ) async* {
+    try {
+      await for (final value in source) {
+        yield value;
+      }
+    } catch (_) {
+      yield const <String, int>{};
+    }
+  }
+
+  /// Effective owner privacy for the chat composer. Stored switches are
+  /// combined with the time-valid server-written entitlement so an expired
+  /// subscription cannot keep suppressing local typing. The backend still
+  /// rechecks both documents on every mutation and remains authoritative.
+  Stream<PremiumMessagingPrivacy> watchPremiumMessagingPrivacy() {
+    final uid = _currentUserId;
+    final preferences = _firestore
+        .collection('directPrivacyPreferences')
+        .doc(uid)
+        .snapshots();
+    final entitlements = _firestore
+        .collection('entitlements')
+        .doc(uid)
+        .snapshots();
+    return _combineLatest2(preferences, entitlements, (
+      preference,
+      entitlement,
+    ) {
+      var premiumActive = false;
+      try {
+        premiumActive = SubscriptionEntitlements.fromFirestore(
+          entitlement,
+        ).isPremium;
+      } catch (_) {
+        // A malformed server projection cannot keep a local privacy control
+        // active. The callable independently applies the same fail-closed
+        // entitlement boundary.
+      }
+      if (!premiumActive) {
+        return PremiumMessagingPrivacy.disabled;
+      }
+      try {
+        return PremiumMessagingPrivacy.fromFirestore(preference);
+      } on FormatException {
+        return PremiumMessagingPrivacy.privacySafeHidden;
+      }
+    });
   }
 
   /// The conversation's messages, minus anything this account deleted.
@@ -2317,12 +2608,16 @@ class MessageService {
   }
 
   Future<void> archiveConversation(String conversationId) async {
-    final called = await _tryCallable('setDirectConversationPreference', {
+    final request = <String, Object?>{
       'conversationId': conversationId,
       'preference': 'archived',
       'enabled': true,
       'requestId': _newRequestId(),
-    });
+    };
+    final called = await _tryIdempotentCallableAfterAmbiguousTransport(
+      'setDirectConversationPreference',
+      request,
+    );
 
     if (called) {
       return;
@@ -2337,12 +2632,16 @@ class MessageService {
   }
 
   Future<void> unarchiveConversation(String conversationId) async {
-    final called = await _tryCallable('setDirectConversationPreference', {
+    final request = <String, Object?>{
       'conversationId': conversationId,
       'preference': 'archived',
       'enabled': false,
       'requestId': _newRequestId(),
-    });
+    };
+    final called = await _tryIdempotentCallableAfterAmbiguousTransport(
+      'setDirectConversationPreference',
+      request,
+    );
 
     if (called) {
       return;

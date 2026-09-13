@@ -129,6 +129,151 @@ void main() {
       },
     );
 
+    test(
+      'short backing audio completion wraps from the video clock without touching video playback',
+      () async {
+        final audio = _FakeAudioPlayback();
+        final video = _FakeVideoPlayback();
+        final coordinator = ReelPlaybackCoordinator(
+          reel: _shortBackingAudioVideoReel(),
+          resolveBackingAudioUri: () async => Uri.parse(
+            'https://storage.googleapis.com/yovoice/short-reel-audio.mp3',
+          ),
+          audioPlaybackFactory: () => audio,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.attachVideo(video);
+        await coordinator.toggle();
+        video
+          ..position = const Duration(milliseconds: 14500)
+          ..playing = true;
+        final videoPlayCount = video.playCount;
+        final videoPauseCount = video.pauseCount;
+        final videoSeekCount = video.seekPositions.length;
+        final audioPlayCount = audio.playCount;
+        final restarted = audio.waitForNextPlay();
+
+        audio.emitCompletion();
+        await restarted;
+
+        // The four-second backing-audio window starts at 2s. At 14.5s on a
+        // video trimmed from 5s, the expected audio clock is 2s + (9.5s % 4s).
+        expect(audio.seekPositions.last, const Duration(milliseconds: 3500));
+        expect(audio.playCount, audioPlayCount + 1);
+        expect(video.playCount, videoPlayCount);
+        expect(video.pauseCount, videoPauseCount);
+        expect(video.seekPositions, hasLength(videoSeekCount));
+        expect(video.position, const Duration(milliseconds: 14500));
+        expect(video.isPlaying, isTrue);
+        expect(coordinator.isPlaying, isTrue);
+      },
+    );
+
+    test(
+      'pause during completion seek prevents a late audio restart',
+      () async {
+        final audio = _FakeAudioPlayback();
+        final video = _FakeVideoPlayback();
+        final coordinator = ReelPlaybackCoordinator(
+          reel: _shortBackingAudioVideoReel(),
+          resolveBackingAudioUri: () async =>
+              Uri.parse('https://storage.googleapis.com/yovoice/audio.mp3'),
+          audioPlaybackFactory: () => audio,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.attachVideo(video);
+        await coordinator.toggle();
+        video
+          ..position = const Duration(milliseconds: 14500)
+          ..playing = true;
+        final audioPlayCount = audio.playCount;
+        final blockedSeek = audio.blockNextSeek();
+
+        audio.emitCompletion();
+        await blockedSeek.started.future;
+        final paused = coordinator.pause();
+        blockedSeek.release.complete();
+        await blockedSeek.returned.future;
+        await paused;
+
+        expect(audio.playCount, audioPlayCount);
+        expect(audio.pauseCount, greaterThanOrEqualTo(1));
+        expect(video.isPlaying, isFalse);
+        expect(coordinator.isPlaying, isFalse);
+      },
+    );
+
+    test(
+      'deactivation during completion seek prevents a late audio restart',
+      () async {
+        final audio = _FakeAudioPlayback();
+        final video = _FakeVideoPlayback();
+        final coordinator = ReelPlaybackCoordinator(
+          reel: _shortBackingAudioVideoReel(),
+          resolveBackingAudioUri: () async =>
+              Uri.parse('https://storage.googleapis.com/yovoice/audio.mp3'),
+          audioPlaybackFactory: () => audio,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.attachVideo(video);
+        await coordinator.toggle();
+        video
+          ..position = const Duration(milliseconds: 14500)
+          ..playing = true;
+        final audioPlayCount = audio.playCount;
+        final blockedSeek = audio.blockNextSeek();
+
+        audio.emitCompletion();
+        await blockedSeek.started.future;
+        final deactivated = coordinator.setActive(false);
+        blockedSeek.release.complete();
+        await blockedSeek.returned.future;
+        await deactivated;
+
+        expect(audio.playCount, audioPlayCount);
+        expect(audio.pauseCount, greaterThanOrEqualTo(1));
+        expect(video.isPlaying, isFalse);
+        expect(coordinator.isPlaying, isFalse);
+      },
+    );
+
+    test(
+      'dispose during completion seek prevents a late audio restart',
+      () async {
+        final audio = _FakeAudioPlayback();
+        final video = _FakeVideoPlayback();
+        final coordinator = ReelPlaybackCoordinator(
+          reel: _shortBackingAudioVideoReel(),
+          resolveBackingAudioUri: () async =>
+              Uri.parse('https://storage.googleapis.com/yovoice/audio.mp3'),
+          audioPlaybackFactory: () => audio,
+        );
+
+        await coordinator.attachVideo(video);
+        await coordinator.toggle();
+        video
+          ..position = const Duration(milliseconds: 14500)
+          ..playing = true;
+        final audioPlayCount = audio.playCount;
+        final blockedSeek = audio.blockNextSeek();
+
+        audio.emitCompletion();
+        await blockedSeek.started.future;
+        coordinator.dispose();
+        blockedSeek.release.complete();
+        await blockedSeek.returned.future;
+        coordinator.dispose();
+        await coordinator.retirement;
+        await Future<void>.delayed(Duration.zero);
+
+        expect(audio.playCount, audioPlayCount);
+        expect(audio.stopCount, 1);
+      },
+    );
+
     test('photo backing audio stops at its selected end and resets', () async {
       final audio = _FakeAudioPlayback();
       final coordinator = ReelPlaybackCoordinator(
@@ -328,6 +473,35 @@ Reel _photoReel() => Reel(
   sortKey: '1788408000000_photo_reel',
 );
 
+Reel _shortBackingAudioVideoReel() => Reel(
+  id: 'short_audio_video_reel',
+  authorId: 'creator',
+  authorName: 'Creator',
+  media: const ReelMediaDescriptor(
+    kind: ReelMediaKind.video,
+    contentType: 'video/mp4',
+    size: 4096,
+    generation: '1',
+    durationMs: 20000,
+  ),
+  backingAudio: const ReelBackingAudioDescriptor(
+    contentType: 'audio/mpeg',
+    size: 4096,
+    generation: '2',
+    durationMs: 6000,
+  ),
+  composition: const ReelComposition(
+    trimStartMs: 5000,
+    trimEndMs: 15000,
+    originalAudioVolume: 35,
+    backingAudioVolume: 65,
+    audioTrimStartMs: 2000,
+    audioRightsAttested: true,
+  ),
+  publishedAt: DateTime.utc(2026, 9, 3),
+  sortKey: '1788408000000_short_audio_video_reel',
+);
+
 class _FakeVideoPlayback implements ReelVideoPlayback {
   bool playing = false;
   @override
@@ -375,6 +549,8 @@ class _FakeAudioPlayback implements ReelAudioPlayback {
   int stopCount = 0;
   final List<Uri> loaded = <Uri>[];
   final List<Duration> seekPositions = <Duration>[];
+  Completer<void>? _nextPlay;
+  _BlockedSeek? _nextBlockedSeek;
 
   @override
   Stream<void> get completions => _completions.stream;
@@ -383,6 +559,28 @@ class _FakeAudioPlayback implements ReelAudioPlayback {
   Stream<Duration> get positionChanges => _positions.stream;
 
   void emitPosition(Duration position) => _positions.add(position);
+
+  void emitCompletion() => _completions.add(null);
+
+  Future<void> waitForNextPlay() {
+    final pending = _nextPlay;
+    if (pending != null && !pending.isCompleted) {
+      throw StateError('Already waiting for the next audio play');
+    }
+    final next = Completer<void>();
+    _nextPlay = next;
+    return next.future;
+  }
+
+  _BlockedSeek blockNextSeek() {
+    final existing = _nextBlockedSeek;
+    if (existing != null && !existing.returned.isCompleted) {
+      throw StateError('An audio seek is already blocked');
+    }
+    final blocked = _BlockedSeek();
+    _nextBlockedSeek = blocked;
+    return blocked;
+  }
 
   @override
   Future<void> dispose() async {
@@ -397,14 +595,33 @@ class _FakeAudioPlayback implements ReelAudioPlayback {
   Future<void> pause() async => pauseCount += 1;
 
   @override
-  Future<void> play() async => playCount += 1;
+  Future<void> play() async {
+    playCount += 1;
+    final next = _nextPlay;
+    _nextPlay = null;
+    if (next != null && !next.isCompleted) next.complete();
+  }
 
   @override
-  Future<void> seek(Duration position) async => seekPositions.add(position);
+  Future<void> seek(Duration position) async {
+    seekPositions.add(position);
+    final blocked = _nextBlockedSeek;
+    _nextBlockedSeek = null;
+    if (blocked == null) return;
+    blocked.started.complete();
+    await blocked.release.future;
+    blocked.returned.complete();
+  }
 
   @override
   Future<void> setVolume(double value) async => volume = value;
 
   @override
   Future<void> stop() async => stopCount += 1;
+}
+
+class _BlockedSeek {
+  final Completer<void> started = Completer<void>();
+  final Completer<void> release = Completer<void>();
+  final Completer<void> returned = Completer<void>();
 }

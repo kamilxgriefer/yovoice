@@ -18,6 +18,7 @@ const {
   canonicalUid,
   syncPrivacyProjectionsForUser,
   handleAuthUserDeleted,
+  handleAuthUserDeletionLifecycle,
   onAuthUserDeleted,
   onUserPrivacySourceChanged,
   searchPublicProfiles,
@@ -451,6 +452,10 @@ describe("privacy projection trigger", () => {
     await db.collection("users").doc(VISIBLE).set({
       displayName: "Deleted Auth account",
       isOnline: true,
+      creatorAudienceEnabled: true,
+      creatorAgeVerified: true,
+      creatorAgeVerifiedAt: Timestamp.now(),
+      creatorAgeVerificationMethod: "self_declared_birth_date",
     });
     await Promise.all([
       db.collection("publicProfiles").doc(VISIBLE).set({ uid: VISIBLE }),
@@ -478,6 +483,10 @@ describe("privacy projection trigger", () => {
     assert.equal(source.data().disabled, true);
     assert.equal(source.data().isOnline, false);
     assert.equal(source.data().premiumIdentity, false);
+    assert.equal(source.data().creatorAudienceEnabled, undefined);
+    assert.equal(source.data().creatorAgeVerified, undefined);
+    assert.equal(source.data().creatorAgeVerifiedAt, undefined);
+    assert.equal(source.data().creatorAgeVerificationMethod, undefined);
     assert.ok(source.data().authDeletedAt);
     assert.equal(profile.exists, false);
     assert.equal(presence.exists, false);
@@ -491,6 +500,29 @@ describe("privacy projection trigger", () => {
     });
     assert.equal(replay.profile, "absent");
     assert.equal(replay.presence, "absent");
+  });
+
+  test("Auth deletion retires identity before erasing private messaging state", async () => {
+    const calls = [];
+    const result = await handleAuthUserDeletionLifecycle(VISIBLE, {
+      database: db,
+      retireIdentity: async (uid, { database }) => {
+        assert.equal(uid, VISIBLE);
+        assert.equal(database, db);
+        calls.push("retire");
+        return { outcome: "retired" };
+      },
+      cleanupPrivacy: async (uid, { database }) => {
+        assert.equal(uid, VISIBLE);
+        assert.equal(database, db);
+        calls.push("cleanup");
+        return { ownerId: uid, deleted: {} };
+      },
+    });
+
+    assert.deepEqual(calls, ["retire", "cleanup"]);
+    assert.equal(result.retirement.outcome, "retired");
+    assert.equal(result.privacyCleanup.ownerId, VISIBLE);
   });
 });
 

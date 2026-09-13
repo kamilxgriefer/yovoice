@@ -4,6 +4,8 @@ import 'dart:ui' as ui;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -16,11 +18,41 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/localization/translations/translations_startup.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/auth/presentation/screens/auth_gate.dart';
+import 'package:yovoice/features/auth/presentation/screens/login_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/startup_loading_screen.dart';
 import 'package:yovoice/features/auth/providers/auth_provider.dart';
 
 const _headline = ValueKey('startup-headline');
 const _hairline = ValueKey('startup-bottom-hairline');
+
+class _FakeFirebaseApp extends FirebaseAppPlatform {
+  _FakeFirebaseApp()
+    : super(
+        defaultFirebaseAppName,
+        const FirebaseOptions(
+          apiKey: 'startup-test-key',
+          appId: 'startup-test-app',
+          messagingSenderId: 'startup-test-sender',
+          projectId: 'startup-test-project',
+        ),
+      );
+}
+
+class _FakeFirebasePlatform extends FirebasePlatform {
+  final _app = _FakeFirebaseApp();
+
+  @override
+  List<FirebaseAppPlatform> get apps => [_app];
+
+  @override
+  FirebaseAppPlatform app([String name = defaultFirebaseAppName]) => _app;
+
+  @override
+  Future<FirebaseAppPlatform> initializeApp({
+    String? name,
+    FirebaseOptions? options,
+  }) async => _app;
+}
 
 Widget _startupHost({
   Locale locale = const Locale('en'),
@@ -150,6 +182,11 @@ List<SemanticsData> _semanticsTree(WidgetTester tester) {
 }
 
 void main() {
+  setUpAll(() async {
+    FirebasePlatform.instance = _FakeFirebasePlatform();
+    await Firebase.initializeApp();
+  });
+
   test(
     'native launch surfaces use the real mark and the Flutter background',
     () {
@@ -766,6 +803,137 @@ void main() {
     await tester.pump(const Duration(milliseconds: 230));
     expect(find.byType(StartupLoadingScreen), findsNothing);
     expect(find.text('Something went wrong'), findsOneWidget);
+  });
+
+  testWidgets(
+    'AuthGate guarantees 1.4 s of startup on a normal signed-out launch',
+    (tester) async {
+      final auth = StreamController<User?>();
+      addTearDown(auth.close);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authStateChangesProvider.overrideWith((ref) => auth.stream),
+          ],
+          child: const MaterialApp(home: AuthGate()),
+        ),
+      );
+      auth.add(null);
+      await tester.pump();
+
+      expect(find.byType(StartupLoadingScreen), findsOneWidget);
+      expect(find.byType(LoginScreen), findsNothing);
+
+      await tester.pump(
+        authGateInitialStartupMinimumVisibility -
+            const Duration(milliseconds: 1),
+      );
+      expect(find.byType(StartupLoadingScreen), findsOneWidget);
+      expect(find.byType(LoginScreen), findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(find.byType(LoginScreen), findsOneWidget);
+      expect(
+        find.byType(StartupLoadingScreen),
+        findsOneWidget,
+        reason: 'the completed minimum ends with the existing short crossfade',
+      );
+
+      await tester.pump(const Duration(milliseconds: 230));
+      expect(find.byType(StartupLoadingScreen), findsNothing);
+      expect(find.byType(LoginScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'Reduce Motion keeps the content hold but removes its crossfade',
+    (tester) async {
+      final auth = StreamController<User?>();
+      addTearDown(auth.close);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authStateChangesProvider.overrideWith((ref) => auth.stream),
+          ],
+          child: MaterialApp(
+            home: Builder(
+              builder: (context) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(disableAnimations: true),
+                child: const AuthGate(),
+              ),
+            ),
+          ),
+        ),
+      );
+      auth.add(null);
+      await tester.pump();
+      await tester.pump(
+        authGateInitialStartupMinimumVisibility -
+            const Duration(milliseconds: 1),
+      );
+      expect(find.byType(StartupLoadingScreen), findsOneWidget);
+      expect(find.byType(LoginScreen), findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(find.byType(StartupLoadingScreen), findsNothing);
+      expect(find.byType(LoginScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('a later auth operation releases the cold-launch minimum', (
+    tester,
+  ) async {
+    final auth = StreamController<User?>();
+    addTearDown(auth.close);
+    final container = ProviderContainer(
+      overrides: [authStateChangesProvider.overrideWith((ref) => auth.stream)],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: AuthGate()),
+      ),
+    );
+    container.read(authLoadingProvider.notifier).state = true;
+    await tester.pump();
+    auth.add(null);
+    await tester.pump();
+
+    expect(
+      find.byType(LoginScreen),
+      findsOneWidget,
+      reason: 'a user-driven auth flow must not inherit the cold-start hold',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('disposing AuthGate cancels its pending startup timer', (
+    tester,
+  ) async {
+    final auth = StreamController<User?>();
+    addTearDown(auth.close);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authStateChangesProvider.overrideWith((ref) => auth.stream),
+        ],
+        child: const MaterialApp(home: AuthGate()),
+      ),
+    );
+    await tester.pumpWidget(
+      const MaterialApp(home: Text('Replacement boundary')),
+    );
+    await tester.pump(authGateInitialStartupMinimumVisibility);
+
+    expect(find.text('Replacement boundary'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

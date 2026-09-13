@@ -4,11 +4,12 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
-import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
-import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
@@ -42,6 +43,7 @@ Map<String, Object?> reelWire(
   int index, {
   bool photo = false,
   String authorId = 'creator',
+  bool sameAuthor = false,
   String? authorName,
   String caption = reelStageCaption,
   int likeCount = 12,
@@ -51,7 +53,7 @@ Map<String, Object?> reelWire(
   final millis = 1725000000000 + index;
   return <String, Object?>{
     'id': 'reel_$index',
-    'authorId': '${authorId}_$index',
+    'authorId': sameAuthor ? authorId : '${authorId}_$index',
     'authorName': authorName ?? 'Creator $index',
     'media': <String, Object?>{
       'kind': photo ? 'image' : 'video',
@@ -105,6 +107,7 @@ ReelService reelStageService({
   bool photo = false,
   String viewerUid = 'viewer',
   String authorId = 'creator',
+  bool sameAuthor = false,
   String? authorName,
   int likeCount = 12,
   int commentCount = 3,
@@ -128,6 +131,7 @@ ReelService reelStageService({
                 index,
                 photo: photo,
                 authorId: authorId,
+                sameAuthor: sameAuthor,
                 authorName: authorName,
                 likeCount: likeCount,
                 commentCount: commentCount,
@@ -158,6 +162,7 @@ ReelService reelStageService({
             1,
             photo: photo,
             authorId: authorId,
+            sameAuthor: sameAuthor,
             authorName: authorName,
             likeCount: likeCount,
             commentCount: commentCount,
@@ -195,49 +200,49 @@ Map<String, Object?> reelCommentWire({
   'createdAtMillis': 1725000000000,
 };
 
-/// A real [FollowService] over in-memory Firebase doubles, so the footer's
-/// follow control exercises the same stream and the same mutation path as
+/// A real [FriendService] over in-memory Firebase doubles, so the footer's
+/// friend control exercises the same relationship and mutation contracts as
 /// production without reaching the network.
-({FollowService service, List<Map<String, dynamic>> mutations})
-reelFollowService({
+({
+  FriendService service,
+  List<({String name, Map<String, dynamic> data})> mutations,
+  List<String> relationshipReads,
+})
+reelFriendService({
   required String viewerUid,
-  Set<String> following = const <String>{},
+  FriendRelationshipStatus relationship = FriendRelationshipStatus.none,
   Completer<void>? gate,
+  Future<FriendRelationshipStatus> Function(String userId)?
+  relationshipStatusInvoker,
 }) {
   final firestore = FakeFirebaseFirestore();
-  for (final uid in following) {
-    firestore
-        .collection('users')
-        .doc(viewerUid)
-        .collection('following')
-        .doc(uid)
-        .set(<String, Object?>{'uid': uid});
-  }
-  final mutations = <Map<String, dynamic>>[];
-  final service = FollowService(
+  final mutations = <({String name, Map<String, dynamic> data})>[];
+  final relationshipReads = <String>[];
+  final service = FriendService(
     firestore: firestore,
     auth: MockFirebaseAuth(
       signedIn: true,
       mockUser: MockUser(uid: viewerUid, isEmailVerified: true),
     ),
-    mutationInvoker: (data) async {
-      mutations.add(data);
+    relationshipStatusInvoker: (userId) async {
+      relationshipReads.add(userId);
+      return relationshipStatusInvoker == null
+          ? relationship
+          : relationshipStatusInvoker(userId);
+    },
+    mutationInvoker: (name, data) async {
+      mutations.add((name: name, data: Map<String, dynamic>.from(data)));
       if (gate != null) await gate.future;
-      final target = data['targetUserId'] as String;
-      final reference = firestore
-          .collection('users')
-          .doc(viewerUid)
-          .collection('following')
-          .doc(target);
-      if (data['following'] == true) {
-        await reference.set(<String, Object?>{'uid': target});
-      } else {
-        await reference.delete();
-      }
-      return <String, dynamic>{};
+      return name == 'sendFriendRequest'
+          ? <String, dynamic>{'outcome': 'requested'}
+          : <String, dynamic>{};
     },
   );
-  return (service: service, mutations: mutations);
+  return (
+    service: service,
+    mutations: mutations,
+    relationshipReads: relationshipReads,
+  );
 }
 
 /// One engine per Reel id, kept across mounts so a page that is scrolled away
@@ -345,44 +350,22 @@ Future<void> loadStageFonts() async {
   await inter.load();
 }
 
-/// A real [FollowService] over fakes, so the stage footer draws the inline
-/// `Obserwuj` control the boards have on it. Without one the footer is a
+/// A real [FriendService] over fakes, so the stage footer draws the inline
+/// Add friend control the product has on it. Without one the footer is a
 /// row shorter than production's and every height measured from it is a
 /// measurement of a footer nobody sees.
-FollowService stageFollowService({String viewerUid = 'viewer'}) =>
-    FollowService(
+FriendService stageFriendService({String viewerUid = 'viewer'}) =>
+    FriendService(
       firestore: FakeFirebaseFirestore(),
       auth: MockFirebaseAuth(
         signedIn: true,
         mockUser: MockUser(uid: viewerUid, isEmailVerified: true),
       ),
-      mutationInvoker: (_) async => <String, dynamic>{},
+      relationshipStatusInvoker: (_) async => FriendRelationshipStatus.none,
+      mutationInvoker: (name, _) async => name == 'sendFriendRequest'
+          ? <String, dynamic>{'outcome': 'requested'}
+          : <String, dynamic>{},
     );
-
-class _StaticCreatorAudienceService extends CreatorAudienceService {
-  _StaticCreatorAudienceService({required this.visible, this.fail = false});
-
-  final bool visible;
-  final bool fail;
-
-  @override
-  Stream<CreatorAudienceProjection> watchPublicProjection(String userId) {
-    if (fail) {
-      return Stream<CreatorAudienceProjection>.error(
-        StateError('Audience projection unavailable'),
-      );
-    }
-    return Stream<CreatorAudienceProjection>.value(
-      visible
-          ? const CreatorAudienceProjection(
-              visible: true,
-              followerCount: 0,
-              followingCount: 0,
-            )
-          : const CreatorAudienceProjection.hidden(),
-    );
-  }
-}
 
 /// Pumps the embedded Reels feed at [size], the way YO Moments hosts it.
 Future<void> pumpReelStage(
@@ -392,13 +375,13 @@ Future<void> pumpReelStage(
   int count = 2,
   bool photo = false,
   bool immersive = false,
+  bool sameAuthor = false,
   double textScale = 1,
   ThemeData? theme,
   TextDirection textDirection = TextDirection.ltr,
+  Locale? locale,
   ReelService? service,
-  FollowService? followService,
-  bool creatorAudienceVisible = true,
-  bool creatorAudienceFails = false,
+  FriendService? friendService,
   void Function(dynamic reel)? onOpenAuthor,
   Future<void> Function()? onCreate,
   ReelAudioPlaybackFactory? audioPlaybackFactory,
@@ -412,6 +395,14 @@ Future<void> pumpReelStage(
   await tester.pumpWidget(
     MaterialApp(
       theme: theme ?? AppTheme.darkTheme,
+      locale: locale,
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+        AppLocalizationsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       home: Directionality(
         textDirection: textDirection,
         child: Scaffold(
@@ -419,12 +410,14 @@ Future<void> pumpReelStage(
             key: ValueKey<Object>(<Object>[size, count, photo, immersive]),
             embedded: true,
             immersive: immersive,
-            service: service ?? reelStageService(count: count, photo: photo),
-            followService: followService,
-            creatorAudienceService: _StaticCreatorAudienceService(
-              visible: creatorAudienceVisible,
-              fail: creatorAudienceFails,
-            ),
+            service:
+                service ??
+                reelStageService(
+                  count: count,
+                  photo: photo,
+                  sameAuthor: sameAuthor,
+                ),
+            friendService: friendService,
             onOpenAuthor: onOpenAuthor,
             onCreate: onCreate,
             audioPlaybackFactory:

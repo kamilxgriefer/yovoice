@@ -30,20 +30,17 @@ class AppPreferences {
   final AppLanguagePreference language;
   final bool soundEffectsEnabled;
 
-  /// Whether GIFs fetch themselves as soon as they appear.
+  /// Whether remote GIFs load as soon as they appear.
   ///
-  /// This is a PRIVACY control, not a data-saver toggle, and it is the only
-  /// one a recipient has. GIFs are served from the provider's own CDN because
-  /// GIPHY's terms require hotlinking and forbid rehosting, so displaying one
-  /// necessarily shows the viewer's IP address and User-Agent to a third
-  /// party — including the person who merely RECEIVED the GIF and never chose
-  /// to interact with GIPHY at all. Off means a placeholder carrying the
-  /// stored title with a tap-to-load affordance, and no provider contact of
-  /// any kind until the person chooses. It covers the picker grid, the
-  /// recents row and received GIF bubbles alike.
+  /// YO Voice Originals are packaged with the app and always play
+  /// automatically without contacting a third-party provider. If an optional
+  /// remote provider is enabled, off means a placeholder carrying the stored
+  /// title and no provider request until the person deliberately taps to load
+  /// it. The preference covers external assets in the picker grid, the recents
+  /// row and received GIF bubbles alike.
   ///
-  /// Default on, matching [soundEffectsEnabled]: the feature is unusable off
-  /// by default, and the disclosure lives in Settings and in the privacy copy.
+  /// Default on, matching [soundEffectsEnabled], so optional external GIFs
+  /// retain the expected automatic-loading behavior.
   final bool gifAutoLoadEnabled;
 
   AppPreferences copyWith({

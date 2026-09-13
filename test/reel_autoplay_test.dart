@@ -356,14 +356,20 @@ void main() {
       tester,
     ) async {
       final players = _Players();
-      await _pumpFeed(tester, players: players, count: 2);
+      final likes = <Map<String, Object?>>[];
+      await _pumpFeed(tester, players: players, count: 2, likeCalls: likes);
       expect(players.of('reel_1').playing, isTrue);
 
       await tester.tap(
         find.byKey(const ValueKey<String>('reel-video-playback-surface')),
       );
+      // The media now distinguishes one tap from the Instagram-style
+      // double-tap, so the single-tap transport intent resolves after that
+      // short gesture window.
+      await tester.pump(const Duration(milliseconds: 350));
       await tester.pumpAndSettle();
       expect(players.of('reel_1').playing, isFalse);
+      expect(likes, isEmpty, reason: 'one tap controls playback only');
 
       // A rebuild is not a reason to start playing again.
       await tester.pump();
@@ -374,8 +380,42 @@ void main() {
       await tester.tap(
         find.byKey(const ValueKey<String>('reel-video-playback-surface')),
       );
+      await tester.pump(const Duration(milliseconds: 350));
       await tester.pumpAndSettle();
       expect(players.of('reel_1').playing, isTrue);
+    });
+
+    testWidgets('a video double-tap likes once without pausing autoplay', (
+      tester,
+    ) async {
+      final players = _Players();
+      final likes = <Map<String, Object?>>[];
+      await _pumpFeed(tester, players: players, count: 1, likeCalls: likes);
+      final player = players.of('reel_1');
+      expect(player.playing, isTrue);
+
+      final media = find.byKey(
+        const ValueKey<String>('reel-media-like-surface'),
+      );
+      await tester.tap(media);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(media);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(likes, hasLength(1));
+      expect(likes.single['liked'], isTrue);
+      expect(player.playing, isTrue);
+      expect(player.pauseCount, 0);
+      expect(
+        find.descendant(
+          of: find.byKey(
+            const ValueKey<String>('reel-media-like-heart-effect'),
+          ),
+          matching: find.byIcon(Icons.favorite_rounded),
+        ),
+        findsOneWidget,
+      );
+      await tester.pumpAndSettle(const Duration(milliseconds: 100));
     });
 
     testWidgets('sound is turned on once and carries to the next Yeel', (
@@ -557,11 +597,13 @@ void main() {
     ) async {
       final players = _Players();
       final audio = _FakeAudioPlayback();
+      final likes = <Map<String, Object?>>[];
       await _pumpFeed(
         tester,
         players: players,
         count: 1,
         photo: true,
+        likeCalls: likes,
         audioPlaybackFactory: () => audio,
       );
 
@@ -572,6 +614,22 @@ void main() {
         find.byKey(const ValueKey<String>('reel-sound-toggle')),
         findsNothing,
       );
+
+      final media = find.byKey(
+        const ValueKey<String>('reel-media-like-surface'),
+      );
+      await tester.tap(media);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(media);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(likes, hasLength(1));
+      expect(likes.single['liked'], isTrue);
+      expect(
+        audio.playCount,
+        0,
+        reason: 'liking a photo never starts its audio',
+      );
+      await tester.pumpAndSettle(const Duration(milliseconds: 100));
     });
   });
 }
@@ -630,6 +688,7 @@ Future<void> _pumpFeed(
   String idPrefix = 'reel',
   ValueListenable<bool>? isVisible,
   ReelAudioPlaybackFactory? audioPlaybackFactory,
+  List<Map<String, Object?>>? likeCalls,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -648,6 +707,7 @@ Future<void> _pumpFeed(
             photo: photo,
             grant: grant,
             idPrefix: idPrefix,
+            likeCalls: likeCalls,
           ),
           isVisible: isVisible,
           onOpenAuthor: (_) {},
@@ -672,6 +732,7 @@ ReelService _service({
   required bool photo,
   required _Grant grant,
   required String idPrefix,
+  List<Map<String, Object?>>? likeCalls,
 }) => ReelService(
   auth: MockFirebaseAuth(
     signedIn: true,
@@ -713,6 +774,15 @@ ReelService _service({
         'schemaVersion': 2,
         'items': <Object?>[],
         'nextCursor': null,
+      };
+    }
+    if (name == 'setReelLike') {
+      likeCalls?.add(Map<String, Object?>.from(payload));
+      return <Object?, Object?>{
+        'reelId': payload['reelId'],
+        'liked': true,
+        'changed': true,
+        'likeCount': 1,
       };
     }
     throw StateError('Unexpected callable $name with $payload');

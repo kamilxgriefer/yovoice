@@ -858,7 +858,9 @@ void main() {
       _StubMessageService service, {
       required Size size,
       ThemeData? theme,
+      Locale locale = const Locale('en'),
       TextScaler textScaler = TextScaler.noScaling,
+      bool disableAnimations = false,
       FriendService? friendService,
     }) async {
       useSurface(tester, size);
@@ -866,7 +868,10 @@ void main() {
         host(
           Builder(
             builder: (context) => MediaQuery(
-              data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+              data: MediaQuery.of(context).copyWith(
+                textScaler: textScaler,
+                disableAnimations: disableAnimations,
+              ),
               child: MessagesScreen(
                 messageService: service,
                 friendService: friendService ?? _StubFriendService(),
@@ -878,6 +883,7 @@ void main() {
             ),
           ),
           theme: theme,
+          locale: locale,
         ),
       );
       await tester.pumpAndSettle();
@@ -891,7 +897,7 @@ void main() {
           final service = _StubMessageService(
             messages: const [],
             conversations: [
-              _archivedConversation().withParticipantIdentity(
+              _archivedConversation(unreadCount: 137).withParticipantIdentity(
                 userId: otherUserId,
                 displayName: name,
                 photoUrl: '',
@@ -922,10 +928,115 @@ void main() {
           expect(text.maxLines, isNull);
           expect(text.overflow, isNot(TextOverflow.ellipsis));
           expect(tester.getSize(title).width, greaterThan(200));
+          expect(find.text('99+'), findsOneWidget);
+          expect(
+            find.bySemanticsLabel(RegExp('137 unread messages')),
+            findsOneWidget,
+          );
           expect(tester.takeException(), isNull);
         },
       );
     }
+
+    for (final entry in [
+      (
+        name: 'dark English',
+        theme: AppTheme.darkTheme,
+        locale: const Locale('en'),
+        archiveTooltip: 'Show archived conversations',
+        unreadLabel: '137 unread messages',
+      ),
+      (
+        name: 'light Polish',
+        theme: AppTheme.lightTheme,
+        locale: const Locale('pl'),
+        archiveTooltip: 'Pokaż zarchiwizowane rozmowy',
+        unreadLabel: '137 nieprzeczytanych wiadomości',
+      ),
+    ]) {
+      testWidgets(
+        'unread conversation highlights its full row and is announced in ${entry.name}',
+        (tester) async {
+          final service = _StubMessageService(
+            messages: const [],
+            conversations: [
+              _archivedConversation(id: 'unread-row', unreadCount: 137),
+              _archivedConversation(id: 'read-row'),
+            ],
+          );
+          await pumpMessages(
+            tester,
+            service,
+            size: narrow,
+            theme: entry.theme,
+            locale: entry.locale,
+          );
+          await tester.tap(find.byTooltip(entry.archiveTooltip));
+          await tester.pumpAndSettle();
+
+          final unreadRow = find.byKey(
+            const ValueKey('conversation-row-unread-row'),
+          );
+          final readRow = find.byKey(
+            const ValueKey('conversation-row-read-row'),
+          );
+          final unreadDecoration =
+              tester.widget<AnimatedContainer>(unreadRow).decoration!
+                  as BoxDecoration;
+          final readDecoration =
+              tester.widget<AnimatedContainer>(readRow).decoration!
+                  as BoxDecoration;
+
+          expect(
+            unreadDecoration.color,
+            entry.theme.colorScheme.primaryContainer,
+          );
+          expect(unreadDecoration.border, isNotNull);
+          expect(readDecoration.color, Colors.transparent);
+          expect(readDecoration.border, isNull);
+          expect(
+            tester.getSize(unreadRow).width,
+            tester.getSize(readRow).width,
+          );
+
+          final badge = find.byKey(
+            const ValueKey('conversation-unread-badge-unread-row'),
+          );
+          expect(
+            find.descendant(of: badge, matching: find.text('99+')),
+            findsOneWidget,
+          );
+          expect(
+            find.bySemanticsLabel(RegExp(RegExp.escape(entry.unreadLabel))),
+            findsOneWidget,
+          );
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+
+    testWidgets('unread row highlight honors Reduce Motion', (tester) async {
+      final service = _StubMessageService(
+        messages: const [],
+        conversations: [
+          _archivedConversation(id: 'reduced-motion', unreadCount: 1),
+        ],
+      );
+      await pumpMessages(
+        tester,
+        service,
+        size: narrow,
+        disableAnimations: true,
+      );
+      await tester.tap(find.byTooltip('Show archived conversations'));
+      await tester.pumpAndSettle();
+
+      final row = tester.widget<AnimatedContainer>(
+        find.byKey(const ValueKey('conversation-row-reduced-motion')),
+      );
+      expect(row.duration, Duration.zero);
+      expect(tester.takeException(), isNull);
+    });
 
     testWidgets('chat list overlays the current friend avatar immediately', (
       tester,
@@ -1083,14 +1194,17 @@ void main() {
   });
 }
 
-Conversation _archivedConversation() {
+Conversation _archivedConversation({
+  String id = 'me-uid_them-uid',
+  int unreadCount = 0,
+}) {
   return Conversation(
-    id: 'me-uid_them-uid',
+    id: id,
     participantIds: const ['me-uid', 'them-uid'],
     participantNames: const {'me-uid': 'Me', 'them-uid': 'Them'},
     participantEmails: const {'me-uid': '', 'them-uid': ''},
     participantPhotoUrls: const {'me-uid': '', 'them-uid': ''},
-    unreadCounts: const {'me-uid': 0, 'them-uid': 0},
+    unreadCounts: {'me-uid': unreadCount, 'them-uid': 0},
     archivedBy: const ['me-uid'],
     mutedBy: const <String>[],
     lastMessage: 'an archived thread',

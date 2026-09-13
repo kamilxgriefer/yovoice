@@ -321,7 +321,10 @@ class _PremiumHero extends StatelessWidget {
                   top: height / 2 + 28,
                   child: _HeroPill(
                     icon: Icons.groups_rounded,
-                    label: copy.text('Server Owner', 'Właściciel serwera'),
+                    label: copy.text(
+                      'Own up to 30 Servers',
+                      'Do 30 własnych serwerów',
+                    ),
                   ),
                 ),
                 Positioned(
@@ -329,7 +332,7 @@ class _PremiumHero extends StatelessWidget {
                   top: height / 2 - 58,
                   child: _HeroPill(
                     icon: Icons.mic_rounded,
-                    label: copy.text('Creator', 'Twórca'),
+                    label: copy.text('Unlock Creator', 'Odblokuj konto twórcy'),
                   ),
                 ),
                 Positioned(
@@ -337,7 +340,7 @@ class _PremiumHero extends StatelessWidget {
                   right: width * .12,
                   child: _HeroPill(
                     icon: Icons.auto_awesome_rounded,
-                    label: copy.text('Premium Identity', 'Tożsamość Premium'),
+                    label: copy.text('Premium appearance', 'Wygląd Premium'),
                   ),
                 ),
               ],

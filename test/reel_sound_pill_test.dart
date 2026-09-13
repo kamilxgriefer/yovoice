@@ -49,6 +49,7 @@ void main() {
     expect(find.text('Sound on'), findsOneWidget);
 
     await tester.tap(find.byKey(reelPlaybackSurfaceKey));
+    await tester.pump(const Duration(milliseconds: 350));
     await tester.pumpAndSettle();
 
     // Paused, and still unmuted: the pill did not quietly change meaning.
@@ -57,6 +58,7 @@ void main() {
     expect(find.bySemanticsLabel('Turn sound off'), findsOneWidget);
 
     await tester.tap(find.byKey(reelPlaybackSurfaceKey));
+    await tester.pump(const Duration(milliseconds: 350));
     await tester.pumpAndSettle();
     expect(players.of('reel_1').playing, isTrue);
     expect(find.text('Sound on'), findsOneWidget);
@@ -70,6 +72,7 @@ void main() {
     await pumpReelStage(tester, players: players, size: const Size(900, 1000));
 
     await tester.tap(find.byKey(reelPlaybackSurfaceKey));
+    await tester.pump(const Duration(milliseconds: 350));
     await tester.pumpAndSettle();
     expect(players.of('reel_1').playing, isFalse);
 

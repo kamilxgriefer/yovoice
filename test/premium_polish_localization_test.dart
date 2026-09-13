@@ -16,6 +16,7 @@ import 'package:yovoice/features/premium/presentation/screens/premium_plans_scre
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_feature_gate.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_upsell_sheet.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 
 const _uid = 'premium-polish-member';
@@ -127,14 +128,14 @@ void main() {
 
     expect(find.text('Więcej przestrzeni\ndla Twojego głosu.'), findsOneWidget);
     await tester.scrollUntilVisible(
-      find.text('Zostań twórcą'),
+      find.text('Konto twórcy i Studio'),
       260,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pump();
-    expect(find.text('Zostań twórcą'), findsOneWidget);
-    expect(find.text('Buduj swoją publiczność'), findsOneWidget);
-    expect(find.text('Wyróżnij się'), findsOneWidget);
+    expect(find.text('Konto twórcy i Studio'), findsOneWidget);
+    expect(find.text('30 własnych serwerów'), findsOneWidget);
+    expect(find.text('Wygląd i prywatność Premium'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Sprawdź plany'),
       220,
@@ -179,7 +180,34 @@ void main() {
     );
     await tester.pump();
     expect(find.text('Premium obejmuje:'), findsOneWidget);
-    expect(find.text('Profil i narzędzia twórcy'), findsOneWidget);
+    expect(
+      find.text(
+        'Konto twórcy i Studio; potwierdzenie wieku oraz zgoda włączają przycisk Obserwuj',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        '30 własnych serwerów (bezpłatnie: 5); dołączanie bez limitu dla każdego',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'W prywatnych czatach tryb incognito ukrywa potwierdzenia odczytu; wskaźnik pisania ustawiasz osobno',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Odznaka Premium i połyskujący pierścień profilu'),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Umiarkowane wsparcie rekomendacji w Yeels; zasięg nie jest gwarantowany',
+      ),
+      findsOneWidget,
+    );
     await tester.scrollUntilVisible(
       find.text('Regulamin'),
       220,
@@ -190,6 +218,23 @@ void main() {
     expect(find.text('Prywatność'), findsOneWidget);
     expect(find.text('Choose your plan'), findsNothing);
     expect(find.text('Everything Premium includes:'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('public Premium mark has Polish membership semantics only', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _polishApp(const Scaffold(body: Center(child: PremiumIdentityBadge()))),
+    );
+
+    expect(
+      find.bySemanticsLabel('Użytkownik YO Voice Premium'),
+      findsOneWidget,
+    );
+    expect(find.text('Premium'), findsNothing);
+    expect(find.textContaining('wiek'), findsNothing);
+    expect(find.byIcon(Icons.check_rounded), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

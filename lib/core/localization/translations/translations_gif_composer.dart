@@ -38,7 +38,7 @@ const gifComposerTranslationKeys = <String>[
   "This GIF is no longer available",
   "Could not save the GIF preference.",
   "Load GIFs automatically",
-  "Off: the GIF provider receives your device data only when you tap to load a GIF.",
+  "YO Voice Originals play automatically. External GIFs load only after you tap when auto-play is off.",
 ];
 
 final gifComposerTranslations = <String, Map<String, String>>{
@@ -89,7 +89,7 @@ const _values = <String, List<String>>{
     "Dieses GIF ist nicht mehr verfügbar",
     "Die GIF-Einstellung konnte nicht gespeichert werden.",
     "GIFs automatisch laden",
-    "Aus: Der GIF-Anbieter erhält deine Gerätedaten erst, wenn du zum Laden auf ein GIF tippst.",
+    "YO Voice Originals werden automatisch abgespielt. Externe GIFs werden bei deaktivierter automatischer Wiedergabe erst nach dem Antippen geladen.",
   ],
   "es": <String>[
     "Emojis",
@@ -128,7 +128,7 @@ const _values = <String, List<String>>{
     "Este GIF ya no está disponible",
     "No se pudo guardar la preferencia de GIFs.",
     "Cargar GIFs automáticamente",
-    "Desactivado: el proveedor de GIFs solo recibe datos de tu dispositivo cuando tocas para cargar un GIF.",
+    "Los GIFs de YO Voice Originals se reproducen automáticamente. Los GIFs externos solo se cargan al tocarlos cuando la reproducción automática está desactivada.",
   ],
   "pt": <String>[
     "Emojis",
@@ -167,7 +167,7 @@ const _values = <String, List<String>>{
     "Este GIF já não está disponível",
     "Não foi possível guardar a preferência de GIFs.",
     "Carregar GIFs automaticamente",
-    "Desativado: o fornecedor de GIFs só recebe dados do teu dispositivo quando tocas para carregar um GIF.",
+    "Os YO Voice Originals são reproduzidos automaticamente. Com a reprodução automática desativada, os GIFs externos só são carregados depois de lhes tocares.",
   ],
   "pt_BR": <String>[
     "Emojis",
@@ -206,7 +206,7 @@ const _values = <String, List<String>>{
     "Este GIF não está mais disponível",
     "Não foi possível salvar a preferência de GIFs.",
     "Carregar GIFs automaticamente",
-    "Desativado: o provedor de GIFs só recebe dados do seu dispositivo quando você toca para carregar um GIF.",
+    "Os YO Voice Originals são reproduzidos automaticamente. Com a reprodução automática desativada, GIFs externos só são carregados quando você toca neles.",
   ],
   "fr": <String>[
     "Émojis",
@@ -245,7 +245,7 @@ const _values = <String, List<String>>{
     "Ce GIF n’est plus disponible",
     "Impossible d’enregistrer la préférence des GIFs.",
     "Charger les GIFs automatiquement",
-    "Désactivé : le fournisseur de GIFs ne reçoit les données de votre appareil que lorsque vous touchez un GIF pour le charger.",
+    "Les YO Voice Originals sont lus automatiquement. Lorsque la lecture automatique est désactivée, les GIFs externes ne se chargent qu’après avoir été touchés.",
   ],
   "it": <String>[
     "Emoji",
@@ -284,7 +284,7 @@ const _values = <String, List<String>>{
     "Questa GIF non è più disponibile",
     "Impossibile salvare la preferenza delle GIF.",
     "Carica le GIF automaticamente",
-    "Disattivato: il fornitore di GIF riceve i dati del dispositivo solo quando tocchi per caricare una GIF.",
+    "Le GIF YO Voice Originals vengono riprodotte automaticamente. Con la riproduzione automatica disattivata, le GIF esterne si caricano solo quando le tocchi.",
   ],
   "uk": <String>[
     "Емодзі",
@@ -323,7 +323,7 @@ const _values = <String, List<String>>{
     "Цей GIF більше недоступний",
     "Не вдалося зберегти налаштування GIF.",
     "Завантажувати GIF автоматично",
-    "Вимкнено: постачальник GIF отримує дані твого пристрою лише після дотику для завантаження GIF.",
+    "YO Voice Originals відтворюються автоматично. Коли автовідтворення вимкнено, зовнішні GIF завантажуються лише після дотику.",
   ],
   "ru": <String>[
     "Эмодзи",
@@ -362,7 +362,7 @@ const _values = <String, List<String>>{
     "Этот GIF больше недоступен",
     "Не удалось сохранить настройку GIF.",
     "Загружать GIF автоматически",
-    "Выключено: поставщик GIF получает данные устройства только после нажатия для загрузки GIF.",
+    "YO Voice Originals воспроизводятся автоматически. Когда автовоспроизведение выключено, внешние GIF загружаются только после нажатия.",
   ],
   "cs": <String>[
     "Emoji",
@@ -401,7 +401,7 @@ const _values = <String, List<String>>{
     "Tento GIF už není dostupný",
     "Nastavení GIFů se nepodařilo uložit.",
     "Načítat GIFy automaticky",
-    "Vypnuto: poskytovatel GIFů získá údaje o zařízení až po klepnutí pro načtení GIFu.",
+    "YO Voice Originals se přehrávají automaticky. Když je automatické přehrávání vypnuté, externí GIFy se načtou až po klepnutí.",
   ],
   "sk": <String>[
     "Emoji",
@@ -440,7 +440,7 @@ const _values = <String, List<String>>{
     "Tento GIF už nie je dostupný",
     "Nastavenie GIFov sa nepodarilo uložiť.",
     "Načítavať GIFy automaticky",
-    "Vypnuté: poskytovateľ GIFov dostane údaje o zariadení až po ťuknutí na načítanie GIFu.",
+    "YO Voice Originals sa prehrávajú automaticky. Keď je automatické prehrávanie vypnuté, externé GIFy sa načítajú až po ťuknutí.",
   ],
   "bg": <String>[
     "Емоджи",
@@ -479,7 +479,7 @@ const _values = <String, List<String>>{
     "Този GIF вече не е наличен",
     "Настройката за GIF не бе запазена.",
     "Зареждай GIF файловете автоматично",
-    "Изключено: доставчикът на GIF получава данни за устройството ти само когато докоснеш за зареждане на GIF.",
+    "YO Voice Originals се възпроизвеждат автоматично. Когато автоматичното възпроизвеждане е изключено, външните GIF файлове се зареждат само след докосване.",
   ],
   "nl": <String>[
     "Emoji",
@@ -518,7 +518,7 @@ const _values = <String, List<String>>{
     "Deze GIF is niet meer beschikbaar",
     "De GIF-voorkeur kon niet worden opgeslagen.",
     "GIF's automatisch laden",
-    "Uit: de GIF-aanbieder ontvangt je apparaatgegevens pas wanneer je tikt om een GIF te laden.",
+    "YO Voice Originals worden automatisch afgespeeld. Als automatisch afspelen uitstaat, worden externe GIFs pas geladen wanneer je erop tikt.",
   ],
   "ro": <String>[
     "Emoji",
@@ -557,7 +557,7 @@ const _values = <String, List<String>>{
     "Acest GIF nu mai este disponibil",
     "Preferința pentru GIF-uri nu a putut fi salvată.",
     "Încarcă GIF-urile automat",
-    "Dezactivat: furnizorul de GIF-uri primește datele dispozitivului doar când atingi pentru a încărca un GIF.",
+    "YO Voice Originals se redau automat. Când redarea automată este dezactivată, GIF-urile externe se încarcă numai după ce le atingi.",
   ],
   "tr": <String>[
     "Emoji",
@@ -596,7 +596,7 @@ const _values = <String, List<String>>{
     "Bu GIF artık kullanılamıyor",
     "GIF tercihi kaydedilemedi.",
     "GIF’leri otomatik yükle",
-    "Kapalı: GIF sağlayıcısı cihaz verilerini yalnızca bir GIF’i yüklemek için dokunduğunda alır.",
+    "YO Voice Originals otomatik olarak oynatılır. Otomatik oynatma kapalıyken harici GIF'ler yalnızca dokunduğunda yüklenir.",
   ],
   "el": <String>[
     "Emoji",
@@ -635,7 +635,7 @@ const _values = <String, List<String>>{
     "Αυτό το GIF δεν είναι πλέον διαθέσιμο",
     "Δεν ήταν δυνατή η αποθήκευση της προτίμησης GIF.",
     "Αυτόματη φόρτωση GIF",
-    "Ανενεργό: ο πάροχος GIF λαμβάνει δεδομένα της συσκευής σου μόνο όταν πατήσεις για να φορτώσεις ένα GIF.",
+    "Τα YO Voice Originals αναπαράγονται αυτόματα. Όταν η αυτόματη αναπαραγωγή είναι απενεργοποιημένη, τα εξωτερικά GIF φορτώνονται μόνο αφού τα πατήσεις.",
   ],
   "hu": <String>[
     "Emojik",
@@ -674,7 +674,7 @@ const _values = <String, List<String>>{
     "Ez a GIF már nem érhető el",
     "A GIF-beállítást nem sikerült menteni.",
     "GIF-ek automatikus betöltése",
-    "Kikapcsolva: a GIF-szolgáltató csak akkor kapja meg az eszköz adatait, ha rákoppintasz egy GIF betöltésére.",
+    "A YO Voice Originals automatikusan lejátszódnak. Kikapcsolt automatikus lejátszásnál a külső GIF-ek csak koppintás után töltődnek be.",
   ],
   "hr": <String>[
     "Emojiji",
@@ -713,7 +713,7 @@ const _values = <String, List<String>>{
     "Ovaj GIF više nije dostupan",
     "Postavka GIF-ova nije spremljena.",
     "Automatski učitavaj GIF-ove",
-    "Isključeno: pružatelj GIF-ova prima podatke uređaja tek kada dodirneš GIF za učitavanje.",
+    "YO Voice Originals reproduciraju se automatski. Kada je automatska reprodukcija isključena, vanjski GIF-ovi učitavaju se tek nakon dodira.",
   ],
   "sr": <String>[
     "Емоџији",
@@ -752,7 +752,7 @@ const _values = <String, List<String>>{
     "Овај GIF више није доступан",
     "Подешавање GIF-ова није сачувано.",
     "Аутоматски учитавај GIF-ове",
-    "Искључено: пружалац GIF-ова добија податке уређаја тек када додирнеш GIF за учитавање.",
+    "YO Voice Originals се репродукују аутоматски. Када је аутоматска репродукција искључена, спољни GIF-ови се учитавају тек након додира.",
   ],
   "sv": <String>[
     "Emojier",
@@ -791,7 +791,7 @@ const _values = <String, List<String>>{
     "Denna GIF är inte längre tillgänglig",
     "Det gick inte att spara GIF-inställningen.",
     "Ladda GIF:ar automatiskt",
-    "Av: GIF-leverantören får enhetens data först när du trycker för att ladda en GIF.",
+    "YO Voice Originals spelas upp automatiskt. När automatisk uppspelning är avstängd läses externa GIF-bilder in först när du trycker på dem.",
   ],
   "da": <String>[
     "Emoji",
@@ -830,7 +830,7 @@ const _values = <String, List<String>>{
     "Denne GIF er ikke længere tilgængelig",
     "GIF-indstillingen kunne ikke gemmes.",
     "Indlæs GIF'er automatisk",
-    "Fra: GIF-udbyderen modtager først enhedens data, når du trykker for at indlæse en GIF.",
+    "YO Voice Originals afspilles automatisk. Når automatisk afspilning er slået fra, indlæses eksterne GIF'er først, når du trykker på dem.",
   ],
   "nb": <String>[
     "Emoji",
@@ -869,7 +869,7 @@ const _values = <String, List<String>>{
     "Denne GIF-en er ikke lenger tilgjengelig",
     "GIF-innstillingen kunne ikke lagres.",
     "Last inn GIF-er automatisk",
-    "Av: GIF-leverandøren mottar enhetens data først når du trykker for å laste inn en GIF.",
+    "YO Voice Originals spilles av automatisk. Når automatisk avspilling er slått av, lastes eksterne GIF-er først når du trykker på dem.",
   ],
   "fi": <String>[
     "Emojit",
@@ -908,7 +908,7 @@ const _values = <String, List<String>>{
     "Tämä GIF-kuva ei ole enää saatavilla",
     "GIF-asetusta ei voitu tallentaa.",
     "Lataa GIF-kuvat automaattisesti",
-    "Pois: GIF-palveluntarjoaja saa laitteesi tiedot vasta, kun napautat ladataksesi GIF-kuvan.",
+    "YO Voice Originals toistetaan automaattisesti. Kun automaattinen toisto on pois päältä, ulkoiset GIF-kuvat ladataan vasta napauttamalla.",
   ],
   "lt": <String>[
     "Jaustukai",
@@ -947,7 +947,7 @@ const _values = <String, List<String>>{
     "Šis GIF nebepasiekiamas",
     "Nepavyko išsaugoti GIF nuostatos.",
     "Automatiškai įkelti GIF",
-    "Išjungta: GIF teikėjas gauna įrenginio duomenis tik palietus GIF, kad jis būtų įkeltas.",
+    "YO Voice Originals atkuriami automatiškai. Kai automatinis atkūrimas išjungtas, išoriniai GIF įkeliami tik juos palietus.",
   ],
   "lv": <String>[
     "Emocijzīmes",
@@ -986,7 +986,7 @@ const _values = <String, List<String>>{
     "Šis GIF vairs nav pieejams",
     "Neizdevās saglabāt GIF iestatījumu.",
     "Automātiski ielādēt GIF",
-    "Izslēgts: GIF pakalpojuma sniedzējs saņem ierīces datus tikai tad, kad pieskaries, lai ielādētu GIF.",
+    "YO Voice Originals tiek atskaņoti automātiski. Ja automātiskā atskaņošana ir izslēgta, ārējie GIF tiek ielādēti tikai pēc pieskāriena.",
   ],
   "et": <String>[
     "Emojid",
@@ -1025,7 +1025,7 @@ const _values = <String, List<String>>{
     "See GIF pole enam saadaval",
     "GIF-i eelistust ei saanud salvestada.",
     "Laadi GIF-id automaatselt",
-    "Väljas: GIF-i pakkuja saab seadme andmed alles siis, kui puudutad GIF-i laadimiseks.",
+    "YO Voice Originals esitatakse automaatselt. Kui automaatesitus on välja lülitatud, laaditakse välised GIF-id alles pärast puudutamist.",
   ],
   "id": <String>[
     "Emoji",
@@ -1064,7 +1064,7 @@ const _values = <String, List<String>>{
     "GIF ini sudah tidak tersedia",
     "Preferensi GIF tidak dapat disimpan.",
     "Muat GIF secara otomatis",
-    "Nonaktif: penyedia GIF hanya menerima data perangkat saat kamu mengetuk untuk memuat GIF.",
+    "YO Voice Originals diputar otomatis. Saat putar otomatis dinonaktifkan, GIF eksternal hanya dimuat setelah kamu mengetuknya.",
   ],
   "vi": <String>[
     "Biểu tượng cảm xúc",
@@ -1103,7 +1103,7 @@ const _values = <String, List<String>>{
     "GIF này không còn khả dụng",
     "Không lưu được tùy chọn GIF.",
     "Tự động tải GIF",
-    "Tắt: nhà cung cấp GIF chỉ nhận dữ liệu thiết bị khi bạn chạm để tải GIF.",
+    "YO Voice Originals tự động phát. Khi tắt tự động phát, GIF bên ngoài chỉ tải sau khi bạn chạm vào.",
   ],
   "zh_CN": <String>[
     "表情",
@@ -1142,7 +1142,7 @@ const _values = <String, List<String>>{
     "此 GIF 已不可用",
     "无法保存 GIF 偏好设置。",
     "自动加载 GIF",
-    "关闭时：只有点按加载 GIF 后，GIF 提供方才会收到你的设备数据。",
+    "YO Voice Originals 会自动播放。关闭自动播放后，外部 GIF 仅在你点按时加载。",
   ],
   "zh_TW": <String>[
     "表情符號",
@@ -1181,7 +1181,7 @@ const _values = <String, List<String>>{
     "此 GIF 已無法使用",
     "無法儲存 GIF 偏好設定。",
     "自動載入 GIF",
-    "關閉時：只有點一下以載入 GIF 後，GIF 提供者才會收到你的裝置資料。",
+    "YO Voice Originals 會自動播放。關閉自動播放後，外部 GIF 只會在你點一下時載入。",
   ],
   "ja": <String>[
     "絵文字",
@@ -1220,7 +1220,7 @@ const _values = <String, List<String>>{
     "このGIFは利用できなくなりました",
     "GIFの設定を保存できませんでした。",
     "GIFを自動で読み込む",
-    "オフの場合、タップしてGIFを読み込むときにのみ、GIF提供元に端末のデータが送信されます。",
+    "YO Voice Originalsは自動再生されます。自動再生がオフの場合、外部GIFはタップしたときだけ読み込まれます。",
   ],
   "ko": <String>[
     "이모지",
@@ -1259,7 +1259,7 @@ const _values = <String, List<String>>{
     "이 GIF는 더 이상 사용할 수 없어요",
     "GIF 설정을 저장하지 못했어요.",
     "GIF 자동으로 불러오기",
-    "끔: 탭하여 GIF를 불러올 때만 GIF 제공업체에 기기 데이터가 전달돼요.",
+    "YO Voice Originals는 자동으로 재생돼요. 자동 재생을 끄면 외부 GIF는 탭한 뒤에만 불러와요.",
   ],
   "ar": <String>[
     "رموز تعبيرية",
@@ -1298,7 +1298,7 @@ const _values = <String, List<String>>{
     "صورة GIF هذه لم تعد متاحة",
     "تعذر حفظ تفضيل صور GIF.",
     "تحميل صور GIF تلقائيًا",
-    "عند الإيقاف: لا يتلقى مزود GIF بيانات جهازك إلا عندما تضغط لتحميل صورة GIF.",
+    "يتم تشغيل YO Voice Originals تلقائيًا. عند إيقاف التشغيل التلقائي، لا يتم تحميل صور GIF الخارجية إلا بعد الضغط عليها.",
   ],
   "hi": <String>[
     "इमोजी",
@@ -1337,7 +1337,7 @@ const _values = <String, List<String>>{
     "यह GIF अब उपलब्ध नहीं है",
     "GIF की पसंद सेव नहीं हो सकी।",
     "GIF अपने आप लोड करें",
-    "बंद होने पर: GIF प्रदाता को आपके डिवाइस का डेटा तभी मिलता है जब आप GIF लोड करने के लिए टैप करते हैं।",
+    "YO Voice Originals अपने-आप चलते हैं। ऑटो-प्ले बंद होने पर बाहरी GIF टैप करने के बाद ही लोड होते हैं।",
   ],
   "bn": <String>[
     "ইমোজি",
@@ -1376,7 +1376,7 @@ const _values = <String, List<String>>{
     "এই GIF আর উপলব্ধ নেই",
     "GIF পছন্দ সংরক্ষণ করা যায়নি।",
     "স্বয়ংক্রিয়ভাবে GIF লোড করুন",
-    "বন্ধ থাকলে: আপনি GIF লোড করতে ট্যাপ করলেই কেবল GIF প্রদানকারী আপনার ডিভাইসের তথ্য পায়।",
+    "YO Voice Originals স্বয়ংক্রিয়ভাবে চলে। অটো-প্লে বন্ধ থাকলে বাহ্যিক GIF ট্যাপ করার পরেই লোড হয়।",
   ],
   "ur": <String>[
     "ایموجی",
@@ -1415,7 +1415,7 @@ const _values = <String, List<String>>{
     "یہ GIF اب دستیاب نہیں ہے",
     "GIF کی ترجیح محفوظ نہیں ہو سکی۔",
     "GIF خودکار طور پر لوڈ کریں",
-    "بند ہونے پر: GIF فراہم کنندہ کو آپ کے آلے کا ڈیٹا صرف تب ملتا ہے جب آپ GIF لوڈ کرنے کے لیے تھپتھپاتے ہیں۔",
+    "YO Voice Originals خودکار طور پر چلتے ہیں۔ آٹو پلے بند ہونے پر بیرونی GIF صرف ٹیپ کرنے کے بعد لوڈ ہوتے ہیں۔",
   ],
   "th": <String>[
     "อีโมจิ",
@@ -1454,7 +1454,7 @@ const _values = <String, List<String>>{
     "GIF นี้ไม่พร้อมใช้งานแล้ว",
     "บันทึกการตั้งค่า GIF ไม่สำเร็จ",
     "โหลด GIF โดยอัตโนมัติ",
-    "เมื่อปิด: ผู้ให้บริการ GIF จะได้รับข้อมูลอุปกรณ์เฉพาะเมื่อคุณแตะเพื่อโหลด GIF เท่านั้น",
+    "YO Voice Originals เล่นอัตโนมัติ เมื่อปิดเล่นอัตโนมัติ GIF ภายนอกจะโหลดหลังจากแตะเท่านั้น",
   ],
   "ms": <String>[
     "Emoji",
@@ -1493,7 +1493,7 @@ const _values = <String, List<String>>{
     "GIF ini tidak lagi tersedia",
     "Pilihan GIF tidak dapat disimpan.",
     "Muatkan GIF secara automatik",
-    "Dimatikan: penyedia GIF hanya menerima data peranti apabila anda mengetik untuk memuatkan GIF.",
+    "YO Voice Originals dimainkan secara automatik. Apabila main automatik dimatikan, GIF luaran hanya dimuatkan selepas anda mengetiknya.",
   ],
   "fil": <String>[
     "Mga emoji",
@@ -1532,7 +1532,7 @@ const _values = <String, List<String>>{
     "Hindi na available ang GIF na ito",
     "Hindi na-save ang kagustuhan sa GIF.",
     "Awtomatikong i-load ang mga GIF",
-    "Kapag naka-off: matatanggap lang ng GIF provider ang data ng device kapag nag-tap ka para mag-load ng GIF.",
+    "Awtomatikong nagpe-play ang YO Voice Originals. Kapag naka-off ang auto-play, maglo-load lang ang mga external GIF pagkatapos mong i-tap ang mga ito.",
   ],
   "he": <String>[
     "אימוג׳י",
@@ -1571,7 +1571,7 @@ const _values = <String, List<String>>{
     "ה-GIF הזה כבר לא זמין",
     "לא ניתן לשמור את העדפת ה-GIF.",
     "טעינה אוטומטית של קובצי GIF",
-    "כבוי: ספק ה-GIF מקבל את נתוני המכשיר רק לאחר הקשה לטעינת GIF.",
+    "YO Voice Originals מופעלים אוטומטית. כשההפעלה האוטומטית כבויה, קובצי GIF חיצוניים נטענים רק לאחר הקשה.",
   ],
   "fa": <String>[
     "ایموجی",
@@ -1610,7 +1610,7 @@ const _values = <String, List<String>>{
     "این GIF دیگر در دسترس نیست",
     "تنظیم GIF ذخیره نشد.",
     "بارگیری خودکار GIF",
-    "در حالت خاموش: ارائه‌دهندهٔ GIF تنها وقتی داده‌های دستگاه را دریافت می‌کند که برای بارگیری GIF ضربه بزنید.",
+    "YO Voice Originals به‌طور خودکار پخش می‌شوند. وقتی پخش خودکار خاموش است، GIFهای خارجی فقط پس از ضربه زدن بارگیری می‌شوند.",
   ],
   "sw": <String>[
     "Emoji",
@@ -1649,6 +1649,6 @@ const _values = <String, List<String>>{
     "GIF hii haipatikani tena",
     "Mapendeleo ya GIF hayakuweza kuhifadhiwa.",
     "Pakia GIF kiotomatiki",
-    "Ikiwa imezimwa: mtoa huduma wa GIF hupokea data ya kifaa chako tu unapogusa ili kupakia GIF.",
+    "YO Voice Originals huchezwa kiotomatiki. Uchezaji otomatiki ukiwa umezimwa, GIF za nje hupakiwa baada ya kuguswa tu.",
   ],
 };

@@ -26,8 +26,9 @@ enum ReportTargetType {
   /// `createContentReport`.
   voiceMomentComment,
 
-  /// A third-party GIF surfaced by the composer's GIF picker, reported
-  /// through `reportGifAsset` (ADR-172).
+  /// A first-party YO Voice Original, or an asset from an optional external
+  /// GIF provider, surfaced by the composer's picker and reported through
+  /// `reportGifAsset` (ADR-172).
   ///
   /// Never a client write, for the same reason [reelComment] is not: the
   /// report has to be proven against `gifAssets/{provider}_{id}`, which is
@@ -36,9 +37,9 @@ enum ReportTargetType {
   /// no room for. Passing this value to [ReportService.report] would be
   /// refused by rules; the picker calls the callable instead.
   ///
-  /// It is the one target type with NO reported account: a GIF belongs to
-  /// GIPHY, not to a YO Voice member, so `reportedUserId` is deliberately
-  /// empty and no sanction workflow may attach a uid to it.
+  /// It is the one target type with NO reported account: a catalog GIF is not
+  /// member-authored content, so `reportedUserId` is deliberately empty and
+  /// no sanction workflow may attach a uid to it.
   gifAsset,
 
   /// An account, independent of any one message.

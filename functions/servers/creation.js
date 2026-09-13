@@ -69,16 +69,15 @@ function createServerCreationService(dependencies) {
         };
       }
       if (prior || reserved) fail("data-loss", "The reserved server graph is unavailable.");
-      // A family is charged to its own one-per-owner policy, never to the free
-      // allowance. The deterministic root alone cannot enforce ownership after
-      // transfer, so the shared accounting's bounded canonical family count
-      // also protects pre-reservation family data.
-      const capacity = await readOwnerAllocations({ db, transaction, uid: auth.uid });
+      // A family keeps its own one-per-owner policy and also consumes one slot
+      // in the account's total owned-server allowance. The deterministic root
+      // alone cannot enforce ownership after transfer, so the shared bounded
+      // family count also protects pre-reservation family data.
+      const capacity = await readOwnerAllocations({ db, transaction, uid: auth.uid, now });
       if (family) {
         if (!hasFamilyServerCapacity(capacity)) fail("failed-precondition", "Your existing family server must be recovered first.");
-      } else {
-        requireFreeServerCapacity(capacity);
       }
+      requireFreeServerCapacity(capacity);
       const seeds = templateChannels(input.serverType, input.defaultLanguage, input.templateVersion);
       const ids = seeds.map((seed) => canonicalChannelId(serverId, seed.seedKey));
       const voiceIndex = seeds.findIndex((seed) => MEDIA_KINDS.includes(seed.kind));

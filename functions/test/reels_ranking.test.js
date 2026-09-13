@@ -5,6 +5,7 @@ const {
   DEFAULT_FEED_RANKING,
   affinityScore,
   engagementScore,
+  premiumAuthorScore,
   rankFeedItems,
   recencyScore,
   resolveFeedRanking,
@@ -24,6 +25,7 @@ function candidate(overrides = {}) {
     likeCount: 0,
     commentCount: 0,
     affinity: "none",
+    premiumAuthor: false,
     seenAtMs: null,
     ...overrides,
   };
@@ -64,6 +66,45 @@ test("affinity uses the real edges only and unknown values score zero", () => {
   assert.equal(affinityScore("none", CONFIG), 0);
   assert.equal(affinityScore("muted", CONFIG), 0);
   assert.equal(affinityScore(undefined, CONFIG), 0);
+});
+
+test("Premium is a bounded positive ranking signal and only exact true earns it", () => {
+  assert.equal(premiumAuthorScore(true), 1);
+  for (const value of [false, null, undefined, 1, "true", {}]) {
+    assert.equal(premiumAuthorScore(value), 0);
+  }
+  const plain = scoreCandidate(candidate({ id: "same" }), {
+    nowMs: NOW_MS,
+    seed: "1234567890abcdef",
+    config: CONFIG,
+  });
+  const premium = scoreCandidate(
+    candidate({ id: "same", premiumAuthor: true }),
+    { nowMs: NOW_MS, seed: "1234567890abcdef", config: CONFIG },
+  );
+  assert.ok(
+    Math.abs((premium - plain) - CONFIG.W_PREMIUM_AUTHOR) < Number.EPSILON * 4,
+  );
+  assert.ok(CONFIG.W_PREMIUM_AUTHOR < CONFIG.W_RECENCY);
+  assert.ok(CONFIG.W_PREMIUM_AUTHOR < CONFIG.W_ENGAGE);
+  assert.ok(CONFIG.W_PREMIUM_AUTHOR < CONFIG.W_AFFINITY);
+});
+
+test("Premium cannot lift a stale empty Reel above fresh ordinary content", () => {
+  const fresh = scoreCandidate(candidate({ id: "same" }), {
+    nowMs: NOW_MS,
+    seed: "1234567890abcdef",
+    config: CONFIG,
+  });
+  const stalePremium = scoreCandidate(
+    candidate({
+      id: "same",
+      premiumAuthor: true,
+      publishedAtMs: NOW_MS - 21 * 24 * HOUR_MS,
+    }),
+    { nowMs: NOW_MS, seed: "1234567890abcdef", config: CONFIG },
+  );
+  assert.ok(fresh > stalePremium);
 });
 
 test("the seen penalty fades to nothing after the decay window", () => {
@@ -252,6 +293,12 @@ test("config resolution is total and a malformed override keeps the defaults",
         REEL_FEED_RANKING: JSON.stringify({ RECENCY_HALF_LIFE_HOURS: 0 }),
       }).RECENCY_HALF_LIFE_HOURS,
       DEFAULT_FEED_RANKING.RECENCY_HALF_LIFE_HOURS,
+    );
+    assert.equal(
+      resolveFeedRanking({
+        REEL_FEED_RANKING: JSON.stringify({ W_PREMIUM_AUTHOR: "1" }),
+      }).W_PREMIUM_AUTHOR,
+      DEFAULT_FEED_RANKING.W_PREMIUM_AUTHOR,
     );
     assert.equal(
       resolveFeedRanking({

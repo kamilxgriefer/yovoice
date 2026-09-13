@@ -1,5 +1,5 @@
-// Independent QA regressions for slice S4 (Servers V1 registration and durable
-// dispatch behind YOVOICE_SERVERS_V1). Written without reusing the author's
+// Independent QA regressions for static Servers V1 registration, fail-closed
+// runtime activation and durable dispatch. Written without reusing the author's
 // helpers; every expectation below comes from docs/Servers.md "Callable
 // contract", the Stage B binding convention and the dispatcher's own stated
 // invariants ("reads only", "never completes uncertain work", "only transient
@@ -16,7 +16,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const {
   COMPANY_FILE_MEDIA_CALLABLES, DISPATCHER_EXPORTS,
   FAMILY_MEMORY_MEDIA_CALLABLES, OUTBOX_COLLECTION,
-  PODCAST_EGRESS_CALLABLES, PODCAST_EPISODE_MEDIA_CALLABLES,
+  PODCAST_EGRESS_CALLABLES, PODCAST_EPISODE_MEDIA_CALLABLES, PODCAST_RECORDING_EXPORTS,
   SERVER_CALLABLE_METHODS, SERVERS_V1_EXPORT_NAMES, SWEEP_EXPORTS,
   authBoundRequest, createServersV1Functions, createServersV1Runtime, describeOutboxJob, isTransientFailure,
 } = require("../servers/registration");
@@ -27,8 +27,10 @@ const CALLABLES = Object.keys(SERVER_CALLABLE_METHODS);
 const TRIGGER = "onServerControlOutboxCreated";
 const SCHEDULE = "processPendingServerControlOutboxSchedule";
 const NOW = 1_900_000_000_000;
-const GATE_MESSAGE = "YOVOICE_SERVERS_V1 must be exactly enabled or disabled.";
-const APP_CHECK_MESSAGE = "YOVOICE_ENFORCE_SERVERS_APP_CHECK must be exactly true or false.";
+const ENABLED_ACTIVATION_GATE = Object.freeze({
+  requireCallable: async () => ({ callableAccess: "all" }),
+  workersEnabled: async () => true,
+});
 const HEX64 = () => randomBytes(32).toString("hex");
 
 /*
@@ -59,6 +61,7 @@ function childEnvironment(overrides) {
   const env = { ...process.env };
   for (const name of [
     "STRIPE_BILLING_EXPORTS", "GIF_PROVIDER", "YOVOICE_SERVERS_V1", "YOVOICE_ENFORCE_SERVERS_APP_CHECK",
+    "YOVOICE_PODCAST_RECORDING_ENABLED",
     "K_SERVICE", "FUNCTION_TARGET", "FIREBASE_STORAGE_BUCKET", "STORAGE_BUCKET", "GCLOUD_STORAGE_BUCKET",
   ]) delete env[name];
   env.GCLOUD_PROJECT = "yovoice-independent-qa";
@@ -96,53 +99,58 @@ function docsCallableNames() {
   return names;
 }
 
-test("QA gate: absent, empty and exactly `disabled` register nothing and load no registration module", () => {
+test("QA discovery: the base map is static for absent, empty and disabled legacy gate values", () => {
+  const expected = SERVERS_V1_EXPORT_NAMES.filter((name) => !PODCAST_RECORDING_EXPORTS.includes(name));
   for (const value of [undefined, "", "disabled"]) {
     const run = coldStart({ YOVOICE_SERVERS_V1: value });
     assert.equal(run.status, 0, `gate=${JSON.stringify(value)} must load: ${run.stderr}`);
-    assert.equal(run.inspection.registrationCached, false);
-    assert.ok(!run.inspection.serversModules.includes("registration.js"));
-    for (const name of SERVERS_V1_EXPORT_NAMES) assert.ok(!run.inspection.exportNames.includes(name), name);
+    assert.equal(run.inspection.registrationCached, true);
+    for (const name of SERVERS_V1_EXPORT_NAMES) {
+      assert.equal(run.inspection.exportNames.includes(name), expected.includes(name), name);
+    }
   }
 });
 
-test("QA gate: only exactly `enabled` registers; case, spelling, boolean spellings and whitespace variants fail at require time with the documented message", () => {
-  const enabled = coldStart({ YOVOICE_SERVERS_V1: "enabled" });
-  assert.equal(enabled.status, 0, enabled.stderr);
-  assert.equal(enabled.inspection.registrationCached, true);
-  for (const name of SERVERS_V1_EXPORT_NAMES) assert.ok(enabled.inspection.exportNames.includes(name), name);
+test("QA discovery: obsolete gate spellings cannot remove or add Server exports", () => {
+  const baseline = coldStart({ YOVOICE_SERVERS_V1: undefined });
   for (const value of ["Enabled", "true", "1", "on", "enabled "]) {
     const run = coldStart({ YOVOICE_SERVERS_V1: value });
-    assert.notEqual(run.status, 0, `gate=${JSON.stringify(value)} must refuse to load`);
-    assert.ok(run.stderr.includes(GATE_MESSAGE), `gate=${JSON.stringify(value)} stderr: ${run.stderr.slice(0, 400)}`);
+    assert.equal(run.status, 0, run.stderr);
+    assert.deepEqual(run.inspection, baseline.inspection, value);
   }
 });
 
-test("QA gate on: the export delta is exactly the fifty-four documented callables plus the two dispatcher exports and four sweeps, and every pre-existing export is structurally unchanged", () => {
-  const off = coldStart({ YOVOICE_SERVERS_V1: undefined }).inspection;
+test("QA discovery: the static base is exactly the documented map minus Podcast recording", () => {
   const on = coldStart({ YOVOICE_SERVERS_V1: "enabled" }).inspection;
   const documented = docsCallableNames();
   assert.equal(documented.length, 54);
   assert.deepEqual(CALLABLES, documented, "registration table must list the documented names in the documented order");
-  const expected = [...documented, ...DISPATCHER_EXPORTS, ...SWEEP_EXPORTS].sort();
-  assert.deepEqual(on.exportNames.filter((name) => !off.exportNames.includes(name)), expected);
-  assert.deepEqual(off.exportNames.filter((name) => !on.exportNames.includes(name)), []);
-  for (const name of off.exportNames) assert.deepEqual(on.endpoints[name], off.endpoints[name], name);
+  const expected = [...documented, ...DISPATCHER_EXPORTS, ...SWEEP_EXPORTS]
+    .filter((name) => !PODCAST_RECORDING_EXPORTS.includes(name))
+    .sort();
+  assert.deepEqual(on.exportNames.filter((name) => expected.includes(name)), expected);
   for (const name of expected) {
     assert.equal(on.endpoints[name].type, "function", name);
     assert.deepEqual(on.endpoints[name].endpoint.region, ["europe-west1"], name);
   }
 });
 
-test("QA gate on: the App Check switch is the strict boolean helper, read only inside the gate", () => {
+test("QA discovery: Podcast recording stays source-disabled even when a late environment value says true", () => {
+  const off = coldStart({ YOVOICE_SERVERS_V1: undefined }).inspection;
+  const on = coldStart({
+    YOVOICE_SERVERS_V1: "enabled",
+    YOVOICE_PODCAST_RECORDING_ENABLED: "true",
+  }).inspection;
+  assert.deepEqual(on, off);
+  for (const name of PODCAST_RECORDING_EXPORTS) assert.ok(!on.exportNames.includes(name), name);
+});
+
+test("QA discovery: App Check stays source-disabled regardless of late environment values", () => {
   const lax = coldStart({ YOVOICE_SERVERS_V1: "enabled", YOVOICE_ENFORCE_SERVERS_APP_CHECK: " TRUE " });
   assert.equal(lax.status, 0, lax.stderr);
   const bad = coldStart({ YOVOICE_SERVERS_V1: "enabled", YOVOICE_ENFORCE_SERVERS_APP_CHECK: "yes" });
-  assert.notEqual(bad.status, 0);
-  assert.ok(bad.stderr.includes(APP_CHECK_MESSAGE), bad.stderr.slice(0, 400));
-  // With the gate off the switch is never read: an invalid value is harmless.
-  const ignored = coldStart({ YOVOICE_SERVERS_V1: "disabled", YOVOICE_ENFORCE_SERVERS_APP_CHECK: "yes" });
-  assert.equal(ignored.status, 0, ignored.stderr);
+  assert.equal(bad.status, 0, bad.stderr);
+  assert.deepEqual(bad.inspection, lax.inspection);
 });
 
 /*
@@ -215,6 +223,8 @@ function build(options = {}) {
   const log = recordingLog();
   const runtime = options.runtime ?? fakeRuntime(options);
   const functions = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: options.enablePodcastRecording ?? true,
     runtime, registrars: registrars(list), log, enforceAppCheck: options.enforceAppCheck, dispatch: options.dispatch ?? {},
   });
   return { functions, list, log, runtime };
@@ -348,11 +358,15 @@ test("QA binding: the registered map is exactly the sixty names with the documen
 });
 
 test("QA binding: construction refuses missing registrars, missing factory methods and out-of-range dispatch limits", () => {
-  assert.throws(() => createServersV1Functions({ runtime: fakeRuntime(), registrars: { onCall() {}, onSchedule() {} }, log: recordingLog() }),
+  assert.throws(() => createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true, runtime: fakeRuntime(), registrars: { onCall() {}, onSchedule() {} }, log: recordingLog() }),
     /Missing Cloud Functions registrar: onDocumentCreated/u);
   const runtime = fakeRuntime();
   delete runtime.memberships.transferServerOwnershipV1;
-  assert.throws(() => createServersV1Functions({ runtime, registrars: registrars([]), log: recordingLog() }),
+  assert.throws(() => createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE,
+    enablePodcastRecording: true, runtime, registrars: registrars([]), log: recordingLog() }),
     /Missing Servers V1 method memberships\.transferServerOwnershipV1/u);
   for (const dispatch of [{ timeBudgetMs: 999 }, { timeBudgetMs: 290_001 }, { triggerMaxPages: 0 }, { scheduleScanPageSize: 101 }, { scheduleScanLimit: 1001 }]) {
     assert.throws(() => build({ dispatch }), withCode("invalid-argument"), JSON.stringify(dispatch));
@@ -567,7 +581,7 @@ async function realFixture() {
     async roomOccupancy() { throw new Error("QA: provider must not be reached"); },
   };
   const runtime = createServersV1Runtime({ db, Timestamp, clock: () => nowMs, livekit });
-  const { functions, log } = build({ runtime });
+  const { functions, log } = build({ runtime, enablePodcastRecording: false });
   const call = (name, uid, data, token = { email_verified: true }) => functions[name].handler({
     auth: { uid, token }, data, rawRequest: { headers: { "x-uid": "forged" } },
   });

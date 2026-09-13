@@ -38,6 +38,17 @@ const _tallTitle = GifAsset(
   height: 200,
 );
 
+const _yovoiceAsset = GifAsset(
+  provider: 'yovoice',
+  id: 'yoLove01',
+  title: 'Sending love',
+  rating: 'g',
+  previewUrl: 'asset://yovoice/gifs/yoLove01.gif',
+  url: 'asset://yovoice/gifs/yoLove01.gif',
+  width: 320,
+  height: 200,
+);
+
 Widget _app(Widget home, {Locale locale = const Locale('en')}) => MaterialApp(
   debugShowCheckedModeBanner: false,
   theme: AppTheme.darkTheme,
@@ -110,6 +121,25 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('gif-view-load')));
     await tester.pump();
     expect(find.byType(Image), findsOneWidget);
+  });
+
+  testWidgets('YO Voice Originals load from the app bundle, not the network', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(const YoGifView(asset: _yovoiceAsset, height: 120, autoLoad: false)),
+    );
+    await tester.pump();
+
+    final image = tester.widget<Image>(find.byType(Image));
+    expect(image.image, isA<AssetImage>());
+    expect(
+      (image.image as AssetImage).assetName,
+      'assets/gifs/yovoice/yoLove01.gif',
+    );
+    expect(_yovoiceAsset.hasPinnedUrl, isTrue);
+    expect(find.byKey(const ValueKey('gif-view-load')), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('a dead CDN URL keeps the height and shows the stored title', (

@@ -24,6 +24,7 @@ import 'package:yovoice/features/media/data/services/gif_transport.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_gif_send_status.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/models/premium_messaging_privacy.dart';
 import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_delivery_progress.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
@@ -158,6 +159,7 @@ class _ChatScreenState extends State<ChatScreen> {
   late final Stream<ChatPresence> _presence;
   StreamSubscription<UserProfile>? _profileSubscription;
   StreamSubscription<List<Message>>? _messagesSubscription;
+  StreamSubscription<PremiumMessagingPrivacy>? _premiumPrivacySubscription;
   StreamSubscription<List<OutboxEntry>>? _outboxSubscription;
   StreamSubscription<OutboxEntry>? _deliveredSubscription;
   StreamSubscription<List<DirectAttachmentOutboxEntry>>?
@@ -176,10 +178,12 @@ class _ChatScreenState extends State<ChatScreen> {
   YoComposerPanelTab? _composerPanel;
   bool _mediaPickerOpen = false;
   bool _startingCall = false;
+  bool _archivingConversation = false;
   bool _profilePreviewOpen = false;
   bool _sharedMediaOpen = false;
   bool _isMuted = false;
   bool _typingAnnounced = false;
+  bool _hideTyping = false;
   bool _typingUpdateInFlight = false;
   bool? _pendingTypingState;
   DateTime? _lastTypingHeartbeat;
@@ -275,6 +279,9 @@ class _ChatScreenState extends State<ChatScreen> {
       // subscription only exists to drive read receipts.
       onError: (Object _) {},
     );
+    _premiumPrivacySubscription = _service
+        .watchPremiumMessagingPrivacy()
+        .listen(_handlePremiumMessagingPrivacy, onError: (Object _) {});
     _outboxSubscription = _service.outbox.changes.listen(_handleOutboxChanged);
     _deliveredSubscription = _service.outbox.delivered.listen(
       _handleOutboxDelivered,
@@ -311,6 +318,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _markReadRetryTimer?.cancel();
     _pendingMediaReconciliation = null;
     unawaited(_messagesSubscription?.cancel());
+    unawaited(_premiumPrivacySubscription?.cancel());
     unawaited(_profileSubscription?.cancel());
     unawaited(_outboxSubscription?.cancel());
     unawaited(_deliveredSubscription?.cancel());
@@ -351,8 +359,22 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  void _handlePremiumMessagingPrivacy(PremiumMessagingPrivacy privacy) {
+    if (_hideTyping == privacy.hideTyping) return;
+    _hideTyping = privacy.hideTyping;
+    if (!_hideTyping) return;
+    _typingTimer?.cancel();
+    _typingAnnounced = false;
+    _lastTypingHeartbeat = null;
+    // This is only an eager cleanup. setDirectTyping independently reads the
+    // live server entitlement and preference, so an altered client still
+    // cannot publish `true` while the paid control is active.
+    unawaited(_queueTypingUpdate(false));
+  }
+
   void _handleTyping() {
     if (_suppressTypingListener) return;
+    if (_hideTyping) return;
     final hasText = _controller.text.trim().isNotEmpty;
     _typingTimer?.cancel();
 
@@ -1190,6 +1212,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _archiveConversation() async {
+    if (_archivingConversation) return;
+    setState(() => _archivingConversation = true);
     try {
       await _service.archiveConversation(widget.conversationId);
 
@@ -1204,6 +1228,10 @@ class _ChatScreenState extends State<ChatScreen> {
             'Nie udało się zarchiwizować tej rozmowy.',
           ),
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _archivingConversation = false);
       }
     }
   }
@@ -1574,6 +1602,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   presenceStream: _presence,
                   muted: _isMuted,
                   callBusy: _startingCall,
+                  archiveBusy: _archivingConversation,
                   onBack: () => Navigator.pop(context),
                   onMute: _toggleMute,
                   onArchive: _archiveConversation,
@@ -1784,6 +1813,7 @@ class _ChatHeader extends StatelessWidget {
     required this.presenceStream,
     required this.muted,
     required this.callBusy,
+    required this.archiveBusy,
     required this.onBack,
     required this.onMute,
     required this.onArchive,
@@ -1802,6 +1832,7 @@ class _ChatHeader extends StatelessWidget {
   final Stream<ChatPresence> presenceStream;
   final bool muted;
   final bool callBusy;
+  final bool archiveBusy;
   final VoidCallback onBack;
   final VoidCallback onMute;
   final VoidCallback onArchive;
@@ -1960,102 +1991,111 @@ class _ChatHeader extends StatelessWidget {
                         : palette.textPrimary,
                   ),
                 ),
-                PopupMenuButton<String>(
-                  tooltip: copy.text('Conversation options', 'Opcje rozmowy'),
-                  color: palette.surfaceRaised,
-                  icon: Icon(
-                    Icons.more_horiz_rounded,
-                    color: palette.textPrimary,
+                if (archiveBusy)
+                  _ArchiveBusyControl(
+                    label: copy.text(
+                      'Archiving conversation',
+                      'Archiwizowanie rozmowy',
+                    ),
+                  )
+                else
+                  PopupMenuButton<String>(
+                    tooltip: copy.text('Conversation options', 'Opcje rozmowy'),
+                    color: palette.surfaceRaised,
+                    icon: Icon(
+                      Icons.more_horiz_rounded,
+                      color: palette.textPrimary,
+                    ),
+                    onSelected: (value) {
+                      if (value == 'mute') {
+                        onMute();
+                      } else if (value == 'archive') {
+                        onArchive();
+                      } else if (value == 'delete') {
+                        onDelete();
+                      } else if (value == 'shared-media') {
+                        onSharedMedia();
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      PopupMenuItem<String>(
+                        value: 'shared-media',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.perm_media_outlined,
+                              color: palette.textPrimary,
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              copy.text(
+                                'Shared media',
+                                'Udostępnione multimedia',
+                              ),
+                              style: TextStyle(color: palette.textPrimary),
+                            ),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem<String>(
+                        value: 'mute',
+                        child: Row(
+                          children: [
+                            Icon(
+                              muted
+                                  ? Icons.notifications_active_outlined
+                                  : Icons.notifications_off_outlined,
+                              color: palette.textPrimary,
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              muted
+                                  ? copy.text('Unmute', 'Włącz powiadomienia')
+                                  : copy.text('Mute', 'Wycisz'),
+                              style: TextStyle(color: palette.textPrimary),
+                            ),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem<String>(
+                        key: const ValueKey('chat-archive-action'),
+                        value: 'archive',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.archive_outlined,
+                              color: palette.textPrimary,
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              copy.text('Archive', 'Archiwizuj'),
+                              style: TextStyle(color: palette.textPrimary),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Destructive, so it sits last and carries the error colour.
+                      PopupMenuItem<String>(
+                        key: const ValueKey('chat-delete-action'),
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.delete_outline_rounded,
+                              color: colors.error,
+                            ),
+                            const SizedBox(width: 12),
+                            Flexible(
+                              child: Text(
+                                copy.text('Delete chat', 'Usuń czat'),
+                                style: TextStyle(color: colors.error),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  onSelected: (value) {
-                    if (value == 'mute') {
-                      onMute();
-                    } else if (value == 'archive') {
-                      onArchive();
-                    } else if (value == 'delete') {
-                      onDelete();
-                    } else if (value == 'shared-media') {
-                      onSharedMedia();
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    PopupMenuItem<String>(
-                      value: 'shared-media',
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.perm_media_outlined,
-                            color: palette.textPrimary,
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            copy.text(
-                              'Shared media',
-                              'Udostępnione multimedia',
-                            ),
-                            style: TextStyle(color: palette.textPrimary),
-                          ),
-                        ],
-                      ),
-                    ),
-                    PopupMenuItem<String>(
-                      value: 'mute',
-                      child: Row(
-                        children: [
-                          Icon(
-                            muted
-                                ? Icons.notifications_active_outlined
-                                : Icons.notifications_off_outlined,
-                            color: palette.textPrimary,
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            muted
-                                ? copy.text('Unmute', 'Włącz powiadomienia')
-                                : copy.text('Mute', 'Wycisz'),
-                            style: TextStyle(color: palette.textPrimary),
-                          ),
-                        ],
-                      ),
-                    ),
-                    PopupMenuItem<String>(
-                      value: 'archive',
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.archive_outlined,
-                            color: palette.textPrimary,
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            copy.text('Archive', 'Archiwizuj'),
-                            style: TextStyle(color: palette.textPrimary),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // Destructive, so it sits last and carries the error colour.
-                    PopupMenuItem<String>(
-                      key: const ValueKey('chat-delete-action'),
-                      value: 'delete',
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.delete_outline_rounded,
-                            color: colors.error,
-                          ),
-                          const SizedBox(width: 12),
-                          Flexible(
-                            child: Text(
-                              copy.text('Delete chat', 'Usuń czat'),
-                              style: TextStyle(color: colors.error),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
               ];
               return Column(
                 mainAxisSize: MainAxisSize.min,
@@ -2117,6 +2157,52 @@ class _ChatHeader extends StatelessWidget {
       return copy.text('Offline', 'Nieaktywny');
     }
     return copy.activeTime(lastSeen);
+  }
+}
+
+class _ArchiveBusyControl extends StatelessWidget {
+  const _ArchiveBusyControl({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return Semantics(
+      key: const ValueKey('chat-archive-busy'),
+      container: true,
+      liveRegion: true,
+      button: true,
+      enabled: false,
+      label: label,
+      child: ExcludeSemantics(
+        child: Tooltip(
+          message: label,
+          excludeFromSemantics: true,
+          child: SizedBox.square(
+            dimension: 48,
+            child: Center(
+              child: reduceMotion
+                  ? Icon(
+                      Icons.hourglass_top_rounded,
+                      key: const ValueKey('chat-archive-static'),
+                      color: palette.interactiveForeground,
+                      size: 20,
+                    )
+                  : SizedBox.square(
+                      key: const ValueKey('chat-archive-progress'),
+                      dimension: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: palette.interactiveForeground,
+                      ),
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

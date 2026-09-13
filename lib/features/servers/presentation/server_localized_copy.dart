@@ -316,8 +316,8 @@ extension ServerLocalizedCopy on AppLocalizations {
     'Nie udało się dokończyć tworzenia serwera. Sprawdź połączenie — ponowne wysłanie jest bezpieczne i nie utworzy drugiego serwera.',
   );
   String get serverCreationCapacityBody => text(
-    'You have reached the limit of 20 active servers.',
-    'Masz już 20 aktywnych serwerów.',
+    'You have reached your owned Server limit: 5 on Free or 30 on Premium.',
+    'Osiągnąłeś limit własnych serwerów: 5 na koncie bezpłatnym lub 30 w Premium.',
   );
 
   /// `invalid-argument`: the payload was refused before any write, so the
@@ -364,16 +364,16 @@ extension ServerLocalizedCopy on AppLocalizations {
     'Wszystko, co wpisujesz, zostaje na miejscu.',
   );
 
-  /// The free allowance, stated per template: `FREE_SERVER_LIMIT` is 20 for
-  /// four templates, while a family server is charged to `familyFreeV1` with
-  /// a limit of one per owner and never to the 20-server allowance.
+  /// Every created/owned Server consumes the same 5-Free / 30-Premium
+  /// allowance. Memberships never consume it. A family retains its additional
+  /// one-per-owner type constraint inside that shared owned-Server boundary.
   String get serverCreationAllowanceBody => text(
-    'You can create up to 20 servers for free.',
-    'Możesz bezpłatnie utworzyć do 20 serwerów.',
+    'Own up to 5 Servers on Free or 30 on Premium. Joining is unlimited.',
+    'Możesz mieć 5 własnych serwerów bezpłatnie lub 30 w Premium. Dołączasz bez limitu.',
   );
   String get serverCreationFamilyAllowanceBody => text(
-    'You can have one family server. It does not count towards your 20 free servers.',
-    'Serwer rodzinny może być tylko jeden. Nie wlicza się do 20 bezpłatnych serwerów.',
+    'You can have one Family Server. It counts towards the same 5-Free or 30-Premium owned limit; joining is unlimited.',
+    'Możesz mieć jeden serwer rodzinny. Wlicza się do limitu 5 własnych serwerów bezpłatnie lub 30 w Premium; dołączasz bez limitu.',
   );
   String get serverInviteIntroTitle =>
       text('Your server is waiting for people', 'Serwer czeka na ludzi');
@@ -543,7 +543,8 @@ extension ServerLocalizedCopy on AppLocalizations {
   );
   String get serverInviteSending => text('Sending…', 'Wysyłanie…');
 
-  /// `not-found` / `unimplemented`: the V1 callables are held.
+  /// The Servers backend is missing or its runtime rollout is not available
+  /// to this account yet.
   String get serverActionUnavailable => text(
     'This part of YO Voice is still being prepared.',
     'Ta część YO Voice jest jeszcze przygotowywana.',

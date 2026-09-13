@@ -90,21 +90,21 @@ emulatorTest("parallel duplicate requests commit one graph; changed payload reus
   await rejection(service.createServerV1(request(service.uid, { ...data, name: "Changed payload" })), "already-exists");
 });
 
-emulatorTest("twentieth free allocation is atomic under parallel creation and seed rooms cost no extra slots", async () => {
+emulatorTest("fifth free allocation is atomic under parallel creation and seed rooms cost no extra slots", async () => {
   const service = await fixture();
-  for (let index = 0; index < 19; index += 1) await db.doc(`clubs/quota-${service.uid}-${index}`).set({
+  for (let index = 0; index < 4; index += 1) await db.doc(`clubs/quota-${service.uid}-${index}`).set({
     ownerId: service.uid, serverSchemaVersion: 1, entitlementPolicyId: "freeServersV1", status: "preparing",
   });
   const outcomes = await Promise.allSettled([1, 2].map(() => service.createServerV1(request(service.uid, input()))));
   assert.equal(outcomes.filter((outcome) => outcome.status === "fulfilled").length, 1);
   assert.equal(outcomes.find((outcome) => outcome.status === "rejected").reason.code, "resource-exhausted");
   const owned = await db.collection("clubs").where("ownerId", "==", service.uid).get();
-  assert.equal(owned.size, 20);
+  assert.equal(owned.size, 5);
 });
 
 emulatorTest("existing ordinary rooms share free capacity; legacy paid clubs do not become free-server paywalls", async () => {
   const service = await fixture();
-  const roomIds = Array.from({ length: 19 }, (_, index) => `ordinary-${service.uid}-${index}`);
+  const roomIds = Array.from({ length: 4 }, (_, index) => `ordinary-${service.uid}-${index}`);
   await Promise.all(roomIds.map((id) => db.doc(`rooms/${id}`).set({ hostId: service.uid, status: "active", roomType: "community" })));
   await db.doc(`privateRoomHostGuards/${service.uid}`).set({ schemaVersion: 2, ownerId: service.uid, activeRoomIds: roomIds, capacityLocked: false });
   await db.doc(`clubs/paid-${service.uid}`).set({ ownerId: service.uid, type: "community", status: "active", entitlementPolicyId: "legacyCommunityPremiumV1" });

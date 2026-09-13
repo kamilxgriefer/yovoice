@@ -173,8 +173,8 @@ class _PremiumLockedDestination extends StatelessWidget {
       PremiumFeature.creatorAccount => (
         copy.text('Creator', 'Twórca'),
         copy.text(
-          'A Premium identity is required to turn this profile into a Creator profile.',
-          'Aby zmienić ten profil w profil twórcy, potrzebujesz tożsamości Premium.',
+          'Premium unlocks Creator mode. Age confirmation and opt-in are required before people can Follow this profile.',
+          'Premium odblokowuje tryb twórcy. Zanim inni będą mogli obserwować ten profil, potrzebne są potwierdzenie wieku i zgoda.',
         ),
       ),
       PremiumFeature.creatorStudio => (

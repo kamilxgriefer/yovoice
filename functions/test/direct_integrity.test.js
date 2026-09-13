@@ -29,6 +29,9 @@ const {
   createTrustedGcsMediaProbe,
   sniffTrustedMediaHeader,
 } = require("../reels/probe");
+const {
+  cleanupPremiumMessagingPrivacyForDeletedUser,
+} = require("../messaging/privacy_cleanup");
 
 const db = getFirestore();
 const A = "dmi-alice";
@@ -109,6 +112,10 @@ async function reset() {
     ...USERS.map((uid) => db.doc(`users/${uid}`).delete()),
     ...USERS.map((uid) => db.doc(`publicProfiles/${uid}`).delete()),
     ...USERS.map((uid) => db.doc(`restrictions/${uid}`).delete()),
+    ...USERS.map((uid) => db.doc(`entitlements/${uid}`).delete()),
+    ...USERS.map((uid) => db.doc(`directPrivacyPreferences/${uid}`).delete()),
+    deleteQuery(db.collection("directPrivateReadStates")),
+    deleteQuery(db.collection("directConversationUnreadStates")),
     ...conversationIds.map(async (id) => {
       const ref = db.doc(`conversations/${id}`);
       if (typeof db.recursiveDelete === "function") await db.recursiveDelete(ref);
@@ -2076,6 +2083,353 @@ test("read receipts advance in bounded server cursors and reactions are actor-ow
     })),
     (error) => error.code === "invalid-argument",
   );
+});
+
+test("Premium messaging privacy is exact, paid, idempotent and concurrency-safe", async () => {
+  const service = directService();
+  await assert.rejects(
+    service.setPremiumMessagingPrivacyV1(request(B, {
+      preference: "hideReadReceipts",
+      enabled: true,
+      requestId: "privacy-free01",
+    })),
+    (error) => error.code === "failed-precondition",
+  );
+  assert.equal((await db.doc(`directPrivacyPreferences/${B}`).get()).exists, false);
+  await db.doc(`entitlements/${B}`).set({
+    isPremium: true,
+    status: "active",
+    currentPeriodEnd: Timestamp.fromMillis(nowMs + 60_000),
+  });
+
+  const readRequest = request(B, {
+    preference: "hideReadReceipts",
+    enabled: true,
+    requestId: "privacy-read01",
+  });
+  const enabled = await service.setPremiumMessagingPrivacyV1(readRequest);
+  assert.deepEqual(
+    await service.setPremiumMessagingPrivacyV1(readRequest),
+    enabled,
+  );
+  await Promise.all([
+    service.setPremiumMessagingPrivacyV1(request(B, {
+      preference: "hideReadReceipts",
+      enabled: false,
+      requestId: "privacy-read02",
+    })),
+    service.setPremiumMessagingPrivacyV1(request(B, {
+      preference: "hideTyping",
+      enabled: true,
+      requestId: "privacy-type01",
+    })),
+  ]);
+  assert.deepEqual(
+    (await db.doc(`directPrivacyPreferences/${B}`).get()).data(),
+    {
+      schemaVersion: 1,
+      ownerId: B,
+      hideReadReceipts: false,
+      hideTyping: true,
+      updatedAt: Timestamp.fromMillis(nowMs),
+    },
+  );
+
+  await db.doc(`entitlements/${B}`).update({
+    currentPeriodEnd: Timestamp.fromMillis(nowMs),
+    isPremium: false,
+    status: "expired",
+  });
+  await service.setPremiumMessagingPrivacyV1(request(B, {
+    preference: "hideTyping",
+    enabled: false,
+    requestId: "privacy-type02",
+  }));
+  assert.equal(
+    (await db.doc(`directPrivacyPreferences/${B}`).get()).data().hideTyping,
+    false,
+  );
+  await assert.rejects(
+    service.setPremiumMessagingPrivacyV1(request(B, {
+      preference: "hideTyping",
+      enabled: false,
+      requestId: "privacy-extra1",
+      ownerId: A,
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+
+  await db.doc(`directPrivacyPreferences/${B}`).delete();
+  await db.doc(`users/${B}`).update({
+    disabled: true,
+    authDeletedAt: Timestamp.fromMillis(nowMs),
+  });
+  await assert.rejects(
+    service.setPremiumMessagingPrivacyV1(request(B, {
+      preference: "hideReadReceipts",
+      enabled: false,
+      requestId: "privacy-deleted-off",
+    })),
+    (error) => error.code === "permission-denied",
+  );
+  assert.equal(
+    (await db.doc(`directPrivacyPreferences/${B}`).get()).exists,
+    false,
+  );
+});
+
+test("incognito clears unread without receipts and never reveals its interval later", async () => {
+  const service = directService({}, { readPageSize: 2 });
+  const { conversationId } = await open(service);
+  const hiddenMessages = [];
+  for (let index = 0; index < 3; index += 1) {
+    hiddenMessages.push(await service.sendDirectMessage(request(A, {
+      conversationId,
+      requestId: `privacy-send0${index}`,
+      text: `hidden read ${index}`,
+    })));
+  }
+  await db.doc(`entitlements/${B}`).set({
+    isPremium: true,
+    status: "active",
+    currentPeriodEnd: Timestamp.fromMillis(nowMs + 60_000),
+  });
+  await service.setPremiumMessagingPrivacyV1(request(B, {
+    preference: "hideReadReceipts",
+    enabled: true,
+    requestId: "privacy-onread",
+  }));
+  const peerVisibleRootBeforeHiddenRead =
+    (await db.doc(`conversations/${conversationId}`).get()).data();
+  const hidden = await service.markDirectConversationRead(request(B, {
+    conversationId,
+    requestId: "privacy-read03",
+  }));
+  assert.deepEqual(
+    {
+      completed: hidden.completed,
+      markedCount: hidden.markedCount,
+      readReceiptHidden: hidden.readReceiptHidden,
+    },
+    { completed: true, markedCount: 0, readReceiptHidden: true },
+  );
+  let root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.deepEqual(root, peerVisibleRootBeforeHiddenRead);
+  assert.equal(root.unreadCounts[B], 3);
+  assert.equal(root.readSequences[B], 0);
+  for (const sent of hiddenMessages) {
+    assert.deepEqual(
+      (await db.doc(
+        `conversations/${conversationId}/messages/${sent.messageId}`,
+      ).get()).data().readBy,
+      [A],
+    );
+  }
+
+  const ownMessage = await service.sendDirectMessage(request(B, {
+    conversationId,
+    requestId: "privacy-send04",
+    text: "sent after a hidden read",
+  }));
+  root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.equal(
+    root.unreadCounts[B],
+    peerVisibleRootBeforeHiddenRead.unreadCounts[B],
+  );
+
+  await service.setPremiumMessagingPrivacyV1(request(B, {
+    preference: "hideReadReceipts",
+    enabled: false,
+    requestId: "privacy-offread",
+  }));
+  const visibleMessage = await service.sendDirectMessage(request(A, {
+    conversationId,
+    requestId: "privacy-send05",
+    text: "visible read",
+  }));
+  const rootAfterVisibleMessage =
+    (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.equal(rootAfterVisibleMessage.unreadCounts[B], 4);
+  const visible = await service.markDirectConversationRead(request(B, {
+    conversationId,
+    requestId: "privacy-read05",
+  }));
+  assert.equal(visible.completed, true);
+  assert.equal(visible.markedCount, 1);
+  assert.equal(visible.readReceiptHidden, false);
+  for (const sent of hiddenMessages) {
+    assert.deepEqual(
+      (await db.doc(
+        `conversations/${conversationId}/messages/${sent.messageId}`,
+      ).get()).data().readBy,
+      [A],
+    );
+  }
+  assert.deepEqual(
+    (await db.doc(
+      `conversations/${conversationId}/messages/${ownMessage.messageId}`,
+    ).get()).data().readBy,
+    [B],
+  );
+  assert.deepEqual(
+    (await db.doc(
+      `conversations/${conversationId}/messages/${visibleMessage.messageId}`,
+    ).get()).data().readBy.sort(),
+    [A, B],
+  );
+  root = (await db.doc(`conversations/${conversationId}`).get()).data();
+  assert.deepEqual(root, rootAfterVisibleMessage);
+  assert.equal(root.readSequences[B], 0);
+  assert.equal(root.unreadCounts[B], 4);
+  const privateStates = await db.collection("directPrivateReadStates")
+    .where("ownerId", "==", B)
+    .where("conversationId", "==", conversationId)
+    .get();
+  assert.equal(privateStates.size, 1);
+  assert.equal(privateStates.docs[0].data().hiddenThroughSequence, 3);
+  assert.equal(privateStates.docs[0].data().processedThroughSequence, 5);
+  const privateUnreadStates = await db
+    .collection("directConversationUnreadStates")
+    .where("ownerId", "==", B)
+    .where("conversationId", "==", conversationId)
+    .get();
+  assert.equal(privateUnreadStates.size, 1);
+  assert.equal(privateUnreadStates.docs[0].data().unreadCount, 0);
+});
+
+test("hidden typing is server-enforced, clears stale state and expires closed", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  await service.setDirectTyping(request(B, {
+    conversationId,
+    isTyping: true,
+    requestId: "privacy-typing1",
+  }));
+  await db.doc(`entitlements/${B}`).set({
+    isPremium: true,
+    status: "active",
+    currentPeriodEnd: Timestamp.fromMillis(nowMs + 60_000),
+  });
+  await service.setPremiumMessagingPrivacyV1(request(B, {
+    preference: "hideTyping",
+    enabled: true,
+    requestId: "privacy-type03",
+  }));
+  const suppressed = await service.setDirectTyping(request(B, {
+    conversationId,
+    isTyping: true,
+    requestId: "privacy-typing2",
+  }));
+  assert.equal(suppressed.isTyping, false);
+  assert.equal(suppressed.suppressed, true);
+  assert.equal(
+    B in (await db.doc(`conversations/${conversationId}`).get()).data().typing,
+    false,
+  );
+
+  await db.doc(`entitlements/${B}`).update({
+    isPremium: false,
+    status: "expired",
+    currentPeriodEnd: Timestamp.fromMillis(nowMs),
+  });
+  const expired = await service.setDirectTyping(request(B, {
+    conversationId,
+    isTyping: true,
+    requestId: "privacy-typing3",
+  }));
+  assert.equal(expired.isTyping, true);
+  assert.equal(expired.suppressed, false);
+  assert.equal(
+    (await db.doc(`conversations/${conversationId}`).get())
+      .data().typing[B].isTyping,
+    true,
+  );
+});
+
+test("malformed paid privacy fails safe without trusting malformed fields", async () => {
+  const service = directService();
+  const { conversationId } = await open(service);
+  await db.doc(`entitlements/${B}`).set({
+    isPremium: true,
+    status: "active",
+    currentPeriodEnd: Timestamp.fromMillis(nowMs + 60_000),
+  });
+  await db.doc(`directPrivacyPreferences/${B}`).set({
+    schemaVersion: 1,
+    ownerId: A,
+    hideReadReceipts: false,
+    hideTyping: false,
+    updatedAt: Timestamp.fromMillis(nowMs),
+  });
+  const result = await service.setDirectTyping(request(B, {
+    conversationId,
+    isTyping: true,
+    requestId: "privacy-malform",
+  }));
+  assert.equal(result.isTyping, false);
+  assert.deepEqual(
+    (await db.doc(`conversations/${conversationId}`).get()).data().typing,
+    {},
+  );
+  const read = await service.markDirectConversationRead(request(B, {
+    conversationId,
+    requestId: "privacy-malread",
+  }));
+  assert.equal(read.readReceiptHidden, true);
+});
+
+test("Auth deletion erases Premium messaging privacy in bounded retries", async () => {
+  await db.doc(`directPrivacyPreferences/${A}`).set({ ownerId: A });
+  for (const collectionName of [
+    "directPrivateReadStates",
+    "directConversationUnreadStates",
+  ]) {
+    for (let index = 0; index < 3; index += 1) {
+      await db.doc(`${collectionName}/${collectionName}-${index}`).set({
+        ownerId: A,
+      });
+    }
+    await db.doc(`${collectionName}/peer-state`).set({ ownerId: B });
+  }
+
+  await assert.rejects(
+    cleanupPremiumMessagingPrivacyForDeletedUser(A, {
+      database: db,
+      pageSize: 2,
+      maxPages: 1,
+    }),
+    (error) => error.code === "cleanup-incomplete",
+  );
+  assert.equal(
+    (await db.doc(`directPrivacyPreferences/${A}`).get()).exists,
+    false,
+  );
+  for (const collectionName of [
+    "directPrivateReadStates",
+    "directConversationUnreadStates",
+  ]) {
+    const remainingOwner = await db.collection(collectionName)
+      .where("ownerId", "==", A)
+      .get();
+    assert.equal(remainingOwner.size, 1);
+  }
+
+  await cleanupPremiumMessagingPrivacyForDeletedUser(A, {
+    database: db,
+    pageSize: 2,
+    maxPages: 2,
+  });
+  for (const collectionName of [
+    "directPrivateReadStates",
+    "directConversationUnreadStates",
+  ]) {
+    const [owner, peer] = await Promise.all([
+      db.collection(collectionName).where("ownerId", "==", A).get(),
+      db.collection(collectionName).where("ownerId", "==", B).get(),
+    ]);
+    assert.equal(owner.empty, true);
+    assert.equal(peer.size, 1);
+  }
 });
 
 test("counter overflow fails without a message write", async () => {

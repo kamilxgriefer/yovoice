@@ -4,7 +4,8 @@ const {
   boundedLegacyRoomQuery, isActiveOrdinaryRoom, validatedGuardRoomIds,
 } = require("../rooms/capacity_contract");
 const { isVersionedServer } = require("../utils/server_access");
-const { FREE_SERVER_LIMIT } = require("./contract");
+const { paidPremiumIsActive } = require("../utils/premium_access");
+const { FREE_SERVER_LIMIT, PREMIUM_SERVER_LIMIT } = require("./contract");
 
 /**
  * Allocation provenance, never a user-editable subscription setting. A V1
@@ -15,32 +16,45 @@ const { FREE_SERVER_LIMIT } = require("./contract");
 const ALLOCATION_POLICIES = Object.freeze([
   "freeServersV1", "legacyRoomV1", "familyFreeV1", "legacyCommunityPremiumV1",
 ]);
-// Charged to the free allowance. A family keeps its one-per-owner reservation
-// and a retained paid Club keeps the Premium allowance instead.
+// Charged to the shared owned-server allowance. Its effective boundary is 5
+// for an ordinary account and 30 for a time-valid paid Premium entitlement.
+// Family roots are counted through their separate canonical query below while
+// also keeping their one-per-owner reservation. A retained paid Club keeps the
+// separate legacy Club allowance instead.
 const FREE_ALLOCATION_POLICIES = Object.freeze(["freeServersV1", "legacyRoomV1"]);
 const FAMILY_SERVER_LIMIT = 1;
-// Free-policy roots are factory-created inside the bounded free allowance, so
+// Free-policy roots are factory-created inside the bounded owned allowance, so
 // a legacy owned-Club scan that has to skip more than this is corrupt data,
 // not a legitimate account. It fails closed instead of scanning further.
-const MAX_SKIPPED_FREE_ROOTS = 5 * FREE_SERVER_LIMIT;
+const MAX_SKIPPED_FREE_ROOTS = 5 * PREMIUM_SERVER_LIMIT;
 const COUNTED_SERVER_STATUSES = Object.freeze(["active", "preparing"]);
 
-function capacityDenied() {
-  throw new HttpsError("resource-exhausted", `You can keep up to ${FREE_SERVER_LIMIT} free server allocations.`, {
-    reason: "server-capacity-reached", limit: FREE_SERVER_LIMIT,
+function capacityDenied(state) {
+  const limit = state?.free?.limit;
+  if (!Number.isSafeInteger(limit) || ![FREE_SERVER_LIMIT, PREMIUM_SERVER_LIMIT].includes(limit)) {
+    fail("data-loss", "The server allocation limit needs reconciliation.");
+  }
+  throw new HttpsError("resource-exhausted", `You can own up to ${limit} server allocations.`, {
+    reason: "server-capacity-reached", limit,
   });
+}
+
+function effectiveOwnedServerLimit(entitlement, now = new Date()) {
+  return paidPremiumIsActive(entitlement, now)
+    ? PREMIUM_SERVER_LIMIT
+    : FREE_SERVER_LIMIT;
 }
 
 /**
  * The ONE mismatch that is reconciled instead of refused: the earliest
  * `createServerV1` stamped the community policy on a family root, so exactly
  * `serverSchemaVersion: 1` + `type: "family"` + `freeServersV1` is read as the
- * family allocation it always was. The pair is unambiguous — a family is
- * charged to its own one-per-owner policy and never to the free allowance —
- * and without this adapter every allocation path for that owner fails closed
- * permanently. V1 was never deployed, so only development and pre-activation
- * data can carry it. It is deliberately NOT a default: any other policy, type
- * or schema version still fails closed.
+ * family allocation it always was. The pair is unambiguous — a family keeps
+ * its own one-per-owner policy and also consumes the shared owned-server
+ * allowance — and without this adapter every allocation path for that owner
+ * fails closed permanently. V1 was never deployed, so only development and
+ * pre-activation data can carry it. It is deliberately NOT a default: any
+ * other policy, type or schema version still fails closed.
  */
 function isLegacyFamilyPolicyPair(data) {
   return data.serverSchemaVersion === 1 && data.type === "family" &&
@@ -106,8 +120,8 @@ async function readOwnerRooms({ db, transaction, uid, roomState }) {
     );
     return { snapshots, locked: false };
   }
-  const legacy = await transaction.get(boundedLegacyRoomQuery(db, uid, FREE_SERVER_LIMIT));
-  return { snapshots: legacy.docs, locked: legacy.size > FREE_SERVER_LIMIT };
+  const legacy = await transaction.get(boundedLegacyRoomQuery(db, uid, PREMIUM_SERVER_LIMIT));
+  return { snapshots: legacy.docs, locked: legacy.size > PREMIUM_SERVER_LIMIT };
 }
 
 /**
@@ -117,24 +131,36 @@ async function readOwnerRooms({ db, transaction, uid, roomState }) {
  * rewritten; only `requireFreeServerCapacity` and the family check refuse an
  * additional allocation. Malformed data still fails closed.
  *
- * `freeServersV1` and `legacyRoomV1` share the free allowance. A standalone
- * room keeps the same allocation identity before and after adoption, so it is
- * never counted twice and cannot vanish from the allowance by acquiring
- * `clubId`. Families and retained paid Clubs are never charged to it.
+ * `freeServersV1`, `legacyRoomV1` and the separately queried family roots
+ * share the owned-server allowance. A standalone room keeps the same
+ * allocation identity before and after adoption, so it is never counted twice
+ * and cannot vanish from the allowance by acquiring `clubId`. Retained paid
+ * Clubs keep their separate legacy Club allowance.
  */
-async function readOwnerAllocations({ db, transaction, uid }) {
+async function readOwnerAllocations({ db, transaction, uid, now = new Date() }) {
   const guards = await readServerOwnerGuards({ db, transaction, uid });
-  const roomState = validatedGuardRoomIds(guards.roomGuard, uid, FREE_SERVER_LIMIT);
+  // `entitlements/{uid}` is exclusively server-authored. Reading it inside
+  // the same transaction makes an expiry, renewal or revocation conflict with
+  // a racing create/transfer instead of trusting a profile mirror or request
+  // claim. Staff preview is deliberately not a paid allocation entitlement.
+  const entitlementSnapshot = await transaction.get(db.doc(`entitlements/${uid}`));
+  const entitlement = entitlementSnapshot.exists ? (entitlementSnapshot.data() ?? {}) : null;
+  const effectiveLimit = effectiveOwnedServerLimit(entitlement, now);
+  // Existing guards written under the former 20-server allowance remain
+  // readable. Over-limit owners keep every root and simply cannot add another;
+  // a later valid Premium entitlement can raise their effective limit without
+  // requiring destructive reconciliation.
+  const roomState = validatedGuardRoomIds(guards.roomGuard, uid, PREMIUM_SERVER_LIMIT);
   const [serverSnapshot, familySnapshot, rooms] = await Promise.all([
     transaction.get(db.collection("clubs")
       .where("ownerId", "==", uid)
       .where("entitlementPolicyId", "in", FREE_ALLOCATION_POLICIES)
       .where("status", "in", COUNTED_SERVER_STATUSES)
-      .limit(FREE_SERVER_LIMIT + 1)),
+      .limit(PREMIUM_SERVER_LIMIT + 1)),
     transaction.get(db.collection("clubs")
       .where("ownerId", "==", uid)
       .where("type", "==", "family")
-      .limit(FAMILY_SERVER_LIMIT + 1)),
+      .limit(PREMIUM_SERVER_LIMIT + 1)),
     readOwnerRooms({ db, transaction, uid, roomState }),
   ]);
 
@@ -158,8 +184,8 @@ async function readOwnerAllocations({ db, transaction, uid }) {
       allocations.add(`server:${snapshot.id}`);
     } else if (policy === "familyFreeV1") {
       // The reconciled legacy V1 family pair: its policy FIELD matches this
-      // exact query, but a family is charged by the canonical family count
-      // below, never to the free allowance.
+      // exact query, but the canonical family query below accounts for it once
+      // in both the total owned-server count and the one-family reservation.
       continue;
     } else {
       fail("data-loss", "A free allocation needs reconciliation.");
@@ -182,7 +208,7 @@ async function readOwnerAllocations({ db, transaction, uid }) {
   }
   activeRoomIds = [...new Set(activeRoomIds)].sort();
   if (roomState?.capacityLocked) activeRoomIds = roomState.activeRoomIds;
-  else if (rooms.locked) activeRoomIds = activeRoomIds.slice(0, FREE_SERVER_LIMIT);
+  else if (rooms.locked) activeRoomIds = activeRoomIds.slice(0, PREMIUM_SERVER_LIMIT);
 
   let familyCount = 0;
   for (const snapshot of familySnapshot.docs) {
@@ -198,8 +224,10 @@ async function readOwnerAllocations({ db, transaction, uid }) {
       freeServersV1, legacyRoomV1: allocations.size - freeServersV1, familyFreeV1: familyCount,
     },
     free: {
-      count: allocations.size, limit: FREE_SERVER_LIMIT,
-      exhaustive: serverSnapshot.size <= FREE_SERVER_LIMIT, locked: rooms.locked,
+      count: allocations.size + familyCount, limit: effectiveLimit,
+      exhaustive: serverSnapshot.size <= PREMIUM_SERVER_LIMIT &&
+        familySnapshot.size <= PREMIUM_SERVER_LIMIT,
+      locked: rooms.locked,
     },
     family: { count: familyCount, limit: FAMILY_SERVER_LIMIT },
     rooms: { locked: rooms.locked },
@@ -254,7 +282,7 @@ function hasFamilyServerCapacity(state) {
 }
 
 function requireFreeServerCapacity(state) {
-  if (!hasFreeServerCapacity(state)) capacityDenied();
+  if (!hasFreeServerCapacity(state)) capacityDenied(state);
 }
 
 function writeOwnerGuards(transaction, state, uid, now) {
@@ -279,7 +307,7 @@ function writeCapacityGuards(transaction, state, uid, now) {
 
 module.exports = {
   ALLOCATION_POLICIES, FAMILY_SERVER_LIMIT, FREE_ALLOCATION_POLICIES, MAX_SKIPPED_FREE_ROOTS,
-  classifyServerAllocation, hasFamilyServerCapacity, hasFreeServerCapacity,
+  classifyServerAllocation, effectiveOwnedServerLimit, hasFamilyServerCapacity, hasFreeServerCapacity,
   readOwnerAllocations, readPremiumClubAllocations, readServerOwnerGuards,
   requireFreeServerCapacity, writeCapacityGuards, writeOwnerGuards,
   // Retained name for in-flight importers; identical to readOwnerAllocations.

@@ -1,12 +1,12 @@
 // Local-only visual preview of the approved Home / Servers / YO Moments
-// redesign. It combines the Server selector with the shared Voice/Reels
+// redesign. It combines the Server directory with the shared Voice/Yeels
 // destination and the server-first Home surface.
 //
 // No sign-in, no network, no writes: every surface is fed by in-memory
 // fixtures through the same injection seams the redesign tests use
 // (fake_cloud_firestore + firebase_auth_mocks + the services' constructor
 // seams), so the real widgets can be rendered on a Simulator without an
-// account. Reel footage is a still stand-in (the same approach as
+// account. Yeel footage is a still stand-in (the same approach as
 // test/reels_immersive_redesign_test.dart); the Voice player is a simulated
 // clock that advances progress without producing audio.
 //
@@ -15,7 +15,7 @@
 // Optional launch configuration (all have runtime toggles in the dock's
 // More sheet / the desktop rail's More item):
 //   --dart-define=YO_PREVIEW_STATE=populated|empty|loading|error|denied
-//   --dart-define=YO_PREVIEW_TAB=home|moments|reels
+//   --dart-define=YO_PREVIEW_TAB=home|servers|chats|friends|voice|yeels
 //   --dart-define=YO_PREVIEW_LOCALE=pl|en
 //   --dart-define=YO_PREVIEW_THEME=system|dark|pearl
 //   --dart-define=YO_PREVIEW_TEXT=100|200
@@ -39,6 +39,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -61,6 +62,9 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
+import 'package:yovoice/features/media/data/models/gif_asset.dart';
+import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
+import 'package:yovoice/features/media/data/services/gif_transport.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
@@ -78,10 +82,12 @@ import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
 import 'package:yovoice/features/servers/data/models/server_creation.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/features/servers/presentation/screens/create_server_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/firebase_options.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
@@ -133,8 +139,9 @@ class _Config {
       ),
       bigText: text == '200',
       longNames: longNames,
-      initialTab: tab == 'home' ? 0 : _momentsSlot,
-      initialReels: tab == 'reels',
+      initialTab: _previewTabForName(tab),
+      // Keep `reels` as a launch-only compatibility alias for old scripts.
+      initialReels: tab == 'yeels' || tab == 'reels',
     );
   }
 
@@ -166,12 +173,21 @@ class _Config {
   );
 }
 
-/// The preview keeps the dock's historical numeric slot while rendering the
-/// current public destination: Home, Servers, Chats and YO Moments.
+/// These are the same retained content identities as production MainShell.
+/// Friends has no dock item but remains reachable from Home, Chats and the
+/// fixture controls.
 const _chatsSlot = 1;
 const _friendsSlot = 2;
-const _serversSlot = 3;
 const _momentsSlot = 5;
+const _serversSlot = 13;
+
+int _previewTabForName(String name) => switch (name) {
+  'servers' => _serversSlot,
+  'chats' => _chatsSlot,
+  'friends' => _friendsSlot,
+  'voice' || 'moments' || 'yeels' || 'reels' => _momentsSlot,
+  _ => 0,
+};
 
 /// Callbacks the real screens fire (join room, open chat, record...) are
 /// reported here instead of navigating, so a tap is visibly acknowledged and
@@ -227,6 +243,283 @@ Widget buildRedesignPreviewForTesting() {
   _reelsRequest.value = config.initialReels;
   return const _PreviewApp(initial: config);
 }
+
+@visibleForTesting
+Widget buildRedesignPreviewChatsForTesting() {
+  const config = _Config(
+    state: _State.populated,
+    polish: false,
+    theme: _Theme.dark,
+    bigText: false,
+    longNames: false,
+    initialTab: _chatsSlot,
+    initialReels: false,
+  );
+  _tabRequest.value = config.initialTab;
+  _reelsRequest.value = config.initialReels;
+  return const _PreviewApp(initial: config);
+}
+
+@visibleForTesting
+GifCatalogService buildRedesignPreviewGifServiceForTesting() =>
+    _newPreviewGifService();
+
+GifCatalogService _newPreviewGifService() => GifCatalogService(
+  transport: const _PreviewGifTransport(),
+  debounce: Duration.zero,
+);
+
+const List<GifAsset> _previewGifAssets = <GifAsset>[
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoLove01',
+    title: 'Sending love',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoLove01.gif',
+    url: 'asset://yovoice/gifs/yoLove01.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoLol001',
+    title: 'Laughing out loud',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoLol001.gif',
+    url: 'asset://yovoice/gifs/yoLol001.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoWow001',
+    title: 'Wow',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoWow001.gif',
+    url: 'asset://yovoice/gifs/yoWow001.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoYes001',
+    title: 'Absolutely yes',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoYes001.gif',
+    url: 'asset://yovoice/gifs/yoYes001.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoNo0001',
+    title: 'Hard no',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoNo0001.gif',
+    url: 'asset://yovoice/gifs/yoNo0001.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoHey001',
+    title: 'Hey there',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoHey001.gif',
+    url: 'asset://yovoice/gifs/yoHey001.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoThx001',
+    title: 'Thank you',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoThx001.gif',
+    url: 'asset://yovoice/gifs/yoThx001.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoClap01',
+    title: 'Bravo',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoClap01.gif',
+    url: 'asset://yovoice/gifs/yoClap01.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoParty1',
+    title: 'Party time',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoParty1.gif',
+    url: 'asset://yovoice/gifs/yoParty1.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoHug001',
+    title: 'Big hug',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoHug001.gif',
+    url: 'asset://yovoice/gifs/yoHug001.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoFire01',
+    title: 'That is fire',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoFire01.gif',
+    url: 'asset://yovoice/gifs/yoFire01.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoCool01',
+    title: 'So cool',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoCool01.gif',
+    url: 'asset://yovoice/gifs/yoCool01.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoMorn01',
+    title: 'Good morning',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoMorn01.gif',
+    url: 'asset://yovoice/gifs/yoMorn01.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoNight1',
+    title: 'Good night',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoNight1.gif',
+    url: 'asset://yovoice/gifs/yoNight1.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoMic001',
+    title: 'On air',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoMic001.gif',
+    url: 'asset://yovoice/gifs/yoMic001.gif',
+    width: 320,
+    height: 200,
+  ),
+  GifAsset(
+    provider: 'yovoice',
+    id: 'yoWin001',
+    title: 'We won',
+    rating: 'g',
+    previewUrl: 'asset://yovoice/gifs/yoWin001.gif',
+    url: 'asset://yovoice/gifs/yoWin001.gif',
+    width: 320,
+    height: 200,
+  ),
+];
+
+const Map<String, String> _previewGifTags = <String, String>{
+  'yoLove01': 'love heart milosc miłość serce kocham',
+  'yoLol001': 'lol laugh funny smiech śmiech zabawne',
+  'yoWow001': 'wow amazing surprise super zaskoczenie',
+  'yoYes001': 'yes tak agree zgoda jasne',
+  'yoNo0001': 'no nope nie disagree odmowa',
+  'yoHey001': 'hey hello hi czesc cześć witaj',
+  'yoThx001': 'thanks thank you dzieki dzięki dziekuje dziękuję',
+  'yoClap01': 'bravo clap applause brawa gratulacje',
+  'yoParty1': 'party dance celebrate impreza taniec swieto święto',
+  'yoHug001': 'hug care przytul usciski uściski',
+  'yoFire01': 'fire hot cool ogien ogień sztos',
+  'yoCool01': 'cool great super swietne świetne',
+  'yoMorn01': 'morning hello dzien dzień dobry rano',
+  'yoNight1': 'night sleep dobranoc noc spanie',
+  'yoMic001': 'voice mic microphone live glos głos mikrofon',
+  'yoWin001': 'win success celebrate wygrana sukces',
+};
+
+class _PreviewGifTransport implements GifTransport {
+  const _PreviewGifTransport();
+
+  @override
+  Future<GifCatalog> catalog() async => const GifCatalog(
+    available: true,
+    reason: null,
+    provider: 'yovoice',
+    attribution: GifAttribution(text: 'YO Voice Originals', required: false),
+    categories: <String>['love', 'lol', 'wow', 'party', 'thanks'],
+    pageSize: 24,
+    minimumQueryLength: 2,
+    ratingLabel: 'g',
+  );
+
+  @override
+  Future<GifSearchPage> search({
+    required String query,
+    required String locale,
+    String? cursor,
+    int? limit,
+  }) async {
+    final terms = query
+        .trim()
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((term) => term.isNotEmpty);
+    final matching = _previewGifAssets
+        .where((asset) {
+          final searchable = '${asset.title} ${_previewGifTags[asset.id] ?? ''}'
+              .toLowerCase();
+          return terms.every(searchable.contains);
+        })
+        .toList(growable: false);
+    final start = int.tryParse(cursor ?? '0') ?? 0;
+    final safeStart = start.clamp(0, matching.length);
+    final size = limit ?? 24;
+    final items = matching.skip(safeStart).take(size).toList(growable: false);
+    final consumed = safeStart + items.length;
+    return GifSearchPage(
+      items: items,
+      nextCursor: consumed < matching.length ? '$consumed' : null,
+      degraded: false,
+      cacheHit: true,
+      attribution: const GifAttribution(
+        text: 'YO Voice Originals',
+        required: false,
+      ),
+    );
+  }
+
+  @override
+  Future<void> report({
+    required String provider,
+    required String gifId,
+    required String reason,
+    String note = '',
+    String? contextPath,
+  }) async {}
+}
+
+Future<Object?> _previewGifMessageInvoker(
+  String callable,
+  Map<String, Object?> payload,
+) async => <String, Object?>{
+  'messageId': 'preview-${payload['requestId'] ?? 'gif'}',
+  if (payload['conversationId'] case final String conversationId)
+    'conversationId': conversationId,
+};
 
 // ---------------------------------------------------------------------------
 // Home fixtures — mirrors test/home_redesign_test.dart.
@@ -302,7 +595,29 @@ class _Rooms extends RoomService {
 }
 
 class _Friends extends FriendService {
-  _Friends(this.fixture) : super(firestore: fixture.db, auth: fixture.auth);
+  _Friends(this.fixture)
+    : super(
+        firestore: fixture.db,
+        auth: fixture.auth,
+        mutationInvoker: (name, data) async {
+          if (name != 'sendFriendRequest') return <String, dynamic>{};
+          final targetUserId = data['targetUserId'];
+          if (targetUserId is! String || targetUserId.trim().isEmpty) {
+            throw ArgumentError('Invalid preview friend mutation.');
+          }
+          await fixture.db
+              .collection('users')
+              .doc(targetUserId.trim())
+              .collection('friendRequests')
+              .doc(_me)
+              .set(<String, Object?>{
+                'senderId': _me,
+                'status': 'pending',
+                'createdAt': Timestamp.now(),
+              });
+          return <String, dynamic>{'outcome': 'requested'};
+        },
+      );
   final _HomeFixture fixture;
   @override
   Stream<List<FriendUser>> watchFriends() => fixture.friends.stream;
@@ -461,6 +776,7 @@ class _HomeFixture {
   late final creatorAudienceService = CreatorAudienceService(firestore: db);
   late final feedService = _HomeFeed(this);
   late final messageService = _Messages(this);
+  late final gifService = _newPreviewGifService();
   late final profileService = ProfileService(firestore: db, auth: auth);
   late final presenceService = PresenceService(auth: auth, firestore: db);
   late final profileMediaService = ProfileMediaService(
@@ -468,7 +784,11 @@ class _HomeFixture {
     invoker: (callable, request) async =>
         throw StateError('Preview has no media callable ($callable).'),
   );
-  late final clubService = ClubService(firestore: db, auth: auth);
+  late final clubService = ClubService(
+    firestore: db,
+    auth: auth,
+    storage: MockFirebaseStorage(),
+  );
   late final clubChatService = ClubChatService(firestore: db, auth: auth);
   late final Future<void> ready;
   Timer? _failure;
@@ -744,6 +1064,7 @@ class _HomeFixture {
   Widget home({
     required bool desktop,
     required ValueListenable<bool> visible,
+    required ServerRepository serverRepository,
   }) => desktop
       ? DesktopHome(
           key: const ValueKey('redesign-home'),
@@ -770,6 +1091,7 @@ class _HomeFixture {
           messageService: messageService,
           clubService: clubService,
           clubChatService: clubChatService,
+          serverRepository: serverRepository,
           firebaseAuth: auth,
           capabilityService: _Capabilities(),
           presenceService: presenceService,
@@ -800,6 +1122,7 @@ class _HomeFixture {
           profileMediaService: profileMediaService,
           feedService: feedService,
           messageService: messageService,
+          serverRepository: serverRepository,
           capabilityService: _Capabilities(),
           presenceService: presenceService,
           isVisible: visible,
@@ -807,6 +1130,7 @@ class _HomeFixture {
 
   Future<void> dispose() async {
     _failure?.cancel();
+    gifService.dispose();
     await Future.wait([
       rooms.close(),
       owned.close(),
@@ -1415,11 +1739,66 @@ Widget _still(BuildContext context, Uri mediaUri, Reel reel) {
 // App + shell
 // ---------------------------------------------------------------------------
 
-/// Local creation authority for the live preview. It exercises the production
-/// selector and configuration widgets without contacting Firebase or creating
-/// real data. The remaining [ServerRepository] members are deliberately
-/// unreachable from this creation-only surface.
-class _PreviewServerCreationRepository implements ServerRepository {
+/// Replayable local Server authority for the live preview. Home, the Server
+/// directory and the creation flow all read the same list, so the desktop and
+/// mobile compositions exercise the production hierarchy without contacting
+/// Firebase.
+class _PreviewServerRepository implements ServerRepository {
+  _PreviewServerRepository({required _State state, required bool longNames}) {
+    _items = <Server>[
+      Server(
+        id: 'preview-friends',
+        name: longNames
+            ? 'Weekendowa ekipa od rozmów, planów i wspólnych wyjazdów'
+            : 'Weekendowa ekipa',
+        description: 'Głos, tekst i plany w jednym miejscu.',
+        ownerId: _me,
+        type: ServerType.friends,
+        privacy: ServerPrivacy.inviteOnly,
+        defaultLanguage: 'Polish',
+        memberCount: 8,
+        defaultChannelId: 'general',
+        defaultVoiceChannelId: 'lounge',
+        schemaVersion: 1,
+        templateVersion: 1,
+        activationState: 'active',
+      ),
+      Server(
+        id: 'preview-podcast',
+        name: longNames ? 'Studio głosu i rozmów bez skrótów' : 'Studio głosu',
+        description: 'Odcinki, pytania słuchaczy i rozmowy na żywo.',
+        ownerId: _me,
+        type: ServerType.podcast,
+        privacy: ServerPrivacy.public,
+        defaultLanguage: 'Polish',
+        memberCount: 126,
+        defaultChannelId: 'episodes',
+        defaultVoiceChannelId: 'studio',
+        schemaVersion: 1,
+        templateVersion: 1,
+        activationState: 'active',
+      ),
+    ];
+    switch (state) {
+      case _State.populated:
+        _servers.add(List<Server>.unmodifiable(_items));
+      case _State.empty:
+        _items.clear();
+        _servers.add(const <Server>[]);
+      case _State.loading:
+        break;
+      case _State.error:
+        _servers.fail(
+          'unavailable',
+          recovery: List<Server>.unmodifiable(_items),
+        );
+      case _State.denied:
+        _servers.fail('permission-denied', recovery: const <Server>[]);
+    }
+  }
+
+  final _Source<List<Server>> _servers = _Source<List<Server>>();
+  late final List<Server> _items;
   final Map<ServerType, ServerCreationRequest> _pending = {};
   var _sequence = 0;
 
@@ -1428,6 +1807,9 @@ class _PreviewServerCreationRepository implements ServerRepository {
 
   @override
   String newRequestId() => 'preview-server-${++_sequence}';
+
+  @override
+  Stream<List<Server>> watchMyServers() => _servers.stream;
 
   @override
   Future<ServerCreationRequest?> pendingCreation(ServerType type) async =>
@@ -1449,13 +1831,34 @@ class _PreviewServerCreationRepository implements ServerRepository {
   Future<ServerCreationResult> createServer(
     ServerCreationRequest request,
   ) async {
-    return ServerCreationResult(
+    final result = ServerCreationResult(
       serverId: 'preview-${request.serverType.name}',
       defaultChannelId: 'general',
       channelIds: const ['general'],
       alreadyExisted: false,
     );
+    _items.removeWhere((server) => server.id == result.serverId);
+    _items.add(
+      Server(
+        id: result.serverId,
+        name: request.name,
+        description: request.description,
+        ownerId: _me,
+        type: request.serverType,
+        privacy: request.privacy,
+        defaultLanguage: request.defaultLanguage,
+        memberCount: 1,
+        defaultChannelId: result.defaultChannelId,
+        schemaVersion: 1,
+        templateVersion: 1,
+        activationState: 'active',
+      ),
+    );
+    _servers.add(List<Server>.unmodifiable(_items));
+    return result;
   }
+
+  Future<void> dispose() => _servers.close();
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -1467,7 +1870,10 @@ class _Fixtures {
       home = _HomeFixture(state: config.state, longNames: config.longNames),
       voice = _VoiceFixture(state: config.state, longNames: config.longNames),
       reels = _ReelsFixture(state: config.state),
-      servers = _PreviewServerCreationRepository() {
+      servers = _PreviewServerRepository(
+        state: config.state,
+        longNames: config.longNames,
+      ) {
     // Static caches keyed by uid / reel id would otherwise bleed the previous
     // fixture set into this one.
     ProfileService.resetCurrentProfileCache();
@@ -1478,11 +1884,10 @@ class _Fixtures {
   final _HomeFixture home;
   final _VoiceFixture voice;
   final _ReelsFixture reels;
-  final _PreviewServerCreationRepository servers;
+  final _PreviewServerRepository servers;
 
   Future<void> dispose() async {
-    await home.dispose();
-    await voice.dispose();
+    await Future.wait([home.dispose(), voice.dispose(), servers.dispose()]);
   }
 }
 
@@ -1507,6 +1912,12 @@ class _PreviewAppState extends State<_PreviewApp> {
         _fixtures = _Fixtures(next);
       }
     });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_fixtures.dispose());
+    super.dispose();
   }
 
   @override
@@ -1658,17 +2069,34 @@ class _ShellState extends State<_Shell> {
       return IndexedStack(
         index: _stackIndex,
         children: [
-          f.home.home(desktop: desktop, visible: _homeVisible),
-          CreateServerScreen(
+          f.home.home(
+            desktop: desktop,
+            visible: _homeVisible,
+            serverRepository: f.servers,
+          ),
+          ServersScreen(
             repository: f.servers,
             isRootTab: true,
-            onCreated: (result) => _report('server-created:${result.serverId}'),
+            onOpenServer: (server) => _report('server:${server.id}'),
+            onCreateServer: () => unawaited(
+              Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) => CreateServerScreen(
+                    repository: f.servers,
+                    onCreated: (result) =>
+                        _report('server-created:${result.serverId}'),
+                  ),
+                ),
+              ),
+            ),
           ),
           MessagesScreen(
             messageService: f.home.messageService,
             friendService: f.home.friendService,
             auth: f.home.auth,
             onFindFriends: () => _select(_friendsSlot),
+            gifService: f.home.gifService,
+            gifMessageInvoker: _previewGifMessageInvoker,
           ),
           FriendsScreen(
             isRootTab: true,
@@ -1695,7 +2123,6 @@ class _ShellState extends State<_Shell> {
             auth: f.voice.auth,
             friendService: f.home.friendService,
             followService: f.home.followService,
-            creatorAudienceService: f.home.creatorAudienceService,
             playerFactory: f.voice.newPlayer,
             onOpenDetail: (moment) => _report('moment-detail:${moment.id}'),
             reelService: f.reels.service,
@@ -1866,6 +2293,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
             const SizedBox(height: 6),
             Wrap(
               spacing: 6,
+              runSpacing: 6,
               children: [
                 ChoiceChip(
                   label: const Text('Polski'),
@@ -1903,6 +2331,27 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     Navigator.of(context).pop();
                   },
                   child: const Text('Home'),
+                ),
+                OutlinedButton(
+                  onPressed: () {
+                    widget.onSelectTab(_serversSlot);
+                    Navigator.of(context).pop();
+                  },
+                  child: const Text('Servers'),
+                ),
+                OutlinedButton(
+                  onPressed: () {
+                    widget.onSelectTab(_chatsSlot);
+                    Navigator.of(context).pop();
+                  },
+                  child: const Text('Chats'),
+                ),
+                OutlinedButton(
+                  onPressed: () {
+                    widget.onSelectTab(_friendsSlot);
+                    Navigator.of(context).pop();
+                  },
+                  child: const Text('Friends'),
                 ),
                 OutlinedButton(
                   onPressed: () {

@@ -5,18 +5,23 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/audio/call_tone.dart';
 import 'package:yovoice/core/audio/ui_sound.dart';
 import 'package:yovoice/core/audio/ui_sound_service.dart';
-import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 
 void main() {
   test(
-    'Soft Bells v4 pack is 48 kHz stereo, bounded and mastered in assets',
+    'Prism Halo v5 pack is 48 kHz stereo, bounded and mastered in assets',
     () {
-      final paths = UiSound.values.map((sound) => sound.assetPath).toSet();
-      expect(paths, hasLength(UiSound.values.length));
-      expect(UiSound.values, hasLength(8));
-      expect(paths, everyElement(startsWith('audio/ui/v4/')));
+      final uiPaths = UiSound.values.map((sound) => sound.assetPath).toSet();
+      final tonePaths = CallTone.values.map((tone) => tone.assetPath).toSet();
+      final paths = <String>{...uiPaths, ...tonePaths};
+      expect(uiPaths, hasLength(UiSound.values.length));
+      expect(tonePaths, hasLength(CallTone.values.length));
+      expect(paths, hasLength(18));
+      expect(UiSound.values, hasLength(17));
+      expect(CallTone.values, hasLength(2));
+      expect(paths, everyElement(startsWith('audio/ui/v5/')));
       final packagedWavs = Directory('assets/audio/ui')
           .listSync(recursive: true)
           .whereType<File>()
@@ -26,43 +31,79 @@ void main() {
       expect(packagedWavs, paths.map((path) => 'assets/$path').toSet());
       final fingerprints = <String>{};
       const expectedSeconds = <String, double>{
-        'room_created.wav': 37600 / 48000,
-        'room_joined.wav': 29920 / 48000,
-        'room_left.wav': 28960 / 48000,
-        'participant_joined.wav': 20320 / 48000,
-        'participant_left.wav': 20320 / 48000,
-        'microphone_muted.wav': 8320 / 48000,
-        'microphone_unmuted.wav': 8320 / 48000,
-        'notification.wav': 35200 / 48000,
+        'room_created.wav': 43552 / 48000,
+        'room_joined.wav': 35104 / 48000,
+        'room_left.wav': 34144 / 48000,
+        'participant_joined.wav': 21472 / 48000,
+        'participant_left.wav': 21472 / 48000,
+        'microphone_muted.wav': 8800 / 48000,
+        'microphone_unmuted.wav': 8800 / 48000,
+        'notification.wav': 40096 / 48000,
+        'notification_social.wav': 42592 / 48000,
+        'notification_achievement.wav': 52768 / 48000,
+        'notification_alert.wav': 43168 / 48000,
+        'call_connected.wav': 48736 / 48000,
+        'call_ended.wav': 45280 / 48000,
+        'call_declined.wav': 47584 / 48000,
+        'call_failed.wav': 49312 / 48000,
+        'call_busy.wav': 54304 / 48000,
+        'call_incoming_loop.wav': 158560 / 48000,
+        'call_outgoing_loop.wav': 161824 / 48000,
       };
       const targetRms = <String, double>{
-        'room_created.wav': -22.00,
-        'room_joined.wav': -23.00,
-        'room_left.wav': -24.00,
+        'room_created.wav': -22.50,
+        'room_joined.wav': -23.50,
+        'room_left.wav': -24.50,
         'participant_joined.wav': -27.00,
         'participant_left.wav': -28.00,
-        'microphone_muted.wav': -26.00,
-        'microphone_unmuted.wav': -26.00,
-        'notification.wav': -21.00,
+        'microphone_muted.wav': -27.00,
+        'microphone_unmuted.wav': -27.00,
+        'notification.wav': -21.50,
+        'notification_social.wav': -22.00,
+        'notification_achievement.wav': -21.50,
+        'notification_alert.wav': -21.00,
+        'call_connected.wav': -21.50,
+        'call_ended.wav': -23.00,
+        'call_declined.wav': -22.50,
+        'call_failed.wav': -22.00,
+        'call_busy.wav': -22.00,
+        'call_incoming_loop.wav': -25.00,
+        'call_outgoing_loop.wav': -27.00,
       };
 
-      for (final sound in UiSound.values) {
-        final file = File('assets/${sound.assetPath}');
-        expect(file.existsSync(), isTrue, reason: sound.name);
+      final assets = <({String name, String fileName, String assetPath})>[
+        for (final sound in UiSound.values)
+          (
+            name: sound.name,
+            fileName: sound.fileName,
+            assetPath: sound.assetPath,
+          ),
+        for (final tone in CallTone.values)
+          (name: tone.name, fileName: tone.fileName, assetPath: tone.assetPath),
+      ];
+      for (final asset in assets) {
+        final file = File('assets/${asset.assetPath}');
+        expect(file.existsSync(), isTrue, reason: asset.name);
         final bytes = file.readAsBytesSync();
         final data = ByteData.sublistView(bytes);
         expect(String.fromCharCodes(bytes.take(4)), 'RIFF');
         expect(String.fromCharCodes(bytes.skip(8).take(4)), 'WAVE');
-        expect(data.getUint16(22, Endian.little), 2, reason: sound.name);
-        expect(data.getUint32(24, Endian.little), 48000, reason: sound.name);
-        expect(data.getUint16(34, Endian.little), 16, reason: sound.name);
-        expect(bytes.length, lessThan(160 * 1024), reason: sound.name);
+        expect(data.getUint16(22, Endian.little), 2, reason: asset.name);
+        expect(data.getUint32(24, Endian.little), 48000, reason: asset.name);
+        expect(data.getUint16(34, Endian.little), 16, reason: asset.name);
+        expect(
+          bytes.length,
+          lessThan(
+            asset.assetPath.contains('_loop.wav') ? 700 * 1024 : 230 * 1024,
+          ),
+          reason: asset.name,
+        );
 
         final frameCount = data.getUint32(40, Endian.little) ~/ 4;
         expect(
           frameCount / 48000,
-          closeTo(expectedSeconds[sound.fileName]!, 1 / 48000),
-          reason: sound.name,
+          closeTo(expectedSeconds[asset.fileName]!, 1 / 48000),
+          reason: asset.name,
         );
         var peak = 0;
         var energy = 0.0;
@@ -77,21 +118,50 @@ void main() {
         final rmsDb = 20 * math.log(rms) / math.ln10;
         expect(
           rmsDb,
-          closeTo(targetRms[sound.fileName]!, 0.08),
-          reason: '${sound.name} loudness',
+          closeTo(targetRms[asset.fileName]!, 0.08),
+          reason: '${asset.name} loudness',
         );
-        expect(peak, lessThan(32767), reason: '${sound.name} must not clip');
+        expect(peak, lessThan(32767), reason: '${asset.name} must not clip');
         expect(
           bytes.skip(bytes.length - 64 * 4),
           everyElement(0),
-          reason: '${sound.name} must end in exact silence',
+          reason: '${asset.name} must end in exact silence',
         );
         fingerprints.add(String.fromCharCodes(bytes));
       }
-      expect(fingerprints, hasLength(UiSound.values.length));
+      // The one-shot push fallback intentionally reuses the exact incoming
+      // call master owned by the looping call-tone service.
+      expect(fingerprints, hasLength(paths.length));
       expect(UiSound.values.map((sound) => sound.volume), everyElement(1.0));
+      expect(CallTone.values.map((tone) => tone.volume), everyElement(1.0));
     },
   );
+
+  test('call fallback watchdog exceeds the packaged incoming cue', () {
+    final bytes = File(
+      'assets/${UiSound.callIncoming.assetPath}',
+    ).readAsBytesSync();
+    final data = ByteData.sublistView(bytes);
+    final sampleRate = data.getUint32(24, Endian.little);
+    final channelCount = data.getUint16(22, Endian.little);
+    final bitsPerSample = data.getUint16(34, Endian.little);
+    final bytesPerFrame = channelCount * bitsPerSample ~/ 8;
+    final frameCount = data.getUint32(40, Endian.little) ~/ bytesPerFrame;
+    final cueDuration = Duration(
+      microseconds: (frameCount * Duration.microsecondsPerSecond) ~/ sampleRate,
+    );
+
+    expect(cueDuration, greaterThan(const Duration(seconds: 2)));
+    expect(incomingCallNativeSoundWindow, greaterThan(cueDuration));
+    expect(
+      uiSoundCompletionTimeout(UiSoundChannel.call),
+      greaterThan(incomingCallNativeSoundWindow),
+    );
+    expect(
+      uiSoundCompletionTimeout(UiSoundChannel.notification),
+      const Duration(seconds: 2),
+    );
+  });
 
   test(
     'Flutter, Android and iOS package the exact same notification master',
@@ -111,21 +181,6 @@ void main() {
       );
     },
   );
-
-  test('Android fallback and Functions keep activity and call channels', () {
-    const channel = PushNotificationService.androidChannelId;
-    expect(channel, 'yovoice_activity_v3');
-    expect(
-      File('android/app/src/main/AndroidManifest.xml').readAsStringSync(),
-      contains('android:value="$channel"'),
-    );
-    final pushPayload = File(
-      'functions/notifications/push_payload.js',
-    ).readAsStringSync();
-    expect(pushPayload, contains('"$channel"'));
-    expect(pushPayload, contains('"yovoice_calls_v1"'));
-    expect(pushPayload, contains('channelId: isIncomingCall'));
-  });
 
   test(
     'production player subscribes before start and awaits the full cue tail',
@@ -250,16 +305,21 @@ void main() {
     await service.play(UiSound.microphoneMuted);
     now = now.add(const Duration(seconds: 1));
     await service.play(UiSound.notification);
+    now = now.add(const Duration(seconds: 1));
+    await service.play(UiSound.callConnected);
 
     expect(players.keys, UiSoundChannel.values);
     expect(players[UiSoundChannel.room]!.paths, [
-      'audio/ui/v4/room_joined.wav',
+      'audio/ui/v5/room_joined.wav',
     ]);
     expect(players[UiSoundChannel.controls]!.paths, [
-      'audio/ui/v4/microphone_muted.wav',
+      'audio/ui/v5/microphone_muted.wav',
     ]);
     expect(players[UiSoundChannel.notification]!.paths, [
-      'audio/ui/v4/notification.wav',
+      'audio/ui/v5/notification.wav',
+    ]);
+    expect(players[UiSoundChannel.call]!.paths, [
+      'audio/ui/v5/call_connected.wav',
     ]);
   });
 

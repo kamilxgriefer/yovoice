@@ -44,9 +44,20 @@ PublicIdentityRepository fakeRepository({
   );
 }
 
-Widget host(Widget child, {double width = 600, ThemeData? theme}) {
+Widget host(
+  Widget child, {
+  double width = 600,
+  ThemeData? theme,
+  double textScale = 1,
+}) {
   return MaterialApp(
     theme: theme,
+    builder: (context, materialChild) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: materialChild!,
+    ),
     home: Scaffold(
       body: Center(
         child: SizedBox(width: width, child: child),
@@ -148,9 +159,7 @@ void main() {
       );
     });
 
-    testWidgets('Pearl account and Premium rail labels retain AA contrast', (
-      tester,
-    ) async {
+    testWidgets('Pearl account rail labels retain AA contrast', (tester) async {
       for (final (accountType, label, expectedSurface) in [
         (AccountType.official, 'Official', AppPalette.light.infoSurface),
         (
@@ -177,22 +186,53 @@ void main() {
           greaterThanOrEqualTo(4.5),
         );
       }
-
-      await tester.pumpWidget(
-        host(
-          const PremiumIdentityChip(compact: true),
-          theme: AppTheme.lightTheme,
-        ),
-      );
-      final premium = tester.widget<Text>(find.text('Premium'));
-      expect(
-        _contrast(
-          premium.style!.color!,
-          AppTheme.lightTheme.colorScheme.primaryContainer,
-        ),
-        greaterThanOrEqualTo(4.5),
-      );
     });
+
+    testWidgets(
+      'Premium identity is a circular violet check in both themes at 200 percent text',
+      (tester) async {
+        for (final theme in [AppTheme.lightTheme, AppTheme.darkTheme]) {
+          await tester.pumpWidget(
+            host(
+              const PremiumIdentityBadge(compact: true),
+              width: 24,
+              theme: theme,
+              textScale: 2,
+            ),
+          );
+
+          final badge = tester.widget<Container>(
+            find.byKey(const ValueKey('premium-identity-badge')),
+          );
+          final decoration = badge.decoration! as BoxDecoration;
+          expect(decoration.shape, BoxShape.circle);
+          expect(decoration.gradient, isA<LinearGradient>());
+          expect((decoration.gradient! as LinearGradient).colors, [
+            AppColors.primary,
+            AppColors.secondary,
+          ]);
+          expect(
+            tester.getSize(
+              find.byKey(const ValueKey('premium-identity-badge')),
+            ),
+            const Size.square(24),
+          );
+          expect(find.text('Premium'), findsNothing);
+
+          final icon = tester.widget<Icon>(find.byIcon(Icons.check_rounded));
+          expect(icon.color, AppColors.white);
+          expect(
+            _contrast(AppColors.white, AppColors.secondary),
+            greaterThanOrEqualTo(3),
+          );
+          expect(
+            find.bySemanticsLabel('YO Voice Premium member'),
+            findsOneWidget,
+          );
+          expect(tester.takeException(), isNull);
+        }
+      },
+    );
 
     testWidgets('an unresolved account still displays USER', (tester) async {
       final repository = fakeRepository(fetch: (_) async => {});

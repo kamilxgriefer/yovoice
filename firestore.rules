@@ -1675,6 +1675,48 @@ service cloud.firestore {
           request.resource.data.updatedAt == request.time;
     }
 
+    function serversV1ActivationConfigHasRulesShape(data) {
+      return data.keys().hasOnly([
+            'schemaVersion', 'callableAccess', 'testerUids',
+            'workersEnabled', 'revision'
+          ]) &&
+          data.keys().hasAll([
+            'schemaVersion', 'callableAccess', 'testerUids',
+            'workersEnabled', 'revision'
+          ]) &&
+          data.schemaVersion == 1 &&
+          data.callableAccess in ['disabled', 'testers', 'all'] &&
+          data.testerUids is list &&
+          data.testerUids.size() <= 100 &&
+          data.testerUids.toSet().size() == data.testerUids.size() &&
+          data.workersEnabled is bool &&
+          data.revision is int &&
+          data.revision >= 1 &&
+          (
+            data.callableAccess == 'testers' ||
+            data.testerUids.size() == 0
+          );
+    }
+
+    // Keep the old seven-write Family bootstrap available only while this
+    // account cannot use Servers V1. As soon as the server-owned rollout
+    // admits the caller, every Family creation must go through createServerV1
+    // so the shared 5/30 ownership guard is serialized with the write. A
+    // activation document with a shape Rules can reject disables the legacy
+    // writer as well. The Admin callable additionally validates every UID.
+    function legacyFamilyCreateCompatibilityAllowed() {
+      let configPath = /databases/$(database)/documents/appConfig/serversV1;
+      return !exists(configPath) ? true :
+          serversV1ActivationConfigHasRulesShape(get(configPath).data) &&
+          (
+            get(configPath).data.callableAccess == 'disabled' ||
+            (
+              get(configPath).data.callableAccess == 'testers' &&
+              !(request.auth.uid in get(configPath).data.testerUids)
+            )
+          );
+    }
+
     function familyClubCreateAllowed(clubId) {
       let data = request.resource.data;
       let ownerMemberPath = /databases/$(database)/documents/clubs/$(clubId)/members/$(request.auth.uid);
@@ -1689,7 +1731,8 @@ service cloud.firestore {
       // malformed/stale reservations require server reconciliation, never a
       // second legacy graph. Existing clients with no reservation keep the
       // exact seven-write bootstrap below.
-      return !exists(
+      return legacyFamilyCreateCompatibilityAllowed() &&
+          !exists(
             /databases/$(database)/documents/serverFamilyOwnerReservations/$(request.auth.uid)
           ) && data.keys().hasOnly([
             'name', 'description', 'ownerId', 'ownerName', 'avatarUrl',
@@ -2961,6 +3004,41 @@ service cloud.firestore {
 
         allow delete: if false;
       }
+    }
+
+    // Premium direct-message privacy. The preference projection contains only
+    // the owner's two switches and is written by setPremiumMessagingPrivacyV1
+    // after checking the time-valid server entitlement. Point-read is enough
+    // for Settings; list access would expose account-level privacy choices and
+    // client writes would turn a paid/server-authoritative control into a
+    // self-granted field.
+    match /directPrivacyPreferences/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    // The incognito cursor deliberately never appears on the participant-
+    // readable conversation root. It lets the backend skip messages already
+    // consumed while hidden and resume receipts only for future reads after
+    // incognito is disabled. Neither the owner nor the peer may observe or
+    // mutate this interval; only Admin SDK transactions use it.
+    match /directPrivateReadStates/{stateId} {
+      allow read, write: if false;
+    }
+
+    // Owner-readable unread projection for conversations that have used
+    // incognito. The participant-readable conversation root deliberately
+    // keeps its unread counter byte-stable during a hidden read; this separate
+    // server-written document lets only the reader's own clients clear their
+    // badge. A list query must constrain ownerId to request.auth.uid, while a
+    // peer cannot point-read or enumerate another account's state.
+    match /directConversationUnreadStates/{stateId} {
+      allow get: if isSignedIn() &&
+          resource.data.ownerId == request.auth.uid;
+      allow list: if isSignedIn() &&
+          resource.data.ownerId == request.auth.uid;
+      allow create, update, delete: if false;
     }
 
     // Trusted subscription state. Written exclusively by Cloud Functions

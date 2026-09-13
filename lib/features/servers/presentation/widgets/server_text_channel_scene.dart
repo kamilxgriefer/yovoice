@@ -2,13 +2,20 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/clubs/data/models/club_chat_authority.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
+import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
+import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
+import 'package:yovoice/features/media/data/services/gif_transport.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_composer_panel.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_gif_send_status.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_text_field.dart';
+import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
@@ -30,6 +37,8 @@ class ServerTextChannelScene extends StatefulWidget {
     required this.channel,
     required this.currentUserId,
     this.chatService,
+    this.gifService,
+    this.gifMessageInvoker,
     this.moderatorIds = const {},
     this.compact = false,
     super.key,
@@ -43,6 +52,8 @@ class ServerTextChannelScene extends StatefulWidget {
 
   /// Test seam; production builds the real service.
   final ClubChatService? chatService;
+  final GifCatalogService? gifService;
+  final GifMessageInvoker? gifMessageInvoker;
 
   /// The ids the server's own member roster returns with moderator power or
   /// above. A badge is drawn for exactly these and for nobody else: the
@@ -65,9 +76,14 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
       _built ??= widget.chatService ?? ClubChatService();
   final _controller = TextEditingController();
   final _focus = FocusNode();
+  late final GifCatalogService _gifService =
+      widget.gifService ??
+      GifCatalogService(transport: FunctionsGifTransport());
+  late GifMessageController _gifDelivery;
   Stream<List<ClubMessage>>? _messages;
   Stream<ClubChatAuthority>? _authority;
   bool _sending = false;
+  YoComposerPanelTab? _composerPanel;
 
   /// How much of the scene the composer (or the read-only notice) may take
   /// before it starts scrolling inside its own band.
@@ -80,12 +96,26 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
   @override
   void initState() {
     super.initState();
+    _gifDelivery = _createGifDelivery();
     _listen();
   }
+
+  GifMessageController _createGifDelivery() => GifMessageController(
+    callable: 'sendClubMessage',
+    target: {'clubId': widget.server.id, 'channelId': widget.channel.id},
+    currentUserId: () => widget.currentUserId,
+    invoke: widget.gifMessageInvoker,
+  );
 
   @override
   void didUpdateWidget(ServerTextChannelScene oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.channel.id != widget.channel.id ||
+        oldWidget.server.id != widget.server.id) {
+      _gifDelivery.dispose();
+      _gifDelivery = _createGifDelivery();
+      _composerPanel = null;
+    }
     if (oldWidget.channel.id != widget.channel.id ||
         oldWidget.server.id != widget.server.id ||
         oldWidget.server.isHeld != widget.server.isHeld) {
@@ -112,9 +142,34 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
 
   @override
   void dispose() {
+    _gifDelivery.dispose();
+    if (widget.gifService == null) _gifService.dispose();
     _controller.dispose();
     _focus.dispose();
     super.dispose();
+  }
+
+  void _toggleComposerPanel() {
+    final opening = _composerPanel == null;
+    setState(() {
+      _composerPanel = opening ? YoComposerPanelTabStore.instance.value : null;
+    });
+    if (opening) {
+      if (!_focus.hasFocus) _focus.requestFocus();
+      unawaited(yoHideSystemKeyboard());
+    } else {
+      _focus.requestFocus();
+    }
+  }
+
+  void _selectComposerTab(YoComposerPanelTab tab) {
+    setState(() => _composerPanel = tab);
+    unawaited(YoComposerPanelTabStore.instance.remember(tab));
+  }
+
+  void _insertEmoji(String emoji) {
+    yoInsertEmojiAtCaret(_controller, emoji);
+    if (!_focus.hasFocus) _focus.requestFocus();
   }
 
   Future<void> _send() async {
@@ -167,17 +222,23 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
         final canWrite = authority.canSendToChannel(
           announcement: _announcement,
         );
-        final foot = canWrite
-            ? _Composer(
+        final foot = Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (canWrite)
+              _Composer(
                 controller: _controller,
                 focusNode: _focus,
                 sending: _sending,
+                panelOpen: _composerPanel != null,
                 hint: copy.serverMessageHint(widget.channel.name),
                 sendLabel: copy.serverSend,
                 onSend: _send,
+                onTogglePanel: _toggleComposerPanel,
                 compact: widget.compact,
               )
-            : Padding(
+            else
+              Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                 child: Text(
                   _announcement
@@ -188,7 +249,43 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
                     color: palette.textSecondary,
                   ),
                 ),
-              );
+              ),
+            YoGifSendStatus(controller: _gifDelivery),
+            if (canWrite && _composerPanel != null)
+              Flexible(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final available = constraints.maxHeight.isFinite
+                        ? constraints.maxHeight
+                        : 260.0;
+                    final panelHeight = available
+                        .clamp(128.0, widget.compact ? 260.0 : 340.0)
+                        .toDouble();
+                    return SingleChildScrollView(
+                      child: YoComposerPanel(
+                        tab: _composerPanel!,
+                        onTabChanged: _selectComposerTab,
+                        onEmojiSelected: _insertEmoji,
+                        onBackspace: () => yoDeleteBackAtCaret(_controller),
+                        gifService: _gifService
+                          ..locale = copy.locale.languageCode,
+                        gifDelivery: _gifDelivery,
+                        onGifSelected: (asset) =>
+                            unawaited(_gifDelivery.send(asset)),
+                        gifAutoLoad:
+                            AppPreferencesScope.maybeOf(
+                              context,
+                            )?.value.gifAutoLoadEnabled ??
+                            true,
+                        compact: widget.compact || available < 300,
+                        height: panelHeight,
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        );
         // The composer — or the read-only sentence standing in for it — is the
         // one part of this scene that cannot shrink, and it is mounted in
         // columns whose height belongs to somebody else (the desktop context
@@ -207,10 +304,14 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
                       ? constraints.maxHeight * _footShare
                       : double.infinity,
                 ),
-                child: SingleChildScrollView(
-                  reverse: true,
-                  child: foot,
-                ),
+                // At large text sizes the closed composer is taller than the
+                // context column's share (notably the 1100 px desktop tier).
+                // Keep its controls reachable by scrolling that fixed footer
+                // band. An open emoji/GIF panel needs the bounded height so
+                // its Flexible child can divide the same band safely.
+                child: _composerPanel == null
+                    ? SingleChildScrollView(reverse: true, child: foot)
+                    : foot,
               ),
             ],
           ),
@@ -345,9 +446,7 @@ class _MessageTile extends StatelessWidget {
                       ),
                       if (isModerator)
                         Container(
-                          key: ValueKey(
-                            'server-moderator-badge-${message.id}',
-                          ),
+                          key: ValueKey('server-moderator-badge-${message.id}'),
                           padding: const EdgeInsets.symmetric(
                             horizontal: 7,
                             vertical: 2,
@@ -368,19 +467,29 @@ class _MessageTile extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    message.isDeleted
-                        ? copy.serverMessageDeleted
-                        : message.content,
-                    style: AppTypography.bodyMedium.copyWith(
-                      color: message.isDeleted
-                          ? palette.textTertiary
-                          : palette.textPrimary,
-                      fontStyle: message.isDeleted
-                          ? FontStyle.italic
-                          : FontStyle.normal,
+                  if (!message.isDeleted && message.gif != null)
+                    YoGifView(
+                      asset: message.gif!,
+                      autoLoad:
+                          AppPreferencesScope.maybeOf(
+                            context,
+                          )?.value.gifAutoLoadEnabled ??
+                          true,
+                    )
+                  else
+                    Text(
+                      message.isDeleted
+                          ? copy.serverMessageDeleted
+                          : message.content,
+                      style: AppTypography.bodyMedium.copyWith(
+                        color: message.isDeleted
+                            ? palette.textTertiary
+                            : palette.textPrimary,
+                        fontStyle: message.isDeleted
+                            ? FontStyle.italic
+                            : FontStyle.normal,
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -396,17 +505,21 @@ class _Composer extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.sending,
+    required this.panelOpen,
     required this.hint,
     required this.sendLabel,
     required this.onSend,
+    required this.onTogglePanel,
     required this.compact,
   });
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool sending;
+  final bool panelOpen;
   final String hint;
   final String sendLabel;
   final VoidCallback onSend;
+  final VoidCallback onTogglePanel;
   final bool compact;
 
   @override
@@ -418,6 +531,13 @@ class _Composer extends StatelessWidget {
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
+        YoEmojiComposerButton(
+          open: panelOpen,
+          onPressed: onTogglePanel,
+          size: 44,
+          iconSize: 20,
+        ),
+        const SizedBox(width: 4),
         Expanded(
           child: YoTextField(
             key: const ValueKey('server-composer'),

@@ -310,20 +310,29 @@ function createServerMembershipService(dependencies) {
       const oldRevision = authorizationRevision(oldAuthorization, auth.uid, access.member) + 1;
       const newRevision = authorizationRevision(newAuthorization, input.newOwnerId, target) + 1;
       if (!validRevision(oldRevision) || !validRevision(newRevision)) fail("data-loss", "Membership revision is exhausted.");
+      // Read the transferred server's bounded media graph before acquiring the
+      // destination owner's contention-sensitive capacity snapshot. Firestore
+      // may abort that owner query as soon as a racing creator changes its
+      // result; issuing further reads after that point can surface the closed
+      // transaction attempt instead of letting the SDK retry the callback.
+      const channels = await readGrantChannels(transaction, access.reference);
+      const roomItems = await readConvergenceBindings({ db, transaction, serverId: input.serverId, server: access.server, channels });
       // Lexical locking prevents opposing concurrent transfers from acquiring
       // overlapping owner locks in inconsistent order.
       const guards = new Map();
       for (const uid of [auth.uid, input.newOwnerId].sort()) guards.set(uid,
         await readServerOwnerGuards({ db, transaction, uid }));
-      // The recipient is charged under the transferred allocation's own policy:
-      // a free or adopted-room server needs free allowance, a family needs the
-      // recipient's family policy and reservation, never the free allowance.
+      // Every transferred Server consumes one slot in the recipient's total
+      // owned-server allowance. A family additionally needs the recipient's
+      // separate one-family policy and reservation.
       const family = access.server.serverType === "family";
       if (family !== (access.server.entitlementPolicyId === "familyFreeV1")) {
         fail("data-loss", "The family allocation policy needs reconciliation.");
       }
-      const targetCapacity = await readOwnerAllocations({ db, transaction, uid: input.newOwnerId });
-      if (!family) requireFreeServerCapacity(targetCapacity);
+      const targetCapacity = await readOwnerAllocations({
+        db, transaction, uid: input.newOwnerId, now,
+      });
+      requireFreeServerCapacity(targetCapacity);
       let oldReservationReference;
       let newReservationReference;
       if (family) {
@@ -338,8 +347,6 @@ function createServerMembershipService(dependencies) {
           fail("resource-exhausted", "The new owner already owns a family server.");
         }
       }
-      const channels = await readGrantChannels(transaction, access.reference);
-      const roomItems = await readConvergenceBindings({ db, transaction, serverId: input.serverId, server: access.server, channels });
       const newRoot = { ...access.server, ownerId: input.newOwnerId, ownerName };
       const formerOwner = { ...access.member, role: "coOwner", authorizationRevision: oldRevision };
       const newOwner = { ...target, role: "owner", authorizationRevision: newRevision };

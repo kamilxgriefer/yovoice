@@ -3,10 +3,10 @@ import 'package:flutter/foundation.dart';
 /// One GIF, as the composer knows it.
 ///
 /// The client mirror of `GifAsset` in `functions/media/gif/normalize.js`. It is
-/// deliberately small and inert: no bytes, no provider knowledge, no HTTP. A
-/// GIF in YO Voice is a provider id, a human label and a URL that points at the
-/// provider's own CDN — never something we host, because GIPHY's terms require
-/// hotlinking and forbid rehosting.
+/// deliberately small: it carries no decoded bytes or transport client. A GIF
+/// is a provider id, a human label and a canonical rendition reference. YO
+/// Voice Originals map to files bundled with the app; remote providers retain
+/// their exact allowlisted CDN reference.
 ///
 /// ## Why the title is not decoration
 ///
@@ -34,9 +34,9 @@ class GifAsset {
     required this.height,
   });
 
-  /// `giphy`, or `fake` in the emulator and in tests. The client never
-  /// branches on this for behaviour — it is carried so a report and a send can
-  /// name the asset unambiguously across providers.
+  /// `yovoice`, `giphy`, or `fake` in the emulator and in tests. It identifies
+  /// the canonical source, lets bundled assets resolve locally, and lets a
+  /// report or send name the asset unambiguously across providers.
   final String provider;
 
   final String id;
@@ -52,7 +52,7 @@ class GifAsset {
   /// The grid thumbnail. May be the same as [url].
   final String previewUrl;
 
-  /// The fixed-height rendition, on the provider's CDN.
+  /// The fixed-height rendition reference: bundled `asset://` or provider CDN.
   ///
   /// Fixed height is the whole reason a chat list does not reflow when the
   /// image lands: the bubble's height is known before a byte is fetched.
@@ -99,13 +99,23 @@ class GifAsset {
     ).hasMatch(id)) {
       return false;
     }
-    final prefix = switch (provider) {
-      'giphy' => 'https://media.giphy.com/media/',
-      'fake' => 'https://fake.invalid/gif/',
+    final expected = switch (provider) {
+      'yovoice' => 'asset://yovoice/gifs/$id.gif',
+      'giphy' => 'https://media.giphy.com/media/$id/200h.gif',
+      'fake' => 'https://fake.invalid/gif/$id/200h.gif',
       _ => null,
     };
-    return prefix != null && url == '$prefix$id/200h.gif';
+    return expected != null && url == expected;
   }
+
+  /// The packaged file behind a first-party YO Voice reaction.
+  ///
+  /// Messages retain the canonical `asset://` identifier while this maps it to
+  /// Flutter's bundle. No sender-controlled path ever reaches [AssetImage]: the
+  /// id grammar and exact URL pin above must both pass first.
+  String? get bundledAssetPath => provider == 'yovoice' && hasPinnedUrl
+      ? 'assets/gifs/yovoice/$id.gif'
+      : null;
 
   /// Parses one wire item, returning `null` for anything malformed.
   ///
@@ -172,7 +182,7 @@ class GifAsset {
 /// different sentence a person reads — and because "unavailable" with no
 /// explanation is exactly the broken-looking state CLAUDE.md forbids.
 enum GifUnavailableReason {
-  /// No provider is configured on the server. This is production today.
+  /// No provider is configured on the server.
   notConfigured,
 
   /// A provider is named but its API key is missing or empty at runtime.

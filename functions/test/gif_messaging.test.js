@@ -24,6 +24,7 @@ const { createGifCache } = require("../media/gif/cache");
 const { createGifModeration } = require("../media/gif/moderation");
 const { createGifFunctions, createGifRuntime } = require("../media/gif/catalog");
 const { createFakeGifProvider } = require("../media/gif/fake_provider");
+const { createYovoiceGifProvider } = require("../media/gif/yovoice_provider");
 const { buildGifAsset } = require("../media/gif/normalize");
 const { gifCdnUrl } = require("../media/gif/gif_ref");
 
@@ -360,6 +361,47 @@ test("catalog-to-message: a picker result sends on all surfaces without resolvin
   const writers = services({ providerName: "fake" });
   for (const surface of SURFACES) {
     await send(surface, payload(surface, { gif: { provider: selected.provider, id: selected.id } }), B, writers);
+  }
+  assert.equal(resolveCalls, 0);
+});
+
+test("YO Voice Originals search and send on every surface without a key or provider request", async () => {
+  let resolveCalls = 0;
+  const provider = createYovoiceGifProvider();
+  const runtime = createGifRuntime({
+    db,
+    now: () => nowMs,
+    log: silentLog,
+    provider: {
+      ...provider,
+      resolve: async () => {
+        resolveCalls += 1;
+        throw new Error("Unexpected resolve");
+      },
+    },
+  });
+  const catalog = createGifFunctions({
+    runtime,
+    providerName: "yovoice",
+    registrars: { onCall: (_options, handler) => handler },
+  });
+  const page = await catalog.searchGifs(request(B, { query: "dziekuje" }));
+  assert.deepEqual(page.items.map((item) => item.id), ["yoThx001"]);
+  assert.equal(page.items[0].url, "asset://yovoice/gifs/yoThx001.gif");
+
+  const selected = page.items[0];
+  const writers = services({ providerName: "yovoice" });
+  for (const surface of SURFACES) {
+    await send(
+      surface,
+      payload(surface, {
+        gif: { provider: selected.provider, id: selected.id },
+      }),
+      B,
+      writers,
+    );
+    const snapshot = await messages(surface).limit(1).get();
+    assert.equal(snapshot.docs[0].data().gif.url, selected.url);
   }
   assert.equal(resolveCalls, 0);
 });

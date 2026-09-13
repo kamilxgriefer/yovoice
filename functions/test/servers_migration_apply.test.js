@@ -613,7 +613,7 @@ emulatorTest("no transient participant became a member of the migrated root", as
   assert.equal((await db.doc(`clubs/${CLEAN}/members/${CROWD}`).get()).exists, false);
 });
 
-emulatorTest("a migrated paid Club never consumes one of the 20 free servers", async () => {
+emulatorTest("a migrated paid Club never consumes one of the five free servers", async () => {
   const allocations = await db.runTransaction((transaction) =>
     readOwnerAllocations({ db, transaction, uid: OWNER }));
   assert.equal(allocations.counts.freeServersV1, 0);

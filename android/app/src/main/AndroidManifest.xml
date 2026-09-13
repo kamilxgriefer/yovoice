@@ -78,7 +78,7 @@
              receives a new id rather than silently reusing stale settings. -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
-            android:value="yovoice_activity_v3" />
+            android:value="yovoice_messages_v1" />
     </application>
 
     <queries>

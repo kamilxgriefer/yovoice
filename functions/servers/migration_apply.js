@@ -40,7 +40,7 @@
  *  - **Entitlements are preserved exactly.** A paid Club keeps
  *    `legacyCommunityPremiumV1`; the post-image is run through the SAME
  *    `classifyServerAllocation` the capacity accounting uses, so a mistake
- *    fails here instead of silently charging someone's 20 free servers.
+ *    fails here instead of silently charging someone's five free servers.
  *  - **Families are excluded (ADR-E).** Not by convention: by
  *    `familyMigrationAllowed()`, which reads the three rules-branch flags that
  *    `clubs/{id}/checkIns`, `clubs/{id}/moments` and `family_moments` Storage

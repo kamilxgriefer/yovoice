@@ -40,7 +40,7 @@ const DEFAULT_FEED_RANKING = Object.freeze({
   // Emitted in the per-request log line so a reported ordering can at least
   // be attributed to a weight set, even though the seed deliberately is not
   // logged (a (viewer, reel) pair is viewing history).
-  version: "feed-ranking-v1",
+  version: "feed-ranking-v2",
   // Stage 1 of the rollout deploys with this false: the new cursor grammar is
   // still emitted and decoded, so the codec is exercised in production while
   // ordering is provably unchanged. Stage 2 flips it on.
@@ -61,6 +61,12 @@ const DEFAULT_FEED_RANKING = Object.freeze({
   W_RECENCY: 1,
   W_ENGAGE: 0.7,
   W_AFFINITY: 0.45,
+  // A paid account gets a modest discovery lift between otherwise comparable
+  // Reels. It is deliberately smaller than recency, engagement and affinity:
+  // Premium improves distribution, but cannot buy eligibility or overwhelm
+  // content quality. The input is resolved from the server-owned entitlement
+  // document by service.js; a missing or expired entitlement contributes 0.
+  W_PREMIUM_AUTHOR: 0.18,
   W_SEEN: 0.6,
   // Deliberately smaller than W_RECENCY: jitter flips near-ties so two opens
   // differ, it cannot lift a three-week-old Reel above a one-hour-old one.
@@ -80,6 +86,7 @@ const WEIGHT_KEYS = Object.freeze([
   "W_RECENCY",
   "W_ENGAGE",
   "W_AFFINITY",
+  "W_PREMIUM_AUTHOR",
   "W_SEEN",
   "W_JITTER",
 ]);
@@ -170,6 +177,10 @@ function seenDecayScore(seenAtMs, nowMs, config) {
   return clamp01(1 - seenAgeHours / config.SEEN_DECAY_HOURS);
 }
 
+function premiumAuthorScore(premiumAuthor) {
+  return premiumAuthor === true ? 1 : 0;
+}
+
 // The per-session shuffle. `digest` is the existing audited SHA-256 helper —
 // no new crypto surface. Domain-separated so a seed can never collide with
 // another digest use of the same strings.
@@ -186,12 +197,14 @@ function scoreCandidate(candidate, { nowMs, seed, config = FEED_RANKING } = {}) 
     config,
   );
   const affinity = affinityScore(candidate?.affinity, config);
+  const premiumAuthor = premiumAuthorScore(candidate?.premiumAuthor);
   const seen = seenDecayScore(candidate?.seenAtMs, nowMs, config);
   const jitter = jitterScore(seed, candidate?.id);
   const score =
     config.W_RECENCY * recency +
     config.W_ENGAGE * engagement +
-    config.W_AFFINITY * affinity -
+    config.W_AFFINITY * affinity +
+    config.W_PREMIUM_AUTHOR * premiumAuthor -
     config.W_SEEN * seen +
     config.W_JITTER * jitter;
   return Number.isFinite(score) ? score : 0;
@@ -304,6 +317,7 @@ module.exports = {
   feedModeFor,
   jitterScore,
   mintFeedSeed,
+  premiumAuthorScore,
   randomFeedSeed,
   rankFeedItems,
   recencyScore,

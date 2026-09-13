@@ -2,6 +2,23 @@ import 'package:cloud_functions/cloud_functions.dart';
 
 import 'server_type.dart';
 
+/// Stable backend reason used when the Servers exports exist but this account
+/// is outside the current runtime rollout. The callable code stays
+/// `failed-precondition` because the request cannot succeed under the current
+/// server configuration; the reason keeps it distinct from product rules such
+/// as the one-family-server limit.
+const serverActivationUnavailableReason = 'servers-v1-not-enabled';
+
+bool isServerActivationUnavailableFailure(Object error) {
+  if (error is! FirebaseFunctionsException ||
+      error.code != 'failed-precondition') {
+    return false;
+  }
+  final details = error.details;
+  return details is Map &&
+      details['reason'] == serverActivationUnavailableReason;
+}
+
 /// Why a creation attempt produced no server, in terms a person can act on.
 ///
 /// A flow that answers every failure with one sentence teaches people that
@@ -15,12 +32,11 @@ import 'server_type.dart';
 /// here, because a refusal that fell through to a generic "try again" would
 /// offer a retry that can never succeed while every field stays locked.
 enum ServerCreationFailure {
-  /// The V1 callables are not registered in this environment.
+  /// The Servers V1 surface is not available to this account yet.
   ///
-  /// `YOVOICE_SERVERS_V1` is absent from `functions/.env`, so `index.js`
-  /// exports no `createServerV1` and the call reaches no endpoint (ADR-176).
-  /// The reviewed factory never raises `not-found` itself, so these three
-  /// codes unambiguously mean "there is no such endpoint here".
+  /// This covers both an older backend without the callable export and the
+  /// source-static backend whose server-owned rollout document is disabled or
+  /// does not include the current account (ADR-176).
   /// **Nothing was created.** Retrying the identical request is safe but
   /// cannot succeed until the gate is opened server-side.
   unavailable,
@@ -99,7 +115,7 @@ enum ServerCreationFailure {
     offline || unknown || signedOut => false,
   };
 
-  /// Whether this is a missing backend rather than a failed attempt.
+  /// Whether the Servers backend is unavailable rather than a failed attempt.
   bool get isBackendMissing => this == unavailable;
 }
 
@@ -118,6 +134,8 @@ ServerCreationFailure classifyServerCreationFailure(Object error) {
       'resource-exhausted' when reason == 'server-capacity-reached' =>
         ServerCreationFailure.capacityReached,
       'invalid-argument' => ServerCreationFailure.rejected,
+      'failed-precondition' when reason == serverActivationUnavailableReason =>
+        ServerCreationFailure.unavailable,
       'failed-precondition' => ServerCreationFailure.precondition,
       'permission-denied' => ServerCreationFailure.denied,
       'data-loss' => ServerCreationFailure.lost,

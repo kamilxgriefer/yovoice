@@ -6,11 +6,14 @@ import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
+import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -63,6 +66,8 @@ class MessagesScreen extends StatefulWidget {
     this.friendService,
     this.auth,
     this.onFindFriends,
+    this.gifService,
+    this.gifMessageInvoker,
     super.key,
   });
 
@@ -73,6 +78,12 @@ class MessagesScreen extends StatefulWidget {
   final MessageService? messageService;
   final FriendService? friendService;
   final FirebaseAuth? auth;
+
+  /// Optional direct-chat GIF seams for local previews and widget tests.
+  /// Production leaves both null, so [ChatScreen] keeps its authoritative
+  /// Cloud Functions catalog and send path.
+  final GifCatalogService? gifService;
+  final GifMessageInvoker? gifMessageInvoker;
 
   /// Opens the shell's retained Friends destination when Chats is one of the
   /// root content slots. Keeping this as a callback lets the app shell switch
@@ -98,6 +109,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
   String _query = '';
   bool _showArchived = false;
   bool _conversationNavigationInFlight = false;
+  final Set<String> _preferenceUpdatesInFlight = <String>{};
 
   @override
   void initState() {
@@ -125,6 +137,20 @@ class _MessagesScreenState extends State<MessagesScreen> {
     }
 
     setState(() => _query = value);
+  }
+
+  bool _beginPreferenceUpdate(String conversationId) {
+    if (_preferenceUpdatesInFlight.contains(conversationId)) return false;
+    setState(() => _preferenceUpdatesInFlight.add(conversationId));
+    return true;
+  }
+
+  void _finishPreferenceUpdate(String conversationId) {
+    if (!mounted) {
+      _preferenceUpdatesInFlight.remove(conversationId);
+      return;
+    }
+    setState(() => _preferenceUpdatesInFlight.remove(conversationId));
   }
 
   Future<void> _openConversation(
@@ -159,6 +185,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
     final otherUserId = conversation.otherUserId(currentUserId);
 
     if (conversation.isArchivedFor(currentUserId)) {
+      if (!_beginPreferenceUpdate(conversation.id)) return;
       try {
         await _messageService.unarchiveConversation(conversation.id);
       } catch (error) {
@@ -179,6 +206,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
             isError: true,
           );
         }
+      } finally {
+        _finishPreferenceUpdate(conversation.id);
       }
     }
 
@@ -201,6 +230,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
           otherProfileUpdatedAt: liveFriend?.profileUpdatedAt,
           messageService: widget.messageService,
           auth: widget.auth,
+          gifService: widget.gifService,
+          gifMessageInvoker: widget.gifMessageInvoker,
         ),
       ),
     );
@@ -233,6 +264,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
             otherProfileUpdatedAt: friend.profileUpdatedAt,
             messageService: widget.messageService,
             auth: widget.auth,
+            gifService: widget.gifService,
+            gifMessageInvoker: widget.gifMessageInvoker,
           ),
         ),
       );
@@ -267,48 +300,54 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   Future<void> _archiveConversation(Conversation conversation) async {
-    try {
-      await _messageService.archiveConversation(conversation.id);
-      if (mounted) {
-        _showMessage(
-          AppLocalizations.of(
-            context,
-          ).text('Conversation archived.', 'Rozmowa została zarchiwizowana.'),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        _showMessage(
-          AppLocalizations.of(context).text(
-            'Could not archive this conversation.',
-            'Nie udało się zarchiwizować tej rozmowy.',
-          ),
-          isError: true,
-        );
-      }
-    }
+    await _updateArchivePreference(conversation, archived: true);
   }
 
   Future<void> _unarchiveConversation(Conversation conversation) async {
+    await _updateArchivePreference(conversation, archived: false);
+  }
+
+  Future<void> _updateArchivePreference(
+    Conversation conversation, {
+    required bool archived,
+  }) async {
+    if (!_beginPreferenceUpdate(conversation.id)) return;
     try {
-      await _messageService.unarchiveConversation(conversation.id);
+      if (archived) {
+        await _messageService.archiveConversation(conversation.id);
+      } else {
+        await _messageService.unarchiveConversation(conversation.id);
+      }
       if (mounted) {
         _showMessage(
-          AppLocalizations.of(
-            context,
-          ).text('Conversation restored.', 'Rozmowa została przywrócona.'),
+          archived
+              ? AppLocalizations.of(context).text(
+                  'Conversation archived.',
+                  'Rozmowa została zarchiwizowana.',
+                )
+              : AppLocalizations.of(context).text(
+                  'Conversation restored.',
+                  'Rozmowa została przywrócona.',
+                ),
         );
       }
     } catch (_) {
       if (mounted) {
         _showMessage(
-          AppLocalizations.of(context).text(
-            'Could not restore this conversation.',
-            'Nie udało się przywrócić tej rozmowy.',
-          ),
+          archived
+              ? AppLocalizations.of(context).text(
+                  'Could not archive this conversation.',
+                  'Nie udało się zarchiwizować tej rozmowy.',
+                )
+              : AppLocalizations.of(context).text(
+                  'Could not restore this conversation.',
+                  'Nie udało się przywrócić tej rozmowy.',
+                ),
           isError: true,
         );
       }
+    } finally {
+      _finishPreferenceUpdate(conversation.id);
     }
   }
 
@@ -570,6 +609,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
                             currentUserId: currentUserId,
                             liveFriend: liveFriend,
                             muted: muted,
+                            preferenceBusy: _preferenceUpdatesInFlight.contains(
+                              conversation.id,
+                            ),
                             service: _messageService,
                             onTap: () => _openConversation(
                               conversation,
@@ -942,6 +984,7 @@ class _ConversationTile extends StatelessWidget {
     required this.currentUserId,
     required this.liveFriend,
     required this.muted,
+    required this.preferenceBusy,
     required this.service,
     required this.onTap,
     required this.onArchive,
@@ -954,6 +997,7 @@ class _ConversationTile extends StatelessWidget {
   final String currentUserId;
   final FriendUser? liveFriend;
   final bool muted;
+  final bool preferenceBusy;
 
   /// The screen's own service, rather than one built inside `build` —
   /// see [_ConversationAvatar].
@@ -985,246 +1029,278 @@ class _ConversationTile extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
     final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    final isUnread = unread > 0;
+    final radius = BorderRadius.circular(18);
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        onLongPress: () => _showActions(context),
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-          decoration: BoxDecoration(
-            color: unread > 0
-                ? colors.primary.withValues(alpha: .09)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: enlargedText
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        _ConversationAvatar(
-                          name: name,
-                          photoUrl: photoUrl,
-                          userId: otherUserId,
-                          mediaRevision: friend?.profileUpdatedAt,
-                          service: service,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 6,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              Text(
-                                _relativeTime(
-                                  context,
-                                  conversation.updatedAt,
-                                  copy,
-                                ),
-                                style: TextStyle(
-                                  color: palette.textSecondary,
-                                  fontSize: 11,
-                                ),
-                              ),
-                              if (muted)
-                                Icon(
-                                  Icons.notifications_off_outlined,
-                                  color: palette.textSecondary,
-                                  size: 18,
-                                ),
-                              if (unread > 0)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 3,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: colors.primary,
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Text(
-                                    unread > 99 ? '99+' : '$unread',
-                                    style: TextStyle(
-                                      color: colors.onPrimary,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => _showActions(context),
-                          tooltip: copy.template(
-                            'Conversation actions for {name}',
-                            'Opcje rozmowy z {name}',
-                            values: {'name': name},
-                          ),
-                          icon: Icon(
-                            Icons.more_horiz_rounded,
-                            color: palette.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 9),
-                    Text(
-                      name,
-                      key: ValueKey(
-                        'conversation-expanded-name-${conversation.id}',
-                      ),
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 15,
-                        fontWeight: unread > 0
-                            ? FontWeight.w900
-                            : FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      preview,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                )
-              : Row(
-                  children: [
-                    _ConversationAvatar(
-                      name: name,
-                      photoUrl: photoUrl,
-                      userId: otherUserId,
-                      mediaRevision: friend?.profileUpdatedAt,
-                      service: service,
-                    ),
-                    const SizedBox(width: 13),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+    return AnimatedContainer(
+      key: ValueKey('conversation-row-${conversation.id}'),
+      duration: AppMotion.resolve(context, AppMotion.standard),
+      curve: Curves.easeOutCubic,
+      decoration: BoxDecoration(
+        color: isUnread ? colors.primaryContainer : Colors.transparent,
+        borderRadius: radius,
+        border: isUnread
+            ? Border.all(color: colors.primary.withValues(alpha: .42))
+            : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: radius,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: preferenceBusy ? null : onTap,
+          onLongPress: preferenceBusy ? null : () => _showActions(context),
+          borderRadius: radius,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            child: enlargedText
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: palette.textPrimary,
-                                    fontSize: 15,
-                                    fontWeight: unread > 0
-                                        ? FontWeight.w900
-                                        : FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                _relativeTime(
-                                  context,
-                                  conversation.updatedAt,
-                                  copy,
-                                ),
-                                style: TextStyle(
-                                  color: unread > 0
-                                      ? palette.focus
-                                      : palette.textTertiary,
-                                  fontSize: 11,
-                                  fontWeight: unread > 0
-                                      ? FontWeight.w800
-                                      : FontWeight.w500,
-                                ),
-                              ),
-                            ],
+                          _ConversationAvatar(
+                            name: name,
+                            photoUrl: photoUrl,
+                            userId: otherUserId,
+                            mediaRevision: friend?.profileUpdatedAt,
+                            service: service,
                           ),
-                          const SizedBox(height: 5),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  preview,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(
+                                  _relativeTime(
+                                    context,
+                                    conversation.updatedAt,
+                                    copy,
+                                  ),
                                   style: TextStyle(
-                                    color: unread > 0
-                                        ? palette.textPrimary
+                                    color: isUnread
+                                        ? colors.onPrimaryContainer
                                         : palette.textSecondary,
-                                    fontSize: 13,
-                                    fontWeight: unread > 0
-                                        ? FontWeight.w700
-                                        : FontWeight.w400,
+                                    fontSize: 11,
+                                    fontWeight: isUnread
+                                        ? FontWeight.w800
+                                        : FontWeight.w500,
                                   ),
                                 ),
-                              ),
-                              if (muted) ...[
-                                const SizedBox(width: 8),
-                                Icon(
-                                  Icons.notifications_off_outlined,
-                                  color: palette.textSecondary,
-                                  size: 16,
-                                ),
-                              ],
-                              if (unread > 0) ...[
-                                const SizedBox(width: 9),
-                                Container(
-                                  constraints: const BoxConstraints(
-                                    minWidth: 20,
-                                    minHeight: 20,
+                                if (muted)
+                                  Icon(
+                                    Icons.notifications_off_outlined,
+                                    color: palette.textSecondary,
+                                    size: 18,
                                   ),
-                                  alignment: Alignment.center,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: colors.primary,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: Text(
-                                    unread > 99 ? '99+' : '$unread',
-                                    style: TextStyle(
-                                      color: colors.onPrimary,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w900,
+                                if (isUnread)
+                                  _UnreadBadge(
+                                    key: ValueKey(
+                                      'conversation-unread-badge-${conversation.id}',
                                     ),
+                                    count: unread,
+                                    enlarged: true,
                                   ),
-                                ),
                               ],
-                            ],
+                            ),
                           ),
+                          _actionsControl(context, name),
                         ],
                       ),
-                    ),
-                    IconButton(
-                      onPressed: () => _showActions(context),
-                      tooltip: copy.template(
-                        'Conversation actions for {name}',
-                        'Opcje rozmowy z {name}',
-                        values: {'name': name},
+                      const SizedBox(height: 9),
+                      Text(
+                        name,
+                        key: ValueKey(
+                          'conversation-expanded-name-${conversation.id}',
+                        ),
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 15,
+                          fontWeight: unread > 0
+                              ? FontWeight.w900
+                              : FontWeight.w700,
+                        ),
                       ),
-                      icon: Icon(
-                        Icons.more_horiz_rounded,
-                        color: palette.textSecondary,
+                      const SizedBox(height: 5),
+                      Text(
+                        preview,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isUnread
+                              ? colors.onPrimaryContainer
+                              : palette.textSecondary,
+                          fontSize: 13,
+                          fontWeight: isUnread
+                              ? FontWeight.w700
+                              : FontWeight.w400,
+                        ),
+                      ),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      _ConversationAvatar(
+                        name: name,
+                        photoUrl: photoUrl,
+                        userId: otherUserId,
+                        mediaRevision: friend?.profileUpdatedAt,
+                        service: service,
+                      ),
+                      const SizedBox(width: 13),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: palette.textPrimary,
+                                      fontSize: 15,
+                                      fontWeight: unread > 0
+                                          ? FontWeight.w900
+                                          : FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _relativeTime(
+                                    context,
+                                    conversation.updatedAt,
+                                    copy,
+                                  ),
+                                  style: TextStyle(
+                                    color: unread > 0
+                                        ? palette.focus
+                                        : palette.textTertiary,
+                                    fontSize: 11,
+                                    fontWeight: unread > 0
+                                        ? FontWeight.w800
+                                        : FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 5),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    preview,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: unread > 0
+                                          ? palette.textPrimary
+                                          : palette.textSecondary,
+                                      fontSize: 13,
+                                      fontWeight: unread > 0
+                                          ? FontWeight.w700
+                                          : FontWeight.w400,
+                                    ),
+                                  ),
+                                ),
+                                if (muted) ...[
+                                  const SizedBox(width: 8),
+                                  Icon(
+                                    Icons.notifications_off_outlined,
+                                    color: palette.textSecondary,
+                                    size: 16,
+                                  ),
+                                ],
+                                if (isUnread) ...[
+                                  const SizedBox(width: 9),
+                                  _UnreadBadge(
+                                    key: ValueKey(
+                                      'conversation-unread-badge-${conversation.id}',
+                                    ),
+                                    count: unread,
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      _actionsControl(context, name),
+                    ],
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _actionsControl(BuildContext context, String name) {
+    final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
+    if (!preferenceBusy) {
+      return IconButton(
+        onPressed: () => _showActions(context),
+        tooltip: copy.template(
+          'Conversation actions for {name}',
+          'Opcje rozmowy z {name}',
+          values: {'name': name},
+        ),
+        icon: Icon(Icons.more_horiz_rounded, color: palette.textSecondary),
+      );
+    }
+
+    final label = _archived
+        ? copy.text('Restoring conversation', 'Przywracanie rozmowy z archiwum')
+        : copy.text('Archiving conversation', 'Archiwizowanie rozmowy');
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return Semantics(
+      key: ValueKey('conversation-preference-busy-${conversation.id}'),
+      container: true,
+      liveRegion: true,
+      button: true,
+      enabled: false,
+      label: label,
+      child: ExcludeSemantics(
+        child: Tooltip(
+          message: label,
+          excludeFromSemantics: true,
+          child: SizedBox.square(
+            dimension: 48,
+            child: Center(
+              child: reduceMotion
+                  ? Icon(
+                      Icons.hourglass_top_rounded,
+                      key: ValueKey(
+                        'conversation-preference-static-${conversation.id}',
+                      ),
+                      color: palette.interactiveForeground,
+                      size: 20,
+                    )
+                  : SizedBox.square(
+                      key: ValueKey(
+                        'conversation-preference-progress-${conversation.id}',
+                      ),
+                      dimension: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: palette.interactiveForeground,
                       ),
                     ),
-                  ],
-                ),
+            ),
+          ),
         ),
       ),
     );
   }
 
   Future<void> _showActions(BuildContext context) async {
+    if (preferenceBusy) return;
+    var preferenceSubmitted = false;
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -1242,6 +1318,8 @@ class _ConversationTile extends StatelessWidget {
             onToggleMute();
           },
           onArchive: () {
+            if (preferenceSubmitted) return;
+            preferenceSubmitted = true;
             Navigator.pop(sheetContext);
             if (_archived) {
               onUnarchive();
@@ -1284,6 +1362,45 @@ class _ConversationTile extends StatelessWidget {
       return localizations.narrowWeekdays[date.weekday % 7];
     }
     return copy.text('${date.day}/${date.month}', '${date.day}.${date.month}');
+  }
+}
+
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.count, this.enlarged = false, super.key});
+
+  final int count;
+  final bool enlarged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
+
+    return Semantics(
+      label: copy.unreadMessages(count),
+      child: ExcludeSemantics(
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+          alignment: Alignment.center,
+          padding: EdgeInsets.symmetric(
+            horizontal: enlarged ? 8 : 6,
+            vertical: enlarged ? 3 : 2,
+          ),
+          decoration: BoxDecoration(
+            color: colors.primary,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            count > 99 ? '99+' : '$count',
+            style: TextStyle(
+              color: colors.onPrimary,
+              fontSize: enlarged ? 11 : 10,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

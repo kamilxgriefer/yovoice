@@ -11,7 +11,8 @@ const {
 
 const SERVER_SCHEMA_VERSION = 1;
 const TEMPLATE_VERSION = 1;
-const FREE_SERVER_LIMIT = 20;
+const FREE_SERVER_LIMIT = 5;
+const PREMIUM_SERVER_LIMIT = 30;
 const MAX_SERVER_CHANNELS = 100;
 const MAX_ACCESS_SUBJECTS = 100;
 const SERVER_TYPES = Object.freeze([
@@ -202,7 +203,7 @@ function revision(value, label = "revision") {
 }
 
 module.exports = {
-  CHANNEL_KINDS, CHANNEL_LIVENESS_VERSION, FREE_SERVER_LIMIT, MAX_ACCESS_SUBJECTS,
+  CHANNEL_KINDS, CHANNEL_LIVENESS_VERSION, FREE_SERVER_LIMIT, PREMIUM_SERVER_LIMIT, MAX_ACCESS_SUBJECTS,
   MAX_SERVER_CHANNELS, MEDIA_KINDS, ROLE_POWER, ROLES, SERVER_INVITE_TTL_MS, SERVER_SCHEMA_VERSION,
   SERVER_TYPES, TEMPLATE_VERSION, accessPolicy, canonicalChannelId, canonicalChannelRoomId,
   canonicalLiveKitRoomName, canonicalServerId, categoryId, channelCreationInput,

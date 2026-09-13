@@ -42,6 +42,13 @@ class CreatorAudienceUpdate {
   final bool changed;
 }
 
+class CreatorAgeConfirmation {
+  const CreatorAgeConfirmation({required this.verified, required this.changed});
+
+  final bool verified;
+  final bool changed;
+}
+
 class CreatorAudienceProjection {
   const CreatorAudienceProjection({
     required this.visible,
@@ -179,6 +186,67 @@ class CreatorAudienceService {
         visible: visible,
         changed: changed,
       );
+    } on FirebaseFunctionsException catch (error) {
+      throw CreatorAudienceException(switch (error.code) {
+        'unauthenticated' => CreatorAudienceFailure.unauthenticated,
+        'failed-precondition' => CreatorAudienceFailure.eligibility,
+        'permission-denied' => CreatorAudienceFailure.inactiveAccount,
+        'invalid-argument' => CreatorAudienceFailure.invalidRequest,
+        'already-exists' => CreatorAudienceFailure.conflictingRequest,
+        'aborted' => CreatorAudienceFailure.staleRequest,
+        _ => CreatorAudienceFailure.unavailable,
+      });
+    } on CreatorAudienceException {
+      rethrow;
+    } catch (_) {
+      throw const CreatorAudienceException(CreatorAudienceFailure.unavailable);
+    }
+  }
+
+  Future<CreatorAgeConfirmation> confirmAdultEligibility({
+    required DateTime birthDate,
+    required String requestId,
+  }) async {
+    if (!_requestIdPattern.hasMatch(requestId)) {
+      throw const CreatorAudienceException(
+        CreatorAudienceFailure.invalidRequest,
+      );
+    }
+    final date = DateTime.utc(birthDate.year, birthDate.month, birthDate.day);
+    final birthDateValue = [
+      date.year.toString().padLeft(4, '0'),
+      date.month.toString().padLeft(2, '0'),
+      date.day.toString().padLeft(2, '0'),
+    ].join('-');
+    final payload = <String, Object?>{
+      'birthDate': birthDateValue,
+      'requestId': requestId,
+    };
+    try {
+      final injected = _mutationInvoker;
+      final raw = injected != null
+          ? await injected('confirmCreatorAdultEligibility', payload)
+          : (await _functions
+                    .httpsCallable('confirmCreatorAdultEligibility')
+                    .call<Map<Object?, Object?>>(payload))
+                .data;
+      if (raw.length != 2 ||
+          !raw.keys.toSet().containsAll(const {
+            'creatorAgeVerified',
+            'changed',
+          })) {
+        throw const CreatorAudienceException(
+          CreatorAudienceFailure.invalidResponse,
+        );
+      }
+      final verified = raw['creatorAgeVerified'];
+      final changed = raw['changed'];
+      if (verified is! bool || changed is! bool || !verified) {
+        throw const CreatorAudienceException(
+          CreatorAudienceFailure.invalidResponse,
+        );
+      }
+      return CreatorAgeConfirmation(verified: verified, changed: changed);
     } on FirebaseFunctionsException catch (error) {
       throw CreatorAudienceException(switch (error.code) {
         'unauthenticated' => CreatorAudienceFailure.unauthenticated,

@@ -4,6 +4,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
+import 'package:yovoice/features/premium/presentation/premium_localized_copy.dart';
 
 /// The desktop right column's Premium card: the three benefit tiles from
 /// the Premium presentation, then one full-width gradient "Check plans"
@@ -59,28 +60,14 @@ class PremiumDesktopCard extends StatelessWidget {
                     child: _BenefitTile(
                       icon: _icons[i],
                       iconColor: iconColors[i],
-                      title: switch (i) {
-                        0 => copy.text('Become a Creator', 'Zostań twórcą'),
-                        1 => copy.text(
-                          'Build your own Servers',
-                          'Buduj własne serwery',
-                        ),
-                        _ => copy.text('Stand out', 'Wyróżnij się'),
-                      },
-                      subtitle: switch (i) {
-                        0 => copy.text(
-                          'Unlock real Creator tools',
-                          'Odblokuj narzędzia dla twórców',
-                        ),
-                        1 => copy.text(
-                          'Build spaces for your people',
-                          'Buduj miejsca dla swojej społeczności',
-                        ),
-                        _ => copy.text(
-                          'Premium look across YO Voice',
-                          'Wygląd Premium w całym YO Voice',
-                        ),
-                      },
+                      title: localizedPremiumBenefit(
+                        copy,
+                        PremiumPlans.benefits[i],
+                      ).$1,
+                      subtitle: localizedPremiumBenefit(
+                        copy,
+                        PremiumPlans.benefits[i],
+                      ).$2,
                     ),
                   ),
                 ],

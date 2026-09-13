@@ -48,8 +48,9 @@ class YoGifView extends StatefulWidget {
 
   final double maxWidth;
 
-  /// `AppPreferences.gifAutoLoadEnabled`. False means no network request is
-  /// made until the person taps.
+  /// `AppPreferences.gifAutoLoadEnabled`. False means no remote provider
+  /// request is made until the person taps. Bundled YO Voice Originals do not
+  /// contact a network and always render immediately.
   final bool autoLoad;
 
   final double borderRadius;
@@ -71,7 +72,13 @@ class _YoGifViewState extends State<YoGifView> {
   bool _manuallyLoaded = false;
   int _imageRevision = 0;
 
-  bool get _shouldLoad => widget.autoLoad || _manuallyLoaded;
+  // First-party animations are already inside the app bundle, so the
+  // third-party network privacy switch must never hide them behind an extra
+  // tap. Remote GIFs still obey the preference exactly as before.
+  bool get _shouldLoad =>
+      widget.asset.bundledAssetPath != null ||
+      widget.autoLoad ||
+      _manuallyLoaded;
 
   @override
   void didUpdateWidget(covariant YoGifView oldWidget) {
@@ -122,8 +129,12 @@ class _YoGifViewState extends State<YoGifView> {
         ),
       );
     } else {
-      body = Image.network(
-        widget.asset.url,
+      final bundledPath = widget.asset.bundledAssetPath;
+      final ImageProvider<Object> imageProvider = bundledPath == null
+          ? NetworkImage(widget.asset.url)
+          : AssetImage(bundledPath);
+      body = Image(
+        image: imageProvider,
         key: ValueKey('gif-image-${widget.asset.id}-$_imageRevision'),
         width: width,
         height: height,
@@ -157,9 +168,9 @@ class _YoGifViewState extends State<YoGifView> {
             child: InkWell(
               key: const ValueKey('gif-view-retry'),
               onTap: () async {
-                final url = widget.asset.url;
-                await NetworkImage(url).evict();
-                if (mounted && widget.asset.url == url) {
+                final asset = widget.asset;
+                await imageProvider.evict();
+                if (mounted && widget.asset == asset) {
                   setState(() => _imageRevision++);
                 }
               },

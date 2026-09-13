@@ -462,6 +462,60 @@ async function main() {
         assert.equal((await getDoc(doc(ctx.firestore(), `serverFamilyOwnerReservations/${uid}`))).exists(), false);
       });
     });
+    await check("Servers V1 admission closes the legacy Family quota bypass at Free 5 and Premium 30", async () => {
+      const freeUid = "legacy-family-free-at-five";
+      const premiumUid = "legacy-family-premium-at-thirty";
+      const legacyUid = "legacy-family-not-admitted";
+      const entries = {
+        [`users/${freeUid}`]: { displayName: freeUid, banned: false, disabled: false },
+        [`users/${premiumUid}`]: { displayName: premiumUid, banned: false, disabled: false },
+        [`users/${legacyUid}`]: { displayName: legacyUid, banned: false, disabled: false },
+        "appConfig/serversV1": {
+          schemaVersion: 1, callableAccess: "testers",
+          testerUids: [freeUid, premiumUid], workersEnabled: true, revision: 1,
+        },
+        [`entitlements/${premiumUid}`]: {
+          schemaVersion: 1, userId: premiumUid, plan: "premium",
+          status: "active", isPremium: true,
+          currentPeriodEnd: new Date("2099-01-01T00:00:00Z"),
+        },
+      };
+      for (let index = 0; index < 5; index += 1) {
+        entries[`clubs/free-owned-${index}`] = server(`free-owned-${index}`, {
+          ownerId: freeUid, entitlementPolicyId: "freeServersV1",
+        });
+      }
+      for (let index = 0; index < 30; index += 1) {
+        entries[`clubs/premium-owned-${index}`] = server(`premium-owned-${index}`, {
+          ownerId: premiumUid, entitlementPolicyId: "freeServersV1",
+        });
+      }
+      await seed(entries);
+
+      await assertFails(legacyFamilyGraph(db(freeUid), freeUid).batch.commit());
+      await assertFails(legacyFamilyGraph(db(premiumUid), premiumUid).batch.commit());
+      await assertSucceeds(legacyFamilyGraph(db(legacyUid), legacyUid).batch.commit());
+
+      await assertFails(read(freeUid, "appConfig/serversV1"));
+      await assertFails(setDoc(doc(db(freeUid), "appConfig/serversV1"), {
+        ...entries["appConfig/serversV1"], callableAccess: "disabled",
+      }));
+    });
+    await check("a malformed Servers V1 activation document fails legacy Family creation closed", async () => {
+      const uid = "legacy-family-malformed-activation";
+      await seed({ [`users/${uid}`]: { displayName: uid, banned: false, disabled: false } });
+      for (const malformed of [
+        { schemaVersion: 2, callableAccess: "testers", testerUids: [], workersEnabled: false, revision: 1 },
+        { schemaVersion: 1, callableAccess: "testers", testerUids: ["duplicate", "duplicate"], workersEnabled: false, revision: 1 },
+      ]) {
+        await seed({ "appConfig/serversV1": malformed });
+        await assertFails(legacyFamilyGraph(db(uid), uid).batch.commit());
+      }
+      await seed({ "appConfig/serversV1": {
+        schemaVersion: 1, callableAccess: "testers",
+        testerUids: [], workersEnabled: true, revision: 2,
+      } });
+    });
     await check("transferred V1 Family reservation prevents a second legacy family_B atomically", async () => {
       const uid = "transferred-family-owner-b";
       const transferredId = "family_original-owner-a";

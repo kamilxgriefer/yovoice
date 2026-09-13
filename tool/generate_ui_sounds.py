@@ -9,15 +9,15 @@ Run it from the repository root:
 Use ``--check`` in CI or before a release to prove that every checked-in copy
 matches the generator without rewriting anything.
 
-DESIGN LANGUAGE (v4, "Soft Bells")
+DESIGN LANGUAGE (v5, "Prism Halo")
 
 * Additive bells: a fundamental plus three softer, faster-dying partials,
   a 4-12 ms attack and an exponential decay, low-passed at 6.5 kHz so
   nothing is glassy or sharp.
-* Meaning lives in a tiny vocabulary of notes from one warm pentatonic set:
-  rising = something opened or arrived, falling = something closed or left,
-  a single bubble = a person, a short velvet tick = the microphone, a calm
-  two-note chime = a notification.
+* Meaning lives in one original B-minor/D-major pentatonic signature. Rising
+  shapes open and connect; falling shapes close; paired low pulses decline or
+  warn; the call loops repeat the same three-note identity with enough silence
+  to stay calm during a long wait.
 * Loudness is a deliberate hierarchy, mastered into each asset: microphone
   ticks whisper (about -27 dBFS RMS), room cues speak (-22 to -25), the
   notification is the only cue meant to be noticed across a room (-21).
@@ -26,11 +26,12 @@ DESIGN LANGUAGE (v4, "Soft Bells")
   so mono playback loses nothing.
 * Internal synthesis is 48 kHz float. Delivery is stereo PCM16 at 48 kHz,
   with deterministic TPDF dither, a click-free fade and exact terminal zeroes.
-* Every cue is under 0.8 s: UiSoundService serialises a channel until the
-  cue has finished, and its completion timeout is 2 s.
+* UI cues are under 1.1 s. Two dedicated call cadences are under 3.5 s and
+  loop through CallToneService, which can stop them immediately on answer,
+  decline, cancellation, backgrounding or disposal.
 
 The sound is intentionally restrained. Normal navigation, loading, likes and
-sheet transitions have no cue; only the eight semantic events below do.
+sheet transitions stay silent; only semantic communication events have cues.
 """
 
 from __future__ import annotations
@@ -48,21 +49,26 @@ from pathlib import Path
 RATE = 48_000
 SAMPLE_WIDTH = 2
 CHANNELS = 2
-MAX_BYTES = 160 * 1024
+MAX_UI_BYTES = 220 * 1024
+MAX_CALL_BYTES = 800 * 1024
 TERMINAL_ZERO_FRAMES = 64
 PAD_FRAMES = 160
 LOWPASS_HZ = 6500.0
 WIDTH_DELAY_FRAMES = 43  # 0.9 ms
 WIDTH_BLEND = 0.12
-ASSET_PACK_VERSION = "v4"
+ASSET_PACK_VERSION = "v5"
 
 
 def _note(semitones_from_c4: float) -> float:
     return 440.0 * 2 ** ((semitones_from_c4 - 9) / 12)
 
 
-C4, E4, G4 = _note(0), _note(4), _note(7)
-C5, D5, E5, G5, A5, C6 = _note(12), _note(14), _note(16), _note(19), _note(21), _note(24)
+C4, D4, E4, FS4, A4, B4 = (
+    _note(0), _note(2), _note(4), _note(6), _note(9), _note(11)
+)
+D5, E5, FS5, A5, B5, D6 = (
+    _note(14), _note(16), _note(18), _note(21), _note(23), _note(26)
+)
 
 BELL = ((1.0, 1.0), (2.0, 0.35), (3.0, 0.12), (4.01, 0.05))
 BUBBLE = ((1.0, 1.0), (2.0, 0.25), (3.0, 0.06))
@@ -93,6 +99,7 @@ class CueSpec:
     tail_feedback: float
     tail_wet: float
     seed: int
+    max_bytes: int = MAX_UI_BYTES
 
 
 def _bell(hz, duration, level, *, attack=0.012, decay=0.35, delay=0.0, partials=BELL):
@@ -100,45 +107,90 @@ def _bell(hz, duration, level, *, attack=0.012, decay=0.35, delay=0.0, partials=
 
 
 CUES = (
-    # rising triad bloom: three staggered bells — a room came into being
-    CueSpec("room_created", -22.0, -3.0, (
-        _bell(C5, 0.55, 0.9, decay=0.22),
-        _bell(E5, 0.55, 0.7, decay=0.21, delay=0.07),
-        _bell(G5, 0.60, 0.6, decay=0.24, delay=0.14),
-    ), 90.0, 0.32, 0.22, 0x41C1),
-    # two ascending notes — welcome in
-    CueSpec("room_joined", -23.0, -3.0, (
-        _bell(E5, 0.42, 0.8, decay=0.17),
-        _bell(A5, 0.46, 0.7, decay=0.21, delay=0.08),
-    ), 80.0, 0.32, 0.22, 0x41C2),
-    # two descending notes — gentle close
-    CueSpec("room_left", -24.0, -3.0, (
-        _bell(A5, 0.38, 0.7, decay=0.15),
-        _bell(E5, 0.44, 0.65, decay=0.20, delay=0.08),
-    ), 80.0, 0.32, 0.16, 0x41C3),
-    # single bright soft bubble — someone arrived
+    CueSpec("room_created", -22.5, -3.0, (
+        _bell(D5, 0.58, 0.82, decay=0.22),
+        _bell(FS5, 0.64, 0.70, decay=0.23, delay=0.07),
+        _bell(B5, 0.72, 0.55, decay=0.26, delay=0.15),
+    ), 92.0, 0.30, 0.20, 0x51A1),
+    CueSpec("room_joined", -23.5, -3.0, (
+        _bell(FS5, 0.48, 0.80, decay=0.18),
+        _bell(B5, 0.56, 0.66, decay=0.22, delay=0.09),
+    ), 84.0, 0.30, 0.18, 0x51A2),
+    CueSpec("room_left", -24.5, -3.0, (
+        _bell(B5, 0.46, 0.68, decay=0.17),
+        _bell(FS5, 0.54, 0.62, decay=0.21, delay=0.09),
+    ), 84.0, 0.30, 0.15, 0x51A3),
     CueSpec("participant_joined", -27.0, -3.0, (
-        _bell(C6, 0.30, 0.75, attack=0.008, decay=0.12, partials=BUBBLE),
-    ), 60.0, 0.32, 0.14, 0x41C4),
-    # single lower, softer bubble — someone left
+        _bell(D6, 0.32, 0.72, attack=0.008, decay=0.12, partials=BUBBLE),
+    ), 62.0, 0.30, 0.13, 0x51A4),
     CueSpec("participant_left", -28.0, -3.0, (
-        _bell(G5, 0.30, 0.65, attack=0.010, decay=0.12, partials=BUBBLE_LOW),
-    ), 60.0, 0.32, 0.12, 0x41C5),
-    # short low velvet tick, falling — microphone closed
-    CueSpec("microphone_muted", -26.0, -3.0, (
-        _bell(E4, 0.16, 0.9, attack=0.004, decay=0.06, partials=TICK),
-        _bell(C4, 0.17, 0.5, attack=0.004, decay=0.07, delay=0.025, partials=TICK_TAIL),
-    ), 0.0, 0.0, 0.0, 0x41C6),
-    # short brighter tick, rising — microphone open
-    CueSpec("microphone_unmuted", -26.0, -3.0, (
-        _bell(G4, 0.16, 0.8, attack=0.004, decay=0.06, partials=TICK),
-        _bell(E5, 0.17, 0.55, attack=0.004, decay=0.08, delay=0.025, partials=TICK_TAIL),
-    ), 0.0, 0.0, 0.0, 0x41C7),
-    # calm two-note chime — a notification
-    CueSpec("notification", -21.0, -3.0, (
-        _bell(A5, 0.50, 0.8, decay=0.20, partials=CHIME),
-        _bell(D5, 0.55, 0.6, decay=0.24, delay=0.10),
-    ), 90.0, 0.32, 0.20, 0x41C8),
+        _bell(A5, 0.32, 0.62, attack=0.010, decay=0.12, partials=BUBBLE_LOW),
+    ), 62.0, 0.30, 0.11, 0x51A5),
+    CueSpec("microphone_muted", -27.0, -3.0, (
+        _bell(FS4, 0.17, 0.84, attack=0.004, decay=0.06, partials=TICK),
+        _bell(D4, 0.18, 0.48, attack=0.004, decay=0.07, delay=0.026, partials=TICK_TAIL),
+    ), 0.0, 0.0, 0.0, 0x51A6),
+    CueSpec("microphone_unmuted", -27.0, -3.0, (
+        _bell(A4, 0.17, 0.76, attack=0.004, decay=0.06, partials=TICK),
+        _bell(FS5, 0.18, 0.50, attack=0.004, decay=0.08, delay=0.026, partials=TICK_TAIL),
+    ), 0.0, 0.0, 0.0, 0x51A7),
+    CueSpec("notification", -21.5, -3.0, (
+        _bell(B5, 0.56, 0.78, decay=0.20, partials=CHIME),
+        _bell(FS5, 0.64, 0.58, decay=0.25, delay=0.11),
+    ), 96.0, 0.30, 0.20, 0x51A8),
+    CueSpec("notification_social", -22.0, -3.0, (
+        _bell(D5, 0.60, 0.72, decay=0.21),
+        _bell(A5, 0.66, 0.62, decay=0.23, delay=0.08),
+        _bell(B5, 0.70, 0.45, decay=0.24, delay=0.16),
+    ), 92.0, 0.30, 0.18, 0x51A9),
+    CueSpec("notification_achievement", -21.5, -3.0, (
+        _bell(D5, 0.76, 0.68, decay=0.23),
+        _bell(FS5, 0.80, 0.58, decay=0.24, delay=0.08),
+        _bell(B5, 0.86, 0.50, decay=0.27, delay=0.17),
+        _bell(D6, 0.90, 0.38, decay=0.28, delay=0.27),
+    ), 98.0, 0.31, 0.22, 0x51AA),
+    CueSpec("notification_alert", -21.0, -3.0, (
+        _bell(FS5, 0.64, 0.78, decay=0.19),
+        _bell(D5, 0.72, 0.62, decay=0.23, delay=0.14),
+    ), 88.0, 0.29, 0.16, 0x51AB),
+    CueSpec("call_connected", -21.5, -3.0, (
+        _bell(D5, 0.68, 0.76, decay=0.21),
+        _bell(FS5, 0.74, 0.65, decay=0.23, delay=0.07),
+        _bell(B5, 0.82, 0.52, decay=0.27, delay=0.15),
+    ), 96.0, 0.30, 0.22, 0x51AC),
+    CueSpec("call_ended", -23.0, -3.0, (
+        _bell(B5, 0.62, 0.68, decay=0.19),
+        _bell(FS5, 0.70, 0.60, decay=0.23, delay=0.10),
+        _bell(D5, 0.76, 0.48, decay=0.25, delay=0.20),
+    ), 90.0, 0.30, 0.17, 0x51AD),
+    CueSpec("call_declined", -22.5, -3.0, (
+        _bell(D5, 0.78, 0.74, decay=0.17),
+        _bell(B4, 0.84, 0.68, decay=0.20, delay=0.22),
+    ), 74.0, 0.27, 0.12, 0x51AE),
+    CueSpec("call_failed", -22.0, -3.0, (
+        _bell(E5, 0.72, 0.74, decay=0.16),
+        _bell(B4, 0.80, 0.68, decay=0.19, delay=0.16),
+        _bell(D4, 0.88, 0.45, decay=0.22, delay=0.32),
+    ), 72.0, 0.27, 0.10, 0x51AF),
+    CueSpec("call_busy", -22.0, -3.0, (
+        _bell(B4, 1.02, 0.78, attack=0.006, decay=0.12, partials=TICK),
+        _bell(B4, 1.02, 0.72, attack=0.006, decay=0.12, delay=0.32, partials=TICK),
+        _bell(B4, 1.02, 0.66, attack=0.006, decay=0.12, delay=0.64, partials=TICK),
+    ), 54.0, 0.24, 0.08, 0x51B0),
+    CueSpec("call_incoming_loop", -25.0, -3.0, (
+        _bell(D5, 3.12, 0.78, decay=0.20),
+        _bell(FS5, 3.12, 0.66, decay=0.22, delay=0.10),
+        _bell(B5, 3.12, 0.54, decay=0.25, delay=0.22),
+        _bell(D5, 3.12, 0.72, decay=0.20, delay=1.34),
+        _bell(FS5, 3.12, 0.60, decay=0.22, delay=1.44),
+        _bell(B5, 3.12, 0.48, decay=0.25, delay=1.56),
+    ), 90.0, 0.27, 0.15, 0x51B1, MAX_CALL_BYTES),
+    CueSpec("call_outgoing_loop", -27.0, -3.0, (
+        _bell(FS5, 3.18, 0.70, decay=0.20),
+        _bell(B5, 3.18, 0.58, decay=0.24, delay=0.18),
+        _bell(FS5, 3.18, 0.62, decay=0.20, delay=0.62),
+        _bell(B5, 3.18, 0.50, decay=0.24, delay=0.80),
+    ), 94.0, 0.27, 0.14, 0x51B2, MAX_CALL_BYTES),
 )
 
 
@@ -304,7 +356,7 @@ def _render(spec: CueSpec) -> bytes:
         wav.setframerate(RATE)
         wav.writeframes(bytes(frames))
     data = output.getvalue()
-    assert len(data) < MAX_BYTES, (spec.name, len(data))
+    assert len(data) < spec.max_bytes, (spec.name, len(data))
     return data
 
 
@@ -313,9 +365,17 @@ def _targets(root: Path, rendered: dict[str, bytes]) -> dict[Path, bytes]:
     targets = {
         asset_directory / f"{name}.wav": data for name, data in rendered.items()
     }
-    notification = rendered["notification"]
-    targets[root / "android/app/src/main/res/raw/yovoice_notification.wav"] = notification
-    targets[root / "ios/Runner/yovoice_notification.wav"] = notification
+    native = {
+        "yovoice_notification": rendered["notification"],
+        "yovoice_message_v1": rendered["notification"],
+        "yovoice_social_v1": rendered["notification_social"],
+        "yovoice_achievement_v1": rendered["notification_achievement"],
+        "yovoice_alert_v1": rendered["notification_alert"],
+        "yovoice_call_v2": rendered["call_incoming_loop"],
+    }
+    for name, data in native.items():
+        targets[root / f"android/app/src/main/res/raw/{name}.wav"] = data
+        targets[root / f"ios/Runner/{name}.wav"] = data
     return targets
 
 
@@ -361,7 +421,7 @@ def main() -> int:
             for mismatch in mismatches:
                 print(f"  {mismatch}", file=sys.stderr)
             return 1
-        print("sound assets match Soft Bells v4 generator")
+        print("sound assets match Prism Halo v5 generator")
         return 0
 
     retired_assets = _unexpected_flutter_assets(root, targets)
@@ -371,7 +431,7 @@ def main() -> int:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
     print(
-        "wrote 8 versioned Soft Bells cues and 2 bit-identical native copies"
+        f"wrote {len(CUES)} versioned Prism Halo cues and native notification copies"
         f"; retired {len(retired_assets)} stale UI WAV(s)"
     )
     return 0

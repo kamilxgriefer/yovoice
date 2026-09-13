@@ -193,7 +193,12 @@ void main() {
     await _fillAndSubmit(tester);
 
     expect(_errorPanel, findsOneWidget);
-    expect(find.text('Masz już 20 aktywnych serwerów.'), findsOneWidget);
+    expect(
+      find.text(
+        'Osiągnąłeś limit własnych serwerów: 5 na koncie bezpłatnym lub 30 w Premium.',
+      ),
+      findsOneWidget,
+    );
     expect(tester.widget<FilledButton>(_submit).onPressed, isNull);
     expect(repository.requests.length, 1);
   });

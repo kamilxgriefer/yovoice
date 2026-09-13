@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:yovoice/core/audio/ui_sound.dart';
+import 'package:yovoice/core/audio/ui_sound_service.dart';
 import 'package:yovoice/features/calls/presentation/direct_call_route_registry.dart';
 import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
@@ -91,12 +93,19 @@ Future<bool> presentForegroundNotificationSurface({
   required bool isCall,
   required bool Function() presentInApp,
   required Future<void> Function() presentNative,
+  Future<bool> Function()? presentInAppCallSound,
+  void Function()? onNativeCallPresented,
   bool Function()? isCurrent,
 }) async {
-  bool tryInApp() {
+  Future<bool> tryInApp() async {
     if (isCurrent?.call() == false) return false;
     try {
-      return presentInApp();
+      final visible = presentInApp();
+      if (!visible) return false;
+      if (!isCall) return true;
+      final playCallSound = presentInAppCallSound;
+      if (playCallSound == null) return false;
+      return await playCallSound();
     } catch (error) {
       debugPrint(
         'PushNotificationService: foreground app surface unavailable '
@@ -107,10 +116,11 @@ Future<bool> presentForegroundNotificationSurface({
   }
 
   if (isWeb) return tryInApp();
-  if (!isCall && tryInApp()) return true;
+  if (!isCall && await tryInApp()) return true;
   if (isCurrent?.call() == false) return false;
   try {
     await presentNative();
+    if (isCall) onNativeCallPresented?.call();
     return true;
   } catch (error) {
     debugPrint(
@@ -118,7 +128,7 @@ Future<bool> presentForegroundNotificationSurface({
       '(${error.runtimeType}).',
     );
     // The host may have mounted while the platform Future was in flight.
-    return tryInApp();
+    return await tryInApp();
   }
 }
 
@@ -134,6 +144,82 @@ bool shouldSuppressForegroundNotification({
   final isConversationActivity =
       type == NotificationType.directMessage || type == NotificationType.reply;
   return isConversationActivity && activeConversations.contains(targetId);
+}
+
+/// Stable native sound families used by foreground and background delivery.
+///
+/// Android persists a channel's sound forever, so each v5 Prism Halo family
+/// owns a fresh channel id. iOS selects the matching bundled WAV per payload.
+enum NotificationSoundProfile { message, social, achievement, alert, call }
+
+NotificationSoundProfile notificationSoundProfileFor(NotificationType type) {
+  return switch (type) {
+    NotificationType.directMessage ||
+    NotificationType.mention ||
+    NotificationType.reply => NotificationSoundProfile.message,
+    NotificationType.friendRequest ||
+    NotificationType.friendAccepted ||
+    NotificationType.follow ||
+    NotificationType.clubInvite ||
+    NotificationType.clubInviteAccepted ||
+    NotificationType.roomInvite ||
+    NotificationType.broadcastInvite ||
+    NotificationType.liveStarted => NotificationSoundProfile.social,
+    NotificationType.achievementUnlocked =>
+      NotificationSoundProfile.achievement,
+    NotificationType.directCall => NotificationSoundProfile.call,
+    NotificationType.missedCall ||
+    NotificationType.moderation ||
+    NotificationType.system => NotificationSoundProfile.alert,
+  };
+}
+
+extension NotificationSoundProfilePlatform on NotificationSoundProfile {
+  /// Matching in-app cue after the animated foreground banner is accepted.
+  /// Incoming calls return null because the push path verifies its audible
+  /// one-shot separately and the coordinator owns normal continuous ringing.
+  UiSound? get foregroundUiSound => switch (this) {
+    NotificationSoundProfile.message => UiSound.notification,
+    NotificationSoundProfile.social => UiSound.notificationSocial,
+    NotificationSoundProfile.achievement => UiSound.notificationAchievement,
+    NotificationSoundProfile.alert => UiSound.notificationAlert,
+    NotificationSoundProfile.call => null,
+  };
+
+  String get androidChannelId => switch (this) {
+    NotificationSoundProfile.message => 'yovoice_messages_v1',
+    NotificationSoundProfile.social => 'yovoice_social_v1',
+    NotificationSoundProfile.achievement => 'yovoice_achievements_v1',
+    NotificationSoundProfile.alert => 'yovoice_alerts_v1',
+    NotificationSoundProfile.call => 'yovoice_calls_v2',
+  };
+
+  String get androidSoundResource => switch (this) {
+    NotificationSoundProfile.message => 'yovoice_message_v1',
+    NotificationSoundProfile.social => 'yovoice_social_v1',
+    NotificationSoundProfile.achievement => 'yovoice_achievement_v1',
+    NotificationSoundProfile.alert => 'yovoice_alert_v1',
+    NotificationSoundProfile.call => 'yovoice_call_v2',
+  };
+
+  String get iosSoundFile => '$androidSoundResource.wav';
+
+  String get channelName => switch (this) {
+    NotificationSoundProfile.message => 'YO Voice messages',
+    NotificationSoundProfile.social => 'YO Voice social activity',
+    NotificationSoundProfile.achievement => 'YO Voice achievements',
+    NotificationSoundProfile.alert => 'YO Voice important alerts',
+    NotificationSoundProfile.call => 'YO Voice calls',
+  };
+
+  String get channelDescription => switch (this) {
+    NotificationSoundProfile.message => 'Messages, mentions and replies',
+    NotificationSoundProfile.social =>
+      'Friend activity, invitations and live updates',
+    NotificationSoundProfile.achievement => 'Achievements earned in YO Voice',
+    NotificationSoundProfile.alert => 'Account, moderation and missed calls',
+    NotificationSoundProfile.call => 'Incoming private voice and video calls',
+  };
 }
 
 /// Initializes notification plumbing and inspects the current OS state without
@@ -187,12 +273,10 @@ Future<void> resolveInitialNotificationNavigation<T>({
 /// pattern applied here.
 class PushNotificationService {
   /// Android notification-channel sound settings are immutable after the
-  /// channel is first created. v3 is the Velvet Prism sound migration; a new
-  /// id is required for existing installs to receive the new master.
-  static const String androidChannelId = 'yovoice_activity_v3';
-  static const String androidCallChannelId = 'yovoice_calls_v1';
-  static const String androidSoundResource = 'yovoice_notification';
-  static const String iosSoundFile = 'yovoice_notification.wav';
+  /// channel is first created. Prism Halo therefore uses fresh ids for every
+  /// semantic family, including a new call channel for existing installs.
+  static const String androidChannelId = 'yovoice_messages_v1';
+  static const String androidCallChannelId = 'yovoice_calls_v2';
 
   static const String _rotationPendingPreference =
       'push_token_rotation_pending_v1';
@@ -787,34 +871,27 @@ class PushNotificationService {
     );
 
     if (Platform.isAndroid) {
-      const channel = AndroidNotificationChannel(
-        androidChannelId,
-        'YO Voice notifications',
-        description: 'Messages, invitations and activity from YO Voice',
-        importance: Importance.high,
-        playSound: true,
-        sound: RawResourceAndroidNotificationSound(androidSoundResource),
-        enableVibration: true,
-      );
-      await _localNotifications
+      final android = _localNotifications
           .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin
-          >()
-          ?.createNotificationChannel(channel);
-      const callChannel = AndroidNotificationChannel(
-        androidCallChannelId,
-        'YO Voice calls',
-        description: 'Incoming private voice calls',
-        importance: Importance.max,
-        playSound: true,
-        sound: RawResourceAndroidNotificationSound(androidSoundResource),
-        enableVibration: true,
-      );
-      await _localNotifications
-          .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
-          >()
-          ?.createNotificationChannel(callChannel);
+          >();
+      for (final profile in NotificationSoundProfile.values) {
+        await android?.createNotificationChannel(
+          AndroidNotificationChannel(
+            profile.androidChannelId,
+            profile.channelName,
+            description: profile.channelDescription,
+            importance: profile == NotificationSoundProfile.call
+                ? Importance.max
+                : Importance.high,
+            playSound: true,
+            sound: RawResourceAndroidNotificationSound(
+              profile.androidSoundResource,
+            ),
+            enableVibration: true,
+          ),
+        );
+      }
     }
   }
 
@@ -829,6 +906,7 @@ class PushNotificationService {
         deliveryEpoch == _identityEpochGuard.epoch;
     if (!isCurrentDelivery()) return;
     final type = NotificationType.fromName(message.data['type'] as String?);
+    final soundProfile = notificationSoundProfileFor(type);
     final targetId = message.data['targetId'] as String?;
     final isCall = type == NotificationType.directCall;
     final notificationId = message.data['notificationId'] as String?;
@@ -886,6 +964,7 @@ class PushNotificationService {
         }
 
         var presented = false;
+        var nativeCallPresented = false;
         try {
           presented = await presentForegroundNotificationSurface(
             isWeb: kIsWeb,
@@ -895,33 +974,34 @@ class PushNotificationService {
               message,
               notificationId: notificationId,
             ),
+            presentInAppCallSound: () =>
+                UiSoundService.instance.playWithResult(UiSound.callIncoming),
+            onNativeCallPresented: () => nativeCallPresented = true,
             presentNative: () => _localNotifications.show(
               id: notification.hashCode,
               title: notification.title,
               body: notification.body,
               notificationDetails: NotificationDetails(
                 android: AndroidNotificationDetails(
-                  isCall ? androidCallChannelId : androidChannelId,
-                  isCall ? 'YO Voice calls' : 'YO Voice notifications',
-                  channelDescription: isCall
-                      ? 'Incoming private voice calls'
-                      : 'Messages, invitations and activity from YO Voice',
+                  soundProfile.androidChannelId,
+                  soundProfile.channelName,
+                  channelDescription: soundProfile.channelDescription,
                   importance: isCall ? Importance.max : Importance.high,
                   priority: isCall ? Priority.max : Priority.high,
                   playSound: true,
-                  sound: const RawResourceAndroidNotificationSound(
-                    androidSoundResource,
+                  sound: RawResourceAndroidNotificationSound(
+                    soundProfile.androidSoundResource,
                   ),
                   enableVibration: true,
                   category: isCall
                       ? AndroidNotificationCategory.call
                       : AndroidNotificationCategory.social,
                 ),
-                iOS: const DarwinNotificationDetails(
+                iOS: DarwinNotificationDetails(
                   presentAlert: true,
                   presentBadge: true,
                   presentSound: true,
-                  sound: iosSoundFile,
+                  sound: soundProfile.iosSoundFile,
                 ),
               ),
               payload:
@@ -937,6 +1017,9 @@ class PushNotificationService {
             DirectCallAlertRegistry.complete(
               callAlertClaim,
               presented: presented,
+              toneOwnership: nativeCallPresented
+                  ? incomingCallNativeSoundWindow
+                  : Duration.zero,
             );
           }
         }

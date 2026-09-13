@@ -161,12 +161,18 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   bool _loopQueued = false;
   bool _photoFinishQueued = false;
   bool _disposed = false;
+  Future<void>? _retirement;
   int _epoch = 0;
   int _commandVersion = 0;
 
   bool get isPlaying => _playing;
   bool get isLoading => _loading;
   bool get isActive => _active;
+
+  /// Completes after [dispose] has stopped and released the owned audio engine.
+  /// A host replacing this coordinator can await it before opening the next
+  /// native player, preserving the single-player invariant.
+  Future<void> get retirement => _retirement ?? Future<void>.value();
 
   /// How far into [timelineDuration] this Reel has played, from the engine
   /// that owns the clock: the video for a video Reel, the backing track for a
@@ -383,6 +389,23 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     });
   }
 
+  /// Explicitly resumes a hand-owned timeline.
+  ///
+  /// Unlike [autoplay], this is allowed for a draft preview and clears the
+  /// viewer-pause latch. Hosts use it after a temporary, explicit suspension
+  /// such as choosing a replacement backing track. It is command-versioned so
+  /// a later pause, deactivation or disposal always wins the race.
+  Future<void> play() {
+    if (!_active || !canToggle) return Future<void>.value();
+    final command = ++_commandVersion;
+    _desiredPlaying = true;
+    _viewerPaused = false;
+    return _enqueue(() async {
+      if (command != _commandVersion) return;
+      await _playNow(command);
+    });
+  }
+
   Future<void> pause({bool reset = false}) {
     final command = ++_commandVersion;
     _desiredPlaying = false;
@@ -557,7 +580,12 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
         _onAudioPosition,
       );
       _audioCompletionSubscription = audio.completions.listen((_) {
-        unawaited(_enqueue(_handleAudioCompletion).catchError((Object _) {}));
+        final command = _commandVersion;
+        unawaited(
+          _enqueue(
+            () => _handleAudioCompletion(audio, command),
+          ).catchError((Object _) {}),
+        );
       });
     }
     final uri = await _resolveBackingAudioUri();
@@ -586,8 +614,16 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     }
   }
 
-  Future<void> _handleAudioCompletion() async {
-    if (_disposed || !_playing) return;
+  Future<void> _handleAudioCompletion(
+    ReelAudioPlayback completedAudio,
+    int command,
+  ) async {
+    if (_disposed ||
+        !_playing ||
+        command != _commandVersion ||
+        !identical(completedAudio, _audio)) {
+      return;
+    }
     if (_mediaKind == ReelMediaKind.image) {
       _commandVersion += 1;
       _desiredPlaying = false;
@@ -598,11 +634,30 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     }
     final video = _video;
     final audio = _audio;
-    if (video == null || audio == null || !_active || !_desiredPlaying) return;
+    if (video == null ||
+        audio == null ||
+        !_active ||
+        !_desiredPlaying ||
+        !video.isPlaying) {
+      return;
+    }
     final expected = _expectedAudioPosition(video.position);
     await audio.seek(expected);
+    // The video is the master clock. Completing a shorter backing track may
+    // seek and restart only that track; it must never pause, seek or restart
+    // the video. Re-check the command after the asynchronous seek so a viewer
+    // pause or a hidden/disposed host wins without one late audio resume.
+    if (_disposed ||
+        !_active ||
+        !_desiredPlaying ||
+        !_playing ||
+        command != _commandVersion ||
+        !identical(video, _video) ||
+        !identical(audio, _audio) ||
+        !video.isPlaying) {
+      return;
+    }
     _audioPosition = expected;
-    if (_disposed || !_active || !_desiredPlaying || !_playing) return;
     await audio.play();
   }
 
@@ -700,15 +755,39 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     _epoch += 1;
     _commandVersion += 1;
     _cancelPhotoEndTimer();
-    unawaited(_audioPositionSubscription?.cancel());
-    unawaited(_audioCompletionSubscription?.cancel());
     _position.dispose();
     final audio = _audio;
     _audio = null;
-    if (audio != null) {
-      unawaited(_stopAndDisposeAudio(audio));
-    }
+    final positionSubscription = _audioPositionSubscription;
+    final completionSubscription = _audioCompletionSubscription;
+    _audioPositionSubscription = null;
+    _audioCompletionSubscription = null;
+    final retirement = _retireResources(
+      positionSubscription: positionSubscription,
+      completionSubscription: completionSubscription,
+      audio: audio,
+    );
+    _retirement = retirement;
     super.dispose();
+  }
+
+  Future<void> _retireResources({
+    required StreamSubscription<Duration>? positionSubscription,
+    required StreamSubscription<void>? completionSubscription,
+    required ReelAudioPlayback? audio,
+  }) async {
+    if (positionSubscription != null) {
+      unawaited(positionSubscription.cancel().catchError((Object _) {}));
+    }
+    if (completionSubscription != null) {
+      unawaited(completionSubscription.cancel().catchError((Object _) {}));
+    }
+    // Stop the engine immediately instead of waiting behind a position event
+    // already dispatched by the platform stream. Disposal also lets that
+    // cancellation finish on plugins which close their streams at teardown.
+    // The returned retirement future tracks the native player itself; a
+    // plugin's listener-cancellation future must not deadlock a source swap.
+    if (audio != null) await _stopAndDisposeAudio(audio);
   }
 
   Future<void> _stopAndDisposeAudio(ReelAudioPlayback audio) async {

@@ -22,6 +22,10 @@ const USER_CALLABLE_METHODS = Object.freeze({
   ],
   markDirectConversationRead: ["direct", "markDirectConversationRead"],
   setDirectMessageReaction: ["direct", "setDirectMessageReaction"],
+  setPremiumMessagingPrivacyV1: [
+    "direct",
+    "setPremiumMessagingPrivacyV1",
+  ],
   setDirectTyping: ["direct", "setDirectTyping"],
   sendRoomMessage: ["community", "sendRoomMessage"],
   sendClubMessage: ["community", "sendClubMessage"],

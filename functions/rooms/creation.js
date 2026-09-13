@@ -552,7 +552,9 @@ function createRoomCreationService({
       // The legacy room writer and Servers V1 now acquire the same three
       // owner locks and count the same canonical allocation set. Creating a
       // server can no longer leave createRoom with a separate free allowance.
-      const capacity = await readOwnerAllocations({ db, transaction, uid: auth.uid });
+      const capacity = await readOwnerAllocations({
+        db, transaction, uid: auth.uid, now: timing.now,
+      });
       const effectiveLimit = Math.min(creationPolicy.maxActiveRooms, capacity.free.limit);
 
       if (

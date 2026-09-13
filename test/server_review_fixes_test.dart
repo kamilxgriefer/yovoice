@@ -323,7 +323,10 @@ void main() {
           findsNothing,
           reason: 'the friends refusal must not open the podcast form',
         );
-        expect(find.byKey(const ValueKey('server-create-resumed')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('server-create-resumed')),
+          findsNothing,
+        );
         expect(_nameEnabled(tester), isTrue);
         expect(tester.widget<FilledButton>(_submit).onPressed, isNotNull);
         expect(
@@ -351,10 +354,12 @@ void main() {
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    const twenty = 'Możesz bezpłatnie utworzyć do 20 serwerów.';
+    const freeAllowance =
+        'Możesz mieć 5 własnych serwerów bezpłatnie lub 30 w Premium. '
+        'Dołączasz bez limitu.';
     const family =
-        'Serwer rodzinny może być tylko jeden. Nie wlicza się do 20 '
-        'bezpłatnych serwerów.';
+        'Możesz mieć jeden serwer rodzinny. Wlicza się do limitu 5 własnych '
+        'serwerów bezpłatnie lub 30 w Premium; dołączasz bez limitu.';
     for (final type in ServerType.values) {
       await pumpServers(
         tester,
@@ -368,11 +373,11 @@ void main() {
       final line = find.byKey(const ValueKey('server-create-allowance'));
       expect(line, findsOneWidget, reason: type.name);
       if (type == ServerType.family) {
-        // FAMILY_SERVER_LIMIT is 1 (functions/servers/capacity.js:21).
+        // FAMILY_SERVER_LIMIT is 1 inside the shared owned-Server allowance.
         expect(find.text(family), findsOneWidget);
-        expect(find.text(twenty), findsNothing);
+        expect(find.text(freeAllowance), findsNothing);
       } else {
-        expect(find.text(twenty), findsOneWidget, reason: type.name);
+        expect(find.text(freeAllowance), findsOneWidget, reason: type.name);
         expect(find.text(family), findsNothing, reason: type.name);
       }
     }
@@ -1044,7 +1049,8 @@ void main() {
     expect(copy.serverInviteIntroTitle, 'Serwer czeka na ludzi');
     expect(
       copy.serverCreationAllowanceBody,
-      'Możesz bezpłatnie utworzyć do 20 serwerów.',
+      'Możesz mieć 5 własnych serwerów bezpłatnie lub 30 w Premium. '
+      'Dołączasz bez limitu.',
     );
   });
 

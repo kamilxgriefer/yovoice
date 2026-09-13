@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
@@ -53,13 +52,13 @@ class ImmersiveChromeOption {
 /// cannot parse them as one row even at an accessibility text size:
 ///
 /// | | level 1 | level 2 |
-/// | shape | contained track + solid thumb | free text, no container |
-/// | selected | solid fill, dark ink on it | low-opacity wash, white ink |
-/// | type | 15 px, w800 selected | 13 px, w700 selected |
+/// | shape | large text + short glow line | smaller filter controls |
+/// | selected | violet ink + line + weight | low-opacity wash + weight |
+/// | type | 17 px, w800 selected | 13 px, w700 selected |
 ///
 /// No [TextDecoration] appears anywhere in this chrome. Selection is carried
-/// by fill AND by the `selected` semantic flag, never by colour alone and
-/// never by a decoration.
+/// by a separate line, weight AND by the `selected` semantic flag, never by
+/// colour alone.
 ///
 /// The chrome is deliberately theme-invariant: it sits over content of
 /// unknown luminance, not over the page canvas, so Dark and Pearl are
@@ -161,12 +160,10 @@ class ImmersiveFeedChrome extends StatelessWidget {
 
 /// Row 1: the plates keep their places and the switch sits between them.
 ///
-/// Deliberately ONE shape at every text size. An earlier cut moved the switch
-/// to its own line at accessibility sizes, which read well but roughly doubled
-/// the height of the chrome — and this chrome is overlaid, so every pixel it
-/// takes is taken from the stage. At 320 px / 200 % that covered the authored
-/// links on the frame beneath it. The switch is horizontally scrollable
-/// instead, so it can never force a second line or overflow.
+/// At ordinary sizes all three slots share one compact row. Large text gives
+/// the edge actions their own row and the format labels the full width below.
+/// This costs one short line of overlay height, but it preserves the reader's
+/// requested text size and keeps both choices complete on a 320 px phone.
 class _FormatRow extends StatelessWidget {
   const _FormatRow({
     required this.formatSwitch,
@@ -181,6 +178,24 @@ class _FormatRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final switchWidget = formatSwitch;
+    final accessibilityLayout =
+        MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    if (switchWidget != null &&
+        accessibilityLayout &&
+        (leading != null || trailing != null)) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(children: <Widget>[?leading, const Spacer(), ?trailing]),
+          const SizedBox(height: AppRhythm.hairline),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: switchWidget,
+          ),
+        ],
+      );
+    }
     return Row(
       children: <Widget>[
         if (leading != null) ...<Widget>[
@@ -197,9 +212,9 @@ class _FormatRow extends StatelessWidget {
             // ever visible: first the selected one sat off-screen, and once
             // the selection was scrolled into view the other one did. A
             // two-item format switch must show both items, so it takes the
-            // room it has and the segments share it equally; the labels stop
-            // scaling at 1.6x (see ImmersiveSegmentedSwitch) well before an
-            // ellipsis is ever needed.
+            // room it has and the segments share it equally. At accessibility
+            // sizes each segment trims only its horizontal breathing room;
+            // the reader's requested label scale remains untouched.
             child: Align(
               alignment: AlignmentDirectional.centerStart,
               child: switchWidget,
@@ -211,13 +226,13 @@ class _FormatRow extends StatelessWidget {
   }
 }
 
-/// Level 1 -- a CONTAINED segmented control over media.
+/// Level 1 -- two large, trackless text tabs over media or the page canvas.
 ///
-/// The selected segment is named by a filled surface, not by a text
-/// decoration: a rounded track with a solid white thumb, dark brand ink on
-/// the thumb and white ink beside it. This is the app's own pill grammar
-/// restated for a surface whose background is unknown, which is why it uses
-/// fixed white/ink rather than the palette's track and primary thumb.
+/// The selected tab uses violet ink, stronger weight and a short glowing line.
+/// The line is a separate shape rather than a text decoration, so it stays
+/// crisp at large text sizes and supplies a non-colour selection cue. There
+/// is deliberately no track, thumb or tile fill: the visual control is only
+/// the two labels, while each label retains a full 48 px interaction target.
 class ImmersiveSegmentedSwitch extends StatelessWidget {
   const ImmersiveSegmentedSwitch({
     required this.segments,
@@ -239,13 +254,10 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
 
   /// True when the switch sits on the page CANVAS instead of over media.
   ///
-  /// Over media the control is theme-invariant (dark plate, white thumb,
-  /// shadowed copy) because the luminance beneath it is unknown. On the
-  /// canvas that luminance is the palette's own, so the same geometry is
-  /// restated in palette roles: `surfaceMuted` track with a hairline,
-  /// `colorScheme.primary` thumb, white on the thumb and `textSecondary`
-  /// beside it, no shadows. Default false keeps every existing host
-  /// byte-for-byte.
+  /// Over media the selected violet and white inactive label use the fixed
+  /// immersive palette because the luminance beneath them is unknown. On the
+  /// canvas the same trackless geometry uses theme-aware text and interaction
+  /// roles for Dark and Pearl.
   final bool onCanvas;
 
   /// The narrowest a segment may be. Over media 72 keeps the two-item
@@ -253,104 +265,48 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
   /// wider segments.
   final double segmentMinWidth;
 
-  /// Track 48, thumb inset 4, so the thumb is 40 and every segment's tap
-  /// target is the full 48 -- the inset belongs to the thumb, not the button.
+  /// Every text tab keeps a full 48 px target even though it has no tile.
   static const double _trackHeight = 48;
-  static const double _trackInset = 4;
-
-  /// Upper bound for the segment labels' text scale. See [build].
-  static const double _maxLabelScale = 1.6;
 
   @override
   Widget build(BuildContext context) {
     final count = segments.length;
     final clamped = selectedIndex.clamp(0, count - 1);
-    final thumbX = count == 1 ? 0.0 : -1 + 2 * clamped / (count - 1);
     final label = groupLabel;
-    final palette = onCanvas ? context.appPalette : null;
-    final thumbColor = onCanvas
-        ? Theme.of(context).colorScheme.primary
-        : Colors.white;
-
-    Widget body = Stack(
-      children: <Widget>[
-        Positioned.fill(
-          child: Padding(
-            padding: const EdgeInsets.all(_trackInset),
-            child: IgnorePointer(
-              child: AnimatedAlign(
-                duration: AppMotion.resolve(context, AppMotion.standard),
-                curve: AppMotion.standardCurve,
-                alignment: AlignmentDirectional(thumbX, 0),
-                child: FractionallySizedBox(
-                  widthFactor: 1 / count,
-                  heightFactor: 1,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: thumbColor,
-                      borderRadius: const BorderRadius.all(
-                        Radius.circular(999),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        // Equal-width segments are what make a 1/count thumb correct. While
-        // the segments were content-sized, the thumb landed on the neighbour
-        // in every locale whose two labels differ in width -- English is the
-        // one case where "Voice" and "Reels" happen to measure the same,
-        // which is why every harness run missed it. The selected label is
-        // painted in contrast ink with no shadow because it is assumed to sit
-        // on the white thumb, so where the thumb had slid away that ink fell
-        // on the dark track at roughly 1.2:1 and became unreadable.
-        // IntrinsicWidth sizes the track to count x the widest segment, and
-        // equal flex then divides it exactly.
-        Row(
-          mainAxisSize: MainAxisSize.max,
-          children: <Widget>[
-            for (var index = 0; index < count; index++)
-              Expanded(
-                child: _SwitchSegment(
-                  key: segments[index].key,
-                  option: segments[index],
-                  selected: index == clamped,
-                  onCanvas: onCanvas,
-                  minWidth: segmentMinWidth,
-                  onTap: () => onSelected(index),
-                ),
-              ),
-          ],
-        ),
-      ],
+    final accessibilityLayout =
+        MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    Widget segment(int index) => _SwitchSegment(
+      key: segments[index].key,
+      option: segments[index],
+      selected: index == clamped,
+      onCanvas: onCanvas,
+      minWidth: segmentMinWidth,
+      onTap: () => onSelected(index),
     );
+    // Equal widths keep the ordinary row visually balanced. At large text,
+    // intrinsic-width tabs use the available line efficiently; Wrap is the
+    // final fallback for a longer locale rather than clipping either word.
+    Widget body = accessibilityLayout
+        ? LayoutBuilder(
+            builder: (context, constraints) => Wrap(
+              spacing: 0,
+              runSpacing: AppRhythm.hairline,
+              children: <Widget>[
+                for (var index = 0; index < count; index++) segment(index),
+              ],
+            ),
+          )
+        : Row(
+            mainAxisSize: MainAxisSize.max,
+            children: <Widget>[
+              for (var index = 0; index < count; index++)
+                Expanded(child: segment(index)),
+            ],
+          );
 
-    body = MediaQuery.withClampedTextScaling(
-      // Both labels must stay on screen at the narrowest supported width.
-      // The 48 px target and the track never depend on the text size, so
-      // capping the LABEL scale keeps every realistic locale fully laid out
-      // at 320 px with 200 % system text while the page around the switch
-      // still scales to 200 %. Equal-width segments plus an ellipsis remain
-      // the last resort beyond that, never a hidden segment.
-      maxScaleFactor: _maxLabelScale,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: _trackHeight),
-        child: DecoratedBox(
-          decoration: palette == null
-              ? const BoxDecoration(
-                  color: overlayPlateColor,
-                  borderRadius: BorderRadius.all(Radius.circular(999)),
-                )
-              : BoxDecoration(
-                  color: palette.surfaceMuted,
-                  border: Border.all(color: palette.border),
-                  borderRadius: const BorderRadius.all(Radius.circular(999)),
-                ),
-          child: IntrinsicWidth(child: body),
-        ),
-      ),
+    body = ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: _trackHeight),
+      child: accessibilityLayout ? body : IntrinsicWidth(child: body),
     );
     return label == null
         ? body
@@ -380,8 +336,7 @@ mixin _KeepsSelectionVisible<T extends StatefulWidget> on State<T> {
   /// for as long as it is animating, so an eased reveal would swallow the
   /// next tap on a neighbouring chip for 140 ms — on the canvas the row is
   /// short and the jump is imperceptible, over media the scrim hides it.
-  Duration get revealDuration =>
-      AppMotion.resolve(context, AppMotion.quick);
+  Duration get revealDuration => AppMotion.resolve(context, AppMotion.quick);
 
   @override
   void initState() {
@@ -449,20 +404,17 @@ class _SwitchSegmentState extends State<_SwitchSegment>
     final selected = widget.selected;
     final onCanvas = widget.onCanvas;
     final palette = onCanvas ? context.appPalette : null;
-    // Over media: dark brand ink on the white thumb (16.6:1); white beside
-    // it on the composited track (9.1:1 even over pure-white media). On the
-    // canvas: white on the primary thumb (5.85:1), textSecondary beside it.
+    // The fixed immersive violet clears AA against the header scrim even over
+    // bright footage. Canvas tabs use theme-aware interaction and copy roles.
+    // In both cases selection also changes weight and gains a separate line.
+    final selectedForeground =
+        palette?.interactiveForeground ?? AppPalette.dark.interactiveForeground;
     final foreground = palette == null
-        ? (selected ? AppColors.contrastInk : Colors.white)
-        : (selected
-              ? Theme.of(context).colorScheme.onPrimary
-              : palette.textSecondary);
-    final focusRing = palette == null
-        // Two-tone by construction: the ring is dark on the white thumb and
-        // white on the dark track, so it is visible in both states over any
-        // media.
-        ? (selected ? AppColors.contrastInk : Colors.white)
-        : palette.focus;
+        ? (selected ? selectedForeground : Colors.white)
+        : (selected ? selectedForeground : palette.textSecondary);
+    final focusRing = palette == null ? Colors.white : palette.focus;
+    final accessibilityLayout =
+        MediaQuery.textScalerOf(context).scale(1) >= 1.6;
     return Semantics(
       button: true,
       selected: selected,
@@ -482,7 +434,7 @@ class _SwitchSegmentState extends State<_SwitchSegment>
           // Selecting the current segment again changes nothing, but the
           // control stays live so keyboard focus can rest on it.
           onTap: selected ? () {} : widget.onTap,
-          customBorder: const StadiumBorder(),
+          borderRadius: const BorderRadius.all(Radius.circular(8)),
           onFocusChange: (focused) {
             if (_focused != focused) setState(() => _focused = focused);
           },
@@ -494,32 +446,66 @@ class _SwitchSegmentState extends State<_SwitchSegment>
                   minWidth: widget.minWidth,
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppRhythm.title,
-                    vertical: 6,
+                  padding: EdgeInsets.symmetric(
+                    // The labels keep the reader's full text scale. On a
+                    // narrow phone, including the Back and Create plates,
+                    // reclaim only decorative side padding once large text
+                    // is active so both words remain complete and tappable.
+                    horizontal: accessibilityLayout ? 0 : AppRhythm.item,
+                    vertical: 4,
                   ),
-                  child: Align(
-                    alignment: Alignment.center,
-                    child: Text(
-                      widget.option.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: foreground,
-                        fontSize: 15,
-                        height: 1.2,
-                        fontWeight: selected
-                            ? FontWeight.w800
-                            : FontWeight.w600,
-                        // White copy laid on media keeps its shadow stack;
-                        // ink on the solid thumb, and any canvas copy, does
-                        // not need one.
-                        shadows: selected || onCanvas
-                            ? null
-                            : overlayTextShadows,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        widget.option.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: foreground,
+                          fontSize: 17,
+                          letterSpacing: accessibilityLayout ? -2 : null,
+                          height: 1.15,
+                          fontWeight: selected
+                              ? FontWeight.w800
+                              : FontWeight.w600,
+                          shadows: onCanvas ? null : overlayTextShadows,
+                        ),
                       ),
-                    ),
+                      const SizedBox(height: 3),
+                      AnimatedContainer(
+                        key: ValueKey<String>(
+                          'immersive-format-indicator-${widget.option.label}',
+                        ),
+                        duration: AppMotion.resolve(
+                          context,
+                          AppMotion.standard,
+                        ),
+                        curve: AppMotion.standardCurve,
+                        width: selected ? 30 : 0,
+                        height: 3,
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? selectedForeground
+                              : Colors.transparent,
+                          borderRadius: const BorderRadius.all(
+                            Radius.circular(999),
+                          ),
+                          boxShadow: selected
+                              ? <BoxShadow>[
+                                  BoxShadow(
+                                    color: selectedForeground.withValues(
+                                      alpha: .62,
+                                    ),
+                                    blurRadius: 8,
+                                  ),
+                                ]
+                              : null,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -527,13 +513,9 @@ class _SwitchSegmentState extends State<_SwitchSegment>
                 child: IgnorePointer(
                   child: AnimatedContainer(
                     duration: AppMotion.resolve(context, AppMotion.quick),
-                    margin: const EdgeInsets.all(
-                      ImmersiveSegmentedSwitch._trackInset,
-                    ),
+                    margin: const EdgeInsets.all(2),
                     decoration: BoxDecoration(
-                      borderRadius: const BorderRadius.all(
-                        Radius.circular(999),
-                      ),
+                      borderRadius: const BorderRadius.all(Radius.circular(8)),
                       border: Border.all(
                         color: _focused ? focusRing : Colors.transparent,
                         width: 2,
@@ -756,7 +738,9 @@ class _FilterInkState extends State<_FilterInk>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: selected ? palette.textPrimary : palette.textSecondary,
+                    color: selected
+                        ? palette.textPrimary
+                        : palette.textSecondary,
                     fontSize: 13,
                     height: 1.2,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w500,

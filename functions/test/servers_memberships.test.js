@@ -17,7 +17,7 @@ const { createServerChannelService } = require("../servers/channels");
 const { createServerMembershipService } = require("../servers/memberships");
 const { createServerConvergenceService } = require("../servers/convergence");
 const { readChannelAccess } = require("../servers/authority");
-const { serverChannelRefId } = require("../servers/contract");
+const { FREE_SERVER_LIMIT, serverChannelRefId } = require("../servers/contract");
 const nowMs = 1_900_000_000_000;
 const request = (uid, data) => ({ auth: { uid, token: { email_verified: true } }, data });
 const rejection = (promise, code) => assert.rejects(promise, (error) => error.code === code);
@@ -203,14 +203,14 @@ emulatorTest("existing over-limit owner can transfer out while full recipient ca
   const value = await fixture();
   const target = await user();
   await value.joinServerV1(request(target, operation(value.serverId)));
-  for (let index = 0; index < 21; index += 1) await db.doc(`clubs/over-${value.uid}-${index}`).set({
+  for (let index = 0; index < FREE_SERVER_LIMIT + 1; index += 1) await db.doc(`clubs/over-${value.uid}-${index}`).set({
     ownerId: value.uid, serverSchemaVersion: 1, entitlementPolicyId: "freeServersV1", status: "active",
   });
-  for (let index = 0; index < 20; index += 1) await db.doc(`clubs/full-${target}-${index}`).set({
+  for (let index = 0; index < FREE_SERVER_LIMIT; index += 1) await db.doc(`clubs/full-${target}-${index}`).set({
     ownerId: target, serverSchemaVersion: 1, entitlementPolicyId: "freeServersV1", status: "active",
   });
   await rejection(value.transferServerOwnershipV1(request(value.uid, operation(value.serverId, { newOwnerId: target }))), "resource-exhausted");
-  await db.doc(`clubs/full-${target}-19`).delete();
+  await db.doc(`clubs/full-${target}-${FREE_SERVER_LIMIT - 1}`).delete();
   await value.transferServerOwnershipV1(request(value.uid, operation(value.serverId, { newOwnerId: target })));
   assert.equal((await db.doc(`clubs/${value.serverId}`).get()).data().ownerId, target);
 });

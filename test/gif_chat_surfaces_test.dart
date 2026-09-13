@@ -16,6 +16,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
+import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_chat_screen.dart';
 import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
 import 'package:yovoice/features/media/data/models/gif_asset.dart';
@@ -28,6 +29,10 @@ import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/models/server_channel.dart';
+import 'package:yovoice/features/servers/data/models/server_type.dart';
+import 'package:yovoice/features/servers/presentation/widgets/server_text_channel_scene.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_composer_panel.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_gif_picker.dart';
@@ -165,7 +170,7 @@ void main() {
           gifMessageInvoker: invoke,
         ),
       ),
-      _ => ClubChatScreen(
+      'club' => ClubChatScreen(
         clubId: 'club',
         clubName: 'Club',
         channel: const ClubChannel(
@@ -182,6 +187,32 @@ void main() {
         auth: auth,
         gifService: catalog,
         gifMessageInvoker: invoke,
+      ),
+      _ => Scaffold(
+        body: ServerTextChannelScene(
+          server: const Server(
+            id: 'club',
+            name: 'Friends server',
+            description: '',
+            ownerId: 'me',
+            type: ServerType.friends,
+            privacy: ServerPrivacy.inviteOnly,
+            defaultChannelId: 'general',
+            schemaVersion: 1,
+            activationState: 'active',
+          ),
+          channel: const ServerChannel(
+            id: 'general',
+            serverId: 'club',
+            name: 'General',
+            kind: ServerChannelKind.text,
+            schemaVersion: 1,
+          ),
+          currentUserId: 'me',
+          chatService: ClubChatService(firestore: db, auth: auth),
+          gifService: catalog,
+          gifMessageInvoker: invoke,
+        ),
       ),
     };
     return AppPreferencesScope(
@@ -223,7 +254,7 @@ void main() {
     });
   }
 
-  for (final surface in ['direct', 'room', 'club']) {
+  for (final surface in ['direct', 'room', 'club', 'server']) {
     testWidgets(
       '$surface receives canonical GIFs without provider contact when auto-load is off',
       (tester) async {
@@ -441,7 +472,7 @@ void main() {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(320, 568);
       addTearDown(tester.view.reset);
-      for (final surface in ['direct', 'room', 'club']) {
+      for (final surface in ['direct', 'room', 'club', 'server']) {
         for (final locale in [const Locale('pl'), const Locale('ar')]) {
           await YoComposerPanelTabStore.instance.remember(
             YoComposerPanelTab.gif,

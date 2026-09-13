@@ -143,6 +143,16 @@ class AudioplayersUiSoundPlayer implements UiSoundPlayer {
 typedef UiSoundPlayerFactory = UiSoundPlayer Function(UiSoundChannel channel);
 typedef UiSoundClock = DateTime Function();
 
+/// Bounds a missing platform completion event without cutting off a valid cue.
+///
+/// Incoming-call fallback uses the 3.303 s ringing master as a one-shot cue,
+/// while every other UI sound is shorter than two seconds. Keeping the longer
+/// watchdog on the call channel avoids weakening failure recovery elsewhere.
+Duration uiSoundCompletionTimeout(UiSoundChannel channel) => switch (channel) {
+  UiSoundChannel.call => const Duration(seconds: 5),
+  _ => const Duration(seconds: 2),
+};
+
 /// A small, failure-isolated sound layer for meaningful product events.
 ///
 /// Players are created lazily (at most one per channel), so simply enabling
@@ -156,7 +166,11 @@ class UiSoundService {
   }) : _enabled =
            enabled ??
            (() => AppPreferencesController.instance.value.soundEffectsEnabled),
-       _playerFactory = playerFactory ?? ((_) => AudioplayersUiSoundPlayer()),
+       _playerFactory =
+           playerFactory ??
+           ((channel) => AudioplayersUiSoundPlayer(
+             completionTimeout: uiSoundCompletionTimeout(channel),
+           )),
        _clock = clock ?? DateTime.now;
 
   static final instance = UiSoundService();
@@ -247,6 +261,7 @@ class UiSoundService {
     UiSoundChannel.room => const Duration(milliseconds: 150),
     UiSoundChannel.controls => const Duration(milliseconds: 70),
     UiSoundChannel.notification => const Duration(milliseconds: 650),
+    UiSoundChannel.call => const Duration(milliseconds: 120),
   };
 
   bool _inside(DateTime now, DateTime then, Duration window) {

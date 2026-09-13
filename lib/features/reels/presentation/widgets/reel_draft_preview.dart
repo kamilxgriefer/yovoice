@@ -109,6 +109,12 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
   bool _scrubbing = false;
   Duration? _lastPosition;
   int _preparationCount = 0;
+  bool _resumeAfterReconfiguration = false;
+  bool _resumeInFlight = false;
+  int _playbackIntentVersion = 0;
+  int _nextBackingAudioPickerToken = 0;
+  int? _backingAudioPickerToken;
+  bool _backingAudioPickerFinished = false;
 
   bool get isPlaying => _playback?.isPlaying ?? false;
 
@@ -138,12 +144,19 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
     final next = widget.composition;
     final trimChanged =
         old.trimStartMs != next.trimStartMs || old.trimEndMs != next.trimEndMs;
-    if (sourceChanged ||
-        !identical(oldWidget.backingAudio?.bytes, widget.backingAudio?.bytes) ||
+    final backingAudioChanged = !identical(
+      oldWidget.backingAudio?.bytes,
+      widget.backingAudio?.bytes,
+    );
+    final audioRecipeChanged =
         old.audioTrimStartMs != next.audioTrimStartMs ||
         old.originalAudioVolume != next.originalAudioVolume ||
-        old.backingAudioVolume != next.backingAudioVolume) {
+        old.backingAudioVolume != next.backingAudioVolume;
+    if (sourceChanged) {
+      _cancelAutomaticResume();
       unawaited(_prepare());
+    } else if (backingAudioChanged || audioRecipeChanged) {
+      unawaited(_prepare(preservePlayback: true));
     } else if (trimChanged) {
       // A trim-only change keeps the decoder and, while a handle is held,
       // the timeline too: the drag scrubs frames and the release rebuilds
@@ -155,20 +168,27 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
       }
     } else if (oldWidget.active != widget.active) {
       final lifecycle = WidgetsBinding.instance.lifecycleState;
-      unawaited(
-        _playback
-            ?.setActive(
-              widget.active &&
-                  (lifecycle == null || lifecycle == AppLifecycleState.resumed),
-            )
-            .catchError((Object _) {}),
-      );
+      final foreground =
+          lifecycle == null || lifecycle == AppLifecycleState.resumed;
+      if (!widget.active && _backingAudioPickerToken == null) {
+        _cancelAutomaticResume();
+      }
+      unawaited(_applyActiveState(foreground: foreground));
     }
   }
 
   bool _current(int epoch) => mounted && epoch == _epoch;
 
-  Future<void> _prepare({bool trimOnly = false}) {
+  Future<void> _prepare({
+    bool trimOnly = false,
+    bool preservePlayback = false,
+  }) {
+    if (preservePlayback &&
+        widget.active &&
+        (isPlaying || _resumeAfterReconfiguration)) {
+      if (!_resumeAfterReconfiguration) _playbackIntentVersion += 1;
+      _resumeAfterReconfiguration = true;
+    }
     final epoch = ++_epoch;
     _preparationCount += 1;
     _preparing = true;
@@ -191,7 +211,9 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
     // change invalidates older work without opening competing native players.
     _preparations = _preparations
         .catchError((Object _) {})
-        .then((_) => _prepareNow(epoch, keepFrame: trimOnly));
+        .then(
+          (_) => _prepareNow(epoch, keepFrame: trimOnly || preservePlayback),
+        );
     return _preparations;
   }
 
@@ -202,15 +224,21 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
     oldPlayback?.removeListener(_onPlayback);
     if (oldPlayback != null) {
       try {
-        // Deactivation rewinds to the old start; after a trim the frame the
-        // user just placed must stay put, so only pause before replacing.
-        if (keepFrame) {
-          await oldPlayback.pause();
-        } else {
-          await oldPlayback.setActive(false);
+        // The decoder belongs to this widget, so pause it directly before
+        // invalidating the old coordinator. Waiting on a queued coordinator
+        // pause could sit behind a stale drift correction from the same tick.
+        final video = _video;
+        if (video != null) {
+          await video.pause();
+          if (!keepFrame) {
+            await video.seekTo(
+              Duration(milliseconds: widget.composition.trimStartMs),
+            );
+          }
         }
       } catch (_) {}
       oldPlayback.dispose();
+      await oldPlayback.retirement;
     }
     if (!_current(epoch)) return;
     if (widget.media.mediaKind != ReelMediaKind.video ||
@@ -256,7 +284,7 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
       if (video != null) await playback.attachVideo(_LocalDraftVideo(video));
       final foreground = WidgetsBinding.instance.lifecycleState;
       await playback.setActive(
-        widget.active &&
+        (widget.active || _backingAudioPickerToken != null) &&
             (foreground == null || foreground == AppLifecycleState.resumed),
       );
       if (_current(epoch)) {
@@ -264,6 +292,7 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
           _preparing = false;
           _quiet = false;
         });
+        unawaited(_resumeIfEligible());
       }
     } catch (_) {
       if (_current(epoch)) {
@@ -309,15 +338,121 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
   }
 
   Future<void> pause() async {
+    _cancelAutomaticResume();
     // The coordinator invalidates an in-flight play synchronously. Navigation
     // must not wait for a native decoder which is still opening local bytes.
     unawaited(_playback?.pause(reset: true).catchError((Object _) {}));
+  }
+
+  /// Pauses in place while the system-owned backing-audio picker is visible.
+  ///
+  /// The returned token belongs to this exact picker request. Completing an
+  /// older request cannot resume a newer one, and ordinary [pause] never arms
+  /// this intent. Cancel and error use [finishBackingAudioPicker] too, which
+  /// restores the previous playback when the preview is still visible.
+  Future<int> pauseForBackingAudioPicker() async {
+    final token = ++_nextBackingAudioPickerToken;
+    _playbackIntentVersion += 1;
+    _backingAudioPickerToken = token;
+    _backingAudioPickerFinished = false;
+    _resumeAfterReconfiguration = isPlaying;
+    final playback = _playback;
+    if (_resumeAfterReconfiguration && playback != null) {
+      try {
+        await playback.pause();
+      } catch (_) {
+        if (mounted && identical(playback, _playback)) {
+          setState(() => _failed = true);
+        }
+      }
+    }
+    return token;
+  }
+
+  /// Releases the temporary picker hold. Playback resumes only when it was
+  /// running before the picker and this preview is still active and resumed.
+  void finishBackingAudioPicker(int token) {
+    if (!mounted || token != _backingAudioPickerToken) return;
+    _backingAudioPickerFinished = true;
+    if (!_resumeAfterReconfiguration) {
+      _backingAudioPickerToken = null;
+      return;
+    }
+    unawaited(_resumeIfEligible());
+  }
+
+  void _cancelAutomaticResume() {
+    _playbackIntentVersion += 1;
+    _resumeAfterReconfiguration = false;
+    _backingAudioPickerToken = null;
+    _backingAudioPickerFinished = false;
+  }
+
+  Future<void> _applyActiveState({required bool foreground}) async {
+    final playback = _playback;
+    if (playback == null) return;
+    try {
+      if (_backingAudioPickerToken != null) {
+        // Keep the coordinator armed but paused so the system picker does not
+        // rewind the video frame. Its token blocks every automatic resume.
+        await playback.pause();
+      } else {
+        await playback.setActive(widget.active && foreground);
+      }
+      if (mounted && widget.active && foreground) {
+        await _resumeIfEligible();
+      }
+    } catch (_) {
+      if (mounted && identical(playback, _playback)) {
+        setState(() => _failed = true);
+      }
+    }
+  }
+
+  Future<void> _resumeIfEligible() async {
+    if (_resumeInFlight ||
+        !_resumeAfterReconfiguration ||
+        _preparing ||
+        !mounted ||
+        !widget.active ||
+        (_backingAudioPickerToken != null && !_backingAudioPickerFinished)) {
+      return;
+    }
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) return;
+    final playback = _playback;
+    if (playback == null || !playback.canToggle) return;
+    final epoch = _epoch;
+    final intent = _playbackIntentVersion;
+    _resumeInFlight = true;
+    try {
+      await playback.play();
+      if (_current(epoch) &&
+          identical(playback, _playback) &&
+          intent == _playbackIntentVersion &&
+          widget.active) {
+        _resumeAfterReconfiguration = false;
+        _backingAudioPickerToken = null;
+        _backingAudioPickerFinished = false;
+        if (mounted) setState(() => _failed = false);
+      }
+    } catch (_) {
+      if (_current(epoch) &&
+          identical(playback, _playback) &&
+          intent == _playbackIntentVersion) {
+        _cancelAutomaticResume();
+        setState(() => _failed = true);
+      }
+    } finally {
+      _resumeInFlight = false;
+    }
   }
 
   /// Holds the timeline while a trim handle moves: playback pauses in place
   /// (no rewind) and trim-only recipe updates stop rebuilding the loop until
   /// [endTrimEdit]. Safe to call repeatedly.
   void beginTrimEdit() {
+    _cancelAutomaticResume();
     _trimEditToken += 1;
     if (_trimEditing) return;
     _trimEditing = true;
@@ -375,6 +510,9 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
   }
 
   Future<void> toggle() async {
+    // Even while a new coordinator is preparing, a deliberate user action
+    // cancels the stored resume intent. It must never start media later.
+    _cancelAutomaticResume();
     if (_preparing || !widget.active) return;
     final playback = _playback;
     final epoch = _epoch;
@@ -392,16 +530,19 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed &&
+        _backingAudioPickerToken == null) {
+      _cancelAutomaticResume();
+    }
     unawaited(
-      _playback
-          ?.setActive(state == AppLifecycleState.resumed && widget.active)
-          .catchError((Object _) {}),
+      _applyActiveState(foreground: state == AppLifecycleState.resumed),
     );
   }
 
   @override
   void dispose() {
     _epoch++;
+    _cancelAutomaticResume();
     WidgetsBinding.instance.removeObserver(this);
     _playback?.removeListener(_onPlayback);
     _playback?.dispose();

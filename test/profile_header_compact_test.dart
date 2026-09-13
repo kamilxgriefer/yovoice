@@ -202,11 +202,15 @@ void main() {
       'OWNER · SUPER ADMIN',
       'VIP',
       'Creator',
-      'Premium',
       'First Word',
     ]) {
       expect(find.text(label), findsOneWidget, reason: '$label stays visible');
     }
+    expect(
+      find.byKey(const ValueKey('premium-identity-badge')),
+      findsOneWidget,
+      reason: 'the Premium check stays visible',
+    );
 
     final railRect = tester.getRect(
       find.byKey(const Key('profile-header-badge-rail')),
@@ -215,14 +219,14 @@ void main() {
     expect(railRect.width, closeTo(354, .01));
 
     final rowCenters = <double>[];
-    for (final label in const [
-      'OWNER · SUPER ADMIN',
-      'VIP',
-      'Creator',
-      'Premium',
-      'First Word',
+    for (final finder in [
+      find.text('OWNER · SUPER ADMIN'),
+      find.text('VIP'),
+      find.text('Creator'),
+      find.byKey(const ValueKey('premium-identity-badge')),
+      find.text('First Word'),
     ]) {
-      final y = tester.getCenter(find.text(label)).dy;
+      final y = tester.getCenter(finder).dy;
       if (!rowCenters.any((existing) => (existing - y).abs() < 4)) {
         rowCenters.add(y);
       }
@@ -271,6 +275,10 @@ void main() {
 
     expect(find.text('OWNER · SUPER ADMIN'), findsOneWidget);
     expect(find.text('VIP'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('premium-identity-badge')),
+      findsOneWidget,
+    );
     expect(find.text('First Word'), findsOneWidget);
     expect(tester.takeException(), isNull, reason: 'no overflow at 200% text');
   });

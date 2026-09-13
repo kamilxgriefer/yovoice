@@ -9,6 +9,11 @@
 // and forbid rehosting, which is why this adapter returns CDN URLs and never
 // bytes.
 //
+// ACTIVATION HOLD: current GIPHY API terms require Search/Trending requests to
+// run client-side. This server adapter is therefore dormant and test-only
+// unless YO Voice first receives written provider approval for the proxy
+// architecture. An API key by itself is not authorization to enable it.
+//
 // `fetchImpl` is injectable and defaults to Node 22's global fetch — so this
 // module adds no npm dependency, and every parsing, normalization, rating and
 // error-mapping path is tested against recorded fixture JSON with no key.
@@ -24,6 +29,9 @@ const {
 } = require("./normalize");
 
 const API_ROOT = "https://api.giphy.com/v1/gifs";
+const GIPHY_MAX_SEARCH_OFFSET = 4999;
+const GIPHY_MAX_TRENDING_OFFSET = 499;
+const GIPHY_MAX_SEARCH_QUERY_LENGTH = 50;
 /// A search a person is waiting on. Longer than this and the picker should
 /// show its retry state rather than hold a spinner; the callable's own
 /// timeout is longer still. This budget covers headers AND response body.
@@ -79,20 +87,18 @@ function normalizeGiphyItem(item) {
 /// GIPHY paginates by offset. The cursor is the offset as a decimal string,
 /// which satisfies normalize.js's cursor grammar and stays opaque to the
 /// client — nothing above this module may assume what a cursor means.
-function parseOffsetCursor(cursor) {
+function parseOffsetCursor(cursor, { maximum }) {
   if (typeof cursor !== "string" || cursor.length === 0) return 0;
   const parsed = Number.parseInt(cursor, 10);
-  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 4999) return 0;
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maximum) return 0;
   return parsed;
 }
 
-function nextOffsetCursor({ offset, count, total }) {
+function nextOffsetCursor({ offset, count, total, maximum }) {
   const consumed = offset + count;
   if (count === 0) return null;
   if (Number.isSafeInteger(total) && consumed >= total) return null;
-  // GIPHY refuses offsets past 4999 on the search endpoint; stopping here is
-  // an honest end-of-results rather than a 4xx the user would see as an error.
-  if (consumed > 4999) return null;
+  if (consumed > maximum) return null;
   return String(consumed);
 }
 
@@ -198,7 +204,7 @@ function createGiphyProvider({
     }
   }
 
-  function normalizePage(payload, offset) {
+  function normalizePage(payload, offset, maximum) {
     const rawItems = Array.isArray(payload?.data) ? payload.data : [];
     const items = [];
     for (const raw of rawItems) {
@@ -212,32 +218,37 @@ function createGiphyProvider({
         offset,
         count: rawItems.length,
         total: Number.isSafeInteger(total) ? total : null,
+        maximum,
       }),
       fetchedAt: now(),
     };
   }
 
   async function search({ query, locale, limit, cursor } = {}) {
-    const offset = parseOffsetCursor(cursor);
+    const offset = parseOffsetCursor(cursor, { maximum: GIPHY_MAX_SEARCH_OFFSET });
     const payload = await request("/search", {
-      q: query,
+      q: [...String(query ?? "")]
+        .slice(0, GIPHY_MAX_SEARCH_QUERY_LENGTH)
+        .join(""),
       lang: locale,
       limit: normalizeLimit(limit, { fallback: DEFAULT_PAGE_SIZE }),
       offset,
       bundle: "messaging_non_clips",
     });
-    return normalizePage(payload, offset);
+    return normalizePage(payload, offset, GIPHY_MAX_SEARCH_OFFSET);
   }
 
   async function trending({ locale, limit, cursor } = {}) {
-    const offset = parseOffsetCursor(cursor);
+    const offset = parseOffsetCursor(cursor, {
+      maximum: GIPHY_MAX_TRENDING_OFFSET,
+    });
     const payload = await request("/trending", {
       lang: locale,
       limit: normalizeLimit(limit, { fallback: DEFAULT_PAGE_SIZE }),
       offset,
       bundle: "messaging_non_clips",
     });
-    return normalizePage(payload, offset);
+    return normalizePage(payload, offset, GIPHY_MAX_TRENDING_OFFSET);
   }
 
   async function resolve({ id } = {}) {
@@ -258,6 +269,9 @@ function createGiphyProvider({
 
 module.exports = {
   GIPHY_ATTRIBUTION,
+  GIPHY_MAX_SEARCH_OFFSET,
+  GIPHY_MAX_SEARCH_QUERY_LENGTH,
+  GIPHY_MAX_TRENDING_OFFSET,
   REQUEST_TIMEOUT_MS,
   createGiphyProvider,
   normalizeGiphyItem,

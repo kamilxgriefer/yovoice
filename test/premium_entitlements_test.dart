@@ -564,9 +564,9 @@ void main() {
         scrollable: find.byType(Scrollable).first,
       );
       await tester.pump();
-      expect(find.text('Become a Creator'), findsOneWidget);
-      expect(find.text('Build your audience'), findsOneWidget);
-      expect(find.text('Stand out'), findsOneWidget);
+      expect(find.text('Creator account & studio'), findsOneWidget);
+      expect(find.text('30 owned Servers'), findsOneWidget);
+      expect(find.text('Premium presence & privacy'), findsOneWidget);
       // No pricing on the presentation — that's the plans screen's job.
       expect(find.text('19,99 zł'), findsNothing);
 
@@ -588,6 +588,32 @@ void main() {
       );
       await tester.pump();
       expect(find.text('Everything Premium includes:'), findsOneWidget);
+      expect(
+        find.text(
+          'Creator account and Studio; age confirmation and opt-in enable Follow',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text('30 owned Servers (Free: 5); unlimited joins for everyone'),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'In private chats, Incognito hides read receipts; typing visibility is separate',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Premium badge and shimmering profile ring'),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'Modest Yeels recommendation boost; reach is never guaranteed',
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('active premium member sees status, not the paywall', (

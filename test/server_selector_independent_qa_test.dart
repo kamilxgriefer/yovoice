@@ -508,11 +508,14 @@ void main() {
       size: const Size(768, 1800),
     );
     expect(
-      find.text('Możesz utworzyć bezpłatnie do 20 nowych serwerów.'),
-      findsNothing,
+      find.text(
+        'Możesz mieć jeden serwer rodzinny. Wlicza się do limitu 5 własnych '
+        'serwerów bezpłatnie lub 30 w Premium; dołączasz bez limitu.',
+      ),
+      findsOneWidget,
       reason:
-          'FAMILY_SERVER_LIMIT is 1 (functions/servers/capacity.js:21); the '
-          '20-server allowance never applies to a family server',
+          'Family keeps its one-per-owner constraint but still consumes the '
+          'same owned-Server allowance as every other template.',
     );
   });
 }

@@ -21,7 +21,40 @@ const asset = GifAsset(
   height: 200,
 );
 
+const yovoiceAsset = GifAsset(
+  provider: 'yovoice',
+  id: 'yoFire01',
+  title: 'That is fire',
+  rating: 'g',
+  previewUrl: 'asset://yovoice/gifs/yoFire01.gif',
+  url: 'asset://yovoice/gifs/yoFire01.gif',
+  width: 320,
+  height: 200,
+);
+
 void main() {
+  test('YO Voice Originals survive catalog and message wire parsing', () {
+    final page = GifSearchPage.fromWire({
+      'items': [yovoiceAsset.toWire()],
+      'nextCursor': null,
+      'degraded': false,
+      'cacheHit': false,
+    });
+    expect(page.items, [yovoiceAsset]);
+    expect(
+      page.items.single.bundledAssetPath,
+      'assets/gifs/yovoice/yoFire01.gif',
+    );
+    expect(GifAsset.fromMessage(yovoiceAsset.toWire()), yovoiceAsset);
+    expect(
+      GifAsset.fromMessage({
+        ...yovoiceAsset.toWire(),
+        'url': 'asset://yovoice/gifs/yoLove01.gif',
+      }),
+      isNull,
+    );
+  });
+
   for (final key in ['width', 'height']) {
     for (final value in [
       double.nan,

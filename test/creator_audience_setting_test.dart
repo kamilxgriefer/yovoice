@@ -90,6 +90,37 @@ void main() {
   });
 
   test(
+    'age confirmation sends only a calendar date and durable request id',
+    () async {
+      String? callable;
+      Map<String, Object?>? payload;
+      final service = CreatorAudienceService(
+        mutationInvoker: (name, data) async {
+          callable = name;
+          payload = data;
+          return const <Object?, Object?>{
+            'creatorAgeVerified': true,
+            'changed': true,
+          };
+        },
+      );
+
+      final result = await service.confirmAdultEligibility(
+        birthDate: DateTime(1998, 4, 9, 23, 45),
+        requestId: 'age_confirmation_001',
+      );
+
+      expect(callable, 'confirmCreatorAdultEligibility');
+      expect(payload, {
+        'birthDate': '1998-04-09',
+        'requestId': 'age_confirmation_001',
+      });
+      expect(result.verified, isTrue);
+      expect(result.changed, isTrue);
+    },
+  );
+
+  test(
     'the public projection fails closed and owns its visible counts',
     () async {
       final firestore = FakeFirebaseFirestore();
@@ -138,6 +169,15 @@ void main() {
       reason: 'Age verification is required before the public opt-in.',
     );
     expect(
+      creatorAudienceCanConfirmAge(profile(ageVerified: false), paid),
+      isTrue,
+    );
+    expect(
+      creatorAudienceSettingIsAvailable(profile(ageVerified: false), paid),
+      isTrue,
+      reason: 'A paid Creator must see the self-service age step.',
+    );
+    expect(
       creatorAudienceCanEnable(
         profile(),
         SubscriptionEntitlements.free.withModeratorBenefits(true),
@@ -161,6 +201,132 @@ void main() {
       creatorAudienceCanEnable(profile(type: AccountType.official), paid),
       isFalse,
     );
+  });
+
+  testWidgets('age confirmation unlocks the Follow opt-in in one flow', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    final service = CreatorAudienceService(
+      requestIdFactory: () => 'age_confirmation_002',
+      mutationInvoker: (name, payload) async {
+        calls.add(name);
+        if (name == 'confirmCreatorAdultEligibility') {
+          expect(payload['birthDate'], '1995-06-15');
+          return const <Object?, Object?>{
+            'creatorAgeVerified': true,
+            'changed': true,
+          };
+        }
+        return const <Object?, Object?>{
+          'creatorAudienceEnabled': true,
+          'creatorAudienceVisible': true,
+          'changed': true,
+        };
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CreatorAudienceSetting(
+            ownerEnabled: false,
+            publicVisible: false,
+            canEnable: false,
+            ageVerified: false,
+            canConfirmAge: true,
+            birthDateSelector: (_) async => DateTime(1995, 6, 15),
+            service: service,
+          ),
+        ),
+      ),
+    );
+
+    final toggle = find.byKey(const ValueKey('creator-audience-switch'));
+    expect(tester.widget<Switch>(toggle).onChanged, isNull);
+    expect(
+      find.byKey(const ValueKey('confirm-creator-age-button')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('confirm-creator-age-button')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      find.text('Age confirmed. You can now enable Follow.'),
+      findsOneWidget,
+    );
+    expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
+    await tester.tap(toggle);
+    await tester.pump();
+    await tester.pump();
+    expect(calls, [
+      'confirmCreatorAdultEligibility',
+      'setCreatorAudienceEnabled',
+    ]);
+    expect(find.text('Your creator audience is now visible.'), findsOneWidget);
+  });
+
+  testWidgets('an ambiguous age retry reuses its date and request id', (
+    tester,
+  ) async {
+    var requestIdsCreated = 0;
+    var dateSelections = 0;
+    var attempts = 0;
+    final payloads = <Map<String, Object?>>[];
+    final service = CreatorAudienceService(
+      requestIdFactory: () {
+        requestIdsCreated += 1;
+        return 'age_confirmation_retry';
+      },
+      mutationInvoker: (_, payload) async {
+        payloads.add(Map<String, Object?>.from(payload));
+        attempts += 1;
+        if (attempts == 1) {
+          throw FirebaseFunctionsException(
+            code: 'unavailable',
+            message: 'network',
+          );
+        }
+        return const <Object?, Object?>{
+          'creatorAgeVerified': true,
+          'changed': true,
+        };
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CreatorAudienceSetting(
+            ownerEnabled: false,
+            publicVisible: false,
+            canEnable: false,
+            ageVerified: false,
+            canConfirmAge: true,
+            birthDateSelector: (_) async {
+              dateSelections += 1;
+              return DateTime(1994, 3, 2);
+            },
+            service: service,
+          ),
+        ),
+      ),
+    );
+
+    final button = find.byKey(const ValueKey('confirm-creator-age-button'));
+    await tester.tap(button);
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(button);
+    await tester.pump();
+    await tester.pump();
+
+    expect(requestIdsCreated, 1);
+    expect(dateSelections, 1);
+    expect(payloads, [
+      {'birthDate': '1994-03-02', 'requestId': 'age_confirmation_retry'},
+      {'birthDate': '1994-03-02', 'requestId': 'age_confirmation_retry'},
+    ]);
   });
 
   testWidgets('a failed retry reuses its durable request id', (tester) async {
@@ -204,11 +370,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('creator-audience-switch')));
     await tester.pump();
     await tester.pump();
-    expect(
-      find.byKey(const ValueKey('creator-audience-feedback')),
-      findsOneWidget,
-    );
-    expect(find.textContaining('age'), findsNothing);
+    final feedback = find.byKey(const ValueKey('creator-audience-feedback'));
+    expect(feedback, findsOneWidget);
+    expect(tester.widget<Text>(feedback).data, isNot(contains('age')));
 
     await tester.tap(find.byKey(const ValueKey('creator-audience-switch')));
     await tester.pump();

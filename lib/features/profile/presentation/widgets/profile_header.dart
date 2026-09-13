@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/achievements/presentation/widgets/title_badge.dart';
@@ -358,7 +359,7 @@ class ProfileHeader extends StatelessWidget {
                         compact: true,
                       ),
                     if (profile.premiumIdentity)
-                      const PremiumIdentityChip(compact: true),
+                      const PremiumIdentityBadge(compact: true),
                   ],
                 )
               : Column(
@@ -388,7 +389,7 @@ class ProfileHeader extends StatelessWidget {
                             compact: true,
                           ),
                         if (profile.premiumIdentity)
-                          const PremiumIdentityChip(compact: true),
+                          const PremiumIdentityBadge(compact: true),
                         TitleBadge(achievement: title!, compact: true),
                       ],
                     ),
@@ -400,64 +401,73 @@ class ProfileHeader extends StatelessWidget {
   }
 }
 
-/// The Premium mark on a profile — rendered only from
+/// The canonical public Premium mark — rendered only from
 /// `profile.premiumIdentity`, the server-written public mirror of the
-/// entitlement. Companion to [AccountTypeBadge] in the header chips row.
-class PremiumIdentityChip extends StatelessWidget {
-  const PremiumIdentityChip({this.compact = false, super.key});
+/// entitlement. The check means Premium membership; Creator eligibility and
+/// age verification are separate state and deliberately absent from its copy.
+class PremiumIdentityBadge extends StatelessWidget {
+  const PremiumIdentityBadge({this.compact = false, super.key});
 
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final colors = Theme.of(context).colorScheme;
-    final color = colors.primary;
-    return Tooltip(
-      message: copy.text(
-        'YO Voice Premium member',
-        'Użytkownik YO Voice Premium',
-      ),
-      child: Container(
-        constraints: BoxConstraints(minHeight: compact ? 24 : 28),
-        padding: EdgeInsets.symmetric(
-          horizontal: compact ? 7 : 9,
-          vertical: compact ? 2 : 4,
-        ),
-        decoration: BoxDecoration(
-          color: colors.primaryContainer,
-          borderRadius: BorderRadius.circular(99),
-          border: Border.all(color: colors.primary.withValues(alpha: .5)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.workspace_premium_rounded,
-              size: compact ? 11 : 13,
-              color: color,
-            ),
-            SizedBox(width: compact ? 3 : 4),
-            // Flexible + ellipsis: at 2.0 text scale on a 320px viewport
-            // the badges column is narrower than the scaled label, and a
-            // rigid Text overflows the chip.
-            Flexible(
-              child: Text(
-                'Premium',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: color,
-                  fontSize: compact ? 9.5 : 11,
-                  fontWeight: FontWeight.w800,
-                ),
+    final label = copy.text(
+      'YO Voice Premium member',
+      'Użytkownik YO Voice Premium',
+    );
+    final size = compact ? 24.0 : 28.0;
+    return Semantics(
+      container: true,
+      image: true,
+      label: label,
+      child: Tooltip(
+        message: label,
+        excludeFromSemantics: true,
+        child: ExcludeSemantics(
+          child: Container(
+            key: const ValueKey('premium-identity-badge'),
+            width: size,
+            height: size,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [AppColors.primary, AppColors.secondary],
               ),
+              border: Border.all(color: AppColors.white.withValues(alpha: .28)),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.secondary.withValues(alpha: .24),
+                  blurRadius: compact ? 8 : 10,
+                  spreadRadius: .5,
+                ),
+              ],
             ),
-          ],
+            child: Icon(
+              // A plain check inside YO Voice's violet circle. The rosette
+              // style `verified` glyph is reserved for Official identity so
+              // Premium membership cannot be mistaken for age/identity
+              // verification.
+              Icons.check_rounded,
+              size: compact ? 15 : 18,
+              color: AppColors.white,
+            ),
+          ),
         ),
       ),
     );
   }
+}
+
+/// Source-compatible alias for older call sites. New surfaces should use
+/// [PremiumIdentityBadge], which reflects the mark's circular presentation.
+@Deprecated('Use PremiumIdentityBadge')
+class PremiumIdentityChip extends PremiumIdentityBadge {
+  const PremiumIdentityChip({super.compact, super.key});
 }
 
 /// Marks a Creator (or Official) account on the profile header.
@@ -526,7 +536,7 @@ class AccountTypeBadge extends StatelessWidget {
           children: [
             Icon(icon, size: compact ? 11 : 13, color: foreground),
             SizedBox(width: compact ? 3 : 4),
-            // Same rationale as PremiumIdentityChip: shrink, never
+            // Account-type labels still shrink, never
             // overflow, when text scaling outgrows the badges column.
             Flexible(
               child: Text(

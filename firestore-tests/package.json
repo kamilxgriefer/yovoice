@@ -3,7 +3,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "test": "node rules.test.js",
+    "test": "node rules.test.js && node premium_messaging_privacy_rules.test.js",
     "test:storage": "node storage.test.js",
     "test:family-media": "node family-media.test.js",
     "test:servers": "node server_rules.test.js"

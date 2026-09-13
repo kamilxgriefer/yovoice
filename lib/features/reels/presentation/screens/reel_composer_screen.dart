@@ -382,7 +382,8 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       _pickingAudio = true;
       _error = null;
     });
-    await _previewKey.currentState?.pause();
+    final preview = _previewKey.currentState;
+    final pickerPlaybackToken = await preview?.pauseForBackingAudioPicker();
     if (!_ownsDraft(generation)) return;
     final picker = widget.backingAudioPicker ?? _pickLocalBackingAudio;
     try {
@@ -406,7 +407,12 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     } catch (error) {
       if (_ownsDraft(generation)) _showError(error);
     } finally {
-      if (_ownsDraft(generation)) setState(() => _pickingAudio = false);
+      if (_ownsDraft(generation)) {
+        setState(() => _pickingAudio = false);
+        if (pickerPlaybackToken != null) {
+          preview?.finishBackingAudioPicker(pickerPlaybackToken);
+        }
+      }
     }
   }
 

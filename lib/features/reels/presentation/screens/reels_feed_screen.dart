@@ -13,13 +13,13 @@ import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
-import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/moments/presentation/widgets/reply_playback_arbiter.dart';
 import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart';
-import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
+import 'package:yovoice/features/reels/presentation/reel_friend_relationship_store.dart';
 import 'package:yovoice/features/reels/presentation/reel_engagement_copy.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card_skeleton.dart';
@@ -52,8 +52,7 @@ class ReelsFeedScreen extends StatefulWidget {
     this.now,
     this.expiryTimerFactory,
     this.onOpenAuthor,
-    this.followService,
-    this.creatorAudienceService,
+    this.friendService,
     this.embedded = false,
     this.immersive = false,
     this.immersiveHeader,
@@ -84,16 +83,10 @@ class ReelsFeedScreen extends StatefulWidget {
   /// coverage never reaches Firestore.
   final void Function(Reel reel)? onOpenAuthor;
 
-  /// The follow graph behind the footer's "Obserwuj". Production leaves it
-  /// null and the feed resolves the real service once; widget coverage
-  /// injects a double, and a host with no Firebase app gets no control at
-  /// all rather than a button that cannot answer.
-  final FollowService? followService;
-
-  /// Public, server-written Creator audience projection used by every Reel
-  /// card. Tests may inject a deterministic source; production resolves the
-  /// real publicProfiles stream once for the feed.
-  final CreatorAudienceService? creatorAudienceService;
+  /// The existing social graph behind each author's Add friend action.
+  /// Production resolves it once for the feed; tests can inject a deterministic
+  /// service and Firebase-less hosts fail closed by hiding the action.
+  final FriendService? friendService;
   final bool embedded;
 
   /// Fill a narrow host's available viewport, while its bottom navigation
@@ -170,31 +163,38 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   bool _includeSeen = false;
   bool _hasWatchedReels = false;
   double _chromeHeight = 0;
-  bool _followServiceResolved = false;
-  FollowService? _followService;
-  late final CreatorAudienceService _defaultCreatorAudienceService =
-      CreatorAudienceService();
+  bool _friendServiceResolved = false;
+  FriendService? _friendService;
+  FriendService? _activeFriendService;
+  ReelFriendRelationshipStore? _friendRelationships;
 
-  CreatorAudienceService get _creatorAudiences =>
-      widget.creatorAudienceService ?? _defaultCreatorAudienceService;
-
-  /// The follow graph for every card in this feed, resolved once.
+  /// The friends graph for every card in this feed, resolved once.
   ///
   /// A host without a Firebase app — every widget test that pumps this feed —
   /// cannot construct one at all. That is not an error here: it means the
-  /// graph is genuinely unavailable, so the footer draws no follow control
+  /// graph is genuinely unavailable, so the footer draws no friend control
   /// instead of a button whose only possible answer is a crash.
-  FollowService? get _follows {
-    final injected = widget.followService;
+  FriendService? _resolveFriends() {
+    final injected = widget.friendService;
     if (injected != null) return injected;
-    if (_followServiceResolved) return _followService;
-    _followServiceResolved = true;
+    if (_friendServiceResolved) return _friendService;
+    _friendServiceResolved = true;
     try {
-      _followService = FollowService();
+      _friendService = FriendService();
     } catch (_) {
-      _followService = null;
+      _friendService = null;
     }
-    return _followService;
+    return _friendService;
+  }
+
+  void _syncFriendRelationships() {
+    final service = _resolveFriends();
+    if (identical(service, _activeFriendService)) return;
+    _friendRelationships?.dispose();
+    _activeFriendService = service;
+    _friendRelationships = service == null
+        ? null
+        : ReelFriendRelationshipStore(friendService: service);
   }
 
   DateTime get _now => (widget.now ?? DateTime.now)().toUtc();
@@ -205,6 +205,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   @override
   void initState() {
     super.initState();
+    _syncFriendRelationships();
     WidgetsBinding.instance.addObserver(this);
     widget.isVisible?.addListener(_handleHostVisibilityChanged);
     _viewerId = _service.currentUserId;
@@ -233,6 +234,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     _loadGeneration++;
     _identityRevision++;
     _expiryTimer?.cancel();
+    _friendRelationships?.clear();
     setState(() {
       _viewerId = uid;
       _items = const [];
@@ -272,6 +274,9 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   @override
   void didUpdateWidget(covariant ReelsFeedScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.friendService, widget.friendService)) {
+      _syncFriendRelationships();
+    }
     if (!identical(oldWidget.isVisible, widget.isVisible)) {
       oldWidget.isVisible?.removeListener(_handleHostVisibilityChanged);
       widget.isVisible?.addListener(_handleHostVisibilityChanged);
@@ -307,6 +312,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
     _soundOn.dispose();
+    _friendRelationships?.dispose();
     _panelArbiter
       ..removeListener(_onVoiceCommentFloorChanged)
       ..dispose();
@@ -572,8 +578,18 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   /// The optimistic count moves by exactly one and is replaced by the returned
   /// aggregate on success, or restored to the pre-tap values on any refusal.
   /// The client never keeps a count it computed itself.
-  Future<void> _toggleLike(Reel reel) async {
-    if (_likePending.contains(reel.id)) return;
+  Future<void> _toggleLike(Reel reel) =>
+      _setLike(reel, liked: !reel.callerLiked);
+
+  /// The media gesture is deliberately one-way: double-tapping an already
+  /// liked Yeel acknowledges the gesture in the card without removing it.
+  Future<void> _likeFromMedia(Reel reel) {
+    if (reel.callerLiked) return Future<void>.value();
+    return _setLike(reel, liked: true);
+  }
+
+  Future<void> _setLike(Reel reel, {required bool liked}) async {
+    if (_likePending.contains(reel.id) || reel.callerLiked == liked) return;
     final generation = _loadGeneration;
     final viewer = _viewerId;
     if (viewer == null) return;
@@ -583,7 +599,6 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
       _announce(reelVerificationNotice(context));
       return;
     }
-    final liked = !reel.callerLiked;
     final restoredLiked = reel.callerLiked;
     final restoredCount = reel.likeCount;
     setState(() {
@@ -969,8 +984,8 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
             // under the media, so identity lives on the card at every width
             // and the docked panel is the conversation alone.
             showIdentity: true,
-            followService: _follows,
-            creatorAudienceService: _creatorAudiences,
+            friendService: _activeFriendService,
+            friendRelationshipStore: _friendRelationships,
             videoBuilder: widget.videoBuilder,
             audioPlaybackFactory: widget.audioPlaybackFactory,
             videoPlaybackFactory: widget.videoPlaybackFactory,
@@ -987,6 +1002,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                 ? _selected
                 : null,
             onLike: _viewerId == null ? null : _toggleLike,
+            onMediaLike: _viewerId == null ? null : _likeFromMedia,
             onComments: (reel) => _openComments(reel, wide: wide),
             onChanged: (index) {
               setState(() => _selected = index);
@@ -1397,9 +1413,10 @@ class _FeedPager extends StatelessWidget {
     required this.immersive,
     required this.mediaTopInset,
     this.onLike,
+    this.onMediaLike,
     this.onOpenAuthor,
-    this.followService,
-    this.creatorAudienceService,
+    this.friendService,
+    this.friendRelationshipStore,
     this.commentsOpenIndex,
     this.suspendPlaybackIndex,
     this.videoBuilder,
@@ -1431,11 +1448,12 @@ class _FeedPager extends StatelessWidget {
 
   /// Null when there is no viewer to like as.
   final Future<void> Function(Reel reel)? onLike;
+  final Future<void> Function(Reel reel)? onMediaLike;
   final void Function(Reel reel)? onOpenAuthor;
 
-  /// Null where the follow graph is unavailable, which hides the control.
-  final FollowService? followService;
-  final CreatorAudienceService? creatorAudienceService;
+  /// Null where the friends graph is unavailable, which hides the control.
+  final FriendService? friendService;
+  final ReelFriendRelationshipStore? friendRelationshipStore;
   final Set<String> likePending;
 
   /// The page whose thread the wide layout is already showing beside the
@@ -1464,6 +1482,7 @@ class _FeedPager extends StatelessWidget {
       itemBuilder: (context, index) {
         final reel = items[index];
         final like = onLike;
+        final mediaLike = onMediaLike;
         return Padding(
           padding: padding,
           child: Center(
@@ -1487,8 +1506,8 @@ class _FeedPager extends StatelessWidget {
                 mediaTopInset: mediaTopInset,
                 showIdentity: showIdentity,
                 onOpenAuthor: onOpenAuthor,
-                followService: followService,
-                creatorAudienceService: creatorAudienceService,
+                friendService: friendService,
+                friendRelationshipStore: friendRelationshipStore,
                 onReport: service.isCurrentUserAuthor(reel)
                     ? null
                     : () => onReport(reel),
@@ -1496,6 +1515,7 @@ class _FeedPager extends StatelessWidget {
                     ? () => onDelete(reel)
                     : null,
                 onLike: like == null ? null : () => like(reel),
+                onMediaLike: mediaLike == null ? null : () => mediaLike(reel),
                 onComments: () => onComments(reel),
                 likePending: likePending.contains(reel.id),
                 commentsOpen: commentsOpenIndex == index,

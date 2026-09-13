@@ -10,14 +10,15 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
-import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
-import 'package:yovoice/features/moments/presentation/widgets/moments_follow_panel.dart';
-import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/friends/presentation/friend_request_error_copy.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
+import 'package:yovoice/features/reels/presentation/reel_friend_relationship_store.dart';
 import 'package:yovoice/features/reels/presentation/sharing/reel_share.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.dart';
@@ -71,11 +72,12 @@ class ReelCard extends StatefulWidget {
     this.onDelete,
     this.onReport,
     this.onLike,
+    this.onMediaLike,
     this.onComments,
     this.onShare,
     this.onOpenAuthor,
-    this.followService,
-    this.creatorAudienceService,
+    this.friendService,
+    this.friendRelationshipStore,
     this.likePending = false,
     this.commentsOpen = false,
     this.showIdentity = true,
@@ -131,6 +133,13 @@ class ReelCard extends StatefulWidget {
   /// Null means there is no viewer to act as. An unverified account keeps a
   /// live control that explains its gate rather than a dead button.
   final VoidCallback? onLike;
+
+  /// One-way like intent from a double-tap on the media. Unlike [onLike],
+  /// this never removes a like; the feed owns the idempotent mutation. The
+  /// future lets the card hold only a real in-flight request. A synchronous
+  /// preflight refusal (for example, an unverified email) completes at once,
+  /// so a later double-tap is still allowed to retry.
+  final Future<void> Function()? onMediaLike;
   final VoidCallback? onComments;
   final Future<void> Function()? onShare;
 
@@ -139,15 +148,14 @@ class ReelCard extends StatefulWidget {
   /// Firestore.
   final void Function(Reel reel)? onOpenAuthor;
 
-  /// The follow graph, for the footer's "Obserwuj" (D2). Null where the host
-  /// has no Firebase app — widget coverage — and the control is then absent
-  /// rather than a button that cannot answer.
-  final FollowService? followService;
+  /// The existing friends graph behind the author's "Add friend" action.
+  /// Null where the host cannot resolve Firebase; the action then stays
+  /// absent instead of exposing a control that cannot complete.
+  final FriendService? friendService;
 
-  /// Resolves the author's server-written public Creator audience projection.
-  /// Null, missing and error states fail closed for new follows; a reliable
-  /// existing follow edge may still expose Following/Unfollow.
-  final CreatorAudienceService? creatorAudienceService;
+  /// Feed-owned state shared by every mounted card for the same author.
+  /// Direct card hosts may omit it; their one card then owns a local store.
+  final ReelFriendRelationshipStore? friendRelationshipStore;
   final bool likePending;
 
   /// True while the wide layout already shows this Reel's thread beside it.
@@ -171,11 +179,15 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
   late Future<Uri> _media = _loadMedia();
   late ReelPlaybackCoordinator _playback = _createPlayback();
   Timer? _watchTimer;
+  Timer? _mediaHeartTimer;
   Duration _watched = Duration.zero;
   bool _photoReady = false;
   bool _viewRecorded = false;
   int _mediaRevision = 0;
   int _automaticRefreshes = 0;
+  int _mediaHeartPulse = 0;
+  bool _mediaHeartVisible = false;
+  Object? _mediaLikeFlight;
   // The stacked desktop card measures only the controls that actually sit
   // across the bottom of its 9:16 frame. The immersive phone composition has
   // a side rail, so treating that rail's HEIGHT as a bottom inset would push
@@ -188,18 +200,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
   /// to finish a sentence. The immersive stage keeps its detail sheet.
   bool _captionExpanded = false;
   final Set<ValueNotifier<bool>> _detailLifetimes = {};
-  Stream<CreatorAudienceProjection>? _creatorAudienceProjection;
   DateTime get _now => (widget.now ?? DateTime.now)();
-
-  void _bindCreatorAudience() {
-    try {
-      _creatorAudienceProjection = widget.creatorAudienceService
-          ?.watchPublicProjection(widget.reel.authorId);
-    } catch (_) {
-      // No Firebase app / unreadable projection: new Follow stays absent.
-      _creatorAudienceProjection = null;
-    }
-  }
 
   void _retireDetails() {
     for (final lifetime in _detailLifetimes) {
@@ -428,7 +429,6 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
     if (widget.soundOn == null) _ownSoundOn = ValueNotifier<bool>(false);
     _soundOn.addListener(_onSoundPreferenceChanged);
     _playback.addListener(_onPlaybackChanged);
-    _bindCreatorAudience();
     if (!widget.isActive) {
       unawaited(_playback.setActive(false).catchError((Object _) {}));
     }
@@ -464,6 +464,9 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         !identical(oldWidget.service, widget.service) ||
         !identical(oldWidget.audioPlaybackFactory, widget.audioPlaybackFactory);
     if (sourceChanged) {
+      _mediaHeartTimer?.cancel();
+      _mediaHeartVisible = false;
+      _mediaLikeFlight = null;
       _retireDetails();
       _playback.removeListener(_onPlaybackChanged);
       _playback.dispose();
@@ -493,19 +496,13 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
     if (sourceChanged || oldWidget.isActive != widget.isActive) {
       _syncWatchTimer();
     }
-    if (oldWidget.reel.authorId != widget.reel.authorId ||
-        !identical(
-          oldWidget.creatorAudienceService,
-          widget.creatorAudienceService,
-        )) {
-      _bindCreatorAudience();
-    }
   }
 
   @override
   void dispose() {
     _retireDetails();
     _watchTimer?.cancel();
+    _mediaHeartTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _soundOn.removeListener(_onSoundPreferenceChanged);
     _ownSoundOn?.dispose();
@@ -617,6 +614,106 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         service: widget.service,
       );
 
+  void _handleMediaDoubleTap() {
+    if (!widget.isActive ||
+        _playbackSuspended ||
+        !widget.reel.availability.isAvailableAt(_now.toUtc())) {
+      return;
+    }
+    final mediaLike = widget.onMediaLike;
+    // An already-liked Yeel still acknowledges the familiar gesture. Without
+    // either that state or a mutation seam, drawing a heart would promise a
+    // change the current viewer cannot make.
+    if (mediaLike == null && !widget.reel.callerLiked) return;
+
+    _mediaHeartTimer?.cancel();
+    setState(() {
+      _mediaHeartPulse++;
+      _mediaHeartVisible = true;
+    });
+    _mediaHeartTimer = Timer(const Duration(milliseconds: 720), () {
+      if (!mounted) return;
+      setState(() => _mediaHeartVisible = false);
+    });
+
+    // Double-tap is one-way. The regular heart remains the explicit toggle.
+    if (widget.reel.callerLiked ||
+        widget.likePending ||
+        _mediaLikeFlight != null ||
+        mediaLike == null) {
+      return;
+    }
+    final flight = Object();
+    _mediaLikeFlight = flight;
+    unawaited(_submitMediaLike(mediaLike, flight));
+  }
+
+  Future<void> _submitMediaLike(
+    Future<void> Function() mediaLike,
+    Object flight,
+  ) async {
+    try {
+      await mediaLike();
+    } finally {
+      // The feed has already published callerLiked/likePending before its
+      // future completes. Clearing this local single-flight latch therefore
+      // permits only a genuine retry after a refusal, never a parallel call.
+      // Identity protects a replacement Reel from a late completion that
+      // belonged to the old source.
+      if (identical(_mediaLikeFlight, flight)) _mediaLikeFlight = null;
+    }
+  }
+
+  Widget _buildMediaLikeSurface(BuildContext context, Widget child) {
+    final duration = AppMotion.resolve(
+      context,
+      const Duration(milliseconds: 180),
+    );
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        GestureDetector(
+          key: const ValueKey<String>('reel-media-like-surface'),
+          behavior: HitTestBehavior.opaque,
+          excludeFromSemantics: true,
+          onDoubleTap: _handleMediaDoubleTap,
+          child: child,
+        ),
+        Positioned.fill(
+          child: IgnorePointer(
+            child: Center(
+              child: AnimatedSwitcher(
+                key: const ValueKey<String>('reel-media-like-heart-effect'),
+                duration: duration,
+                reverseDuration: duration,
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: ScaleTransition(
+                    scale: Tween<double>(begin: .72, end: 1).animate(animation),
+                    child: child,
+                  ),
+                ),
+                child: _mediaHeartVisible
+                    ? Icon(
+                        Icons.favorite_rounded,
+                        key: ValueKey<int>(_mediaHeartPulse),
+                        size: 104,
+                        color: Colors.white,
+                        shadows: const <Shadow>[
+                          Shadow(color: Color(0x8A000000), blurRadius: 22),
+                        ],
+                      )
+                    : const SizedBox.shrink(
+                        key: ValueKey<String>('reel-media-like-heart-hidden'),
+                      ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   /// The decoder must survive a change of SHAPE, not only of size: crossing
   /// 600 swaps the immersive stack for the stacked card, and a short window
   /// swaps it back. A global key reparents the one media subtree instead of
@@ -662,28 +759,34 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         final videoPlaybackFactory = widget.videoPlaybackFactory;
         if (widget.reel.media.kind == ReelMediaKind.video &&
             videoPlaybackFactory != null) {
-          return _HostedReelVideoPlayer(
-            uri: uri,
-            reel: widget.reel,
-            playback: _playback,
-            playbackFactory: videoPlaybackFactory,
-            videoBuilder: widget.videoBuilder,
-            onToggle: _togglePlayback,
-            fillViewport: widget.fillViewport,
-            overlaySafeInsets: overlaySafeInsets,
+          return _buildMediaLikeSurface(
+            context,
+            _HostedReelVideoPlayer(
+              uri: uri,
+              reel: widget.reel,
+              playback: _playback,
+              playbackFactory: videoPlaybackFactory,
+              videoBuilder: widget.videoBuilder,
+              onToggle: _togglePlayback,
+              fillViewport: widget.fillViewport,
+              overlaySafeInsets: overlaySafeInsets,
+            ),
           );
         }
         if (widget.reel.media.kind == ReelMediaKind.video &&
             widget.videoBuilder == null) {
-          return _DefaultReelVideoPlayer(
-            uri: uri,
-            reel: widget.reel,
-            playback: _playback,
-            onToggle: _togglePlayback,
-            onRetry: _refreshMedia,
-            onFailure: () => _refreshMedia(automatic: true),
-            fillViewport: widget.fillViewport,
-            overlaySafeInsets: overlaySafeInsets,
+          return _buildMediaLikeSurface(
+            context,
+            _DefaultReelVideoPlayer(
+              uri: uri,
+              reel: widget.reel,
+              playback: _playback,
+              onToggle: _togglePlayback,
+              onRetry: _refreshMedia,
+              onFailure: () => _refreshMedia(automatic: true),
+              fillViewport: widget.fillViewport,
+              overlaySafeInsets: overlaySafeInsets,
+            ),
           );
         }
         final media = widget.reel.media.kind == ReelMediaKind.image
@@ -694,15 +797,18 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                 onFailure: () => _refreshMedia(automatic: true),
               )
             : widget.videoBuilder!(context, uri, widget.reel);
-        return ReelCompositionFrame(
-          fillViewport: widget.fillViewport,
-          overlayInsetsInViewport: true,
-          overlaySafeInsets: overlaySafeInsets,
-          composition: widget.reel.composition,
-          media: media,
-          mediaForeground: const _LegibilityScrim(),
-          onOpenLink: (overlay) =>
-              launchUrl(overlay.uri, mode: LaunchMode.externalApplication),
+        return _buildMediaLikeSurface(
+          context,
+          ReelCompositionFrame(
+            fillViewport: widget.fillViewport,
+            overlayInsetsInViewport: true,
+            overlaySafeInsets: overlaySafeInsets,
+            composition: widget.reel.composition,
+            media: media,
+            mediaForeground: const _LegibilityScrim(),
+            onOpenLink: (overlay) =>
+                launchUrl(overlay.uri, mode: LaunchMode.externalApplication),
+          ),
         );
       },
     );
@@ -710,23 +816,6 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final projection = _creatorAudienceProjection;
-    if (projection == null) {
-      return _buildSurface(context, canStartFollowing: false);
-    }
-    return StreamBuilder<CreatorAudienceProjection>(
-      stream: projection,
-      builder: (context, snapshot) => _buildSurface(
-        context,
-        canStartFollowing: !snapshot.hasError && snapshot.data?.visible == true,
-      ),
-    );
-  }
-
-  Widget _buildSurface(
-    BuildContext context, {
-    required bool canStartFollowing,
-  }) {
     final copy = AppLocalizations.of(context);
     return Semantics(
       container: true,
@@ -736,8 +825,8 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         values: <String, Object>{'author': widget.reel.authorName},
       ),
       child: widget.fillViewport
-          ? _buildImmersiveStage(context, canStartFollowing: canStartFollowing)
-          : _buildCardStage(context, canStartFollowing: canStartFollowing),
+          ? _buildImmersiveStage(context)
+          : _buildCardStage(context),
     );
   }
 
@@ -751,11 +840,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
   /// frame and a footer bar at a legible size. Nothing is lost there — the
   /// author, the caption and the four actions are the same controls, laid
   /// over the media instead of under it.
-  Widget _buildImmersiveStage(
-    BuildContext context, {
-    required bool canStartFollowing,
-    bool asCard = false,
-  }) {
+  Widget _buildImmersiveStage(BuildContext context, {bool asCard = false}) {
     final palette = context.appPalette;
     final radius = widget.borderRadius;
     return LayoutBuilder(
@@ -825,8 +910,9 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                             showAudioToggle: widget.reel.backingAudio != null,
                             position: _playback.position,
                             timeline: _playback.timelineDuration,
-                            followService: widget.followService,
-                            canStartFollowing: canStartFollowing,
+                            friendService: widget.friendService,
+                            friendRelationshipStore:
+                                widget.friendRelationshipStore,
                             viewerUid: widget.service.currentUserId,
                             onAudio: _togglePlayback,
                             onOpenAuthor: _openAuthor,
@@ -862,7 +948,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
   }
 
   /// From 600 up: board 08's card — the authored frame on top, and under it
-  /// a real footer bar with the author, the follow control, the caption and
+  /// a real footer bar with the author, the friend control, the caption and
   /// the four actions, on the card's own surface instead of over the media.
   ///
   /// The frame stays height-bound: it takes what the stage has left after the
@@ -882,10 +968,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         sideBySide: sideBySide,
       );
 
-  Widget _buildCardStage(
-    BuildContext context, {
-    required bool canStartFollowing,
-  }) {
+  Widget _buildCardStage(BuildContext context) {
     final palette = context.appPalette;
     final radius = widget.borderRadius;
     return LayoutBuilder(
@@ -914,11 +997,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         // composition instead. A 79 px wide Reel is not a smaller design, it
         // is a broken one.
         if (frameWidth < _minimumStackedFrameWidth) {
-          return _buildImmersiveStage(
-            context,
-            canStartFollowing: canStartFollowing,
-            asCard: true,
-          );
+          return _buildImmersiveStage(context, asCard: true);
         }
         return Center(
           child: SizedBox(
@@ -992,6 +1071,9 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                                     child: _StageFrameControls(
                                       position: _playback.position,
                                       total: _playback.timelineDuration,
+                                      showProgressTimes:
+                                          widget.reel.media.kind ==
+                                          ReelMediaKind.video,
                                       soundChip: _buildSoundChip(),
                                       soundToggle:
                                           widget.reel.media.kind ==
@@ -1014,8 +1096,8 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                     ReelStageFooterBar(
                       key: const ValueKey('reel-stage-footer'),
                       reel: widget.reel,
-                      followService: widget.followService,
-                      canStartFollowing: canStartFollowing,
+                      friendService: widget.friendService,
+                      friendRelationshipStore: widget.friendRelationshipStore,
                       viewerUid: widget.service.currentUserId,
                       captionExpanded: _captionExpanded,
                       onToggleCaption: () =>
@@ -1274,12 +1356,14 @@ class _StageFrameControls extends StatelessWidget {
   const _StageFrameControls({
     required this.position,
     required this.total,
+    required this.showProgressTimes,
     this.soundToggle,
     this.soundChip,
   });
 
   final ValueListenable<Duration> position;
   final Duration total;
+  final bool showProgressTimes;
 
   /// Built with the frame's own answer to "is there room for the words".
   final Widget Function(bool showLabel)? soundToggle;
@@ -1344,7 +1428,10 @@ class _StageFrameControls extends StatelessWidget {
                 ),
                 const SizedBox(height: AppRhythm.title),
               ],
-              ReelProgressRow(position: position, total: total),
+              if (showProgressTimes)
+                ReelProgressRow(position: position, total: total)
+              else
+                ReelProgressBar(position: position, total: total),
             ],
           ),
         ),
@@ -1353,7 +1440,7 @@ class _StageFrameControls extends StatelessWidget {
   }
 }
 
-/// Board 08's footer bar: who published this Reel, whether you follow them,
+/// Board 08's footer bar: who published this Reel, whether you can add them,
 /// what they wrote, and the four things you can do about it — on the card's
 /// own surface, under the media, never over the subject.
 ///
@@ -1371,8 +1458,8 @@ class ReelStageFooterBar extends StatelessWidget {
     required this.onMore,
     required this.likePending,
     required this.commentsOpen,
-    required this.canStartFollowing,
-    this.followService,
+    this.friendService,
+    this.friendRelationshipStore,
     this.viewerUid,
     this.onLike,
     this.onComments,
@@ -1380,8 +1467,8 @@ class ReelStageFooterBar extends StatelessWidget {
   });
 
   final Reel reel;
-  final FollowService? followService;
-  final bool canStartFollowing;
+  final FriendService? friendService;
+  final ReelFriendRelationshipStore? friendRelationshipStore;
   final String? viewerUid;
   final bool captionExpanded;
   final VoidCallback onToggleCaption;
@@ -1430,7 +1517,7 @@ class ReelStageFooterBar extends StatelessWidget {
     // a budget that is short by any amount is a ledge, not a rounding.
     final name = (scaler.scale(18) * 1.4).ceilToDouble();
     final captionLine = (scaler.scale(14) * 1.5).ceilToDouble();
-    // At an accessibility text size the name and the follow control take a
+    // At an accessibility text size the name and the friend control take a
     // line each; below that they share one — and the footer now lays them
     // out that way, so this budget and the widget agree.
     final identityRow = scaler.scale(1) >= 1.6
@@ -1474,7 +1561,7 @@ class ReelStageFooterBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final follows = followService;
+    final friends = friendService;
     final viewer = viewerUid;
     final caption = reel.composition.caption;
 
@@ -1503,52 +1590,34 @@ class ReelStageFooterBar extends StatelessWidget {
       onComments: onComments,
     );
 
-    // At an accessibility text size the name and the follow control cannot
-    // share a line, and squeezing the name to nothing so a button can keep
-    // its width is not a layout — it is a Reel whose author has disappeared.
-    // Below that size they DO share one, which is what the board draws and
-    // what `_stageFooterHeight` budgets for: a Wrap that also ran at x1 cost
-    // the footer a whole 48-px row, and the media the height that row took.
-    final identityStacks = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    // The relationship action is live data: its localized error and pending
+    // labels can be materially wider than the normal CTA. Let the identity
+    // group take a second row when it needs one instead of squeezing the
+    // author's avatar/name below their own minimum readable width.
     final author = ReelAuthorRow(
       reel: reel,
       variant: ReelAuthorRowVariant.panel,
       onTap: onOpenAuthor,
     );
-    final follow = follows != null && viewer != null && viewer != reel.authorId
-        ? MomentsFollowButton(
-            key: ValueKey<String>('reel-follow-${reel.authorId}'),
+    final friend = friends != null && viewer != null && viewer != reel.authorId
+        ? _ReelFriendButton(
             userId: reel.authorId,
             displayName: reel.authorName,
             viewerUid: viewer,
-            followService: follows,
-            canStartFollowing: canStartFollowing,
+            friendService: friends,
+            relationshipStore: friendRelationshipStore,
           )
         : null;
     final identity = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        if (identityStacks)
-          Wrap(
-            spacing: AppRhythm.item,
-            runSpacing: AppRhythm.hairline,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: <Widget>[author, ?follow],
-          )
-        else
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              // Flexible, not Expanded: a short name leaves the follow pill
-              // beside it instead of pushing it to the trailing edge.
-              Flexible(child: author),
-              if (follow != null) ...<Widget>[
-                const SizedBox(width: AppRhythm.item),
-                follow,
-              ],
-            ],
-          ),
+        Wrap(
+          spacing: AppRhythm.item,
+          runSpacing: AppRhythm.hairline,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[author, ?friend],
+        ),
         if (caption.isNotEmpty) ...<Widget>[
           const SizedBox(height: AppRhythm.tight),
           Semantics(
@@ -1608,6 +1677,335 @@ class ReelStageFooterBar extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// The Yeel author action backed by the app's canonical friend-request flow.
+///
+/// Relationship state is resolved before the action appears, so an existing
+/// friend never flashes an invalid CTA. A request already sent stays visibly
+/// pending and disabled, while an incoming request uses the same explicit
+/// accept mutation as Add friends and the profile preview.
+class _ReelFriendButton extends StatefulWidget {
+  const _ReelFriendButton({
+    required this.userId,
+    required this.displayName,
+    required this.viewerUid,
+    required this.friendService,
+    this.relationshipStore,
+    this.onMedia = false,
+  });
+
+  final String userId;
+  final String displayName;
+  final String viewerUid;
+  final FriendService friendService;
+  final ReelFriendRelationshipStore? relationshipStore;
+  final bool onMedia;
+
+  @override
+  State<_ReelFriendButton> createState() => _ReelFriendButtonState();
+}
+
+class _ReelFriendButtonState extends State<_ReelFriendButton> {
+  ReelFriendRelationshipStore? _ownedStore;
+  ReelFriendRelationshipEntry? _entry;
+
+  @override
+  void initState() {
+    super.initState();
+    _attachEntry();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReelFriendButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.userId != widget.userId ||
+        oldWidget.viewerUid != widget.viewerUid ||
+        !identical(oldWidget.friendService, widget.friendService) ||
+        !identical(oldWidget.relationshipStore, widget.relationshipStore)) {
+      _detachEntry();
+      _ownedStore?.dispose();
+      _ownedStore = null;
+      _attachEntry();
+    }
+  }
+
+  void _attachEntry() {
+    final store =
+        widget.relationshipStore ??
+        (_ownedStore ??= ReelFriendRelationshipStore(
+          friendService: widget.friendService,
+        ));
+    _entry = store.entryFor(
+      viewerUid: widget.viewerUid,
+      authorId: widget.userId,
+    )..addListener(_relationshipChanged);
+  }
+
+  void _detachEntry() {
+    _entry?.removeListener(_relationshipChanged);
+    _entry = null;
+  }
+
+  void _relationshipChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _detachEntry();
+    _ownedStore?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _act() async {
+    final entry = _entry;
+    final previous = entry?.status;
+    if (entry == null ||
+        entry.busy ||
+        (previous != FriendRelationshipStatus.none &&
+            previous != FriendRelationshipStatus.requestReceived)) {
+      return;
+    }
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final copy = AppLocalizations.of(context);
+    try {
+      final next = await entry.submit(displayName: widget.displayName);
+      if (!mounted) return;
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              next == FriendRelationshipStatus.friends
+                  ? copy.template(
+                      'You and {name} are now friends.',
+                      'Ty i {name} jesteście teraz znajomymi.',
+                      values: <String, Object>{'name': widget.displayName},
+                    )
+                  : copy.template(
+                      'Friend request sent to {name}.',
+                      'Wysłano zaproszenie do {name}.',
+                      values: <String, Object>{'name': widget.displayName},
+                    ),
+            ),
+          ),
+        );
+    } catch (error) {
+      if (!mounted) return;
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(friendRequestErrorMessage(copy, error)),
+          ),
+        );
+    }
+  }
+
+  void _retry() {
+    final entry = _entry;
+    if (entry == null || entry.loading) return;
+    unawaited(entry.refresh());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final entry = _entry;
+    final status = entry?.status;
+    if (widget.userId.isEmpty ||
+        widget.userId == widget.viewerUid ||
+        status == FriendRelationshipStatus.friends ||
+        status == FriendRelationshipStatus.blocked) {
+      return const SizedBox.shrink();
+    }
+
+    final copy = AppLocalizations.of(context);
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final loadError = entry?.loadError;
+    if (entry == null || (entry.loading && loadError == null)) {
+      return const SizedBox.shrink();
+    }
+    if (loadError != null) {
+      return _relationshipError(
+        context,
+        copy: copy,
+        checking: entry.loading,
+        reduceMotion: reduceMotion,
+      );
+    }
+    if (status == null) return const SizedBox.shrink();
+    final requested = status == FriendRelationshipStatus.requestSent;
+    final received = status == FriendRelationshipStatus.requestReceived;
+    final enabled = !entry.busy && !requested;
+    final label = entry.busy
+        ? copy.text('Sending…', 'Wysyłanie…')
+        : requested
+        ? copy.text('Requested', 'Wysłano zaproszenie')
+        : received
+        ? copy.text('Accept', 'Akceptuj')
+        : copy.text('Add friend', 'Dodaj znajomego');
+    final semanticLabel = entry.busy
+        ? copy.template(
+            'Updating friend request for {name}',
+            'Aktualizowanie zaproszenia dla {name}',
+            values: <String, Object>{'name': widget.displayName},
+          )
+        : requested
+        ? copy.template(
+            'Friend request sent to {name}',
+            'Wysłano zaproszenie do {name}',
+            values: <String, Object>{'name': widget.displayName},
+          )
+        : received
+        ? copy.template(
+            'Accept friend request from {name}',
+            'Akceptuj zaproszenie od {name}',
+            values: <String, Object>{'name': widget.displayName},
+          )
+        : copy.template(
+            'Add {name} as a friend',
+            'Dodaj {name} do znajomych',
+            values: <String, Object>{'name': widget.displayName},
+          );
+    final style = OutlinedButton.styleFrom(
+      minimumSize: const Size(
+        AppSizing.minimumTouchTarget,
+        AppSizing.minimumTouchTarget,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: AppRhythm.item),
+      shape: const StadiumBorder(),
+      foregroundColor: widget.onMedia ? Colors.white : null,
+      disabledForegroundColor: widget.onMedia
+          ? Colors.white.withValues(alpha: .72)
+          : null,
+      side: widget.onMedia
+          ? BorderSide(color: Colors.white.withValues(alpha: .72))
+          : null,
+    );
+    final icon = entry.busy && !reduceMotion
+        ? const SizedBox.square(
+            dimension: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Icon(
+            requested
+                ? Icons.hourglass_top_rounded
+                : received
+                ? Icons.check_circle_rounded
+                : Icons.person_add_alt_1_rounded,
+            size: 18,
+          );
+    return Semantics(
+      container: true,
+      // Reuse the button's one semantics node as the status announcement.
+      // A second hidden live region would speak the same update twice.
+      liveRegion: entry.busy,
+      button: true,
+      enabled: enabled,
+      label: semanticLabel,
+      onTap: enabled ? () => unawaited(_act()) : null,
+      excludeSemantics: true,
+      child: OutlinedButton.icon(
+        key: ValueKey<String>('reel-friend-${widget.userId}'),
+        onPressed: enabled ? () => unawaited(_act()) : null,
+        style: style,
+        icon: icon,
+        label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ),
+    );
+  }
+
+  Widget _relationshipError(
+    BuildContext context, {
+    required AppLocalizations copy,
+    required bool checking,
+    required bool reduceMotion,
+  }) {
+    final colors = Theme.of(context).colorScheme;
+    final label = checking
+        ? copy.text('Checking…', 'Sprawdzanie…')
+        : copy.text('Try again', 'Spróbuj ponownie');
+    final semanticLabel = checking
+        ? copy.template(
+            'Checking friendship with {name}',
+            'Sprawdzanie relacji ze znajomym {name}',
+            values: <String, Object>{'name': widget.displayName},
+          )
+        : copy.template(
+            'Could not check friendship with {name}. Try again.',
+            'Nie udało się sprawdzić relacji z {name}. Spróbuj ponownie.',
+            values: <String, Object>{'name': widget.displayName},
+          );
+    final foreground = widget.onMedia ? Colors.white : colors.error;
+    final icon = checking && !reduceMotion
+        ? SizedBox.square(
+            dimension: 16,
+            child: CircularProgressIndicator(strokeWidth: 2, color: foreground),
+          )
+        : Icon(
+            checking ? Icons.hourglass_top_rounded : Icons.refresh_rounded,
+            size: 18,
+          );
+    return Semantics(
+      key: ValueKey<String>('reel-friend-error-${widget.userId}'),
+      container: true,
+      liveRegion: true,
+      button: true,
+      enabled: !checking,
+      label: semanticLabel,
+      onTap: checking ? null : _retry,
+      excludeSemantics: true,
+      child: ConstrainedBox(
+        // Polish "Spróbuj ponownie" is deliberately allowed two lines here.
+        // Its full phrase remains visible without taking the entire identity
+        // row away from the author's avatar and name.
+        constraints: const BoxConstraints(maxWidth: 154),
+        child: Tooltip(
+          message: semanticLabel,
+          excludeFromSemantics: true,
+          child: OutlinedButton(
+            key: ValueKey<String>('reel-friend-${widget.userId}'),
+            onPressed: checking ? null : _retry,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(
+                AppSizing.minimumTouchTarget,
+                AppSizing.minimumTouchTarget,
+              ),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppRhythm.item,
+                vertical: AppRhythm.hairline,
+              ),
+              shape: const StadiumBorder(),
+              foregroundColor: foreground,
+              disabledForegroundColor: foreground.withValues(alpha: .72),
+              backgroundColor: widget.onMedia
+                  ? Colors.black.withValues(alpha: .54)
+                  : null,
+              side: BorderSide(color: foreground.withValues(alpha: .82)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                icon,
+                const SizedBox(width: AppRhythm.tight),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 2,
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.visible,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -2045,7 +2443,7 @@ class _ImmersiveOverlayGeometry {
       showInformation:
           !micro && !horizontalActions && (showIdentity || showSound),
       showSound: showSound,
-      // Avatar + name + the 48 px follow action need roughly 310 logical
+      // Avatar + name + the 48 px friend action need roughly 310 logical
       // pixels at ordinary text size. Once they wrap, the authored bottom
       // edge must clear two identity rows plus the one-line caption.
       informationWraps:
@@ -2126,8 +2524,8 @@ class _OverlayFooter extends StatelessWidget {
     required this.onCaption,
     required this.onMore,
     required this.onShare,
-    required this.canStartFollowing,
-    this.followService,
+    this.friendService,
+    this.friendRelationshipStore,
     this.viewerUid,
     this.soundToggle,
     this.onAudio,
@@ -2146,8 +2544,8 @@ class _OverlayFooter extends StatelessWidget {
   final bool showAudioToggle;
   final ValueListenable<Duration> position;
   final Duration timeline;
-  final FollowService? followService;
-  final bool canStartFollowing;
+  final FriendService? friendService;
+  final ReelFriendRelationshipStore? friendRelationshipStore;
   final String? viewerUid;
   final bool likePending;
   final bool commentsOpen;
@@ -2167,7 +2565,7 @@ class _OverlayFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final follows = followService;
+    final friends = friendService;
     final viewer = viewerUid;
     final showSound =
         showAudioToggle || reel.composition.audioAttribution.isNotEmpty;
@@ -2185,35 +2583,34 @@ class _OverlayFooter extends StatelessWidget {
           )
         : null;
     final author = ReelAuthorRow(reel: reel, onTap: onOpenAuthor);
-    final follow = follows != null && viewer != null && viewer != reel.authorId
-        ? MomentsFollowButton(
-            key: ValueKey<String>('reel-follow-${reel.authorId}'),
+    final friend = friends != null && viewer != null && viewer != reel.authorId
+        ? _ReelFriendButton(
             userId: reel.authorId,
             displayName: reel.authorName,
             viewerUid: viewer,
-            followService: follows,
-            canStartFollowing: canStartFollowing,
+            friendService: friends,
+            relationshipStore: friendRelationshipStore,
             onMedia: true,
           )
         : null;
-    final identity = follow == null
+    final identity = friend == null
         ? author
         : geometry.informationWraps
         ? Wrap(
             spacing: AppRhythm.tight,
             runSpacing: AppRhythm.hairline,
             crossAxisAlignment: WrapCrossAlignment.center,
-            children: <Widget>[author, follow],
+            children: <Widget>[author, friend],
           )
         : Row(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              // A long display name yields its remaining width to Follow and
+              // A long display name yields its remaining width to Add friend
               // ellipsizes; it must not silently create a second identity row
               // after geometry has budgeted the inline composition.
               Flexible(child: author),
               const SizedBox(width: AppRhythm.tight),
-              follow,
+              friend,
             ],
           );
 
@@ -2448,7 +2845,7 @@ class ReelAuthorRow extends StatelessWidget {
       alignment: AlignmentDirectional.centerStart,
       // The author is an inline identity control. Without a width factor an
       // Align under Wrap expands to the whole information column, forcing the
-      // follow button onto a second line even when both labels comfortably
+      // friend button onto a second line even when both labels comfortably
       // fit. That extra unbudgeted row can overlap a bottom-authored sticker.
       widthFactor: 1,
       child: AccessibleTapRegion(

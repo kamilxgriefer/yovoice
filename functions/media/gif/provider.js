@@ -80,7 +80,7 @@ function isFixtureEnvironment(env = process.env) {
 
 /// Build the configured adapter, or `null` when nothing is configured.
 ///
-/// `null` is a normal, expected answer — it is what production returns today —
+/// `null` is a normal, expected answer when the feature is explicitly disabled,
 /// and it is why `getGifCatalog` can bind no secret and still tell the truth.
 function createGifProvider({
   provider = process.env.GIF_PROVIDER,
@@ -92,6 +92,15 @@ function createGifProvider({
   const selected = typeof provider === "string" ? provider.trim() : "";
   if (selected === "" || selected === GIF_PROVIDERS.none) return null;
 
+  // YO Voice Originals are a small first-party pack bundled with the app.
+  // They need no external credential and are safe in production. Keeping this
+  // adapter separate from the fake provider is deliberate: the latter points
+  // at an invalid host and must remain impossible to expose to users.
+  if (selected === GIF_PROVIDERS.yovoice) {
+    const { createYovoiceGifProvider } = require("./yovoice_provider");
+    return assertProviderShape(createYovoiceGifProvider({ now }));
+  }
+
   if (selected === GIF_PROVIDERS.fake) {
     if (!isFixtureEnvironment(env)) {
       // Deliberately a throw, following strictBooleanEnvironment() in
@@ -99,7 +108,7 @@ function createGifProvider({
       // instead of quietly serving fixtures to real people.
       throw new Error(
         "GIF_PROVIDER=fake is only available in the emulator or under " +
-          "NODE_ENV=test. Production must use giphy or none.",
+          "NODE_ENV=test. Production must use yovoice, giphy or none.",
       );
     }
     const { createFakeGifProvider } = require("./fake_provider");

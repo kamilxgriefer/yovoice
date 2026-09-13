@@ -1193,6 +1193,8 @@ class _EverythingIncluded extends StatelessWidget {
 
   static const _icons = [
     Icons.person_outline_rounded,
+    Icons.dns_outlined,
+    Icons.visibility_off_outlined,
     Icons.workspace_premium_outlined,
     Icons.graphic_eq_rounded,
     Icons.auto_awesome_outlined,

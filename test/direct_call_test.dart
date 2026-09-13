@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/audio/call_tone.dart';
+import 'package:yovoice/core/audio/call_tone_service.dart';
+import 'package:yovoice/core/audio/ui_sound.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/models/voice_connection_info.dart';
@@ -27,9 +30,12 @@ import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 void main() {
   late PublicIdentityRepository originalIdentityRepository;
+  late CallToneService defaultToneService;
 
   setUp(() {
     ActiveConversationRegistry.instance.clear();
+    defaultToneService = CallToneService(enabled: () => false);
+    debugCallToneServiceOverride = defaultToneService;
     originalIdentityRepository = PublicIdentityRepository.instance;
     PublicIdentityRepository.instance = PublicIdentityRepository(
       auth: MockFirebaseAuth(
@@ -46,6 +52,8 @@ void main() {
   tearDown(() {
     ActiveConversationRegistry.instance.clear();
     PublicIdentityRepository.instance = originalIdentityRepository;
+    debugCallToneServiceOverride = null;
+    unawaited(defaultToneService.dispose());
   });
 
   test(
@@ -80,6 +88,299 @@ void main() {
       );
     },
   );
+
+  for (final scenario in <({String userId, CallTone tone, String action})>[
+    (userId: 'callee', tone: CallTone.incoming, action: 'Answer'),
+    (userId: 'caller', tone: CallTone.outgoing, action: 'Cancel'),
+  ]) {
+    testWidgets(
+      '${scenario.tone.name} call uses its loop and the primary action stops it',
+      (tester) async {
+        final gateway = _FakeDirectCallGateway(
+          _call(status: DirectCallStatus.ringing),
+        );
+        final player = _RecordingCallTonePlayer();
+        final tones = CallToneService(
+          enabled: () => true,
+          playerFactory: () => player,
+        );
+        addTearDown(tones.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData.dark(useMaterial3: true),
+            home: DirectCallScreen(
+              callId: 'call-1',
+              callService: gateway,
+              voiceService: _FakeVoiceCallService(),
+              toneService: tones,
+              currentUserId: scenario.userId,
+              participantName: 'Participant',
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(player.paths, [scenario.tone.assetPath]);
+        expect(tones.activeTone, scenario.tone);
+
+        await tester.tap(find.byTooltip(scenario.action));
+        await tester.pump();
+        expect(player.stopCalls, 1);
+        expect(tones.isPlaying, isFalse);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+  }
+
+  testWidgets('ringing tone stops in background and resumes in foreground', (
+    tester,
+  ) async {
+    final players = <_RecordingCallTonePlayer>[];
+    final tones = CallToneService(
+      enabled: () => true,
+      playerFactory: () {
+        final player = _RecordingCallTonePlayer();
+        players.add(player);
+        return player;
+      },
+    );
+    addTearDown(tones.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: DirectCallScreen(
+          callId: 'call-1',
+          callService: _FakeDirectCallGateway(
+            _call(status: DirectCallStatus.ringing),
+          ),
+          voiceService: _FakeVoiceCallService(),
+          toneService: tones,
+          currentUserId: 'callee',
+          participantName: 'Callee',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(players, hasLength(1));
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    expect(players.single.stopCalls, 1);
+    expect(tones.isPlaying, isFalse);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await tester.pump();
+    expect(players, hasLength(2));
+    expect(players.last.paths, [CallTone.incoming.assetPath]);
+    expect(tones.activeTone, CallTone.incoming);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('native push hands off to one screen loop without overlap', (
+    tester,
+  ) async {
+    DirectCallAlertRegistry.clear();
+    addTearDown(DirectCallAlertRegistry.clear);
+    final pushClaim = DirectCallAlertRegistry.claim(
+      'call-1',
+      DirectCallAlertOwner.push,
+    );
+    DirectCallAlertRegistry.complete(
+      pushClaim,
+      presented: true,
+      toneOwnership: const Duration(seconds: 1),
+    );
+    final player = _RecordingCallTonePlayer();
+    final tones = CallToneService(
+      enabled: () => true,
+      playerFactory: () => player,
+    );
+    addTearDown(tones.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DirectCallScreen(
+          callId: 'call-1',
+          callService: _FakeDirectCallGateway(
+            _call(status: DirectCallStatus.ringing),
+          ),
+          voiceService: _FakeVoiceCallService(),
+          toneService: tones,
+          currentUserId: 'callee',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(player.paths, isEmpty);
+    expect(tones.isPlaying, isFalse);
+
+    await tester.pump(const Duration(milliseconds: 999));
+    expect(player.paths, isEmpty);
+
+    await tester.pump(const Duration(milliseconds: 2));
+    await tester.pump();
+    expect(player.paths, [CallTone.incoming.assetPath]);
+    expect(tones.activeTone, CallTone.incoming);
+
+    final duplicatePush = DirectCallAlertRegistry.claim(
+      'call-1',
+      DirectCallAlertOwner.push,
+    );
+    expect(duplicatePush.ownsAlert, isFalse);
+    expect(await duplicatePush.result, isTrue);
+  });
+
+  testWidgets('web push finishes its in-app cue before the screen loop', (
+    tester,
+  ) async {
+    DirectCallAlertRegistry.clear();
+    addTearDown(DirectCallAlertRegistry.clear);
+    final pushClaim = DirectCallAlertRegistry.claim(
+      'call-1',
+      DirectCallAlertOwner.push,
+    );
+    final cueFinished = Completer<bool>();
+    final presentation =
+        presentForegroundNotificationSurface(
+          isWeb: true,
+          isCall: true,
+          presentInApp: () => true,
+          presentInAppCallSound: () => cueFinished.future,
+          presentNative: () async => fail('web must not use a native surface'),
+        ).then((presented) {
+          DirectCallAlertRegistry.complete(pushClaim, presented: presented);
+        });
+    final player = _RecordingCallTonePlayer();
+    final tones = CallToneService(
+      enabled: () => true,
+      playerFactory: () => player,
+    );
+    addTearDown(tones.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DirectCallScreen(
+          callId: 'call-1',
+          callService: _FakeDirectCallGateway(
+            _call(status: DirectCallStatus.ringing),
+          ),
+          voiceService: _FakeVoiceCallService(),
+          toneService: tones,
+          currentUserId: 'callee',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(player.paths, isEmpty);
+    expect(tones.isPlaying, isFalse);
+
+    cueFinished.complete(true);
+    await presentation;
+    await tester.pump();
+    await tester.pump();
+
+    expect(player.paths, [CallTone.incoming.assetPath]);
+    expect(tones.activeTone, CallTone.incoming);
+  });
+
+  testWidgets('outgoing declined call plays its terminal cue exactly once', (
+    tester,
+  ) async {
+    final gateway = _FakeDirectCallGateway(
+      _call(status: DirectCallStatus.ringing),
+    );
+    final voice = _FakeVoiceCallService();
+    final player = _RecordingUiSoundPlayer();
+    final sounds = UiSoundService(
+      enabled: () => true,
+      playerFactory: (_) => player,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DirectCallScreen(
+          callId: 'call-1',
+          callService: gateway,
+          voiceService: voice,
+          soundService: sounds,
+          currentUserId: 'caller',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    gateway._emit(DirectCallStatus.declined);
+    await tester.pump();
+    await tester.pump();
+    gateway._emit(DirectCallStatus.declined);
+    await tester.pump();
+
+    expect(player.paths, [UiSound.callDeclined.assetPath]);
+    expect(voice.disconnectCalls, 0);
+    await sounds.dispose().timeout(const Duration(seconds: 1));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('connected call end owns one service cue without a screen cue', (
+    tester,
+  ) async {
+    final gateway = _FakeDirectCallGateway(
+      _call(status: DirectCallStatus.active),
+    );
+    final voice = _FakeVoiceCallService();
+    await voice.joinDirectCall(
+      callId: 'call-1',
+      contactName: 'Caller',
+      participantName: 'Callee',
+    );
+    final player = _RecordingUiSoundPlayer();
+    final sounds = UiSoundService(
+      enabled: () => true,
+      playerFactory: (_) => player,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DirectCallScreen(
+          callId: 'call-1',
+          callService: gateway,
+          voiceService: voice,
+          soundService: sounds,
+          currentUserId: 'caller',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(voice.isConnected, isTrue);
+
+    gateway._emit(DirectCallStatus.ended);
+    await tester.pump();
+    await tester.pump();
+
+    expect(voice.disconnectCalls, 1);
+    expect(player.paths, isEmpty);
+    await sounds.dispose().timeout(const Duration(seconds: 1));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
 
   testWidgets('incoming call can be answered, muted and ended', (tester) async {
     final gateway = _FakeDirectCallGateway(
@@ -1672,6 +1973,8 @@ void main() {
       signedIn: true,
       mockUser: MockUser(uid: 'callee', displayName: 'Callee'),
     );
+    final silentTones = CallToneService(enabled: () => false);
+    addTearDown(silentTones.dispose);
     await tester.pumpWidget(
       MaterialApp(
         home: DirectCallCoordinator(
@@ -1679,11 +1982,15 @@ void main() {
           auth: auth,
           voiceService: _FakeVoiceCallService(),
           soundService: UiSoundService(enabled: () => false),
+          toneService: silentTones,
           child: const Scaffold(body: Text('home')),
         ),
       ),
     );
-    await tester.pump();
+    for (var attempt = 0; attempt < 5 && gateway.watchCount == 0; attempt++) {
+      await tester.pump();
+    }
+    expect(gateway.watchCount, 1);
 
     gateway.emitSignal(
       IncomingDirectCallSignal(
@@ -1704,6 +2011,212 @@ void main() {
     );
     expect(fallback.ownsAlert, isTrue);
     DirectCallAlertRegistry.complete(fallback, presented: true);
+  });
+
+  testWidgets('coordinator starts incoming loop and auth change stops it', (
+    tester,
+  ) async {
+    final gateway = _RetryingIncomingGateway();
+    addTearDown(gateway.dispose);
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'callee', displayName: 'Callee'),
+    );
+    final player = _RecordingCallTonePlayer();
+    final tones = CallToneService(
+      enabled: () => true,
+      playerFactory: () => player,
+    );
+    addTearDown(tones.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DirectCallCoordinator(
+          callService: gateway,
+          auth: auth,
+          voiceService: _FakeVoiceCallService(),
+          soundService: UiSoundService(enabled: () => false),
+          toneService: tones,
+          child: const Scaffold(body: Text('home')),
+        ),
+      ),
+    );
+    for (var attempt = 0; attempt < 5 && gateway.watchCount == 0; attempt++) {
+      await tester.pump();
+    }
+    expect(gateway.watchCount, 1);
+
+    gateway.emitSignal(
+      IncomingDirectCallSignal(
+        callId: 'tone-call',
+        callerId: 'caller',
+        callerName: 'Caller',
+        callerPhotoUrl: null,
+        status: DirectCallStatus.ringing,
+        // Legacy signal documents can omit expiresAt and remain ringable.
+        expiresAt: null,
+      ),
+    );
+    for (var attempt = 0; attempt < 5 && player.paths.isEmpty; attempt++) {
+      await tester.pump();
+    }
+
+    expect(player.paths, [CallTone.incoming.assetPath]);
+    expect(tones.activeTone, CallTone.incoming);
+
+    await auth.signOut();
+    await tester.pump();
+    expect(player.stopCalls, 1);
+    expect(tones.isPlaying, isFalse);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets(
+    'coordinator never starts a call loop while already backgrounded',
+    (tester) async {
+      final gateway = _RetryingIncomingGateway();
+      addTearDown(gateway.dispose);
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'callee', displayName: 'Callee'),
+      );
+      final player = _RecordingCallTonePlayer();
+      final tones = CallToneService(
+        enabled: () => true,
+        playerFactory: () => player,
+      );
+      addTearDown(tones.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DirectCallCoordinator(
+            callService: gateway,
+            auth: auth,
+            voiceService: _FakeVoiceCallService(),
+            soundService: UiSoundService(enabled: () => false),
+            toneService: tones,
+            child: const Scaffold(body: Text('home')),
+          ),
+        ),
+      );
+      for (var attempt = 0; attempt < 5 && gateway.watchCount == 0; attempt++) {
+        await tester.pump();
+      }
+      expect(gateway.watchCount, 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+
+      gateway.emitSignal(
+        IncomingDirectCallSignal(
+          callId: 'background-call',
+          callerId: 'caller',
+          callerName: 'Caller',
+          callerPhotoUrl: null,
+          status: DirectCallStatus.ringing,
+          expiresAt: DateTime.now().add(const Duration(minutes: 1)),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(DirectCallScreen), findsNothing);
+      expect(player.paths, isEmpty);
+      expect(tones.isPlaying, isFalse);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      for (var attempt = 0; attempt < 8 && player.paths.isEmpty; attempt++) {
+        await tester.pump();
+      }
+      expect(player.paths, [CallTone.incoming.assetPath]);
+
+      await auth.signOut();
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
+
+  testWidgets('native handoff cannot ring after the call becomes active', (
+    tester,
+  ) async {
+    DirectCallAlertRegistry.clear();
+    addTearDown(DirectCallAlertRegistry.clear);
+    final gateway = _RetryingIncomingGateway();
+    addTearDown(gateway.dispose);
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'callee', displayName: 'Callee'),
+    );
+    final player = _RecordingCallTonePlayer();
+    final tones = CallToneService(
+      enabled: () => true,
+      playerFactory: () => player,
+    );
+    addTearDown(tones.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DirectCallCoordinator(
+          callService: gateway,
+          auth: auth,
+          voiceService: _FakeVoiceCallService(),
+          soundService: UiSoundService(enabled: () => false),
+          toneService: tones,
+          child: const Scaffold(body: Text('home')),
+        ),
+      ),
+    );
+    for (var attempt = 0; attempt < 5 && gateway.watchCount == 0; attempt++) {
+      await tester.pump();
+    }
+    expect(gateway.watchCount, 1);
+
+    final pushClaim = DirectCallAlertRegistry.claim(
+      'handoff-active-call',
+      DirectCallAlertOwner.push,
+    );
+    DirectCallAlertRegistry.complete(
+      pushClaim,
+      presented: true,
+      toneOwnership: const Duration(seconds: 1),
+    );
+    gateway.emitSignal(
+      IncomingDirectCallSignal(
+        callId: 'handoff-active-call',
+        callerId: 'caller',
+        callerName: 'Caller',
+        callerPhotoUrl: null,
+        status: DirectCallStatus.ringing,
+        expiresAt: DateTime.now().add(const Duration(minutes: 1)),
+      ),
+    );
+    for (var attempt = 0; attempt < 6; attempt++) {
+      await tester.pump();
+    }
+    expect(player.paths, isEmpty);
+
+    gateway.emitSignal(
+      IncomingDirectCallSignal(
+        callId: 'handoff-active-call',
+        callerId: 'caller',
+        callerName: 'Caller',
+        callerPhotoUrl: null,
+        status: DirectCallStatus.active,
+        expiresAt: DateTime.now().add(const Duration(minutes: 1)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1100));
+    await tester.pump();
+
+    expect(player.paths, isEmpty);
+    expect(tones.isPlaying, isFalse);
+
+    await auth.signOut();
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 }
 
@@ -1964,6 +2477,41 @@ class _RetryingIncomingGateway implements DirectCallGateway {
   Future<VoiceConnectionInfo> createJoinToken(String callId) {
     throw UnimplementedError();
   }
+}
+
+class _RecordingCallTonePlayer implements CallTonePlayer {
+  final paths = <String>[];
+  final volumes = <double>[];
+  int stopCalls = 0;
+  int disposeCalls = 0;
+
+  @override
+  Future<void> startLoop(String assetPath, {required double volume}) async {
+    paths.add(assetPath);
+    volumes.add(volume);
+  }
+
+  @override
+  Future<void> stop() async {
+    stopCalls++;
+  }
+
+  @override
+  Future<void> dispose() async {
+    disposeCalls++;
+  }
+}
+
+class _RecordingUiSoundPlayer implements UiSoundPlayer {
+  final paths = <String>[];
+
+  @override
+  Future<void> play(String assetPath, {required double volume}) async {
+    paths.add(assetPath);
+  }
+
+  @override
+  Future<void> dispose() async {}
 }
 
 class _FakeVoiceCallService extends VoiceCallService {

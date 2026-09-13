@@ -1,0 +1,105 @@
+{
+  "files": [
+    {
+      "bytes": 54655,
+      "file": "yoLove01.gif",
+      "id": "yoLove01",
+      "sha256": "8c1790a3a9faac264322e4018a452dc0e75fca701fc9a3deae6007b0c153b5f6"
+    },
+    {
+      "bytes": 55911,
+      "file": "yoLol001.gif",
+      "id": "yoLol001",
+      "sha256": "d63f83928135144762343ab4b995b9cfc11f88f104b4de322b0097cdb8a73467"
+    },
+    {
+      "bytes": 62051,
+      "file": "yoWow001.gif",
+      "id": "yoWow001",
+      "sha256": "d3900e8888357e0f07ad46e8881d8a3068b106b3385cc340bf9695e7b1bda89b"
+    },
+    {
+      "bytes": 53063,
+      "file": "yoYes001.gif",
+      "id": "yoYes001",
+      "sha256": "ad01d9d67290792717d73a8705b65d9afcc7719f80d60f76f619283a75fd4166"
+    },
+    {
+      "bytes": 51057,
+      "file": "yoNo0001.gif",
+      "id": "yoNo0001",
+      "sha256": "0fa6c55677c2f09a35711fa4a35e21c253f95bc10e36e396c43bd7a0273e7078"
+    },
+    {
+      "bytes": 54169,
+      "file": "yoHey001.gif",
+      "id": "yoHey001",
+      "sha256": "e3b822ce4dc9bf44a0134e7d98adaf2faa3f58e80883af5a48b99fd23e75cf6a"
+    },
+    {
+      "bytes": 60665,
+      "file": "yoThx001.gif",
+      "id": "yoThx001",
+      "sha256": "a9e42d02f25a2fc229ca4eb2cf46cfe0a77372627fea656bcb4e933204749520"
+    },
+    {
+      "bytes": 65395,
+      "file": "yoClap01.gif",
+      "id": "yoClap01",
+      "sha256": "cedd633966415c908df20a4631d6d6a6fc013067eb084d954a68f4efb50be253"
+    },
+    {
+      "bytes": 59226,
+      "file": "yoParty1.gif",
+      "id": "yoParty1",
+      "sha256": "50bd26120556d48437c10a2300c9db2ad2c57d7e87ffb7f954c72313a57fe614"
+    },
+    {
+      "bytes": 51489,
+      "file": "yoHug001.gif",
+      "id": "yoHug001",
+      "sha256": "78b9a75306b828a4beed96a63c747b26fb5bc40c5a56caf8b4cfb31b9d5fbecf"
+    },
+    {
+      "bytes": 43177,
+      "file": "yoFire01.gif",
+      "id": "yoFire01",
+      "sha256": "9507563eb3a62efe9c5d05d1da17fdc500a097bb2ecd9cd6e1dd2c2a4127a01c"
+    },
+    {
+      "bytes": 57533,
+      "file": "yoCool01.gif",
+      "id": "yoCool01",
+      "sha256": "920fd25f53dacde5935c8b102a090eb1977deba0e1191b660c9670a9b2c068c9"
+    },
+    {
+      "bytes": 65781,
+      "file": "yoMorn01.gif",
+      "id": "yoMorn01",
+      "sha256": "d423a6c3338120bb1a57d5427a1fb94cdb080d0739afe819cdafe84ce1a8eb09"
+    },
+    {
+      "bytes": 57544,
+      "file": "yoNight1.gif",
+      "id": "yoNight1",
+      "sha256": "833f6670a973b9e57bb3b6fb332c829b7d7e64b51ae8fd5fd516e8dda6b0780c"
+    },
+    {
+      "bytes": 61672,
+      "file": "yoMic001.gif",
+      "id": "yoMic001",
+      "sha256": "4606d9ffda731ed329234102c2fe06c81c5df972358c13ccf412e404bbd29df7"
+    },
+    {
+      "bytes": 63242,
+      "file": "yoWin001.gif",
+      "id": "yoWin001",
+      "sha256": "64a63437b4d9e77cb3d18d5d47eaa922771f53b64b8b3ba5f374e25127fe754a"
+    }
+  ],
+  "frames": 12,
+  "generator": "tool/generate_yovoice_gifs.py",
+  "height": 200,
+  "schemaVersion": 1,
+  "width": 320
+}

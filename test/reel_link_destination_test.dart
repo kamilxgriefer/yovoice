@@ -511,6 +511,7 @@ void main() {
             await tester.tap(
               find.byKey(const ValueKey('reel-video-playback-surface')),
             );
+            await tester.pump(const Duration(milliseconds: 350));
             await tester.pumpAndSettle();
             expect(video.isPlaying, isFalse);
           }

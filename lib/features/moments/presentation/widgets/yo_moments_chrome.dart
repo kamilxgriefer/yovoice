@@ -231,8 +231,8 @@ class YoMomentsHeader extends StatelessWidget {
   }
 }
 
-/// Level 1 on the canvas: "Głos" | "Reels" in the landed segmented switch's
-/// own geometry (track 48, thumb 40), restated in palette roles.
+/// Level 1 on the canvas: trackless "Głos" | "Yeels" text tabs with a 48 px
+/// interaction target and theme-aware violet active state.
 class YoMomentsFormatSwitch extends StatelessWidget {
   const YoMomentsFormatSwitch({
     required this.selected,

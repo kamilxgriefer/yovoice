@@ -6,9 +6,18 @@ class PremiumPlans {
   /// The three benefit cards on the Premium presentation screen — one
   /// place, so copy can't drift between the app and the marketing site.
   static const List<(String, String)> benefits = [
-    ('Become a Creator', 'Unlock real Creator tools'),
-    ('Build your audience', 'Verified tools for Creators'),
-    ('Stand out', 'Premium look across YO Voice'),
+    (
+      'Creator account & studio',
+      'Unlock Creator Studio; age confirmation and opt-in enable Follow',
+    ),
+    (
+      '30 owned Servers',
+      'Free includes 5; joining stays unlimited for everyone',
+    ),
+    (
+      'Premium presence & privacy',
+      'Badge, shimmer, privacy controls and a modest Yeels boost',
+    ),
   ];
 
   /// The short per-plan checklist on the plans screen. Identical for both
@@ -16,15 +25,20 @@ class PremiumPlans {
   static const List<String> planChecklist = [
     'Creator access',
     'Audience tools',
-    'Premium identity',
+    'Premium profile appearance',
+    '30 owned Servers',
+    'Privacy controls',
+    'Yeels discovery boost',
     'Exclusive features',
   ];
 
   /// The "Everything Premium includes" list on the plans screen.
   static const List<String> everythingIncluded = [
-    'Creator profile & tools',
-    'Verified audience tools',
-    'Premium presence in conversations',
+    'Creator account and Studio; age confirmation and opt-in enable Follow',
+    '30 owned Servers (Free: 5); unlimited joins for everyone',
+    'In private chats, Incognito hides read receipts; typing visibility is separate',
+    'Premium badge and shimmering profile ring',
+    'Modest Yeels recommendation boost; reach is never guaranteed',
     'More benefits coming soon',
   ];
 }

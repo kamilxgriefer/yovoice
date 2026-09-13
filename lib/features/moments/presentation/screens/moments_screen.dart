@@ -9,7 +9,6 @@ import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
-import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
 import 'package:yovoice/features/creator/presentation/screens/find_creators_screen.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -90,7 +89,6 @@ class MomentsScreen extends StatefulWidget {
     this.onOpenFindCreators,
     this.friendService,
     this.followService,
-    this.creatorAudienceService,
     super.key,
   });
 
@@ -108,10 +106,6 @@ class MomentsScreen extends StatefulWidget {
   /// viewer does not follow yet); production passes nothing.
   final FriendService? friendService;
   final FollowService? followService;
-
-  /// Public Creator audience source for Reel author actions. Production uses
-  /// the real projection; previews and widget tests may inject a local one.
-  final CreatorAudienceService? creatorAudienceService;
 
   /// Injection seam for the caller's viewed-state; production passes
   /// nothing.
@@ -443,14 +437,10 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                             service: widget.reelService,
                             videoBuilder: widget.reelVideoBuilder,
                             isVisible: _reelsVisible,
-                            // The Reel footer's "Obserwuj" reads the same
-                            // follow graph as the Voice half's calm panel.
-                            // Null here is the production default: the feed
-                            // resolves the real service itself, and a host
-                            // with no Firebase app gets no control at all.
-                            followService: widget.followService,
-                            creatorAudienceService:
-                                widget.creatorAudienceService,
+                            // Yeels use the same existing friend graph as the
+                            // Voice half's people panel. The feed resolves the
+                            // production service when no host seam is supplied.
+                            friendService: widget.friendService,
                             onCreate: _openReelComposer,
                           )
                         else
@@ -472,11 +462,9 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
 
 /// Compact format navigation over footage, without consuming the video stage.
 ///
-/// The selected format used to be named by a text underline, four pixels above
-/// a second row of white words, which read as one indistinct block. It is now
-/// a contained switch — see [ImmersiveSegmentedSwitch] — and the pool filters
-/// below it are deliberately quieter, so the two levels cannot be parsed as
-/// one row of words.
+/// The two formats are large, trackless text tabs. The active format gains
+/// violet ink, weight and a short animated glow line; the pool filters below
+/// stay deliberately quieter, so the two levels cannot be parsed as one row.
 ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
   BuildContext context, {
   required bool showBack,

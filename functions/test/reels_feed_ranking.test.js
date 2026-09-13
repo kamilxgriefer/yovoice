@@ -18,6 +18,13 @@ const NOW_MS = 1_778_000_000_000;
 const HOUR_MS = 60 * 60 * 1000;
 const VIEWER = "viewer-1";
 
+function activePremium(entitlement, now) {
+  return entitlement.isPremium === true &&
+    entitlement.status === "active" &&
+    entitlement.currentPeriodEnd instanceof Date &&
+    entitlement.currentPeriodEnd.getTime() > now.getTime();
+}
+
 function composition() {
   return {
     caption: "A real Reel",
@@ -42,7 +49,10 @@ function sortKeyFor(rank, id) {
 // A fixture with an injectable seed sequence. Feed ranking without a seam on
 // the randomness is flaky by construction — every ordering assertion below
 // depends on knowing exactly which seed a request was built with.
-function fixture({ seeds = ["0000000000000001"] } = {}) {
+function fixture({
+  seeds = ["0000000000000001"],
+  premiumEntitlementIsActive,
+} = {}) {
   const db = new InMemoryFirestore();
   db.seed(`users/${VIEWER}`, { uid: VIEWER, displayName: "Viewer" });
   const minted = [];
@@ -66,6 +76,9 @@ function fixture({ seeds = ["0000000000000001"] } = {}) {
       minted.push(seed);
       return seed;
     },
+    ...(premiumEntitlementIsActive === undefined
+      ? {}
+      : { premiumEntitlementIsActive }),
   });
 
   function seedAuthor(authorId, profile = {}) {
@@ -113,7 +126,15 @@ function fixture({ seeds = ["0000000000000001"] } = {}) {
     });
   }
 
-  return { db, service, minted, seedAuthor, seedReel, seedSeen };
+  function seedPremium(authorId, { expiresAtMs = NOW_MS + HOUR_MS } = {}) {
+    db.seed(`entitlements/${authorId}`, {
+      isPremium: true,
+      status: "active",
+      currentPeriodEnd: new Date(expiresAtMs),
+    });
+  }
+
+  return { db, service, minted, seedAuthor, seedPremium, seedReel, seedSeen };
 }
 
 function request({ cursor = null, limit = 20, ...rest } = {}) {
@@ -137,11 +158,11 @@ async function drain(service, { limit, ...rest }) {
 
 test("ranking is enabled by default so these assertions mean something", () => {
   assert.equal(FEED_RANKING.enabled, true);
-  assert.equal(FEED_RANKING.version, "feed-ranking-v1");
+  assert.equal(FEED_RANKING.version, "feed-ranking-v2");
 });
 
 test("no ranking signal can surface a Reel the viewer may not see", async () => {
-  const scenario = fixture();
+  const scenario = fixture({ premiumEntitlementIsActive: activePremium });
   // Every hidden author below gets the MAXIMUM ranking treatment a viewer can
   // produce: a friend edge, a follow edge, saturating counters and the
   // freshest possible timestamp. If ranking were an authorization path, these
@@ -166,6 +187,7 @@ test("no ranking signal can surface a Reel the viewer may not see", async () => 
     scenario.db.seed(`users/${VIEWER}/following/${authorId}`, {
       userId: authorId,
     });
+    scenario.seedPremium(authorId);
   });
   scenario.db.seed(`users/${VIEWER}/blocked/author-viewer-blocked`, {
     createdAt: new Date(NOW_MS),
@@ -294,6 +316,51 @@ test("ranking actually reorders the page away from pure recency", async () => {
     new Set(page.items.map(({ id }) => id)),
     new Set(chronological),
   );
+});
+
+test("an active server-owned Premium entitlement lifts a comparable Reel", async () => {
+  const scenario = fixture({
+    seeds: ["00000000000000aa"],
+    premiumEntitlementIsActive: activePremium,
+  });
+  scenario.seedReel({ id: "premium", authorId: "premium-author", rank: 0 });
+  scenario.seedReel({ id: "plain", authorId: "plain-author", rank: 1 });
+  scenario.seedPremium("premium-author");
+
+  const page = await scenario.service.listReelsV2(request({ limit: 2 }));
+  assert.deepEqual(page.items.map(({ id }) => id), ["premium", "plain"]);
+  // The ranking-only entitlement must never leak into the client response.
+  assert.doesNotMatch(JSON.stringify(page), /entitlement|premiumAuthor/u);
+});
+
+test("an expired Premium entitlement earns no ranking lift", async () => {
+  const scenario = fixture({
+    seeds: ["00000000000000aa"],
+    premiumEntitlementIsActive: activePremium,
+  });
+  scenario.seedReel({ id: "premium", authorId: "expired-author", rank: 0 });
+  scenario.seedReel({ id: "plain", authorId: "plain-author", rank: 1 });
+  scenario.seedPremium("expired-author", { expiresAtMs: NOW_MS - 1 });
+
+  const page = await scenario.service.listReelsV2(request({ limit: 2 }));
+  assert.deepEqual(page.items.map(({ id }) => id), ["plain", "premium"]);
+});
+
+test("a malformed Premium entitlement fails closed to the ordinary score", async () => {
+  const scenario = fixture({
+    seeds: ["00000000000000aa"],
+    premiumEntitlementIsActive: activePremium,
+  });
+  scenario.seedReel({ id: "premium", authorId: "malformed-author", rank: 0 });
+  scenario.seedReel({ id: "plain", authorId: "plain-author", rank: 1 });
+  scenario.db.seed("entitlements/malformed-author", {
+    isPremium: "yes",
+    status: "active",
+    currentPeriodEnd: "forever",
+  });
+
+  const page = await scenario.service.listReelsV2(request({ limit: 2 }));
+  assert.deepEqual(page.items.map(({ id }) => id), ["plain", "premium"]);
 });
 
 test("two opens give different orders while one paging session stays stable",
@@ -586,6 +653,7 @@ test("Your Reels and v1 read no ranking documents at all", async () => {
   const discoverReads =
     scenario.db.metrics.getAllDocumentReads - before - ownReads;
   // Discover adds one reelViews document per candidate plus two social-graph
-  // documents per distinct author. Your Reels pays none of that.
-  assert.equal(discoverReads - ownReads, 4 + 2);
+  // documents and one Premium entitlement per distinct author. Your Reels
+  // pays none of that.
+  assert.equal(discoverReads - ownReads, 4 + 3);
 });

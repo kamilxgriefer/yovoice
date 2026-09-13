@@ -644,10 +644,14 @@ class VoiceCallService extends ChangeNotifier {
           }
         })
         ..on<ParticipantConnectedEvent>((_) {
-          unawaited(_sounds.play(UiSound.participantJoined));
+          if (kind == VoiceSessionKind.room) {
+            unawaited(_sounds.play(UiSound.participantJoined));
+          }
         })
         ..on<ParticipantDisconnectedEvent>((_) {
-          unawaited(_sounds.play(UiSound.participantLeft));
+          if (kind == VoiceSessionKind.room) {
+            unawaited(_sounds.play(UiSound.participantLeft));
+          }
         });
       _events = joiningEvents;
 
@@ -744,7 +748,13 @@ class VoiceCallService extends ChangeNotifier {
         ),
       );
       if (playSound) {
-        unawaited(_sounds.play(UiSound.roomJoined));
+        unawaited(
+          _sounds.play(
+            kind == VoiceSessionKind.directCall
+                ? UiSound.callConnected
+                : UiSound.roomJoined,
+          ),
+        );
       }
       if (cameraRequestedNow &&
           cameraAvailable &&
@@ -795,6 +805,9 @@ class VoiceCallService extends ChangeNotifier {
       if (!_isJoinCurrent(joinEpoch, sessionRoomId)) return;
       _errorMessage = _friendlyError(failure);
       _setStatus(VoiceCallStatus.failed);
+      if (playSound && kind == VoiceSessionKind.directCall) {
+        unawaited(_sounds.play(UiSound.callFailed));
+      }
       Error.throwWithStackTrace(failure, stackTrace);
     }
   }
@@ -1338,6 +1351,7 @@ class VoiceCallService extends ChangeNotifier {
       );
     }
     final wasConnected = isConnected;
+    final wasDirectCall = isDirectCall;
     _status = VoiceCallStatus.disconnected;
     _errorMessage = null;
     _isMuted = false;
@@ -1363,7 +1377,9 @@ class VoiceCallService extends ChangeNotifier {
       if (requireCleanupComplete) rethrow;
     }
     if (playSound && wasConnected) {
-      unawaited(_sounds.play(UiSound.roomLeft));
+      unawaited(
+        _sounds.play(wasDirectCall ? UiSound.callEnded : UiSound.roomLeft),
+      );
     }
   }
 

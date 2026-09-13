@@ -189,7 +189,7 @@ void main() {
           size: Size(width, 844),
           immersive: true,
           textScale: scale,
-          followService: stageFollowService(),
+          friendService: stageFriendService(),
           service: reelStageService(
             authorName:
                 'A deliberately long creator display name that still truncates safely',
@@ -211,7 +211,7 @@ void main() {
         expect(
           linkRect.bottom,
           lessThanOrEqualTo(identity.top),
-          reason: 'authored content must stop before wrapped author/follow',
+          reason: 'authored content must stop before wrapped author/friend',
         );
         expect(
           tester
@@ -424,6 +424,7 @@ void main() {
     expect(engine.volume, 1);
 
     await tester.tap(find.byKey(reelPlaybackSurfaceKey));
+    await tester.pump(const Duration(milliseconds: 350));
     await tester.pumpAndSettle();
     expect(engine.playing, isFalse);
 

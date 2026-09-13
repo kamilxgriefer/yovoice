@@ -1,13 +1,15 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 
 import 'reel_stage_test_support.dart';
 
-/// Board 08's footer bar: who published this Reel, whether you follow them,
+/// Board 08's footer bar: who published this Reel, whether you can add them,
 /// what they wrote, and the four things you can do about it.
 void main() {
   testWidgets('the author row opens the same profile seam as everywhere else', (
@@ -127,152 +129,292 @@ void main() {
     expect(players.of('reel_1').playCount, 1);
   });
 
-  group('Obserwuj (D2)', () {
-    testWidgets('is a real follow, guarded against a double submit', (
+  testWidgets('photo cards omit the numeric clock but keep progress', (
+    tester,
+  ) async {
+    final players = FakeReelPlayers();
+    await pumpReelStage(
+      tester,
+      players: players,
+      size: const Size(900, 1000),
+      photo: true,
+    );
+
+    expect(find.byKey(reelProgressBarKey), findsOneWidget);
+    expect(find.byKey(reelProgressTimesKey), findsNothing);
+  });
+
+  testWidgets('video cards retain the numeric playback clock', (tester) async {
+    final players = FakeReelPlayers();
+    await pumpReelStage(tester, players: players, size: const Size(900, 1000));
+
+    expect(find.byKey(reelProgressBarKey), findsOneWidget);
+    expect(find.byKey(reelProgressTimesKey), findsOneWidget);
+  });
+
+  group('Add friend', () {
+    testWidgets('shares one sent state across two Yeels by the same author', (
       tester,
     ) async {
-      final gate = Completer<void>();
-      final follows = reelFollowService(viewerUid: 'viewer', gate: gate);
+      final friends = reelFriendService(viewerUid: 'viewer');
+      final players = FakeReelPlayers();
+      await pumpReelStage(
+        tester,
+        players: players,
+        size: const Size(390, 844),
+        count: 2,
+        sameAuthor: true,
+        immersive: true,
+        friendService: friends.service,
+      );
+
+      final firstCard = find.byKey(const ValueKey<String>('reel_1'));
+      final firstButton = find.descendant(
+        of: firstCard,
+        matching: find.byKey(const ValueKey<String>('reel-friend-creator')),
+      );
+      expect(firstButton, findsOneWidget);
+      await tester.tap(firstButton);
+      await tester.pumpAndSettle();
+      expect(friends.mutations, hasLength(1));
+
+      await tester.drag(find.byType(PageView), const Offset(0, -700));
+      await tester.pumpAndSettle();
+
+      final secondCard = find.byKey(const ValueKey<String>('reel_2'));
+      final secondButton = find.descendant(
+        of: secondCard,
+        matching: find.byKey(const ValueKey<String>('reel-friend-creator')),
+      );
+      expect(secondButton, findsOneWidget);
+      expect(
+        find.descendant(of: secondCard, matching: find.text('Requested')),
+        findsOneWidget,
+      );
+      expect(tester.widget<OutlinedButton>(secondButton).onPressed, isNull);
+      await tester.tap(secondButton, warnIfMissed: false);
+      await tester.pump();
+      expect(friends.mutations, hasLength(1));
+      expect(friends.relationshipReads, <String>['creator']);
+    });
+
+    testWidgets('names a relationship read error in Polish and retries', (
+      tester,
+    ) async {
+      var read = 0;
+      final retryGate = Completer<void>();
+      final friends = reelFriendService(
+        viewerUid: 'viewer',
+        relationshipStatusInvoker: (_) async {
+          read++;
+          if (read == 1) throw StateError('temporary read failure');
+          await retryGate.future;
+          return FriendRelationshipStatus.none;
+        },
+      );
       final players = FakeReelPlayers();
       await pumpReelStage(
         tester,
         players: players,
         size: const Size(900, 1000),
-        followService: follows.service,
+        friendService: friends.service,
+        locale: const Locale('pl'),
+      );
+
+      final retry = find.byKey(const ValueKey<String>('reel-friend-creator_1'));
+      expect(retry, findsOneWidget);
+      expect(find.text('Spróbuj ponownie'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel(
+          'Nie udało się sprawdzić relacji z Creator 1. Spróbuj ponownie.',
+        ),
+        findsOneWidget,
+      );
+      expect(tester.getSize(retry).height, greaterThanOrEqualTo(48));
+
+      await tester.tap(retry);
+      await tester.pump();
+      expect(find.text('Sprawdzanie…'), findsOneWidget);
+      expect(tester.widget<OutlinedButton>(retry).onPressed, isNull);
+
+      retryGate.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('Dodaj znajomego'), findsOneWidget);
+      expect(friends.relationshipReads, <String>['creator_1', 'creator_1']);
+
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+      expect(find.text('Wysłano zaproszenie'), findsOneWidget);
+      expect(friends.mutations, hasLength(1));
+    });
+
+    testWidgets('sends one real request and guards against a double submit', (
+      tester,
+    ) async {
+      final gate = Completer<void>();
+      final friends = reelFriendService(viewerUid: 'viewer', gate: gate);
+      final players = FakeReelPlayers();
+      await pumpReelStage(
+        tester,
+        players: players,
+        size: const Size(900, 1000),
+        friendService: friends.service,
       );
 
       final button = find.byKey(
-        const ValueKey<String>('reel-follow-creator_1'),
+        const ValueKey<String>('reel-friend-creator_1'),
       );
       expect(button, findsOneWidget);
-      expect(find.text('Follow'), findsOneWidget);
+      expect(find.text('Add friend'), findsOneWidget);
 
       await tester.tap(button);
       await tester.pump();
       // A second tap while the first is in flight must not reach the graph.
       await tester.tap(button, warnIfMissed: false);
       await tester.pump();
-      expect(follows.mutations, hasLength(1));
-      expect(follows.mutations.single['targetUserId'], 'creator_1');
-      expect(follows.mutations.single['following'], isTrue);
+      expect(friends.mutations, hasLength(1));
+      expect(friends.mutations.single.name, 'sendFriendRequest');
+      expect(friends.mutations.single.data['targetUserId'], 'creator_1');
 
       gate.complete();
       await tester.pumpAndSettle();
-      expect(find.text('Following'), findsOneWidget);
+      expect(find.text('Requested'), findsOneWidget);
     });
 
-    testWidgets('reads the real edge for a creator you already follow', (
+    testWidgets('busy request is announced once by the disabled action', (
       tester,
     ) async {
-      final follows = reelFollowService(
-        viewerUid: 'viewer',
-        following: const <String>{'creator_1'},
-      );
+      final semantics = tester.ensureSemantics();
+      final gate = Completer<void>();
+      final friends = reelFriendService(viewerUid: 'viewer', gate: gate);
       final players = FakeReelPlayers();
       await pumpReelStage(
         tester,
         players: players,
         size: const Size(900, 1000),
-        followService: follows.service,
-      );
-
-      expect(find.text('Following'), findsOneWidget);
-      expect(find.text('Follow'), findsNothing);
-    });
-
-    testWidgets('an ineligible author exposes no new Follow action', (
-      tester,
-    ) async {
-      final follows = reelFollowService(viewerUid: 'viewer');
-      final players = FakeReelPlayers();
-      await pumpReelStage(
-        tester,
-        players: players,
-        size: const Size(900, 1000),
-        followService: follows.service,
-        creatorAudienceVisible: false,
-      );
-
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey<String>('reel-follow-creator_1')),
-          matching: find.byType(OutlinedButton),
-        ),
-        findsNothing,
-      );
-      expect(find.text('Follow'), findsNothing);
-    });
-
-    testWidgets('an audience projection error fails closed', (tester) async {
-      final follows = reelFollowService(viewerUid: 'viewer');
-      final players = FakeReelPlayers();
-      await pumpReelStage(
-        tester,
-        players: players,
-        size: const Size(900, 1000),
-        followService: follows.service,
-        creatorAudienceFails: true,
-      );
-
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey<String>('reel-follow-creator_1')),
-          matching: find.byType(OutlinedButton),
-        ),
-        findsNothing,
-      );
-      expect(find.text('Follow'), findsNothing);
-    });
-
-    testWidgets('an ineligible author keeps only reliable Following/Unfollow', (
-      tester,
-    ) async {
-      final follows = reelFollowService(
-        viewerUid: 'viewer',
-        following: const <String>{'creator_1'},
-      );
-      final players = FakeReelPlayers();
-      await pumpReelStage(
-        tester,
-        players: players,
-        size: const Size(900, 1000),
-        followService: follows.service,
-        creatorAudienceVisible: false,
+        friendService: friends.service,
       );
 
       final button = find.byKey(
-        const ValueKey<String>('reel-follow-creator_1'),
+        const ValueKey<String>('reel-friend-creator_1'),
+      );
+      await tester.tap(button);
+      await tester.pump();
+
+      const busyLabel = 'Updating friend request for Creator 1';
+      final busy = find.bySemanticsLabel(busyLabel);
+      expect(
+        busy,
+        findsOneWidget,
+        reason: 'One node must announce the state without a duplicate region.',
+      );
+      final data = tester.getSemantics(busy).getSemanticsData();
+      expect(data.flagsCollection.isLiveRegion, isTrue);
+      expect(data.flagsCollection.isEnabled, ui.Tristate.isFalse);
+      expect(data.hasAction(ui.SemanticsAction.tap), isFalse);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(find.bySemanticsLabel(busyLabel), findsNothing);
+      semantics.dispose();
+    });
+
+    testWidgets('a pending request is clear and cannot be sent twice', (
+      tester,
+    ) async {
+      final friends = reelFriendService(
+        viewerUid: 'viewer',
+        relationship: FriendRelationshipStatus.requestSent,
+      );
+      final players = FakeReelPlayers();
+      await pumpReelStage(
+        tester,
+        players: players,
+        size: const Size(900, 1000),
+        friendService: friends.service,
+      );
+
+      final button = find.byKey(
+        const ValueKey<String>('reel-friend-creator_1'),
+      );
+      expect(find.text('Requested'), findsOneWidget);
+      expect(tester.widget<OutlinedButton>(button).onPressed, isNull);
+      await tester.tap(button, warnIfMissed: false);
+      await tester.pump();
+      expect(friends.mutations, isEmpty);
+    });
+
+    testWidgets('an existing friendship hides the action', (tester) async {
+      final friends = reelFriendService(
+        viewerUid: 'viewer',
+        relationship: FriendRelationshipStatus.friends,
+      );
+      final players = FakeReelPlayers();
+      await pumpReelStage(
+        tester,
+        players: players,
+        size: const Size(900, 1000),
+        friendService: friends.service,
+      );
+
+      expect(
+        find.byKey(const ValueKey<String>('reel-friend-creator_1')),
+        findsNothing,
+      );
+      expect(find.text('Add friend'), findsNothing);
+    });
+
+    testWidgets('an incoming request uses the explicit accept mutation', (
+      tester,
+    ) async {
+      final friends = reelFriendService(
+        viewerUid: 'viewer',
+        relationship: FriendRelationshipStatus.requestReceived,
+      );
+      final players = FakeReelPlayers();
+      await pumpReelStage(
+        tester,
+        players: players,
+        size: const Size(900, 1000),
+        friendService: friends.service,
+      );
+
+      final button = find.byKey(
+        const ValueKey<String>('reel-friend-creator_1'),
       );
       expect(button, findsOneWidget);
-      expect(find.text('Following'), findsOneWidget);
-      expect(find.text('Follow'), findsNothing);
+      expect(find.text('Accept'), findsOneWidget);
 
       await tester.tap(button);
       await tester.pumpAndSettle();
-      expect(follows.mutations, [
-        {'targetUserId': 'creator_1', 'following': false},
-      ]);
+      expect(friends.mutations, hasLength(1));
+      expect(friends.mutations.single.name, 'respondToFriendRequest');
+      expect(friends.mutations.single.data, {
+        'senderId': 'creator_1',
+        'accept': true,
+      });
+      expect(button, findsNothing);
     });
 
     testWidgets('is absent on your own Yeel', (tester) async {
-      final follows = reelFollowService(viewerUid: 'creator_1');
+      final friends = reelFriendService(viewerUid: 'creator_1');
       final players = FakeReelPlayers();
       await pumpReelStage(
         tester,
         players: players,
         size: const Size(900, 1000),
         service: reelStageService(count: 2, viewerUid: 'creator_1'),
-        followService: follows.service,
+        friendService: friends.service,
       );
 
       expect(
-        find.byKey(const ValueKey<String>('reel-follow-creator_1')),
+        find.byKey(const ValueKey<String>('reel-friend-creator_1')),
         findsNothing,
       );
-      expect(find.text('Follow'), findsNothing);
+      expect(find.text('Add friend'), findsNothing);
     });
 
-    testWidgets('is absent where the follow graph is unavailable', (
+    testWidgets('is absent where the friends graph is unavailable', (
       tester,
     ) async {
       // A host with no graph draws no control rather than a button whose only
@@ -284,6 +426,7 @@ void main() {
         size: const Size(900, 1000),
       );
 
+      expect(find.text('Add friend'), findsNothing);
       expect(find.text('Follow'), findsNothing);
       expect(find.byKey(reelStageFooterKey), findsOneWidget);
     });

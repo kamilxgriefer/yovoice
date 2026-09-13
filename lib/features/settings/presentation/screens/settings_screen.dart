@@ -29,6 +29,7 @@ import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/profile_visibility_screen.dart';
+import 'package:yovoice/features/settings/presentation/screens/premium_messaging_privacy_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/downloaded_audio_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/device_sessions_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/two_factor_authentication_screen.dart';
@@ -609,8 +610,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       'Przejdź na Premium',
                     ),
                     subtitle: copy.text(
-                      'Creator tools, verified identity and Premium presence',
-                      'Narzędzia twórcy, zweryfikowana tożsamość i obecność Premium',
+                      'Creator tools, Premium profile look and presence controls',
+                      'Narzędzia twórcy, wygląd profilu Premium i kontrola obecności',
                     ),
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
@@ -779,6 +780,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
               },
             ),
             const MessagePrivacySettingsTile(),
+            _SettingsTile(
+              icon: Icons.visibility_off_rounded,
+              title: copy.text(
+                'Read receipts & typing',
+                'Potwierdzenia odczytu i pisanie',
+              ),
+              subtitle: copy.text(
+                'Premium controls for read receipts and typing status',
+                'Opcje Premium dla potwierdzeń odczytu i statusu pisania',
+              ),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const PremiumMessagingPrivacyScreen(),
+                ),
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 22),
@@ -902,13 +919,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onChanged: _setSoundEffectsEnabled,
               ),
             ),
-            // The one privacy control a GIF RECIPIENT has.
-            //
-            // GIFs are served from the provider's own CDN because GIPHY's
-            // terms require hotlinking and forbid rehosting, so displaying one
-            // shows this device's IP address and User-Agent to a third party —
-            // including when somebody else sent it. The subtitle says that
-            // plainly rather than describing this as a data-saver.
+            // Controls automatic loading for optional external GIFs. Bundled
+            // YO Voice Originals always play automatically and disclose no
+            // device data to a third-party provider. A remote provider must
+            // respect this tap-before-load preference when it is off.
             _SettingsTile(
               icon: Icons.gif_box_outlined,
               title: copy.text(
@@ -916,10 +930,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'Wczytuj GIF-y automatycznie',
               ),
               subtitle: copy.text(
-                'Off: the GIF provider receives your device data only when '
-                    'you tap to load a GIF.',
-                'Wyłączone: dostawca GIF-ów otrzymuje dane urządzenia dopiero, '
-                    'gdy dotkniesz GIF-a, aby go wczytać.',
+                'YO Voice Originals play automatically. External GIFs load '
+                    'only after you tap when auto-play is off.',
+                'GIF-y YO Voice Originals odtwarzają się automatycznie. '
+                    'Zewnętrzne GIF-y przy wyłączonym autoodtwarzaniu '
+                    'wczytują się dopiero po dotknięciu.',
               ),
               trailing: Switch.adaptive(
                 value: AppPreferencesScope.of(context).value.gifAutoLoadEnabled,

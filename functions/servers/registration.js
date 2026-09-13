@@ -2,13 +2,9 @@
 //
 // This is the only module that turns the reviewed, frozen factories under
 // functions/servers/* into Cloud Functions endpoints. functions/index.js
-// requires it solely inside its `YOVOICE_SERVERS_V1=enabled` block, so the
-// production default (the variable absent from functions/.env) keeps every
-// module in this directory off the cold-start graph and exports none of the
-// names below — the registration shape of `STRIPE_BILLING_EXPORTS` and
-// `GIF_PROVIDER` in functions/index.js, for the same reason: the factories
-// must be deployable as one reviewed unit, on a separate authorization,
-// without changing the export map installed clients depend on today.
+// registers the base map statically because Firebase discovers exports before
+// loading functions/.env. Runtime use stays fail-closed behind the server-owned
+// activation document below, so deployment and activation remain separate.
 //
 // What this module does NOT do, on purpose:
 //   - it never writes to Firestore itself. Every mutation is a reviewed
@@ -67,6 +63,10 @@ const { createServerLiveKitAdapter } = require("./session_livekit");
 
 const REGION = "europe-west1";
 const OUTBOX_COLLECTION = "serverControlOutbox";
+const ACTIVATION_CONFIG_PATH = "appConfig/serversV1";
+const ACTIVATION_ACCESS = Object.freeze(["disabled", "testers", "all"]);
+const ACTIVATION_UNAVAILABLE_REASON = "servers-v1-not-enabled";
+const MAX_ACTIVATION_TESTERS = 100;
 
 // The fifty-four V1 callables of docs/Servers.md "Callable contract", in that
 // order, each bound to the reviewed factory that implements it. The export
@@ -170,6 +170,16 @@ const PODCAST_EPISODE_MEDIA_CALLABLES = Object.freeze([
   "getServerPodcastEpisodeAccessV1",
 ]);
 
+// These exports stay absent until the dedicated Egress credential and the
+// server-side rollout switch are both ready. Podcast questions and events are
+// independent and remain part of the base Podcast template.
+const PODCAST_RECORDING_EXPORTS = Object.freeze([
+  ...PODCAST_EGRESS_CALLABLES,
+  "publishServerPodcastEpisodeV1",
+  ...PODCAST_EPISODE_MEDIA_CALLABLES,
+  "reconcileServerPodcastEgressSchedule",
+]);
+
 const DISPATCHER_EXPORTS = Object.freeze([
   "onServerControlOutboxCreated",
   "processPendingServerControlOutboxSchedule",
@@ -250,13 +260,87 @@ const DEFAULT_DISPATCH_LIMITS = Object.freeze({
 // secrets are read inside a request, never at module load.
 const livekitApiKey = defineSecret("LIVEKIT_API_KEY");
 const livekitApiSecret = defineSecret("LIVEKIT_API_SECRET");
-const podcastEgressGcpCredentials = defineSecret("PODCAST_EGRESS_GCP_CREDENTIALS");
 const livekitUrl = defineString("LIVEKIT_URL");
 const LIVEKIT_SECRET_PARAMS = Object.freeze([livekitApiKey, livekitApiSecret]);
-const PODCAST_EGRESS_SECRET_PARAMS = Object.freeze([
-  ...LIVEKIT_SECRET_PARAMS,
-  podcastEgressGcpCredentials,
-]);
+
+function podcastEgressSecretParams() {
+  // Firebase deploy discovery treats an eager defineSecret() as required even
+  // when the selected deployment omits every endpoint that binds it. Declare
+  // this credential only inside the explicit Podcast-recording rollout.
+  return Object.freeze([
+    ...LIVEKIT_SECRET_PARAMS,
+    defineSecret("PODCAST_EGRESS_GCP_CREDENTIALS"),
+  ]);
+}
+
+function canonicalActivationConfig(snapshot) {
+  if (!snapshot?.exists) {
+    return Object.freeze({ schemaVersion: 1, callableAccess: "disabled", testerUids: [],
+      workersEnabled: false, revision: 0 });
+  }
+  const data = snapshot.data();
+  const keys = data && typeof data === "object" ? Object.keys(data).sort() : [];
+  const expected = ["callableAccess", "revision", "schemaVersion", "testerUids", "workersEnabled"];
+  if (!data || data.schemaVersion !== 1 || !ACTIVATION_ACCESS.includes(data.callableAccess) ||
+      typeof data.workersEnabled !== "boolean" || !Number.isSafeInteger(data.revision) || data.revision < 1 ||
+      !Array.isArray(data.testerUids) || data.testerUids.length > MAX_ACTIVATION_TESTERS ||
+      keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
+    throw new TypeError("Malformed Servers V1 activation configuration.");
+  }
+  const testerUids = [];
+  const seen = new Set();
+  for (const uid of data.testerUids) {
+    requireId(uid, "testerUid");
+    if (seen.has(uid)) throw new TypeError("Duplicate Servers V1 tester uid.");
+    seen.add(uid);
+    testerUids.push(uid);
+  }
+  if (data.callableAccess !== "testers" && testerUids.length !== 0) {
+    throw new TypeError("Servers V1 tester uids require tester access mode.");
+  }
+  return Object.freeze({ ...data, testerUids: Object.freeze(testerUids) });
+}
+
+/**
+ * Runtime-only activation authority. Export discovery is intentionally static;
+ * this server-owned Firestore document controls use after deployment. Missing,
+ * unreadable or malformed configuration fails closed. Reads are deliberately
+ * uncached so an emergency disable takes effect on the next invocation.
+ */
+function createServersV1ActivationGate({ db, log = logger } = {}) {
+  if (typeof db?.doc !== "function") throw new TypeError("A Firestore handle is required for Servers V1 activation.");
+  async function read() {
+    let snapshot;
+    try {
+      snapshot = await db.doc(ACTIVATION_CONFIG_PATH).get();
+    } catch (error) {
+      log.error("servers.activation_config_unavailable", { code: safeErrorCode(error), name: error?.name ?? "Error" });
+      throw new HttpsError("unavailable", "Servers are temporarily unavailable.");
+    }
+    try {
+      return canonicalActivationConfig(snapshot);
+    } catch (error) {
+      log.error("servers.activation_config_invalid", { name: error?.name ?? "Error" });
+      throw new HttpsError("failed-precondition", "Servers are not enabled.", {
+        reason: ACTIVATION_UNAVAILABLE_REASON,
+      });
+    }
+  }
+  return Object.freeze({
+    async requireCallable(uid) {
+      requireId(uid, "uid");
+      const config = await read();
+      if (config.callableAccess === "all" ||
+          (config.callableAccess === "testers" && config.testerUids.includes(uid))) return config;
+      throw new HttpsError("failed-precondition", "Servers are not enabled for this account.", {
+        reason: ACTIVATION_UNAVAILABLE_REASON,
+      });
+    },
+    async workersEnabled() {
+      return (await read()).workersEnabled;
+    },
+  });
+}
 
 function defaultRegistrars() {
   return { onCall, onDocumentCreated, onSchedule };
@@ -279,6 +363,8 @@ function createServersV1Runtime({
   companyFileStorage = null,
   podcastEgress = null,
   podcastEpisodeStorage = null,
+  podcastEgressGcpCredentials = null,
+  enablePodcastRecording = false,
 } = {}) {
   if (typeof clock !== "function") throw new TypeError("clock must be a function.");
   if (typeof FieldPathClass?.documentId !== "function") throw new TypeError("FieldPath is required.");
@@ -296,37 +382,48 @@ function createServersV1Runtime({
     createTrustedGcsMediaProbe(resolvedBucket);
   const privateCompanyFileStorage = companyFileStorage ??
     createCompanyFileStorageAdapter(resolvedBucket);
-  const privatePodcastEpisodeStorage = podcastEpisodeStorage ??
-    createPodcastEpisodeStorageAdapter(resolvedBucket);
-  const privatePodcastEgress = podcastEgress ?? createLiveKitPodcastEgressAdapter({
-    apiKey: () => livekitApiKey.value(),
-    apiSecret: () => livekitApiSecret.value(),
-    serverUrl: () => livekitUrl.value(),
-    gcpCredentials: () => podcastEgressGcpCredentials.value(),
-    bucketName: () => resolvedBucket.name,
-  });
+  let podcastEpisodes = null;
+  if (enablePodcastRecording === true) {
+    const privatePodcastEpisodeStorage = podcastEpisodeStorage ??
+      createPodcastEpisodeStorageAdapter(resolvedBucket);
+    let privatePodcastEgress = podcastEgress;
+    if (privatePodcastEgress === null) {
+      if (typeof podcastEgressGcpCredentials !== "function") {
+        throw new TypeError("Podcast Egress credentials accessor is required when recording is enabled.");
+      }
+      privatePodcastEgress = createLiveKitPodcastEgressAdapter({
+        apiKey: () => livekitApiKey.value(),
+        apiSecret: () => livekitApiSecret.value(),
+        serverUrl: () => livekitUrl.value(),
+        gcpCredentials: podcastEgressGcpCredentials,
+        bucketName: () => resolvedBucket.name,
+      });
+    }
+    podcastEpisodes = createServerPodcastEpisodeService({
+      db: database, Timestamp: TimestampClass, FieldPath: FieldPathClass,
+      livekit: adapter, clock, familyMemoryStorage: privateFamilyMemoryStorage,
+      companyFileStorage: privateCompanyFileStorage,
+      egress: privatePodcastEgress,
+      episodeStorage: privatePodcastEpisodeStorage,
+    });
+  }
   const dependencies = {
     db: database, Timestamp: TimestampClass, FieldPath: FieldPathClass,
     livekit: adapter, clock, familyMemoryStorage: privateFamilyMemoryStorage,
     companyFileStorage: privateCompanyFileStorage,
-    podcastEpisodeStorage: privatePodcastEpisodeStorage,
   };
   return Object.freeze({
     db: database,
     FieldPath: FieldPathClass,
     clock,
-    // This runtime is constructed only by the module that index.js requires
-    // behind exact `YOVOICE_SERVERS_V1=enabled`. Activation applies solely to
-    // the absent-root creation branch and is not accepted from callable input.
+    // Creation may seed an absent root active only after the registration
+    // wrapper's server-owned runtime gate admits this caller. Request data can
+    // never select or bypass the activation mode.
     creation: createServerCreationService({ ...dependencies, activateNewServers: true }),
     channels: createServerChannelService(dependencies),
     events: createServerEventService(dependencies),
     podcastQuestions: createServerPodcastQuestionService(dependencies),
-    podcastEpisodes: createServerPodcastEpisodeService({
-      ...dependencies,
-      egress: privatePodcastEgress,
-      episodeStorage: privatePodcastEpisodeStorage,
-    }),
+    podcastEpisodes,
     sharedList: createServerSharedListService(dependencies),
     familyCheckIns: createServerFamilyCheckInService(dependencies),
     familyMemories: createServerFamilyMemoryService({
@@ -374,10 +471,11 @@ function safeErrorCode(error) {
   return "internal";
 }
 
-function callableHandler(name, method, log) {
+function callableHandler(name, method, activationGate, log) {
   return async (request) => {
     const bound = authBoundRequest(request);
     try {
+      await activationGate.requireCallable(bound.auth.uid);
       return await method(bound);
     } catch (error) {
       // Factory failures are already structured HttpsErrors (integrity/guards
@@ -647,15 +745,15 @@ function createServersV1Dispatcher({
 }
 
 /**
- * Builds the complete Servers V1 export map: the fifty-four callables plus the
- * outbox trigger and its bounded schedules.
- * functions/index.js merges the result into `exports` only behind
- * `YOVOICE_SERVERS_V1=enabled`.
+ * Builds the Servers V1 export map. Podcast recording stays excluded unless
+ * its independent source-controlled rollout is explicitly enabled.
  */
 function createServersV1Functions({
   runtime = null,
   registrars = defaultRegistrars(),
   enforceAppCheck = false,
+  enablePodcastRecording = false,
+  activationGate = null,
   log = logger,
   dispatch = {},
 } = {}) {
@@ -664,9 +762,21 @@ function createServersV1Functions({
       throw new TypeError(`Missing Cloud Functions registrar: ${name}.`);
     }
   }
-  const resolved = runtime ?? createServersV1Runtime();
+  const podcastSecretParams = enablePodcastRecording === true
+    ? podcastEgressSecretParams()
+    : null;
+  const resolved = runtime ?? createServersV1Runtime({
+    enablePodcastRecording,
+    podcastEgressGcpCredentials: podcastSecretParams === null
+      ? null
+      : () => podcastSecretParams.at(-1).value(),
+  });
   if (typeof resolved?.staleness?.stageStaleServerChannelSessions !== "function") {
     throw new TypeError("Missing Servers V1 worker staleness.stageStaleServerChannelSessions.");
+  }
+  const activation = activationGate ?? createServersV1ActivationGate({ db: resolved.db, log });
+  if (typeof activation?.requireCallable !== "function" || typeof activation?.workersEnabled !== "function") {
+    throw new TypeError("A Servers V1 runtime activation gate is required.");
   }
   const callableOptions = {
     region: REGION,
@@ -687,15 +797,18 @@ function createServersV1Functions({
   const mediaOptions = { ...callableOptions, memory: "512MiB", timeoutSeconds: 120 };
   const exportsMap = {};
   for (const [name, serviceName] of Object.entries(SERVER_CALLABLE_METHODS)) {
+    if (enablePodcastRecording !== true && PODCAST_RECORDING_EXPORTS.includes(name)) {
+      continue;
+    }
     const method = resolved?.[serviceName]?.[name];
     if (typeof method !== "function") {
       throw new TypeError(`Missing Servers V1 method ${serviceName}.${name}.`);
     }
-    const handler = callableHandler(name, method, log);
+    const handler = callableHandler(name, method, activation, log);
     const options = PODCAST_EGRESS_CALLABLES.includes(name)
       ? {
           ...mediaOptions,
-          secrets: [...PODCAST_EGRESS_SECRET_PARAMS],
+          secrets: [...podcastSecretParams],
         }
       : SECRET_BOUND_CALLABLES.includes(name)
       ? { ...securedOptions }
@@ -708,6 +821,21 @@ function createServersV1Functions({
   }
 
   const dispatcher = createServersV1Dispatcher({ runtime: resolved, log, ...dispatch });
+  async function runWorker(name, task, paused) {
+    let enabled = false;
+    try {
+      enabled = await activation.workersEnabled();
+    } catch {
+      // The activation reader already emitted a non-sensitive diagnostic. A
+      // trigger may return safely because the schedule will revisit any
+      // durable job after configuration recovers.
+    }
+    if (!enabled) {
+      log.info("servers.worker_paused", { worker: name });
+      return paused;
+    }
+    return task();
+  }
   const workerOptions = {
     region: REGION,
     memory: "512MiB",
@@ -723,11 +851,16 @@ function createServersV1Functions({
       maxInstances: 10,
       retry: true,
     },
-    dispatcher.onServerControlOutboxCreated,
+    (event) => runWorker("onServerControlOutboxCreated",
+      () => dispatcher.onServerControlOutboxCreated(event),
+      { source: "trigger", operationId: null, kind: null, outcome: "activation-disabled", pages: 0, processed: 0, code: null }),
   );
   exportsMap.processPendingServerControlOutboxSchedule = registrars.onSchedule(
     { ...workerOptions, schedule: "every 5 minutes", timeZone: "Etc/UTC", maxInstances: 1 },
-    dispatcher.processPendingServerControlOutbox,
+    () => runWorker("processPendingServerControlOutboxSchedule",
+      () => dispatcher.processPendingServerControlOutbox(),
+      { scanned: 0, completed: 0, deferred: 0, rejected: 0, failed: 0, unsupported: 0,
+        hasMore: false, activationDisabled: true }),
   );
   // Same cadence as the legacy sweepStrandedLiveRoomsSchedule: a stale
   // generation stays visibly LIVE for at most one grace period plus one
@@ -735,13 +868,14 @@ function createServersV1Functions({
   // (the staging transaction makes that correct anyway, but not free).
   exportsMap.sweepStaleServerChannelSessionsSchedule = registrars.onSchedule(
     { ...workerOptions, schedule: "every 5 minutes", timeZone: "Etc/UTC", maxInstances: 1 },
-    async () => {
+    async () => runWorker("sweepStaleServerChannelSessionsSchedule", async () => {
       const outcome = await resolved.staleness.stageStaleServerChannelSessions();
       const line = { ...outcome, staged: outcome.staged.length };
       if (outcome.truncated || outcome.providerUnavailable > 0) log.warn("servers.stale_session_sweep", line);
       else log.info("servers.stale_session_sweep", line);
       return line;
-    },
+    }, { scanned: 0, truncated: false, skippedLegacy: 0, skippedUnbound: 0, skippedYoung: 0,
+      skippedOccupied: 0, providerUnavailable: 0, changed: 0, staged: 0, activationDisabled: true }),
   );
   exportsMap.sweepServerFamilyMemoryMaintenanceSchedule = registrars.onSchedule(
     {
@@ -752,7 +886,7 @@ function createServersV1Functions({
       timeZone: "Etc/UTC",
       maxInstances: 1,
     },
-    async () => {
+    async () => runWorker("sweepServerFamilyMemoryMaintenanceSchedule", async () => {
       const [uploads, deletions] = await Promise.all([
         resolved.familyMemories.expireServerFamilyMemoryUploadReservations({ limit: 20 }),
         resolved.familyMemories.processPendingFamilyMemoryDeletionJobs({ limit: 20 }),
@@ -761,7 +895,8 @@ function createServersV1Functions({
       if (uploads.hasMore || deletions.hasMore) log.warn("servers.family_memory_sweep", line);
       else log.info("servers.family_memory_sweep", line);
       return line;
-    },
+    }, { uploads: { processed: 0, hasMore: false, expired: [] },
+      deletions: { processed: 0, hasMore: false, completed: [] }, activationDisabled: true }),
   );
   exportsMap.sweepServerCompanyFileMaintenanceSchedule = registrars.onSchedule(
     {
@@ -772,7 +907,7 @@ function createServersV1Functions({
       timeZone: "Etc/UTC",
       maxInstances: 1,
     },
-    async () => {
+    async () => runWorker("sweepServerCompanyFileMaintenanceSchedule", async () => {
       const [uploads, deletions] = await Promise.all([
         resolved.companyFiles.expireServerCompanyFileUploadReservations({ limit: 20 }),
         resolved.companyFiles.processPendingCompanyFileDeletionJobs({ limit: 20 }),
@@ -781,29 +916,35 @@ function createServersV1Functions({
       if (uploads.hasMore || deletions.hasMore) log.warn("servers.company_file_sweep", line);
       else log.info("servers.company_file_sweep", line);
       return line;
-    },
+    }, { uploads: { processed: 0, hasMore: false, expired: [] },
+      deletions: { processed: 0, hasMore: false, completed: [] }, activationDisabled: true }),
   );
-  exportsMap.reconcileServerPodcastEgressSchedule = registrars.onSchedule(
-    {
-      region: REGION,
-      memory: "512MiB",
-      timeoutSeconds: 300,
-      schedule: "every 5 minutes",
-      timeZone: "Etc/UTC",
-      maxInstances: 1,
-      secrets: [...PODCAST_EGRESS_SECRET_PARAMS],
-    },
-    async () => {
-      const line = await resolved.podcastEpisodes.reconcileServerPodcastEgressJobs({ limit: 20 });
-      if (line.hasMore) log.warn("servers.podcast_egress_sweep", line);
-      else log.info("servers.podcast_egress_sweep", line);
-      return line;
-    },
-  );
+  if (enablePodcastRecording === true) {
+    exportsMap.reconcileServerPodcastEgressSchedule = registrars.onSchedule(
+      {
+        region: REGION,
+        memory: "512MiB",
+        timeoutSeconds: 300,
+        schedule: "every 5 minutes",
+        timeZone: "Etc/UTC",
+        maxInstances: 1,
+        secrets: [...podcastSecretParams],
+      },
+      async () => runWorker("reconcileServerPodcastEgressSchedule", async () => {
+        const line = await resolved.podcastEpisodes.reconcileServerPodcastEgressJobs({ limit: 20 });
+        if (line.hasMore) log.warn("servers.podcast_egress_sweep", line);
+        else log.info("servers.podcast_egress_sweep", line);
+        return line;
+      }, { processed: [], scanned: 0, hasMore: false, activationDisabled: true }),
+    );
+  }
   return Object.freeze(exportsMap);
 }
 
 module.exports = {
+  ACTIVATION_ACCESS,
+  ACTIVATION_CONFIG_PATH,
+  ACTIVATION_UNAVAILABLE_REASON,
   CONVERGENCE_KINDS,
   COMPANY_FILE_MEDIA_CALLABLES,
   DEFAULT_DISPATCH_LIMITS,
@@ -812,14 +953,16 @@ module.exports = {
   OUTBOX_COLLECTION,
   OUTBOX_KINDS,
   PODCAST_EGRESS_CALLABLES,
-  PODCAST_EGRESS_SECRET_PARAMS,
   PODCAST_EPISODE_MEDIA_CALLABLES,
+  PODCAST_RECORDING_EXPORTS,
   REGION,
   SECRET_BOUND_CALLABLES,
   SERVER_CALLABLE_METHODS,
   SERVERS_V1_EXPORT_NAMES,
   SWEEP_EXPORTS,
   authBoundRequest,
+  canonicalActivationConfig,
+  createServersV1ActivationGate,
   createServersV1Dispatcher,
   createServersV1Functions,
   createServersV1Runtime,

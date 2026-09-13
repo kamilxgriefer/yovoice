@@ -47,8 +47,8 @@ class _PremiumUpsellSheet extends StatelessWidget {
           'Funkcje twórcy są dostępne w YO Voice Premium',
         ),
         copy.text(
-          'Build a public Creator identity, grow followers and unlock Creator tools with a Premium subscription.',
-          'Zbuduj publiczną tożsamość twórcy, rozwijaj grono obserwujących i odblokuj narzędzia twórcy dzięki subskrypcji Premium.',
+          'Premium unlocks Creator tools. Age verification and your opt-in are still required before people can Follow your Creator profile.',
+          'Premium odblokowuje narzędzia twórcy. Zanim inni będą mogli obserwować Twój profil twórcy, nadal potrzebne są potwierdzenie wieku i Twoja zgoda.',
         ),
       ),
       PremiumUpsellContext.creatorStudio => (
@@ -58,8 +58,8 @@ class _PremiumUpsellSheet extends StatelessWidget {
           'Studio twórcy jest funkcją Premium',
         ),
         copy.text(
-          'Activate your Premium identity to open your creator dashboard, publishing tools and community insights.',
-          'Aktywuj tożsamość Premium, aby otworzyć panel twórcy, narzędzia publikowania i statystyki społeczności.',
+          'Activate Premium to open your creator dashboard, publishing tools and community insights.',
+          'Aktywuj Premium, aby otworzyć panel twórcy, narzędzia publikowania i statystyki społeczności.',
         ),
       ),
       PremiumUpsellContext.clubs => (

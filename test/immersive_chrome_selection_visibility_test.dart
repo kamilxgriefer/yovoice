@@ -11,17 +11,17 @@
 // 390 px phone, and the filter chip at default text size once four Polish
 // pool labels are present.
 //
-// B-3: the thumb was sized 1/count of the track while the segments were
-// content-sized, so it landed on the neighbour in every locale whose two
-// labels differ in width. English is the one case where "Voice" and "Reels"
-// measure alike, which is why every earlier run missed it.
+// B-3: the text tabs must remain equal width so their active glow line stays
+// visually balanced across locales whose labels differ in width.
 //
 // These tests do not constitute device or screen-reader evidence.
 
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
 
 const _chrome = ValueKey<String>('chrome-under-test');
@@ -47,21 +47,39 @@ Widget _host({
   required int selectedFilter,
   List<String> formatLabels = const <String>['Voice', 'Yeels'],
   List<String> filterLabels = _polishFilters,
+  bool onCanvas = false,
+  bool disableAnimations = false,
+  Brightness brightness = Brightness.dark,
+  Widget? leading,
+  Widget? trailing,
 }) {
   final formatKeys = <Key>[_formatA, _formatB];
+  final palette = brightness == Brightness.dark
+      ? AppPalette.dark
+      : AppPalette.light;
   return MaterialApp(
+    theme: ThemeData(
+      brightness: brightness,
+      extensions: <ThemeExtension>[palette],
+    ),
     home: Scaffold(
       body: Center(
         child: MediaQuery(
-          data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+          data: MediaQueryData(
+            textScaler: TextScaler.linear(scale),
+            disableAnimations: disableAnimations,
+          ),
           child: SizedBox(
             width: width,
             child: ImmersiveFeedChrome(
               key: _chrome,
               gutter: 12,
+              leading: leading,
+              trailing: trailing,
               formatSwitch: ImmersiveSegmentedSwitch(
                 selectedIndex: selectedFormat,
                 onSelected: (_) {},
+                onCanvas: onCanvas,
                 segments: <ImmersiveChromeOption>[
                   for (var i = 0; i < formatLabels.length; i++)
                     ImmersiveChromeOption(
@@ -100,6 +118,153 @@ void _expectInsideChrome(WidgetTester tester, Finder target, String because) {
 }
 
 void main() {
+  testWidgets(
+    'format tabs use larger text and a line instead of black/white tiles',
+    (tester) async {
+      await tester.pumpWidget(
+        _host(width: 390, scale: 1, selectedFormat: 0, selectedFilter: 0),
+      );
+      await tester.pumpAndSettle();
+
+      final voice = tester.widget<Text>(find.text('Voice'));
+      final yeels = tester.widget<Text>(find.text('Yeels'));
+      expect(voice.style?.fontSize, 17);
+      expect(voice.style?.fontWeight, FontWeight.w800);
+      expect(voice.style?.color, AppPalette.dark.interactiveForeground);
+      expect(yeels.style?.fontSize, 17);
+      expect(yeels.style?.fontWeight, FontWeight.w600);
+      expect(yeels.style?.color, Colors.white);
+
+      final active = find.byKey(
+        const ValueKey<String>('immersive-format-indicator-Voice'),
+      );
+      final inactive = find.byKey(
+        const ValueKey<String>('immersive-format-indicator-Yeels'),
+      );
+      expect(tester.getSize(active).width, 30);
+      expect(tester.getSize(inactive).width, 0);
+
+      final switcher = find.byType(ImmersiveSegmentedSwitch);
+      final tileFills = tester
+          .widgetList<DecoratedBox>(
+            find.descendant(of: switcher, matching: find.byType(DecoratedBox)),
+          )
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .where(
+            (decoration) =>
+                decoration.color == Colors.black ||
+                decoration.color == Colors.white,
+          );
+      expect(
+        tileFills,
+        isEmpty,
+        reason: 'The format selector must not restore a black track or thumb.',
+      );
+    },
+  );
+
+  for (final brightness in Brightness.values) {
+    testWidgets('canvas active violet adapts to ${brightness.name}', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          width: 390,
+          scale: 1,
+          selectedFormat: 1,
+          selectedFilter: 0,
+          onCanvas: true,
+          brightness: brightness,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final palette = brightness == Brightness.dark
+          ? AppPalette.dark
+          : AppPalette.light;
+      expect(
+        tester.widget<Text>(find.text('Yeels')).style?.color,
+        palette.interactiveForeground,
+      );
+      expect(
+        tester.widget<Text>(find.text('Voice')).style?.color,
+        palette.textSecondary,
+      );
+    });
+  }
+
+  testWidgets('Reduce Motion removes the active-line transition', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        width: 390,
+        scale: 1,
+        selectedFormat: 0,
+        selectedFilter: 0,
+        disableAnimations: true,
+      ),
+    );
+
+    final indicator = tester.widget<AnimatedContainer>(
+      find.byKey(const ValueKey<String>('immersive-format-indicator-Voice')),
+    );
+    expect(indicator.duration, Duration.zero);
+  });
+
+  for (final width in _phoneWidths) {
+    testWidgets(
+      '${width.toInt()} px honors the full 200 % format-label scale with '
+      'both edge actions',
+      (tester) async {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        await tester.pumpWidget(
+          _host(
+            width: width,
+            scale: 2,
+            selectedFormat: 0,
+            selectedFilter: 0,
+            formatLabels: const <String>['Głos', 'Yeels'],
+            // This is the tightest real header: pushed routes retain Back
+            // while Create remains visible on the other edge.
+            leading: const SizedBox.square(dimension: 48),
+            trailing: const SizedBox.square(dimension: 48),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        for (final (index, label) in const <String>['Głos', 'Yeels'].indexed) {
+          final finder = find.text(label);
+          final paragraph = tester.renderObject<RenderParagraph>(finder);
+          expect(
+            paragraph.textScaler.scale(17),
+            closeTo(34, .01),
+            reason: '$label must receive the full 2.0 system text scale.',
+          );
+          expect(
+            paragraph.didExceedMaxLines,
+            isFalse,
+            reason:
+                '$label must remain complete at 200% on $width px. '
+                'text=${paragraph.size}, '
+                'intrinsic=${paragraph.getMaxIntrinsicWidth(double.infinity)}, '
+                'segment=${tester.getSize(index == 0 ? find.byKey(_formatA) : find.byKey(_formatB))}',
+          );
+          _expectInsideChrome(
+            tester,
+            finder,
+            '$label must remain inside the phone header at 200%.',
+          );
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   group('B-1 the selected format segment stays inside the viewport', () {
     for (final width in _phoneWidths) {
       for (final scale in _scales) {
@@ -124,9 +289,8 @@ void main() {
             _expectInsideChrome(
               tester,
               find.byKey(selected == 0 ? _formatA : _formatB),
-              'The white thumb is the only non-colour indicator of the '
-              'selected format. Off-screen, a reader sees the other label '
-              'with no thumb and concludes the wrong format is selected.',
+              'The active glow line is the non-colour indicator of the '
+              'selected format. It must remain inside the visible chrome.',
             );
           });
         }
@@ -197,53 +361,49 @@ void main() {
     );
   });
 
-  group(
-    'B-3 segments are equal width, so the 1/count thumb cannot misalign',
-    () {
-      // Pairs whose rendered widths differ. The last is the English pair that
-      // happens to measure alike, which is exactly why the bug survived.
-      const pairs = <List<String>>[
-        <String>['Głos', 'Yeels'],
-        <String>['音声', 'Yeels'],
-        <String>['Stimme', 'Yeels'],
-        <String>['Voice', 'Yeels'],
-      ];
-      for (final pair in pairs) {
-        for (final scale in _scales) {
-          testWidgets('${pair.first} / ${pair.last} at ${scale}x', (
-            tester,
-          ) async {
-            tester.view.physicalSize = const Size(390, 900);
-            tester.view.devicePixelRatio = 1.0;
-            addTearDown(tester.view.reset);
+  group('B-3 text tabs remain equal width across locales', () {
+    // Pairs whose rendered widths differ. The last is the English pair that
+    // happens to measure alike, which is exactly why the bug survived.
+    const pairs = <List<String>>[
+      <String>['Głos', 'Yeels'],
+      <String>['音声', 'Yeels'],
+      <String>['Stimme', 'Yeels'],
+      <String>['Voice', 'Yeels'],
+    ];
+    for (final pair in pairs) {
+      for (final scale in const <double>[1.0]) {
+        testWidgets('${pair.first} / ${pair.last} at ${scale}x', (
+          tester,
+        ) async {
+          tester.view.physicalSize = const Size(390, 900);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.reset);
 
-            await tester.pumpWidget(
-              _host(
-                width: 390,
-                scale: scale,
-                selectedFormat: 1,
-                selectedFilter: 0,
-                formatLabels: pair,
-              ),
-            );
-            await tester.pumpAndSettle();
+          await tester.pumpWidget(
+            _host(
+              width: 390,
+              scale: scale,
+              selectedFormat: 1,
+              selectedFilter: 0,
+              formatLabels: pair,
+            ),
+          );
+          await tester.pumpAndSettle();
 
-            final a = tester.getRect(find.byKey(_formatA));
-            final b = tester.getRect(find.byKey(_formatB));
-            expect(
-              (a.width - b.width).abs() < 0.5,
-              isTrue,
-              reason:
-                  'Unequal segments put the thumb on the neighbour, and the '
-                  'selected label is painted in contrast ink with no shadow '
-                  'because it is assumed to sit on the white thumb. '
-                  'a=${a.width} b=${b.width}',
-            );
-          });
-        }
+          final a = tester.getRect(find.byKey(_formatA));
+          final b = tester.getRect(find.byKey(_formatB));
+          expect(
+            (a.width - b.width).abs() < 0.5,
+            isTrue,
+            reason:
+                'Unequal text tabs make the active line and labels look '
+                'visually unbalanced. '
+                'a=${a.width} b=${b.width}',
+          );
+        });
       }
-    },
-  );
+    }
+  });
 
   testWidgets('F-1 segments and chips expose enabled and focusable state', (
     tester,

@@ -26,12 +26,12 @@ const {
   FAMILY_SERVER_LIMIT, MAX_SKIPPED_FREE_ROOTS, classifyServerAllocation, readOwnerAllocations,
   readPremiumClubAllocations,
 } = require("../servers/capacity");
-const { FREE_SERVER_LIMIT } = require("../servers/contract");
+const { FREE_SERVER_LIMIT, PREMIUM_SERVER_LIMIT } = require("../servers/contract");
 const { createServerCreationService } = require("../servers/creation");
 const { createServerMembershipService } = require("../servers/memberships");
 
 const nowMs = 1_900_000_000_000;
-const CAPACITY_DETAILS = { reason: "server-capacity-reached", limit: FREE_SERVER_LIMIT };
+const CAPACITY_REASON = "server-capacity-reached";
 // Contention retries below must never be throttled by the per-owner budgets.
 const LIMITS = Object.freeze({
   attempts: Object.freeze({ maxEvents: 10_000, windowMs: 60_000 }),
@@ -42,10 +42,13 @@ const request = (uid, data) => ({ auth: { uid, token: { email_verified: true } }
 const input = (overrides = {}) => ({ requestId: randomUUID(), serverType: "friends", templateVersion: 1,
   name: "Trusted server", description: "", privacy: "inviteOnly", defaultLanguage: "English", ...overrides });
 const rejection = (promise, code) => assert.rejects(promise, (error) => error.code === code);
-const isCapacity = (error) => error?.code === "resource-exhausted" &&
-  error.details?.reason === CAPACITY_DETAILS.reason && error.details?.limit === CAPACITY_DETAILS.limit;
-const capacityRejection = (promise) => assert.rejects(promise, isCapacity);
-const read = (uid, extra = {}) => db.runTransaction((transaction) => readOwnerAllocations({ db, transaction, uid, ...extra }));
+const isCapacity = (error, limit = FREE_SERVER_LIMIT) => error?.code === "resource-exhausted" &&
+  error.details?.reason === CAPACITY_REASON && error.details?.limit === limit;
+const capacityRejection = (promise, limit = FREE_SERVER_LIMIT) =>
+  assert.rejects(promise, (error) => isCapacity(error, limit));
+const read = (uid, extra = {}) => db.runTransaction((transaction) => readOwnerAllocations({
+  db, transaction, uid, now: Timestamp.fromMillis(nowMs), ...extra,
+}));
 const premium = (uid, limit = 3) => db.runTransaction((transaction) => readPremiumClubAllocations({ db, transaction, uid, limit }));
 const legacyQuota = (uid) => db.runTransaction((transaction) =>
   require("../clubs/quota").requireCommunityClubCapacity(transaction, uid));
@@ -87,7 +90,7 @@ const activeAnchor = (uid, serverId) => ({ hostId: uid, status: "active", clubId
 const roomGuard = (uid, activeRoomIds, capacityLocked = false) =>
   ({ schemaVersion: 2, ownerId: uid, activeRoomIds, capacityLocked });
 const entitlement = () => ({ status: "active", isPremium: true, premiumIdentityEnabled: true, canCreateClubs: true,
-  maxOwnedClubs: 3, currentPeriodEnd: Timestamp.fromMillis(Date.now() + 86_400_000) });
+  maxOwnedClubs: 3, currentPeriodEnd: Timestamp.fromMillis(nowMs + 86_400_000) });
 
 // Emulator fixture activation only, never a shipped activation path.
 async function activate(serverId, uid) {
@@ -164,7 +167,7 @@ test("classification fails closed on a string schema version and on a marker wit
     { policy: "familyFreeV1", versioned: false });
 });
 
-emulatorTest("(a) 25 parallel free creations by one owner land exactly 20, refuse 5 with the structured error, persist exactly 20 and replay without a second slot", async () => {
+emulatorTest("(a) parallel free creations land exactly at the configured limit, refuse overflow with the structured error and replay without a second slot", async () => {
   const uid = await owner();
   const service = services();
   const inputs = Array.from({ length: FREE_SERVER_LIMIT + 5 }, () => input());
@@ -243,30 +246,36 @@ emulatorTest("(a) a transfer into a recipient racing the recipient's own creatio
   assert.deepEqual((await read(source)).counts, { freeServersV1: transferred ? 0 : 1, legacyRoomV1: 0, familyFreeV1: 0 });
 });
 
-emulatorTest("(b) an owner at 20 free plus a family: the family lands via reservation, a 21st free is refused, one transfer out reopens exactly one slot and the ping-pong back is refused", async () => {
+emulatorTest("(b) family consumes the fifth owned-server slot; one transfer out reopens one slot and ping-pong back is refused", async () => {
   const uid = await owner();
   const recipient = await owner();
   const service = services();
-  await seed(freeRoots(uid, FREE_SERVER_LIMIT - 1));
+  await seed(freeRoots(uid, FREE_SERVER_LIMIT - 2));
   const serverId = await joinedServer(service, uid, recipient);
-  assert.deepEqual((await read(uid)).counts, { freeServersV1: FREE_SERVER_LIMIT, legacyRoomV1: 0, familyFreeV1: 0 });
+  assert.deepEqual((await read(uid)).counts, { freeServersV1: FREE_SERVER_LIMIT - 1, legacyRoomV1: 0, familyFreeV1: 0 });
   const family = await service.createServerV1(request(uid, input({ serverType: "family" })));
   assert.equal(family.alreadyExisted, false);
   assert.equal((await doc(`clubs/${family.serverId}`)).entitlementPolicyId, "familyFreeV1");
   assert.equal((await doc(`serverFamilyOwnerReservations/${uid}`)).serverId, family.serverId);
-  assert.deepEqual((await read(uid)).counts, { freeServersV1: FREE_SERVER_LIMIT, legacyRoomV1: 0, familyFreeV1: 1 });
+  let state = await read(uid);
+  assert.deepEqual(state.counts, { freeServersV1: FREE_SERVER_LIMIT - 1, legacyRoomV1: 0, familyFreeV1: 1 });
+  assert.equal(state.free.count, FREE_SERVER_LIMIT);
   await capacityRejection(service.createServerV1(request(uid, input())));
   await transfer(service, uid, serverId, recipient);
   assert.equal((await doc(`clubs/${serverId}`)).ownerId, recipient);
-  assert.deepEqual((await read(uid)).counts, { freeServersV1: FREE_SERVER_LIMIT - 1, legacyRoomV1: 0, familyFreeV1: 1 });
+  state = await read(uid);
+  assert.deepEqual(state.counts, { freeServersV1: FREE_SERVER_LIMIT - 2, legacyRoomV1: 0, familyFreeV1: 1 });
+  assert.equal(state.free.count, FREE_SERVER_LIMIT - 1);
   assert.deepEqual((await read(recipient)).counts, { freeServersV1: 1, legacyRoomV1: 0, familyFreeV1: 0 });
   const refill = await service.createServerV1(request(uid, input()));
   assert.equal(refill.alreadyExisted, false);
-  assert.deepEqual((await read(uid)).counts, { freeServersV1: FREE_SERVER_LIMIT, legacyRoomV1: 0, familyFreeV1: 1 });
+  state = await read(uid);
+  assert.deepEqual(state.counts, { freeServersV1: FREE_SERVER_LIMIT - 1, legacyRoomV1: 0, familyFreeV1: 1 });
+  assert.equal(state.free.count, FREE_SERVER_LIMIT);
   await capacityRejection(service.createServerV1(request(uid, input())));
   await capacityRejection(transfer(service, recipient, serverId, uid));
   assert.equal((await doc(`clubs/${serverId}`)).ownerId, recipient);
-  assert.equal(await ownedRoots(uid), FREE_SERVER_LIMIT + 1);
+  assert.equal(await ownedRoots(uid), FREE_SERVER_LIMIT);
 });
 
 emulatorTest("(c) a refused transfer into a full recipient is atomic: root, roles, authorizations, mirrors, guards, ledger and outbox are untouched, and the same requestId succeeds once a slot opens", async () => {
@@ -312,7 +321,7 @@ emulatorTest("(c) a refused transfer into a full recipient is atomic: root, role
   assert.equal((await doc(`privateRoomHostGuards/${recipient}`)).capacityLocked, false);
 });
 
-emulatorTest("(d) a legacy Premium owner at the allowance stays refused before and after 20 free roots interleaved around the legacy roots; one release restores exactly one legacy creation", async () => {
+emulatorTest("(d) a legacy Premium owner at the allowance stays refused with a full free allowance interleaved around legacy roots; one release restores one legacy creation", async () => {
   const uid = await owner();
   await db.doc(`entitlements/${uid}`).set(entitlement());
   const { createCommunityClub } = require("../clubs/creation");
@@ -325,14 +334,17 @@ emulatorTest("(d) a legacy Premium owner at the allowance stays refused before a
     [`clubs/f-legacy-${uid}`, legacyClub(uid)]]);
   assert.deepEqual(await premium(uid), { count: 3, limit: 3, exhaustive: true });
   await rejection(run(`h-legacy-${uid}`), "resource-exhausted");
-  await seed([...freeRoots(uid, 5, `a-${uid}`), ...freeRoots(uid, 5, `c-${uid}`),
-    ...freeRoots(uid, 5, `e-${uid}`), ...freeRoots(uid, 5, `g-${uid}`)]);
+  const segmentSizes = [0, 1, 2, 3].map((offset) => Math.floor((FREE_SERVER_LIMIT + offset) / 4));
+  await seed([...freeRoots(uid, segmentSizes[0], `a-${uid}`),
+    ...freeRoots(uid, segmentSizes[1], `c-${uid}`),
+    ...freeRoots(uid, segmentSizes[2], `e-${uid}`),
+    ...freeRoots(uid, segmentSizes[3], `g-${uid}`)]);
   assert.deepEqual(await premium(uid), { count: 3, limit: 3, exhaustive: true });
   await rejection(run(`h-legacy-${uid}`), "resource-exhausted");
   await rejection(legacyQuota(uid), "resource-exhausted");
   const state = await read(uid);
   assert.deepEqual(state.counts, { freeServersV1: FREE_SERVER_LIMIT, legacyRoomV1: 0, familyFreeV1: 0 });
-  await capacityRejection(services().createServerV1(request(uid, input())));
+  assert.equal(state.free.limit, PREMIUM_SERVER_LIMIT);
   await db.doc(`clubs/f-legacy-${uid}`).delete();
   assert.deepEqual(await premium(uid), { count: 2, limit: 3, exhaustive: true });
   assert.equal((await run(`h-legacy-${uid}`)).alreadyExisted, false);
@@ -346,17 +358,17 @@ emulatorTest("(d) a free server transferred into a legacy Premium owner at the a
   const service = services();
   await db.doc(`entitlements/${recipient}`).set(entitlement());
   await seed([[`clubs/b-legacy-${recipient}`, legacyClub(recipient)], [`clubs/d-legacy-${recipient}`, legacyClub(recipient)],
-    [`clubs/f-legacy-${recipient}`, legacyClub(recipient)], ...freeRoots(recipient, FREE_SERVER_LIMIT - 1)]);
+    [`clubs/f-legacy-${recipient}`, legacyClub(recipient)], ...freeRoots(recipient, PREMIUM_SERVER_LIMIT - 1)]);
   await rejection(legacyQuota(recipient), "resource-exhausted");
   const serverId = await joinedServer(service, source, recipient);
   await transfer(service, source, serverId, recipient);
-  assert.deepEqual((await read(recipient)).counts, { freeServersV1: FREE_SERVER_LIMIT, legacyRoomV1: 0, familyFreeV1: 0 });
+  assert.deepEqual((await read(recipient)).counts, { freeServersV1: PREMIUM_SERVER_LIMIT, legacyRoomV1: 0, familyFreeV1: 0 });
   assert.deepEqual(await premium(recipient), { count: 3, limit: 3, exhaustive: true });
   await rejection(legacyQuota(recipient), "resource-exhausted");
   await db.doc(`clubs/f-legacy-${recipient}`).delete();
   assert.deepEqual(await legacyQuota(recipient), { ownedCommunityClubs: 2, limit: 3 });
   const another = await joinedServer(service, source, recipient);
-  await capacityRejection(transfer(service, source, another, recipient));
+  await capacityRejection(transfer(service, source, another, recipient), PREMIUM_SERVER_LIMIT);
 });
 
 emulatorTest("(d) readPremiumClubAllocations page boundaries with free roots before, between and after legacy roots", async () => {
@@ -381,8 +393,8 @@ emulatorTest("(d) readPremiumClubAllocations page boundaries with free roots bef
     ["a paid retained V1 root counts like a legacy Club", (uid) => [
       ...freeRoots(uid, 4, `a-${uid}`), [`clubs/z-paid-${uid}`, { ...freeRoot(uid), entitlementPolicyId: "legacyCommunityPremiumV1", status: "active" }],
     ], { count: 1, limit: 3, exhaustive: true }],
-    ["second page (24) exactly full of free roots after the legacy roots; the third page is empty", (uid) => [
-      ...freeRoots(uid, 4, `a-${uid}`), [`clubs/m-0-${uid}`, legacyClub(uid)], [`clubs/m-1-${uid}`, legacyClub(uid)], ...freeRoots(uid, 22, `z-${uid}`),
+    ["second page exactly full of free roots after the legacy roots; the third page is empty", (uid) => [
+      ...freeRoots(uid, 4, `a-${uid}`), [`clubs/m-0-${uid}`, legacyClub(uid)], [`clubs/m-1-${uid}`, legacyClub(uid)], ...freeRoots(uid, FREE_SERVER_LIMIT + 2, `z-${uid}`),
     ], { count: 2, limit: 3, exhaustive: true }],
     ["exactly MAX_SKIPPED_FREE_ROOTS free roots are skipped", (uid) => [
       ...freeRoots(uid, MAX_SKIPPED_FREE_ROOTS, `a-${uid}`), [`clubs/z-0-${uid}`, legacyClub(uid)], [`clubs/z-1-${uid}`, legacyClub(uid)],
@@ -396,7 +408,12 @@ emulatorTest("(d) readPremiumClubAllocations page boundaries with free roots bef
   const uid = await owner();
   await seed([...freeRoots(uid, MAX_SKIPPED_FREE_ROOTS + 1, `a-${uid}`), [`clubs/z-0-${uid}`, legacyClub(uid)]]);
   await rejection(premium(uid), "data-loss");
-  await db.doc(`clubs/a-${uid}-100`).delete();
+  const overflowRoots = await db.collection("clubs")
+    .where("ownerId", "==", uid)
+    .where("entitlementPolicyId", "==", "freeServersV1")
+    .get();
+  assert.equal(overflowRoots.size, MAX_SKIPPED_FREE_ROOTS + 1);
+  await overflowRoots.docs[0].ref.delete();
   assert.deepEqual(await premium(uid), { count: 1, limit: 3, exhaustive: true });
 });
 
@@ -419,8 +436,8 @@ emulatorTest("(e) status predicates: active and preparing count, deleting/archiv
   await seed(freeRoots(uid, FREE_SERVER_LIMIT - 4, `t-${uid}`));
   state = await read(uid);
   assert.equal(state.free.count, FREE_SERVER_LIMIT - 1);
-  const twentieth = await service.createServerV1(request(uid, input()));
-  assert.equal(twentieth.alreadyExisted, false);
+  const boundaryCreation = await service.createServerV1(request(uid, input()));
+  assert.equal(boundaryCreation.alreadyExisted, false);
   await capacityRejection(service.createServerV1(request(uid, input())));
   assert.equal(await ownedRoots(uid), FREE_SERVER_LIMIT + 3);
 
@@ -438,6 +455,7 @@ emulatorTest("(e) status predicates: active and preparing count, deleting/archiv
   await seed([[`clubs/archived-family-${familyOwner}`, familyRoot(familyOwner, { status: "archived" })]]);
   state = await read(familyOwner);
   assert.deepEqual(state.counts, { freeServersV1: 0, legacyRoomV1: 0, familyFreeV1: 1 });
+  assert.equal(state.free.count, 1);
   await rejection(service.createServerV1(request(familyOwner, input({ serverType: "family" }))), "failed-precondition");
   assert.equal(await exists(`serverFamilyOwnerReservations/${familyOwner}`), false);
 });
@@ -494,16 +512,17 @@ emulatorTest("(g) malformed roots fail closed on every path that can see them an
   await seed([[`clubs/bad-${familyFree}`, freeRoot(familyFree, { type: "family", status: "active" })]]);
   const reconciled = await read(familyFree);
   assert.deepEqual(reconciled.counts, { freeServersV1: 0, legacyRoomV1: 0, familyFreeV1: 1 });
-  assert.equal(reconciled.free.count, 0);
+  assert.equal(reconciled.free.count, 1);
   assert.deepEqual(reconciled.family, { count: 1, limit: FAMILY_SERVER_LIMIT });
-  // Charged to the one-per-owner family policy: a second family is refused as
-  // a family, not as unreadable data, and nothing is created.
+  // The root consumes one total slot and the one-per-owner family reservation:
+  // a second family is refused as a family and nothing is created.
   await rejection(service.createServerV1(request(familyFree, input({ serverType: "family" }))), "failed-precondition");
   assert.equal(await exists(`clubs/family_${familyFree}`), false);
-  // Never charged to the free allowance...
+  // Another Server consumes the second total slot...
   assert.equal((await service.createServerV1(request(familyFree, input()))).alreadyExisted, false);
   assert.deepEqual((await read(familyFree)).counts, { freeServersV1: 1, legacyRoomV1: 0, familyFreeV1: 1 });
-  // ...and never visible to the Premium allowance either.
+  assert.equal((await read(familyFree)).free.count, 2);
+  // ...while the retired Premium Club allowance remains separate.
   assert.deepEqual(await premium(familyFree), { count: 0, limit: 3, exhaustive: true });
   // The adapter is one-directional, never a silent default: the mirror-image
   // pair (community root carrying the family policy) still fails closed.
@@ -520,8 +539,9 @@ emulatorTest("(g) malformed roots fail closed on every path that can see them an
   await seed([[`clubs/bad-${unknownPolicy}`, freeRoot(unknownPolicy, { entitlementPolicyId: "premium", status: "active" })]]);
   await rejection(premium(unknownPolicy), "data-loss");
   await rejection(legacyQuota(unknownPolicy), "data-loss");
-  // The exact free-policy queries cannot see an unknown policy: it is neither
-  // charged to the free allowance nor to a family (reported as a coverage gap).
+  // The exact policy queries cannot see an unknown policy: it is neither
+  // charged to the shared owned-server allowance nor to a family reservation
+  // (reported as a coverage gap).
   const state = await read(unknownPolicy);
   assert.deepEqual(state.counts, { freeServersV1: 0, legacyRoomV1: 0, familyFreeV1: 0 });
 });
@@ -560,20 +580,21 @@ emulatorTest("(h) activated anchors stay excluded from allocation count; a bound
   await seed([
     [`clubs/${serverId}`, freeRoot(uid, { status: "active" })],
     ...ordinary.map((id) => [`rooms/${id}`, ordinaryRoom(uid)]),
-    ...[0, 1, 2].map((index) => [`rooms/anchor-${index}-${uid}`, activeAnchor(uid, serverId)]),
+    ...Array.from({ length: PREMIUM_SERVER_LIMIT - ordinary.length + 1 }, (_, index) =>
+      [`rooms/anchor-${index}-${uid}`, activeAnchor(uid, serverId)]),
   ]);
   const state = await read(uid);
-  // 18 rooms + 1 free root = 19 allocations: the anchors are never counted...
+  // (limit - 2) rooms + 1 free root = (limit - 1) allocations: anchors are never counted...
   assert.deepEqual(state.counts, { freeServersV1: 1, legacyRoomV1: FREE_SERVER_LIMIT - 2, familyFreeV1: 0 });
   assert.equal(state.free.count, FREE_SERVER_LIMIT - 1);
-  // ...but 21 rows in the hostId/status bounded bootstrap still report the
-  // owner locked. Both writers now consume this same fail-closed state.
+  // ...but more than the maximum Premium boundary in the host/status bootstrap
+  // still reports the owner locked. Both writers consume this fail-closed state.
   assert.equal(state.free.locked, true);
   await capacityRejection(services().createServerV1(request(uid, input())));
   assert.equal(await exists(`privateRoomHostGuards/${uid}`), false);
 });
 
-emulatorTest("(i) a locked room guard is never rewritten to unlocked: refused free create and transfer leave it untouched, a family transfer in persists it locked with its ids", async () => {
+emulatorTest("(i) a locked room guard is never rewritten and blocks free and family ownership transfers", async () => {
   const service = services();
   const source = await owner();
   const locked = await owner();
@@ -596,14 +617,14 @@ emulatorTest("(i) a locked room guard is never rewritten to unlocked: refused fr
     expiresAt: Timestamp.fromMillis(nowMs + 60_000),
   });
   await service.respondToServerInviteV1(request(locked, { serverId: family.serverId, requestId: randomUUID(), response: "accept" }));
-  await transfer(service, source, family.serverId, locked);
-  assert.equal((await doc(`clubs/${family.serverId}`)).ownerId, locked);
+  await capacityRejection(transfer(service, source, family.serverId, locked));
+  assert.equal((await doc(`clubs/${family.serverId}`)).ownerId, source);
+  assert.equal(await exists(`serverFamilyOwnerReservations/${locked}`), false);
   const guard = await doc(`privateRoomHostGuards/${locked}`);
-  assert.equal(guard.capacityLocked, true);
-  assert.deepEqual(guard.activeRoomIds, lockedGuard.activeRoomIds);
-  assert.equal(guard.schemaVersion, 2);
+  assert.deepEqual(guard, lockedGuard);
   const state = await read(locked);
-  assert.deepEqual(state.counts, { freeServersV1: 0, legacyRoomV1: 0, familyFreeV1: 1 });
+  assert.deepEqual(state.counts, { freeServersV1: 0, legacyRoomV1: 0, familyFreeV1: 0 });
+  assert.equal(state.free.count, 0);
   assert.equal(state.free.locked, true);
   await capacityRejection(service.createServerV1(request(locked, input())));
   assert.deepEqual((await doc(`privateRoomHostGuards/${locked}`)).activeRoomIds, lockedGuard.activeRoomIds);

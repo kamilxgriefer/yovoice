@@ -18,6 +18,16 @@ bool creatorAudienceCanEnable(
     entitlements.premiumIdentityEnabled &&
     entitlements.creatorEnabled;
 
+bool creatorAudienceCanConfirmAge(
+  UserProfile profile,
+  SubscriptionEntitlements entitlements,
+) =>
+    profile.accountType == AccountType.creator &&
+    !profile.creatorAgeVerified &&
+    entitlements.isPremium &&
+    entitlements.premiumIdentityEnabled &&
+    entitlements.creatorEnabled;
+
 /// Shows the control to an eligible paid Creator, or to anyone who still has
 /// an enabled owner opt-in and therefore needs a durable way to turn it off
 /// after losing authority.
@@ -26,7 +36,8 @@ bool creatorAudienceSettingIsAvailable(
   SubscriptionEntitlements entitlements,
 ) =>
     profile.creatorAudienceEnabled ||
-    creatorAudienceCanEnable(profile, entitlements);
+    creatorAudienceCanEnable(profile, entitlements) ||
+    creatorAudienceCanConfirmAge(profile, entitlements);
 
 class CreatorAudienceSetting extends StatefulWidget {
   const CreatorAudienceSetting({
@@ -34,6 +45,9 @@ class CreatorAudienceSetting extends StatefulWidget {
     required this.publicVisible,
     required this.canEnable,
     required this.service,
+    this.ageVerified = true,
+    this.canConfirmAge = false,
+    this.birthDateSelector,
     this.onSaved,
     super.key,
   });
@@ -41,6 +55,9 @@ class CreatorAudienceSetting extends StatefulWidget {
   final bool ownerEnabled;
   final bool publicVisible;
   final bool canEnable;
+  final bool ageVerified;
+  final bool canConfirmAge;
+  final Future<DateTime?> Function(BuildContext context)? birthDateSelector;
   final CreatorAudienceService service;
   final ValueChanged<CreatorAudienceUpdate>? onSaved;
 
@@ -52,10 +69,14 @@ class _CreatorAudienceSettingState extends State<CreatorAudienceSetting> {
   late bool _enabled = widget.ownerEnabled;
   late bool _visible = widget.publicVisible;
   bool _busy = false;
+  late bool _ageVerified = widget.ageVerified;
   CreatorAudienceFailure? _failure;
   bool _saved = false;
+  bool _ageConfirmationSaved = false;
   String? _pendingRequestId;
   bool? _pendingEnabled;
+  String? _pendingAgeRequestId;
+  DateTime? _pendingBirthDate;
 
   @override
   void didUpdateWidget(CreatorAudienceSetting oldWidget) {
@@ -69,6 +90,13 @@ class _CreatorAudienceSettingState extends State<CreatorAudienceSetting> {
     }
     if (oldWidget.publicVisible != widget.publicVisible) {
       _visible = widget.publicVisible;
+    }
+    if (oldWidget.ageVerified != widget.ageVerified) {
+      _ageVerified = widget.ageVerified;
+      if (_ageVerified) {
+        _pendingAgeRequestId = null;
+        _pendingBirthDate = null;
+      }
     }
   }
 
@@ -84,6 +112,7 @@ class _CreatorAudienceSettingState extends State<CreatorAudienceSetting> {
       setState(() {
         _failure = error.failure;
         _saved = false;
+        _ageConfirmationSaved = false;
       });
       return;
     }
@@ -105,6 +134,7 @@ class _CreatorAudienceSettingState extends State<CreatorAudienceSetting> {
         _visible = result.visible;
         _busy = false;
         _saved = true;
+        _ageConfirmationSaved = false;
         _pendingRequestId = null;
         _pendingEnabled = null;
       });
@@ -115,6 +145,78 @@ class _CreatorAudienceSettingState extends State<CreatorAudienceSetting> {
         _busy = false;
         _failure = error.failure;
         _saved = false;
+      });
+    }
+  }
+
+  Future<void> _confirmAdultEligibility() async {
+    if (_busy || _ageVerified || !widget.canConfirmAge) return;
+    final now = DateTime.now();
+    final latestAdultDate = DateTime(now.year - 18, now.month, now.day);
+    final pendingBirthDate = _pendingBirthDate;
+    final injectedSelector = widget.birthDateSelector;
+    DateTime? birthDate = pendingBirthDate;
+    if (birthDate == null) {
+      if (injectedSelector != null) {
+        birthDate = await injectedSelector(context);
+      } else {
+        final helpText = AppLocalizations.of(context).text(
+          'Confirm that you are 18+',
+          'Potwierdź, że masz co najmniej 18 lat',
+        );
+        birthDate = await showDatePicker(
+          context: context,
+          initialDate: DateTime(now.year - 25, now.month, now.day),
+          firstDate: DateTime(now.year - 120, now.month, now.day),
+          lastDate: latestAdultDate,
+          helpText: helpText,
+        );
+      }
+    }
+    if (birthDate == null || !mounted) return;
+    late final String requestId;
+    try {
+      requestId = _pendingAgeRequestId ?? widget.service.newRequestId();
+    } on CreatorAudienceException catch (error) {
+      setState(() {
+        _failure = error.failure;
+        _saved = false;
+        _ageConfirmationSaved = false;
+      });
+      return;
+    }
+    _pendingAgeRequestId = requestId;
+    _pendingBirthDate = birthDate;
+    setState(() {
+      _busy = true;
+      _failure = null;
+      _saved = false;
+      _ageConfirmationSaved = false;
+    });
+    try {
+      final result = await widget.service.confirmAdultEligibility(
+        birthDate: birthDate,
+        requestId: requestId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _ageVerified = result.verified;
+        _ageConfirmationSaved = result.verified;
+        _pendingAgeRequestId = null;
+        _pendingBirthDate = null;
+      });
+    } on CreatorAudienceException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _failure = error.failure;
+        _ageConfirmationSaved = false;
+        if (error.failure != CreatorAudienceFailure.unavailable &&
+            error.failure != CreatorAudienceFailure.invalidResponse) {
+          _pendingAgeRequestId = null;
+          _pendingBirthDate = null;
+        }
       });
     }
   }
@@ -166,8 +268,8 @@ class _CreatorAudienceSettingState extends State<CreatorAudienceSetting> {
                               'Obserwujący i obserwowani są widoczni na Twoim profilu twórcy.',
                             )
                           : copy.text(
-                              'YO Voice privately checks your Creator Premium and account verification when you turn this on.',
-                              'Po włączeniu YO Voice prywatnie sprawdzi Creator Premium i weryfikację konta.',
+                              'YO Voice privately checks your Creator Premium, age confirmation and opt-in when you turn this on.',
+                              'Po włączeniu YO Voice prywatnie sprawdzi Creator Premium, potwierdzenie wieku i Twoją zgodę.',
                             ),
                       style: const TextStyle(
                         color: Color(0xFFA99DB3),
@@ -189,10 +291,54 @@ class _CreatorAudienceSettingState extends State<CreatorAudienceSetting> {
                 Switch(
                   key: const ValueKey('creator-audience-switch'),
                   value: _enabled,
-                  onChanged: widget.canEnable || _enabled ? _setEnabled : null,
+                  onChanged:
+                      widget.canEnable ||
+                          (_ageVerified && widget.canConfirmAge) ||
+                          _enabled
+                      ? _setEnabled
+                      : null,
                 ),
             ],
           ),
+          if (!_ageVerified && widget.canConfirmAge) ...[
+            const SizedBox(height: 14),
+            Container(
+              key: const ValueKey('creator-age-confirmation'),
+              padding: const EdgeInsets.all(13),
+              decoration: BoxDecoration(
+                color: const Color(0xFF21162B),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.verified_user_outlined,
+                    color: Color(0xFFC863FF),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Text(
+                      copy.text(
+                        'Confirm you are 18+ to enable Follow. Your birth date is used only for this age check and is not saved.',
+                        'Potwierdź, że masz co najmniej 18 lat, aby włączyć Obserwuj. Data urodzenia służy wyłącznie do sprawdzenia wieku i nie jest zapisywana.',
+                      ),
+                      style: const TextStyle(
+                        color: Color(0xFFD9CFDF),
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  FilledButton(
+                    key: const ValueKey('confirm-creator-age-button'),
+                    onPressed: _busy ? null : _confirmAdultEligibility,
+                    child: Text(copy.text('Confirm age', 'Potwierdź wiek')),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (feedback != null) ...[
             const SizedBox(height: 10),
             Semantics(
@@ -225,8 +371,8 @@ class _CreatorAudienceSettingState extends State<CreatorAudienceSetting> {
           'Zaloguj się ponownie przed zmianą tego ustawienia.',
         ),
         CreatorAudienceFailure.eligibility => copy.text(
-          'Audience sharing is unavailable. Check Creator Premium and account verification, then try again.',
-          'Udostępnianie społeczności jest niedostępne. Sprawdź Creator Premium i weryfikację konta, a potem spróbuj ponownie.',
+          'Audience sharing is unavailable. Check Creator Premium and age confirmation, then try again.',
+          'Udostępnianie społeczności jest niedostępne. Sprawdź Creator Premium i potwierdzenie wieku, a potem spróbuj ponownie.',
         ),
         CreatorAudienceFailure.inactiveAccount => copy.text(
           'This setting is unavailable while the account is inactive.',
@@ -244,6 +390,12 @@ class _CreatorAudienceSettingState extends State<CreatorAudienceSetting> {
           'Nie udało się zapisać ustawienia. Sprawdź połączenie i spróbuj ponownie.',
         ),
       };
+    }
+    if (_ageConfirmationSaved) {
+      return copy.text(
+        'Age confirmed. You can now enable Follow.',
+        'Wiek potwierdzony. Możesz teraz włączyć Obserwuj.',
+      );
     }
     if (!_saved) return null;
     return _visible

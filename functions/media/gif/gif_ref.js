@@ -1,10 +1,10 @@
 // The GIF reference model — one shape, shared by every surface.
 //
-// A "GIF" in YO Voice is never bytes we hold. It is a provider id plus a title
-// plus a URL that points at the provider's own CDN, because GIPHY's terms
-// REQUIRE hotlinking and forbid rehosting or mirroring their content. That is
-// the reason there is no Storage object here and no egress on our bill: it is
-// a licensing constraint first and a cost decision second.
+// A "GIF" in YO Voice is a provider id, a title and one canonical rendition
+// reference. YO Voice Originals use an `asset://` reference to a file bundled
+// with the client. GIPHY references point at GIPHY's CDN because its terms
+// require hotlinking and forbid rehosting or mirroring that content. Neither
+// path creates a Firebase Storage object or a server-side image proxy.
 //
 // This module is deliberately dependency-free (no Firestore handle, no SDK, no
 // firebase-functions import) so the URL pin, the id grammar and the document-id
@@ -18,11 +18,11 @@
 
 /// Every provider this project knows how to speak to.
 ///
-/// `none` is a real, first-class value: it is what production runs today and
-/// what makes `getGifCatalog` answer `available:false` honestly instead of the
-/// feature half-existing.
+/// `none` is a real, first-class value. It makes `getGifCatalog` answer
+/// `available:false` honestly instead of leaving the feature half-existing.
 const GIF_PROVIDERS = Object.freeze({
   none: "none",
+  yovoice: "yovoice",
   giphy: "giphy",
   fake: "fake",
 });
@@ -31,6 +31,7 @@ const GIF_PROVIDERS = Object.freeze({
 /// emulator and the test suite genuinely serve from it; `catalog.js` refuses
 /// to select it outside those two environments.
 const SERVING_PROVIDERS = Object.freeze(new Set([
+  GIF_PROVIDERS.yovoice,
   GIF_PROVIDERS.giphy,
   GIF_PROVIDERS.fake,
 ]));
@@ -60,7 +61,7 @@ const GIF_ID_PATTERN =
 /// reads in a report — so it is small, mandatory and sanitized.
 const MAX_GIF_TITLE_LENGTH = 100;
 
-/// The CDN URL template, per provider.
+/// The canonical rendition template, per provider.
 ///
 /// THIS IS THE SECURITY CRUX OF THE WHOLE FEATURE. Room and club messages
 /// carry the URL in the document, and resolveGifAsset reconstructs exactly
@@ -70,10 +71,19 @@ const MAX_GIF_TITLE_LENGTH = 100;
 /// person who opens the room. If Rules ever allow client message creation,
 /// that write boundary must enforce the same exact pin.
 ///
-/// `200h.gif` is GIPHY's fixed-height rendition alias. Fixed height is not an
-/// arbitrary choice either — it means the bubble's height is known before a
-/// byte is fetched, so a chat list never reflows when the image lands.
+/// `200h.gif` is GIPHY's fixed-height rendition alias. First-party entries also
+/// declare fixed dimensions. In both cases the bubble's height is known before
+/// a byte is decoded, so a chat list never reflows when the image lands.
 const GIF_CDN_TEMPLATES = Object.freeze({
+  // First-party loops ship inside every YO Voice client. `asset://` is a
+  // canonical message identifier, not a remote fetch: the Flutter client maps
+  // it to `assets/gifs/yovoice/<id>.gif`. This keeps the composer functional
+  // before an optional third-party provider key exists and gives old clients a
+  // safe text fallback instead of an arbitrary URL.
+  [GIF_PROVIDERS.yovoice]: Object.freeze({
+    prefix: "asset://yovoice/gifs/",
+    suffix: ".gif",
+  }),
   [GIF_PROVIDERS.giphy]: Object.freeze({
     prefix: "https://media.giphy.com/media/",
     suffix: "/200h.gif",
@@ -94,6 +104,8 @@ const GIF_CDN_TEMPLATES = Object.freeze({
 /// `?`, `#`, `@` and backslash, so a preview URL cannot smuggle credentials or
 /// a second authority past the host check.
 const GIF_PREVIEW_HOST_PATTERNS = Object.freeze({
+  [GIF_PROVIDERS.yovoice]:
+    /^asset:\/\/yovoice\/gifs\/(?!\.{1,2}\.gif$)(?!__.*__\.gif$)[A-Za-z0-9._-]{1,128}\.gif$/u,
   [GIF_PROVIDERS.giphy]:
     /^https:\/\/(?:media[0-9]*|i)\.giphy\.com\/[A-Za-z0-9/._~%-]{1,300}$/u,
   [GIF_PROVIDERS.fake]: /^https:\/\/fake\.invalid\/[A-Za-z0-9/._~-]{1,300}$/u,

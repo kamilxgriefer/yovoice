@@ -9,7 +9,6 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/localization/document_language.dart';
 import 'package:yovoice/core/localization/firebase_auth_language_sync.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
-import 'package:yovoice/core/audio/ui_sound.dart';
 import 'package:yovoice/core/audio/ui_sound_service.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
@@ -333,12 +332,15 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
   Widget _authBoundary({
     bool initiallySignedOut = false,
     Object? initialAuthError,
+    Duration initialStartupMinimumVisibility =
+        authGateInitialStartupMinimumVisibility,
   }) {
     return DirectCallCoordinator(
       child: PresenceLifecycle(
         child: AuthGate(
           initiallySignedOut: initiallySignedOut,
           initialAuthError: initialAuthError,
+          initialStartupMinimumVisibility: initialStartupMinimumVisibility,
           reelLinkIntent: _reelLinkIntent,
         ),
       ),
@@ -360,7 +362,9 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             AuthRouteResetReason.signedOut => _authBoundary(
               initiallySignedOut: true,
             ),
-            AuthRouteResetReason.principalChanged => _authBoundary(),
+            AuthRouteResetReason.principalChanged => _authBoundary(
+              initialStartupMinimumVisibility: Duration.zero,
+            ),
             AuthRouteResetReason.authError => _authBoundary(
               initialAuthError: target.error,
             ),
@@ -438,7 +442,10 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
     }
     // Play only after the visible, deep-linkable surface was accepted. This
     // keeps the completion signal equivalent to one audible + visible event.
-    unawaited(UiSoundService.instance.play(UiSound.notification));
+    final sound = notificationSoundProfileFor(type).foregroundUiSound;
+    if (sound != null) {
+      unawaited(UiSoundService.instance.play(sound));
+    }
     return true;
   }
 

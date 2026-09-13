@@ -78,6 +78,7 @@ const {
   validateAvailabilityHours,
   validateAvailabilitySnapshot,
 } = require("./availability");
+const { paidPremiumIsActive } = require("../utils/premium_access");
 
 const RESERVATION_TTL_MS = 30 * 60 * 1000;
 const MEDIA_GRANT_TTL_MS = 90 * 1000;
@@ -162,6 +163,9 @@ function createReelService({
   // The per-open feed session seed. An injectable seam alongside `clock` so
   // ranking tests are deterministic rather than flaky by construction.
   randomSeed = randomFeedSeed,
+  // Test seam only. Production uses the strict server-owned entitlement
+  // validator, never a request field or public profile claim.
+  premiumEntitlementIsActive = paidPremiumIsActive,
   probeMedia = null,
   limits = DEFAULT_LIMITS,
   // Structured observability for the feed. Null in tests so a unit run stays
@@ -188,6 +192,9 @@ function createReelService({
   }
   if (typeof randomSeed !== "function") {
     throw new TypeError("randomSeed must return a feed session seed.");
+  }
+  if (typeof premiumEntitlementIsActive !== "function") {
+    throw new TypeError("premiumEntitlementIsActive must be a function.");
   }
 
   function timing() {
@@ -1261,6 +1268,20 @@ function createReelService({
     return "none";
   }
 
+  // Paid distribution is a ranking-only signal. The private entitlement
+  // snapshot never reaches `visibleFeedItem` or the response projection.
+  // Invalid, missing and expired records fail closed to the ordinary score.
+  function hasActivePremiumRankingSignal(rankingSnapshots, authorId, nowMs) {
+    const snapshot = rankingSnapshots.get(`entitlements/${authorId}`);
+    if (!snapshot?.exists) return false;
+    try {
+      return premiumEntitlementIsActive(snapshot.data() ?? {}, new Date(nowMs)) ===
+        true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // Deliberately carries no seed, no uid and no Reel ids: a (viewer, reel)
   // pair is viewing history. This trades individual "why did I see this?"
   // reproducibility for privacy, consciously.
@@ -1447,7 +1468,8 @@ function createReelService({
         db.doc(`users/${authorId}/blocked/${auth.uid}`),
       ]);
       // Ranking inputs: the viewer's own seen ledger for each candidate, and
-      // the two real social-graph edges per distinct author. They join the
+      // the two real social-graph edges plus the server-owned Premium
+      // entitlement per distinct author. They join the
       // batch that already loads availability and `callerLiked`, so this adds
       // documents but no extra round trips. Fetched only when this request is
       // actually ranked, which keeps v1 and `own` read counts unchanged.
@@ -1461,6 +1483,7 @@ function createReelService({
             ...[...authorIds].flatMap((authorId) => [
               db.doc(`users/${auth.uid}/following/${authorId}`),
               db.doc(`users/${auth.uid}/friends/${authorId}`),
+              db.doc(`entitlements/${authorId}`),
             ]),
           ];
       const references = [
@@ -1510,6 +1533,7 @@ function createReelService({
             // contributes nothing and the item is still emitted.
             let seenAtMs = null;
             let affinity = "none";
+            let premiumAuthor = false;
             if (ranked) {
               try {
                 seenAtMs = seenAtMillis(
@@ -1521,9 +1545,15 @@ function createReelService({
                   auth.uid,
                   entry.candidate.authorId,
                 );
+                premiumAuthor = hasActivePremiumRankingSignal(
+                  rankingSnapshots,
+                  entry.candidate.authorId,
+                  entryNowMs,
+                );
               } catch (_) {
                 seenAtMs = null;
                 affinity = "none";
+                premiumAuthor = false;
               }
             }
             // The one deliberate viewer-preference filter. Structurally
@@ -1550,6 +1580,7 @@ function createReelService({
                   likeCount: visible.item.likeCount,
                   commentCount: visible.item.commentCount,
                   affinity,
+                  premiumAuthor,
                   seenAtMs,
                 },
               });

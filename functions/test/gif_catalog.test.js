@@ -31,6 +31,7 @@ const {
   createGifRuntime,
 } = require("../media/gif/catalog");
 const { createFakeGifProvider } = require("../media/gif/fake_provider");
+const { createYovoiceGifProvider } = require("../media/gif/yovoice_provider");
 const { createGifProvider } = require("../media/gif/provider");
 const { GifProviderError } = require("../media/gif/provider");
 const { GIF_RATING } = require("../media/gif/gif_ref");
@@ -100,7 +101,7 @@ beforeEach(async () => {
 after(reset);
 
 // ---------------------------------------------------------------------------
-// Availability — the "no key configured" contract, which is production today.
+// Availability — the explicit "no provider configured" contract.
 // ---------------------------------------------------------------------------
 
 test("with no provider configured the catalog says so and binds no secret", async () => {
@@ -183,7 +184,7 @@ function fakeFunctions(overrides = {}) {
   return { exportsMap, runtime, options };
 }
 
-test("a configured provider registers all three callables, two of them secret-bound", () => {
+test("the fixture provider registers all callables without a production secret", () => {
   const { exportsMap, options } = fakeFunctions();
   assert.deepEqual(Object.keys(exportsMap).sort(), [
     "getGifCatalog",
@@ -191,11 +192,49 @@ test("a configured provider registers all three callables, two of them secret-bo
     "searchGifs",
   ]);
   assert.equal(options[0].secrets, undefined);
-  assert.equal(options[1].secrets.length, 1);
-  assert.equal(options[2].secrets.length, 1);
+  assert.equal(options[1].secrets, undefined);
+  assert.equal(options[2].secrets, undefined);
   for (const option of options) {
     assert.equal(option.region, "europe-west1");
   }
+});
+
+test("GIPHY is the only provider that binds GIPHY_API_KEY", () => {
+  const { registrars, options } = captureRegistrars();
+  const exportsMap = createGifFunctions({
+    runtime: runtimeWith(createFakeGifProvider()),
+    registrars,
+    providerName: "giphy",
+  });
+  assert.deepEqual(Object.keys(exportsMap).sort(), [
+    "getGifCatalog",
+    "reportGifAsset",
+    "searchGifs",
+  ]);
+  assert.equal(options[0].secrets, undefined);
+  assert.equal(options[1].secrets.length, 1);
+  assert.equal(options[1].secrets[0].name, "GIPHY_API_KEY");
+  assert.equal(options[2].secrets.length, 1);
+  assert.equal(options[2].secrets[0].name, "GIPHY_API_KEY");
+});
+
+test("YO Voice Originals bypass only the external provider budget", async () => {
+  const { registrars } = captureRegistrars();
+  const exportsMap = createGifFunctions({
+    runtime: runtimeWith(createYovoiceGifProvider(), {
+      hourlyProviderBudget: 0,
+    }),
+    registrars,
+    providerName: "yovoice",
+  });
+
+  const page = await exportsMap.searchGifs(
+    request({ query: "dziękuję", locale: "pl" }),
+  );
+  assert.deepEqual(page.items.map((item) => item.id), ["yoThx001"]);
+  assert.equal(page.degraded, false);
+  assert.equal((await db.collection("gifProviderBudget").get()).size, 0);
+  assert.equal((await db.collection("gifRateLimits").get()).size, 1);
 });
 
 test("a blank query is trending, and results are written to gifAssets first", async () => {

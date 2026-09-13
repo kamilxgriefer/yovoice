@@ -28,7 +28,7 @@ extension PremiumFeatureAccess on PremiumFeature {
 
   String get lockedDescription => switch (this) {
     PremiumFeature.creatorAccount =>
-      'A Premium identity is required before this profile can become a Creator.',
+      'Premium unlocks Creator mode. Follow also requires age confirmation and opt-in.',
     PremiumFeature.creatorStudio =>
       'Activate Premium to use your creator dashboard and publishing tools.',
     PremiumFeature.clubs => 'Open Servers to manage your spaces and channels.',
@@ -48,8 +48,8 @@ class PremiumGates {
   PremiumGates._();
 
   /// Gates a complete Premium destination or account capability. The trusted
-  /// entitlement grants both the feature and the public Premium identity in
-  /// one server batch; a cosmetic VIP grant alone never unlocks paid tools.
+  /// entitlement grants the feature and Premium profile appearance in one
+  /// server batch; a cosmetic VIP grant alone never unlocks paid tools.
   static Future<bool> ensureFeatureAccess(
     BuildContext context, {
     required PremiumFeature feature,

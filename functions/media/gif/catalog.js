@@ -10,15 +10,13 @@
 //                        cold start.
 //   reportGifAsset()  -> a `reports` document in the queue that already exists.
 //
-// Registration follows the Stripe precedent in functions/index.js exactly: the
-// secret-bound exports register only when GIF_PROVIDER names a real provider,
-// because defineSecret requires the secret to exist at deploy time and deploy
-// discovery has to keep working before the key does.
+// Registration follows the Stripe precedent in functions/index.js exactly.
+// Only the GIPHY configuration declares and binds GIPHY_API_KEY; the bundled
+// YO Voice provider registers the same exports without an external secret.
 //
-// IMAGE BYTES NEVER PASS THROUGH HERE. We proxy metadata and search; the
-// device fetches the image from the provider's CDN directly, because GIPHY's
-// terms require hotlinking and forbid rehosting. See docs/SECURITY.md for what
-// that means for the viewer's IP address.
+// IMAGE BYTES NEVER PASS THROUGH HERE. We return metadata and canonical
+// references. The client reads YO Voice Originals from its bundle; GIPHY
+// content is fetched directly from its CDN under its hotlinking terms.
 
 "use strict";
 
@@ -53,10 +51,17 @@ const {
 
 const REGION = "europe-west1";
 
-/// Bound ONLY to the two callables that talk to the provider. `getGifCatalog`
-/// deliberately does not bind it, so availability can be reported before the
-/// secret exists.
-const GIPHY_API_KEY = defineSecret("GIPHY_API_KEY");
+/// Bound ONLY to the two GIPHY callables that talk to the remote provider.
+/// `getGifCatalog` deliberately does not bind it, so availability can be
+/// reported before the secret exists. Keep the declaration lazy as well as the
+/// binding: Firebase deploy discovery collects every eagerly declared
+/// SecretParam, even when no exported endpoint references it, and would
+/// otherwise require a GIPHY key for the credential-free YO Voice provider.
+let giphyApiKey = null;
+function getGiphyApiKey() {
+  giphyApiKey ??= defineSecret("GIPHY_API_KEY");
+  return giphyApiKey;
+}
 
 /// Server-owned kill switch, same shape as `publicStats/live` and
 /// `publicShowcase/live`: set `appConfig/gif.enabled = false` and the feature
@@ -253,6 +258,12 @@ function createGifFunctions({
   const selected = typeof providerName === "string" ? providerName.trim() : "";
   const providerConfigured =
     selected !== "" && selected !== GIF_PROVIDERS.none && isServingProvider(selected);
+  // The first-party YO Voice catalog is credential-free. Only GIPHY may bind
+  // its Secret Manager parameter; otherwise deploy discovery would still ask
+  // for a key even though the selected provider does not use one.
+  const apiKeyParameter = selected === GIF_PROVIDERS.giphy
+    ? getGiphyApiKey()
+    : null;
 
   const baseOptions = {
     region: REGION,
@@ -267,7 +278,7 @@ function createGifFunctions({
     runtime ??
     createGifRuntime({
       // The secret is read inside the request, never at module load.
-      apiKey: () => GIPHY_API_KEY.value(),
+      apiKey: () => apiKeyParameter?.value() ?? "",
       providerName,
     });
 
@@ -284,19 +295,21 @@ function createGifFunctions({
   });
 
   if (!providerConfigured) {
-    // No provider: the two secret-bound callables are not registered at all.
+    // No provider: the search/report callables are not registered at all.
     // A client calling them gets NOT_FOUND, which it never does, because
     // getGifCatalog already told it the feature is unavailable.
     return exportsMap;
   }
 
-  const securedOptions = { ...baseOptions, secrets: [GIPHY_API_KEY] };
+  const providerOptions = apiKeyParameter === null
+    ? baseOptions
+    : { ...baseOptions, secrets: [apiKeyParameter] };
 
   // ---------------------------------------------------------------------
   // searchGifs — a blank query means trending.
   // ---------------------------------------------------------------------
   exportsMap.searchGifs = registrars.onCall(
-    securedOptions,
+    providerOptions,
     async (request) => {
       const auth = requireActor(request, { verified: false });
       const data = requireExactInput(
@@ -386,7 +399,13 @@ function createGifFunctions({
         };
       }
 
-      const claimed = await resolved.limiter.claimProviderCall();
+      // The global hourly ceiling protects an external provider's paid quota.
+      // YO Voice Originals execute entirely in-process, so applying it there
+      // would eventually degrade a free local search for no cost or safety
+      // benefit. The per-account abuse limit above still applies to both.
+      const claimed =
+        state.provider.id === GIF_PROVIDERS.yovoice ||
+        await resolved.limiter.claimProviderCall();
       if (!claimed) {
         // The hour's budget is spent. Serve the freshest trending page we hold
         // and SAY SO, rather than erroring: a degraded picker is a working
@@ -504,7 +523,7 @@ function createGifFunctions({
   // reportGifAsset — into the queue that already exists.
   // ---------------------------------------------------------------------
   exportsMap.reportGifAsset = registrars.onCall(
-    securedOptions,
+    providerOptions,
     async (request) => {
       // Reporting stays available to an authenticated but not-yet-verified
       // account, matching createReelReport and the `reports` create rule: a
@@ -566,7 +585,6 @@ module.exports = {
   BREAKER_WINDOW_MS,
   CATEGORY_KEYS,
   CONFIG_DOCUMENT,
-  GIPHY_API_KEY,
   availability,
   catalogResponse,
   createBreaker,

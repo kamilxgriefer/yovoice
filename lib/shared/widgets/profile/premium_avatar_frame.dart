@@ -2,6 +2,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+/// Stable inspection handle for the canonical Premium ring paint layer.
+const Key premiumAvatarRingKey = Key('premium-avatar-ring');
+
 /// The canonical Premium identity treatment: a slow, subtle violet→magenta
 /// halo ring around an avatar. One implementation, used everywhere a
 /// premium ring appears, so the effect cannot drift per screen.
@@ -87,6 +90,7 @@ class _PremiumAvatarFrameState extends State<PremiumAvatarFrame>
                     progress: reduceMotion ? 0 : _controller.value,
                     ringWidth: widget.ringWidth,
                   ),
+                  key: premiumAvatarRingKey,
                 ),
               ),
             ),
