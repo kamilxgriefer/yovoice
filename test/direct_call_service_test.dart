@@ -128,6 +128,116 @@ void main() {
   });
 
   testWidgets(
+    'cached absence times out as recoverable when canonical server result stalls',
+    (tester) async {
+      const initialTimeout = Duration(milliseconds: 20);
+      var cancellations = 0;
+      final events = StreamController<DocumentSnapshot<Map<String, dynamic>>>(
+        onCancel: () {
+          cancellations++;
+        },
+      );
+      final firestore = _MetadataOnlyFirestore(
+        document: _MetadataOnlyDocument(events: events.stream),
+      );
+      final service = DirectCallService(
+        firestore: firestore,
+        functions: _DeadlineFunctions(),
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'caller'),
+        ),
+        initialSnapshotTimeout: initialTimeout,
+      );
+      final errors = <Object>[];
+      final done = Completer<void>();
+
+      service
+          .watchCall('call')
+          .listen((_) {}, onError: errors.add, onDone: done.complete);
+      await tester.pump();
+      events.add(_MissingSnapshot(true));
+      await tester.pump();
+      expect(errors, isEmpty, reason: 'An empty cache is not server deletion.');
+      expect(done.isCompleted, isFalse);
+
+      await tester.pump(initialTimeout);
+      await tester.pump();
+
+      expect(errors, hasLength(1));
+      expect(
+        errors.single,
+        isA<DirectCallTimeoutException>()
+            .having((error) => error.operation, 'operation', 'watchCall')
+            .having(
+              (error) => error.stage,
+              'stage',
+              'initial-canonical-snapshot',
+            ),
+      );
+      expect(done.isCompleted, isTrue);
+      expect(cancellations, 1);
+      events.close().ignore();
+    },
+  );
+
+  testWidgets(
+    'present cache row stays provisional until a canonical server snapshot',
+    (tester) async {
+      const initialTimeout = Duration(milliseconds: 20);
+      var cancellations = 0;
+      final events = StreamController<DocumentSnapshot<Map<String, dynamic>>>(
+        onCancel: () {
+          cancellations++;
+        },
+      );
+      final service = DirectCallService(
+        firestore: _MetadataOnlyFirestore(
+          document: _MetadataOnlyDocument(events: events.stream),
+        ),
+        functions: _DeadlineFunctions(),
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'caller'),
+        ),
+        initialSnapshotTimeout: initialTimeout,
+      );
+      final received = <DirectCall>[];
+      final errors = <Object>[];
+      final done = Completer<void>();
+
+      service
+          .watchCall('call')
+          .listen(received.add, onError: errors.add, onDone: done.complete);
+      await tester.pump();
+      events.add(_CachedRecreatedSnapshot());
+      await tester.pump();
+      expect(
+        received,
+        hasLength(1),
+        reason: 'Cache remains useful immediately.',
+      );
+      expect(errors, isEmpty);
+
+      await tester.pump(initialTimeout);
+      await tester.pump();
+
+      expect(errors, <Matcher>[
+        isA<DirectCallTimeoutException>()
+            .having((error) => error.operation, 'operation', 'watchCall')
+            .having(
+              (error) => error.stage,
+              'stage',
+              'initial-canonical-snapshot',
+            ),
+      ]);
+      expect(done.isCompleted, isTrue);
+      expect(cancellations, 1);
+      events.close().ignore();
+    },
+  );
+
+  testWidgets(
     'timeout then unavailable retry still delivers the later own ACK',
     (tester) async {
       final functions = _DeadlineFunctions();
@@ -1240,6 +1350,12 @@ class _RecreatedSnapshot extends _MissingSnapshot {
     'calleeId': 'callee',
     'status': 'active',
   };
+}
+
+// ignore: subtype_of_sealed_class
+class _CachedRecreatedSnapshot extends _RecreatedSnapshot {
+  @override
+  SnapshotMetadata get metadata => _Metadata(true);
 }
 
 class _Metadata implements SnapshotMetadata {

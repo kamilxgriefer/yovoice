@@ -261,6 +261,7 @@ class DirectCallService implements DirectCallGateway {
     this.operationTimeout = const Duration(seconds: 20),
     this.callableAttemptTimeout = const Duration(seconds: 8),
     this.reconciliationTimeout = const Duration(seconds: 3),
+    this.initialSnapshotTimeout = const Duration(seconds: 8),
     this.lateResultRetention = const Duration(minutes: 2),
     // A ringing call can become active after its start response was lost and
     // remain valid for eight hours. Keep the idempotency key slightly longer
@@ -269,6 +270,7 @@ class DirectCallService implements DirectCallGateway {
   }) : assert(operationTimeout > Duration.zero),
        assert(callableAttemptTimeout > Duration.zero),
        assert(reconciliationTimeout > Duration.zero),
+       assert(initialSnapshotTimeout > Duration.zero),
        assert(lateResultRetention > Duration.zero),
        _firestore = firestore ?? FirebaseFirestore.instance,
        _functions =
@@ -295,6 +297,7 @@ class DirectCallService implements DirectCallGateway {
   final Duration operationTimeout;
   final Duration callableAttemptTimeout;
   final Duration reconciliationTimeout;
+  final Duration initialSnapshotTimeout;
   final Duration lateResultRetention;
   final _lateAcceptResults = <_LateAcceptResultHolder>{};
   Future<String>? _installationIdFuture;
@@ -409,7 +412,13 @@ class DirectCallService implements DirectCallGateway {
   Stream<DirectCall> watchCall(String callId) {
     late final StreamController<DirectCall> controller;
     StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? subscription;
+    Timer? initialSnapshotTimer;
     var finished = false;
+
+    void resolveInitialSnapshot() {
+      initialSnapshotTimer?.cancel();
+      initialSnapshotTimer = null;
+    }
 
     void cancelSource() {
       final current = subscription;
@@ -422,6 +431,7 @@ class DirectCallService implements DirectCallGateway {
     void finish({Object? error, StackTrace? stackTrace}) {
       if (finished) return;
       finished = true;
+      resolveInitialSnapshot();
       if (error != null) controller.addError(error, stackTrace);
       controller.close().ignore();
       cancelSource();
@@ -430,6 +440,15 @@ class DirectCallService implements DirectCallGateway {
     controller = StreamController<DirectCall>(
       onListen: () {
         try {
+          initialSnapshotTimer = Timer(
+            initialSnapshotTimeout,
+            () => finish(
+              error: const DirectCallTimeoutException(
+                operation: 'watchCall',
+                stage: 'initial-canonical-snapshot',
+              ),
+            ),
+          );
           subscription = _firestore
               .collection('directCalls')
               .doc(callId)
@@ -440,10 +459,19 @@ class DirectCallService implements DirectCallGateway {
                   // An empty offline cache is not proof of server deletion.
                   if (!snapshot.exists && snapshot.metadata.isFromCache) return;
                   if (!snapshot.exists) {
+                    resolveInitialSnapshot();
                     finish(error: const DirectCallUnavailableException());
                     return;
                   }
                   try {
+                    // A present cache row is useful optimistic data, but it is
+                    // not proof that the canonical call still exists. Keep the
+                    // deadline armed until Firestore confirms any present row
+                    // from the server (metadata-only events are requested
+                    // above precisely so an unchanged row still confirms it).
+                    if (!snapshot.metadata.isFromCache) {
+                      resolveInitialSnapshot();
+                    }
                     controller.add(DirectCall.fromFirestore(snapshot));
                   } catch (error, stackTrace) {
                     finish(error: error, stackTrace: stackTrace);
@@ -464,6 +492,7 @@ class DirectCallService implements DirectCallGateway {
       onResume: () => subscription?.resume(),
       onCancel: () {
         finished = true;
+        resolveInitialSnapshot();
         cancelSource();
       },
     );

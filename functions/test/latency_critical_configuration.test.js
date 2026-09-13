@@ -43,13 +43,13 @@ function boundSecretNames(callable) {
     .map((secret) => secret.key);
 }
 
-test("only latency-critical call setup endpoints keep one warm instance", () => {
+test("only latency-critical call setup and answer endpoints stay warm", () => {
   assert.equal(minInstances(createLiveKitToken), 1);
   assert.equal(minInstances(startDirectCall), 1);
+  assert.equal(minInstances(acceptDirectCall), 1);
   assert.equal(minInstances(createDirectCallToken), 1);
 
   for (const callable of [
-    acceptDirectCall,
     declineDirectCall,
     cancelDirectCall,
     endDirectCall,

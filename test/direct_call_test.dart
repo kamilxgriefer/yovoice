@@ -563,6 +563,152 @@ void main() {
     });
   }
 
+  testWidgets('initial canonical timeout offers Close and a working Retry', (
+    tester,
+  ) async {
+    final gateway =
+        _FakeDirectCallGateway(_call(status: DirectCallStatus.ringing))
+          ..watchError = const DirectCallTimeoutException(
+            operation: 'watchCall',
+            stage: 'initial-canonical-snapshot',
+          );
+    final voice = _FakeVoiceCallService();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: DirectCallScreen(
+          callId: 'call-1',
+          callService: gateway,
+          voiceService: voice,
+          currentUserId: 'callee',
+          participantName: 'Callee',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.text(
+        'The call is taking too long to load. Check your connection and try again.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(FilledButton, 'Retry'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Close'), findsOneWidget);
+    expect(gateway.watchCalls, 1);
+
+    gateway.watchError = null;
+    await tester.tap(find.widgetWithText(FilledButton, 'Retry'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(gateway.watchCalls, 2);
+    expect(
+      find.text(
+        'The call is taking too long to load. Check your connection and try again.',
+      ),
+      findsNothing,
+    );
+    expect(find.text('Caller'), findsOneWidget);
+    expect(voice.joinCalls, 0);
+  });
+
+  testWidgets(
+    'Retry reprocesses an active cache row after canonical watch timeout',
+    (tester) async {
+      final gateway =
+          _FakeDirectCallGateway(_call(status: DirectCallStatus.active))
+            ..watchError = const DirectCallTimeoutException(
+              operation: 'watchCall',
+              stage: 'initial-canonical-snapshot',
+            )
+            ..watchErrorsAfterData = 1
+            ..watchErrorAfterDataGate = Completer<void>();
+      final voice = _FakeVoiceCallService(
+        joinError: StateError('offline token request'),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: DirectCallScreen(
+            callId: 'call-1',
+            callService: gateway,
+            voiceService: voice,
+            currentUserId: 'caller',
+            participantName: 'Caller',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(voice.joinCalls, 1);
+      gateway.watchErrorAfterDataGate!.complete();
+      await tester.pump();
+      expect(find.widgetWithText(FilledButton, 'Retry'), findsOneWidget);
+
+      gateway.watchError = null;
+      await tester.tap(find.widgetWithText(FilledButton, 'Retry'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(gateway.watchCalls, 2);
+      expect(
+        voice.joinCalls,
+        2,
+        reason: 'The same active status is actionable on a fresh watch.',
+      );
+    },
+  );
+
+  testWidgets(
+    'Close during a stalled Retry still cancels the last known outgoing call',
+    (tester) async {
+      final gateway =
+          _FakeDirectCallGateway(_call(status: DirectCallStatus.ringing))
+            ..watchError = const DirectCallTimeoutException(
+              operation: 'watchCall',
+              stage: 'initial-canonical-snapshot',
+            )
+            ..watchErrorsAfterData = 1
+            ..watchErrorAfterDataGate = Completer<void>();
+      final voice = _FakeVoiceCallService();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: DirectCallScreen(
+            callId: 'call-1',
+            callService: gateway,
+            voiceService: voice,
+            currentUserId: 'caller',
+            participantName: 'Caller',
+          ),
+        ),
+      );
+      await tester.pump();
+      gateway.watchErrorAfterDataGate!.complete();
+      await tester.pump();
+      expect(find.widgetWithText(FilledButton, 'Retry'), findsOneWidget);
+
+      gateway.watchError = null;
+      gateway.watchBeforeDataGate = Completer<void>();
+      await tester.tap(find.widgetWithText(FilledButton, 'Retry'));
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Close'));
+      await tester.pump();
+
+      expect(gateway.cancelCalls, 1);
+      expect(gateway.endCalls, 0);
+      gateway.watchBeforeDataGate!.complete();
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets(
     'incoming video call is explicit and enables camera after answer',
     (tester) async {
@@ -1651,6 +1797,7 @@ class _FakeDirectCallGateway implements DirectCallGateway {
   int declineCalls = 0;
   int cancelCalls = 0;
   int endCalls = 0;
+  int watchCalls = 0;
   String? lastCalleeId;
   String? lastConversationId;
   DirectCallMediaType? lastMediaType;
@@ -1660,6 +1807,9 @@ class _FakeDirectCallGateway implements DirectCallGateway {
   bool publishActiveSnapshotOnAccept = true;
   void Function(DirectCallStatus status)? lateAcceptResult;
   Object? watchError;
+  int watchErrorsAfterData = 0;
+  Completer<void>? watchErrorAfterDataGate;
+  Completer<void>? watchBeforeDataGate;
   Completer<void>? cancelGate;
   Completer<void>? endGate;
   bool answerWinsCancelRace = false;
@@ -1671,8 +1821,17 @@ class _FakeDirectCallGateway implements DirectCallGateway {
 
   @override
   Stream<DirectCall> watchCall(String callId) async* {
-    if (watchError case final error?) throw error;
+    watchCalls++;
+    if (watchCalls > 1) await watchBeforeDataGate?.future;
+    if (watchErrorsAfterData == 0) {
+      if (watchError case final error?) throw error;
+    }
     yield current;
+    if (watchErrorsAfterData > 0) {
+      await watchErrorAfterDataGate?.future;
+      watchErrorsAfterData--;
+      if (watchError case final error?) throw error;
+    }
     yield* _changes.stream;
   }
 

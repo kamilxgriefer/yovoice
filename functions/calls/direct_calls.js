@@ -1626,7 +1626,15 @@ const startDirectCall = onCall(
   startDirectCallHandler,
 );
 const acceptDirectCall = onCall(
-  { region: REGION, enforceAppCheck: false },
+  {
+    region: REGION,
+    enforceAppCheck: false,
+    // Answer is on the human-perceived critical path before either peer can
+    // request its installation-bound LiveKit token. One idle 256 MiB instance
+    // removes that avoidable cold start while preserving the same handler and
+    // authorization boundary.
+    minInstances: 1,
+  },
   (request) => transitionDirectCall(request, "accept"),
 );
 const declineDirectCall = onCall(

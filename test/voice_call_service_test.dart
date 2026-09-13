@@ -332,6 +332,52 @@ void main() {
     await service.disconnect(playSound: false);
   });
 
+  for (final video in <bool>[false, true]) {
+    test(
+      'backgrounding during teardown keeps replacement ${video ? 'video' : 'audio'} call retryable',
+      () async {
+        final disconnectGate = Completer<void>();
+        final oldRoom = _JoinRoom(
+          _JoinParticipant(),
+          disconnectGate: disconnectGate.future,
+        );
+        final replacementParticipant = _JoinParticipant();
+        final replacementRoom = _JoinRoom(replacementParticipant);
+        var createdRooms = 0;
+        final service = _joinService(
+          oldRoom,
+          roomFactory: () => createdRooms++ == 0 ? oldRoom : replacementRoom,
+        );
+        addTearDown(service.dispose);
+
+        await _joinPrivate(service, callId: 'old-call');
+        final replacement = _joinPrivate(
+          service,
+          callId: 'replacement-call',
+          video: video,
+        );
+        await oldRoom.disconnectStarted.future;
+
+        await service.pauseCameraForBackground();
+        disconnectGate.complete();
+        await replacement;
+
+        expect(service.status, VoiceCallStatus.connected);
+        expect(service.directCallId, 'replacement-call');
+        expect(service.micState, MicState.on);
+        expect(replacementRoom.connectCount, 1);
+        expect(replacementParticipant.microphoneRequests, <bool>[true]);
+        expect(
+          replacementParticipant.cameraAttempts,
+          0,
+          reason: 'A camera invalidated in background stays off after join.',
+        );
+        service.resumeAfterBackground();
+        await service.disconnect(playSound: false);
+      },
+    );
+  }
+
   test('replacement waits for the old connect native-audio finally', () async {
     final connectGate = Completer<void>();
     final oldRoom = _JoinRoom(
@@ -543,6 +589,183 @@ void main() {
     expect(room.disposeCount, 1);
   });
 
+  testWidgets(
+    'stalled microphone fails in bounded time and late capture is stopped',
+    (tester) async {
+      const microphoneTimeout = Duration(milliseconds: 20);
+      final microphoneGate = Completer<void>();
+      final participant = _JoinParticipant(
+        microphoneGate: microphoneGate.future,
+      );
+      final room = _JoinRoom(participant);
+      final service = _joinService(
+        room,
+        microphoneStartTimeout: microphoneTimeout,
+      );
+      addTearDown(service.dispose);
+
+      Object? joinFailure;
+      final joining = _joinPrivate(service).then<void>(
+        (_) {},
+        onError: (Object error, StackTrace _) {
+          joinFailure = error;
+        },
+      );
+      await participant.microphoneStarted.future;
+      await tester.pump(microphoneTimeout);
+      await joining;
+
+      expect(
+        joinFailure,
+        isA<VoiceMediaStageTimeoutException>().having(
+          (error) => error.stage,
+          'stage',
+          VoiceMediaStage.microphone,
+        ),
+      );
+      expect(service.status, VoiceCallStatus.failed);
+      expect(service.isBusy, isFalse);
+      expect(room.disconnectCount, 1);
+      expect(room.disposeCount, 1);
+      expect(participant.microphoneEnabled, isFalse);
+
+      microphoneGate.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(participant.microphoneEnabled, isFalse);
+      expect(participant.microphoneRequests.last, isFalse);
+      expect(service.status, VoiceCallStatus.failed);
+    },
+  );
+
+  testWidgets(
+    'stalled manual unmute clears busy and a late success is muted again',
+    (tester) async {
+      const microphoneTimeout = Duration(milliseconds: 20);
+      final participant = _JoinParticipant();
+      final room = _JoinRoom(participant);
+      final service = _joinService(
+        room,
+        microphoneStartTimeout: microphoneTimeout,
+      );
+      addTearDown(service.dispose);
+
+      await _joinPrivate(service);
+      await service.setMuted(true);
+      expect(service.isMuted, isTrue);
+
+      final unmuteGate = Completer<void>();
+      participant.microphoneGate = unmuteGate.future;
+      Object? failure;
+      final unmuting = service.toggleMute().then<void>(
+        (_) {},
+        onError: (Object error, StackTrace _) => failure = error,
+      );
+      expect(service.muteChangeInProgress, isTrue);
+      expect(participant.microphoneRequests.last, isTrue);
+
+      await tester.pump(microphoneTimeout);
+      await unmuting;
+      expect(
+        failure,
+        isA<VoiceMediaStageTimeoutException>().having(
+          (error) => error.stage,
+          'stage',
+          VoiceMediaStage.microphone,
+        ),
+      );
+      expect(service.muteChangeInProgress, isFalse);
+      expect(service.isMuted, isTrue);
+
+      unmuteGate.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(participant.microphoneEnabled, isFalse);
+      expect(participant.microphoneRequests.last, isFalse);
+      expect(service.isMuted, isTrue);
+      await service.disconnect(playSound: false);
+    },
+  );
+
+  testWidgets('stalled manual mute is locally fail-closed and clears busy', (
+    tester,
+  ) async {
+    const microphoneTimeout = Duration(milliseconds: 20);
+    final participant = _JoinParticipant();
+    final room = _JoinRoom(participant);
+    final service = _joinService(
+      room,
+      microphoneStartTimeout: microphoneTimeout,
+    );
+    addTearDown(service.dispose);
+
+    await _joinPrivate(service);
+    final microphoneTrack = participant.microphoneTrack;
+    expect(microphoneTrack, isNotNull);
+    expect(microphoneTrack!.mediaStreamTrack.enabled, isTrue);
+
+    final muteGate = Completer<void>();
+    participant.microphoneDisableGate = muteGate.future;
+    Object? failure;
+    final muting = service.toggleMute().then<void>(
+      (_) {},
+      onError: (Object error, StackTrace _) => failure = error,
+    );
+    expect(service.muteChangeInProgress, isTrue);
+
+    await tester.pump(microphoneTimeout);
+    await muting;
+    expect(
+      failure,
+      isA<VoiceMediaStageTimeoutException>().having(
+        (error) => error.stage,
+        'stage',
+        VoiceMediaStage.microphone,
+      ),
+    );
+    expect(service.muteChangeInProgress, isFalse);
+    expect(service.isMuted, isTrue);
+    expect(microphoneTrack.mediaStreamTrack.enabled, isFalse);
+
+    muteGate.complete();
+    await tester.pump();
+    await tester.pump();
+    expect(participant.microphoneEnabled, isFalse);
+    expect(service.isMuted, isTrue);
+    await service.disconnect(playSound: false);
+  });
+
+  testWidgets('stalled output routing cannot hold the call setup', (
+    tester,
+  ) async {
+    const routeTimeout = Duration(milliseconds: 20);
+    final routeGate = Completer<void>();
+    final routeRequests = <bool>[];
+    final room = _JoinRoom(_JoinParticipant());
+    final service = _joinService(
+      room,
+      speakerRouteTimeout: routeTimeout,
+      canSwitchSpeakerphone: true,
+      speakerPreferenceSetter: (preferred) async {
+        routeRequests.add(preferred);
+        await routeGate.future;
+      },
+    );
+    addTearDown(service.dispose);
+
+    final joining = _joinPrivate(service);
+    await tester.pump();
+    expect(routeRequests, <bool>[false]);
+    await tester.pump(routeTimeout);
+    await joining;
+
+    expect(service.status, VoiceCallStatus.connected);
+    expect(service.micState, MicState.on);
+    routeGate.complete();
+    await tester.pump();
+    await service.disconnect(playSound: false);
+  });
+
   test(
     'publisher entering a room muted stays distinct from listen-only',
     () async {
@@ -577,6 +800,7 @@ void main() {
     addTearDown(service.dispose);
 
     await _joinPrivate(service, video: true);
+    await Future<void>.delayed(Duration.zero);
 
     expect(service.status, VoiceCallStatus.connected);
     expect(service.micState, MicState.on);
@@ -590,6 +814,260 @@ void main() {
     expect(room.disconnectCount, 0);
     await service.disconnect(playSound: false);
   });
+
+  testWidgets(
+    'stalled initial camera cannot hold ready audio or publish after timeout',
+    (tester) async {
+      const cameraTimeout = Duration(milliseconds: 20);
+      final publishGate = Completer<void>();
+      final candidate = _JoinVideoTrack();
+      final participant = _JoinParticipant(
+        videoPublishGate: publishGate.future,
+      );
+      final room = _JoinRoom(participant);
+      final service = _joinService(
+        room,
+        cameraStartTimeout: cameraTimeout,
+        cameraTrackFactory: (_) async => candidate,
+      );
+      addTearDown(service.dispose);
+
+      await _joinPrivate(service, video: true);
+      expect(
+        service.status,
+        VoiceCallStatus.connected,
+        reason: 'Microphone readiness publishes Connected before camera.',
+      );
+      await participant.videoPublishStarted.future;
+      expect(service.cameraChangeInProgress, isTrue);
+
+      await tester.pump(cameraTimeout);
+      await tester.pump();
+      expect(service.status, VoiceCallStatus.connected);
+      expect(service.micState, MicState.on);
+      expect(service.cameraChangeInProgress, isFalse);
+      expect(
+        service.cameraIssue,
+        'Camera could not be started. Continue with audio or retry.',
+      );
+      expect(candidate.mediaStreamTrack.enabled, isFalse);
+
+      publishGate.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(candidate.mediaStreamTrack.enabled, isFalse);
+      expect(candidate.stopCount, greaterThan(0));
+      expect(service.status, VoiceCallStatus.connected);
+      await service.disconnect(playSound: false);
+    },
+  );
+
+  testWidgets(
+    'backgrounding during an in-flight camera publish stops capture now',
+    (tester) async {
+      final publishGate = Completer<void>();
+      final candidate = _JoinVideoTrack();
+      final participant = _JoinParticipant(
+        videoPublishGate: publishGate.future,
+      );
+      final room = _JoinRoom(participant);
+      final service = _joinService(
+        room,
+        cameraTrackFactory: (_) async => candidate,
+      );
+      addTearDown(service.dispose);
+
+      await _joinPrivate(service, video: true);
+      await participant.videoPublishStarted.future;
+      expect(candidate.mediaStreamTrack.enabled, isTrue);
+
+      await service.pauseCameraForBackground();
+      expect(candidate.mediaStreamTrack.enabled, isFalse);
+      expect(service.cameraChangeInProgress, isFalse);
+      expect(service.isCameraEnabled, isFalse);
+
+      publishGate.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(candidate.mediaStreamTrack.enabled, isFalse);
+      expect(candidate.stopCount, greaterThan(0));
+      service.resumeAfterBackground();
+      await service.disconnect(playSound: false);
+    },
+  );
+
+  testWidgets(
+    'stalled manual camera enable times out and stops its late candidate',
+    (tester) async {
+      const cameraTimeout = Duration(milliseconds: 20);
+      final publishGate = Completer<void>();
+      final candidate = _JoinVideoTrack();
+      final participant = _JoinParticipant(
+        videoPublishGate: publishGate.future,
+      );
+      final room = _JoinRoom(participant);
+      final service = _joinService(
+        room,
+        cameraStartTimeout: cameraTimeout,
+        cameraTrackFactory: (_) async => candidate,
+      );
+      addTearDown(service.dispose);
+
+      await service.pauseCameraForBackground();
+      await _joinPrivate(service, video: true);
+      service.resumeAfterBackground();
+      expect(participant.videoPublishCount, 0);
+
+      Object? failure;
+      final enabling = service
+          .setCameraEnabled(true)
+          .then<void>(
+            (_) {},
+            onError: (Object error, StackTrace _) => failure = error,
+          );
+      await participant.videoPublishStarted.future;
+      expect(service.cameraChangeInProgress, isTrue);
+
+      await tester.pump(cameraTimeout);
+      await enabling;
+      expect(
+        failure,
+        isA<VoiceMediaStageTimeoutException>().having(
+          (error) => error.stage,
+          'stage',
+          VoiceMediaStage.camera,
+        ),
+      );
+      expect(service.cameraChangeInProgress, isFalse);
+      expect(service.isCameraEnabled, isFalse);
+      expect(candidate.mediaStreamTrack.enabled, isFalse);
+      expect(participant.cameraRequests, <bool>[false]);
+
+      publishGate.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(candidate.mediaStreamTrack.enabled, isFalse);
+      expect(candidate.stopCount, greaterThan(0));
+      await service.disconnect(playSound: false);
+    },
+  );
+
+  testWidgets(
+    'stalled manual camera disable is bounded and locally stops capture',
+    (tester) async {
+      const cameraTimeout = Duration(milliseconds: 20);
+      final cameraTrack = _JoinVideoTrack();
+      final participant = _JoinParticipant();
+      final room = _JoinRoom(participant);
+      final service = _joinService(
+        room,
+        cameraStartTimeout: cameraTimeout,
+        cameraTrackFactory: (_) async => cameraTrack,
+      );
+      addTearDown(service.dispose);
+
+      await _joinPrivate(service, video: true);
+      await participant.videoPublishStarted.future;
+      await tester.pump();
+      expect(service.cameraChangeInProgress, isFalse);
+      expect(service.isCameraEnabled, isTrue);
+
+      final disableGate = Completer<void>();
+      participant.cameraDisableGate = disableGate.future;
+      Object? failure;
+      final disabling = service
+          .setCameraEnabled(false)
+          .then<void>(
+            (_) {},
+            onError: (Object error, StackTrace _) => failure = error,
+          );
+      expect(service.cameraChangeInProgress, isTrue);
+
+      await tester.pump(cameraTimeout);
+      await disabling;
+      expect(
+        failure,
+        isA<VoiceMediaStageTimeoutException>().having(
+          (error) => error.stage,
+          'stage',
+          VoiceMediaStage.camera,
+        ),
+      );
+      expect(service.cameraChangeInProgress, isFalse);
+      expect(service.isCameraEnabled, isFalse);
+      expect(cameraTrack.mediaStreamTrack.enabled, isFalse);
+
+      disableGate.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(service.isCameraEnabled, isFalse);
+      expect(
+        participant.cameraRequests,
+        <bool>[false],
+        reason: 'A late successful camera-off write needs no second write.',
+      );
+      await service.disconnect(playSound: false);
+    },
+  );
+
+  testWidgets(
+    'stalled camera flip clears busy and cannot publish its late track',
+    (tester) async {
+      const cameraTimeout = Duration(milliseconds: 20);
+      final firstTrack = _JoinVideoTrack();
+      final flippedTrack = _JoinVideoTrack();
+      var trackIndex = 0;
+      final participant = _JoinParticipant();
+      final room = _JoinRoom(participant);
+      final service = _joinService(
+        room,
+        cameraStartTimeout: cameraTimeout,
+        cameraTrackFactory: (_) async =>
+            trackIndex++ == 0 ? firstTrack : flippedTrack,
+      );
+      addTearDown(service.dispose);
+
+      await _joinPrivate(service, video: true);
+      await participant.videoPublishStarted.future;
+      await tester.pump();
+      expect(service.cameraChangeInProgress, isFalse);
+      expect(service.isCameraEnabled, isTrue);
+
+      final flipGate = Completer<void>();
+      participant.videoPublishGate = flipGate.future;
+      Object? failure;
+      final flipping = service.flipCamera().then<void>(
+        (_) {},
+        onError: (Object error, StackTrace _) => failure = error,
+      );
+      await tester.pump();
+      expect(participant.videoPublishCount, 2);
+      expect(service.cameraChangeInProgress, isTrue);
+
+      await tester.pump(cameraTimeout);
+      await flipping;
+      expect(
+        failure,
+        isA<VoiceMediaStageTimeoutException>().having(
+          (error) => error.stage,
+          'stage',
+          VoiceMediaStage.camera,
+        ),
+      );
+      expect(service.cameraChangeInProgress, isFalse);
+      expect(service.isCameraEnabled, isFalse);
+      expect(firstTrack.mediaStreamTrack.enabled, isFalse);
+      expect(flippedTrack.mediaStreamTrack.enabled, isFalse);
+      expect(participant.cameraRequests, <bool>[false]);
+
+      flipGate.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(flippedTrack.mediaStreamTrack.enabled, isFalse);
+      expect(flippedTrack.stopCount, greaterThan(0));
+      await service.disconnect(playSound: false);
+    },
+  );
 
   test(
     'late successful camera publication after End hard-stops its track',
@@ -853,9 +1331,14 @@ VoiceCallService _joinService(
   _VoicePermissionPlatform? platform,
   Room Function()? roomFactory,
   Duration connectionTimeout = const Duration(seconds: 20),
+  Duration speakerRouteTimeout = const Duration(seconds: 3),
+  Duration microphoneStartTimeout = const Duration(seconds: 8),
+  Duration cameraStartTimeout = const Duration(seconds: 8),
   Duration cleanupWaitTimeout = const Duration(seconds: 3),
   Future<LocalVideoTrack> Function(CameraCaptureOptions options)?
   cameraTrackFactory,
+  bool? canSwitchSpeakerphone,
+  Future<void> Function(bool preferred)? speakerPreferenceSetter,
   VoiceSessionKeepAlive? keepAlive,
 }) {
   final token = canPublish
@@ -869,8 +1352,13 @@ VoiceCallService _joinService(
     keepAlive: keepAlive,
     roomFactory: roomFactory ?? () => room,
     connectionTimeout: connectionTimeout,
+    speakerRouteTimeout: speakerRouteTimeout,
+    microphoneStartTimeout: microphoneStartTimeout,
+    cameraStartTimeout: cameraStartTimeout,
     cleanupWaitTimeout: cleanupWaitTimeout,
     cameraTrackFactory: cameraTrackFactory,
+    canSwitchSpeakerphone: canSwitchSpeakerphone,
+    speakerPreferenceSetter: speakerPreferenceSetter,
     directCallService: _JoinDirectGateway(token),
     tokenService: _JoinRoomTokens(token),
     permissionReadiness: PermissionReadinessService(
@@ -1005,22 +1493,30 @@ final class _JoinParticipant extends Fake implements LocalParticipant {
   }) : permissions = ParticipantPermissions(canPublish: canPublish);
 
   final Object? microphoneError;
-  final Future<void>? microphoneGate;
+  Future<void>? microphoneGate;
+  Future<void>? microphoneDisableGate;
   final Object? cameraError;
-  final Future<void>? videoPublishGate;
+  Future<void>? videoPublishGate;
+  Future<void>? cameraDisableGate;
   final videoPublishStarted = Completer<void>();
-  final List<LocalTrackPublication<LocalVideoTrack>> _videoPublications = [];
+  final List<_JoinAudioPublication> _audioPublications = [];
+  final List<_JoinVideoPublication> _videoPublications = [];
   final microphoneRequests = <bool>[];
+  final cameraRequests = <bool>[];
   final microphoneStarted = Completer<void>();
   bool microphoneEnabled = false;
   int cameraAttempts = 0;
+  int videoPublishCount = 0;
+
+  _JoinAudioTrack? get microphoneTrack =>
+      _audioPublications.isEmpty ? null : _audioPublications.first.track;
 
   @override
   final ParticipantPermissions permissions;
 
   @override
   List<LocalTrackPublication<LocalAudioTrack>> get audioTrackPublications =>
-      const [];
+      _audioPublications;
 
   @override
   List<LocalTrackPublication<LocalVideoTrack>> get videoTrackPublications =>
@@ -1031,7 +1527,8 @@ final class _JoinParticipant extends Fake implements LocalParticipant {
     LocalVideoTrack track, {
     VideoPublishOptions? publishOptions,
   }) async {
-    videoPublishStarted.complete();
+    videoPublishCount++;
+    if (!videoPublishStarted.isCompleted) videoPublishStarted.complete();
     await videoPublishGate;
     // The SDK can finish native track.start after disposal took its snapshot.
     track.mediaStreamTrack.enabled = true;
@@ -1044,15 +1541,46 @@ final class _JoinParticipant extends Fake implements LocalParticipant {
   bool isMicrophoneEnabled() => microphoneEnabled;
 
   @override
-  bool isCameraEnabled() => false;
+  bool isCameraEnabled() => _videoPublications.any(
+    (publication) => publication.track.mediaStreamTrack.enabled,
+  );
+
+  @override
+  Future<LocalTrackPublication?> setCameraEnabled(
+    bool enabled, {
+    CameraCaptureOptions? cameraCaptureOptions,
+  }) async {
+    cameraRequests.add(enabled);
+    if (!enabled) {
+      await cameraDisableGate;
+      for (final publication in _videoPublications) {
+        publication.track.mediaStreamTrack.enabled = false;
+      }
+    }
+    return null;
+  }
 
   @override
   LocalTrackPublication? getTrackPublicationBySource(TrackSource source) {
     if (source == TrackSource.camera) {
       cameraAttempts++;
       if (cameraError case final error?) throw error;
+      if (_videoPublications.isNotEmpty) return _videoPublications.first;
     }
     return null;
+  }
+
+  @override
+  Future<void> removePublishedTrack(
+    String trackSid, {
+    bool notify = true,
+  }) async {
+    final index = _videoPublications.indexWhere(
+      (publication) => publication.sid == trackSid,
+    );
+    if (index < 0) return;
+    final publication = _videoPublications.removeAt(index);
+    await publication.track.stop();
   }
 
   @override
@@ -1065,6 +1593,17 @@ final class _JoinParticipant extends Fake implements LocalParticipant {
       if (!microphoneStarted.isCompleted) microphoneStarted.complete();
       await microphoneGate;
       if (microphoneError case final error?) throw error;
+      if (_audioPublications.isEmpty) {
+        _audioPublications.add(_JoinAudioPublication(_JoinAudioTrack()));
+      }
+      for (final publication in _audioPublications) {
+        publication.track.mediaStreamTrack.enabled = true;
+      }
+    } else {
+      await microphoneDisableGate;
+      for (final publication in _audioPublications) {
+        publication.track.mediaStreamTrack.enabled = false;
+      }
     }
     microphoneEnabled = enabled;
     return null;
@@ -1077,9 +1616,48 @@ final class _JoinVideoPublication extends Fake
 
   @override
   final LocalVideoTrack track;
+
+  @override
+  String get sid => 'camera-${identityHashCode(track)}';
+
+  @override
+  TrackSource get source => TrackSource.camera;
+
+  @override
+  bool get muted => false;
+}
+
+final class _JoinAudioPublication extends Fake
+    implements LocalTrackPublication<LocalAudioTrack> {
+  _JoinAudioPublication(this.track);
+
+  @override
+  final _JoinAudioTrack track;
+
+  @override
+  String get sid => 'microphone-${identityHashCode(track)}';
+
+  @override
+  TrackSource get source => TrackSource.microphone;
+
+  @override
+  bool get muted => false;
 }
 
 final class _JoinVideoTrack extends Fake implements LocalVideoTrack {
+  @override
+  final mediaStreamTrack = _JoinMediaTrack();
+  int stopCount = 0;
+
+  @override
+  Future<bool> stop() async {
+    stopCount++;
+    await mediaStreamTrack.stop();
+    return true;
+  }
+}
+
+final class _JoinAudioTrack extends Fake implements LocalAudioTrack {
   @override
   final mediaStreamTrack = _JoinMediaTrack();
   int stopCount = 0;

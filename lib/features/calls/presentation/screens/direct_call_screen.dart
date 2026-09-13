@@ -42,7 +42,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       widget.callService ?? DirectCallService();
   late final VoiceCallService _voice =
       widget.voiceService ?? VoiceCallService.instance;
-  late final Stream<DirectCall> _call = _calls.watchCall(widget.callId);
+  late Stream<DirectCall> _call = _calls.watchCall(widget.callId);
   late final AnimationController _pulse;
 
   Timer? _clock;
@@ -59,6 +59,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   bool _terminalDisconnectPending = false;
   bool _cameraPausedInBackground = false;
   int _elapsedSeconds = 0;
+  int _callWatchGeneration = 0;
   late VoiceCallStatus _lastVoiceStatus;
   late final String _boundUserId;
 
@@ -632,6 +633,18 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  void _retryCallWatch() {
+    if (_finishRequested || !mounted) return;
+    setState(() {
+      _callWatchGeneration++;
+      // A provisional cache row may have been handled before its canonical
+      // watch timed out. The replacement stream must be allowed to process the
+      // same status again (for example, retrying media for an active call).
+      _lastHandledStatus = null;
+      _call = _calls.watchCall(widget.callId);
+    });
+  }
+
   String _friendlyError(
     Object error, {
     required String english,
@@ -665,6 +678,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   @override
   Widget build(BuildContext context) {
     final content = StreamBuilder<DirectCall>(
+      key: ValueKey<int>(_callWatchGeneration),
       stream: _call,
       builder: (context, snapshot) {
         final call = snapshot.data;
@@ -699,7 +713,15 @@ class _DirectCallScreenState extends State<DirectCallScreen>
               ),
               child: SafeArea(
                 child: snapshot.hasError
-                    ? _CallFailure(onClose: _finish)
+                    ? _CallFailure(
+                        retryable:
+                            snapshot.error is DirectCallTimeoutException &&
+                            (snapshot.error! as DirectCallTimeoutException)
+                                    .operation ==
+                                'watchCall',
+                        onRetry: _retryCallWatch,
+                        onClose: _finish,
+                      )
                     : call == null
                     ? Center(
                         child: Column(
@@ -1857,8 +1879,14 @@ class _RoundCallAction extends StatelessWidget {
 }
 
 class _CallFailure extends StatelessWidget {
-  const _CallFailure({required this.onClose});
+  const _CallFailure({
+    required this.retryable,
+    required this.onRetry,
+    required this.onClose,
+  });
 
+  final bool retryable;
+  final VoidCallback onRetry;
   final VoidCallback onClose;
 
   @override
@@ -1877,10 +1905,15 @@ class _CallFailure extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              copy.text(
-                'This call is no longer available.',
-                'To połączenie nie jest już dostępne.',
-              ),
+              retryable
+                  ? copy.text(
+                      'The call is taking too long to load. Check your connection and try again.',
+                      'Wczytywanie połączenia trwa zbyt długo. Sprawdź internet i spróbuj ponownie.',
+                    )
+                  : copy.text(
+                      'This call is no longer available.',
+                      'To połączenie nie jest już dostępne.',
+                    ),
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: AppImmersiveColors.textPrimary,
@@ -1889,9 +1922,28 @@ class _CallFailure extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 18),
-            FilledButton(
-              onPressed: onClose,
-              child: Text(copy.text('Close', 'Zamknij')),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 12,
+              runSpacing: 10,
+              children: [
+                if (retryable)
+                  FilledButton.icon(
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: Text(copy.text('Retry', 'Ponów')),
+                  ),
+                if (retryable)
+                  OutlinedButton(
+                    onPressed: onClose,
+                    child: Text(copy.text('Close', 'Zamknij')),
+                  )
+                else
+                  FilledButton(
+                    onPressed: onClose,
+                    child: Text(copy.text('Close', 'Zamknij')),
+                  ),
+              ],
             ),
           ],
         ),

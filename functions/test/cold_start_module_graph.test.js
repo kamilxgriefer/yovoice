@@ -286,12 +286,14 @@ const EXPORT_NAMES = Object.freeze([
 // The complete warm set — every callable deployed with minInstances > 0 —
 // and nothing else. Each entry is one always-on Cloud Run instance billed
 // whether or not it serves a request (docs/DEPLOYMENT.md has the per-name
-// cost). Call setup: createLiveKitToken, startDirectCall,
-// createDirectCallToken. Send paths: sendDirectMessage, sendRoomMessage.
+// cost). Call setup: startDirectCall, acceptDirectCall,
+// createDirectCallToken and createLiveKitToken. Send paths: sendDirectMessage,
+// sendRoomMessage.
 // Chat open: openDirectConversation. Dormant-room join: startRoomVoice.
 // Unmute: setOwnRoomParticipantMute. Reel publish: reserveReelDraftV2,
 // finalizeReelDraftV2.
 const WARM_SET = Object.freeze([
+  ["acceptDirectCall", 1],
   ["createDirectCallToken", 1],
   ["createLiveKitToken", 1],
   ["finalizeReelDraftV2", 1],
