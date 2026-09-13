@@ -3,6 +3,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/achievements/data/achievement_catalog.dart';
 import 'package:yovoice/features/achievements/data/services/achievement_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -124,6 +125,23 @@ void main() {
     expect(
       () => achievements.incrementMetric('not-a-metric'),
       throwsArgumentError,
+    );
+  });
+
+  test('legacy room metrics keep their ids but expose Server copy', () {
+    final firstServer = AchievementCatalog.byId('rooms_1');
+
+    expect(firstServer, isNotNull);
+    expect(firstServer!.metric, 'rooms');
+    expect(firstServer.title, 'Server Opener');
+    expect(firstServer.description, 'Reach 1 created servers.');
+
+    final visibleCopy = AchievementCatalog.all.expand(
+      (achievement) => [achievement.title, achievement.description],
+    );
+    expect(
+      visibleCopy.where((text) => RegExp(r'\bRooms?\b').hasMatch(text)),
+      isEmpty,
     );
   });
 }
