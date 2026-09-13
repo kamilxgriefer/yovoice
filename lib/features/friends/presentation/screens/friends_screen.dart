@@ -103,6 +103,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
 
   final Set<String> _processingRequestIds = <String>{};
   late Stream<int> _requestCountStream;
+  int _requestCountGeneration = 0;
   bool _navigationInFlight = false;
 
   /// Friend whose conversation is being opened right now — drives the
@@ -150,6 +151,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
     // replacement when the user next interacts with the filters.
     if (_requestFanoutFailed) {
       _requestCountStream = _friendService.watchPendingFriendRequestCount();
+      _requestCountGeneration += 1;
       _requestFanoutFailed = false;
     }
     if (_filter == filter) {
@@ -547,6 +549,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final useCoordinatedScroll =
+        MediaQuery.sizeOf(context).width < 440 &&
+        MediaQuery.textScalerOf(context).scale(1) >= 1.5;
     return Scaffold(
       key: const ValueKey('friends-screen'),
       backgroundColor: palette.background,
@@ -572,41 +577,294 @@ class _FriendsScreenState extends State<FriendsScreen> {
           child: ResponsiveContentFrame(
             width: ResponsiveContentWidth.list,
             alignment: ResponsiveContentAlignment.topLeft,
-            child: Column(
-              children: [
-                _buildHeader(),
-                _buildSearch(),
-                _buildFilters(),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: _filter == _FriendsFilter.requests
-                      ? _buildRequests()
-                      : _buildFriends(),
-                ),
-              ],
-            ),
+            child: useCoordinatedScroll
+                ? _buildCoordinatedScroll()
+                : Column(
+                    children: [
+                      _buildHeader(),
+                      _buildFilters(),
+                      _buildSearch(),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: _filter == _FriendsFilter.requests
+                            ? _buildRequests()
+                            : _buildFriends(),
+                      ),
+                    ],
+                  ),
           ),
         ),
       ),
     );
   }
 
+  /// At large text sizes the header, controls and results share one viewport.
+  /// Keeping the data stream outside the [CustomScrollView] lets the result
+  /// section use a real [SliverList], so only visible friend/request cards are
+  /// laid out instead of eagerly measuring the entire collection with
+  /// `shrinkWrap`.
+  Widget _buildCoordinatedScroll() {
+    if (_filter == _FriendsFilter.requests) {
+      return StreamBuilder<List<FriendRequest>>(
+        key: const ValueKey('friends-coordinated-request-source'),
+        stream: _friendService.watchFriendRequests(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) _requestFanoutFailed = true;
+          return _coordinatedViewport(_requestSlivers(snapshot));
+        },
+      );
+    }
+
+    return StreamBuilder<List<FriendUser>>(
+      key: const ValueKey('friends-coordinated-friend-source'),
+      stream: _friendService.watchFriends(),
+      builder: (context, snapshot) =>
+          _coordinatedViewport(_friendSlivers(snapshot)),
+    );
+  }
+
+  Widget _coordinatedViewport(List<Widget> resultSlivers) {
+    return CustomScrollView(
+      key: const ValueKey('friends-coordinated-scroll'),
+      slivers: [
+        SliverToBoxAdapter(child: _buildHeader()),
+        SliverToBoxAdapter(child: _buildFilters()),
+        SliverToBoxAdapter(child: _buildSearch()),
+        const SliverToBoxAdapter(child: SizedBox(height: 8)),
+        ...resultSlivers,
+      ],
+    );
+  }
+
+  List<Widget> _friendSlivers(AsyncSnapshot<List<FriendUser>> snapshot) {
+    final copy = AppLocalizations.of(context);
+    if (snapshot.connectionState == ConnectionState.waiting &&
+        !snapshot.hasData) {
+      return [
+        SliverToBoxAdapter(
+          child: SizedBox(
+            height: 240,
+            child: Center(
+              child: CircularProgressIndicator(
+                color: context.appPalette.interactiveForeground,
+              ),
+            ),
+          ),
+        ),
+      ];
+    }
+
+    if (snapshot.hasError) {
+      return [
+        SliverToBoxAdapter(
+          child: _EmptyState(
+            scrollable: false,
+            icon: Icons.cloud_off_rounded,
+            title: copy.text(
+              'Could not load friends',
+              'Nie udało się wczytać znajomych',
+            ),
+            subtitle: copy.isPolish
+                ? 'Sprawdź połączenie i spróbuj ponownie.'
+                : friendlyErrorMessage(snapshot.error!),
+          ),
+        ),
+      ];
+    }
+
+    final allFriends = snapshot.data ?? const <FriendUser>[];
+    final showSuggestions = _filter == _FriendsFilter.all && _query.isEmpty;
+    final friendIds = allFriends.map((friend) => friend.id).toSet();
+    final filtered = allFriends
+        .where((friend) {
+          if (_filter == _FriendsFilter.online && !friend.isOnline) {
+            return false;
+          }
+          if (_query.isEmpty) return true;
+          return friend.displayName.toLowerCase().contains(_query) ||
+              friend.searchableUsername.contains(_query);
+        })
+        .toList(growable: false);
+
+    if (filtered.isEmpty) {
+      final isSearching = _query.isNotEmpty;
+      return [
+        SliverToBoxAdapter(
+          child: _EmptyState(
+            scrollable: false,
+            icon: isSearching
+                ? Icons.search_off_rounded
+                : _filter == _FriendsFilter.online
+                ? Icons.wifi_off_rounded
+                : Icons.people_outline_rounded,
+            title: isSearching
+                ? copy.text('No matching friends', 'Brak pasujących znajomych')
+                : _filter == _FriendsFilter.online
+                ? copy.text('Nobody is online', 'Nikt nie jest teraz online')
+                : copy.text('No friends yet', 'Nie masz jeszcze znajomych'),
+            subtitle: isSearching
+                ? copy.text(
+                    'Try another name or username.',
+                    'Wpisz inną nazwę lub pseudonim.',
+                  )
+                : _filter == _FriendsFilter.online
+                ? copy.text(
+                    'Online friends will appear here.',
+                    'Znajomi dostępni online pojawią się tutaj.',
+                  )
+                : copy.text(
+                    'Find someone and start building your circle.',
+                    'Znajdź kogoś i zacznij budować swoje grono.',
+                  ),
+            footer: showSuggestions ? _buildSuggestions(friendIds) : null,
+          ),
+        ),
+      ];
+    }
+
+    final onlineCount = allFriends.where((friend) => friend.isOnline).length;
+    final leadingCount = showSuggestions ? 3 : 2;
+    return [
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(14, 4, 14, 120),
+        sliver: SliverList(
+          delegate: SliverChildBuilderDelegate((context, index) {
+            if (index == 0) {
+              return _FriendsSummary(
+                totalCount: allFriends.length,
+                onlineCount: onlineCount,
+              );
+            }
+            if (index == 1) return const SizedBox(height: 10);
+            if (showSuggestions && index == 2) {
+              return _buildSuggestions(friendIds);
+            }
+
+            final friend = filtered[index - leadingCount];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _FriendCard(
+                friend: friend,
+                profileMediaService: _profileMediaService,
+                openingChat: _openingChatFriendId == friend.id,
+                onProfile: () => _openProfile(friend),
+                onMessage: () => _startChat(friend),
+                onRemove: () => _confirmRemoveFriend(friend),
+              ),
+            );
+          }, childCount: leadingCount + filtered.length),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _requestSlivers(AsyncSnapshot<List<FriendRequest>> snapshot) {
+    final copy = AppLocalizations.of(context);
+    if (snapshot.connectionState == ConnectionState.waiting &&
+        !snapshot.hasData) {
+      return [
+        SliverToBoxAdapter(
+          child: SizedBox(
+            height: 240,
+            child: Center(
+              child: CircularProgressIndicator(
+                color: context.appPalette.interactiveForeground,
+              ),
+            ),
+          ),
+        ),
+      ];
+    }
+
+    if (snapshot.hasError) {
+      return [
+        SliverToBoxAdapter(
+          child: _EmptyState(
+            scrollable: false,
+            icon: Icons.cloud_off_rounded,
+            title: copy.text(
+              'Could not load requests',
+              'Nie udało się wczytać zaproszeń',
+            ),
+            subtitle: copy.isPolish
+                ? 'Sprawdź połączenie i spróbuj ponownie.'
+                : friendlyErrorMessage(snapshot.error!),
+          ),
+        ),
+      ];
+    }
+
+    final requests = (snapshot.data ?? const <FriendRequest>[])
+        .where((request) {
+          if (_query.isEmpty) return true;
+          return request.senderName.toLowerCase().contains(_query);
+        })
+        .toList(growable: false);
+    if (requests.isEmpty) {
+      return [
+        SliverToBoxAdapter(
+          child: _EmptyState(
+            scrollable: false,
+            icon: _query.isEmpty
+                ? Icons.mark_email_read_outlined
+                : Icons.search_off_rounded,
+            title: _query.isEmpty
+                ? copy.text(
+                    'No pending requests',
+                    'Brak oczekujących zaproszeń',
+                  )
+                : copy.text(
+                    'No matching requests',
+                    'Brak pasujących zaproszeń',
+                  ),
+            subtitle: _query.isEmpty
+                ? copy.text(
+                    'New friend requests will appear here.',
+                    'Nowe zaproszenia pojawią się tutaj.',
+                  )
+                : copy.text('Try another name.', 'Wpisz inną nazwę.'),
+          ),
+        ),
+      ];
+    }
+
+    return [
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(14, 4, 14, 120),
+        sliver: SliverList(
+          delegate: SliverChildBuilderDelegate((context, index) {
+            if (index.isOdd) return const SizedBox(height: 9);
+            final request = requests[index ~/ 2];
+            return FriendRequestCard(
+              request: request,
+              profileMediaService: _profileMediaService,
+              processing: _processingRequestIds.contains(request.senderId),
+              onAccept: () => _acceptRequest(request),
+              onDecline: () => _declineRequest(request),
+            );
+          }, childCount: requests.length * 2 - 1),
+        ),
+      ),
+    ];
+  }
+
   Widget _buildHeader() {
     final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact =
-              constraints.maxWidth < 440 ||
-              MediaQuery.textScalerOf(context).scale(1) > 1.4;
+              constraints.maxWidth < 500 ||
+              MediaQuery.textScalerOf(context).scale(1) > 1.35;
           final leading = <Widget>[
             if (!widget.isRootTab) ...[
               YoIconButton(
                 icon: Icons.arrow_back_ios_new_rounded,
                 iconSize: 18,
-                size: 40,
+                size: 48,
                 backgroundColor: palette.surface,
                 borderColor: palette.border,
                 onPressed: () => Navigator.of(context).pop(),
@@ -629,68 +887,61 @@ class _FriendsScreenState extends State<FriendsScreen> {
               const SizedBox(height: 4),
               Text(
                 copy.text(
-                  'Your people, one tap away.',
-                  'Twoi znajomi zawsze pod ręką.',
+                  'Use Add friend to find someone new. The field below filters current friends.',
+                  'Przycisk Dodaj znajomego wyszukuje nowe osoby. Pole niżej filtruje obecnych znajomych.',
                 ),
-                style: TextStyle(color: palette.textSecondary, fontSize: 13),
+                style: TextStyle(
+                  color: palette.textSecondary,
+                  fontSize: 13,
+                  height: 1.35,
+                ),
               ),
             ],
           );
-          final actions = Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              StreamBuilder<int>(
-                stream: _friendService.watchPendingFriendRequestCount(),
-                builder: (context, snapshot) {
-                  final count = snapshot.data ?? 0;
-                  return _HeaderButton(
-                    tooltip: copy.text(
-                      'Friend requests',
-                      'Zaproszenia do znajomych',
-                    ),
-                    icon: Icons.notifications_none_rounded,
-                    badgeCount: count,
-                    onTap: () =>
-                        setState(() => _filter = _FriendsFilter.requests),
-                  );
-                },
+          final action = FilledButton.icon(
+            key: const ValueKey('friends-find-new-person'),
+            onPressed: _openAddFriend,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(0, 48),
+              backgroundColor: colors.primary,
+              foregroundColor: colors.onPrimary,
+              padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(15),
               ),
-              const SizedBox(width: 9),
-              _HeaderButton(
-                tooltip: copy.text('Blocked users', 'Zablokowani użytkownicy'),
-                icon: Icons.block_rounded,
-                onTap: _openBlockedUsers,
-              ),
-              const SizedBox(width: 9),
-              _HeaderButton(
-                tooltip: copy.text('Add friend', 'Dodaj znajomego'),
-                icon: Icons.person_add_alt_1_rounded,
-                highlighted: true,
-                onTap: _openAddFriend,
-              ),
-            ],
+            ),
+            icon: const Icon(Icons.person_add_alt_1_rounded, size: 20),
+            label: Text(
+              copy.text('Add friend', 'Dodaj znajomego'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
           );
 
           if (compact) {
             return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     ...leading,
                     Expanded(child: title),
                   ],
                 ),
                 const SizedBox(height: 12),
-                Align(alignment: Alignment.centerRight, child: actions),
+                action,
               ],
             );
           }
 
           return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               ...leading,
               Expanded(child: title),
-              actions,
+              const SizedBox(width: 16),
+              action,
             ],
           );
         },
@@ -701,15 +952,25 @@ class _FriendsScreenState extends State<FriendsScreen> {
   Widget _buildSearch() {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
+    final requests = _filter == _FriendsFilter.requests;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18),
+      padding: const EdgeInsets.fromLTRB(18, 13, 18, 0),
       child: TextField(
+        key: ValueKey(
+          requests ? 'friend-request-search' : 'current-friend-search',
+        ),
         controller: _searchController,
         style: TextStyle(color: palette.textPrimary),
         decoration: InputDecoration(
-          hintText: _filter == _FriendsFilter.requests
-              ? copy.text('Search requests...', 'Szukaj zaproszeń...')
-              : copy.text('Search friends...', 'Szukaj znajomych...'),
+          hintText: requests
+              ? copy.text(
+                  'Search friend requests...',
+                  'Szukaj w zaproszeniach...',
+                )
+              : copy.text(
+                  'Search current friends by name or @username...',
+                  'Szukaj obecnych znajomych po nazwie lub @username...',
+                ),
           hintStyle: TextStyle(color: palette.textTertiary),
           prefixIcon: Icon(Icons.search_rounded, color: palette.textSecondary),
           suffixIcon: ValueListenableBuilder<TextEditingValue>(
@@ -742,8 +1003,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
   Widget _buildFilters() {
     final copy = AppLocalizations.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 13, 18, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 18),
       child: StreamBuilder<int>(
+        key: ValueKey('friend-request-count-$_requestCountGeneration'),
         stream: _requestCountStream,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
@@ -773,8 +1035,27 @@ class _FriendsScreenState extends State<FriendsScreen> {
                           'Zaproszenia $requestCount',
                         )
                       : copy.text('Requests', 'Zaproszenia'),
+                  semanticLabel: requestCount > 0
+                      ? copy.text(
+                          'Friend requests, $requestCount pending',
+                          'Zaproszenia do znajomych, oczekujących: $requestCount',
+                        )
+                      : copy.text(
+                          'Friend requests',
+                          'Zaproszenia do znajomych',
+                        ),
                   selected: _filter == _FriendsFilter.requests,
                   onTap: () => _selectFilter(_FriendsFilter.requests),
+                ),
+                const SizedBox(width: 8),
+                _FilterChip(
+                  label: copy.text('Blocked', 'Zablokowani'),
+                  semanticLabel: copy.text(
+                    'Blocked users',
+                    'Zablokowani użytkownicy',
+                  ),
+                  selected: false,
+                  onTap: _openBlockedUsers,
                 ),
               ],
             ),
@@ -794,15 +1075,16 @@ class _FriendsScreenState extends State<FriendsScreen> {
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
-          return Center(
+          final loading = Center(
             child: CircularProgressIndicator(
               color: context.appPalette.interactiveForeground,
             ),
           );
+          return loading;
         }
 
         if (snapshot.hasError) {
-          return _EmptyState(
+          final error = _EmptyState(
             icon: Icons.cloud_off_rounded,
             title: copy.text(
               'Could not load friends',
@@ -812,6 +1094,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 ? 'Sprawdź połączenie i spróbuj ponownie.'
                 : friendlyErrorMessage(snapshot.error!),
           );
+          return error;
         }
 
         final allFriends = snapshot.data ?? const <FriendUser>[];
@@ -833,7 +1116,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
 
         if (filtered.isEmpty) {
           final isSearching = _query.isNotEmpty;
-          return _EmptyState(
+          final empty = _EmptyState(
             icon: isSearching
                 ? Icons.search_off_rounded
                 : _filter == _FriendsFilter.online
@@ -858,17 +1141,12 @@ class _FriendsScreenState extends State<FriendsScreen> {
                     'Find someone and start building your circle.',
                     'Znajdź kogoś i zacznij budować swoje grono.',
                   ),
-            actionLabel: _filter == _FriendsFilter.all && !isSearching
-                ? copy.text('Add friend', 'Dodaj znajomego')
-                : null,
-            onAction: _filter == _FriendsFilter.all && !isSearching
-                ? _openAddFriend
-                : null,
             // An account with no friends yet is exactly who the rail helps,
             // so it sits under the empty message instead of being reserved
             // for people who already have a list.
             footer: showSuggestions ? _buildSuggestions(friendIds) : null,
           );
+          return empty;
         }
 
         final onlineCount = allFriends
@@ -876,6 +1154,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
             .length;
 
         return ListView(
+          key: const ValueKey('friends-results-scroll'),
           padding: const EdgeInsets.fromLTRB(14, 4, 14, 120),
           children: [
             _FriendsSummary(
@@ -913,16 +1192,17 @@ class _FriendsScreenState extends State<FriendsScreen> {
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
-          return Center(
+          final loading = Center(
             child: CircularProgressIndicator(
               color: context.appPalette.interactiveForeground,
             ),
           );
+          return loading;
         }
 
         if (snapshot.hasError) {
           _requestFanoutFailed = true;
-          return _EmptyState(
+          final error = _EmptyState(
             icon: Icons.cloud_off_rounded,
             title: copy.text(
               'Could not load requests',
@@ -932,6 +1212,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 ? 'Sprawdź połączenie i spróbuj ponownie.'
                 : friendlyErrorMessage(snapshot.error!),
           );
+          return error;
         }
 
         final requests = (snapshot.data ?? const <FriendRequest>[])
@@ -942,7 +1223,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
             .toList(growable: false);
 
         if (requests.isEmpty) {
-          return _EmptyState(
+          final empty = _EmptyState(
             icon: _query.isEmpty
                 ? Icons.mark_email_read_outlined
                 : Icons.search_off_rounded,
@@ -962,22 +1243,22 @@ class _FriendsScreenState extends State<FriendsScreen> {
                   )
                 : copy.text('Try another name.', 'Wpisz inną nazwę.'),
           );
+          return empty;
         }
 
+        Widget requestCard(FriendRequest request) => FriendRequestCard(
+          request: request,
+          profileMediaService: _profileMediaService,
+          processing: _processingRequestIds.contains(request.senderId),
+          onAccept: () => _acceptRequest(request),
+          onDecline: () => _declineRequest(request),
+        );
         return ListView.separated(
+          key: const ValueKey('friend-requests-scroll'),
           padding: const EdgeInsets.fromLTRB(14, 4, 14, 120),
           itemCount: requests.length,
           separatorBuilder: (_, __) => const SizedBox(height: 9),
-          itemBuilder: (context, index) {
-            final request = requests[index];
-            return FriendRequestCard(
-              request: request,
-              profileMediaService: _profileMediaService,
-              processing: _processingRequestIds.contains(request.senderId),
-              onAccept: () => _acceptRequest(request),
-              onDecline: () => _declineRequest(request),
-            );
-          },
+          itemBuilder: (context, index) => requestCard(requests[index]),
         );
       },
     );
@@ -1382,11 +1663,12 @@ class FriendRequestCard extends StatelessWidget {
                   style: TextStyle(color: palette.textSecondary, fontSize: 12),
                 ),
                 const SizedBox(height: 11),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final textScale = MediaQuery.textScalerOf(context).scale(1);
+                Builder(
+                  builder: (context) {
+                    final media = MediaQuery.of(context);
                     final stackActions =
-                        textScale > 1.4 || constraints.maxWidth < 250;
+                        media.textScaler.scale(1) > 1.4 ||
+                        media.size.width < 374;
                     final accept = FilledButton.icon(
                       key: const ValueKey('friend-request-accept'),
                       onPressed: processing ? null : onAccept,
@@ -1453,11 +1735,13 @@ class FriendRequestCard extends StatelessWidget {
 class _FilterChip extends StatelessWidget {
   const _FilterChip({
     required this.label,
+    this.semanticLabel,
     required this.selected,
     required this.onTap,
   });
 
   final String label;
+  final String? semanticLabel;
   final bool selected;
   final VoidCallback onTap;
 
@@ -1467,11 +1751,12 @@ class _FilterChip extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     return AccessibleTapRegion(
       selected: selected,
-      semanticLabel: label,
+      semanticLabel: semanticLabel ?? label,
       onTap: onTap,
       borderRadius: 99,
+      minimumSize: const Size(48, 48),
       child: Container(
-        constraints: const BoxConstraints(minHeight: 44),
+        constraints: const BoxConstraints(minHeight: 48),
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
         decoration: BoxDecoration(
@@ -1492,108 +1777,19 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-class _HeaderButton extends StatelessWidget {
-  const _HeaderButton({
-    required this.tooltip,
-    required this.icon,
-    required this.onTap,
-    this.highlighted = false,
-    this.badgeCount = 0,
-  });
-
-  final String tooltip;
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool highlighted;
-  final int badgeCount;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    final copy = AppLocalizations.of(context);
-    final semanticLabel = badgeCount > 0
-        ? copy.text(
-            '$tooltip, $badgeCount pending',
-            '$tooltip, oczekujących: $badgeCount',
-          )
-        : tooltip;
-    return Tooltip(
-      message: tooltip,
-      excludeFromSemantics: true,
-      child: AccessibleTapRegion(
-        semanticLabel: semanticLabel,
-        onTap: onTap,
-        borderRadius: 15,
-        child: Container(
-          width: 46,
-          height: 46,
-          decoration: BoxDecoration(
-            color: highlighted ? colors.primary : palette.surface,
-            borderRadius: BorderRadius.circular(15),
-            border: highlighted ? null : Border.all(color: palette.border),
-          ),
-          child: Stack(
-            clipBehavior: Clip.none,
-            alignment: Alignment.center,
-            children: [
-              Icon(
-                icon,
-                color: highlighted ? colors.onPrimary : palette.textPrimary,
-                size: 21,
-              ),
-              if (badgeCount > 0)
-                Positioned(
-                  top: -5,
-                  right: -5,
-                  child: Container(
-                    constraints: const BoxConstraints(
-                      minWidth: 20,
-                      minHeight: 20,
-                    ),
-                    alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(horizontal: 5),
-                    decoration: BoxDecoration(
-                      color: palette.dangerSurface,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: palette.dangerForeground,
-                        width: 1,
-                      ),
-                    ),
-                    child: Text(
-                      badgeCount > 99 ? '99+' : '$badgeCount',
-                      style: TextStyle(
-                        color: palette.dangerForeground,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _EmptyState extends StatelessWidget {
   const _EmptyState({
     required this.icon,
     required this.title,
     required this.subtitle,
-    this.actionLabel,
-    this.onAction,
     this.footer,
+    this.scrollable = true,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
-  final String? actionLabel;
-  final VoidCallback? onAction;
+  final bool scrollable;
 
   /// Optional full-width content under the message. It owns its own gutter
   /// so a horizontally scrolling rail is not inset by the 28 px the centred
@@ -1604,81 +1800,61 @@ class _EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(0, 24, 0, 130),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 28),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      color: colors.primaryContainer,
-                      borderRadius: BorderRadius.circular(23),
-                    ),
-                    child: Icon(
-                      icon,
-                      color: colors.onPrimaryContainer,
-                      size: 35,
-                    ),
+    final content = Padding(
+      padding: const EdgeInsets.fromLTRB(0, 24, 0, 130),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    color: colors.primaryContainer,
+                    borderRadius: BorderRadius.circular(23),
                   ),
-                  const SizedBox(height: 18),
-                  Text(
-                    title,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
+                  child: Icon(icon, color: colors.onPrimaryContainer, size: 35),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    subtitle,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontSize: 13,
-                      height: 1.45,
-                    ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  subtitle,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 13,
+                    height: 1.45,
                   ),
-                  if (actionLabel != null && onAction != null) ...[
-                    const SizedBox(height: 18),
-                    FilledButton.icon(
-                      onPressed: onAction,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: colors.primary,
-                        foregroundColor: colors.onPrimary,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 13,
-                        ),
-                      ),
-                      icon: const Icon(Icons.person_add_alt_1_rounded),
-                      label: Text(actionLabel!),
-                    ),
-                  ],
-                ],
-              ),
+                ),
+              ],
             ),
-            if (footer != null) ...[
-              const SizedBox(height: 30),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: footer!,
-              ),
-            ],
+          ),
+          if (footer != null) ...[
+            const SizedBox(height: 30),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: footer!,
+            ),
           ],
-        ),
+        ],
       ),
     );
+    if (!scrollable) return content;
+    return Center(child: SingleChildScrollView(child: content));
   }
 }
 

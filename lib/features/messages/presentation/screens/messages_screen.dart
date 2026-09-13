@@ -62,6 +62,7 @@ class MessagesScreen extends StatefulWidget {
     this.messageService,
     this.friendService,
     this.auth,
+    this.onFindFriends,
     super.key,
   });
 
@@ -72,6 +73,11 @@ class MessagesScreen extends StatefulWidget {
   final MessageService? messageService;
   final FriendService? friendService;
   final FirebaseAuth? auth;
+
+  /// Opens the shell's retained Friends destination when Chats is one of the
+  /// root content slots. Keeping this as a callback lets the app shell switch
+  /// its active index instead of pushing a second Friends route over the Hub.
+  final VoidCallback? onFindFriends;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -471,7 +477,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
                         child: _FriendsRow(
                           friends: friends,
                           onFriendSelected: _startChat,
-                          onAdd: _showNewMessageSheet,
+                          onFindFriends: widget.onFindFriends,
+                          onNewMessage: _showNewMessageSheet,
                         ),
                       ),
                     ),
@@ -781,12 +788,14 @@ class _FriendsRow extends StatelessWidget {
   const _FriendsRow({
     required this.friends,
     required this.onFriendSelected,
-    required this.onAdd,
+    required this.onFindFriends,
+    required this.onNewMessage,
   });
 
   final List<FriendUser> friends;
   final ValueChanged<FriendUser> onFriendSelected;
-  final VoidCallback onAdd;
+  final VoidCallback? onFindFriends;
+  final VoidCallback onNewMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -801,10 +810,20 @@ class _FriendsRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 18),
         children: [
           _FriendStory(
-            label: copy.text('New', 'Nowa'),
+            key: const ValueKey('messages-add-friend'),
+            label: copy.text('Add friend', 'Dodaj znajomego'),
+            semanticLabel: copy.text('Add friend', 'Dodaj znajomego'),
+            icon: Icons.person_add_alt_1_rounded,
+            onTap: onFindFriends,
+            width: 108,
+          ),
+          _FriendStory(
+            key: const ValueKey('messages-new-message'),
+            label: copy.text('New message', 'Nowa wiadomość'),
             semanticLabel: copy.text('New message', 'Nowa wiadomość'),
-            icon: Icons.add_rounded,
-            onTap: onAdd,
+            icon: Icons.edit_square,
+            onTap: onNewMessage,
+            width: 108,
           ),
           ...friends
               .take(12)
@@ -830,13 +849,16 @@ class _FriendStory extends StatelessWidget {
     required this.onTap,
     this.friend,
     this.icon,
+    this.width = 76,
+    super.key,
   });
 
   final String label;
   final String semanticLabel;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final FriendUser? friend;
   final IconData? icon;
+  final double width;
 
   @override
   Widget build(BuildContext context) {
@@ -847,10 +869,12 @@ class _FriendStory extends StatelessWidget {
     return AccessibleTapRegion(
       onTap: onTap,
       semanticLabel: semanticLabel,
+      tooltip: semanticLabel,
       borderRadius: 18,
+      minimumSize: const Size(48, 48),
       child: ExcludeSemantics(
         child: SizedBox(
-          width: 76,
+          width: width,
           child: Column(
             children: [
               Stack(

@@ -193,6 +193,11 @@ class MainShell extends StatefulWidget {
 
   static const double desktopBreakpoint = 1100;
 
+  /// Stable retained content slot for Friends. Chats routes here through the
+  /// shell so the existing Friends screen and its state are reused.
+  @visibleForTesting
+  static const int friendsSlot = 2;
+
   /// Stable content identities are independent of the mobile dock's visual
   /// order: Home, Servers (slot 13), Chats, Moments. Friends (2) and Discover
   /// (3) remain retained hidden slots reached from Home and More;
@@ -347,11 +352,7 @@ class _MainShellState extends State<MainShell>
   // Keep stable content identities when the mobile visual order changes.
   // Friends remains retained at slot 2. Legacy slot identities stay allocated
   // for compatibility; all space navigation resolves to Servers at slot 13.
-  static const List<Widget> _screens = [
-    SizedBox.shrink(),
-    MessagesScreen(),
-    FriendsScreen(isRootTab: true),
-  ];
+  late final List<Widget> _screens;
 
   /// Moments is now a PRIMARY destination on both form factors, but it
   /// keeps the desktop slot it always had. Promoting it by inserting a
@@ -589,6 +590,14 @@ class _MainShellState extends State<MainShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    _screens = <Widget>[
+      const SizedBox.shrink(),
+      MessagesScreen(
+        onFindFriends: () => _onDestinationSelected(MainShell.friendsSlot),
+      ),
+      const FriendsScreen(isRootTab: true),
+    ];
 
     final currentUser = FirebaseAuth.instance.currentUser;
     _onboardingProgress =

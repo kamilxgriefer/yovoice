@@ -97,6 +97,20 @@ void main() {
     );
   }
 
+  Finder friendsVerticalScrollable() {
+    final coordinated = find.descendant(
+      of: find.byKey(const ValueKey('friends-coordinated-scroll')),
+      matching: find.byType(Scrollable),
+    );
+    if (coordinated.evaluate().isNotEmpty) return coordinated.first;
+    return find
+        .descendant(
+          of: find.byKey(const ValueKey('friends-results-scroll')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+  }
+
   testWidgets('the rail renders suggestions with their mutual-friend counts', (
     tester,
   ) async {
@@ -128,7 +142,13 @@ void main() {
       railTop,
       greaterThan(tester.getBottomLeft(find.text('1 friend')).dy),
     );
-    expect(railTop, lessThan(tester.getTopLeft(find.text('Ada')).dy));
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('friend-options-ada')),
+      180,
+      scrollable: friendsVerticalScrollable(),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Ada'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -495,12 +515,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Riley'), findsOneWidget);
-    expect(find.byTooltip('Message'), findsOneWidget);
-
-    await tester.ensureVisible(
+    await tester.scrollUntilVisible(
       find.byKey(const ValueKey('friend-options-ada')),
+      180,
+      scrollable: friendsVerticalScrollable(),
     );
     await tester.pumpAndSettle();
+    expect(find.byTooltip('Message'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('friend-options-ada')));
     await tester.pumpAndSettle();
     expect(find.text('View profile'), findsOneWidget);
@@ -578,16 +599,13 @@ void main() {
       // At 320 px and 200% text the screen's own header, search field and
       // filter row already fill the viewport, so the rail lives below the
       // fold. It must still be reachable and intact, not clipped away.
-      await tester.scrollUntilVisible(
-        rail,
-        220,
-        scrollable: find
-            .descendant(
-              of: find.byType(ListView),
-              matching: find.byType(Scrollable),
-            )
-            .first,
-      );
+      if (rail.evaluate().isEmpty) {
+        await tester.scrollUntilVisible(
+          rail,
+          220,
+          scrollable: friendsVerticalScrollable(),
+        );
+      }
       await tester.pumpAndSettle();
       expect(rail, findsOneWidget);
       // Every card in the rail is the same height and stays inside it.

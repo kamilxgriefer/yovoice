@@ -167,6 +167,23 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    final declineAny = find.byKey(
+      const ValueKey('friend-request-decline'),
+      skipOffstage: false,
+    );
+    final coordinatedScroll = find
+        .descendant(
+          of: find.byKey(const ValueKey('friends-coordinated-scroll')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(
+      declineAny,
+      180,
+      scrollable: coordinatedScroll,
+    );
+    await tester.pumpAndSettle();
+
     final accept = find.byKey(const ValueKey('friend-request-accept'));
     final decline = find.byKey(const ValueKey('friend-request-decline'));
     expect(

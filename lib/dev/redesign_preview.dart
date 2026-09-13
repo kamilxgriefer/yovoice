@@ -53,6 +53,8 @@ import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
+import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
@@ -61,6 +63,7 @@ import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.da
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
@@ -166,6 +169,7 @@ class _Config {
 /// The preview keeps the dock's historical numeric slot while rendering the
 /// current public destination: Home, Servers, Chats and YO Moments.
 const _chatsSlot = 1;
+const _friendsSlot = 2;
 const _serversSlot = 3;
 const _momentsSlot = 5;
 
@@ -302,6 +306,16 @@ class _Friends extends FriendService {
   final _HomeFixture fixture;
   @override
   Stream<List<FriendUser>> watchFriends() => fixture.friends.stream;
+}
+
+class _SocialGraph extends SocialGraphService {
+  @override
+  Future<List<SuggestedFriend>> getFriendSuggestions({int limit = 10}) async =>
+      const <SuggestedFriend>[];
+
+  @override
+  Future<MutualFriendsSummary> getMutualFriends(String targetUserId) async =>
+      MutualFriendsSummary.empty;
 }
 
 class _Following extends FollowService {
@@ -1630,7 +1644,8 @@ class _ShellState extends State<_Shell> {
     0 => 0,
     _serversSlot => 1,
     _chatsSlot => 2,
-    _ => 3,
+    _friendsSlot => 3,
+    _ => 4,
   };
 
   Widget _content({required bool desktop}) => FutureBuilder<void>(
@@ -1649,7 +1664,21 @@ class _ShellState extends State<_Shell> {
             isRootTab: true,
             onCreated: (result) => _report('server-created:${result.serverId}'),
           ),
-          const _OutOfScope('Chats'),
+          MessagesScreen(
+            messageService: f.home.messageService,
+            friendService: f.home.friendService,
+            auth: f.home.auth,
+            onFindFriends: () => _select(_friendsSlot),
+          ),
+          FriendsScreen(
+            isRootTab: true,
+            friendService: f.home.friendService,
+            messageService: f.home.messageService,
+            socialGraphService: _SocialGraph(),
+            profileMediaService: f.home.profileMediaService,
+            firestore: f.home.db,
+            auth: f.home.auth,
+          ),
           MomentsScreen(
             key: ValueKey(
               'redesign-moments-${_reelsRequest.value ? 'reels' : 'voice'}',
@@ -1698,6 +1727,7 @@ class _ShellState extends State<_Shell> {
                 _momentsSlot => DesktopNavItem.moments,
                 _chatsSlot => DesktopNavItem.chats,
                 _serversSlot => DesktopNavItem.servers,
+                _friendsSlot => DesktopNavItem.more,
                 _ => null,
               },
               unreadConversationCount: 2,
@@ -1707,6 +1737,7 @@ class _ShellState extends State<_Shell> {
                 DesktopNavItem.moments => _select(_momentsSlot),
                 DesktopNavItem.chats => _select(_chatsSlot),
                 DesktopNavItem.servers => _select(_serversSlot),
+                DesktopNavItem.friends => _select(_friendsSlot),
                 DesktopNavItem.more => unawaited(_openSettings()),
                 _ => _report('rail:${item.name}'),
               },
@@ -1747,26 +1778,6 @@ class _ShellState extends State<_Shell> {
             moreSelected: _sheetOpen,
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _OutOfScope extends StatelessWidget {
-  const _OutOfScope(this.label);
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(
-          '$label is outside this local preview.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: palette.textSecondary),
-        ),
       ),
     );
   }
