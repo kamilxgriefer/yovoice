@@ -23,7 +23,7 @@ extension PremiumFeatureAccess on PremiumFeature {
   String get label => switch (this) {
     PremiumFeature.creatorAccount => 'Creator',
     PremiumFeature.creatorStudio => 'Creator Studio',
-    PremiumFeature.clubs => 'Clubs',
+    PremiumFeature.clubs => 'Server tools',
   };
 
   String get lockedDescription => switch (this) {
@@ -31,8 +31,7 @@ extension PremiumFeatureAccess on PremiumFeature {
       'A Premium identity is required before this profile can become a Creator.',
     PremiumFeature.creatorStudio =>
       'Activate Premium to use your creator dashboard and publishing tools.',
-    PremiumFeature.clubs =>
-      'Activate Premium to open the Clubs hub and build communities.',
+    PremiumFeature.clubs => 'Open Servers to manage your spaces and channels.',
   };
 }
 

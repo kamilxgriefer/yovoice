@@ -34,6 +34,7 @@ class ServerPanel extends StatefulWidget {
     this.role,
     this.onInvite,
     this.onAddChannel,
+    this.onManage,
     this.onBack,
     this.connectedChannelId,
     this.onHome,
@@ -50,6 +51,10 @@ class ServerPanel extends StatefulWidget {
   /// Null disables `Zaproś` (held server, or a role that may not invite).
   final VoidCallback? onInvite;
   final VoidCallback? onAddChannel;
+
+  /// Opens server, channel and member settings. Null hides the control for a
+  /// read-only integration that does not provide the management contract.
+  final VoidCallback? onManage;
 
   /// Present when the panel is hosted inline over the directory, so the
   /// person has a way back that the shell's rail does not provide.
@@ -196,7 +201,7 @@ class _ServerPanelState extends State<ServerPanel> {
             ),
             const SizedBox(height: 12),
           ],
-          _Cover(server: server, colors: colors),
+          _Cover(server: server, colors: colors, onManage: widget.onManage),
           const SizedBox(height: 12),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -449,9 +454,10 @@ class _HomeTile extends StatelessWidget {
 /// upload reservation exists, so this is the identity tile the directory
 /// already uses — never a placeholder photograph.
 class _Cover extends StatelessWidget {
-  const _Cover({required this.server, required this.colors});
+  const _Cover({required this.server, required this.colors, this.onManage});
   final Server server;
   final ServerIdentityVisuals colors;
+  final VoidCallback? onManage;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -497,6 +503,24 @@ class _Cover extends StatelessWidget {
             ),
           ),
         ),
+        if (onManage != null)
+          PositionedDirectional(
+            top: 6,
+            end: 6,
+            child: Material(
+              color: Colors.transparent,
+              child: IconButton.filledTonal(
+                key: const ValueKey('server-manage-action'),
+                onPressed: onManage,
+                tooltip: AppLocalizations.of(context).serverManage,
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(48, 48),
+                  foregroundColor: colors.selectedForeground,
+                ),
+                icon: const Icon(Icons.more_horiz_rounded),
+              ),
+            ),
+          ),
       ],
     ),
   );

@@ -609,8 +609,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       'Przejdź na Premium',
                     ),
                     subtitle: copy.text(
-                      'Creator profile, Club creation and premium identity',
-                      'Profil twórcy, tworzenie Klubów i wyjątkowy wygląd profilu',
+                      'Creator tools, verified identity and Premium presence',
+                      'Narzędzia twórcy, zweryfikowana tożsamość i obecność Premium',
                     ),
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
@@ -819,8 +819,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       'Adres e-mail jest zweryfikowany',
                     )
                   : copy.text(
-                      'Verify your email to unlock posting and rooms',
-                      'Zweryfikuj adres e-mail, aby publikować i tworzyć pokoje',
+                      'Verify your email to unlock posting and server creation',
+                      'Zweryfikuj adres e-mail, aby publikować i tworzyć serwery',
                     ),
               trailing: emailVerified
                   ? Icon(Icons.check_circle_rounded, color: success)
@@ -891,8 +891,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: Icons.graphic_eq_rounded,
               title: copy.text('Sound effects', 'Dźwięki aplikacji'),
               subtitle: copy.text(
-                'Room, microphone and in-app activity cues',
-                'Sygnały dźwiękowe pokoi, mikrofonu i aktywności w aplikacji',
+                'Voice channel, microphone and in-app activity cues',
+                'Sygnały kanałów głosowych, mikrofonu i aktywności w aplikacji',
               ),
               trailing: Switch.adaptive(
                 value: AppPreferencesScope.of(

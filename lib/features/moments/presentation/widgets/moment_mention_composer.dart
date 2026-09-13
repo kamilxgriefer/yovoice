@@ -247,6 +247,11 @@ class _MentionComposerFieldState extends State<MentionComposerField> {
             style: TextStyle(color: palette.textPrimary),
             decoration: InputDecoration(
               hintText: widget.hintText,
+              // One line, always. A wrapping placeholder grew the pinned
+              // composer to ~180 px of a 568 viewport and pushed the whole
+              // transport below the fold at rest; the typed text still
+              // wraps to `maxLines`.
+              hintMaxLines: 1,
               hintStyle: TextStyle(color: palette.textTertiary),
               filled: true,
               fillColor: palette.surfaceSunken,

@@ -71,6 +71,13 @@ class _VoiceReplyMiniPlayerState extends State<VoiceReplyMiniPlayer> {
   bool _busy = false;
   bool _loaded = false;
 
+  /// One intended playback of this reply. The comment-scoped grant is a
+  /// network round trip; anything that takes the floor during it — the main
+  /// recording, another reply, disposal — bumps the token, so the answer
+  /// that lands afterwards can tell it is stale. `mounted` cannot see the
+  /// floor moving.
+  int _playToken = 0;
+
   @override
   void initState() {
     super.initState();
@@ -88,6 +95,7 @@ class _VoiceReplyMiniPlayerState extends State<VoiceReplyMiniPlayer> {
 
   @override
   void dispose() {
+    _playToken += 1;
     widget.arbiter?.removeListener(_handleArbiter);
     widget.arbiter?.replyStopped(widget.commentId);
     for (final subscription in _subscriptions) {
@@ -101,10 +109,34 @@ class _VoiceReplyMiniPlayerState extends State<VoiceReplyMiniPlayer> {
   /// Another reply — or the main recording — took the floor.
   void _handleArbiter() {
     final active = widget.arbiter?.activeReplyId;
-    if (active == widget.commentId || !_playing) return;
+    if (active == widget.commentId) return;
+    // Unconditional, before the `_playing` guard: a grant in flight has to
+    // be invalidated even in the frame between the tap and the first sound,
+    // which is exactly the window in which the floor can move.
+    _playToken += 1;
+    if (!_playing) return;
     final player = _player;
     if (player != null) unawaited(player.pause().catchError((Object _) {}));
     if (mounted) setState(() => _playing = false);
+  }
+
+  /// Is the playback started under [token] still the one the thread wants
+  /// to hear? Checked after the grant resolves and again after `play()`.
+  bool _stillHoldsFloor(int token) {
+    if (!mounted || token != _playToken) return false;
+    final arbiter = widget.arbiter;
+    return arbiter == null || arbiter.activeReplyId == widget.commentId;
+  }
+
+  /// Stops a reply whose grant landed after it had already lost the floor,
+  /// and leaves the row drawing exactly what is true: not playing.
+  void _abandonStalePlayback(AudioPlayer player, {required bool sounding}) {
+    if (sounding) unawaited(player.stop().catchError((Object _) {}));
+    if (!mounted) return;
+    setState(() {
+      _playing = false;
+      _busy = false;
+    });
   }
 
   AudioPlayer _ensurePlayer() {
@@ -151,6 +183,7 @@ class _VoiceReplyMiniPlayerState extends State<VoiceReplyMiniPlayer> {
     // stops BEFORE this one is granted, so two sources never overlap even
     // for the length of a round trip.
     widget.arbiter?.replyStarted(widget.commentId);
+    final token = ++_playToken;
     setState(() {
       _playing = true;
       _busy = true;
@@ -158,10 +191,24 @@ class _VoiceReplyMiniPlayerState extends State<VoiceReplyMiniPlayer> {
     try {
       if (_loaded) {
         await player.resume();
+        if (!_stillHoldsFloor(token)) {
+          _abandonStalePlayback(player, sounding: true);
+          return;
+        }
       } else {
         final uri = await widget.resolveMediaUri();
-        if (!mounted) return;
+        if (!_stillHoldsFloor(token)) {
+          _abandonStalePlayback(player, sounding: false);
+          return;
+        }
         await player.play(UrlSource(uri.toString()));
+        if (!_stillHoldsFloor(token)) {
+          // The floor moved while `play()` itself was in flight: stop what
+          // was just started rather than sounding over the recording this
+          // reply answers.
+          _abandonStalePlayback(player, sounding: true);
+          return;
+        }
         _loaded = true;
       }
       if (mounted) setState(() => _busy = false);
@@ -210,9 +257,13 @@ class _VoiceReplyMiniPlayerState extends State<VoiceReplyMiniPlayer> {
           );
 
     return Semantics(
+      // `container: true` keeps the row its own node below a 1200 slot, where
+      // the surrounding thread fragment would otherwise absorb it.
+      container: true,
       button: true,
       toggled: _playing,
       label: label,
+      onTap: () => unawaited(_toggle()),
       excludeSemantics: true,
       child: Material(
         color: palette.surfaceMuted,

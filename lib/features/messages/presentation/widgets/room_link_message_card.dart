@@ -4,14 +4,14 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
 
 /// Resolves the room behind a link. Null means "show nothing": the room is
 /// gone, closed, or this account may not read it.
 typedef RoomLinkResolver = Future<VoiceRoom?> Function(String roomId);
 
-/// Opens a resolved room. The production default pushes [RoomEntryScreen],
-/// the one consent boundary every room route goes through.
+/// Opens a resolved legacy voice link through the current Servers facade.
 typedef RoomLinkOpener = void Function(BuildContext context, VoiceRoom room);
 
 /// Reads are memoised for a short while so a chat list scrolling the same
@@ -45,13 +45,15 @@ Future<VoiceRoom?> defaultRoomLinkResolver(String roomId) {
   return future;
 }
 
-/// Mirrors `NotificationRouter._openRoom`: the entry screen is the single
-/// place that asks for consent before writing a roster row or touching
-/// LiveKit, for links exactly as for pushes.
 void defaultRoomLinkOpener(BuildContext context, VoiceRoom room) {
-  Navigator.of(
-    context,
-  ).push(MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)));
+  final serverId = room.clubId?.trim();
+  Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      builder: (_) => serverId == null || serverId.isEmpty
+          ? const ServersScreen()
+          : ServerWorkspaceScreen(serverId: serverId),
+    ),
+  );
 }
 
 /// Clears the memoised reads and, optionally, installs the [RoomService]
@@ -63,9 +65,9 @@ void resetRoomLinkCache({RoomService? service}) {
   _roomLinkService = service;
 }
 
-/// A compact room card rendered under a text message that carries a room
-/// link: type icon, room name, host, and a Join button. Renders nothing at
-/// all when the room cannot be resolved.
+/// A compact server-conversation card rendered under a legacy room link:
+/// type icon, conversation name, host and the current destination action.
+/// Renders nothing at all when the conversation cannot be resolved.
 class RoomLinkMessageCard extends StatefulWidget {
   const RoomLinkMessageCard({
     required this.roomId,
@@ -141,9 +143,14 @@ class _RoomLinkLoading extends StatelessWidget {
             child: CircularProgressIndicator(strokeWidth: 1.6, color: muted),
           ),
           const SizedBox(width: 8),
-          Text(
-            copy.text('Loading room…', 'Wczytywanie pokoju…'),
-            style: TextStyle(color: muted, fontSize: 12),
+          Flexible(
+            child: Text(
+              copy.text(
+                'Loading server conversation…',
+                'Wczytywanie rozmowy na serwerze…',
+              ),
+              style: TextStyle(color: muted, fontSize: 12),
+            ),
           ),
         ],
       ),
@@ -177,7 +184,7 @@ class _RoomLinkCard extends StatelessWidget {
         : palette.border;
     final typeLabel = room.isBroadcast
         ? copy.text('Podcast', 'Podcast')
-        : copy.text('Community room', 'Pokój społeczności');
+        : copy.text('Voice channel', 'Kanał głosowy');
     final host = room.hostName.trim();
     final hostLine = host.isEmpty
         ? typeLabel
@@ -188,7 +195,7 @@ class _RoomLinkCard extends StatelessWidget {
           );
     final joinLabel = room.isBroadcast
         ? copy.text('Join podcast', 'Dołącz do podcastu')
-        : copy.text('Join room', 'Dołącz do pokoju');
+        : copy.text('Open server', 'Otwórz serwer');
 
     return Padding(
       padding: const EdgeInsets.only(top: 10),
@@ -258,7 +265,7 @@ class _RoomLinkCard extends StatelessWidget {
               const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,
-                child: FilledButton.icon(
+                child: FilledButton(
                   key: const ValueKey('room-link-card-join'),
                   onPressed: onJoin,
                   style: onBrandSurface
@@ -270,13 +277,22 @@ class _RoomLinkCard extends StatelessWidget {
                       : FilledButton.styleFrom(
                           visualDensity: VisualDensity.compact,
                         ),
-                  icon: Icon(
-                    room.isLive
-                        ? Icons.graphic_eq_rounded
-                        : Icons.login_rounded,
-                    size: 18,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        room.isLive
+                            ? Icons.graphic_eq_rounded
+                            : Icons.login_rounded,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(joinLabel, textAlign: TextAlign.center),
+                      ),
+                    ],
                   ),
-                  label: Text(joinLabel),
                 ),
               ),
             ],

@@ -62,8 +62,7 @@ class MomentCommentRow extends StatelessWidget {
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
 
-  bool get _canReport =>
-      onReport != null && !isOwn && comment.id.isNotEmpty;
+  bool get _canReport => onReport != null && !isOwn && comment.id.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -278,7 +277,9 @@ class MomentConversationThread extends StatelessWidget {
       'Conversation',
       'Rozmowa',
     );
-    final total = commentCount < comments.length ? comments.length : commentCount;
+    final total = commentCount < comments.length
+        ? comments.length
+        : commentCount;
     return Column(
       key: const ValueKey('moment-conversation-thread'),
       crossAxisAlignment: CrossAxisAlignment.start,

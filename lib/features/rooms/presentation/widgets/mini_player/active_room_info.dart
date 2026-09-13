@@ -141,7 +141,7 @@ class ActiveRoomInfo extends StatelessWidget {
 
     return Semantics(
       button: true,
-      label: copy.text('Return to $roomName', 'Wróć do pokoju $roomName'),
+      label: copy.text('Return to $roomName', 'Wróć do rozmowy $roomName'),
       child: InkWell(
         key: const ValueKey('mini-player-room-info'),
         borderRadius: BorderRadius.circular(14),
@@ -211,13 +211,13 @@ class _InsideChip extends StatelessWidget {
     // LayoutBuilder has no intrinsic dimensions.)
     final label = narrow
         ? '$count'
-        : copy.text('$count inside', '$count w pokoju');
+        : copy.text('$count inside', '$count w rozmowie');
     // The VISUAL string degrades on narrow widths; the accessible one never
     // does — a screen reader was hearing a bare "3".
     return Semantics(
       label: copy.text(
         '$count ${count == 1 ? 'person' : 'people'} inside',
-        count == 1 ? '1 osoba w pokoju' : '$count osób w pokoju',
+        count == 1 ? '1 osoba w rozmowie' : '$count osób w rozmowie',
       ),
       excludeSemantics: true,
       child: Container(

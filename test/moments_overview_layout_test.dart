@@ -57,8 +57,9 @@ void main() {
 
   double gutterFor(double slot) => slot < 600 ? 16 : 24;
 
-  testWidgets('599 / 600 / 1099: one column, 16 then 24 gutters, 640 measure',
-      (tester) async {
+  testWidgets('599 / 600 / 1099: one column, 16 then 24 gutters, 640 measure', (
+    tester,
+  ) async {
     for (final slot in <double>[599, 600, 1099]) {
       await pumpFeed(tester, slot: slot);
       final list = tester.getRect(
@@ -86,7 +87,9 @@ void main() {
       'with a pool', (tester) async {
     for (final slot in <double>[1100, 1199]) {
       await pumpFeed(tester, slot: slot);
-      final panel = find.byKey(const ValueKey<String>('yo-moments-local-panel'));
+      final panel = find.byKey(
+        const ValueKey<String>('yo-moments-local-panel'),
+      );
       expect(panel, findsOneWidget, reason: 'slot $slot');
       final panelRect = tester.getRect(panel);
       expect(panelRect.left, 0);
@@ -113,11 +116,20 @@ void main() {
       expect(calm, findsOneWidget, reason: 'slot $slot');
       final calmRect = tester.getRect(calm);
       expect(calmRect.width, 320);
-      expect(calmRect.right, slot - 24, reason: 'trailing gutter 24');
+      // Above 1440 the three columns stop spreading and centre inside a
+      // capped workspace, so the trailing gutter is measured from the
+      // WORKSPACE edge, not from the window's.
+      final inset = math.max(0.0, (slot - 1440) / 2);
+      final workspace = slot - 2 * inset;
+      expect(
+        calmRect.right,
+        slot - inset - 24,
+        reason: 'trailing gutter 24 inside the capped workspace',
+      );
       final list = tester.getRect(
         find.byKey(const ValueKey('moments-feed-scroll')),
       );
-      final mainSlot = slot - 240 - 24 - 24 - 320 - 24;
+      final mainSlot = workspace - 240 - 24 - 24 - 320 - 24;
       final expectedList = math.min(mainSlot, 640 + 48);
       expect(list.width, expectedList, reason: 'slot $slot');
       final card = tester.getRect(find.byKey(const ValueKey('moment-row-m4')));
@@ -130,24 +142,51 @@ void main() {
       final wideList = tester.getRect(
         find.byKey(const ValueKey('moments-feed-scroll')),
       );
-      final wideMain = slot - 240 - 24;
+      final wideMain = workspace - 240 - 24;
       final wideExpected = math.min(wideMain, 640 + 48);
       expect(wideList.width, wideExpected, reason: 'no empty third column');
-      expect(wideList.left, 264 + (wideMain - wideExpected) / 2);
+      expect(wideList.left, inset + 264 + (wideMain - wideExpected) / 2);
     }
   });
 
-  testWidgets('200 % text doubles the local panel and moves wide-3 to 1440',
-      (tester) async {
+  testWidgets('200 % text doubles the local panel and moves wide-3 to 1440', (
+    tester,
+  ) async {
     await pumpFeed(tester, slot: 1400, textScale: 2);
     expect(
-      tester.getSize(find.byKey(const ValueKey<String>('yo-moments-local-panel'))).width,
+      tester
+          .getSize(find.byKey(const ValueKey<String>('yo-moments-local-panel')))
+          .width,
       480,
     );
     expect(find.byKey(const ValueKey('moments-follow-panel')), findsNothing);
 
     await pumpFeed(tester, slot: 1440, textScale: 2);
     expect(find.byKey(const ValueKey('moments-follow-panel')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('above 1440 the workspace centres instead of stretching', (
+    tester,
+  ) async {
+    // Visual contract §9.1, the 1920 cell: "local + main + calm, workspace
+    // centred ≤ 1440". Below the cap nothing moves.
+    await pumpFeed(tester, slot: 1440);
+    final atCap = tester.getRect(
+      find.byKey(const ValueKey<String>('yo-moments-local-panel')),
+    );
+    expect(atCap.left, 0, reason: '1440 is the workspace, not a window');
+
+    await pumpFeed(tester, slot: 1920);
+    final panel = tester.getRect(
+      find.byKey(const ValueKey<String>('yo-moments-local-panel')),
+    );
+    final calm = tester.getRect(
+      find.byKey(const ValueKey('moments-follow-panel')),
+    );
+    expect(panel.left, 240, reason: '(1920 - 1440) / 2');
+    expect(calm.right, 1920 - 240 - 24);
+    expect(calm.right - panel.left, lessThanOrEqualTo(1440));
     expect(tester.takeException(), isNull);
   });
 
@@ -161,8 +200,16 @@ void main() {
     expect(YoMomentsLayout.of(1199).tier, YoMomentsLayoutTier.wide2);
     expect(YoMomentsLayout.of(1200).tier, YoMomentsLayoutTier.wide3);
     expect(YoMomentsLayout.of(1440).tier, YoMomentsLayoutTier.wide3);
-    expect(YoMomentsLayout.of(1439, textScale: 2).tier, YoMomentsLayoutTier.wide2);
-    expect(YoMomentsLayout.of(1440, textScale: 2).tier, YoMomentsLayoutTier.wide3);
+    expect(
+      YoMomentsLayout.of(1439, textScale: 2).tier,
+      YoMomentsLayoutTier.wide2,
+    );
+    expect(
+      YoMomentsLayout.of(1440, textScale: 2).tier,
+      YoMomentsLayoutTier.wide3,
+    );
+    expect(YoMomentsLayout.of(1440).workspaceSideInset, 0);
+    expect(YoMomentsLayout.of(1920).workspaceSideInset, 240);
     expect(YoMomentsLayout.of(1440, textScale: 2).localPanelWidth, 480);
     expect(YoMomentsLayout.of(1440).mainColumnOuterWidth, 688);
   });

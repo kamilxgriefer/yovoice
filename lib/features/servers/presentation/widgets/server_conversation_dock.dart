@@ -19,12 +19,9 @@ import '../theme/server_identity.dart';
 /// reports an established link — every other phase is named for what it is.
 ///
 /// Board 04's meeting adds `Kamera`, `Udostępnij ekran` and `Tablica` to the
-/// row, and the elapsed time of the generation. Each of the three is drawn
-/// for what it can actually do: the camera has no publishing lifecycle yet
-/// (contract §3) and is disabled and labelled so; the share follows contract
-/// decision D — enabled where the grant and the platform both allow it,
-/// otherwise disabled with the real reason on it; the whiteboard control
-/// selects a view and is drawn only where that view exists.
+/// row, and the elapsed time of the generation. Camera and screen capture
+/// start only after an explicit press and reflect the provider's actual
+/// publication state. The whiteboard control selects its meeting view.
 class ServerConversationDock extends StatelessWidget {
   const ServerConversationDock({
     required this.controller,
@@ -81,8 +78,7 @@ class ServerConversationDock extends StatelessWidget {
       // Board 04's row. A meeting is the one channel configuration whose
       // grant carries a camera and a screen share at all, so these three are
       // drawn there and nowhere else.
-      final meeting =
-          connected && channel?.kind == ServerChannelKind.meeting;
+      final meeting = connected && channel?.kind == ServerChannelKind.meeting;
       // The meeting on screen is the one the session is in: a clock and a
       // view that belong to another channel are simply not drawn.
       final here = meeting && channel?.id == meetingChannel?.id;
@@ -92,6 +88,8 @@ class ServerConversationDock extends StatelessWidget {
       final share = screenShare ?? controller.screenShare;
       final canShare = controller.canShareScreen;
       final sharing = controller.isScreenShareEnabled;
+      final cameraEnabled = controller.isCameraEnabled;
+      final canUseCamera = controller.canPublishCamera;
       final controls = [
         if (publishing)
           _DockControl(
@@ -124,16 +122,19 @@ class ServerConversationDock extends StatelessWidget {
                 : controller.toggleDeafened,
           ),
         if (meeting)
-          // The grant permits a camera (`mediaMode: meeting`); the client
-          // lifecycle that would publish one does not exist yet, so the
-          // control is visibly unavailable and says why instead of failing.
           _DockControl(
             key: const ValueKey('server-dock-camera'),
-            icon: Icons.videocam_off_outlined,
+            icon: cameraEnabled
+                ? Icons.videocam_rounded
+                : Icons.videocam_off_outlined,
             label: compact ? null : copy.serverCamera,
-            semanticLabel:
-                '${copy.serverCamera} — ${copy.serverCameraUnavailable}',
-            onPressed: null,
+            semanticLabel: canUseCamera
+                ? (cameraEnabled ? copy.serverCameraOn : copy.serverCameraOff)
+                : '${copy.serverCamera} — ${copy.serverCameraNotAllowed}',
+            active: cameraEnabled,
+            onPressed: canUseCamera && !controller.cameraBusy
+                ? controller.toggleCamera
+                : null,
           ),
         if (meeting)
           _DockControl(
@@ -286,6 +287,14 @@ class ServerConversationDock extends StatelessWidget {
     // the point — what the person needs to know is that the control they just
     // pressed did not take. The next press clears it, and so does leaving.
     // The dock's own `liveRegion` means a screen reader hears it too.
+    final cameraFailure = controller.cameraError;
+    if (cameraFailure != null) {
+      return serverActionFailureCopy(
+        cameraFailure,
+        copy,
+        fallback: copy.serverCameraControlFailed,
+      );
+    }
     final refused = controller.privacyError;
     if (refused != null) {
       return serverActionFailureCopy(

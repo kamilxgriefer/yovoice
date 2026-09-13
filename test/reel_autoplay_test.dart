@@ -291,8 +291,13 @@ void main() {
       expect(players.of('reel_1').playing, isTrue);
     });
 
-    testWidgets('the wide layout stops playback while its thread panel is '
-        'docked open', (tester) async {
+    // D5, the ADR-170 amendment. The rule the two tests below hold in place
+    // is not "a thread suspends playback" but "anything IN FRONT of the Reel
+    // suspends playback": the phone sheet covers the media, the docked panel
+    // stands beside it and covers nothing. Reading the conversation while the
+    // Reel keeps playing is the entire reason the wide layout has a column
+    // for it.
+    testWidgets('the docked wide panel keeps the Reel playing', (tester) async {
       final players = _Players();
       await _pumpFeed(
         tester,
@@ -309,7 +314,42 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+
+      // The panel is docked, not pushed: nothing covers the media.
+      expect(find.byType(BottomSheet), findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('reel-comments-panel-view')),
+        findsOneWidget,
+      );
+      expect(players.of('reel_1').playing, isTrue);
+      // And it was never stopped and started again to get there.
+      expect(players.of('reel_1').playCount, 1);
+    });
+
+    testWidgets('the phone sheet still suspends playback while it covers the '
+        'Reel', (tester) async {
+      final players = _Players();
+      await _pumpFeed(
+        tester,
+        players: players,
+        count: 2,
+        size: const Size(390, 844),
+      );
+      expect(players.of('reel_1').playing, isTrue);
+
+      await tester.tap(
+        find.descendant(
+          of: find.byType(ReelCard),
+          matching: find.byKey(const ValueKey<String>('reel-comments-action')),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(BottomSheet), findsOneWidget);
       expect(players.of('reel_1').playing, isFalse);
+
+      Navigator.of(tester.element(find.byType(ReelCard))).pop();
+      await tester.pumpAndSettle();
+      expect(players.of('reel_1').playing, isTrue);
     });
 
     testWidgets('a tap still pauses, and autoplay does not fight it', (
@@ -386,8 +426,9 @@ void main() {
         expect(target.width, greaterThanOrEqualTo(44), reason: '$size');
         expect(target.height, greaterThanOrEqualTo(44), reason: '$size');
 
-        // Inside the frame, in its top trailing corner, and clear of the
-        // engagement rail underneath it.
+        // Board 08 puts the sound state where the playback state is: the
+        // frame's bottom leading corner, inside the frame, on the same line
+        // of the stack as the progress it sits above.
         final frame = tester.getRect(
           find
               .descendant(
@@ -399,8 +440,19 @@ void main() {
         final rect = tester.getRect(toggle);
         expect(frame.contains(rect.topLeft), isTrue, reason: '$size');
         expect(frame.contains(rect.bottomRight), isTrue, reason: '$size');
-        expect(rect.center.dx, greaterThan(frame.center.dx), reason: '$size');
-        expect(rect.center.dy, lessThan(frame.center.dy), reason: '$size');
+        expect(rect.center.dx, lessThan(frame.center.dx), reason: '$size');
+        // Its place in the stack is what pins it: directly above the bar it
+        // names the state of, and above the actions below that. Which third
+        // of the frame that lands in depends on how tall the stack is at
+        // this size, and is not what this test is about.
+        // Never over the bar it names the state of.
+        final bar = tester.getRect(
+          find.descendant(
+            of: find.byType(ReelCard),
+            matching: find.byKey(const ValueKey<String>('reel-progress-bar')),
+          ),
+        );
+        expect(rect.bottom, lessThanOrEqualTo(bar.top + .01), reason: '$size');
         expect(
           rect.bottom,
           lessThan(

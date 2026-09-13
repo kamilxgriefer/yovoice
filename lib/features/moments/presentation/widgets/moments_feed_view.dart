@@ -1816,90 +1816,99 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
               layout.showsCalmPanel &&
               _calmPanelHasPeople &&
               !_isLoadingFirstPage;
+          // One traversal group per column. Without them the reading-order
+          // policy interleaves the three columns — Tab crossed between them
+          // seven times inside a single card — and a keyboard or switch user
+          // reaches the calm panel between two controls of the same Moment.
           content = Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              YoMomentsLocalPanel(
-                options: options,
-                selectedIndex: _filter.index,
-                onSelected: (index) => _setFilter(MomentsFilter.values[index]),
-                groupLabel: groupLabel,
-                width: layout.localPanelWidth,
-                onCreate: widget.onCreate,
-                // The same control as the phone's refresh (an IconButton
-                // with the same key, tooltip and focus-recovery node), given
-                // its label as a row so it reads like the panel's rows.
-                trailing: Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: IconButton(
-                    key: const ValueKey('moments-discovery-refresh'),
-                    focusNode: _expiryRecoveryFocus,
-                    onPressed: _refreshAll,
-                    tooltip: copy.text('Reload Moments', 'Odśwież Momenty'),
-                    style: IconButton.styleFrom(
-                      foregroundColor: context.appPalette.textSecondary,
-                      minimumSize: const Size(
-                        AppSizing.minimumTouchTarget,
-                        AppSizing.standardControlHeight,
+              FocusTraversalGroup(
+                child: YoMomentsLocalPanel(
+                  options: options,
+                  selectedIndex: _filter.index,
+                  onSelected: (index) =>
+                      _setFilter(MomentsFilter.values[index]),
+                  groupLabel: groupLabel,
+                  width: layout.localPanelWidth,
+                  onCreate: widget.onCreate,
+                  // The same control as the phone's refresh (an IconButton
+                  // with the same key, tooltip and focus-recovery node), given
+                  // its label as a row so it reads like the panel's rows.
+                  trailing: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: IconButton(
+                      key: const ValueKey('moments-discovery-refresh'),
+                      focusNode: _expiryRecoveryFocus,
+                      onPressed: _refreshAll,
+                      tooltip: copy.text('Reload Moments', 'Odśwież Momenty'),
+                      style: IconButton.styleFrom(
+                        foregroundColor: context.appPalette.textSecondary,
+                        minimumSize: const Size(
+                          AppSizing.minimumTouchTarget,
+                          AppSizing.standardControlHeight,
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppRhythm.item,
+                        ),
+                        shape: const RoundedRectangleBorder(
+                          borderRadius: AppRadius.md,
+                        ),
                       ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppRhythm.item,
-                      ),
-                      shape: const RoundedRectangleBorder(
-                        borderRadius: AppRadius.md,
-                      ),
-                    ),
-                    icon: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.refresh_rounded, size: 20),
-                        const SizedBox(width: AppRhythm.item),
-                        Flexible(
-                          // Spoken once, through the tooltip.
-                          child: ExcludeSemantics(
-                            child: Text(
-                              copy.text('Reload Moments', 'Odśwież Momenty'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: AppTypography.titleSmall.copyWith(
-                                color: context.appPalette.textSecondary,
+                      icon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.refresh_rounded, size: 20),
+                          const SizedBox(width: AppRhythm.item),
+                          Flexible(
+                            // Spoken once, through the tooltip.
+                            child: ExcludeSemantics(
+                              child: Text(
+                                copy.text('Reload Moments', 'Odśwież Momenty'),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppTypography.titleSmall.copyWith(
+                                  color: context.appPalette.textSecondary,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
               SizedBox(width: layout.gutter),
-              Expanded(child: mainColumn),
+              Expanded(child: FocusTraversalGroup(child: mainColumn)),
               if (layout.showsCalmPanel) ...[
                 // Mounted whenever the third column CAN exist, so the pool
                 // is known before the column is shown; it takes no width
                 // until the pool has someone in it.
-                Visibility(
-                  visible: calmVisible,
-                  maintainState: true,
-                  child: Padding(
-                    padding: EdgeInsetsDirectional.only(
-                      start: layout.gutter,
-                      end: layout.gutter,
-                    ),
-                    child: SizedBox(
-                      width: YoMomentsLayout.calmPanelWidth,
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.only(
-                          top: AppRhythm.title,
-                          bottom: AppRhythm.page,
-                        ),
-                        child: MomentsFollowPanel(
-                          key: ValueKey('moments-follow-panel-$_viewerUid'),
-                          friendService: widget.friendService,
-                          followService: widget.followService,
-                          auth: widget.auth,
-                          onRecord: widget.onRecord,
-                          onPoolChanged: _setCalmPanel,
+                FocusTraversalGroup(
+                  child: Visibility(
+                    visible: calmVisible,
+                    maintainState: true,
+                    child: Padding(
+                      padding: EdgeInsetsDirectional.only(
+                        start: layout.gutter,
+                        end: layout.gutter,
+                      ),
+                      child: SizedBox(
+                        width: YoMomentsLayout.calmPanelWidth,
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.only(
+                            top: AppRhythm.title,
+                            bottom: AppRhythm.page,
+                          ),
+                          child: MomentsFollowPanel(
+                            key: ValueKey('moments-follow-panel-$_viewerUid'),
+                            friendService: widget.friendService,
+                            followService: widget.followService,
+                            auth: widget.auth,
+                            onRecord: widget.onRecord,
+                            onPoolChanged: _setCalmPanel,
+                          ),
                         ),
                       ),
                     ),
@@ -1907,6 +1916,16 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
                 ),
               ],
             ],
+          );
+        }
+
+        // Padding rather than an Align: the columns stretch to the full
+        // height, and an Align would hand them loose height constraints.
+        final sideInset = layout.workspaceSideInset;
+        if (layout.showsLocalPanel && sideInset > 0) {
+          content = Padding(
+            padding: EdgeInsets.symmetric(horizontal: sideInset),
+            child: content,
           );
         }
 
@@ -2170,7 +2189,10 @@ class MomentAuthorCapsuleStrip extends StatelessWidget {
                     ? copy.template(
                         'Open the story chain by {name}, {count} Moments',
                         'Otwórz relację użytkownika {name}, Momenty: {count}',
-                        values: {'name': chain.authorName, 'count': chain.length},
+                        values: {
+                          'name': chain.authorName,
+                          'count': chain.length,
+                        },
                       )
                     : copy.template(
                         'Open the story chain by {name}',
@@ -2274,7 +2296,10 @@ class _FeedColumn extends StatelessWidget {
       key: const ValueKey('moments-feed-scroll'),
       // The cards carry the gutter themselves so the capsule strip can be
       // full-bleed with the gutter as its scroll padding.
-      padding: const EdgeInsets.only(top: AppRhythm.title, bottom: AppRhythm.page),
+      padding: const EdgeInsets.only(
+        top: AppRhythm.title,
+        bottom: AppRhythm.page,
+      ),
       itemCount: offset + moments.length + (footer == null ? 0 : 1),
       findChildIndexCallback: (key) => indices[key],
       itemBuilder: (context, index) {
@@ -2304,8 +2329,7 @@ class _FeedColumn extends StatelessWidget {
             key: ValueKey('moment-row-${moment.id}'),
             moment: moment,
             seen: viewedIds.contains(moment.id),
-            isOwn:
-                currentUserId.isNotEmpty && moment.authorId == currentUserId,
+            isOwn: currentUserId.isNotEmpty && moment.authorId == currentUserId,
             canInteract: currentUserId.isNotEmpty,
             canLike: canLike,
             likePending: pendingLikes.contains(moment.id),
@@ -2569,6 +2593,31 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
       child: Semantics(
         container: true,
         explicitChildNodes: true,
+        // The largest target on the screen used to reach the accessibility
+        // bridge with no role and no name of its own: what it announced was
+        // whatever loose text had not claimed a node — the relative age, the
+        // expiry line, the seek slider's label — under the REPLY button's
+        // tooltip. It is a button, and it says what opening it does.
+        button: enabled,
+        // ...and the bridge can press it. `explicitChildNodes` keeps every
+        // descendant's node, so the InkWell's own tap action would land on a
+        // CHILD and leave this one an enabled button with nothing to
+        // activate — the defect the four dead transport controls were rated
+        // P0 for, arrived at from the other side. The action lives here, on
+        // the named node, and the ink below is excluded from semantics so
+        // there is exactly one card-body affordance rather than two.
+        onTap: widget.canInteract ? widget.onTap : null,
+        label: copy.template(
+          'Open Voice Moment: {caption}, {author}, {age}',
+          'Otwórz Voice Moment: {caption}, {author}, {age}',
+          values: <String, Object>{
+            'caption': caption,
+            'author': moment.authorName,
+            // The relative age when there is one; the availability line is
+            // the honest stand-in while a Moment is still uploading.
+            'age': age.isEmpty ? (availability ?? '') : age,
+          },
+        ),
         child: MouseRegion(
           onEnter: (_) => setState(() => _hovered = true),
           onExit: (_) => setState(() => _hovered = false),
@@ -2583,6 +2632,10 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
             clipBehavior: Clip.antiAlias,
             child: InkWell(
               onTap: widget.canInteract ? widget.onTap : null,
+              // The node above carries this same action under the card's
+              // own name; a second, unnamed tap node under it is what a
+              // screen reader would read instead of the name.
+              excludeFromSemantics: true,
               borderRadius: AppRadius.lg,
               child: Padding(
                 padding: const EdgeInsets.all(AppRhythm.title),
@@ -2739,25 +2792,48 @@ class _CardActions extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: AppRhythm.tight),
       textStyle: AppTypography.labelLarge,
     );
-    final like = TextButton.icon(
-      key: ValueKey('moment-row-like-$id'),
-      onPressed: enabled && canLike ? onLike : null,
-      style: quiet(),
-      icon: Icon(
-        moment.callerLiked
-            ? Icons.favorite_rounded
-            : Icons.favorite_border_rounded,
-        size: 24,
-        color: moment.callerLiked ? AppColors.secondary : null,
-      ),
-      label: Text(
-        moment.likeCount > 0
-            ? copy.template(
-                'Likes: {count}',
-                'Polubienia: {count}',
-                values: {'count': moment.likeCount},
-              )
-            : copy.text('Like', 'Lubię to'),
+    // The board draws a glyph and a number; the word belongs to the spoken
+    // name, not to the row. Word labels never fitted one line at any width
+    // and broke mid-word at 200 % text ("Polubieni / a: 3"), which reads as
+    // a rendering fault. The exact total stays in the semantic label, so
+    // nothing is lost to assistive technology — the same split the Reels
+    // engagement bar already makes.
+    final likeLabel = moment.likeCount > 0
+        ? copy.template(
+            'Likes: {count}',
+            'Polubienia: {count}',
+            values: {'count': moment.likeCount},
+          )
+        : copy.text('Like', 'Lubię to');
+    final commentsLabel = moment.commentCount > 0
+        ? copy.template(
+            'Comments: {count}',
+            'Komentarze: {count}',
+            values: {'count': moment.commentCount},
+          )
+        : copy.text('Comments', 'Komentarze');
+    // MergeSemantics so the liked STATE lands on the same node as the role,
+    // the name and the tap action: the glyph swap alone never announced it.
+    final like = MergeSemantics(
+      child: Semantics(
+        selected: moment.callerLiked,
+        child: TextButton.icon(
+          key: ValueKey('moment-row-like-$id'),
+          onPressed: enabled && canLike ? onLike : null,
+          style: quiet(),
+          icon: Icon(
+            moment.callerLiked
+                ? Icons.favorite_rounded
+                : Icons.favorite_border_rounded,
+            size: 24,
+            color: moment.callerLiked ? AppColors.secondary : null,
+          ),
+          label: Text(
+            '${moment.likeCount}',
+            maxLines: 1,
+            semanticsLabel: likeLabel,
+          ),
+        ),
       ),
     );
     final comments = TextButton.icon(
@@ -2766,13 +2842,9 @@ class _CardActions extends StatelessWidget {
       style: quiet(),
       icon: const Icon(Icons.mode_comment_outlined, size: 24),
       label: Text(
-        moment.commentCount > 0
-            ? copy.template(
-                'Comments: {count}',
-                'Komentarze: {count}',
-                values: {'count': moment.commentCount},
-              )
-            : copy.text('Comments', 'Komentarze'),
+        '${moment.commentCount}',
+        maxLines: 1,
+        semanticsLabel: commentsLabel,
       ),
     );
     final replyLabel = copy.text('Reply with voice', 'Odpowiedz głosem');
@@ -3012,42 +3084,60 @@ class _VoiceMomentTransport extends StatelessWidget {
             ),
           ),
           Positioned.fill(
-            child: Semantics(
-              label: copy.contextualText(
-                'yoMoments.playbackPosition',
-                'Playback position',
-                'Pozycja odtwarzania',
-              ),
-              child: SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  trackHeight: waveformHeight,
-                  activeTrackColor: Colors.transparent,
-                  inactiveTrackColor: Colors.transparent,
-                  disabledActiveTrackColor: Colors.transparent,
-                  disabledInactiveTrackColor: Colors.transparent,
-                  secondaryActiveTrackColor: Colors.transparent,
-                  thumbColor: Colors.transparent,
-                  disabledThumbColor: Colors.transparent,
-                  overlayColor: Colors.transparent,
-                  thumbShape: SliderComponentShape.noThumb,
-                  overlayShape: SliderComponentShape.noOverlay,
-                  trackShape: const RectangularSliderTrackShape(),
-                  showValueIndicator: ShowValueIndicator.never,
+            // One node carrying the name AND the value. Without the
+            // container the label merged into the CARD's node — which is
+            // where the card's junk name came from — and the slider itself
+            // reached the accessibility bridge unnamed; without the merge
+            // the name and the position would be two separate nodes.
+            child: MergeSemantics(
+              child: Semantics(
+                container: true,
+                label: copy.contextualText(
+                  'yoMoments.playbackPosition',
+                  'Playback position',
+                  'Pozycja odtwarzania',
                 ),
-                child: Slider(
-                  key: ValueKey('moment-row-progress-${moment.id}'),
-                  value: position.toDouble(),
-                  max: maxMs > 0 ? maxMs.toDouble() : 1,
-                  padding: EdgeInsets.zero,
-                  onChanged:
-                      enabled &&
-                          active &&
-                          !state.busy &&
-                          state.error == null &&
-                          maxMs > 0
-                      ? (value) => onSeek(Duration(milliseconds: value.round()))
-                      : null,
-                  semanticFormatterCallback: (value) => _clock(value ~/ 1000),
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: waveformHeight,
+                    activeTrackColor: Colors.transparent,
+                    inactiveTrackColor: Colors.transparent,
+                    disabledActiveTrackColor: Colors.transparent,
+                    disabledInactiveTrackColor: Colors.transparent,
+                    secondaryActiveTrackColor: Colors.transparent,
+                    thumbColor: Colors.transparent,
+                    disabledThumbColor: Colors.transparent,
+                    overlayColor: Colors.transparent,
+                    thumbShape: SliderComponentShape.noThumb,
+                    overlayShape: SliderComponentShape.noOverlay,
+                    trackShape: const RectangularSliderTrackShape(),
+                    showValueIndicator: ShowValueIndicator.never,
+                  ),
+                  child: Slider(
+                    key: ValueKey('moment-row-progress-${moment.id}'),
+                    value: position.toDouble(),
+                    max: maxMs > 0 ? maxMs.toDouble() : 1,
+                    padding: EdgeInsets.zero,
+                    onChanged:
+                        enabled &&
+                            active &&
+                            !state.busy &&
+                            state.error == null &&
+                            maxMs > 0
+                        ? (value) =>
+                              onSeek(Duration(milliseconds: value.round()))
+                        : null,
+                    // Both numbers, not the bare position: "0:18" alone tells
+                    // a screen-reader user nothing about how much is left.
+                    semanticFormatterCallback: (value) => copy.template(
+                      '{position} of {total}',
+                      '{position} z {total}',
+                      values: <String, Object>{
+                        'position': _clock(value ~/ 1000),
+                        'total': _clock(maxMs ~/ 1000),
+                      },
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -3079,7 +3169,10 @@ class _VoiceMomentTransport extends StatelessWidget {
             // At 200 % text the reserved label alone can eat the waveform;
             // it then drops under the row rather than squeezing the bars.
             final inline =
-                constraints.maxWidth - discSize - 2 * AppRhythm.item - reserved >=
+                constraints.maxWidth -
+                    discSize -
+                    2 * AppRhythm.item -
+                    reserved >=
                 64;
             if (inline) {
               return Row(
@@ -4109,16 +4202,15 @@ class _LoadingStateState extends State<_LoadingState>
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
     final avatar = widget.compact ? 48.0 : 56.0;
-    Widget bone(double width, double height, {bool round = false}) =>
-        Container(
-          width: width,
-          height: height,
-          decoration: BoxDecoration(
-            color: palette.surfaceMuted,
-            shape: round ? BoxShape.circle : BoxShape.rectangle,
-            borderRadius: round ? null : AppRadius.sm,
-          ),
-        );
+    Widget bone(double width, double height, {bool round = false}) => Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: palette.surfaceMuted,
+        shape: round ? BoxShape.circle : BoxShape.rectangle,
+        borderRadius: round ? null : AppRadius.sm,
+      ),
+    );
     return Semantics(
       liveRegion: true,
       label: copy.text('Loading Moments', 'Wczytywanie Momentów'),

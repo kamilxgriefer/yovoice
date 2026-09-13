@@ -9,10 +9,17 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import '../models/server.dart';
 import '../models/server_channel.dart';
 import '../models/server_creation.dart';
+import '../models/server_event.dart';
 import '../models/server_member_role.dart';
+import '../models/server_member.dart';
+import '../models/server_podcast_episode.dart';
+import '../models/server_podcast_question.dart';
 import '../models/server_session.dart';
 import '../models/server_type.dart';
+import '../models/server_whiteboard.dart';
 import 'server_creation_request_store.dart';
+import 'server_podcast_episode_repository.dart';
+import 'server_whiteboard_repository.dart';
 
 abstract interface class ServerRepository {
   String get currentUserId;
@@ -89,6 +96,186 @@ abstract interface class ServerRepository {
   });
 }
 
+/// Mutations and roster reads used by the server settings surface.
+///
+/// Kept separate from [ServerRepository] so small read-only integrations can
+/// still provide the directory/session contract without pretending they can
+/// administer a server.
+abstract interface class ServerManagementRepository {
+  Stream<List<ServerMember>> watchMembers(String serverId);
+
+  Future<void> updateServer({
+    required String serverId,
+    required int expectedRevision,
+    required Map<String, Object?> patch,
+    required String requestId,
+  });
+
+  Future<void> updateChannel({
+    required String serverId,
+    required String channelId,
+    required int expectedRevision,
+    required Map<String, Object?> patch,
+    required String requestId,
+  });
+
+  Future<void> reorderChannels({
+    required String serverId,
+    required int expectedRevision,
+    required List<String> channelIds,
+    required String requestId,
+  });
+
+  Future<void> setChannelAccess({
+    required String serverId,
+    required String channelId,
+    required int expectedAclRevision,
+    required ServerChannelAccess access,
+    required List<String> roleIds,
+    required List<String> userIds,
+    required String requestId,
+  });
+
+  Future<void> archiveChannel({
+    required String serverId,
+    required String channelId,
+    required String requestId,
+  });
+
+  Future<void> deleteChannel({
+    required String serverId,
+    required String channelId,
+    required String requestId,
+  });
+
+  Future<void> revokeInvite({
+    required String serverId,
+    required String inviteeId,
+    required String requestId,
+  });
+
+  Future<void> respondToInvite({
+    required String serverId,
+    required bool accept,
+    required String requestId,
+  });
+
+  Future<void> leaveServer({
+    required String serverId,
+    required String requestId,
+  });
+
+  Future<void> setMemberRole({
+    required String serverId,
+    required String memberId,
+    required ServerMemberRole role,
+    required String requestId,
+  });
+
+  Future<void> removeMember({
+    required String serverId,
+    required String memberId,
+    required String requestId,
+  });
+
+  Future<void> setMemberBan({
+    required String serverId,
+    required String memberId,
+    required bool banned,
+    required String reason,
+    required String requestId,
+  });
+
+  Future<void> transferOwnership({
+    required String serverId,
+    required String newOwnerId,
+    required String requestId,
+  });
+
+  Future<void> deleteServer({
+    required String serverId,
+    required String requestId,
+  });
+}
+
+abstract interface class ServerEventsRepository {
+  Stream<List<ServerEvent>> watchEvents(String serverId, String channelId);
+  Stream<ServerEventAttendance?> watchMyEventResponse(
+    String serverId,
+    String channelId,
+    String eventId,
+  );
+
+  Future<void> createEvent({
+    required String serverId,
+    required String channelId,
+    required String title,
+    required String description,
+    required DateTime startsAt,
+    required DateTime endsAt,
+    required String timeZone,
+    required String requestId,
+  });
+
+  Future<void> updateEvent({
+    required ServerEvent event,
+    required String title,
+    required String description,
+    required DateTime startsAt,
+    required DateTime endsAt,
+    required String timeZone,
+    required String requestId,
+  });
+
+  Future<void> cancelEvent({
+    required ServerEvent event,
+    required String requestId,
+  });
+
+  Future<void> respondToEvent({
+    required ServerEvent event,
+    required ServerEventResponse response,
+    required String requestId,
+    bool? reminderRequested,
+  });
+}
+
+/// The persisted listener Q&A in a podcast server's Questions channel.
+///
+/// Kept separate so a repository that only supports the common server shell
+/// never has to claim podcast mutation support.
+abstract interface class ServerPodcastQuestionsRepository {
+  Stream<List<ServerPodcastQuestion>> watchPodcastQuestions(
+    String serverId,
+    String channelId,
+  );
+
+  Stream<bool> watchMyPodcastQuestionVote(
+    String serverId,
+    String channelId,
+    String questionId,
+  );
+
+  Future<void> createPodcastQuestion({
+    required String serverId,
+    required String channelId,
+    required String body,
+    required String requestId,
+  });
+
+  Future<void> setPodcastQuestionVote({
+    required ServerPodcastQuestion question,
+    required bool voted,
+    required String requestId,
+  });
+
+  Future<void> setPodcastQuestionOnAir({
+    required ServerPodcastQuestion question,
+    required bool onAir,
+    required String requestId,
+  });
+}
+
 typedef ServerCallable =
     Future<Map<Object?, Object?>> Function(
       String name,
@@ -97,7 +284,14 @@ typedef ServerCallable =
 
 /// Reads the existing Club graph through a server vocabulary. Authorization
 /// remains in Rules/callables; no read creates or migrates a document.
-class ServerService implements ServerRepository {
+class ServerService
+    implements
+        ServerRepository,
+        ServerManagementRepository,
+        ServerEventsRepository,
+        ServerPodcastEpisodeRepository,
+        ServerPodcastQuestionsRepository,
+        ServerWhiteboardRepository {
   ServerService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
@@ -139,14 +333,29 @@ class ServerService implements ServerRepository {
   @override
   String get currentUserId => _auth.currentUser?.uid ?? '';
 
-  Stream<String?> _watchAccountId() => Stream<String?>.multi((controller) {
-    final subscription = _auth.authStateChanges().listen(
-      (user) => controller.add(user?.uid),
-      onError: controller.addError,
-    );
-    controller.add(_auth.currentUser?.uid);
-    controller.onCancel = subscription.cancel;
-  }).distinct();
+  Stream<String?> _watchAccountId() {
+    late final FirebaseAuth auth;
+    try {
+      auth = _auth;
+    } on FirebaseException catch (error) {
+      // Widget and model tests can exercise anonymous read paths without
+      // booting a Firebase app. In production a default app exists before
+      // this service is built; once it does, Auth stream errors remain real
+      // errors and continue through the stream below.
+      if (_authOverride == null && error.code == 'no-app') {
+        return Stream<String?>.value(null);
+      }
+      rethrow;
+    }
+    return Stream<String?>.multi((controller) {
+      final subscription = auth.authStateChanges().listen(
+        (user) => controller.add(user?.uid),
+        onError: controller.addError,
+      );
+      controller.add(auth.currentUser?.uid);
+      controller.onCancel = subscription.cancel;
+    }).distinct();
+  }
 
   @override
   String newRequestId() {
@@ -169,6 +378,10 @@ class ServerService implements ServerRepository {
         .httpsCallable(name)
         .call<Map<Object?, Object?>>(data);
     return result.data;
+  }
+
+  Future<void> _mutate(String name, Map<String, Object?> data) async {
+    await _invoke(name, data);
   }
 
   @override
@@ -263,8 +476,12 @@ class ServerService implements ServerRepository {
 
   /// The roles `capabilitiesFor` grants `moderate` to. Anything else — an
   /// unknown value, a member, a guest — carries no badge.
-  static const _moderatorRoles = <String>['owner', 'coOwner', 'admin',
-    'moderator'];
+  static const _moderatorRoles = <String>[
+    'owner',
+    'coOwner',
+    'admin',
+    'moderator',
+  ];
 
   @override
   Stream<Set<String>> watchModerators(String serverId) {
@@ -286,13 +503,878 @@ class ServerService implements ServerRepository {
               .snapshots()
               .map(
                 (snapshot) => snapshot.docs
-                    .map(
-                      (doc) => serverString(doc.data()['userId']) ?? doc.id,
-                    )
+                    .map((doc) => serverString(doc.data()['userId']) ?? doc.id)
                     .toSet(),
               ),
         ).map((value) => value ?? const <String>{});
       });
+    });
+  }
+
+  @override
+  Stream<List<ServerEvent>> watchEvents(String serverId, String channelId) {
+    _requireId(serverId);
+    _requireId(channelId);
+    return _firestore
+        .collection('clubs')
+        .doc(serverId)
+        .collection('channels')
+        .doc(channelId)
+        .collection('events')
+        .where('status', isEqualTo: 'scheduled')
+        .where('endsAt', isGreaterThan: Timestamp.fromDate(_now().toUtc()))
+        .orderBy('endsAt')
+        .snapshots()
+        .map((snapshot) {
+          final events = <ServerEvent>[];
+          for (final document in snapshot.docs) {
+            try {
+              events.add(
+                ServerEvent.fromFirestore(
+                  document,
+                  serverId: serverId,
+                  channelId: channelId,
+                ),
+              );
+            } on FormatException {
+              continue;
+            }
+          }
+          final now = _now().toUtc();
+          events.removeWhere((event) => !event.endsAt.isAfter(now));
+          events.sort((first, second) {
+            final starts = first.startsAt.compareTo(second.startsAt);
+            return starts != 0 ? starts : first.id.compareTo(second.id);
+          });
+          return List<ServerEvent>.unmodifiable(events);
+        });
+  }
+
+  @override
+  Stream<ServerEventAttendance?> watchMyEventResponse(
+    String serverId,
+    String channelId,
+    String eventId,
+  ) {
+    _requireId(serverId);
+    _requireId(channelId);
+    _requireId(eventId);
+    return _switchMap(_watchAccountId(), (uid) {
+      if (uid == null) return Stream.value(null);
+      return _firestore
+          .collection('clubs')
+          .doc(serverId)
+          .collection('channels')
+          .doc(channelId)
+          .collection('events')
+          .doc(eventId)
+          .collection('responses')
+          .doc(uid)
+          .snapshots()
+          .map((document) {
+            if (!document.exists) return null;
+            final data = document.data();
+            final response = switch (data?['response']) {
+              'going' => ServerEventResponse.going,
+              'maybe' => ServerEventResponse.maybe,
+              'declined' => ServerEventResponse.declined,
+              _ => null,
+            };
+            if (data == null ||
+                data['schemaVersion'] != 1 ||
+                data['serverId'] != serverId ||
+                data['channelId'] != channelId ||
+                data['eventId'] != eventId ||
+                data['userId'] != uid ||
+                response == null ||
+                data['reminderRequested'] is! bool ||
+                data['eventRevision'] is! int ||
+                (data['eventRevision'] as int) < 1 ||
+                serverString(data['operationId']) == null ||
+                data['createdAt'] is! Timestamp ||
+                data['updatedAt'] is! Timestamp) {
+              throw const FormatException('Unsupported server event response.');
+            }
+            return ServerEventAttendance(
+              response: response,
+              reminderRequested: data['reminderRequested'] as bool,
+            );
+          });
+    });
+  }
+
+  @override
+  Future<void> createEvent({
+    required String serverId,
+    required String channelId,
+    required String title,
+    required String description,
+    required DateTime startsAt,
+    required DateTime endsAt,
+    required String timeZone,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    await _mutate('createServerEventV1', {
+      'serverId': serverId,
+      'channelId': channelId,
+      'requestId': requestId,
+      'title': title,
+      'description': description,
+      'startsAtMillis': startsAt.millisecondsSinceEpoch,
+      'endsAtMillis': endsAt.millisecondsSinceEpoch,
+      'timeZone': timeZone,
+    });
+  }
+
+  @override
+  Future<void> updateEvent({
+    required ServerEvent event,
+    required String title,
+    required String description,
+    required DateTime startsAt,
+    required DateTime endsAt,
+    required String timeZone,
+    required String requestId,
+  }) async {
+    await _mutate('updateServerEventV1', {
+      'serverId': event.serverId,
+      'channelId': event.channelId,
+      'eventId': event.id,
+      'requestId': requestId,
+      'expectedRevision': event.revision,
+      'patch': {
+        'title': title,
+        'description': description,
+        'startsAtMillis': startsAt.millisecondsSinceEpoch,
+        'endsAtMillis': endsAt.millisecondsSinceEpoch,
+        'timeZone': timeZone,
+      },
+    });
+  }
+
+  @override
+  Future<void> cancelEvent({
+    required ServerEvent event,
+    required String requestId,
+  }) async {
+    await _mutate('cancelServerEventV1', {
+      'serverId': event.serverId,
+      'channelId': event.channelId,
+      'eventId': event.id,
+      'requestId': requestId,
+      'expectedRevision': event.revision,
+    });
+  }
+
+  @override
+  Future<void> respondToEvent({
+    required ServerEvent event,
+    required ServerEventResponse response,
+    required String requestId,
+    bool? reminderRequested,
+  }) async {
+    await _mutate('respondToServerEventV1', {
+      'serverId': event.serverId,
+      'channelId': event.channelId,
+      'eventId': event.id,
+      'requestId': requestId,
+      'expectedRevision': event.revision,
+      'response': response.name,
+      'reminderRequested': ?reminderRequested,
+    });
+  }
+
+  @override
+  Stream<ServerPodcastRecordingState?> watchPodcastRecording(
+    String serverId,
+    String studioChannelId,
+  ) {
+    _requireId(serverId);
+    _requireId(studioChannelId);
+    return _firestore
+        .collection('clubs')
+        .doc(serverId)
+        .collection('channels')
+        .doc(studioChannelId)
+        .collection('podcastRecordingState')
+        .doc('main')
+        .snapshots()
+        .map(
+          (document) => document.exists
+              ? ServerPodcastRecordingState.fromFirestore(
+                  document,
+                  serverId: serverId,
+                  studioChannelId: studioChannelId,
+                )
+              : null,
+        );
+  }
+
+  @override
+  Stream<List<ServerPodcastEpisode>> watchPodcastEpisodes(
+    String serverId,
+    String channelId, {
+    required bool canModerate,
+  }) {
+    _requireId(serverId);
+    _requireId(channelId);
+    Query<Map<String, dynamic>> query = _firestore
+        .collection('clubs')
+        .doc(serverId)
+        .collection('channels')
+        .doc(channelId)
+        .collection('episodes');
+    query = canModerate
+        ? query.orderBy('createdAt', descending: true)
+        : query
+              .where('status', isEqualTo: 'published')
+              .orderBy('publishedAt', descending: true);
+    return query.limit(100).snapshots().map((snapshot) {
+      final episodes = <ServerPodcastEpisode>[];
+      for (final document in snapshot.docs) {
+        try {
+          episodes.add(
+            ServerPodcastEpisode.fromFirestore(
+              document,
+              serverId: serverId,
+              channelId: channelId,
+            ),
+          );
+        } on FormatException {
+          // One future or corrupt row cannot fabricate a playable episode.
+          // Omit it while the rest of this authorized channel remains usable.
+        }
+      }
+      return List<ServerPodcastEpisode>.unmodifiable(episodes);
+    });
+  }
+
+  @override
+  Future<ServerPodcastEpisodeReceipt> startPodcastRecording({
+    required String serverId,
+    required String channelId,
+    required String studioChannelId,
+    required String sessionId,
+    required String title,
+    required String requestId,
+  }) async => ServerPodcastEpisodeReceipt.fromMap(
+    await _invoke('startServerPodcastRecordingV1', {
+      'serverId': serverId,
+      'channelId': channelId,
+      'studioChannelId': studioChannelId,
+      'sessionId': sessionId,
+      'title': title,
+      'requestId': requestId,
+    }),
+  );
+
+  Map<String, Object?> _podcastEpisodeMutation(
+    ServerPodcastEpisode episode,
+    String requestId,
+  ) => {
+    'serverId': episode.serverId,
+    'channelId': episode.channelId,
+    'studioChannelId': episode.studioChannelId,
+    'episodeId': episode.id,
+    'expectedRevision': episode.revision,
+    'requestId': requestId,
+  };
+
+  @override
+  Future<ServerPodcastEpisodeReceipt> stopPodcastRecording({
+    required ServerPodcastRecordingState recording,
+    required String requestId,
+  }) async => ServerPodcastEpisodeReceipt.fromMap(
+    await _invoke('stopServerPodcastRecordingV1', {
+      'serverId': recording.serverId,
+      'channelId': recording.channelId,
+      'studioChannelId': recording.studioChannelId,
+      'episodeId': recording.episodeId,
+      'expectedRevision': recording.episodeRevision,
+      'requestId': requestId,
+    }),
+  );
+
+  @override
+  Future<ServerPodcastEpisodeReceipt> finalizePodcastEpisode({
+    required ServerPodcastEpisode episode,
+    required String requestId,
+  }) async => ServerPodcastEpisodeReceipt.fromMap(
+    await _invoke(
+      'finalizeServerPodcastEpisodeV1',
+      _podcastEpisodeMutation(episode, requestId),
+    ),
+  );
+
+  @override
+  Future<ServerPodcastEpisodeReceipt> retryPodcastRecording({
+    required ServerPodcastEpisode episode,
+    required String requestId,
+  }) async => ServerPodcastEpisodeReceipt.fromMap(
+    await _invoke(
+      'retryServerPodcastRecordingV1',
+      _podcastEpisodeMutation(episode, requestId),
+    ),
+  );
+
+  @override
+  Future<ServerPodcastEpisodeReceipt> publishPodcastEpisode({
+    required ServerPodcastEpisode episode,
+    required String requestId,
+  }) async => ServerPodcastEpisodeReceipt.fromMap(
+    await _invoke(
+      'publishServerPodcastEpisodeV1',
+      _podcastEpisodeMutation(episode, requestId),
+    ),
+  );
+
+  @override
+  Future<ServerPodcastEpisodeAccess> getPodcastEpisodeAccess({
+    required ServerPodcastEpisode episode,
+  }) async => ServerPodcastEpisodeAccess.fromMap(
+    await _invoke('getServerPodcastEpisodeAccessV1', {
+      'serverId': episode.serverId,
+      'channelId': episode.channelId,
+      'episodeId': episode.id,
+    }),
+  );
+
+  @override
+  Stream<List<ServerPodcastQuestion>> watchPodcastQuestions(
+    String serverId,
+    String channelId,
+  ) {
+    _requireId(serverId);
+    _requireId(channelId);
+    return _firestore
+        .collection('clubs')
+        .doc(serverId)
+        .collection('channels')
+        .doc(channelId)
+        .collection('questions')
+        .where('status', whereIn: const ['queued', 'onAir'])
+        .orderBy('createdAt', descending: true)
+        .limit(100)
+        .snapshots()
+        .map((snapshot) {
+          final questions = <ServerPodcastQuestion>[];
+          for (final document in snapshot.docs) {
+            try {
+              questions.add(
+                ServerPodcastQuestion.fromFirestore(
+                  document,
+                  serverId: serverId,
+                  channelId: channelId,
+                ),
+              );
+            } on FormatException {
+              continue;
+            }
+          }
+          questions.sort((first, second) {
+            if (first.isOnAir != second.isOnAir) {
+              return first.isOnAir ? -1 : 1;
+            }
+            final votes = second.voteCount.compareTo(first.voteCount);
+            if (votes != 0) return votes;
+            final created = first.createdAt.compareTo(second.createdAt);
+            return created != 0 ? created : first.id.compareTo(second.id);
+          });
+          return List<ServerPodcastQuestion>.unmodifiable(questions);
+        });
+  }
+
+  @override
+  Stream<bool> watchMyPodcastQuestionVote(
+    String serverId,
+    String channelId,
+    String questionId,
+  ) {
+    _requireId(serverId);
+    _requireId(channelId);
+    _requireId(questionId);
+    return _switchMap(_watchAccountId(), (uid) {
+      if (uid == null) return Stream.value(false);
+      return _firestore
+          .collection('clubs')
+          .doc(serverId)
+          .collection('channels')
+          .doc(channelId)
+          .collection('questions')
+          .doc(questionId)
+          .collection('votes')
+          .doc(uid)
+          .snapshots()
+          .map((document) {
+            if (!document.exists) return false;
+            final data = document.data();
+            if (data == null ||
+                data['schemaVersion'] != 1 ||
+                data['serverId'] != serverId ||
+                data['channelId'] != channelId ||
+                data['questionId'] != questionId ||
+                data['userId'] != uid ||
+                data['active'] is! bool ||
+                data['questionRevision'] is! int ||
+                (data['questionRevision'] as int) < 1) {
+              throw const FormatException('Unsupported podcast question vote.');
+            }
+            return data['active'] as bool;
+          });
+    });
+  }
+
+  @override
+  Future<void> createPodcastQuestion({
+    required String serverId,
+    required String channelId,
+    required String body,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    await _mutate('createServerPodcastQuestionV1', {
+      'serverId': serverId,
+      'channelId': channelId,
+      'requestId': requestId,
+      'body': body,
+    });
+  }
+
+  @override
+  Future<void> setPodcastQuestionVote({
+    required ServerPodcastQuestion question,
+    required bool voted,
+    required String requestId,
+  }) async {
+    await _mutate('setServerPodcastQuestionVoteV1', {
+      'serverId': question.serverId,
+      'channelId': question.channelId,
+      'questionId': question.id,
+      'requestId': requestId,
+      'expectedRevision': question.revision,
+      'voted': voted,
+    });
+  }
+
+  @override
+  Future<void> setPodcastQuestionOnAir({
+    required ServerPodcastQuestion question,
+    required bool onAir,
+    required String requestId,
+  }) async {
+    await _mutate('setServerPodcastQuestionOnAirV1', {
+      'serverId': question.serverId,
+      'channelId': question.channelId,
+      'questionId': question.id,
+      'requestId': requestId,
+      'expectedRevision': question.revision,
+      'onAir': onAir,
+    });
+  }
+
+  @override
+  Stream<ServerWhiteboardSnapshot> watchWhiteboard(
+    String serverId,
+    String channelId,
+  ) {
+    _requireId(serverId);
+    _requireId(channelId);
+    final channel = _firestore
+        .collection('clubs')
+        .doc(serverId)
+        .collection('channels')
+        .doc(channelId);
+    return _switchMap(
+      channel.collection('whiteboardState').doc('main').snapshots(),
+      (document) {
+        final state = document.exists
+            ? ServerWhiteboardState.fromFirestore(
+                document,
+                serverId: serverId,
+                channelId: channelId,
+              )
+            : ServerWhiteboardState.empty(
+                serverId: serverId,
+                channelId: channelId,
+              );
+        if (!document.exists) {
+          return Stream.value(
+            ServerWhiteboardSnapshot(state: state, strokes: const []),
+          );
+        }
+        return channel
+            .collection('whiteboardStrokes')
+            .where('generation', isEqualTo: state.generation)
+            .orderBy('sequence')
+            .limit(181)
+            .snapshots()
+            .map((snapshot) {
+              if (snapshot.docs.length > 180) {
+                throw const FormatException(
+                  'The company whiteboard exceeds its supported size.',
+                );
+              }
+              final strokes = <ServerWhiteboardStroke>[];
+              var previousSequence = 0;
+              for (final document in snapshot.docs) {
+                final stroke = ServerWhiteboardStroke.fromFirestore(
+                  document,
+                  serverId: serverId,
+                  channelId: channelId,
+                  generation: state.generation,
+                );
+                if (stroke.sequence <= previousSequence) {
+                  throw const FormatException(
+                    'The company whiteboard order is invalid.',
+                  );
+                }
+                previousSequence = stroke.sequence;
+                strokes.add(stroke);
+              }
+              return ServerWhiteboardSnapshot(
+                state: state,
+                strokes: List.unmodifiable(strokes),
+              );
+            });
+      },
+    );
+  }
+
+  @override
+  Future<void> createWhiteboardStroke({
+    required String serverId,
+    required String channelId,
+    required List<ServerWhiteboardPoint> points,
+    required ServerWhiteboardColor color,
+    required int lineWidth,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    if (points.length < 2 || points.length > 64) {
+      throw ArgumentError.value(points.length, 'points');
+    }
+    for (final point in points) {
+      if (!point.x.isFinite ||
+          !point.y.isFinite ||
+          point.x < 0 ||
+          point.x > 1 ||
+          point.y < 0 ||
+          point.y > 1) {
+        throw ArgumentError.value(point.toMap(), 'points');
+      }
+    }
+    if (lineWidth < 1 || lineWidth > 16) {
+      throw ArgumentError.value(lineWidth, 'lineWidth');
+    }
+    await _mutate('createServerWhiteboardStrokeV1', {
+      'serverId': serverId,
+      'channelId': channelId,
+      'requestId': requestId,
+      'points': [for (final point in points) point.toMap()],
+      'color': color.name,
+      'lineWidth': lineWidth,
+    });
+  }
+
+  @override
+  Future<void> undoWhiteboardStroke({
+    required ServerWhiteboardStroke stroke,
+    required String requestId,
+  }) async {
+    _requireId(stroke.serverId);
+    _requireId(stroke.channelId);
+    _requireId(stroke.id);
+    await _mutate('undoServerWhiteboardStrokeV1', {
+      'serverId': stroke.serverId,
+      'channelId': stroke.channelId,
+      'strokeId': stroke.id,
+      'requestId': requestId,
+      'expectedRevision': stroke.revision,
+    });
+  }
+
+  @override
+  Future<void> clearWhiteboard({
+    required String serverId,
+    required String channelId,
+    required int expectedRevision,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    if (expectedRevision < 0) {
+      throw ArgumentError.value(expectedRevision, 'expectedRevision');
+    }
+    await _mutate('clearServerWhiteboardV1', {
+      'serverId': serverId,
+      'channelId': channelId,
+      'requestId': requestId,
+      'expectedRevision': expectedRevision,
+    });
+  }
+
+  @override
+  Stream<List<ServerMember>> watchMembers(String serverId) {
+    _requireId(serverId);
+    return _dropDenied<List<ServerMember>>(
+      _firestore
+          .collection('clubs')
+          .doc(serverId)
+          .collection('members')
+          .orderBy('joinedAt')
+          .snapshots()
+          .map((snapshot) {
+            final members = <ServerMember>[];
+            for (final document in snapshot.docs) {
+              try {
+                members.add(ServerMember.fromFirestore(document));
+              } on FormatException {
+                continue;
+              }
+            }
+            return List<ServerMember>.unmodifiable(members);
+          }),
+    ).map((members) => members ?? const <ServerMember>[]);
+  }
+
+  @override
+  Future<void> updateServer({
+    required String serverId,
+    required int expectedRevision,
+    required Map<String, Object?> patch,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    await _mutate('updateServerV1', {
+      'serverId': serverId,
+      'requestId': requestId,
+      'expectedRevision': expectedRevision,
+      'patch': patch,
+    });
+  }
+
+  @override
+  Future<void> updateChannel({
+    required String serverId,
+    required String channelId,
+    required int expectedRevision,
+    required Map<String, Object?> patch,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    await _mutate('updateServerChannelV1', {
+      'serverId': serverId,
+      'channelId': channelId,
+      'requestId': requestId,
+      'expectedRevision': expectedRevision,
+      'patch': patch,
+    });
+  }
+
+  @override
+  Future<void> reorderChannels({
+    required String serverId,
+    required int expectedRevision,
+    required List<String> channelIds,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    for (final channelId in channelIds) {
+      _requireId(channelId);
+    }
+    await _mutate('reorderServerChannelsV1', {
+      'serverId': serverId,
+      'requestId': requestId,
+      'expectedRevision': expectedRevision,
+      'channelIds': List<String>.of(channelIds),
+    });
+  }
+
+  @override
+  Future<void> setChannelAccess({
+    required String serverId,
+    required String channelId,
+    required int expectedAclRevision,
+    required ServerChannelAccess access,
+    required List<String> roleIds,
+    required List<String> userIds,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    await _mutate('setServerChannelAccessV1', {
+      'serverId': serverId,
+      'channelId': channelId,
+      'requestId': requestId,
+      'expectedAclRevision': expectedAclRevision,
+      'policy': {
+        'accessMode': access.name,
+        'roleIds': List<String>.of(roleIds),
+        'userIds': List<String>.of(userIds),
+      },
+    });
+  }
+
+  Future<void> _channelTermination(
+    String name, {
+    required String serverId,
+    required String channelId,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    await _mutate(name, {
+      'serverId': serverId,
+      'channelId': channelId,
+      'requestId': requestId,
+    });
+  }
+
+  @override
+  Future<void> archiveChannel({
+    required String serverId,
+    required String channelId,
+    required String requestId,
+  }) => _channelTermination(
+    'archiveServerChannelV1',
+    serverId: serverId,
+    channelId: channelId,
+    requestId: requestId,
+  );
+
+  @override
+  Future<void> deleteChannel({
+    required String serverId,
+    required String channelId,
+    required String requestId,
+  }) => _channelTermination(
+    'deleteServerChannelV1',
+    serverId: serverId,
+    channelId: channelId,
+    requestId: requestId,
+  );
+
+  @override
+  Future<void> revokeInvite({
+    required String serverId,
+    required String inviteeId,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(inviteeId);
+    await _mutate('revokeServerInviteV1', {
+      'serverId': serverId,
+      'inviteeId': inviteeId,
+      'requestId': requestId,
+    });
+  }
+
+  @override
+  Future<void> respondToInvite({
+    required String serverId,
+    required bool accept,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    await _mutate('respondToServerInviteV1', {
+      'serverId': serverId,
+      'requestId': requestId,
+      'response': accept ? 'accept' : 'decline',
+    });
+  }
+
+  @override
+  Future<void> leaveServer({
+    required String serverId,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    await _mutate('leaveServerV1', {
+      'serverId': serverId,
+      'requestId': requestId,
+    });
+  }
+
+  @override
+  Future<void> setMemberRole({
+    required String serverId,
+    required String memberId,
+    required ServerMemberRole role,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(memberId);
+    await _mutate('setServerMemberRoleV1', {
+      'serverId': serverId,
+      'memberId': memberId,
+      'requestId': requestId,
+      'role': role.name,
+    });
+  }
+
+  @override
+  Future<void> removeMember({
+    required String serverId,
+    required String memberId,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(memberId);
+    await _mutate('removeServerMemberV1', {
+      'serverId': serverId,
+      'memberId': memberId,
+      'requestId': requestId,
+    });
+  }
+
+  @override
+  Future<void> setMemberBan({
+    required String serverId,
+    required String memberId,
+    required bool banned,
+    required String reason,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(memberId);
+    await _mutate('setServerMemberBanV1', {
+      'serverId': serverId,
+      'memberId': memberId,
+      'requestId': requestId,
+      'banned': banned,
+      'reason': reason,
+    });
+  }
+
+  @override
+  Future<void> transferOwnership({
+    required String serverId,
+    required String newOwnerId,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(newOwnerId);
+    await _mutate('transferServerOwnershipV1', {
+      'serverId': serverId,
+      'newOwnerId': newOwnerId,
+      'requestId': requestId,
+    });
+  }
+
+  @override
+  Future<void> deleteServer({
+    required String serverId,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    await _mutate('deleteServerV1', {
+      'serverId': serverId,
+      'requestId': requestId,
     });
   }
 
@@ -392,7 +1474,9 @@ class ServerService implements ServerRepository {
             .toSet()
             .toList();
         return _combineNullable(
-          ids.map((id) => _dropUnreadable(_dropDenied(watchServer(id)))).toList(),
+          ids
+              .map((id) => _dropUnreadable(_dropDenied(watchServer(id))))
+              .toList(),
         );
       },
     );
@@ -413,9 +1497,7 @@ class ServerService implements ServerRepository {
           return channels
               .orderBy('position')
               .snapshots()
-              .map(
-                (snapshot) => _parsedChannels(serverId, snapshot.docs),
-              );
+              .map((snapshot) => _parsedChannels(serverId, snapshot.docs));
         }
         // A broad collection query cannot safely list mixed restricted rows.
         final members = channels

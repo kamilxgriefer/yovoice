@@ -675,7 +675,8 @@ const momentsListenTranslations = <String, Map<String, String>>{
     'Play voice reply from {name}, {duration}': '播放 {name} 的语音回复，{duration}',
     'Pause voice reply from {name}, {duration}': '暂停 {name} 的语音回复，{duration}',
     'Now playing: {caption}': '正在播放：{caption}',
-    'Open Voice Moment: {caption}, {author}': '打开 Voice Moment：{caption}，{author}',
+    'Open Voice Moment: {caption}, {author}':
+        '打开 Voice Moment：{caption}，{author}',
   },
   'zh_TW': {
     'yoMoments.play': '播放',
@@ -694,7 +695,8 @@ const momentsListenTranslations = <String, Map<String, String>>{
     'Play voice reply from {name}, {duration}': '播放 {name} 的語音回覆，{duration}',
     'Pause voice reply from {name}, {duration}': '暫停 {name} 的語音回覆，{duration}',
     'Now playing: {caption}': '正在播放：{caption}',
-    'Open Voice Moment: {caption}, {author}': '開啟 Voice Moment：{caption}，{author}',
+    'Open Voice Moment: {caption}, {author}':
+        '開啟 Voice Moment：{caption}，{author}',
   },
   'ja': {
     'yoMoments.play': '再生',
@@ -713,7 +715,8 @@ const momentsListenTranslations = <String, Map<String, String>>{
     'Play voice reply from {name}, {duration}': '{name} の音声返信を再生、{duration}',
     'Pause voice reply from {name}, {duration}': '{name} の音声返信を一時停止、{duration}',
     'Now playing: {caption}': '再生中：{caption}',
-    'Open Voice Moment: {caption}, {author}': 'Voice Moment を開く：{caption}、{author}',
+    'Open Voice Moment: {caption}, {author}':
+        'Voice Moment を開く：{caption}、{author}',
   },
   'ko': {
     'yoMoments.play': '재생',
@@ -730,9 +733,11 @@ const momentsListenTranslations = <String, Map<String, String>>{
     'Could not load more replies. Try again.': '답글을 더 불러오지 못했습니다. 다시 시도해 주세요.',
     '{position} of {total}': '{total} 중 {position}',
     'Play voice reply from {name}, {duration}': '{name}의 음성 답글 재생, {duration}',
-    'Pause voice reply from {name}, {duration}': '{name}의 음성 답글 일시정지, {duration}',
+    'Pause voice reply from {name}, {duration}':
+        '{name}의 음성 답글 일시정지, {duration}',
     'Now playing: {caption}': '재생 중: {caption}',
-    'Open Voice Moment: {caption}, {author}': 'Voice Moment 열기: {caption}, {author}',
+    'Open Voice Moment: {caption}, {author}':
+        'Voice Moment 열기: {caption}, {author}',
   },
   'ar': {
     'yoMoments.play': 'تشغيل',

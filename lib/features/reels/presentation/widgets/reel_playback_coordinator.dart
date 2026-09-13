@@ -128,6 +128,17 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   StreamSubscription<Duration>? _audioPositionSubscription;
   StreamSubscription<void>? _audioCompletionSubscription;
   Duration _audioPosition = Duration.zero;
+
+  /// The timeline clock, published for painting only.
+  ///
+  /// A progress bar redraws with the engine — many times a second — and a
+  /// [ChangeNotifier] tick would rebuild the whole card with it (spec §9
+  /// line 167). This is a separate [ValueListenable] so the bar and its
+  /// labels are the only things that repaint, and nothing that listens to
+  /// the coordinator itself hears a position change at all.
+  final ValueNotifier<Duration> _position = ValueNotifier<Duration>(
+    Duration.zero,
+  );
   Future<void> _operations = Future<void>.value();
   Timer? _photoEndTimer;
   DateTime? _lastDriftCorrection;
@@ -156,6 +167,23 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   bool get isPlaying => _playing;
   bool get isLoading => _loading;
   bool get isActive => _active;
+
+  /// How far into [timelineDuration] this Reel has played, from the engine
+  /// that owns the clock: the video for a video Reel, the backing track for a
+  /// photo Reel. Never negative, never past the timeline.
+  ValueListenable<Duration> get position => _position;
+
+  void _publishPosition(Duration raw) {
+    if (_disposed) return;
+    final total = timelineDuration;
+    final clamped = raw < Duration.zero
+        ? Duration.zero
+        : total > Duration.zero && raw > total
+        ? total
+        : raw;
+    if (_position.value == clamped) return;
+    _position.value = clamped;
+  }
 
   /// Whether this Reel is allowed to start itself. False for photo Reels and
   /// for every composer preview.
@@ -243,6 +271,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     _commandVersion += 1;
     _desiredPlaying = false;
     _setPlaying(false);
+    _publishPosition(Duration.zero);
     _cancelPhotoEndTimer();
     // Straight to the player, not through the queue: a page being scrolled
     // away is detached and then disposed in the same frame, and a queued
@@ -273,6 +302,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
       // later starts it again, the same as reaching it for the first time.
       _viewerPaused = false;
       _setPlaying(false);
+      _publishPosition(Duration.zero);
       _cancelPhotoEndTimer();
     }
     _notify();
@@ -367,6 +397,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   Future<void> synchronizeVideoTick() async {
     final video = _video;
     if (_disposed || !_active || video == null) return;
+    _publishPosition(video.position - _videoStart);
     final position = _playing && !_autoplaySuspended && video.isPlaying
         ? video.position
         : null;
@@ -487,6 +518,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
       if (audio != null && _audioLoaded) audio.seek(_audioStart),
     ]);
     _audioPosition = _audioStart;
+    _publishPosition(Duration.zero);
   }
 
   Future<void> _loopVideo() async {
@@ -502,6 +534,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
       if (audio != null) audio.seek(_audioStart),
     ]);
     _audioPosition = _audioStart;
+    _publishPosition(Duration.zero);
     _lastDriftCorrection = null;
     if (!_active || !_desiredPlaying || _disposed) {
       _setPlaying(false);
@@ -540,6 +573,12 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   void _onAudioPosition(Duration position) {
     if (_disposed) return;
     _audioPosition = position;
+    // A photo Reel's timeline IS its backing track, so that track is the
+    // clock. A video Reel's audio only follows the video and must never move
+    // the bar on its own.
+    if (_mediaKind == ReelMediaKind.image) {
+      _publishPosition(position - _audioStart);
+    }
     if (_mediaKind == ReelMediaKind.image &&
         _playing &&
         position >= _audioEnd) {
@@ -586,6 +625,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
       await audio.seek(_audioStart);
     }
     _audioPosition = _audioStart;
+    _publishPosition(Duration.zero);
     _setPlaying(false);
   }
 
@@ -662,6 +702,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     _cancelPhotoEndTimer();
     unawaited(_audioPositionSubscription?.cancel());
     unawaited(_audioCompletionSubscription?.cancel());
+    _position.dispose();
     final audio = _audio;
     _audio = null;
     if (audio != null) {

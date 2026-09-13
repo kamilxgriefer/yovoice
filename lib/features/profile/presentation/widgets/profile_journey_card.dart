@@ -30,7 +30,7 @@ class ProfileJourneyCard extends StatelessWidget {
     final items = <_JourneyItem>[
       _JourneyItem(
         icon: Icons.hub_rounded,
-        label: copy.text('Communities', 'Społeczności'),
+        label: copy.text('Servers joined', 'Serwery użytkownika'),
         value: '$communitiesCount',
         keyName: 'communities',
       ),
@@ -47,8 +47,8 @@ class ProfileJourneyCard extends StatelessWidget {
         keyName: 'voice-time',
       ),
       _JourneyItem(
-        icon: Icons.meeting_room_rounded,
-        label: copy.text('Rooms created', 'Utworzone pokoje'),
+        icon: Icons.add_circle_outline_rounded,
+        label: copy.text('Servers created', 'Utworzone serwery'),
         value: '$roomCount',
         keyName: 'rooms-created',
       ),

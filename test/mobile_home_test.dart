@@ -20,14 +20,12 @@ import 'package:yovoice/features/moments/data/services/voice_moment_read_service
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
-import 'package:yovoice/features/rooms/data/models/voice_room.dart';
-import 'package:yovoice/features/rooms/data/services/room_service.dart';
-import 'package:yovoice/features/staff/data/staff_capabilities.dart';
-import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_here_now_hero.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_server_overview.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/models/server_type.dart';
+import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 
@@ -46,9 +44,26 @@ class _StreamFollowService extends FollowService {
   });
 
   final Stream<List<FollowUser>> stream;
+  int calls = 0;
 
   @override
-  Stream<List<FollowUser>> watchFollowing(String userId) => stream;
+  Stream<List<FollowUser>> watchFollowing(String userId) {
+    calls++;
+    return stream;
+  }
+}
+
+class _StaticServers extends ServerService {
+  _StaticServers({
+    required super.firestore,
+    required super.auth,
+    required this.servers,
+  });
+
+  final List<Server> servers;
+
+  @override
+  Stream<List<Server>> watchMyServers() => Stream.value(servers);
 }
 
 void main() {
@@ -62,43 +77,22 @@ void main() {
     mockUser: MockUser(uid: uid, email: 'me@yovoice.app', displayName: 'Kamil'),
   );
 
-  Future<void> seedRoom({
+  Server server({
     required String id,
     required String name,
     required String description,
-    int participants = 8,
-    String? hostId,
-    bool isLive = true,
-  }) async {
-    await db.collection('rooms').doc(id).set({
-      'hostId': hostId ?? 'host-$id',
-      'hostName': 'Host',
-      'name': name,
-      'description': description,
-      'category': 'community',
-      'visibility': 'public',
-      'language': 'English',
-      'participantCount': participants,
-      'memberCount': 0,
-      'isLive': isLive,
-      'roomType': 'community',
-      'status': 'active',
-      'experience': 'community',
-      'createdAt': Timestamp.now(),
-    });
-    await db
-        .collection('rooms')
-        .doc(id)
-        .collection('participants')
-        .doc('speaker-$id')
-        .set({
-          'userId': 'speaker-$id',
-          'displayName': 'Speaker',
-          'role': 'host',
-          'isMuted': false,
-          'isSpeaker': true,
-        });
-  }
+    String? ownerId,
+  }) => Server(
+    id: id,
+    name: name,
+    description: description,
+    ownerId: ownerId ?? uid,
+    type: ServerType.community,
+    privacy: ServerPrivacy.public,
+    defaultLanguage: 'English',
+    schemaVersion: 1,
+    activationState: 'active',
+  );
 
   Future<void> seedConversation({
     required String id,
@@ -189,7 +183,6 @@ void main() {
   Widget host(Widget child) => MaterialApp(home: Scaffold(body: child));
 
   MobileHome buildHome({
-    void Function(VoiceRoom)? onOpenRoom,
     VoidCallback? onDiscover,
     VoidCallback? onFindCreators,
     VoidCallback? onFriends,
@@ -200,7 +193,9 @@ void main() {
     ValueChanged<List<VoiceMoment>>? onOpenChain,
     ValueChanged<Conversation>? onOpenConversation,
     VoidCallback? onSeeAllMoments,
-    StaffCapabilityService? capabilityService,
+    ValueChanged<Server>? onOpenServer,
+    VoidCallback? onOpenServers,
+    List<Server> servers = const [],
     PresenceService? presenceService,
     FollowService? followService,
     HomeFeedService? feedService,
@@ -209,7 +204,6 @@ void main() {
   }) {
     final firebaseAuth = auth();
     return MobileHome(
-      onOpenRoom: onOpenRoom ?? (_) {},
       onOpenDiscover: onDiscover ?? () {},
       onOpenFindCreators: onFindCreators,
       onOpenFriends: onFriends ?? () {},
@@ -224,7 +218,13 @@ void main() {
       onOpenConversation: onOpenConversation ?? (_) {},
       onSeeAllChats: () {},
       onSeeAllMoments: onSeeAllMoments,
-      roomService: RoomService(firestore: db, auth: firebaseAuth),
+      onOpenServer: onOpenServer,
+      onOpenServers: onOpenServers,
+      serverRepository: _StaticServers(
+        firestore: db,
+        auth: firebaseAuth,
+        servers: servers,
+      ),
       friendService: FriendService(firestore: db, auth: firebaseAuth),
       followService:
           followService ?? FollowService(firestore: db, auth: firebaseAuth),
@@ -239,7 +239,6 @@ void main() {
             ),
           ),
       messageService: MessageService(firestore: db, auth: firebaseAuth),
-      capabilityService: capabilityService,
       presenceService: presenceService,
       currentUserId: uid,
       isVisible: isVisible,
@@ -333,75 +332,53 @@ void main() {
     }
   }
 
-  testWidgets('renders the briefing modules from real data and drops the '
-      'retired hero composition', (tester) async {
-    // Tall viewport: mobile Home is a long feed now, and a lazy ListView
-    // only builds what fits. Phone-width layout is asserted by the
-    // dedicated size tests below.
+  testWidgets('renders the server-first briefing in its intentional order', (
+    tester,
+  ) async {
     usePhone(tester, const Size(390, 2600));
-    await seedRoom(
-      id: 'r1',
+    final primaryServer = server(
+      id: 's1',
       name: 'Evening Talks',
       description: 'Real conversations, real people',
-      participants: 8,
-    );
-    // Hosted by this account but not live: it belongs to "Your active
-    // rooms" only, so the section renders without a second board banner.
-    await seedRoom(
-      id: 'mine',
-      name: 'My hosted room',
-      description: 'Owned, not live',
-      participants: 2,
-      hostId: uid,
-      isLive: false,
     );
 
-    await tester.pumpWidget(host(buildHome()));
+    await tester.pumpWidget(host(buildHome(servers: [primaryServer])));
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
 
-    // Compact header: one greeting carrying the account's own first name.
-    // The wave is decoration — drawn, never announced (see the semantics
-    // test below, which still refuses to let a control claim the greeting).
     expect(find.textContaining('Hi, Kamil'), findsOneWidget);
     expect(find.text('👋'), findsOneWidget);
-    // The friends rail leads, with the signed-in account as its first tile.
     expect(find.text('Your people'), findsOneWidget);
     expect(find.byKey(const ValueKey('home-people-me')), findsOneWidget);
-    // The four questions Home answers, in order, and nothing else.
-    expect(find.text('YO Moments from your circle'), findsNothing);
-    // Only the people tile says "You" now: the Moments rail's own tile
-    // left Home, and the trailing Record tile took over creation.
     expect(find.text('You'), findsOneWidget);
-    // With nothing followed to hear, a heading promising followed Moments
-    // is a promise Home cannot keep: the section header is gated on real
-    // content and the Record affordance becomes a labelled action instead.
     expect(find.text('From people you follow'), findsNothing);
     expect(find.byKey(const ValueKey('home-record-moment')), findsOneWidget);
     expect(find.text('Record a Voice Moment'), findsOneWidget);
     expect(find.byKey(const ValueKey('home-your-moment')), findsNothing);
     expect(find.text('Here and now'), findsOneWidget);
-    expect(find.text('Your active rooms'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('home-server-continue-s1')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('home-servers-overview')), findsOneWidget);
+    expect(find.byKey(const ValueKey('home-server-row-s1')), findsOneWidget);
     expect(find.text('Your recent chats'), findsOneWidget);
 
-    double y(String label) => tester.getTopLeft(find.text(label)).dy;
-    expect(y('You'), lessThan(y('Here and now')));
-    expect(y('Here and now'), lessThan(y('Got a minute?')));
-    expect(y('Got a minute?'), lessThan(y('Your recent chats')));
-    expect(y('Your recent chats'), lessThan(y('Your active rooms')));
-    expect(find.byKey(const ValueKey('home-featured-room')), findsOneWidget);
+    double y(Finder finder) => tester.getTopLeft(finder).dy;
+    expect(
+      y(find.byKey(const ValueKey('home-people-me'))),
+      lessThan(y(find.text('Here and now'))),
+    );
+    expect(
+      y(find.text('Here and now')),
+      lessThan(y(find.byKey(const ValueKey('home-record-moment')))),
+    );
+    expect(
+      y(find.byKey(const ValueKey('home-record-moment'))),
+      lessThan(y(find.text('Your recent chats'))),
+    );
 
-    // The room appears ONCE, and its name is the hero's eyebrow — the
-    // headline never inflects a user-typed name.
-    expect(find.textContaining('Evening Talks'), findsOneWidget);
-    // The summary is the REAL roster, read from the room's participants.
-    expect(find.text('Speaker is talking'), findsOneWidget);
-    // The one primary action, and it opens the pre-join screen.
-    expect(find.byKey(const ValueKey('home-hero-join')), findsOneWidget);
-    expect(find.text('Join the conversation'), findsOneWidget);
-
-    // Retired compositions are gone.
     for (final removed in [
       'LIVE NOW',
       'FEATURED',
@@ -412,51 +389,54 @@ void main() {
       'Global conversations',
       'Top creators you follow',
       'Voice Trending',
-      // The followed-Moments rail and the room directory both left Home.
       'Live for you',
       'Rooms for you',
+      'Your active rooms',
+      'Join the conversation',
     ]) {
       expect(find.text(removed), findsNothing, reason: '$removed returned');
     }
-
-    // Mobile carries no Premium or sponsored content.
     expect(find.textContaining('Check plans'), findsNothing);
     expect(find.text('SPONSORED EXAMPLE'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('actions reuse the existing flows', (tester) async {
+  testWidgets('actions open the exact server and existing destinations', (
+    tester,
+  ) async {
     usePhone(tester, const Size(390, 2600));
-    await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
-
-    VoiceRoom? opened;
+    final primaryServer = server(
+      id: 's1',
+      name: 'Evening Talks',
+      description: 'Real talk',
+    );
+    Server? opened;
     var discover = 0;
     var creators = 0;
     var friends = 0;
     var moment = 0;
-    var createRoom = 0;
+    var openServers = 0;
 
     await tester.pumpWidget(
       host(
         buildHome(
-          onOpenRoom: (room) => opened = room,
+          servers: [primaryServer],
+          onOpenServer: (value) => opened = value,
+          onOpenServers: () => openServers++,
           onDiscover: () => discover++,
           onFindCreators: () => creators++,
           onFriends: () => friends++,
           onCreateMoment: () => moment++,
-          onCreateRoom: () => createRoom++,
         ),
       ),
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    // ONE primary action on the page: the hero's join pill.
-    await tester.tap(find.byKey(const ValueKey('home-hero-join')));
+    await tester.tap(find.byKey(const ValueKey('home-server-continue-s1')));
     await tester.pump();
+    expect(opened?.id, 's1');
     expect(opened?.name, 'Evening Talks');
 
-    // No filler card and no duplicate actions. Recording is the "Masz
-    // chwilę?" row card — the followed rail and its own story tile left Home.
     expect(find.text('Find creators'), findsNothing);
     expect(find.text('Record a Moment'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('home-record-moment')));
@@ -466,50 +446,36 @@ void main() {
     expect(discover, 0);
 
     await tester.tap(find.byKey(const ValueKey('home-quick-friends')));
-    await tester.tap(find.byKey(const ValueKey('home-quick-create-room')));
+    await tester.tap(find.byKey(const ValueKey('home-quick-create-server')));
     await tester.pump();
     expect(friends, 1);
-    expect(createRoom, 1);
-    expect(moment, 1, reason: 'Create room must never record a Moment');
+    expect(openServers, 1);
+    expect(moment, 1, reason: 'Create server must never record a Moment');
   });
 
-  testWidgets('phone room banners expose owner controls and senior staff '
-      'controls without granting them to ordinary visitors', (tester) async {
+  testWidgets('server cards do not expose legacy room administration', (
+    tester,
+  ) async {
     usePhone(tester, const Size(390, 1400));
-    await seedRoom(
+    final owned = server(
       id: 'mine',
-      name: 'My mobile room',
+      name: 'My mobile server',
       description: 'Owned here',
-      hostId: uid,
     );
+    Server? opened;
 
-    await tester.pumpWidget(host(buildHome()));
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(find.byTooltip('Manage your room'), findsWidgets);
-    expect(find.byIcon(Icons.shield_rounded), findsNothing);
-
-    // Start a fresh screen/session so initState loads the newly injected
-    // server capability set rather than retaining the ordinary-account one.
-    await tester.pumpWidget(host(const SizedBox.shrink()));
-    await tester.pump();
     await tester.pumpWidget(
       host(
-        buildHome(
-          capabilityService: _StaticCapabilityService(
-            const StaffCapabilities(
-              staffRole: 'superModerator',
-              permanentDeleteSpaces: true,
-              endAnyRoom: true,
-            ),
-          ),
-        ),
+        buildHome(servers: [owned], onOpenServer: (value) => opened = value),
       ),
     );
     await tester.pump(const Duration(milliseconds: 200));
-    expect(find.byIcon(Icons.shield_rounded), findsOneWidget);
-    await tester.tap(find.byIcon(Icons.shield_rounded));
-    await tester.pumpAndSettle();
-    expect(find.text('Delete permanently…'), findsOneWidget);
+    expect(find.byKey(const ValueKey('home-server-continue-mine')), findsOne);
+    expect(find.byTooltip('Manage your room'), findsNothing);
+    expect(find.byIcon(Icons.shield_rounded), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('home-server-row-mine')));
+    await tester.pump();
+    expect(opened?.id, 'mine');
   });
 
   testWidgets('header profile is a named 44px keyboard action', (tester) async {
@@ -545,21 +511,24 @@ void main() {
     expect(tester.getSize(bell).height, greaterThanOrEqualTo(44));
   });
 
-  testWidgets('no live rooms: compact honest empty states', (tester) async {
+  testWidgets('no servers: compact honest empty state and one CTA', (
+    tester,
+  ) async {
     usePhone(tester, const Size(390, 844));
     await tester.pumpWidget(host(buildHome()));
     await tester.pump(const Duration(milliseconds: 150));
 
     expect(
-      find.textContaining('A good conversation starts here.'),
+      find.text('A good conversation starts in your server.'),
       findsOneWidget,
     );
-    // The recommended list hides rather than showing filler rows.
-    expect(find.text('Recommended now'), findsNothing);
-    // An account hosting nothing gets no permanently empty owned-rooms
-    // card, and no second Create Room button duplicating the pill row.
+    expect(find.byKey(const ValueKey('home-servers-empty')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('home-empty-create-server')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('home-servers-overview')), findsNothing);
     expect(find.text('Your active rooms'), findsNothing);
-    expect(find.text('You have no rooms yet.'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -642,7 +611,6 @@ void main() {
 
     // The followed rail and its own story tile left Home; creation survives
     // as the "Got a minute?" card.
-    expect(find.byType(MobileMomentsStrip), findsNothing);
     expect(find.byKey(const ValueKey('home-your-moment')), findsNothing);
     expect(find.byKey(const ValueKey('home-record-moment')), findsOneWidget);
 
@@ -673,8 +641,9 @@ void main() {
     expect(openedChain!.every((moment) => moment.hasAuthorizedMedia), isTrue);
   });
 
-  testWidgets('initial following stream failure fails closed to the Record '
-      'tile', (tester) async {
+  testWidgets('Home never subscribes to the retired following stream', (
+    tester,
+  ) async {
     usePhone(tester, const Size(390, 1000));
     await seedMoment(
       id: 'stream-followed-moment',
@@ -694,6 +663,7 @@ void main() {
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
+    expect(followService.calls, 0);
     expect(find.text('Stream followed'), findsNothing);
     expect(find.byKey(const ValueKey('home-record-moment')), findsOneWidget);
     expect(find.byKey(const ValueKey('home-your-moment')), findsNothing);
@@ -897,16 +867,13 @@ void main() {
     });
   });
 
-  testWidgets('Your active rooms survives 200% text without clipping', (
+  testWidgets('the server card survives 200% text without clipping', (
     tester,
   ) async {
-    // WCAG 1.4.4: the owned-room card must reflow, not be cut off. The row
-    // used to pin itself to artwork + a flat 96 px.
-    await seedRoom(
+    final item = server(
       id: 'mine',
       name: 'Evening Talks',
       description: 'Real talk',
-      hostId: uid,
     );
     for (final width in [320.0, 390.0, 430.0, 768.0]) {
       usePhone(tester, Size(width, 2600));
@@ -917,103 +884,94 @@ void main() {
               size: Size(width, 2600),
               textScaler: const TextScaler.linear(2),
             ),
-            child: Scaffold(body: buildHome()),
+            child: Scaffold(body: buildHome(servers: [item])),
           ),
         ),
       );
       await tester.pump(const Duration(milliseconds: 250));
 
-      // At 200 % the hero above grows (the headline wraps rather than being
-      // cut), so this section can start below the lazy list's build window.
-      // Reaching it by scrolling is the assertion: it exists and reflows.
-      final section = find.text('Your active rooms');
-      if (section.evaluate().isEmpty) {
+      final card = find.byKey(const ValueKey('home-server-continue-mine'));
+      if (card.evaluate().isEmpty) {
         await tester.scrollUntilVisible(
-          section,
+          card,
           400,
           scrollable: find.byType(Scrollable).first,
         );
       }
       expect(
-        section,
+        card,
         findsOneWidget,
-        reason: 'the section must actually render at $width',
+        reason: 'the server card must actually render at $width',
       );
       expect(tester.takeException(), isNull, reason: 'at $width @200% text');
     }
   });
 
-  testWidgets('the room directory is not on Home: six live rooms produce one '
-      'hero and no second board', (tester) async {
+  testWidgets('six servers produce one continuation card and three rows', (
+    tester,
+  ) async {
     usePhone(tester, const Size(390, 4000));
-    for (var index = 0; index < 6; index++) {
-      await seedRoom(
-        id: 'r$index',
-        name: 'Room $index',
-        description: 'Room number $index',
-        participants: 3 + index,
-      );
-    }
+    final servers = [
+      for (var index = 0; index < 6; index++)
+        server(
+          id: 's$index',
+          name: 'Server $index',
+          description: 'Server number $index',
+        ),
+    ];
 
-    await tester.pumpWidget(host(buildHome()));
+    await tester.pumpWidget(host(buildHome(servers: servers)));
     await tester.pump(const Duration(milliseconds: 250));
 
-    // Discovery belongs to the Odkrywaj destination; Home never becomes a
-    // second directory with a listener per banner. The other live rooms are
-    // still read — they are the hero's candidate list.
     expect(find.text('Rooms for you'), findsNothing);
-    expect(find.byType(HomeRoomBanner), findsNothing);
-    expect(find.byKey(const ValueKey('home-featured-room')), findsOneWidget);
-    expect(find.byKey(const ValueKey('home-hero-join')), findsOneWidget);
+    expect(find.byKey(const ValueKey('home-server-continue-s0')), findsOne);
+    expect(find.byKey(const ValueKey('home-servers-overview')), findsOne);
+    for (var index = 0; index < 3; index++) {
+      expect(find.byKey(ValueKey('home-server-row-s$index')), findsOne);
+    }
+    for (var index = 3; index < 6; index++) {
+      expect(find.byKey(ValueKey('home-server-row-s$index')), findsNothing);
+    }
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a host keeps "Your active rooms" when several live rooms '
-      'lengthen the sections above it', (tester) async {
-    // The owned-rooms block sits after a variable-length section. Unkeyed,
-    // its list child shifted index the moment the board grew, which
-    // rebuilt it from scratch, re-subscribed to an already-emitted
-    // broadcast stream, and left the host's own rooms silently missing.
+  testWidgets('several servers keep the projection stable', (tester) async {
     usePhone(tester, const Size(390, 3000));
-    await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
-    await seedRoom(id: 'r2', name: 'Night Shift', description: 'Late talk');
-    await seedRoom(
-      id: 'mine',
-      name: 'Morning Coffee',
-      description: 'Owned and live',
-      hostId: uid,
-    );
+    final servers = [
+      server(id: 's1', name: 'Evening Talks', description: 'Real talk'),
+      server(id: 's2', name: 'Night Shift', description: 'Late talk'),
+      server(id: 'mine', name: 'Morning Coffee', description: 'Owned'),
+    ];
 
-    await tester.pumpWidget(host(buildHome()));
+    await tester.pumpWidget(host(buildHome(servers: servers)));
     for (var i = 0; i < 10; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(find.text('Your active rooms'), findsOneWidget);
+    expect(find.byKey(const ValueKey('home-server-continue-s1')), findsOne);
+    expect(find.byKey(const ValueKey('home-server-row-s1')), findsOne);
+    expect(find.byKey(const ValueKey('home-server-row-s2')), findsOne);
+    expect(find.byKey(const ValueKey('home-server-row-mine')), findsOne);
     expect(find.text('Could not load rooms'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('a medium width is not a stretched phone: wider gutters and '
-      'the wide hero composition', (tester) async {
-    // The mobile shell also serves tablets and a resized desktop window.
-    // At 768 the body is not otherwise framed, so it takes UI.md's medium
-    // gutter (24) and the featured room gets its non-compact banner —
-    // deliberate, and the ONLY two things that change with width here.
-    await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
+      'the expanded server composition', (tester) async {
+    final item = server(
+      id: 's1',
+      name: 'Evening Talks',
+      description: 'Real talk',
+    );
 
-    for (final (width, gutter, compact) in [
-      (390.0, 16.0, true),
-      (768.0, 24.0, false),
+    for (final (width, gutter, expanded) in [
+      (390.0, 16.0, false),
+      (768.0, 24.0, true),
     ]) {
       usePhone(tester, Size(width, 1400));
-      await tester.pumpWidget(host(buildHome()));
+      await tester.pumpWidget(host(buildHome(servers: [item])));
       await tester.pump(const Duration(milliseconds: 250));
 
-      // The gutter lives on the page children now, not on the ListView:
-      // the two rails are full-bleed so their tiles can scroll under the
-      // frame edge. Measure what the reader sees — the left ink of a
-      // gutter-wrapped section — rather than a padding value.
       final list = tester.widget<ListView>(find.byType(ListView).first);
       expect((list.padding! as EdgeInsets).left, 0);
       expect((list.padding! as EdgeInsets).right, 0);
@@ -1028,10 +986,13 @@ void main() {
         reason: 'right gutter at $width',
       );
 
-      final featured = tester.widget<HomeHereNowHero>(
-        find.byKey(const ValueKey('home-featured-room')),
+      final featured = tester.widget<HomeServerConversationCard>(
+        find.ancestor(
+          of: find.byKey(const ValueKey('home-server-continue-s1')),
+          matching: find.byType(HomeServerConversationCard),
+        ),
       );
-      expect(featured.compact, compact, reason: 'featured hero at $width');
+      expect(featured.expanded, expanded, reason: 'server card at $width');
       expect(tester.takeException(), isNull);
     }
   });
@@ -1045,11 +1006,13 @@ void main() {
       'lays out cleanly at ${size.width.toInt()}x${size.height.toInt()}',
       (tester) async {
         usePhone(tester, size);
-        await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Talk');
-        await seedRoom(id: 'r2', name: 'new test', description: 'Open talk');
-        await seedRoom(id: 'r3', name: 'super test', description: 'Chill');
+        final servers = [
+          server(id: 's1', name: 'Evening Talks', description: 'Talk'),
+          server(id: 's2', name: 'new test', description: 'Open talk'),
+          server(id: 's3', name: 'super test', description: 'Chill'),
+        ];
 
-        await tester.pumpWidget(host(buildHome()));
+        await tester.pumpWidget(host(buildHome(servers: servers)));
         await tester.pump(const Duration(milliseconds: 150));
 
         expect(tester.takeException(), isNull);
@@ -1096,13 +1059,4 @@ void main() {
       expect(find.text('Find friends'), findsOneWidget);
     });
   });
-}
-
-class _StaticCapabilityService extends StaffCapabilityService {
-  _StaticCapabilityService(this.value);
-
-  final StaffCapabilities value;
-
-  @override
-  Future<StaffCapabilities> load({bool refresh = false}) async => value;
 }

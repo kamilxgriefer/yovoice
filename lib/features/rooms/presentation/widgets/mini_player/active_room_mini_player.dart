@@ -15,7 +15,8 @@ import 'package:yovoice/features/permissions/data/permission_readiness_service.d
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/mini_player/active_room_controls.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/mini_player/active_room_info.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/mini_player/compact_active_room_bar.dart';
@@ -344,9 +345,12 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
         try {
           final room = await _rooms.getRoom(roomId);
           if (!mounted || !_isCurrentSession(roomId, generation)) return;
+          final serverId = room.clubId?.trim();
           await Navigator.of(context).push<void>(
             MaterialPageRoute<void>(
-              builder: (_) => RoomEntryScreen(room: room),
+              builder: (_) => serverId == null || serverId.isEmpty
+                  ? const ServersScreen()
+                  : ServerWorkspaceScreen(serverId: serverId),
             ),
           );
         } catch (_) {
@@ -443,8 +447,8 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
             SnackBar(
               content: Text(
                 copy.text(
-                  "You're muted. Room status couldn't sync; try again.",
-                  'Mikrofon jest wyciszony. Nie udało się zsynchronizować statusu pokoju — spróbuj ponownie.',
+                  "You're muted. Conversation status couldn't sync; try again.",
+                  'Mikrofon jest wyciszony. Nie udało się zsynchronizować statusu rozmowy — spróbuj ponownie.',
                 ),
               ),
             ),
@@ -518,10 +522,10 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
             title: Text(
               authorityUncertain
                   ? copy.text(
-                      'Leave or end room?',
-                      'Opuścić czy zakończyć pokój?',
+                      'Leave or end conversation?',
+                      'Opuścić czy zakończyć rozmowę?',
                     )
-                  : copy.text('End room?', 'Zakończyć pokój?'),
+                  : copy.text('End conversation?', 'Zakończyć rozmowę?'),
               style: TextStyle(
                 color: palette.textPrimary,
                 fontWeight: FontWeight.w900,
@@ -530,14 +534,14 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
             content: Text(
               authorityUncertain
                   ? copy.text(
-                      'Room authority could not be verified. Leaving may end '
+                      'Conversation authority could not be verified. Leaving may end '
                           'this live session if you are its host.',
-                      'Nie udało się potwierdzić uprawnień w pokoju. Jeśli jesteś gospodarzem, wyjście może zakończyć sesję na żywo.',
+                      'Nie udało się potwierdzić uprawnień w rozmowie. Jeśli jesteś gospodarzem, wyjście może zakończyć sesję na żywo.',
                     )
                   : copy.text(
                       'You are the host. Leaving can end this live session for '
                           'everyone still inside.',
-                      'Jesteś gospodarzem. Wyjście może zakończyć sesję na żywo dla wszystkich osób w pokoju.',
+                      'Jesteś gospodarzem. Wyjście może zakończyć sesję na żywo dla wszystkich uczestników.',
                     ),
               style: TextStyle(color: palette.textSecondary, height: 1.4),
             ),
@@ -557,7 +561,7 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
                 child: Text(
                   authorityUncertain
                       ? copy.text('Leave anyway', 'Wyjdź mimo to')
-                      : copy.text('End room', 'Zakończ pokój'),
+                      : copy.text('End conversation', 'Zakończ rozmowę'),
                 ),
               ),
             ],
@@ -599,7 +603,7 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
           View.of(context),
           AppLocalizations.of(
             context,
-          ).text('Room chat expanded', 'Czat pokoju rozwinięty'),
+          ).text('Channel chat expanded', 'Czat kanału rozwinięty'),
           Directionality.of(context),
         ),
       );
@@ -770,8 +774,8 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
                     child: Semantics(
                       button: true,
                       label: copy.text(
-                        'Close room chat',
-                        'Zamknij czat pokoju',
+                        'Close channel chat',
+                        'Zamknij czat kanału',
                       ),
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,

@@ -92,10 +92,7 @@ String _localizedSectionLabel(AppLocalizations copy, StaffSection section) =>
         'Centrum moderacji',
       ),
       StaffSection.users => copy.text('Users', 'Użytkownicy'),
-      StaffSection.rooms => copy.text(
-        'Rooms & Spaces',
-        'Pokoje i przestrzenie',
-      ),
+      StaffSection.rooms => copy.text('Live conversations', 'Rozmowy na żywo'),
       StaffSection.sanctions => copy.text('Sanctions', 'Sankcje'),
       StaffSection.staffRoles => copy.text('Staff & Roles', 'Zespół i role'),
       StaffSection.audit => copy.text('Audit Log', 'Dziennik audytu'),

@@ -393,7 +393,7 @@ void main() {
       expect(english, [
         'Live for you',
         'Your circle',
-        'Create room',
+        'Create server',
         'Invite and talk',
         'Grow your circle',
         'You',
@@ -401,7 +401,7 @@ void main() {
       expect(labels(const AppLocalizations(Locale('pl'))), [
         'Na żywo dla Ciebie',
         'Twój krąg',
-        'Utwórz pokój',
+        'Stwórz serwer',
         'Zaproś i rozmawiaj',
         'Powiększ swój krąg',
         'Ty',
@@ -469,8 +469,8 @@ void main() {
           'Got a minute?',
           'Record a Voice Moment',
           'A good conversation starts here.',
-          "It's quiet right now. Create a room or check on your friends.",
-          'Discover rooms',
+          "It's quiet right now. Create a server or check on your friends.",
+          'Servers',
         ]);
         expect(labels(const AppLocalizations(Locale('pl'))), [
           'Cześć, Maja',
@@ -491,8 +491,8 @@ void main() {
           'Masz chwilę?',
           'Nagraj Voice Moment',
           'Tu zaczyna się dobra rozmowa.',
-          'Teraz jest cicho. Utwórz pokój albo zajrzyj do znajomych.',
-          'Odkrywaj pokoje',
+          'Teraz jest cicho. Utwórz serwer albo zajrzyj do znajomych.',
+          'Serwery',
         ]);
         for (final locale in AppLocalizations.supportedLocales) {
           final copy = AppLocalizations(locale);
@@ -502,6 +502,14 @@ void main() {
             expect(values[index].trim(), isNotEmpty, reason: '$tag #$index');
             expect(values[index], isNot(contains('{')), reason: '$tag #$index');
             if (locale.languageCode != 'en') {
+              if (index == 19 && locale.languageCode != 'pl') {
+                expect(
+                  values[index],
+                  translatedPhrase(copy.localeKey, 'navigation.servers'),
+                  reason: '$tag must use the reviewed Servers label.',
+                );
+                continue;
+              }
               expect(
                 values[index],
                 isNot(english[index]),
@@ -722,18 +730,28 @@ void main() {
       },
     );
 
-    test('mobile Rooms label never falls back to English in other locales', () {
-      expect(const AppLocalizations(Locale('en')).navigationRooms, 'Rooms');
-      expect(const AppLocalizations(Locale('pl')).navigationRooms, 'Pokoje');
-      expect(const AppLocalizations(Locale('ar')).navigationRooms, 'الغرف');
-      for (final locale in AppLocalizations.supportedLocales) {
-        final label = AppLocalizations(locale).navigationRooms;
-        expect(label.trim(), isNotEmpty, reason: locale.toLanguageTag());
-        if (locale.languageCode != 'en') {
-          expect(label, isNot('Rooms'), reason: locale.toLanguageTag());
+    test(
+      'mobile Servers label never falls back to English in other locales',
+      () {
+        expect(const AppLocalizations(Locale('en')).navigationRooms, 'Servers');
+        expect(const AppLocalizations(Locale('pl')).navigationRooms, 'Serwery');
+        expect(const AppLocalizations(Locale('ar')).navigationRooms, 'الخوادم');
+        for (final locale in AppLocalizations.supportedLocales) {
+          final label = AppLocalizations(locale).navigationRooms;
+          expect(label.trim(), isNotEmpty, reason: locale.toLanguageTag());
+          if (locale.languageCode != 'en' && locale.languageCode != 'pl') {
+            expect(
+              label,
+              translatedPhrase(
+                localizationKeyForLocale(locale),
+                'navigation.servers',
+              ),
+              reason: locale.toLanguageTag(),
+            );
+          }
         }
-      }
-    });
+      },
+    );
 
     test(
       'mobile tab label is localized without changing the product brand',
@@ -770,37 +788,30 @@ void main() {
       },
     );
 
-    test('the retired create guidance still resolves in every locale', () {
-      // The possessive sentence no longer has a call site (O11 flipped it to
-      // "Open Moments"), but its 41 catalog values stay: an installed build
-      // mid-rollout, or any caller that still passes this source string,
-      // must never fall back to raw English.
-      const source =
-          'Create a Voice Room here. Open Your Moments to record a Voice Moment.';
-      const polish =
-          'Tutaj utworzysz pokój głosowy. Otwórz Twoje Momenty, aby nagrać Voice Moment.';
+    test('server-first create guidance resolves in every locale', () {
+      const source = 'Create a Voice Moment or start a server here.';
+      const polish = 'Utwórz Voice Moment lub uruchom tutaj serwer.';
+      const retired = 'Create a Voice Moment or start a Voice Room here.';
       for (final locale in AppLocalizations.supportedLocales) {
         final copy = AppLocalizations(locale);
         final body = copy.text(source, polish);
-        expect(
-          body,
-          contains(copy.navigationYourMoments),
-          reason: '${locale.toLanguageTag()} must match the visible tab label.',
-        );
         expect(body, contains('Voice Moment'));
+        expect(body, isNot(contains('Voice Room')));
         if (locale.languageCode != 'en') {
           expect(body, isNot(source), reason: locale.toLanguageTag());
         }
         if (locale.languageCode != 'en' && locale.languageCode != 'pl') {
           expect(
-            translatedPhrase(
-              copy.localeKey,
-              'Create a Voice Moment or start a Voice Room here.',
-            ),
+            translatedPhrase(copy.localeKey, source),
             isNotNull,
-            reason: 'Existing desktop creation guidance remains available.',
+            reason: 'Current server guidance must be translated.',
           );
         }
+        expect(
+          translatedPhrase(copy.localeKey, retired),
+          isNull,
+          reason: 'Retired standalone Room copy must not remain active.',
+        );
       }
     });
 

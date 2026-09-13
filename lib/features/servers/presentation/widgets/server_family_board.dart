@@ -4,14 +4,18 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/features/clubs/presentation/widgets/family_check_in_panel.dart';
 
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
 import '../../data/models/server_member_role.dart';
+import '../../data/services/server_family_check_in_service.dart';
+import '../../data/services/server_family_memory_service.dart';
 import '../../data/services/server_session_controller.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
 import 'server_channel_scene.dart';
+import 'server_family_memory_album.dart';
 import 'server_module_card.dart';
 import 'server_panel.dart';
 import 'server_voice_stage.dart';
@@ -20,11 +24,10 @@ import 'server_voice_stage.dart';
 ///
 /// It is a **view of the family server**, not a channel: nothing is seeded
 /// under this name and no document is invented for it. Everything on it is
-/// either real (the lounge, which joins through the reviewed token path) or
-/// visibly a module that does not exist yet: the calendar, the memory album
-/// and the shared list have channel kinds and no persistence, callable or
-/// Rules at all (contract G9), so they render as named `Wkrótce` modules
-/// with their action disabled and the real channel offered beside it.
+/// backed by the server contract. The lounge joins through the reviewed token
+/// path, check-ins are server scoped, calendar/shared-list channels open their
+/// synchronized modules, and the private Family Memory album previews its
+/// real photo-and-voice feed.
 ///
 /// Family type and targets are one step larger than the other templates',
 /// which is the board's own difference.
@@ -34,6 +37,9 @@ class ServerFamilyBoard extends StatelessWidget {
     required this.channels,
     required this.session,
     required this.onOpenChannel,
+    required this.checkIns,
+    required this.memories,
+    required this.currentUserId,
     this.role,
     this.compact = false,
     super.key,
@@ -43,6 +49,9 @@ class ServerFamilyBoard extends StatelessWidget {
   final List<ServerChannel> channels;
   final ServerSessionController session;
   final ValueChanged<ServerChannel> onOpenChannel;
+  final ServerFamilyCheckInRepository checkIns;
+  final ServerFamilyMemoryRepository memories;
+  final String currentUserId;
   final ServerMemberRole? role;
 
   /// Phone width: one column, tighter paddings, smaller stage.
@@ -63,6 +72,7 @@ class ServerFamilyBoard extends StatelessWidget {
       server.type,
     ).resolve(Theme.of(context).brightness);
     final lounge = _first(ServerChannelKind.voice);
+    final memoriesChannel = _first(ServerChannelKind.memories);
     final modules = <Widget>[
       if (_first(ServerChannelKind.calendar) case final calendar?)
         ServerModuleCard(
@@ -71,13 +81,14 @@ class ServerFamilyBoard extends StatelessWidget {
           title: copy.serverFamilyPlans,
           body: copy.serverFamilyPlansBody,
           colors: colors,
-          primaryLabel: copy.serverFamilyPlansRsvp,
+          primaryLabel: copy.serverOpenCalendar,
           primaryIcon: Icons.check_circle_outline,
           channel: calendar,
           onOpenChannel: onOpenChannel,
+          available: true,
           large: true,
         ),
-      if (_first(ServerChannelKind.memories) case final memories?)
+      if (memoriesChannel case final memories?)
         ServerModuleCard(
           key: const ValueKey('server-family-memories'),
           icon: serverChannelIcon(ServerChannelKind.memories),
@@ -85,9 +96,10 @@ class ServerFamilyBoard extends StatelessWidget {
           body: copy.serverFamilyMemoriesBody,
           colors: colors,
           primaryLabel: copy.serverFamilyMemoriesPlay,
-          primaryIcon: Icons.play_arrow_rounded,
+          primaryIcon: Icons.grid_view_rounded,
           channel: memories,
           onOpenChannel: onOpenChannel,
+          available: true,
           large: true,
         ),
       if (_first(ServerChannelKind.list) case final list?)
@@ -97,10 +109,11 @@ class ServerFamilyBoard extends StatelessWidget {
           title: copy.serverFamilyShopping,
           body: copy.serverFamilyShoppingBody,
           colors: colors,
-          primaryLabel: copy.serverFamilyShoppingAdd,
+          primaryLabel: copy.serverOpenSharedList,
           primaryIcon: Icons.add_rounded,
           channel: list,
           onOpenChannel: onOpenChannel,
+          available: true,
           large: true,
         ),
     ];
@@ -111,6 +124,13 @@ class ServerFamilyBoard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _Hero(server: server, colors: colors, compact: compact),
+          SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
+          FamilyCheckInPanel(
+            clubId: server.id,
+            currentUserId: currentUserId,
+            canManage: role?.canModerate ?? false,
+            serverRepository: checkIns,
+          ),
           SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
           if (lounge != null) ...[
             _LoungeCard(
@@ -163,6 +183,21 @@ class ServerFamilyBoard extends StatelessWidget {
                 );
               },
             ),
+          if (memoriesChannel != null) ...[
+            SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
+            ServerFamilyMemoryAlbum(
+              serverId: server.id,
+              channelId: memoriesChannel.id,
+              repository: memories,
+              currentUserId: currentUserId,
+              role: role,
+              colors: colors,
+              serverHeld: server.isHeld,
+              compact: compact,
+              embedded: true,
+              onOpenFullAlbum: () => onOpenChannel(memoriesChannel),
+            ),
+          ],
         ],
       ),
     );
@@ -193,11 +228,7 @@ class _Hero extends StatelessWidget {
         if (!compact) ...[
           Row(
             children: [
-              Icon(
-                Icons.lock_outline,
-                size: 20,
-                color: palette.textSecondary,
-              ),
+              Icon(Icons.lock_outline, size: 20, color: palette.textSecondary),
               const SizedBox(width: 8),
               Flexible(
                 child: Text(
@@ -224,9 +255,8 @@ class _Hero extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           copy.serverFamilyHeroBody,
-          style:
-              (compact ? AppTypography.bodyMedium : AppTypography.bodyLarge)
-                  .copyWith(color: palette.textSecondary),
+          style: (compact ? AppTypography.bodyMedium : AppTypography.bodyLarge)
+              .copyWith(color: palette.textSecondary),
         ),
       ],
     );

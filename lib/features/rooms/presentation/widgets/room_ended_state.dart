@@ -1,7 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
 
 /// The polished full-screen state a participant lands on when the room
 /// they were in ends (host closed it, or they were removed after it shut
@@ -23,10 +25,13 @@ class RoomEndedState extends StatelessWidget {
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
-  void _discoverRooms(BuildContext context) {
-    Navigator.of(context).popUntil((route) => route.isFirst);
-    // The shell wires this static hook to open Discover over itself.
-    HomeScreen.openDiscoverTab?.call();
+  Future<void> _openServers(BuildContext context) async {
+    final navigator = Navigator.of(context);
+    navigator.popUntil((route) => route.isFirst);
+    if (!navigator.mounted) return;
+    await navigator.push<void>(
+      MaterialPageRoute<void>(builder: (_) => const ServersScreen()),
+    );
   }
 
   @override
@@ -51,7 +56,10 @@ class RoomEndedState extends StatelessWidget {
           ),
           const SizedBox(height: 22),
           Text(
-            copy.text('This room has ended', 'Ten pokój już się zakończył'),
+            copy.text(
+              'This conversation has ended',
+              'Ta rozmowa już się zakończyła',
+            ),
             style: const TextStyle(
               color: Colors.white,
               fontSize: 22,
@@ -63,7 +71,7 @@ class RoomEndedState extends StatelessWidget {
           Text(
             copy.text(
               'Thanks for listening to "$roomName".',
-              'Dziękujemy za udział w pokoju „$roomName”.',
+              'Dziękujemy za udział w rozmowie „$roomName”.',
             ),
             textAlign: TextAlign.center,
             maxLines: 2,
@@ -72,7 +80,7 @@ class RoomEndedState extends StatelessWidget {
           ),
           const SizedBox(height: 28),
           FilledButton(
-            onPressed: () => _discoverRooms(context),
+            onPressed: () => unawaited(_openServers(context)),
             style: FilledButton.styleFrom(
               backgroundColor: accent,
               minimumSize: const Size(230, 50),
@@ -81,7 +89,7 @@ class RoomEndedState extends StatelessWidget {
               ),
             ),
             child: Text(
-              copy.text('Discover more rooms', 'Odkryj więcej pokoi'),
+              copy.text('Open Servers', 'Otwórz Serwery'),
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
           ),

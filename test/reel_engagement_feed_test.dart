@@ -509,15 +509,15 @@ void main() {
           _viewResponse(comments: <Map<String, Object?>>[_commentWire('c1')]);
       await _pumpFeed(tester, harness, size: const Size(1440, 900));
 
-      // The panel carries its own bar in the written-label variant.
-      expect(find.byType(ReelEngagementBar), findsNWidgets(2));
+      // Since board 08 the card's own footer bar carries the counts and the
+      // author, and the docked column is the conversation alone — so each is
+      // said exactly once in the view, on the card.
+      expect(find.byType(ReelEngagementBar), findsOneWidget);
       expect(find.byType(ReelCommentsView), findsNothing);
-      // Identity is said once: the docked panel says it, the frame beside it
-      // stays artwork with a rail.
       expect(_authorName, findsOneWidget);
       expect(
         find.descendant(of: find.byType(ReelCard), matching: _authorName),
-        findsNothing,
+        findsOneWidget,
       );
 
       await tester.tap(_inCard(_commentsAction));

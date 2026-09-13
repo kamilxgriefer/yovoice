@@ -14,11 +14,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/email_verification_banner.dart';
-import 'package:yovoice/features/clubs/data/models/club.dart';
-import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
-import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
-import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -42,7 +38,6 @@ import 'package:yovoice/features/premium/data/models/subscription_entitlements.d
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/premium_gates.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
-import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -56,9 +51,11 @@ import 'package:yovoice/features/moments/presentation/screens/record_voice_momen
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_mini_bar.dart';
+import 'package:yovoice/features/servers/data/server_links.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/presentation/screens/create_server_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_edge_back_gesture.dart';
@@ -89,6 +86,27 @@ Future<bool> evaluateGuidedOnboardingAfterReadiness({
 @visibleForTesting
 bool isSafeInitialRoomLinkId(String value) =>
     RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(value);
+
+/// Resolves direct Server links without weakening the canonical parser.
+/// Historic Club invites remain readable, but share the current workspace.
+@visibleForTesting
+ServerLinkTarget? parseInitialServerWorkspaceLink(Uri uri) {
+  final current = parseServerLink(uri);
+  if (current != null) return current;
+  final legacyServerId = parseLegacyClubServerLink(uri);
+  return legacyServerId == null
+      ? null
+      : ServerLinkTarget(serverId: legacyServerId);
+}
+
+/// The production route builder for a direct Server link, exposed so the
+/// deep-link contract can be tested without booting Firebase-backed MainShell.
+@visibleForTesting
+ServerWorkspaceScreen serverWorkspaceForInitialLink(ServerLinkTarget target) =>
+    ServerWorkspaceScreen(
+      serverId: target.serverId,
+      initialChannelId: target.channelId,
+    );
 
 /// Serializes presentation of the More menu without blocking the destination
 /// subsequently opened from it.
@@ -141,6 +159,7 @@ class MainShell extends StatefulWidget {
     this.onboardingLastSignInTime,
     this.onboardingReadiness,
     this.permissionReadiness,
+    this.initialUri,
     super.key,
   });
 
@@ -166,6 +185,11 @@ class MainShell extends StatefulWidget {
 
   @visibleForTesting
   final PermissionReadinessService? permissionReadiness;
+
+  /// Captured browser entry URI. Production reads [Uri.base]; tests can inject
+  /// the same immutable input without changing navigation or Firebase state.
+  @visibleForTesting
+  final Uri? initialUri;
 
   static const double desktopBreakpoint = 1100;
 
@@ -258,14 +282,12 @@ class _MainShellState extends State<MainShell>
   final MessageService _messageService = MessageService.live;
   final RoomService _roomService = RoomService();
 
-  /// True while a pre-join screen is being pushed — see [_openRoom].
-  bool _roomEntryInFlight = false;
   final AuthService _authService = AuthService();
   final EntitlementService _entitlementService = EntitlementService();
   final MoreMenuTransitionGuard _moreMenuTransition = MoreMenuTransitionGuard();
   final GuidedOnboardingPresentationGuard _onboardingPresentation =
       GuidedOnboardingPresentationGuard();
-  bool _handledInitialRoomLink = false;
+  bool _handledInitialServerLink = false;
 
   late final GuidedOnboardingProgress _onboardingProgress;
   late final PermissionReadinessService _permissionReadiness;
@@ -323,10 +345,10 @@ class _MainShellState extends State<MainShell>
   StreamSubscription<SubscriptionEntitlements>? _entitlementSubscription;
 
   // Keep stable content identities when the mobile visual order changes.
-  // Friends remains retained at slot 2; Discover keeps slot 3 as a retained
-  // root reached from More; Servers owns slot 13 (dock slot 1).
+  // Friends remains retained at slot 2. Legacy slot identities stay allocated
+  // for compatibility; all space navigation resolves to Servers at slot 13.
   static const List<Widget> _screens = [
-    HomeScreen(),
+    SizedBox.shrink(),
     MessagesScreen(),
     FriendsScreen(isRootTab: true),
   ];
@@ -385,26 +407,12 @@ class _MainShellState extends State<MainShell>
   /// detail) would read as "gone" and end a conversation the person never
   /// left.
   final ValueNotifier<bool> _serversVisible = ValueNotifier<bool>(false);
-  final ScrollController _roomsScrollController = ScrollController();
-
   Widget _buildSlot(int index) {
     if (index == _discoverSlot) {
-      return Builder(
-        builder: (context) {
-          final mobile = !MainShell.usesDesktopLayout(
-            MediaQuery.sizeOf(context),
-          );
-          // Discover keeps its Create CTA when opened from More on a phone.
-          // The guided tour's Create anchor now lives on Home's create pill
-          // (mobile) and the rail's CREATE section (desktop); this retained
-          // slot may be mounted beside Home, so it must not hold the key.
-          return DiscoverScreen(
-            isRootTab: true,
-            asRoomsDestination: mobile,
-            scrollController: _roomsScrollController,
-            onCreateRoom: mobile ? () => unawaited(_openCreateRoom()) : null,
-          );
-        },
+      return moreDestinationScreen(
+        MoreDestination.servers,
+        isRootTab: true,
+        serversVisible: _serversVisible,
       );
     }
     if (index == _notificationsSlot) {
@@ -453,21 +461,12 @@ class _MainShellState extends State<MainShell>
     // The mobile tour's Create spotlight: Home's own create pill.
     createRoomKey: _onboardingAnchors[GuidedOnboardingTarget.create],
     unreadNotificationCount: _unreadNotificationCount,
-    onOpenRoom: (room) => unawaited(_openRoom(room)),
     // The Serwery destination (content slot 13): "Zobacz wszystkie",
     // "+ Stwórz serwer" and the places empty state all lead there, and the
     // gate on creation lives inside that feature.
     onOpenServers: () => _onDestinationSelected(_serversSlot),
-    onOpenClub: (club) => unawaited(
-      Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => ClubOverviewScreen(clubId: club.id),
-        ),
-      ),
-    ),
-    onEnterClubLounge: (club) => unawaited(_openClubLounge(club)),
-    onOpenDiscover: () =>
-        unawaited(_openMoreDestination(MoreDestination.discover)),
+    onOpenServer: (server) => unawaited(_openServerWorkspace(server)),
+    onOpenDiscover: () => _onDestinationSelected(_serversSlot),
     onOpenFindCreators: () =>
         unawaited(_openMoreDestination(MoreDestination.findCreators)),
     onOpenFriends: () => _onDestinationSelected(2),
@@ -478,7 +477,7 @@ class _MainShellState extends State<MainShell>
     ),
     onOpenProfile: () => unawaited(_openProfile()),
     onCreateMoment: _openCreateMoment,
-    onCreateRoom: () => unawaited(_openCreateRoom()),
+    onCreateRoom: () => unawaited(_openCreateServer()),
     onOpenMoment: (moment) => unawaited(_openMoment(moment)),
     onOpenChain: (moments) => unawaited(_openMomentChain(moments)),
     onOpenComments: (moment) => unawaited(
@@ -504,11 +503,10 @@ class _MainShellState extends State<MainShell>
     isVisible: _homeVisible,
     currentUserId: _currentUserId,
     unreadNotificationCount: _unreadNotificationCount,
-    onOpenRoom: (room) => unawaited(_openRoom(room)),
-    onSeeAllRooms: () => _onDestinationSelected(_discoverSlot),
+    onSeeAllRooms: () => _onDestinationSelected(_serversSlot),
     onFindCreators: () => _onDestinationSelected(_findCreatorsSlot),
     onViewAllFriends: () => _onDestinationSelected(2),
-    onStartRoom: () => unawaited(_openCreateRoom()),
+    onStartRoom: () => unawaited(_openCreateServer()),
     onOpenMoment: (moment) => unawaited(_openMoment(moment)),
     onOpenChain: (moments) => unawaited(_openMomentChain(moments)),
     onCreateMoment: _openCreateMoment,
@@ -516,13 +514,6 @@ class _MainShellState extends State<MainShell>
         unawaited(_openMoreDestination(MoreDestination.moments)),
     onOpenConversation: (conversation) =>
         unawaited(_openConversation(conversation)),
-    onOpenClub: (club) => unawaited(
-      Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => ClubOverviewScreen(clubId: club.id),
-        ),
-      ),
-    ),
     // The greeting card's bell and avatar are the SAME destinations the rail
     // header's bell and the rail's profile card open — one handler each.
     onOpenNotifications: () => _onDestinationSelected(_notificationsSlot),
@@ -531,9 +522,9 @@ class _MainShellState extends State<MainShell>
     // "Stwórz serwer" and the places empty state all lead there, and the
     // gate on creation lives inside that feature.
     onOpenServers: () => _onDestinationSelected(_serversSlot),
-    onEnterClubLounge: (club) => unawaited(_openClubLounge(club)),
+    onOpenServer: (server) => unawaited(_openServerWorkspace(server)),
     onSeeAllChats: () => _onDestinationSelected(1),
-    onOpenClubs: () => unawaited(_openMoreDestination(MoreDestination.clubs)),
+    onOpenClubs: () => _onDestinationSelected(_serversSlot),
     trailingContent: trailingContent,
   );
 
@@ -555,70 +546,12 @@ class _MainShellState extends State<MainShell>
     );
   }
 
-  /// Entering a room is the existing full-screen room flow (identical to
-  /// every other entry point); Home's own navigation never pushes.
-  ///
-  /// Single-flight: Home's hero CTA is a full-width pill and a double tap
-  /// used to push two pre-join screens, so leaving the room once left the
-  /// reader on a second one. The guard is here rather than in the widget
-  /// because every Home entry point (hero, quick actions, owned rooms,
-  /// server rows) shares it.
-  Future<void> _openRoom(VoiceRoom room) async {
-    if (_roomEntryInFlight) return;
-    _roomEntryInFlight = true;
-    try {
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
+  Future<void> _openServerWorkspace(Server server) =>
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ServerWorkspaceScreen(serverId: server.id),
+        ),
       );
-    } finally {
-      _roomEntryInFlight = false;
-    }
-  }
-
-  /// Resolves a member's Club Lounge and opens the SAME pre-join screen.
-  ///
-  /// `prepareClubLounge` checks membership and nothing else: it starts no
-  /// voice session and writes no roster row, so tapping "Zajrzyj" on Home is
-  /// still only a request to look.
-  Future<void> _openClubLounge(Club club) async {
-    if (_roomEntryInFlight) return;
-    _roomEntryInFlight = true;
-    try {
-      final room = await _roomService.prepareClubLounge(
-        clubId: club.id,
-        clubName: club.name,
-        clubDescription: club.description,
-        language: club.defaultLanguage,
-        ownerId: club.ownerId,
-        ownerName: club.ownerName,
-        imageUrl: club.avatarUrl,
-      );
-      if (!mounted) return;
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              intentionalOrFriendly(
-                error,
-                fallback: AppLocalizations.of(context).text(
-                  "Couldn't open this club room. Please try again.",
-                  'Nie udało się otworzyć pokoju klubu. Spróbuj ponownie.',
-                ),
-              ),
-            ),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } finally {
-      _roomEntryInFlight = false;
-    }
-  }
 
   /// Maps a More destination to its desktop slot, or null when it has
   /// none (Profile stays a pushed route: it has a real Back button and
@@ -757,9 +690,10 @@ class _MainShellState extends State<MainShell>
   }
 
   Future<void> _prepareGuidedOnboarding() async {
-    // A valid cold-start room link owns the first route. Await its full visit
-    // so the tutorial never obscures room controls or starts underneath it.
-    await _openInitialRoomLink();
+    // A valid cold-start Server link owns the first route. Await its full
+    // visit so the tutorial never obscures workspace controls or starts
+    // underneath it. Historic Club/Room links resolve through this facade.
+    await _openInitialServerLink();
     if (!mounted) return;
 
     // Cold-start notification routing owns the first destination. Permission
@@ -878,7 +812,7 @@ class _MainShellState extends State<MainShell>
   Future<void> _prepareGuidedOnboardingLayout(bool desktop) async {
     if (!mounted || !_onboardingOpen) return;
     // Both layouts tour from Home: the mobile Create spotlight is Home's own
-    // create pill (`home-quick-create-room`), the desktop one is the rail's
+    // create pill (`home-quick-create-server`), the desktop one is the rail's
     // CREATE section. Preparing either layout invokes no creation, entry or
     // media permission.
     const tourIndex = 0;
@@ -986,38 +920,71 @@ class _MainShellState extends State<MainShell>
     if (mounted) unawaited(_checkVerification());
   }
 
-  Future<void> _openInitialRoomLink() async {
-    if (_handledInitialRoomLink) {
+  Future<void> _openInitialServerLink() async {
+    if (_handledInitialServerLink) {
       return;
     }
-    _handledInitialRoomLink = true;
+    _handledInitialServerLink = true;
 
-    final roomId = Uri.base.queryParameters['room']?.trim();
+    final initialUri = widget.initialUri ?? Uri.base;
+    final directTarget = parseInitialServerWorkspaceLink(initialUri);
+    if (directTarget != null) {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => serverWorkspaceForInitialLink(directTarget),
+        ),
+      );
+      return;
+    }
+
+    // An altered current/legacy Server contract fails closed. In particular,
+    // a malformed `server`/`club` link cannot smuggle in a second `room`
+    // destination and revive old routing through fallback parsing.
+    final keys = initialUri.queryParametersAll.keys;
+    if (keys.contains('server') ||
+        keys.contains('channel') ||
+        keys.contains('club')) {
+      return;
+    }
+
+    final roomId = initialUri.queryParameters['room']?.trim();
     if (roomId == null || !isSafeInitialRoomLinkId(roomId)) {
       return;
     }
 
     try {
       final room = await _roomService.getRoom(roomId);
-      if (!mounted || !room.isActive) {
+      if (!mounted) return;
+      final serverId = room.clubId?.trim();
+      if (serverId != null && serverId.isNotEmpty) {
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => serverWorkspaceForInitialLink(
+              ServerLinkTarget(serverId: serverId),
+            ),
+          ),
+        );
         return;
       }
-
-      // RoomEntryScreen is the one consent boundary for every route. Deep
-      // links may resolve metadata for their passive preview, but do not
-      // write a roster row or touch LiveKit before its explicit CTA.
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => RoomEntryScreen(room: room, startMuted: true),
+      // Standalone legacy links remain parseable but now land on the single
+      // Servers directory rather than reviving the removed room surface.
+      _onDestinationSelected(_serversSlot);
+    } catch (error) {
+      if (!mounted) return;
+      _onDestinationSelected(_serversSlot);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            intentionalOrFriendly(
+              error,
+              fallback: AppLocalizations.of(context).text(
+                'Open the Servers tab to continue.',
+                'Otwórz kartę Serwery, aby kontynuować.',
+              ),
+            ),
+          ),
         ),
       );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(intentionalOrFriendly(error))));
     }
   }
 
@@ -1028,7 +995,6 @@ class _MainShellState extends State<MainShell>
     _homeVisible.dispose();
     _momentsVisible.dispose();
     _serversVisible.dispose();
-    _roomsScrollController.dispose();
     _tabTransition.dispose();
     _conversationSubscription?.cancel();
     _notificationCountSubscription?.cancel();
@@ -1316,14 +1282,15 @@ class _MainShellState extends State<MainShell>
       return;
     }
 
-    // Discover, Moments and Servers are true mobile roots, not duplicated
-    // pushed destinations. More and Home links select the same retained
-    // content as the dock, preserving search, scroll and audio-visibility
-    // ownership.
+    // Every old space identity converges on the one retained Servers slot.
     if (destination == MoreDestination.discover ||
-        destination == MoreDestination.moments ||
+        destination == MoreDestination.clubs ||
         destination == MoreDestination.servers) {
-      _onDestinationSelected(_slotForDestination(destination)!);
+      _onDestinationSelected(_serversSlot);
+      return;
+    }
+    if (destination == MoreDestination.moments) {
+      _onDestinationSelected(_momentsSlot);
       return;
     }
 
@@ -1364,7 +1331,7 @@ class _MainShellState extends State<MainShell>
         onVoicePressed: _openVoiceAction,
         onMorePressed: _openMoreMenu,
         onDesktopNavSelected: (item) => unawaited(_onDesktopNavSelected(item)),
-        onCreateRoom: () => unawaited(_openCreateRoom()),
+        onCreateRoom: () => unawaited(_openCreateServer()),
         onCreateMoment: _openCreateMoment,
         onOpenProfile: () => unawaited(_openProfile()),
         onOpenProfileSettings: () => unawaited(_openProfileSettings()),
@@ -1397,15 +1364,15 @@ class _MainShellState extends State<MainShell>
   /// open, so the desktop shell never looks "nowhere".
   static DesktopNavItem? _desktopItemFor(MoreDestination destination) {
     return switch (destination) {
-      MoreDestination.servers => DesktopNavItem.servers,
+      MoreDestination.servers ||
+      MoreDestination.discover ||
+      MoreDestination.clubs => DesktopNavItem.servers,
       MoreDestination.moments ||
       MoreDestination.reels => DesktopNavItem.moments,
       // Everything reached THROUGH the More popover keeps More lit —
       // including the three destinations that left the rail for it.
-      MoreDestination.discover ||
       MoreDestination.findCreators ||
       MoreDestination.friends ||
-      MoreDestination.clubs ||
       MoreDestination.creatorStudio ||
       MoreDestination.achievements ||
       MoreDestination.notifications ||
@@ -1458,9 +1425,9 @@ class _MainShellState extends State<MainShell>
     await _openMoreDestination(MoreDestination.settings);
   }
 
-  Future<void> _openCreateRoom() async {
+  Future<void> _openCreateServer() async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => const RoomTypeSelectorScreen()),
+      MaterialPageRoute<void>(builder: (_) => const CreateServerScreen()),
     );
   }
 
@@ -1532,7 +1499,7 @@ class _MainShellState extends State<MainShell>
         onVoicePressed: _openVoiceAction,
         onMorePressed: _openMoreMenu,
         onDesktopNavSelected: (item) => unawaited(_onDesktopNavSelected(item)),
-        onCreateRoom: () => unawaited(_openCreateRoom()),
+        onCreateRoom: () => unawaited(_openCreateServer()),
         onCreateMoment: _openCreateMoment,
         onOpenProfile: () => unawaited(_openProfile()),
         onOpenProfileSettings: () => unawaited(_openProfileSettings()),
@@ -1592,8 +1559,6 @@ class _MainShellState extends State<MainShell>
       _lastDesktopLayout = isDesktop;
     }
 
-    HomeScreen.openDiscoverTab = () => _onDestinationSelected(_discoverSlot);
-
     if (isDesktop) {
       return Scaffold(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -1618,7 +1583,7 @@ class _MainShellState extends State<MainShell>
               unreadConversationCount: _unreadConversationCount,
               unreadNotificationCount: _unreadNotificationCount,
               onSelect: (item) => unawaited(_onDesktopNavSelected(item)),
-              onCreateRoom: () => unawaited(_openCreateRoom()),
+              onCreateRoom: () => unawaited(_openCreateServer()),
               onCreateMoment: _openCreateMoment,
               onOpenProfile: () => unawaited(_openProfile()),
               onOpenProfileSettings: () => unawaited(_openProfileSettings()),
@@ -1808,8 +1773,8 @@ class _DesktopRightColumn extends StatelessWidget {
 /// persistent bottom navigation — this host re-hosts the SAME
 /// [YoFloatingNavigationDock] widget wired back to the shell's state (one source
 /// of truth for the bar; nothing is reimplemented per screen). Deep
-/// detail flows pushed from WITHIN those screens (a friend's profile, a
-/// club's detail, a settings subpage, a chat, a room) continue to push
+/// detail flows pushed from WITHIN those screens (a friend's profile,
+/// server workspace, settings subpage or chat) continue to push
 /// plain full-screen routes and intentionally cover the bar. Bar taps
 /// here pop back to the shell FIRST, then act, so a tab switch always
 /// lands on the real shell.
@@ -2027,7 +1992,7 @@ class _IncomingMessageAvatar extends StatelessWidget {
 class _VoiceActionSheet extends StatelessWidget {
   const _VoiceActionSheet();
 
-  Future<void> _openCreateRoom(BuildContext context) async {
+  Future<void> _openCreateServer(BuildContext context) async {
     final navigator = Navigator.of(context);
 
     navigator.pop();
@@ -2039,7 +2004,7 @@ class _VoiceActionSheet extends StatelessWidget {
     }
 
     await navigator.push<void>(
-      MaterialPageRoute<void>(builder: (_) => const RoomTypeSelectorScreen()),
+      MaterialPageRoute<void>(builder: (_) => const CreateServerScreen()),
     );
   }
 
@@ -2112,15 +2077,15 @@ class _VoiceActionSheet extends StatelessWidget {
           ),
           const SizedBox(height: 13),
           _VoiceOption(
-            icon: Icons.groups_2_rounded,
-            title: copy.text('Start Voice Room', 'Utwórz pokój głosowy'),
+            icon: Icons.hub_rounded,
+            title: copy.text('Create Server', 'Stwórz serwer'),
             subtitle: copy.text(
-              'Open a live room and invite people',
-              'Otwórz pokój na żywo i zaproś innych',
+              'Choose a template, then add voice and text channels',
+              'Wybierz szablon, a potem dodaj kanały głosowe i tekstowe',
             ),
             colors: const [Color(0xFFFF3E81), Color(0xFF9C1DFF)],
             onPressed: () {
-              _openCreateRoom(context);
+              _openCreateServer(context);
             },
           ),
         ],

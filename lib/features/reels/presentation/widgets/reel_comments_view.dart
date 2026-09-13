@@ -1,8 +1,14 @@
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_sizing.dart';
+import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
+import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/reply_playback_arbiter.dart';
+import 'package:yovoice/features/moments/presentation/widgets/voice_reply_mini_player.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/reel_engagement_copy.dart';
@@ -13,6 +19,25 @@ import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
+
+/// Opens the deliberate recording flow for one voice comment.
+///
+/// Production pushes the immersive recorder (`RecordVoiceMomentScreen`) with
+/// [publish] as its publisher; a widget test supplies its own so no platform
+/// audio channel is touched. It resolves to `true` when a recording was
+/// published, and to null or false when the person backed out — which is the
+/// whole of "cancel" as far as this thread is concerned.
+///
+/// THE MICROPHONE IS NOT PART OF THIS CONTRACT. Opening the recorder opens a
+/// screen; the recorder asks for the microphone only when its own Record
+/// control is pressed. Opening a thread, and even tapping the mic, must never
+/// start capturing.
+typedef ReelVoiceCommentComposer =
+    Future<bool?> Function(
+      BuildContext context, {
+      required String authorName,
+      required VoiceMomentReplyPublisher publish,
+    });
 
 /// One loaded page of a Reel thread, kept with the cursor that produced it.
 ///
@@ -79,6 +104,9 @@ class ReelCommentsView extends StatefulWidget {
     this.autofocusComposer = false,
     this.gutter,
     this.overlayBuilder,
+    this.arbiter,
+    this.voiceComposer,
+    this.voicePlayerFactory,
     super.key,
   });
 
@@ -100,6 +128,27 @@ class ReelCommentsView extends StatefulWidget {
   /// A private destination may extend its lifetime boundary to the separate
   /// report and confirmation routes. Existing hosts keep their default UI.
   final ReelCommentOverlayBuilder? overlayBuilder;
+
+  /// The host's playback floor.
+  ///
+  /// A voice comment must never sound over the Reel it answers, and two
+  /// voice comments must never sound over each other. The host supplies one
+  /// when it owns a main transport that is still running beside this thread
+  /// — the wide layout's docked panel, where the Reel deliberately keeps
+  /// playing next to the conversation. A host whose presentation already
+  /// silences the Reel (the phone sheet is a pushed route, and the card
+  /// suspends on route currency) passes none, and this view creates its own
+  /// so replies still arbitrate against each other.
+  final ReplyPlaybackArbiter? arbiter;
+
+  /// Opens the recorder for a voice comment. Defaults to pushing the
+  /// immersive recorder screen.
+  final ReelVoiceCommentComposer? voiceComposer;
+
+  /// Supplies the mini-players' audio engine. Tests inject one; production
+  /// leaves it null.
+  @visibleForTesting
+  final AudioPlayer Function()? voicePlayerFactory;
 
   @override
   State<ReelCommentsView> createState() => _ReelCommentsViewState();
@@ -134,6 +183,24 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
   /// for attempts nobody is going to make.
   _ReportAttempt? _reportAttempt;
 
+  /// Created only when the host did not supply one, and then disposed here.
+  /// A host-owned arbiter belongs to the host's lifetime, not to this view's.
+  ReplyPlaybackArbiter? _ownArbiter;
+
+  /// The voice comment currently being recorded, if any.
+  ///
+  /// One session per TAKE: it carries the request id, the server's comment id
+  /// and storage path, and the committed generation, so the recorder's own
+  /// retry replays to the same comment rather than publishing a person's
+  /// voice twice. It is dropped once the comment is published or the take is
+  /// abandoned.
+  ReelVoiceCommentSession? _voiceSession;
+
+  /// True between a successful voice publish and the thread re-read that
+  /// shows it, so the composer can say the recording went through even if
+  /// the re-read is slow.
+  bool _voicePosted = false;
+
   String? _nextCursor;
   Object? _error;
   Object? _composerError;
@@ -154,16 +221,30 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
 
   String? get _viewerId => widget.service.currentUserId;
 
+  /// The floor this thread's voice comments arbitrate against.
+  ReplyPlaybackArbiter get _arbiter =>
+      widget.arbiter ?? (_ownArbiter ??= ReplyPlaybackArbiter());
+
   @override
   void initState() {
     super.initState();
     _composer.addListener(_onComposerChanged);
+    // NOTHING here touches a microphone or an audio engine. The thread loads
+    // words; a recorder opens only on a deliberate tap, and a mini-player
+    // allocates its decoder only on a deliberate play.
+    widget.service.voiceCommentSupport.addListener(_onVoiceSupportChanged);
     _load(reset: true);
   }
 
   @override
   void didUpdateWidget(covariant ReelCommentsView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.service, widget.service)) {
+      oldWidget.service.voiceCommentSupport.removeListener(
+        _onVoiceSupportChanged,
+      );
+      widget.service.voiceCommentSupport.addListener(_onVoiceSupportChanged);
+    }
     if (oldWidget.reel.id != widget.reel.id ||
         !identical(oldWidget.service, widget.service)) {
       _composer.clear();
@@ -171,6 +252,10 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
       // A request id is bound to one target. Carrying one across a Reel
       // change would replay an old attempt against a new thread.
       _reportAttempt = null;
+      // Likewise a voice reservation: it names one Reel, and replaying it
+      // against another would finalize into the wrong thread.
+      _voiceSession = null;
+      _voicePosted = false;
       _reported.clear();
       _load(reset: true);
     }
@@ -179,11 +264,19 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
   @override
   void dispose() {
     _generation++;
+    widget.service.voiceCommentSupport.removeListener(_onVoiceSupportChanged);
     _composer
       ..removeListener(_onComposerChanged)
       ..dispose();
     _composerFocus.dispose();
+    _ownArbiter?.dispose();
     super.dispose();
+  }
+
+  /// The deployed backend answered the capability probe. The mic is offered
+  /// or withdrawn accordingly — never both ways at once, and never guessed.
+  void _onVoiceSupportChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onComposerChanged() {
@@ -249,6 +342,7 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
       _posting = true;
       _composerError = null;
       _posted = false;
+      _voicePosted = false;
     });
     try {
       final result = await widget.service.createComment(
@@ -271,6 +365,134 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
       if (_isCurrent(generation)) setState(() => _composerError = error);
     } finally {
       if (_isCurrent(generation)) setState(() => _posting = false);
+    }
+  }
+
+  /// Opens the recorder and, if a recording is published, re-reads the tail
+  /// so the new comment appears the way the server actually stored it.
+  ///
+  /// Nothing about the microphone happens here: this pushes a screen. The
+  /// recorder owns the permission request, the meter, the 1–60 s bound, the
+  /// pre-send listen, the cancel and the retry, and calls back into
+  /// [_publishVoiceComment] only when the person presses Publish.
+  Future<void> _recordVoiceComment() async {
+    if (_posting ||
+        !widget.service.isEmailVerified ||
+        !widget.service.voiceCommentsSupported) {
+      return;
+    }
+    final generation = _generation;
+    final copy = AppLocalizations.of(context);
+    final composer = widget.voiceComposer ?? _pushVoiceRecorder;
+    // A voice comment in flight must not sound over anything: whatever is
+    // playing in this thread stops before a recorder that will ask for the
+    // microphone is even on screen.
+    _arbiter.mainPlaybackStarted();
+    final published = await composer(
+      context,
+      authorName: widget.reel.authorName,
+      publish: _publishVoiceComment,
+    );
+    if (!mounted || !_isCurrent(generation)) return;
+    if (published != true) {
+      // Cancelled. The reservation of an abandoned take is swept server-side
+      // after thirty minutes; nothing here pretends a comment exists.
+      setState(() => _voiceSession = null);
+      return;
+    }
+    setState(() {
+      _voiceSession = null;
+      _voicePosted = true;
+      _composerError = null;
+      _posted = false;
+    });
+    _announce(
+      copy.contextualText(
+        'reels.voiceCommentPosted',
+        'Voice comment posted.',
+        'Komentarz głosowy został opublikowany.',
+      ),
+    );
+    // The comment belongs at the end of the thread, and only the server knows
+    // the display name and timestamp it captured — the same rule the text
+    // composer follows.
+    if (_nextCursor == null) {
+      await _reloadTail(generation);
+    } else {
+      await _load(reset: true);
+    }
+  }
+
+  Future<bool?> _pushVoiceRecorder(
+    BuildContext context, {
+    required String authorName,
+    required VoiceMomentReplyPublisher publish,
+  }) => Navigator.of(context).push<bool>(
+    MaterialPageRoute<bool>(
+      // Through the host's overlay boundary, exactly like the report and
+      // confirmation routes: a private destination that revokes access has
+      // to take the recorder down with everything else it put on screen.
+      builder: (context) => _overlay(
+        context,
+        (_) => RecordVoiceMomentScreen(
+          replyToAuthorName: authorName,
+          publishReply: publish,
+        ),
+      ),
+      fullscreenDialog: true,
+    ),
+  );
+
+  /// The publisher the recorder calls. Retry-stable and refusal-honest.
+  ///
+  /// Every failure leaves as a [VoiceMomentPresentationNotice] so the
+  /// recorder shows copy that names THIS operation — a refused Reel, a rate
+  /// limit, an unverified account — instead of the Voice Moment wording its
+  /// own category mapping would otherwise choose. The recording is always
+  /// kept: capture succeeded, only publishing failed.
+  Future<void> _publishVoiceComment({
+    required RecordedAudio audio,
+    required int durationSeconds,
+    required String caption,
+  }) async {
+    final copy = AppLocalizations.of(context);
+    final trimmed = caption.trim();
+    var session = _voiceSession;
+    // A retry whose contract changed is a DIFFERENT operation at the server's
+    // ledger, so it must not reuse the id. The recorder freezes both values
+    // at the first attempt, which makes this a guard rather than a path.
+    if (session == null ||
+        session.reelId != widget.reel.id ||
+        session.durationSeconds != durationSeconds ||
+        session.caption != trimmed) {
+      session = ReelVoiceCommentSession(
+        reelId: widget.reel.id,
+        durationSeconds: durationSeconds,
+        caption: trimmed,
+      );
+      _voiceSession = session;
+    }
+    try {
+      await widget.service.publishVoiceComment(session, audio: audio);
+    } catch (error) {
+      // The thread is still below the recorder's route, so this holds in
+      // practice; if it somehow does not, the raw error travels rather than
+      // copy resolved against a dead element.
+      if (!mounted) rethrow;
+      throw VoiceMomentPresentationNotice(
+        VoiceRecordingProblem.uploadFailed,
+        reelEngagementMessage(
+          context,
+          error,
+          action: ReelEngagementAction.comment,
+        ),
+        action: copy.contextualText(
+          'reels.voiceCommentKept',
+          'Your recording is still here — try publishing again.',
+          'Nagranie zostało zachowane — spróbuj opublikować je ponownie.',
+        ),
+        cause: error,
+      );
     }
   }
 
@@ -395,10 +617,14 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
     final previous = _reportAttempt?.commentId == comment.id
         ? _reportAttempt
         : null;
+    // A voice comment is named by its recording, not quoted: its caption is
+    // optional, and reporting a blank quote tells the reporter nothing about
+    // what they are sending.
     final request = await showReelCommentReportSheet(
       context,
       authorName: comment.authorName,
       commentText: comment.text,
+      voiceDurationSeconds: comment.isVoice ? comment.durationSeconds : null,
       initialReason: previous?.request.reason,
       initialNote: previous?.request.note ?? '',
       overlayBuilder: widget.overlayBuilder,
@@ -596,9 +822,12 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
               gutter: gutter,
               posting: _posting,
               posted: _posted,
+              voicePosted: _voicePosted,
               verified: widget.service.isEmailVerified,
+              voiceSupport: widget.service.voiceCommentSupport.value,
               error: _composerError,
               onSubmit: _post,
+              onRecordVoice: _recordVoiceComment,
             ),
           ],
         );
@@ -673,6 +902,15 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
         return _CommentTile(
           comment: comment,
           dense: gutter < 16,
+          arbiter: _arbiter,
+          playerFactory: widget.voicePlayerFactory,
+          // One comment-scoped grant per play, minted for THIS viewer and
+          // bound to the object generation the comment names. It is never
+          // the Reel's own grant and never a stored URL.
+          resolveVoiceUri: () => widget.service.resolveVoiceCommentUri(
+            widget.reel.id,
+            commentId: comment.id,
+          ),
           busy:
               _deleting.contains(comment.id) ||
               _reporting.contains(comment.id) ||
@@ -704,10 +942,20 @@ class _CommentTile extends StatelessWidget {
     required this.onDelete,
     required this.onReport,
     required this.onRemove,
+    required this.arbiter,
+    required this.resolveVoiceUri,
+    this.playerFactory,
   });
 
   final ReelComment comment;
   final bool dense;
+
+  /// Keeps one voice comment from sounding over the Reel, or over another.
+  final ReplyPlaybackArbiter arbiter;
+
+  /// Mints this comment's own playback grant.
+  final Future<Uri> Function() resolveVoiceUri;
+  final AudioPlayer Function()? playerFactory;
 
   /// A call is in flight on this row. One flag rather than three, because the
   /// row shows one spinner and refuses every action while it spins.
@@ -726,19 +974,35 @@ class _CommentTile extends StatelessWidget {
     final palette = context.appPalette;
     final theme = Theme.of(context);
     final timestamp = copy.relativeCompactTime(comment.createdAt.toLocal());
+    // The row's own name says WHAT it is. The player inside a voice row
+    // carries its own button semantics ("Play voice reply from …"), so this
+    // container must not also claim to be the comment's words.
+    final label = comment.isVoice
+        ? (reported
+              ? copy.template(
+                  'Voice comment by {author}, reported by you',
+                  'Komentarz głosowy od: {author}, zgłoszony przez Ciebie',
+                  values: <String, Object>{'author': comment.authorName},
+                )
+              : copy.template(
+                  'Voice comment by {author}',
+                  'Komentarz głosowy od: {author}',
+                  values: <String, Object>{'author': comment.authorName},
+                ))
+        : (reported
+              ? copy.template(
+                  'Comment by {author}, reported by you',
+                  'Komentarz od: {author}, zgłoszony przez Ciebie',
+                  values: <String, Object>{'author': comment.authorName},
+                )
+              : copy.template(
+                  'Comment by {author}',
+                  'Komentarz od: {author}',
+                  values: <String, Object>{'author': comment.authorName},
+                ));
     return Semantics(
       container: true,
-      label: reported
-          ? copy.template(
-              'Comment by {author}, reported by you',
-              'Komentarz od: {author}, zgłoszony przez Ciebie',
-              values: <String, Object>{'author': comment.authorName},
-            )
-          : copy.template(
-              'Comment by {author}',
-              'Komentarz od: {author}',
-              values: <String, Object>{'author': comment.authorName},
-            ),
+      label: label,
       child: Padding(
         padding: EdgeInsets.symmetric(vertical: dense ? 6 : 8),
         child: Row(
@@ -769,12 +1033,39 @@ class _CommentTile extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 2),
-                  Text(
-                    comment.text,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: palette.textSecondary,
+                  if (comment.isVoice) ...<Widget>[
+                    // The board's own rendering: a play button, a waveform
+                    // and the real duration, in ONE row that is a single
+                    // 48-px target. The same widget the Voice thread uses —
+                    // not a second player that could drift from it.
+                    VoiceReplyMiniPlayer(
+                      key: ValueKey<String>('reel-voice-comment-${comment.id}'),
+                      commentId: comment.id,
+                      authorName: comment.authorName,
+                      durationSeconds: comment.durationSeconds ?? 0,
+                      resolveMediaUri: resolveVoiceUri,
+                      arbiter: arbiter,
+                      playerFactory: playerFactory,
                     ),
-                  ),
+                    // A caption is optional on a voice comment: the content
+                    // is the recording. An empty one prints nothing rather
+                    // than an empty line.
+                    if (comment.text.trim().isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 6),
+                      Text(
+                        comment.text,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: palette.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ] else
+                    Text(
+                      comment.text,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: palette.textSecondary,
+                      ),
+                    ),
                   // The comment is deliberately still here. This says the
                   // report was sent, not that anything was decided — the
                   // reporter is not the person who decides.
@@ -968,9 +1259,12 @@ class _Composer extends StatelessWidget {
     required this.gutter,
     required this.posting,
     required this.posted,
+    required this.voicePosted,
     required this.verified,
+    required this.voiceSupport,
     required this.error,
     required this.onSubmit,
+    required this.onRecordVoice,
     super.key,
   });
 
@@ -980,9 +1274,16 @@ class _Composer extends StatelessWidget {
   final double gutter;
   final bool posting;
   final bool posted;
+  final bool voicePosted;
   final bool verified;
+
+  /// What the DEPLOYED backend has proven about voice comments. Three
+  /// states, because "not proven yet" and "proven absent" are different
+  /// things to say to somebody.
+  final ReelVoiceCommentSupport voiceSupport;
   final Object? error;
   final VoidCallback onSubmit;
+  final VoidCallback onRecordVoice;
 
   @override
   Widget build(BuildContext context) {
@@ -1026,7 +1327,7 @@ class _Composer extends StatelessWidget {
                 ),
               )
             else ...<Widget>[
-              if (error != null || posted)
+              if (error != null || posted || voicePosted)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Semantics(
@@ -1039,6 +1340,12 @@ class _Composer extends StatelessWidget {
                               context,
                               error!,
                               action: ReelEngagementAction.comment,
+                            )
+                          : voicePosted
+                          ? copy.contextualText(
+                              'reels.voiceCommentPosted',
+                              'Voice comment posted.',
+                              'Komentarz głosowy został opublikowany.',
                             )
                           : copy.text(
                               'Comment posted.',
@@ -1056,6 +1363,8 @@ class _Composer extends StatelessWidget {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: <Widget>[
+                  _voiceButton(context, copy, palette),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: TextField(
                       key: const ValueKey<String>('reel-comment-field'),
@@ -1100,6 +1409,69 @@ class _Composer extends StatelessWidget {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+
+  /// The mic, beside the field, at the composer's own 48-px target.
+  ///
+  /// THREE STATES, AND NONE OF THEM PRETENDS:
+  ///
+  ///  - `supported` — the deployed backend accepted the voice contract. The
+  ///    mic is live and opens the recorder. It does NOT open a microphone:
+  ///    the recorder asks for one only when its own Record control is used.
+  ///  - `unsupported` — the deployed backend predates voice comments. The
+  ///    control is disabled and says "Coming soon", in its tooltip and in
+  ///    its accessible name. Nothing is faked and the text composer is
+  ///    untouched.
+  ///  - `unknown` — no thread has answered yet. Disabled, and it claims
+  ///    nothing either way; an unproven capability is not a capability, and
+  ///    an unproven absence is not an absence.
+  ///
+  /// Tonal rather than filled so Send stays the primary action of the row.
+  Widget _voiceButton(
+    BuildContext context,
+    AppLocalizations copy,
+    AppPalette palette,
+  ) {
+    final unsupported = voiceSupport == ReelVoiceCommentSupport.unsupported;
+    final enabled =
+        voiceSupport == ReelVoiceCommentSupport.supported && !posting;
+    final action = copy.text('Reply with voice', 'Odpowiedz głosem');
+    final label = unsupported
+        ? copy.contextualText(
+            'reels.voiceCommentComingSoon',
+            'Reply with voice — coming soon',
+            'Odpowiedz głosem — wkrótce',
+          )
+        : action;
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        container: true,
+        button: true,
+        enabled: enabled,
+        label: label,
+        excludeSemantics: true,
+        // excludeSemantics drops the IconButton's own tap action, so the
+        // node must carry it again or assistive tech that activates through
+        // semantics (Switch Control, screen readers, automation) finds a
+        // button that does nothing. Null while disabled, like onPressed.
+        onTap: enabled ? onRecordVoice : null,
+        child: IconButton.filledTonal(
+          key: const ValueKey<String>('reel-comment-voice'),
+          // A disabled IconButton drops its own tooltip, so the state lives
+          // on the Semantics above as well as in the Tooltip around it.
+          onPressed: enabled ? onRecordVoice : null,
+          constraints: const BoxConstraints(
+            minWidth: AppSizing.standardControlHeight,
+            minHeight: AppSizing.standardControlHeight,
+          ),
+          icon: Icon(
+            Icons.mic_none_rounded,
+            color: enabled ? null : palette.textTertiary,
+          ),
         ),
       ),
     );
@@ -1174,7 +1546,13 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
     final theme = Theme.of(context);
     final media = MediaQuery.of(context);
     final gutter = media.size.width < 380 ? 12.0 : 16.0;
-    final title = copy.text('Comments', 'Komentarze');
+    // One name for one thing: the docked panel and this sheet are the same
+    // conversation, so they carry the same heading (board 08 §5.3).
+    final title = copy.contextualText(
+      'yoMoments.conversation',
+      'Conversation',
+      'Rozmowa',
+    );
     return Material(
       color: palette.surfaceRaised,
       clipBehavior: Clip.antiAlias,

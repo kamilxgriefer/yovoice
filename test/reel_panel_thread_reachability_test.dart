@@ -9,10 +9,14 @@ import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.da
 import 'package:yovoice/features/reels/presentation/widgets/reel_comments_view.dart';
 
 /// On the wide layout the docked panel owns the only way into a Reel's
-/// conversation. These tests hold that control on screen when the panel's
-/// header — an author row, a caption of any length, an engagement bar — is
-/// large enough to want the whole column, and hold the conversation itself
-/// readable once that control has been used.
+/// conversation. These tests hold that control on screen at an accessibility
+/// text size, in a short window and under the destination's own chrome, and
+/// hold the conversation itself readable once that control has been used.
+///
+/// Since board 08 the column is the conversation alone — heading, thread,
+/// composer, and the next-Reel card under them. The author, the caption and
+/// the engagement counts moved onto the card's footer bar, which is why the
+/// caption below is expected exactly once in the view rather than twice.
 const _threadToggle = ValueKey<String>('reel-panel-thread-toggle');
 const _closedThread = ValueKey<String>('reel-panel-thread-closed');
 const _commentList = ValueKey<String>('reel-comment-thread');
@@ -251,25 +255,24 @@ void main() {
     }
 
     testWidgets(
-      '${themeEntry.key} opening the thread costs a roomy header nothing',
+      '${themeEntry.key} opening the thread gives the column to the thread',
       (tester) async {
-        // Reserving for the open thread caps how tall the header may be; it
-        // must not start scrolling a header that still fits.
+        // Board 08 made this column the conversation: a fixed heading, then
+        // the thread. Opening it must hand the room BELOW the heading to the
+        // conversation rather than to anything else, at 200 % text included.
         await _pumpWideFeed(tester, theme: themeEntry.value, textScale: 2);
         await tester.tap(find.byKey(_threadToggle));
         await tester.pumpAndSettle();
 
-        final header = find.ancestor(
-          of: find.text(_longCaption),
-          matching: find.byType(SingleChildScrollView),
-        );
-        expect(header, findsOneWidget);
-        final position = tester
-            .state<ScrollableState>(
-              find.descendant(of: header, matching: find.byType(Scrollable)),
-            )
-            .position;
-        expect(position.maxScrollExtent, 0);
+        expect(find.byType(ReelCommentsView), findsOneWidget);
+        final heading = tester.getRect(find.text('Conversation'));
+        final thread = tester.getRect(find.byType(ReelCommentsView));
+        expect(thread.top, greaterThanOrEqualTo(heading.bottom - .01));
+        expect(thread.height, greaterThan(0));
+        // The caption is NOT repeated here: the card's own footer bar carries
+        // it, and saying it twice in one view is the duplication board 08
+        // removed.
+        expect(find.text(_longCaption), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
     );
@@ -294,6 +297,8 @@ void main() {
         expect(target.bottom, lessThanOrEqualTo(420.01));
         final block = tester.getRect(find.byKey(_closedThread));
         expect(target.bottom, lessThanOrEqualTo(block.bottom + .01));
+        // The heading above it is never what gets clipped away.
+        expect(find.text('Conversation'), findsOneWidget);
         // The thread is not opened here on purpose: a column this short
         // cannot host ReelCommentsView at 200 % text, and that widget's own
         // layout is not what this test is about.
@@ -311,6 +316,7 @@ void main() {
         // painted and the caption is not cut short by the fix.
         expect(find.text(_longCaption), findsOneWidget);
         expect(find.text('Creator One'), findsOneWidget);
+        expect(find.text('Conversation'), findsOneWidget);
         expect(find.byKey(_threadToggle).hitTestable(), findsOneWidget);
         expect(
           tester.getRect(find.byKey(_threadToggle)).height,

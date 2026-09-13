@@ -133,7 +133,7 @@ void main() {
     );
     await tester.pump();
     expect(find.text('Zostań twórcą'), findsOneWidget);
-    expect(find.text('Twórz własne kluby'), findsOneWidget);
+    expect(find.text('Buduj swoją publiczność'), findsOneWidget);
     expect(find.text('Wyróżnij się'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Sprawdź plany'),

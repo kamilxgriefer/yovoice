@@ -11,46 +11,38 @@ import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.da
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
-import 'package:yovoice/features/rooms/data/models/voice_room.dart';
-import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/services/server_service.dart';
 
-/// "Rooms for you" on both live Home compositions, when the room query
-/// FAILS rather than returning nothing.
-///
-/// Both screens read `snapshot.data ?? const <VoiceRoom>[]` with no
-/// `hasError` branch and then printed the invitation copy over a denial
-/// your community will see it here." That is the same collapse that hid the
-/// Discover clubs rail, with an extra harm: it hands the reader an action
-/// ("start one") in the one situation where the app does not know whether
-/// there are rooms at all.
-class _FailingRoomService extends RoomService {
-  _FailingRoomService({super.firestore, super.auth});
+/// Server-first Home keeps denied, empty and recovered repository states
+/// distinct on both responsive compositions.
+class _FailingServerService extends ServerService {
+  _FailingServerService({super.firestore, super.auth});
 
   @override
-  Stream<List<VoiceRoom>> watchLivePublicRooms() =>
-      Stream<List<VoiceRoom>>.error(
-        FirebaseException(
-          plugin: 'cloud_firestore',
-          code: 'permission-denied',
-          message: 'Missing or insufficient permissions.',
-        ),
-      );
+  Stream<List<Server>> watchMyServers() => Stream<List<Server>>.error(
+    FirebaseException(
+      plugin: 'cloud_firestore',
+      code: 'permission-denied',
+      message: 'Missing or insufficient permissions.',
+    ),
+  );
 }
 
-class _RecoveringRoomService extends RoomService {
-  _RecoveringRoomService({super.firestore, super.auth});
+class _RecoveringServerService extends ServerService {
+  _RecoveringServerService({super.firestore, super.auth});
 
   int subscriptions = 0;
 
   @override
-  Stream<List<VoiceRoom>> watchLivePublicRooms() {
+  Stream<List<Server>> watchMyServers() {
     subscriptions += 1;
     if (subscriptions == 1) {
-      return Stream<List<VoiceRoom>>.error(
-        StateError('temporary room query failure'),
+      return Stream<List<Server>>.error(
+        StateError('temporary server query failure'),
       );
     }
-    return Stream<List<VoiceRoom>>.value(const <VoiceRoom>[]);
+    return Stream<List<Server>>.value(const <Server>[]);
   }
 }
 
@@ -83,7 +75,7 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
-  MobileHome mobileHome({required RoomService rooms}) {
+  MobileHome mobileHome({required ServerRepository servers}) {
     final firebaseAuth = auth();
     return MobileHome(
       onOpenRoom: (_) {},
@@ -97,7 +89,7 @@ void main() {
       onOpenComments: (_) {},
       onOpenConversation: (_) {},
       onSeeAllChats: () {},
-      roomService: rooms,
+      serverRepository: servers,
       friendService: FriendService(firestore: db, auth: firebaseAuth),
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
       feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
@@ -106,7 +98,7 @@ void main() {
     );
   }
 
-  DesktopHome desktopHome({required RoomService rooms}) {
+  DesktopHome desktopHome({required ServerRepository servers}) {
     final firebaseAuth = auth();
     return DesktopHome(
       currentUserId: uid,
@@ -121,7 +113,7 @@ void main() {
       onOpenClub: (_) {},
       onSeeAllChats: () {},
       onOpenClubs: () {},
-      roomService: rooms,
+      serverRepository: servers,
       friendService: FriendService(firestore: db, auth: firebaseAuth),
       followService: FollowService(firestore: db, auth: firebaseAuth),
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
@@ -131,32 +123,35 @@ void main() {
     );
   }
 
-  testWidgets('mobile: a failed room query says so, and never invites the '
-      'reader to fix it by starting a room', (tester) async {
+  testWidgets('mobile: a failed server query stays distinct from empty', (
+    tester,
+  ) async {
     useSize(tester, const Size(390, 2600));
 
     await tester.pumpWidget(
       host(
         mobileHome(
-          rooms: _FailingRoomService(firestore: db, auth: auth()),
+          servers: _FailingServerService(firestore: db, auth: auth()),
         ),
       ),
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    final error = find.byKey(const ValueKey('home-rooms-error'));
+    final error = find.byKey(const ValueKey('home-servers-error'));
     expect(error, findsOneWidget);
     expect(
       find.descendant(
         of: error,
         matching: find.text(
-          'Live rooms could not be loaded. Check your connection and try '
-          "again. You don't have permission to do that.",
+          "Your servers could not be loaded. You don't have permission to do that.",
         ),
       ),
       findsOneWidget,
     );
-    expect(find.textContaining('A good conversation starts here.'), findsNothing);
+    expect(
+      find.text('A good conversation starts in your server.'),
+      findsNothing,
+    );
     expect(
       find.descendant(
         of: error,
@@ -170,7 +165,7 @@ void main() {
     );
   });
 
-  testWidgets('mobile: an empty room list still reads as empty', (
+  testWidgets('mobile: an empty server list still reads as empty', (
     tester,
   ) async {
     useSize(tester, const Size(390, 2600));
@@ -178,41 +173,46 @@ void main() {
     await tester.pumpWidget(
       host(
         mobileHome(
-          rooms: RoomService(firestore: db, auth: auth()),
+          servers: ServerService(firestore: db, auth: auth()),
         ),
       ),
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(find.textContaining('A good conversation starts here.'), findsOneWidget);
+    expect(
+      find.text('A good conversation starts in your server.'),
+      findsOneWidget,
+    );
     expect(find.textContaining('could not be loaded'), findsNothing);
   });
 
-  testWidgets('desktop: a failed room query says so', (tester) async {
+  testWidgets('desktop: a failed server query says so', (tester) async {
     useSize(tester, const Size(1440, 2600));
 
     await tester.pumpWidget(
       host(
         desktopHome(
-          rooms: _FailingRoomService(firestore: db, auth: auth()),
+          servers: _FailingServerService(firestore: db, auth: auth()),
         ),
       ),
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    final error = find.byKey(const ValueKey('home-rooms-error'));
+    final error = find.byKey(const ValueKey('home-servers-error'));
     expect(error, findsOneWidget);
     expect(
       find.descendant(
         of: error,
         matching: find.text(
-          'Live rooms could not be loaded. Check your connection and try '
-          "again. You don't have permission to do that.",
+          "Your servers could not be loaded. You don't have permission to do that.",
         ),
       ),
       findsOneWidget,
     );
-    expect(find.textContaining('A good conversation starts here.'), findsNothing);
+    expect(
+      find.text('A good conversation starts in your server.'),
+      findsNothing,
+    );
     expect(
       find.descendant(
         of: error,
@@ -226,7 +226,7 @@ void main() {
     );
   });
 
-  testWidgets('desktop: an empty room list still reads as empty', (
+  testWidgets('desktop: an empty server list still reads as empty', (
     tester,
   ) async {
     useSize(tester, const Size(1440, 2600));
@@ -234,25 +234,28 @@ void main() {
     await tester.pumpWidget(
       host(
         desktopHome(
-          rooms: RoomService(firestore: db, auth: auth()),
+          servers: ServerService(firestore: db, auth: auth()),
         ),
       ),
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(find.textContaining('A good conversation starts here.'), findsOneWidget);
+    expect(
+      find.text('A good conversation starts in your server.'),
+      findsOneWidget,
+    );
     expect(find.textContaining('could not be loaded'), findsNothing);
   });
 
-  testWidgets('mobile: Try again creates a fresh room subscription', (
+  testWidgets('mobile: Try again creates a fresh server subscription', (
     tester,
   ) async {
     useSize(tester, const Size(390, 2600));
-    final rooms = _RecoveringRoomService(firestore: db, auth: auth());
+    final servers = _RecoveringServerService(firestore: db, auth: auth());
 
-    await tester.pumpWidget(host(mobileHome(rooms: rooms)));
+    await tester.pumpWidget(host(mobileHome(servers: servers)));
     await tester.pump(const Duration(milliseconds: 150));
-    final error = find.byKey(const ValueKey('home-rooms-error'));
+    final error = find.byKey(const ValueKey('home-servers-error'));
     final retry = find.descendant(of: error, matching: find.text('Try again'));
     expect(retry, findsOneWidget);
 
@@ -260,21 +263,24 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(rooms.subscriptions, 2);
+    expect(servers.subscriptions, 2);
     expect(error, findsNothing);
-    expect(find.textContaining('A good conversation starts here.'), findsOneWidget);
+    expect(
+      find.text('A good conversation starts in your server.'),
+      findsOneWidget,
+    );
     expect(find.textContaining('could not be loaded'), findsNothing);
   });
 
-  testWidgets('desktop: Try again creates a fresh room subscription', (
+  testWidgets('desktop: Try again creates a fresh server subscription', (
     tester,
   ) async {
     useSize(tester, const Size(1440, 2600));
-    final rooms = _RecoveringRoomService(firestore: db, auth: auth());
+    final servers = _RecoveringServerService(firestore: db, auth: auth());
 
-    await tester.pumpWidget(host(desktopHome(rooms: rooms)));
+    await tester.pumpWidget(host(desktopHome(servers: servers)));
     await tester.pump(const Duration(milliseconds: 150));
-    final error = find.byKey(const ValueKey('home-rooms-error'));
+    final error = find.byKey(const ValueKey('home-servers-error'));
     final retry = find.descendant(of: error, matching: find.text('Try again'));
     expect(retry, findsOneWidget);
 
@@ -282,9 +288,12 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(rooms.subscriptions, 2);
+    expect(servers.subscriptions, 2);
     expect(error, findsNothing);
-    expect(find.textContaining('A good conversation starts here.'), findsOneWidget);
+    expect(
+      find.text('A good conversation starts in your server.'),
+      findsOneWidget,
+    );
     expect(find.textContaining('could not be loaded'), findsNothing);
   });
 }

@@ -8,6 +8,14 @@ import '../data/models/achievement_definition.dart';
 /// shared with older clients. Keeping Polish copy here lets the UI translate
 /// those stable definitions without changing data, unlock rules or Firestore
 /// values.
+const Map<String, String> _englishAchievementTitles = {
+  'rooms_1': 'Conversation Starter',
+  'rooms_50': 'Conversation Founder',
+  'rooms_500': 'Conversation Curator',
+  'rooms_1000': 'Conversation Architect',
+  'hostMinutes_30': 'Voice Guide',
+};
+
 const Map<String, String> _polishAchievementTitles = {
   'messages_1': 'Pierwsze słowo',
   'messages_10': 'Przełamane lody',
@@ -39,13 +47,13 @@ const Map<String, String> _polishAchievementTitles = {
   'voiceMinutes_6000': 'Dźwiękowy podróżnik',
   'voiceMinutes_12000': 'Mistrz fal',
   'voiceMinutes_30000': 'Wieczny głos',
-  'rooms_1': 'Otwarcie pokoju',
+  'rooms_1': 'Początek rozmowy',
   'rooms_10': 'Punkt spotkań',
-  'rooms_50': 'Założyciel pokoju',
+  'rooms_50': 'Twórca rozmów',
   'rooms_100': 'Gospodarz spotkań',
   'rooms_250': 'Budowniczy społeczności',
-  'rooms_500': 'Kurator pokoi',
-  'rooms_1000': 'Architekt pokoi',
+  'rooms_500': 'Kurator rozmów',
+  'rooms_1000': 'Architekt rozmów',
   'rooms_2500': 'Założyciel sieci',
   'rooms_5000': 'Budowniczy królestwa',
   'rooms_10000': 'Założyciel królestwa',
@@ -80,7 +88,7 @@ const Map<String, String> _polishAchievementTitles = {
   'reactions_5000': 'Ukochany głos',
   'reactions_10000': 'Powszechny aplauz',
   'hostMinutes_1': 'Pierwszy gospodarz',
-  'hostMinutes_30': 'Przewodnik pokoju',
+  'hostMinutes_30': 'Przewodnik rozmowy',
   'hostMinutes_120': 'Lider rozmowy',
   'hostMinutes_300': 'Kapitan głosu',
   'hostMinutes_600': 'Reżyser głosu',
@@ -115,7 +123,7 @@ String localizedAchievementTitle(
   AppLocalizations copy,
   AchievementDefinition achievement,
 ) => copy.text(
-  achievement.title,
+  _englishAchievementTitles[achievement.id] ?? achievement.title,
   _polishAchievementTitles[achievement.id] ?? achievement.title,
 );
 
@@ -123,7 +131,7 @@ String localizedAchievementDescription(
   AppLocalizations copy,
   AchievementDefinition achievement,
 ) => copy.text(
-  achievement.description,
+  _englishAchievementDescription(achievement),
   _polishAchievementDescription(achievement),
 );
 
@@ -146,7 +154,10 @@ String localizedAchievementMetric(AppLocalizations copy, String metric) =>
       'messages' => copy.text('Messages', 'Wiadomości'),
       'followers' => copy.text('Followers', 'Obserwujący'),
       'voiceMinutes' => copy.text('Voice minutes', 'Minuty rozmów'),
-      'rooms' => copy.text('Rooms created', 'Utworzone pokoje'),
+      'rooms' => copy.text(
+        'Voice conversations started',
+        'Rozpoczęte rozmowy głosowe',
+      ),
       'communities' => copy.text('Communities', 'Społeczności'),
       'friends' => copy.text('Friends', 'Znajomi'),
       'reactions' => copy.text('Reactions', 'Reakcje'),
@@ -167,7 +178,7 @@ String _polishAchievementDescription(AchievementDefinition achievement) {
     'voiceMinutes' =>
       'Spędź $count ${_polishForm(count, 'minutę', 'minuty', 'minut')} na rozmowach głosowych.',
     'rooms' =>
-      'Utwórz $count ${_polishForm(count, 'pokój', 'pokoje', 'pokojów')}.',
+      'Rozpocznij $count ${_polishForm(count, 'rozmowę głosową', 'rozmowy głosowe', 'rozmów głosowych')}.',
     'communities' =>
       'Dołącz do $count ${count == 1 ? 'społeczności' : 'społeczności'}.',
     'friends' =>
@@ -175,11 +186,23 @@ String _polishAchievementDescription(AchievementDefinition achievement) {
     'reactions' =>
       'Otrzymaj $count ${_polishForm(count, 'reakcję', 'reakcje', 'reakcji')}.',
     'hostMinutes' =>
-      'Prowadź pokoje głosowe przez $count ${_polishForm(count, 'minutę', 'minuty', 'minut')}.',
+      'Prowadź rozmowy głosowe przez $count ${_polishForm(count, 'minutę', 'minuty', 'minut')}.',
     'activeDays' =>
       'Korzystaj z YO Voice przez $count ${_polishForm(count, 'dzień', 'dni', 'dni')}.',
     'moments' =>
       'Opublikuj $count ${_polishForm(count, 'moment głosowy', 'momenty głosowe', 'momentów głosowych')}.',
+    _ => achievement.description,
+  };
+}
+
+String _englishAchievementDescription(AchievementDefinition achievement) {
+  final count = achievement.threshold;
+
+  return switch (achievement.metric) {
+    'rooms' =>
+      'Start $count ${count == 1 ? 'voice conversation' : 'voice conversations'}.',
+    'hostMinutes' =>
+      'Host voice conversations for $count ${count == 1 ? 'minute' : 'minutes'}.',
     _ => achievement.description,
   };
 }

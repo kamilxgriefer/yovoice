@@ -1,6 +1,6 @@
-// Home "Tu i teraz" — Foundation. Friends, Discover and Find creators left
-// the desktop rail for the More popover (kept, never deleted); Servers joined
-// Moments as a rail-owned destination; the mobile More sheet is unchanged.
+// Home "Tu i teraz" — server cutover. Servers owns the former space
+// destinations while Friends and Find creators remain secondary actions.
+// Legacy Discover/Clubs identities stay parseable but are never listed.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
@@ -34,7 +34,7 @@ void main() {
     expect((asRoot as ServersScreen).isRootTab, isTrue);
     expect(asPushed, isA<ServersScreen>());
     expect((asPushed as ServersScreen).isRootTab, isFalse);
-    // The relocated three still resolve to their real screens.
+    // Friends and Find creators retain their existing surfaces.
     expect(
       moreDestinationScreen(
         MoreDestination.friends,
@@ -42,13 +42,13 @@ void main() {
       ).runtimeType.toString(),
       'FriendsScreen',
     );
-    expect(
-      moreDestinationScreen(
-        MoreDestination.discover,
-        isRootTab: true,
-      ).runtimeType.toString(),
-      'DiscoverScreen',
-    );
+    // Compatibility identities can still be handed to the router, but may
+    // never resurrect either retired standalone surface.
+    for (final legacy in [MoreDestination.discover, MoreDestination.clubs]) {
+      final redirected = moreDestinationScreen(legacy, isRootTab: true);
+      expect(redirected, isA<ServersScreen>(), reason: legacy.name);
+      expect((redirected as ServersScreen).isRootTab, isTrue);
+    }
     expect(
       moreDestinationScreen(
         MoreDestination.findCreators,
@@ -59,8 +59,8 @@ void main() {
   });
 
   testWidgets(
-    'the desktop popover lists Friends, Discover and Find creators exactly '
-    'once, never Moments or Servers',
+    'the desktop popover lists secondary people destinations exactly once '
+    'and no retired space surface',
     (tester) async {
       tester.view.physicalSize = const Size(1440, 900);
       tester.view.devicePixelRatio = 1;
@@ -86,35 +86,37 @@ void main() {
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
 
-      // The mobile sheet's exact labels and subtitles, each once.
+      // People destinations remain available, each once.
       for (final entry in const {
         'Friends': 'Your circle',
-        'Discover': 'Find rooms',
         'Find creators': 'People to follow',
       }.entries) {
         expect(find.text(entry.key), findsOneWidget, reason: entry.key);
         expect(find.text(entry.value), findsOneWidget, reason: entry.value);
       }
-      // Everything that was already there is still there.
-      for (final label in ['Clubs', 'Creator Studio', 'Awards', 'Alerts']) {
+      for (final label in ['Creator Studio', 'Awards', 'Alerts']) {
         expect(find.text(label), findsOneWidget, reason: label);
       }
-      // Rail-owned destinations never appear twice.
-      for (final absent in ['Moments', 'YO Moments', 'Servers']) {
+      // Rail-owned destinations and retired standalone surfaces never appear
+      // in the popover.
+      for (final absent in [
+        'Discover',
+        'Clubs',
+        'Rooms',
+        'Moments',
+        'YO Moments',
+        'Servers',
+      ]) {
         expect(find.text(absent), findsNothing, reason: absent);
       }
-      // Reading order: the three relocated rows lead the popover.
+      // Reading order remains stable for the retained rows.
       expect(
         tester.getCenter(find.text('Friends')).dy,
-        lessThan(tester.getCenter(find.text('Discover')).dy),
-      );
-      expect(
-        tester.getCenter(find.text('Discover')).dy,
         lessThan(tester.getCenter(find.text('Find creators')).dy),
       );
       expect(
         tester.getCenter(find.text('Find creators')).dy,
-        lessThan(tester.getCenter(find.text('Clubs')).dy),
+        lessThan(tester.getCenter(find.text('Creator Studio')).dy),
       );
 
       await tester.tap(find.text('Friends'));
@@ -124,7 +126,7 @@ void main() {
     },
   );
 
-  testWidgets('the mobile More sheet keeps its entries and lists no Servers', (
+  testWidgets('the mobile More sheet exposes no Rooms or Clubs entry', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -144,14 +146,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Byte-identical entries: the same nine destinations as before the
-    // Foundation slice, in the same order.
+    // The retained destinations keep their order after the two space aliases
+    // leave the launcher.
     const expected = [
       MoreDestination.friends,
       MoreDestination.profile,
-      MoreDestination.discover,
       MoreDestination.findCreators,
-      MoreDestination.clubs,
       MoreDestination.notifications,
       MoreDestination.achievements,
       MoreDestination.creatorStudio,
@@ -171,8 +171,7 @@ void main() {
       if (previous != null) {
         final laterRow = topLeft.dy > previous.dy + .5;
         final sameRowLater =
-            (topLeft.dy - previous.dy).abs() <= .5 &&
-            topLeft.dx > previous.dx;
+            (topLeft.dy - previous.dy).abs() <= .5 && topLeft.dx > previous.dx;
         expect(
           laterRow || sameRowLater,
           isTrue,
@@ -181,9 +180,9 @@ void main() {
       }
       previous = topLeft;
     }
-    // Servers is a dock root (cell 1), Moments a dock root (cell 3), Reels a
-    // compatibility deep link — none is a sheet entry.
-    for (final absent in ['servers', 'moments', 'reels']) {
+    // Servers is a dock root (cell 1), Moments a dock root (cell 3), while
+    // Discover, Clubs and Reels are compatibility identities only.
+    for (final absent in ['discover', 'clubs', 'servers', 'moments', 'reels']) {
       expect(
         find.byKey(ValueKey('more-destination-$absent')),
         findsNothing,
@@ -191,6 +190,9 @@ void main() {
       );
     }
     expect(find.text('Servers'), findsNothing);
+    expect(find.text('Discover'), findsNothing);
+    expect(find.text('Clubs'), findsNothing);
+    expect(find.text('Rooms'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

@@ -22,8 +22,8 @@ import 'server_test_support.dart';
 /// only come from the provider's own in-session roster, and no surface may
 /// ever render a number of people — no presence writer exists (contract
 /// G6/G3). Every module the boards draw (events, calendar, memories, list)
-/// has no persistence at all (G9) and must therefore be a named `Wkrótce`
-/// state with a disabled action, never a control that fails.
+/// must route to its real server-scoped repository and keep honest
+/// loading/empty/error states rather than manufacturing content.
 
 Server boardServer(ServerType type, {bool held = false, int members = 8}) =>
     Server(
@@ -71,20 +71,23 @@ List<ServerChannel> boardChannels(
   ];
 }
 
-ClubChatService boardChat([FakeFirebaseFirestore? firestore]) => ClubChatService(
-  firestore: firestore ?? FakeFirebaseFirestore(),
-  auth: MockFirebaseAuth(
-    signedIn: true,
-    mockUser: MockUser(uid: 'owner', email: 'owner@yo.voice'),
-  ),
-  requestIdFactory: () => 'msg-1',
-  messageSendInvoker: (_) async => <Object?, Object?>{},
-);
+ClubChatService boardChat([FakeFirebaseFirestore? firestore]) =>
+    ClubChatService(
+      firestore: firestore ?? FakeFirebaseFirestore(),
+      auth: MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'owner', email: 'owner@yo.voice'),
+      ),
+      requestIdFactory: () => 'msg-1',
+      messageSendInvoker: (_) async => <Object?, Object?>{},
+    );
 
 const boardWidths = [320.0, 390.0, 768.0, 1100.0, 1440.0, 1920.0];
 
 /// Copy that could only come from the presence writer that does not exist.
-final fabricated = RegExp(r'\d+\s+(osob[ay]? (rozmawia|w rozmowie)|widz|słuchacz)');
+final fabricated = RegExp(
+  r'\d+\s+(osob[ay]? (rozmawia|w rozmowie)|widz|słuchacz)',
+);
 
 Finder get joinAction => find.byKey(const ValueKey('server-join'));
 Finder get micControl =>
@@ -149,10 +152,16 @@ void main() {
           );
           final reason = 'friends $width ×$scale';
           expect(tester.takeException(), isNull, reason: reason);
-          expect(find.byType(ServerParticipantTile), findsNothing,
-              reason: reason);
-          expect(find.byKey(const ValueKey('server-voice-controls')),
-              findsNothing, reason: reason);
+          expect(
+            find.byType(ServerParticipantTile),
+            findsNothing,
+            reason: reason,
+          );
+          expect(
+            find.byKey(const ValueKey('server-voice-controls')),
+            findsNothing,
+            reason: reason,
+          );
           expect(find.textContaining(fabricated), findsNothing, reason: reason);
           expect(joinAction, findsOneWidget, reason: reason);
           expect(repository.calls, isEmpty, reason: reason);
@@ -161,8 +170,9 @@ void main() {
     });
 
     testWidgets('after joining the scene is the provider roster around the '
-        'mic orb, with the ring only on who is actually speaking',
-        (tester) async {
+        'mic orb, with the ring only on who is actually speaking', (
+      tester,
+    ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final repository = TestServerRepository()
         ..servers = [boardServer(ServerType.friends)]
@@ -190,8 +200,10 @@ void main() {
 
       link.setRoster(foursome);
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('server-voice-stage-orbit')),
-          findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('server-voice-stage-orbit')),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('server-voice-orb')), findsOneWidget);
       expect(find.byType(ServerParticipantTile), findsNWidgets(4));
       expect(find.text('Maja'), findsOneWidget);
@@ -307,15 +319,20 @@ void main() {
       await tester.tap(joinAction);
       await tester.pumpAndSettle();
       expect(
-        tester.widget<IconButton>(
-          find.descendant(of: micControl, matching: find.byType(IconButton)),
-        ).onPressed,
+        tester
+            .widget<IconButton>(
+              find.descendant(
+                of: micControl,
+                matching: find.byType(IconButton),
+              ),
+            )
+            .onPressed,
         isNull,
       );
       expect(find.text('Tylko słuchasz'), findsOneWidget);
     });
 
-    testWidgets('the event card is an honest module, not a working RSVP', (
+    testWidgets('the event card opens the real persisted Events board', (
       tester,
     ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -339,29 +356,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         find.descendant(of: card, matching: find.text('Wkrótce')),
-        findsOneWidget,
+        findsNothing,
       );
-      final rsvp = find.descendant(
+      final openEvents = find.descendant(
         of: card,
-        matching: find.widgetWithText(FilledButton, 'Dołączę'),
+        matching: find.widgetWithText(FilledButton, 'Otwórz wydarzenia'),
       );
-      expect(tester.widget<FilledButton>(rsvp).onPressed, isNull);
-      // The real channel is offered instead, and opening it changes nothing
-      // but the selection.
-      await tester.tap(
-        find.descendant(of: card, matching: find.text('Wydarzenia')),
-      );
+      expect(tester.widget<FilledButton>(openEvents).onPressed, isNotNull);
+      await tester.tap(openEvents);
       await tester.pumpAndSettle();
       expect(repository.calls, isEmpty);
-      // The header names the channel and, under it, its kind — the same
-      // word twice for an events channel, which is correct.
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('server-channel-header')),
-          matching: find.text('Wydarzenia'),
-        ),
-        findsWidgets,
-      );
+      expect(find.byKey(const ValueKey('server-events-board')), findsOneWidget);
     });
 
     testWidgets('no events channel means no event card at all', (tester) async {
@@ -415,8 +420,13 @@ void main() {
       expect(find.byKey(const ValueKey('server-composer')), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('server-tab-events')));
       await tester.pumpAndSettle();
-      expect(find.text('Nie ma jeszcze planów'), findsOneWidget);
-      expect(find.text('Wkrótce'), findsWidgets);
+      expect(find.byKey(const ValueKey('server-events-board')), findsOneWidget);
+      expect(
+        find.text('Nie ma jeszcze żadnych nadchodzących planów.'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('server-create-event')), findsOneWidget);
+      expect(find.text('Wkrótce'), findsNothing);
       expect(joinAction, findsNothing, reason: 'the events tab is not a scene');
     });
 
@@ -478,9 +488,38 @@ void main() {
       expect(find.text('Tylko na zaproszenie · 8 osób'), findsOneWidget);
       expect(find.byKey(const ValueKey('server-home-board')), findsOneWidget);
       expect(find.text('Rodzinny pulpit'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('family-check-in-panel')),
+        findsOneWidget,
+      );
       // A board is not a channel: nothing was asked of the backend to draw it.
       expect(repository.calls, isEmpty);
       expect(find.textContaining(fabricated), findsNothing);
+    });
+
+    testWidgets('a family check-in reaches the versioned server callable', (
+      tester,
+    ) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = TestServerRepository()
+        ..servers = [boardServer(ServerType.family)]
+        ..channels = boardChannels(ServerType.family);
+      await pumpServers(
+        tester,
+        ServerWorkspaceScreen(
+          serverId: 's',
+          repository: repository,
+          isRootTab: true,
+          chatService: boardChat(),
+        ),
+        size: const Size(1440, 900),
+      );
+
+      await tester.tap(find.text('Jestem w domu'));
+      await tester.pumpAndSettle();
+      expect(repository.calls.single.$1, 'createServerFamilyCheckInV1');
+      expect(repository.calls.single.$2['serverId'], 's');
+      expect(repository.calls.single.$2['status'], 'home');
     });
 
     testWidgets('the Salon rodzinny card joins for real and then shows the '
@@ -528,8 +567,9 @@ void main() {
       );
     });
 
-    testWidgets('the three cards are named modules with disabled actions and '
-        'a real channel behind each', (tester) async {
+    testWidgets('family calendar, memories and shared list are live', (
+      tester,
+    ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final repository = TestServerRepository()
         ..servers = [boardServer(ServerType.family)]
@@ -544,17 +584,24 @@ void main() {
         ),
         size: const Size(1440, 900),
       );
-      const cards = {
-        'server-family-plans': ('Najbliższe plany', 'Będę', 'Kalendarz'),
+      const cards = <String, (String, String, String, bool)>{
+        'server-family-plans': (
+          'Najbliższe plany',
+          'Otwórz kalendarz',
+          'Kalendarz',
+          true,
+        ),
         'server-family-memories': (
           'Rodzinne wspomnienia',
-          'Odtwórz',
+          'Otwórz album',
           'Wspomnienia',
+          true,
         ),
         'server-family-shopping': (
           'Do kupienia',
-          'Dodaj produkt',
+          'Otwórz wspólną listę',
           'Lista zakupów',
+          true,
         ),
       };
       for (final entry in cards.entries) {
@@ -569,7 +616,7 @@ void main() {
         );
         expect(
           find.descendant(of: card, matching: find.text('Wkrótce')),
-          findsOneWidget,
+          entry.value.$4 ? findsNothing : findsOneWidget,
           reason: entry.key,
         );
         expect(
@@ -581,7 +628,7 @@ void main() {
                 ),
               )
               .onPressed,
-          isNull,
+          entry.value.$4 ? isNotNull : isNull,
           reason: entry.key,
         );
         expect(
@@ -592,6 +639,62 @@ void main() {
       }
       expect(repository.calls, isEmpty);
     });
+
+    testWidgets(
+      'family module actions open the real calendar, album and shared list',
+      (tester) async {
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final repository = TestServerRepository()
+          ..servers = [boardServer(ServerType.family)]
+          ..channels = boardChannels(ServerType.family);
+        await pumpServers(
+          tester,
+          ServerWorkspaceScreen(
+            serverId: 's',
+            repository: repository,
+            isRootTab: true,
+            chatService: boardChat(),
+          ),
+          size: const Size(1440, 900),
+        );
+
+        await tester.tap(find.widgetWithText(FilledButton, 'Otwórz kalendarz'));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('server-events-board')),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(const ValueKey('server-home-board')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(FilledButton, 'Otwórz album'));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('server-family-memory-album')),
+          findsOneWidget,
+        );
+        expect(
+          find.text('Nie ma jeszcze rodzinnych wspomnień'),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(const ValueKey('server-home-board')));
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.widgetWithText(FilledButton, 'Otwórz wspólną listę'),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('server-shared-list-board')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('server-list-composer')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
 
     testWidgets('the module row is three, two and one column by width', (
       tester,
@@ -671,7 +774,19 @@ void main() {
         findsWidgets,
       );
       expect(find.byKey(const ValueKey('server-family-board')), findsNothing);
+      expect(find.byKey(const ValueKey('server-events-board')), findsOneWidget);
       // The strip is still there, so the way home is one tap.
+      await tester.tap(find.byKey(const ValueKey('server-tab-home')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('server-family-board')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('server-tab-memories')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('server-family-memory-album')),
+        findsOneWidget,
+      );
+      expect(find.byType(ServerChannelEmptyState), findsNothing);
       await tester.tap(find.byKey(const ValueKey('server-tab-home')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('server-family-board')), findsOneWidget);
@@ -691,6 +806,54 @@ void main() {
         find.byKey(const ValueKey('server-open-channels')),
         findsOneWidget,
       );
+    });
+
+    testWidgets('the Family Memory channel routes on desktop and phone at '
+        '200 percent text', (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      for (final configuration in const [
+        (Size(1440, 900), 1.0),
+        (Size(390, 820), 2.0),
+      ]) {
+        final repository = TestServerRepository()
+          ..servers = [boardServer(ServerType.family)]
+          ..channels = boardChannels(ServerType.family);
+        await pumpServers(
+          tester,
+          ServerWorkspaceScreen(
+            key: UniqueKey(),
+            serverId: 's',
+            repository: repository,
+            isRootTab: true,
+            initialChannelId: 'memories',
+            chatService: boardChat(),
+          ),
+          size: configuration.$1,
+          textScale: configuration.$2,
+          light: configuration.$2 == 2,
+        );
+
+        expect(
+          find.byKey(const ValueKey('server-family-memory-album')),
+          findsOneWidget,
+          reason: '${configuration.$1} ×${configuration.$2}',
+        );
+        expect(find.byType(ServerChannelEmptyState), findsNothing);
+        final emptyAlbum = find.text('Nie ma jeszcze rodzinnych wspomnień');
+        if (emptyAlbum.evaluate().isEmpty) {
+          await tester.drag(
+            find.byKey(const ValueKey('server-family-memory-album')),
+            const Offset(0, -420),
+          );
+          await tester.pumpAndSettle();
+        }
+        expect(
+          emptyAlbum,
+          findsOneWidget,
+          reason: '${configuration.$1} ×${configuration.$2}',
+        );
+        expect(tester.takeException(), isNull);
+      }
     });
 
     testWidgets('the board survives six widths and 200 percent and asks the '
@@ -723,8 +886,11 @@ void main() {
             reason: reason,
           );
           expect(joinAction, findsOneWidget, reason: reason);
-          expect(find.byType(ServerParticipantTile), findsNothing,
-              reason: reason);
+          expect(
+            find.byType(ServerParticipantTile),
+            findsNothing,
+            reason: reason,
+          );
           expect(find.textContaining(fabricated), findsNothing, reason: reason);
           expect(repository.calls, isEmpty, reason: reason);
         }

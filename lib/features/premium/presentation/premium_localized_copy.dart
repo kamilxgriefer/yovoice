@@ -19,9 +19,9 @@ String localizedPremiumPlanLabel(AppLocalizations copy, PremiumPlan plan) =>
 ) {
   final title = switch (benefit.$1) {
     'Become a Creator' => copy.text('Become a Creator', 'Zostań twórcą'),
-    'Create your own Clubs' => copy.text(
-      'Create your own Clubs',
-      'Twórz własne kluby',
+    'Build your audience' => copy.text(
+      'Build your audience',
+      'Buduj swoją publiczność',
     ),
     'Stand out' => copy.text('Stand out', 'Wyróżnij się'),
     _ => copy.text(benefit.$1, 'Korzyść Premium'),
@@ -35,6 +35,10 @@ String localizedPremiumPlanLabel(AppLocalizations copy, PremiumPlan plan) =>
       'Build spaces for your people',
       'Buduj miejsca dla swojej społeczności',
     ),
+    'Verified tools for Creators' => copy.text(
+      'Verified tools for Creators',
+      'Zweryfikowane narzędzia dla twórców',
+    ),
     'Premium look across YO Voice' => copy.text(
       'Premium look across YO Voice',
       'Wygląd Premium w całym YO Voice',
@@ -44,20 +48,19 @@ String localizedPremiumPlanLabel(AppLocalizations copy, PremiumPlan plan) =>
   return (title, subtitle);
 }
 
-String localizedPremiumChecklistItem(AppLocalizations copy, String item) =>
-    switch (item) {
-      'Creator access' => copy.text(
-        'Creator access',
-        'Dostęp do funkcji twórcy',
-      ),
-      'Create Clubs' => copy.text('Create Clubs', 'Tworzenie klubów'),
-      'Premium identity' => copy.text('Premium identity', 'Tożsamość Premium'),
-      'Exclusive features' => copy.text(
-        'Exclusive features',
-        'Ekskluzywne funkcje',
-      ),
-      _ => copy.text(item, 'Funkcja Premium'),
-    };
+String localizedPremiumChecklistItem(
+  AppLocalizations copy,
+  String item,
+) => switch (item) {
+  'Creator access' => copy.text('Creator access', 'Dostęp do funkcji twórcy'),
+  'Audience tools' => copy.text('Audience tools', 'Narzędzia dla publiczności'),
+  'Premium identity' => copy.text('Premium identity', 'Tożsamość Premium'),
+  'Exclusive features' => copy.text(
+    'Exclusive features',
+    'Ekskluzywne funkcje',
+  ),
+  _ => copy.text(item, 'Funkcja Premium'),
+};
 
 String localizedPremiumIncludedItem(AppLocalizations copy, String item) =>
     switch (item) {
@@ -65,13 +68,13 @@ String localizedPremiumIncludedItem(AppLocalizations copy, String item) =>
         'Creator profile & tools',
         'Profil i narzędzia twórcy',
       ),
-      'Club creation (up to 3 clubs)' => copy.text(
-        'Club creation (up to 3 clubs)',
-        'Tworzenie klubów (maksymalnie 3)',
+      'Verified audience tools' => copy.text(
+        'Verified audience tools',
+        'Zweryfikowane narzędzia dla publiczności',
       ),
-      'Premium presence in rooms' => copy.text(
-        'Premium presence in rooms',
-        'Obecność Premium w pokojach',
+      'Premium presence in conversations' => copy.text(
+        'Premium presence in conversations',
+        'Obecność Premium w rozmowach',
       ),
       'More benefits coming soon' => copy.text(
         'More benefits coming soon',

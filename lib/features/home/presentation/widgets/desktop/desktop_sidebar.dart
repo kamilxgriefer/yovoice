@@ -37,7 +37,7 @@ typedef _DesktopNavIconBuilder =
 ///    section, Więcej (More). Friends, Discover and Find creators moved
 ///    into the More popover (kept, never deleted). The selected row gets a
 ///    violet wash with a lavender icon and a bright label.
-///  * CREATE: a section label, the gradient "Create Room" primary CTA,
+///  * CREATE: a section label, the gradient "Create Server" primary CTA,
 ///    and the quieter outlined "Create Voice Moment" under it.
 ///  * MORE: a section label plus a single More row, which the shell
 ///    anchors its floating popover to (via [moreItemKey]).
@@ -772,7 +772,7 @@ class _CreateRoomButtonState extends State<_CreateRoomButton> {
                     child: Text(
                       AppLocalizations.of(
                         context,
-                      ).text('Create Room', 'Utwórz pokój'),
+                      ).text('Create Server', 'Stwórz serwer'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -792,10 +792,10 @@ class _CreateRoomButtonState extends State<_CreateRoomButton> {
   }
 }
 
-/// The rail's SECOND creation action, under the gradient Create Room.
+/// The rail's SECOND creation action, under the gradient Create Server.
 ///
-/// Deliberately quieter than Create Room — outlined rather than filled,
-/// shorter, violet text on the rail's own surface — because room creation
+/// Deliberately quieter than Create Server — outlined rather than filled,
+/// shorter, violet text on the rail's own surface — because server creation
 /// is the primary act and this is the one-tap alternative beside it. It
 /// opens the existing recorder; there is no second recording screen.
 class _CreateMomentButton extends StatefulWidget {

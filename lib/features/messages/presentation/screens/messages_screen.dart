@@ -1699,8 +1699,8 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                               onTap: () => SharePlus.instance.share(
                                 ShareParams(
                                   text: copy.text(
-                                    'Join me on YO Voice — the app for live voice rooms and communities: https://yovoice.app/download',
-                                    'Dołącz do mnie w YO Voice — aplikacji z pokojami głosowymi na żywo i społecznościami: https://yovoice.app/download',
+                                    'Join me on YO Voice — the app for voice servers, Moments and real conversations: https://yovoice.app/download',
+                                    'Dołącz do mnie w YO Voice — aplikacji z serwerami głosowymi, Momentami i prawdziwymi rozmowami: https://yovoice.app/download',
                                   ),
                                 ),
                               ),

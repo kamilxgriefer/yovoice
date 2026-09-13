@@ -45,7 +45,10 @@ class MomentNeighbourQueue extends ValueNotifier<MomentNeighbourSnapshot> {
   /// The instance production wires up. Tests construct their own.
   static final MomentNeighbourQueue shared = MomentNeighbourQueue();
 
-  void publish({required String viewerUid, required List<VoiceMoment> moments}) {
+  void publish({
+    required String viewerUid,
+    required List<VoiceMoment> moments,
+  }) {
     value = MomentNeighbourSnapshot(
       viewerUid: viewerUid,
       moments: List<VoiceMoment>.unmodifiable(moments),
@@ -247,11 +250,9 @@ class _QueueRow extends StatelessWidget {
       label: copy.template(
         'Open Voice Moment: {caption}, {author}',
         'Otwórz Voice Moment: {caption}, {author}',
-        values: <String, Object>{
-          'caption': title,
-          'author': moment.authorName,
-        },
+        values: <String, Object>{'caption': title, 'author': moment.authorName},
       ),
+      onTap: onTap,
       excludeSemantics: true,
       child: Material(
         color: Colors.transparent,

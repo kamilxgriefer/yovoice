@@ -9,7 +9,6 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/achievements/data/services/achievement_service.dart';
 import 'package:yovoice/features/achievements/presentation/screens/achievements_screen.dart';
-import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/creator/data/services/creator_directory_service.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_pinned_moment_screen.dart';
@@ -18,11 +17,11 @@ import 'package:yovoice/features/creator/presentation/screens/creator_studio_scr
 import 'package:yovoice/features/creator/presentation/screens/find_creators_screen.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
-import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
@@ -135,12 +134,24 @@ Future<void> _expectImmersiveDarkRoute(
   expect(tester.takeException(), isNull);
 }
 
+Future<void> _expectPearlRoute(WidgetTester tester, Widget route) async {
+  await tester.pumpWidget(MaterialApp(theme: AppTheme.lightTheme, home: route));
+  await tester.pump();
+
+  expect(find.byType(YoImmersiveDarkSurface), findsNothing);
+  final scaffoldContext = tester.element(find.byType(Scaffold).first);
+  expect(Theme.of(scaffoldContext).brightness, Brightness.light);
+  expect(scaffoldContext.appPalette.background, AppPalette.light.background);
+  expect(tester.takeException(), isNull);
+}
+
 void main() {
-  testWidgets('Room type selector is an immersive dark route from Pearl', (
-    tester,
-  ) async {
-    await _expectImmersiveDarkRoute(tester, const RoomTypeSelectorScreen());
-  });
+  testWidgets(
+    'the legacy selector opens the canonical Server surface in Pearl',
+    (tester) async {
+      await _expectPearlRoute(tester, const RoomTypeSelectorScreen());
+    },
+  );
 
   testWidgets('Create room is an immersive dark route from Pearl', (
     tester,
@@ -206,13 +217,12 @@ void main() {
           auth: auth,
           storage: storage,
         ),
-        roomService: RoomService(firestore: db, auth: auth),
-        clubService: ClubService(firestore: db, auth: auth, storage: storage),
         momentService: MomentService(
           firestore: db,
           auth: auth,
           storage: storage,
         ),
+        entitlementService: EntitlementService(firestore: db, auth: auth),
       ),
     );
   });

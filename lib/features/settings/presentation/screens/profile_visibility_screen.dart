@@ -150,8 +150,8 @@ class _ProfileVisibilityScreenState extends State<ProfileVisibilityScreen> {
                           SizedBox(height: 6),
                           Text(
                             copy.text(
-                              'Your name can still appear where you participate, such as rooms, clubs and existing conversations. This setting controls your profile page and discovery.',
-                              'Twoja nazwa nadal może być widoczna w miejscach, w których uczestniczysz — na przykład w pokojach, Klubach i istniejących rozmowach. To ustawienie określa widoczność strony profilu i możliwość znalezienia Cię.',
+                              'Your name can still appear in servers, channels and existing conversations where you participate. This setting controls your profile page and discovery.',
+                              'Twoja nazwa nadal może być widoczna na serwerach, kanałach i w istniejących rozmowach, w których uczestniczysz. To ustawienie określa widoczność strony profilu i możliwość znalezienia Cię.',
                             ),
                             style: TextStyle(
                               color: palette.textSecondary,

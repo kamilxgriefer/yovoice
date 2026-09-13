@@ -1017,6 +1017,12 @@ void main() {
                     reel: reel,
                     service: service,
                     now: () => f.now,
+                    // The caption opens the detail sheet on the IMMERSIVE
+                    // stage; since board 08 the stacked card expands its
+                    // caption in place instead, and ⋯ is the way to the full
+                    // text and the authored links there. Each entry is
+                    // exercised on the stage that actually offers it.
+                    fillViewport: entry == 'caption',
                     videoPlaybackFactory: f.video,
                     videoBuilder: (_, _, _) =>
                         const ColoredBox(color: Colors.indigo),

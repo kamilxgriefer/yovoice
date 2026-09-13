@@ -1,85 +1,54 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-
-import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_greeting_header.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_here_now_hero.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_lounge_watcher.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_places_card.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_places_section.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_record_moment_card.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_roster_cache.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_greeting_header.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_record_moment_card.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_section_header.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_server_overview.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart'
     show MomentViewedIds;
-import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
-import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
-import 'package:yovoice/features/staff/presentation/widgets/room_staff_menu.dart';
-import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
-import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_section_header.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
-import 'package:yovoice/features/friends/data/models/friend_user.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
-/// "Tu i teraz" — the WIDE Home surface.
-///
-/// The same facts as the phone Home, from the same streams and the same
-/// components, in a deliberately different composition: a rail (owned by the
-/// shell) beside a greeting card, one full-width friends row, and below it a
-/// main column carrying the conversation the reader can walk into, with a
-/// narrow context column of doors beside it.
-///
-/// Every module reads existing production data; nothing here invents a user,
-/// a room, a message or an activity number:
-///  - greeting, avatar, availability → [ProfileService.watchCurrentProfile]
-///  - friends, presence, rings       → [FriendService.watchFriends] plus the
-///    existing social page, gated by real friendship
-///  - the featured room, its roster  → [RoomService] through [HomeRosterCache]
-///  - places and their live lounges  → [ClubService.watchMyClubs] +
-///    [RoomService.watchClubLounge]
-///  - recent chats, owned rooms      → the same flows as everywhere else
-///
-/// Opening this screen joins no audio, requests no microphone and writes no
-/// roster row. Every way into a room ends at the existing pre-join screen,
-/// which is the single consent boundary for both room products.
-///
-/// Navigation is delegated: the callbacks below are wired by MainShell to the
-/// SAME fixed-shell content-slot mechanism the rail uses, so nothing here
-/// pushes a route except entering a room, opening a chat or a club — the
-/// flows that already own their full-screen route everywhere else.
+/// Wide, server-first Home surface. Friends stay immediately below the
+/// greeting; all space entries below that row come from [ServerRepository].
 class DesktopHome extends StatefulWidget {
   const DesktopHome({
     required this.currentUserId,
-    required this.onOpenRoom,
+    this.onOpenRoom,
     required this.onSeeAllRooms,
     this.onFindCreators,
     required this.onViewAllFriends,
@@ -89,12 +58,13 @@ class DesktopHome extends StatefulWidget {
     required this.onSeeAllMoments,
     this.onOpenChain,
     required this.onOpenConversation,
-    required this.onOpenClub,
+    this.onOpenClub,
     required this.onSeeAllChats,
     required this.onOpenClubs,
     this.onOpenNotifications,
     this.onOpenProfile,
     this.onOpenServers,
+    this.onOpenServer,
     this.onEnterClubLounge,
     this.unreadNotificationCount = 0,
     this.roomService,
@@ -106,6 +76,7 @@ class DesktopHome extends StatefulWidget {
     this.messageService,
     this.clubService,
     this.clubChatService,
+    this.serverRepository,
     this.momentViewsService,
     this.firebaseAuth,
     this.capabilityService,
@@ -116,49 +87,27 @@ class DesktopHome extends StatefulWidget {
   });
 
   final String currentUserId;
-
-  final ValueChanged<VoiceRoom> onOpenRoom;
-
-  /// Discover — also the destination behind every "go find something"
-  /// action in the empty states.
+  final ValueChanged<VoiceRoom>? onOpenRoom;
   final VoidCallback onSeeAllRooms;
   final VoidCallback? onFindCreators;
   final VoidCallback onViewAllFriends;
   final VoidCallback onStartRoom;
-
-  /// The existing Moment viewer, creation flow and Moments destination.
   final ValueChanged<VoiceMoment> onOpenMoment;
   final VoidCallback onCreateMoment;
   final VoidCallback onSeeAllMoments;
-
-  /// Opens one author's active Voice Moment chain in the story viewer — what
-  /// a friend tile with a new Voice Moment taps through to.
   final ValueChanged<List<VoiceMoment>>? onOpenChain;
-
-  /// The existing chat screen, club surface, Chats and Clubs destinations.
   final ValueChanged<Conversation> onOpenConversation;
-  final ValueChanged<Club> onOpenClub;
+  final ValueChanged<Club>? onOpenClub;
   final VoidCallback onSeeAllChats;
   final VoidCallback onOpenClubs;
-
-  /// The notifications feed and the profile, behind the greeting card's own
-  /// bell and avatar. They call the SAME shell handlers the rail's bell and
-  /// profile card call — one destination, two doors, never two states.
   final VoidCallback? onOpenNotifications;
   final VoidCallback? onOpenProfile;
-
-  /// The Serwery destination: "Zobacz wszystkie" beside "W Twoich serwerach",
-  /// the places card's "Stwórz serwer" and its overflow row. Creation is
-  /// gated inside that feature, which is where its own honest copy lives.
   final VoidCallback? onOpenServers;
-
-  /// Resolves a member's club lounge and opens the pre-join screen. Never
-  /// joins audio here — `prepareClubLounge` only checks membership.
+  final ValueChanged<Server>? onOpenServer;
   final ValueChanged<Club>? onEnterClubLounge;
-
-  /// The shell's real unread count, printed on the greeting card's bell.
   final int unreadNotificationCount;
 
+  // Legacy service seams stay source-compatible while the schema remains.
   final RoomService? roomService;
   final FriendService? friendService;
   final FollowService? followService;
@@ -168,32 +117,14 @@ class DesktopHome extends StatefulWidget {
   final MessageService? messageService;
   final ClubService? clubService;
   final ClubChatService? clubChatService;
-
-  /// Test seam for the ONE `momentViews` listener behind the friend badges.
+  final ServerRepository? serverRepository;
   final MomentViewsService? momentViewsService;
   final FirebaseAuth? firebaseAuth;
-
-  /// Staff capabilities, loaded once per session. Absent or failing, the
-  /// board renders the ordinary UI.
   final StaffCapabilityService? capabilityService;
-
-  /// Test seam for the availability affordance on the own tile. Production
-  /// passes null and the picker constructs a service only when a choice is
-  /// actually made, so simply opening Home never touches presence.
   final PresenceService? presenceService;
-
-  /// Supplementary shell modules, appended under the feed. Home itself no
-  /// longer has a tenant here (the Premium and Sponsored cards moved to the
-  /// destinations that own them), but the seam stays for the dev preview and
-  /// for any future shell-level card.
   final Widget? trailingContent;
-
-  /// Retained-shell visibility used by one-shot Voice Moment projections.
   final ValueListenable<bool>? isVisible;
 
-  /// The slot width at which the context column earns its place. Below it
-  /// the same modules continue down the single column — nothing is hidden,
-  /// only rearranged.
   static const double twoColumnThreshold = 1000;
 
   @override
@@ -201,9 +132,6 @@ class DesktopHome extends StatefulWidget {
 }
 
 class _DesktopHomeState extends State<DesktopHome> {
-  // Responsive reflow moves these sections, never their subscriptions or
-  // expiry-recovery focus nodes. Global keys reparent the existing elements
-  // in the same frame when the available content width crosses a boundary.
   final _peopleKey = GlobalKey();
   final _conversationKey = GlobalKey();
   final _chatsKey = GlobalKey();
@@ -212,98 +140,44 @@ class _DesktopHomeState extends State<DesktopHome> {
   final _recordKey = GlobalKey();
 
   Stream<List<FriendUser>>? _friends;
-  RoomService? _rooms;
-  Stream<List<VoiceRoom>>? _liveRooms;
   Stream<UserProfile>? _profile;
-  Stream<List<VoiceRoom>>? _owned;
-  Stream<List<Conversation>>? _conversations;
-  Stream<List<FollowUser>>? _following;
   ProfileService? _profiles;
-  final Map<String, Stream<String>> _recentChatPhotoStreams = {};
-
   Stream<List<VoiceMoment>>? _feed;
-
-  /// Last page the feed delivered; shown while a refresh is in flight.
   List<VoiceMoment>? _lastFeedPage;
   HomeFeedService? _feedSource;
+  Stream<List<Conversation>>? _conversations;
+  Stream<List<Server>>? _servers;
+  ServerRepository? _serverRepository;
+  final Map<String, Stream<String>> _recentChatPhotoStreams = {};
 
-  ClubService? _clubs;
-  Stream<List<Club>>? _myClubs;
-
-  /// Bumped by the places retry so the lounge watcher re-subscribes.
-  int _loungeGeneration = 0;
-
-  StaffCapabilities _capabilities = StaffCapabilities.none;
-
-  /// THE bounded roster pool: at most four `watchParticipants` listeners for
-  /// the whole screen, shared by the hero, the live server rows and the
-  /// friend intersection that decides which room the hero features.
-  late final HomeRosterCache _rosters;
+  VoidCallback get _openServers => widget.onOpenServers ?? widget.onSeeAllRooms;
 
   @override
   void initState() {
     super.initState();
+    _loadFriends();
+    _loadProfile();
+    _loadFeed();
+    _loadChats();
+    _loadServers();
+    widget.isVisible?.addListener(_handleVisibility);
+  }
+
+  void _loadFriends() {
     try {
       _friends = (widget.friendService ?? FriendService()).watchFriends();
-    } catch (_) {
-      _friends = null;
+    } catch (error) {
+      _friends = Stream<List<FriendUser>>.error(error);
     }
-    // Each dependency is optional at runtime: Home must degrade to empty
-    // states rather than throw when a service cannot be constructed.
-    try {
-      _rooms = widget.roomService ?? RoomService();
-      _liveRooms = _rooms!.watchLivePublicRooms();
-      _owned = _rooms!.watchOwnedRooms();
-    } catch (_) {
-      _rooms = null;
-      _owned = null;
-    }
-    _rosters = HomeRosterCache(service: _rooms)..addListener(_onRosters);
-    try {
-      _conversations = (widget.messageService ?? MessageService.live)
-          .watchConversations();
-    } catch (_) {
-      _conversations = null;
-    }
+  }
+
+  void _loadProfile() {
     try {
       _profiles = widget.profileService ?? ProfileService();
       _profile = _profiles!.watchCurrentProfile();
-    } catch (_) {
+    } catch (error) {
       _profiles = null;
-      _profile = null;
-    }
-    // Feeds the board's top ranking tier. One subscription for the whole
-    // screen — the previous shape opened a roster listener per visible
-    // room to fill a map nothing read.
-    try {
-      _following = (widget.followService ?? FollowService()).watchFollowing(
-        widget.currentUserId,
-      );
-    } catch (_) {
-      _following = null;
-    }
-    _loadClubs();
-    _loadFeed();
-    widget.isVisible?.addListener(_handleVisibility);
-    // Failure means the ordinary UI, never a guess.
-    (widget.capabilityService ?? StaffCapabilityService())
-        .load()
-        .then((capabilities) {
-          if (mounted) setState(() => _capabilities = capabilities);
-        })
-        .catchError((_) {});
-  }
-
-  void _onRosters() {
-    if (mounted) setState(() {});
-  }
-
-  void _loadClubs() {
-    try {
-      _clubs ??= widget.clubService ?? ClubService();
-      _myClubs = _clubs!.watchMyClubs();
-    } catch (_) {
-      _myClubs = null;
+      _profile = Stream<UserProfile>.error(error);
     }
   }
 
@@ -311,366 +185,135 @@ class _DesktopHomeState extends State<DesktopHome> {
     try {
       _feedSource ??= widget.feedService ?? HomeFeedService();
       _feed = _feedSource!.watchSocialMoments();
-    } catch (_) {
-      _feed = null;
+    } catch (error) {
+      _feed = Stream<List<VoiceMoment>>.error(error);
+    }
+  }
+
+  void _loadChats() {
+    try {
+      _conversations = (widget.messageService ?? MessageService.live)
+          .watchConversations();
+    } catch (error) {
+      _conversations = Stream<List<Conversation>>.error(error);
+    }
+  }
+
+  void _loadServers() {
+    try {
+      _serverRepository ??= widget.serverRepository ?? ServerService();
+      _servers = _serverRepository!.watchMyServers();
+    } catch (error) {
+      _servers = Stream<List<Server>>.error(error);
     }
   }
 
   void _handleVisibility() {
-    if (!mounted || widget.isVisible?.value != true) return;
-    // The v2 feed is a one-shot projection, so returning to the retained
-    // Home is the refresh point. The previous page stays on screen as the
-    // StreamBuilder's initial data until the new one arrives.
+    if (widget.isVisible?.value != true || !mounted) return;
     setState(_loadFeed);
   }
 
-  @override
-  void didUpdateWidget(covariant DesktopHome oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.isVisible != widget.isVisible) {
-      oldWidget.isVisible?.removeListener(_handleVisibility);
-      widget.isVisible?.addListener(_handleVisibility);
-    }
-    if (oldWidget.feedService != widget.feedService) {
-      _feedSource = null;
-      _lastFeedPage = null;
-      setState(_loadFeed);
-    }
-    if (oldWidget.clubService != widget.clubService) {
-      _clubs = null;
-      setState(_loadClubs);
-    }
-  }
+  void _retryFriends() => setState(_loadFriends);
+  void _retryChats() => setState(_loadChats);
+  void _retryServers() => setState(_loadServers);
+
+  Stream<String> _recentChatPhotoStream(String userId) =>
+      _recentChatPhotoStreams.putIfAbsent(
+        userId,
+        () =>
+            _profiles
+                ?.watchProfile(userId)
+                .map(
+                  (profile) =>
+                      profile.profileUpdatedAt?.toUtc().toIso8601String() ??
+                      'legacy:${profile.uid}',
+                )
+                .distinct() ??
+            Stream<String>.value(''),
+      );
 
   @override
   void dispose() {
     widget.isVisible?.removeListener(_handleVisibility);
-    _rosters
-      ..removeListener(_onRosters)
-      ..dispose();
     super.dispose();
   }
 
-  Stream<String> _recentChatPhotoStream(String userId) {
-    final profiles = _profiles;
-    if (profiles == null) return const Stream<String>.empty();
-    // At most three of these cold point-read streams are subscribed at once.
-    // Caching keeps rebuilds from replacing Firestore listeners, while
-    // StreamBuilder owns cancellation when a card leaves the tree.
-    return _recentChatPhotoStreams.putIfAbsent(
-      userId,
-      () => profiles
-          .watchProfile(userId)
-          .map(
-            (profile) =>
-                profile.profileUpdatedAt?.toUtc().toIso8601String() ??
-                'legacy:${profile.uid}',
-          )
-          .distinct(),
-    );
-  }
-
-  void _retryLiveRooms() {
-    setState(() {
-      try {
-        _rooms ??= widget.roomService ?? RoomService();
-        _liveRooms = _rooms!.watchLivePublicRooms();
-        _owned ??= _rooms!.watchOwnedRooms();
-      } catch (_) {
-        _liveRooms = null;
-      }
-    });
-  }
-
-  void _retryFriends() {
-    setState(() {
-      try {
-        _friends = (widget.friendService ?? FriendService()).watchFriends();
-      } catch (_) {
-        _friends = null;
-      }
-    });
-  }
-
-  /// Re-creates `watchMyClubs` AND every lounge child, because a denial on
-  /// the membership mirror usually means the lounge reads failed too.
-  void _retryPlaces() {
-    setState(() {
-      _clubs = null;
-      _loungeGeneration++;
-      _loadClubs();
-    });
-  }
-
-  void _retryChats() {
-    setState(() {
-      try {
-        _conversations = (widget.messageService ?? MessageService.live)
-            .watchConversations();
-      } catch (_) {
-        _conversations = null;
-      }
-    });
-  }
-
-  void _openRoomSettings(VoiceRoom room) {
-    // The existing settings screen, which re-checks authorship; rules
-    // refuse a non-host write regardless of what the UI offers.
-    Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => RoomSettingsScreen(room: room)),
-    );
-  }
-
-  Future<void> _deleteOwnedRoom(VoiceRoom room) async {
-    final service = _rooms;
-    if (service == null) {
-      throw StateError(
-        AppLocalizations.of(context).text(
-          'Room management is temporarily unavailable.',
-          'Zarządzanie pokojem jest chwilowo niedostępne.',
-        ),
-      );
-    }
-    await service.deleteRoom(room.id);
-  }
-
-  void _openCandidate(HomeLiveCandidate candidate) {
-    final club = candidate.club;
-    if (club != null) {
-      final enter = widget.onEnterClubLounge;
-      if (enter != null) {
-        enter(club);
-        return;
-      }
-    }
-    widget.onOpenRoom(candidate.room);
-  }
-
   @override
-  Widget build(BuildContext context) {
-    return YoPageBackground(
-      section: YoPageSection.home,
-      // DesktopShell owns the base canvas and surrounding columns.
-      decoration: const BoxDecoration(),
-      child: HomeErrorAnnouncementScope(
-        isVisible: widget.isVisible,
-        child: ResponsiveContentFrame(
-          width: ResponsiveContentWidth.workbench,
-          child: _buildContent(context),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildContent(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // UI.md: 32 px gutters in the wide band. This surface only ever
-        // renders inside the desktop shell, which exists from a 1100 px
-        // VIEWPORT — so it is always in that band, however much of the
-        // viewport the 264 px rail has taken. Reading the band off the slot
-        // instead gave a 1280 px desktop the 24 px gutters of a tablet.
-        // The narrow step survives for harnesses that pump this widget in a
-        // small box.
-        final slot = constraints.maxWidth;
-        final gutter = slot >= 600 ? AppSpacing.xl : AppSpacing.md;
-        return StreamBuilder<List<VoiceRoom>>(
-          stream: _liveRooms,
-          builder: (context, roomSnapshot) => StreamBuilder<List<FriendUser>>(
+  Widget build(BuildContext context) => YoPageBackground(
+    section: YoPageSection.home,
+    decoration: const BoxDecoration(),
+    child: HomeErrorAnnouncementScope(
+      isVisible: widget.isVisible,
+      child: ResponsiveContentFrame(
+        width: ResponsiveContentWidth.workbench,
+        child: LayoutBuilder(
+          builder: (context, constraints) => StreamBuilder<List<FriendUser>>(
             stream: _friends,
-            builder: (context, friendSnapshot) => StreamBuilder<List<Club>>(
-              stream: _myClubs,
-              builder: (context, clubSnapshot) => HomeLoungeWatcher(
-                clubs: (clubSnapshot.data ?? const <Club>[])
-                    .take(HomeLoungeWatcher.budget)
-                    .toList(growable: false),
-                rooms: _rooms,
-                generation: _loungeGeneration,
-                builder: (context, lounges) => MomentViewedIds(
-                  service: widget.momentViewsService,
-                  builder: (context, viewedIds) => _buildPage(
-                    context,
-                    slot: slot,
-                    gutter: gutter,
-                    roomSnapshot: roomSnapshot,
-                    friendSnapshot: friendSnapshot,
-                    clubSnapshot: clubSnapshot,
-                    lounges: lounges,
-                    viewedIds: viewedIds,
+            builder: (context, friendSnapshot) => StreamBuilder<List<Server>>(
+              stream: _servers,
+              builder: (context, serverSnapshot) =>
+                  StreamBuilder<List<VoiceMoment>>(
+                    stream: _feed,
+                    initialData: _lastFeedPage,
+                    builder: (context, momentSnapshot) {
+                      if (momentSnapshot.hasData &&
+                          !momentSnapshot.hasError &&
+                          momentSnapshot.connectionState !=
+                              ConnectionState.waiting) {
+                        _lastFeedPage = momentSnapshot.data;
+                      }
+                      return MomentViewedIds(
+                        service: widget.momentViewsService,
+                        builder: (context, viewedIds) => _buildPage(
+                          context,
+                          slot: constraints.maxWidth,
+                          friendSnapshot: friendSnapshot,
+                          serverSnapshot: serverSnapshot,
+                          momentSnapshot: momentSnapshot,
+                          viewedIds: viewedIds,
+                        ),
+                      );
+                    },
                   ),
-                ),
-              ),
             ),
           ),
-        );
-      },
-    );
-  }
+        ),
+      ),
+    ),
+  );
 
   Widget _buildPage(
     BuildContext context, {
     required double slot,
-    required double gutter,
-    required AsyncSnapshot<List<VoiceRoom>> roomSnapshot,
     required AsyncSnapshot<List<FriendUser>> friendSnapshot,
-    required AsyncSnapshot<List<Club>> clubSnapshot,
-    required Map<String, HomePlace> lounges,
+    required AsyncSnapshot<List<Server>> serverSnapshot,
+    required AsyncSnapshot<List<VoiceMoment>> momentSnapshot,
     required Set<String> viewedIds,
   }) {
     final copy = AppLocalizations.of(context);
-    final live = roomSnapshot.data ?? const <VoiceRoom>[];
-    // A failed room query is NOT an empty room list. Folding the two
-    // together printed "start one and your community will see it here" over
-    // a permission denial or a dead connection — advice that cannot help on
-    // a page whose real state is unknown.
-    final roomsUnavailable = roomSnapshot.hasError || _liveRooms == null;
-    final roomsLoading = !roomsUnavailable && !roomSnapshot.hasData;
-
     final friendIds = {
       for (final friend in friendSnapshot.data ?? const <FriendUser>[])
         friend.id,
     };
-
-    final clubs = clubSnapshot.data ?? const <Club>[];
-    final clubsUnavailable = clubSnapshot.hasError || _myClubs == null;
-    final clubsLoading = !clubsUnavailable && !clubSnapshot.hasData;
-    final places = [
-      for (final club in clubs) lounges[club.id] ?? HomePlace(club: club),
-    ];
-
-    return StreamBuilder<List<FollowUser>>(
-      stream: _following,
-      builder: (context, followingSnapshot) {
-        final followedIds = {
-          for (final user in followingSnapshot.data ?? const <FollowUser>[])
-            user.uid,
-        };
-        return StreamBuilder<List<VoiceRoom>>(
-          stream: _owned,
-          builder: (context, ownedSnapshot) {
-            final ownedFailed = ownedSnapshot.hasError || _owned == null;
-            final owned = ownedFailed || !ownedSnapshot.hasData
-                ? const <VoiceRoom>[]
-                : HomeActiveRooms.ownedBy(
-                    ownedSnapshot.data ?? const <VoiceRoom>[],
-                    widget.currentUserId,
-                  );
-            final candidates = homeLiveCandidates(
-              places: places,
-              owned: owned,
-              live: live,
-              followedIds: followedIds,
-              friendIds: friendIds,
-            );
-            // Ask for exactly the rosters the page can use, in priority
-            // order, and never more than the pool's budget.
-            _rosters.request(candidates.map((candidate) => candidate.roomId));
-            final featured = selectHereNowCandidate(
-              candidates: candidates,
-              rosters: _rosters,
-              friendIds: friendIds,
-            );
-            return StreamBuilder<List<VoiceMoment>>(
-              stream: _feed,
-              initialData: _lastFeedPage,
-              builder: (context, momentSnapshot) {
-                final momentsUnavailable =
-                    momentSnapshot.hasError ||
-                    followingSnapshot.hasError ||
-                    _feed == null ||
-                    _following == null;
-                if (momentsUnavailable) _lastFeedPage = null;
-                if (momentSnapshot.hasData &&
-                    !momentsUnavailable &&
-                    momentSnapshot.connectionState != ConnectionState.waiting) {
-                  _lastFeedPage = momentSnapshot.data;
-                }
-                // A failed page renders presence only — never a stale badge
-                // claiming there is something new to hear.
-                final voiceByFriend = momentsUnavailable
-                    ? const <String, HomeFriendVoice>{}
-                    : homeFriendVoiceByAuthor(
-                        page: momentSnapshot.data ?? const <VoiceMoment>[],
-                        friendIds: friendIds,
-                        viewedMomentIds: viewedIds,
-                        now: DateTime.now(),
-                      );
-                return _buildList(
-                  context,
-                  copy: copy,
-                  slot: slot,
-                  gutter: gutter,
-                  friendSnapshot: friendSnapshot,
-                  roomsUnavailable: roomsUnavailable,
-                  roomsLoading: roomsLoading,
-                  roomsError: roomSnapshot.error,
-                  featured: featured,
-                  friendIds: friendIds,
-                  voiceByFriend: voiceByFriend,
-                  places: places,
-                  clubsUnavailable: clubsUnavailable,
-                  clubsLoading: clubsLoading,
-                  clubError: clubSnapshot.error,
-                  owned: owned,
-                  ownedFailed: ownedFailed,
-                  ownedError: ownedSnapshot.error,
-                );
-              },
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildList(
-    BuildContext context, {
-    required AppLocalizations copy,
-    required double slot,
-    required double gutter,
-    required AsyncSnapshot<List<FriendUser>> friendSnapshot,
-    required bool roomsUnavailable,
-    required bool roomsLoading,
-    required Object? roomsError,
-    required HomeLiveCandidate? featured,
-    required Set<String> friendIds,
-    required Map<String, HomeFriendVoice> voiceByFriend,
-    required List<HomePlace> places,
-    required bool clubsUnavailable,
-    required bool clubsLoading,
-    required Object? clubError,
-    required List<VoiceRoom> owned,
-    required bool ownedFailed,
-    required Object? ownedError,
-  }) {
-    // The lounge watcher only ever receives the head of this list, so only
-    // the head may be spoken about: a membership Home never looked at is not
-    // a quiet membership. The rail below still shows every place — it makes
-    // no activity claim — and the remainder is counted so the quiet card can
-    // say what it actually checked.
-    final checkedPlaces = places
-        .take(HomeLoungeWatcher.budget)
-        .toList(growable: false);
-    final uncheckedPlaces = places.length - checkedPlaces.length;
-
-    final openServers = widget.onOpenServers ?? widget.onSeeAllRooms;
+    final voiceByFriend = momentSnapshot.hasError
+        ? const <String, HomeFriendVoice>{}
+        : homeFriendVoiceByAuthor(
+            page: momentSnapshot.data ?? const <VoiceMoment>[],
+            friendIds: friendIds,
+            viewedMomentIds: viewedIds,
+            now: DateTime.now(),
+          );
     final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
     final extraScale = (scale - 1).clamp(0.0, 2.0);
-    // A context column is only worth its 300 px while the main column keeps
-    // a hero that still reads as a stage. At large text scale that costs
-    // more width, so the threshold moves with the type rather than against
-    // it — and below it the SAME modules continue down one column.
     final twoColumns =
         slot >= DesktopHome.twoColumnThreshold + extraScale * 260;
     final contextWidth = (300 + extraScale * 40).clamp(280.0, 344.0);
 
     final quickActions = HomeQuickActions(
       key: _quickActionsKey,
-      onCreateRoom: widget.onStartRoom,
+      onCreateRoom: _openServers,
       onFriends: widget.onViewAllFriends,
     );
-
-    // ------------------------------------------------------ main column
     final conversationSection = Column(
       key: _conversationKey,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -678,115 +321,38 @@ class _DesktopHomeState extends State<DesktopHome> {
         HomeSectionHeader(
           title: copy.homeHereNow,
           scale: HomeSectionHeaderScale.expanded,
-          live: featured != null,
         ),
-        _hereNow(
-          context,
-          copy: copy,
-          featured: featured,
-          friendIds: friendIds,
-          roomsUnavailable: roomsUnavailable,
-          roomsLoading: roomsLoading,
-          error: roomsError,
-          quickActions: quickActions,
+        HomeServerConversationCard(
+          snapshot: serverSnapshot,
+          onOpenServers: _openServers,
+          onOpenServer: widget.onOpenServer,
+          onRetry: _retryServers,
+          expanded: true,
         ),
-        // The invitation card embeds these actions itself; every other
-        // state keeps them under the section. A failed room read must not
-        // also cost the reader the way to start a room of their own.
-        if (!(featured == null && !roomsUnavailable && !roomsLoading)) ...[
-          const SizedBox(height: AppRhythm.item),
-          quickActions,
-        ],
+        const SizedBox(height: AppRhythm.item),
+        quickActions,
       ],
     );
-
-    // ONE card per failed read, in the column that owns the subject. In the
-    // two-column layout "Twoje miejsca" lives in the context column, so the
-    // denial is reported there; in the single column this section is where
-    // the reader meets it first. Never both — two cards about one read is
-    // the noise a reader cannot attribute.
-    final placesError = HomeSectionError(
-      key: const ValueKey('home-places-error'),
-      error: clubError,
-      message: copy.text(
-        "Couldn't load your places.",
-        'Nie udało się wczytać Twoich miejsc.',
+    final serversSection = KeyedSubtree(
+      key: _placesKey,
+      child: HomeServersOverview(
+        snapshot: serverSnapshot,
+        onOpenServers: _openServers,
+        onOpenServer: widget.onOpenServer,
+        expandedHeading: true,
       ),
-      onRetry: _retryPlaces,
     );
-
-    final serversSection = clubsUnavailable
-        ? (twoColumns
-              ? const SizedBox.shrink()
-              : Padding(
-                  padding: const EdgeInsets.only(top: AppRhythm.section),
-                  child: placesError,
-                ))
-        : clubsLoading || places.isEmpty
-        ? const SizedBox.shrink()
-        : HomeServerActivitySection(
-            places: checkedPlaces,
-            uncheckedPlaces: uncheckedPlaces,
-            rosters: _rosters,
-            onSeeAll: openServers,
-            onOpenPlace: (club) => widget.onOpenClub(club),
-            onEnterLounge: (place) =>
-                widget.onEnterClubLounge?.call(place.club),
-            onRetryPlace: (_) => _retryPlaces(),
-          );
-
-    final ownedSection = KeyedSubtree(
-      key: const ValueKey('home-owned-rooms'),
-      child: ownedFailed || owned.isNotEmpty
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                HomeSectionHeader(
-                  title: copy.text('Your active rooms', 'Twoje aktywne pokoje'),
-                  scale: HomeSectionHeaderScale.expanded,
-                  onSeeAll: widget.onSeeAllRooms,
-                ),
-                if (ownedFailed)
-                  HomeSectionError(
-                    error: ownedError,
-                    message: copy.text(
-                      'Could not load rooms',
-                      'Nie udało się wczytać pokojów',
-                    ),
-                    onRetry: () =>
-                        setState(() => _owned = _rooms?.watchOwnedRooms()),
-                  )
-                else
-                  HomeActiveRooms(
-                    rooms: owned,
-                    currentUserId: widget.currentUserId,
-                    onEnter: widget.onOpenRoom,
-                    onEdit: _openRoomSettings,
-                    onDelete: _deleteOwnedRoom,
-                    onCreateRoom: widget.onStartRoom,
-                  ),
-              ],
-            )
-          : const SizedBox.shrink(),
-    );
-
-    // --------------------------------------------------- context column
     final recordCard = KeyedSubtree(
       key: _recordKey,
       child: HomeRecordMomentCard(onCreateMoment: widget.onCreateMoment),
     );
-
     final chatsSection = ClipRect(
       key: _chatsKey,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           HomeSectionHeader(
             title: copy.text('Your recent chats', 'Ostatnie czaty'),
-            // The context column is 300 px wide and its neighbours are
-            // cards with 16 px titles. A 19 px heading with a "See all"
-            // beside it wraps to two lines there, which is a worse reading
-            // of "one ramp" than matching the column it lives in.
             scale: twoColumns
                 ? HomeSectionHeaderScale.compact
                 : HomeSectionHeaderScale.expanded,
@@ -794,11 +360,10 @@ class _DesktopHomeState extends State<DesktopHome> {
           ),
           StreamBuilder<List<Conversation>>(
             stream: _conversations,
-            builder: (context, conversationSnapshot) =>
-                conversationSnapshot.hasError || _conversations == null
+            builder: (context, snapshot) => snapshot.hasError
                 ? HomeSectionError(
                     key: const ValueKey('home-chats-error'),
-                    error: conversationSnapshot.error,
+                    error: snapshot.error,
                     message: copy.text(
                       'Your recent chats could not be loaded.',
                       'Nie udało się wczytać ostatnich czatów.',
@@ -806,7 +371,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                     onRetry: _retryChats,
                   )
                 : RecentChats(
-                    snapshot: conversationSnapshot,
+                    snapshot: snapshot,
                     currentUserId: widget.currentUserId,
                     onOpenConversation: widget.onOpenConversation,
                     onFindFriends: widget.onViewAllFriends,
@@ -820,72 +385,8 @@ class _DesktopHomeState extends State<DesktopHome> {
         ],
       ),
     );
-
-    // "Twoje miejsca": a card of rows in the context column, the phone's
-    // tile rail when the page is one column. The same memberships, the same
-    // stream, the same destination — a different shape for a different box.
-    final placesModule = KeyedSubtree(
-      key: _placesKey,
-      child: clubsUnavailable
-          // A denial is never an absence. This column owns "Twoje miejsca",
-          // so in the two-column layout it is where the failed read is
-          // reported, with the same retry, instead of the section silently
-          // disappearing. The single column reports it above instead.
-          ? (twoColumns ? placesError : const SizedBox.shrink())
-          : clubsLoading
-          ? (twoColumns
-                ? const HomePlacesCardLoading()
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      HomeSectionHeader(
-                        title: copy.homeYourPlaces,
-                        scale: HomeSectionHeaderScale.expanded,
-                      ),
-                      const HomePlacesLoading(horizontalPadding: 0),
-                    ],
-                  ))
-          : places.isEmpty
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                HomeSectionHeader(
-                  title: copy.homeYourPlaces,
-                  // The same ramp its populated and loading siblings use:
-                  // the 300 px context column runs compact, the single
-                  // column runs the page's own expanded ramp.
-                  scale: twoColumns
-                      ? HomeSectionHeaderScale.compact
-                      : HomeSectionHeaderScale.expanded,
-                ),
-                HomePlacesEmptyCard(
-                  onCreateServer: openServers,
-                  onDiscover: widget.onSeeAllRooms,
-                ),
-              ],
-            )
-          : twoColumns
-          ? HomePlacesCard(
-              places: places,
-              onOpenPlace: (club) => widget.onOpenClub(club),
-              onCreateServer: openServers,
-              onSeeAll: openServers,
-            )
-          // The rail draws its own heading — one promise, one title.
-          : HomePlacesRail(
-              places: places,
-              horizontalPadding: 0,
-              headerScale: HomeSectionHeaderScale.expanded,
-              onOpenPlace: (club) => widget.onOpenClub(club),
-              onCreateServer: openServers,
-            ),
-    );
-
     final peopleSection = HomePeopleStrip(
       key: _peopleKey,
-      // The list is already resolved above (the hero needs the same ids):
-      // the strip renders it rather than opening a second listener on the
-      // same query.
       friendsSnapshot: _friends == null ? null : friendSnapshot,
       friends: _friends,
       profile: _profile,
@@ -900,16 +401,12 @@ class _DesktopHomeState extends State<DesktopHome> {
     );
 
     return ListView(
-      // The feed owns its own position and never claims the ambient primary
-      // controller. Two bare vertical scrollables under one
-      // PrimaryScrollController do NOT scroll together — each keeps its own
-      // ScrollPosition — but they DO put two positions on one controller,
-      // which `Scrollbar` asserts against and `controller.offset` throws on.
+      key: const ValueKey('desktop-home-server-first'),
       primary: false,
-      padding: EdgeInsets.fromLTRB(
-        gutter,
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.xl,
         AppRhythm.title,
-        gutter,
+        AppSpacing.xl,
         AppRhythm.page,
       ),
       children: [
@@ -920,10 +417,7 @@ class _DesktopHomeState extends State<DesktopHome> {
               widget.onOpenNotifications ?? widget.onSeeAllChats,
           onOpenProfile: widget.onOpenProfile ?? widget.onViewAllFriends,
         ),
-        // 1. Who can I talk to right now? Me first, then my friends — one
-        //    full-width row above the split, as the reference draws it.
         peopleSection,
-        // 2. The conversation I can walk into, and the doors beside it.
         if (twoColumns)
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -932,7 +426,11 @@ class _DesktopHomeState extends State<DesktopHome> {
                 child: Column(
                   key: const ValueKey('home-main-column'),
                   crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [conversationSection, serversSection, ownedSection],
+                  children: [
+                    conversationSection,
+                    const SizedBox(height: AppRhythm.section),
+                    serversSection,
+                  ],
                 ),
               ),
               const SizedBox(width: AppRhythm.section),
@@ -942,10 +440,6 @@ class _DesktopHomeState extends State<DesktopHome> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // The context column starts level with the hero, not
-                    // with the heading above it.
-                    const SizedBox(height: AppRhythm.section),
-                    placesModule,
                     const SizedBox(height: AppRhythm.section),
                     recordCard,
                     chatsSection,
@@ -956,84 +450,17 @@ class _DesktopHomeState extends State<DesktopHome> {
           )
         else ...[
           conversationSection,
+          const SizedBox(height: AppRhythm.section),
           serversSection,
-          placesModule,
           const SizedBox(height: AppRhythm.section),
           recordCard,
           chatsSection,
-          ownedSection,
         ],
         if (widget.trailingContent != null) ...[
           const SizedBox(height: AppRhythm.section),
           widget.trailingContent!,
         ],
       ],
-    );
-  }
-
-  Widget _hereNow(
-    BuildContext context, {
-    required AppLocalizations copy,
-    required HomeLiveCandidate? featured,
-    required Set<String> friendIds,
-    required bool roomsUnavailable,
-    required bool roomsLoading,
-    required Object? error,
-    required Widget quickActions,
-  }) {
-    if (roomsUnavailable) {
-      return HomeSectionError(
-        key: const ValueKey('home-rooms-error'),
-        error: error,
-        message: copy.text(
-          'Live rooms could not be loaded. Check your connection and try again.',
-          'Nie udało się wczytać pokojów na żywo. Sprawdź połączenie i spróbuj ponownie.',
-        ),
-        onRetry: _retryLiveRooms,
-      );
-    }
-    if (roomsLoading) return const HomeRoomsLoading();
-    if (featured == null) {
-      return HomeConversationInvitation(
-        actions: quickActions,
-        onDiscover: widget.onSeeAllRooms,
-      );
-    }
-    final room = featured.room;
-    final service = _rooms;
-    final ownsRoom =
-        widget.currentUserId.isNotEmpty && room.hostId == widget.currentUserId;
-    final hasStaffActions = _capabilities.hasRoomModeration;
-    final trailing = ownsRoom || hasStaffActions
-        ? Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (ownsRoom)
-                HomeOwnedRoomMenu(
-                  key: ValueKey('owned-room-menu-${room.id}'),
-                  room: room,
-                  onManage: () => _openRoomSettings(room),
-                  onDelete: () => _deleteOwnedRoom(room),
-                  currentUserId: widget.currentUserId,
-                  clubService: _clubs,
-                ),
-              if (hasStaffActions)
-                RoomStaffMenu(room: room, capabilities: _capabilities),
-            ],
-          )
-        : null;
-    return HomeHereNowHero(
-      key: const ValueKey('home-featured-room'),
-      candidate: featured,
-      roster: _rosters.entryFor(room.id),
-      friendIds: friendIds,
-      compact: false,
-      expanded: true,
-      trailing: trailing,
-      onJoin: () => _openCandidate(featured),
-      onOpenRoster: service == null
-          ? null
-          : () => openHomeRoomRoster(context, room, service, compact: false),
     );
   }
 }
@@ -1177,8 +604,8 @@ class RoomVisual extends StatelessWidget {
   }
 }
 
-/// The roster itself. Every row is a real participant document from the
-/// room's own stream — the same source the stage reads — so there is
+/// Compatibility roster for a server-bound voice channel. Every row is a
+/// real participant document from the legacy session stream, so there is
 /// nothing here that was invented to fill the list.
 class RoomRosterList extends StatefulWidget {
   const RoomRosterList({
@@ -1233,8 +660,8 @@ class _RosterListState extends State<RoomRosterList> {
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
         child: Text(
           copy.text(
-            'Nobody is in this room yet.',
-            'W tym pokoju nikogo jeszcze nie ma.',
+            'Nobody is in this channel yet.',
+            'Na tym kanale nikogo jeszcze nie ma.',
           ),
           style: TextStyle(color: palette.textSecondary, fontSize: 12),
         ),
@@ -1249,8 +676,8 @@ class _RosterListState extends State<RoomRosterList> {
           padding: const EdgeInsets.fromLTRB(6, 2, 6, 8),
           child: Text(
             copy.text(
-              '${participants.length} in the room',
-              '${participants.length} w pokoju',
+              '${participants.length} in the channel',
+              '${participants.length} na kanale',
             ),
             style: TextStyle(
               color: palette.textSecondary,

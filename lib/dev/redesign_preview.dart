@@ -1,5 +1,6 @@
-// Local-only visual preview of the approved Home / Voice Moments / Reels
-// redesign (slice F1, docs/agent_handoffs/2026-09-11-approved-home-moments-reels.md).
+// Local-only visual preview of the approved Home / Servers / YO Moments
+// redesign. It combines the Server selector with the shared Voice/Reels
+// destination and the server-first Home surface.
 //
 // No sign-in, no network, no writes: every surface is fed by in-memory
 // fixtures through the same injection seams the redesign tests use
@@ -73,6 +74,10 @@ import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/servers/data/models/server_creation.dart';
+import 'package:yovoice/features/servers/data/models/server_type.dart';
+import 'package:yovoice/features/servers/data/services/server_service.dart';
+import 'package:yovoice/features/servers/presentation/screens/create_server_screen.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/firebase_options.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
@@ -80,7 +85,7 @@ import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 const _me = 'preview-me';
 
-/// One data state, applied to all three surfaces at once.
+/// One data state, applied to the preview surfaces at once.
 enum _State { populated, empty, loading, error, denied }
 
 enum _Theme { system, dark, pearl }
@@ -157,10 +162,10 @@ class _Config {
   );
 }
 
-/// The shell's stable content identities (docs/UI.md, "Floating mobile
-/// navigation"): Home 0, Chats 1, Rooms 3, Your Moments 5.
+/// The preview keeps the dock's historical numeric slot while rendering the
+/// current public destination: Home, Servers, Chats and YO Moments.
 const _chatsSlot = 1;
-const _roomsSlot = 3;
+const _serversSlot = 3;
 const _momentsSlot = 5;
 
 /// Callbacks the real screens fire (join room, open chat, record...) are
@@ -200,6 +205,22 @@ Future<void> main() async {
   _tabRequest.value = config.initialTab;
   _reelsRequest.value = config.initialReels;
   runApp(_PreviewApp(initial: config));
+}
+
+@visibleForTesting
+Widget buildRedesignPreviewForTesting() {
+  const config = _Config(
+    state: _State.populated,
+    polish: false,
+    theme: _Theme.dark,
+    bigText: false,
+    longNames: false,
+    initialTab: _momentsSlot,
+    initialReels: false,
+  );
+  _tabRequest.value = config.initialTab;
+  _reelsRequest.value = config.initialReels;
+  return const _PreviewApp(initial: config);
 }
 
 // ---------------------------------------------------------------------------
@@ -414,7 +435,9 @@ class _HomeFixture {
   Future<void> _initialize() async {
     await db.doc('users/$_me').set({
       'uid': _me,
-      'displayName': longNames ? 'Aleksandra Nowakowska-Kowalska' : 'Aleksandra',
+      'displayName': longNames
+          ? 'Aleksandra Nowakowska-Kowalska'
+          : 'Aleksandra',
       'username': 'aleksandra',
       'availability': 'available',
     });
@@ -465,8 +488,8 @@ class _HomeFixture {
         'hostId': _me,
         'hostName': 'Aleksandra',
         'name': longNames
-            ? 'Twój pokój o bardzo długiej nazwie, która musi się zawijać'
-            : 'Twój pokój',
+            ? 'Twój kanał na serwerze o bardzo długiej nazwie, która musi się zawijać'
+            : 'Twój kanał na serwerze',
         'description': 'Rozmowy, pomysły i codzienne historie.',
         'category': 'talk',
         'visibility': 'public',
@@ -512,7 +535,7 @@ class _HomeFixture {
       'qa-chat-1': (_people[0], 'Masz chwilę na rozmowę?', 'text', 2),
       'qa-chat-2': (
         _people[1],
-        'Wysłałem Ci notatki z wczorajszego pokoju — zerknij, kiedy będziesz '
+        'Wysłałem Ci notatki z wczorajszej rozmowy na serwerze — zerknij, kiedy będziesz '
             'mieć chwilę, bo jest tam kilka rzeczy do przegadania.',
         'text',
         0,
@@ -670,19 +693,19 @@ class _HomeFixture {
       ? DesktopHome(
           key: const ValueKey('redesign-home'),
           currentUserId: _me,
-          onOpenRoom: (r) => _report('room:${r.id} (prejoin flow)'),
-          onSeeAllRooms: () => _report('discover'),
+          onOpenRoom: (r) => _report('server-conversation:${r.id}'),
+          onSeeAllRooms: () => _report('servers'),
           onFindCreators: () => _report('find-creators'),
           onViewAllFriends: () => _report('friends'),
-          onStartRoom: () => _report('create-room'),
+          onStartRoom: () => _report('create-server'),
           onOpenMoment: (m) => _report('moment:${m.id}'),
           onOpenChain: (m) => _report('chain:${m.first.id}'),
           onCreateMoment: () => _report('record-moment'),
           onSeeAllMoments: () => _report('moments'),
           onOpenConversation: (c) => _report('chat:${c.id}'),
           onSeeAllChats: () => _report('chats'),
-          onOpenClub: (club) => _report('club:${club.id}'),
-          onOpenClubs: () => _report('clubs'),
+          onOpenClub: (club) => _report('server:${club.id}'),
+          onOpenClubs: () => _report('servers'),
           roomService: roomService,
           friendService: friendService,
           followService: followService,
@@ -700,11 +723,11 @@ class _HomeFixture {
       : MobileHome(
           key: const ValueKey('redesign-home'),
           currentUserId: _me,
-          onOpenRoom: (r) => _report('room:${r.id} (prejoin flow)'),
-          onOpenDiscover: () => _report('discover'),
+          onOpenRoom: (r) => _report('server-conversation:${r.id}'),
+          onOpenDiscover: () => _report('servers'),
           onOpenFindCreators: () => _report('find-creators'),
           onOpenFriends: () => _report('friends'),
-          onCreateRoom: () => _report('create-room'),
+          onCreateRoom: () => _report('create-server'),
           onOpenNotifications: () => _report('notifications'),
           onOpenProfile: () => _report('profile'),
           unreadNotificationCount: 2,
@@ -805,9 +828,8 @@ class _Moments implements MomentService {
   final _VoiceFixture fixture;
 
   @override
-  Stream<VoiceMoment> watchMoment(String momentId) => Stream.value(
-    fixture.all.firstWhere((moment) => moment.id == momentId),
-  );
+  Stream<VoiceMoment> watchMoment(String momentId) =>
+      Stream.value(fixture.all.firstWhere((moment) => moment.id == momentId));
 
   @override
   Stream<List<VoiceMoment>> watchMyMoments() => Stream.value(fixture.mine);
@@ -1136,7 +1158,13 @@ class _ReelsFixture {
         28,
         false,
       ),
-      _ => (_me, 'Aleksandra', 'Own Reel — owner actions live in More.', 0, false),
+      _ => (
+        _me,
+        'Aleksandra',
+        'Own Reel — owner actions live in More.',
+        0,
+        false,
+      ),
     };
     return {
       'id': id,
@@ -1309,7 +1337,11 @@ Widget _still(BuildContext context, Uri mediaUri, Reel reel) {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.landscape_outlined, color: Colors.white54, size: 160),
+          const Icon(
+            Icons.landscape_outlined,
+            color: Colors.white54,
+            size: 160,
+          ),
           Text(
             'Fixture still · no decoder',
             style: TextStyle(
@@ -1328,12 +1360,59 @@ Widget _still(BuildContext context, Uri mediaUri, Reel reel) {
 // App + shell
 // ---------------------------------------------------------------------------
 
+/// Local creation authority for the live preview. It exercises the production
+/// selector and configuration widgets without contacting Firebase or creating
+/// real data. The remaining [ServerRepository] members are deliberately
+/// unreachable from this creation-only surface.
+class _PreviewServerCreationRepository implements ServerRepository {
+  final Map<ServerType, ServerCreationRequest> _pending = {};
+  var _sequence = 0;
+
+  @override
+  String get currentUserId => _me;
+
+  @override
+  String newRequestId() => 'preview-server-${++_sequence}';
+
+  @override
+  Future<ServerCreationRequest?> pendingCreation(ServerType type) async =>
+      _pending[type];
+
+  @override
+  Future<ServerCreationRequest> rememberPendingCreation(
+    ServerCreationRequest request,
+  ) async => _pending.putIfAbsent(request.serverType, () => request);
+
+  @override
+  Future<void> forgetPendingCreation(ServerCreationRequest request) async {
+    if (_pending[request.serverType]?.requestId == request.requestId) {
+      _pending.remove(request.serverType);
+    }
+  }
+
+  @override
+  Future<ServerCreationResult> createServer(
+    ServerCreationRequest request,
+  ) async {
+    return ServerCreationResult(
+      serverId: 'preview-${request.serverType.name}',
+      defaultChannelId: 'general',
+      channelIds: const ['general'],
+      alreadyExisted: false,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 class _Fixtures {
   _Fixtures(_Config config)
     : id = config.fixtureId,
       home = _HomeFixture(state: config.state, longNames: config.longNames),
       voice = _VoiceFixture(state: config.state, longNames: config.longNames),
-      reels = _ReelsFixture(state: config.state) {
+      reels = _ReelsFixture(state: config.state),
+      servers = _PreviewServerCreationRepository() {
     // Static caches keyed by uid / reel id would otherwise bleed the previous
     // fixture set into this one.
     ProfileService.resetCurrentProfileCache();
@@ -1344,6 +1423,7 @@ class _Fixtures {
   final _HomeFixture home;
   final _VoiceFixture voice;
   final _ReelsFixture reels;
+  final _PreviewServerCreationRepository servers;
 
   Future<void> dispose() async {
     await home.dispose();
@@ -1431,9 +1511,7 @@ class _Shell extends StatefulWidget {
 
 class _ShellState extends State<_Shell> {
   late int _tab = _tabRequest.value;
-  late final ValueNotifier<bool> _homeVisible = ValueNotifier<bool>(
-    _tab == 0,
-  );
+  late final ValueNotifier<bool> _homeVisible = ValueNotifier<bool>(_tab == 0);
   late final ValueNotifier<bool> _momentsVisible = ValueNotifier<bool>(
     _tab == _momentsSlot,
   );
@@ -1509,7 +1587,7 @@ class _ShellState extends State<_Shell> {
 
   int get _stackIndex => switch (_tab) {
     0 => 0,
-    _roomsSlot => 1,
+    _serversSlot => 1,
     _chatsSlot => 2,
     _ => 3,
   };
@@ -1525,7 +1603,11 @@ class _ShellState extends State<_Shell> {
         index: _stackIndex,
         children: [
           f.home.home(desktop: desktop, visible: _homeVisible),
-          const _OutOfScope('Rooms'),
+          CreateServerScreen(
+            repository: f.servers,
+            isRootTab: true,
+            onCreated: (result) => _report('server-created:${result.serverId}'),
+          ),
           const _OutOfScope('Chats'),
           MomentsScreen(
             key: ValueKey(
@@ -1541,6 +1623,7 @@ class _ShellState extends State<_Shell> {
             discoveryService: f.voice.discovery,
             viewsService: f.voice.views,
             auth: f.voice.auth,
+            followService: f.home.followService,
             playerFactory: f.voice.newPlayer,
             onOpenDetail: (moment) => _report('moment-detail:${moment.id}'),
             reelService: f.reels.service,
@@ -1571,7 +1654,7 @@ class _ShellState extends State<_Shell> {
                 0 => DesktopNavItem.home,
                 _momentsSlot => DesktopNavItem.moments,
                 _chatsSlot => DesktopNavItem.chats,
-                _roomsSlot => DesktopNavItem.discover,
+                _serversSlot => DesktopNavItem.servers,
                 _ => null,
               },
               unreadConversationCount: 2,
@@ -1580,11 +1663,11 @@ class _ShellState extends State<_Shell> {
                 DesktopNavItem.home => _select(0),
                 DesktopNavItem.moments => _select(_momentsSlot),
                 DesktopNavItem.chats => _select(_chatsSlot),
-                DesktopNavItem.discover => _select(_roomsSlot),
+                DesktopNavItem.servers => _select(_serversSlot),
                 DesktopNavItem.more => unawaited(_openSettings()),
                 _ => _report('rail:${item.name}'),
               },
-              onCreateRoom: () => _report('create-room'),
+              onCreateRoom: () => _select(_serversSlot),
               onCreateMoment: () => _report('record-moment'),
               onOpenProfile: () => _report('profile'),
               onOpenProfileSettings: () => _report('profile-settings'),
@@ -1612,11 +1695,11 @@ class _ShellState extends State<_Shell> {
           // connection, which this preview never creates.
           YoFloatingNavigationDock(
             selectedTabIndex: _tab,
-            roomsTabIndex: _roomsSlot,
+            roomsTabIndex: _serversSlot,
             momentsTabIndex: _momentsSlot,
             unreadConversationCount: 2,
             onDestinationSelected: _select,
-            onVoicePressed: () => _report('voice'),
+            onVoicePressed: () => _select(_serversSlot),
             onMorePressed: () => unawaited(_openSettings()),
             moreSelected: _sheetOpen,
           ),
@@ -1637,7 +1720,7 @@ class _OutOfScope extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(
-          '$label is outside slice F1 — preview placeholder.',
+          '$label is outside this local preview.',
           textAlign: TextAlign.center,
           style: TextStyle(color: palette.textSecondary),
         ),

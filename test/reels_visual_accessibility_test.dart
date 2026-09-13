@@ -16,9 +16,13 @@ import 'package:yovoice/features/reels/data/services/reel_upload.dart';
 import 'package:yovoice/features/reels/presentation/reel_visuals.dart';
 import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
 import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reels_toolbar.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_segmented_pill.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+
+const _feedCaption =
+    'The full Reel caption remains readable in its details at large text.';
 
 void _useViewport(WidgetTester tester, Size size, {double textScale = 1}) {
   tester.view.physicalSize = size;
@@ -378,6 +382,7 @@ void main() {
             '${viewport.width.toInt()}x${viewport.height.toInt()} and 200%', (
           tester,
         ) async {
+          final semantics = tester.ensureSemantics();
           _useViewport(tester, viewport, textScale: 2);
           await tester.pumpWidget(
             MaterialApp(
@@ -404,6 +409,16 @@ void main() {
 
           await tester.tap(find.byKey(const ValueKey('reel-more-action')));
           await tester.pumpAndSettle();
+          final captionSemantics = tester.getSemantics(
+            find.byKey(const ValueKey('reel-details-caption-semantics')),
+          );
+          expect(captionSemantics.label, _feedCaption);
+          expect(
+            captionSemantics.getSemanticsData().flagsCollection.isTextField,
+            isFalse,
+          );
+          await tester.ensureVisible(find.text('Report Reel'));
+          await tester.pumpAndSettle();
           await tester.tap(find.text('Report Reel'));
           await tester.pumpAndSettle();
           expect(find.byType(YoModalSheetChrome), findsOneWidget);
@@ -412,6 +427,7 @@ void main() {
             findsOneWidget,
           );
           expect(tester.takeException(), isNull);
+          semantics.dispose();
         });
       }
     }
@@ -462,6 +478,34 @@ void main() {
               );
             }
 
+            final refreshRect = tester.getRect(find.byKey(refresh));
+            final createRect = tester.getRect(find.byKey(create));
+            // From wide-3 up the destination's own docked local panel hosts
+            // these three controls as a column (board 08 §9.3), and there is
+            // no toolbar row to fold. Below that they are the toolbar's.
+            final docked = find.byKey(
+              const ValueKey<String>('yo-moments-local-panel'),
+            );
+            if (docked.evaluate().isNotEmpty) {
+              final discoverRect = tester.getRect(
+                find.byKey(const ValueKey<String>('reels-discover-filter')),
+              );
+              final ownRect = tester.getRect(
+                find.byKey(const ValueKey<String>('reels-own-filter')),
+              );
+              expect(
+                ownRect.top,
+                greaterThanOrEqualTo(discoverRect.bottom - 1),
+              );
+              expect(refreshRect.top, greaterThanOrEqualTo(ownRect.bottom - 1));
+              expect(
+                createRect.top,
+                greaterThanOrEqualTo(refreshRect.bottom - 1),
+              );
+              expect(find.byType(ReelsToolbar), findsNothing);
+              return;
+            }
+
             // Two intentional shapes and nothing in between: the actions sit
             // on the pill's own line, or wholly on a second line beneath it.
             // A ragged wrap that reflows control by control is the failure
@@ -469,8 +513,6 @@ void main() {
             // this locale at this text size, so it is not asserted here — the
             // font a widget test paints with is not the shipped one.
             final pill = tester.getRect(find.byType(YoSegmentedPill).first);
-            final refreshRect = tester.getRect(find.byKey(refresh));
-            final createRect = tester.getRect(find.byKey(create));
             expect(createRect.center.dy, closeTo(refreshRect.center.dy, 2));
             final oneRow = refreshRect.center.dy < pill.bottom;
             if (oneRow) {
@@ -512,6 +554,7 @@ ReelService _feedService() {
     mockUser: MockUser(uid: 'viewer'),
   );
   final composition = ReelComposition(
+    caption: _feedCaption,
     crop: const ReelCropTransform(scale: 2, offsetX: .8, offsetY: -.8),
     trimStartMs: 0,
     trimEndMs: 10000,

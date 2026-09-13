@@ -9,7 +9,9 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
 import '../../data/models/server_member_role.dart';
+import '../../data/models/server_podcast_episode.dart';
 import '../../data/services/server_media_connector.dart';
+import '../../data/services/server_podcast_episode_repository.dart';
 import '../../data/services/server_session_controller.dart';
 import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
@@ -29,35 +31,29 @@ import 'server_scrolling_details.dart';
 /// by the provider. That is authority, not a guess — but it exists only
 /// inside a joined generation, so before joining this scene names nobody.
 ///
-/// Everything board 05 shows that has no contract is absent rather than
-/// invented:
+/// The studio never invents state:
 ///
 /// * **no listener, viewer or participant count** anywhere — the liveness
 ///   projection is `{schemaVersion, isLive, startedAt}` and no presence
 ///   writer exists (contract G6), so `NA ŻYWO` and *since when* are drawn and
 ///   `84 słuchaczy` never is, before or after joining;
-/// * **no recording indicator.** Recording has no contract at all — no egress
-///   configuration, no job document, no callable, no signed callback
-///   (contract §3) — so the board's red "Audycja jest nagrywana" has no
-///   authoritative state to come from. The studio says the opposite, plainly,
-///   and the control that would start it is not drawn;
-/// * **no episode title, number, schedule or archive** — episodes have a
-///   channel kind and no persistence (G9), so `Następny odcinek` and
-///   `Ostatnie odcinki` name their module, keep the board's action visibly
-///   disabled and offer the real channel as the way in;
-/// * **no question votes and no `Na antenie` badge** on a question — nothing
-///   counts a vote and nothing marks a question as read out.
+/// * recording status comes only from `podcastRecordingState/main`; moderator
+///   controls reach revision-fenced callables and playback uses a short-lived,
+///   generation-bound URL from the episode service;
+/// * the persisted program opens through Events V1 and the archive through the
+///   dedicated Episodes channel.
 ///
 /// `Poproś o głos` is real: it calls the registered `setServerSessionHandV1`,
 /// only from inside a joined generation, and never for that generation's own
-/// host. `Zadaj pytanie` is real too, and is exactly what it says — it opens
-/// the server's own questions channel, where the message goes through the
-/// same reviewed path as every other message.
+/// host. `Zadaj pytanie` opens the server's persisted Q&A: each member has one
+/// vote per question and a moderator can select the single question currently
+/// marked `Na antenie`.
 class ServerPodcastStage extends StatefulWidget {
   const ServerPodcastStage({
     required this.server,
     required this.channel,
     required this.session,
+    required this.episodeRepository,
     this.role,
     this.channels = const [],
     this.onOpenChannel,
@@ -68,6 +64,7 @@ class ServerPodcastStage extends StatefulWidget {
   final Server server;
   final ServerChannel channel;
   final ServerSessionController session;
+  final ServerPodcastEpisodeRepository? episodeRepository;
   final ServerMemberRole? role;
 
   /// The server's own channels, so the episode cards and `Zadaj pytanie` can
@@ -97,10 +94,11 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
   String? _raisedSessionId;
   bool _busy = false;
   Object? _error;
+  bool _recordingBusy = false;
+  Object? _recordingError;
 
-  ServerChannel? _channelOfKind(ServerChannelKind kind) => widget.channels
-      .where((channel) => channel.kind == kind)
-      .firstOrNull;
+  ServerChannel? _channelOfKind(ServerChannelKind kind) =>
+      widget.channels.where((channel) => channel.kind == kind).firstOrNull;
 
   ServerChannel? get _episodes => _channelOfKind(ServerChannelKind.episodes);
   ServerChannel? get _program => _channelOfKind(ServerChannelKind.events);
@@ -187,6 +185,72 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
     }
   }
 
+  Future<void> _startRecording() async {
+    final repository = widget.episodeRepository;
+    final episodes = _episodes;
+    final sessionId = _sessionId;
+    if (repository == null ||
+        episodes == null ||
+        sessionId == null ||
+        widget.session.phase != ServerSessionPhase.connected ||
+        !(widget.role?.canModerate ?? false) ||
+        _recordingBusy) {
+      return;
+    }
+    final title = await showDialog<String>(
+      context: context,
+      builder: (_) => const _PodcastRecordingTitleDialog(),
+    );
+    if (title == null || !mounted) return;
+    setState(() {
+      _recordingBusy = true;
+      _recordingError = null;
+    });
+    try {
+      await repository.startPodcastRecording(
+        serverId: widget.server.id,
+        channelId: episodes.id,
+        studioChannelId: widget.channel.id,
+        sessionId: sessionId,
+        title: title,
+        requestId: repository.newRequestId(),
+      );
+      if (mounted) setState(() => _recordingBusy = false);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _recordingBusy = false;
+        _recordingError = error;
+      });
+    }
+  }
+
+  Future<void> _stopRecording(ServerPodcastRecordingState recording) async {
+    final repository = widget.episodeRepository;
+    if (repository == null ||
+        _recordingBusy ||
+        !(widget.role?.canModerate ?? false)) {
+      return;
+    }
+    setState(() {
+      _recordingBusy = true;
+      _recordingError = null;
+    });
+    try {
+      await repository.stopPodcastRecording(
+        recording: recording,
+        requestId: repository.newRequestId(),
+      );
+      if (mounted) setState(() => _recordingBusy = false);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _recordingBusy = false;
+        _recordingError = error;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: widget.session,
@@ -221,7 +285,7 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
       children: [
         _studio(context, copy, palette, colors),
         const SizedBox(height: 16),
-        _recording(copy, palette),
+        _recording(context, copy, palette),
         const SizedBox(height: 16),
         _description(palette, copy, maxLines: 4, lead: true),
         const SizedBox(height: 20),
@@ -262,7 +326,7 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
             children: [
               _studio(context, copy, palette, colors),
               const SizedBox(height: 12),
-              _recording(copy, palette),
+              _recording(context, copy, palette),
               const SizedBox(height: 12),
               _description(palette, copy, maxLines: 3),
               const SizedBox(height: 14),
@@ -306,7 +370,10 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
             Text(
               live
                   ? copy.serverLiveSince(
-                      serverLiveClock(context, widget.channel.liveness.startedAt!),
+                      serverLiveClock(
+                        context,
+                        widget.channel.liveness.startedAt!,
+                      ),
                     )
                   : copy.serverQuiet(widget.channel.kind),
               key: const ValueKey('server-podcast-liveness'),
@@ -338,9 +405,7 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
       key: const ValueKey('server-podcast-scene'),
       padding: EdgeInsets.all(widget.compact ? 16 : 24),
       decoration: BoxDecoration(
-        border: Border.all(
-          color: _inRoom ? colors.iconBorder : palette.border,
-        ),
+        border: Border.all(color: _inRoom ? colors.iconBorder : palette.border),
         borderRadius: AppRadius.lg,
         // The template's own coral wash over the card fill, exactly as the
         // accepted selector card is drawn — no new colour.
@@ -410,7 +475,11 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
     final people = [
       (host, copy.serverPodcastHost, widget.compact || listed ? 100.0 : 148.0),
       for (final guest in guests)
-        (guest, copy.serverPodcastGuest, widget.compact || listed ? 84.0 : 104.0),
+        (
+          guest,
+          copy.serverPodcastGuest,
+          widget.compact || listed ? 84.0 : 104.0,
+        ),
     ];
     if (listed) {
       return Column(
@@ -526,61 +595,201 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
 
   // ----------------------------------------------------------------- pieces
 
-  /// Board 05's recording status, inverted into the truth.
-  ///
-  /// There is no recording job, no egress configuration and no callback, so
-  /// nothing authoritative could ever light this. The circle is deliberately
-  /// unlit and carries no danger or live colour — a red dot here would be the
-  /// one thing on this screen a listener must be able to trust.
-  Widget _recording(AppLocalizations copy, AppPalette palette) => Column(
-    key: const ValueKey('server-podcast-recording'),
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      // Not a `Chip`. A `Chip` takes its label's intrinsic width and keeps a
-      // box sized for one line, so at 1100 x 200 % the two-line label was
-      // laid out inside a one-line box and its second line was painted
-      // outside and clipped — the marker rendered as `Nagrywanie audycji ·`,
-      // a dangling middle dot with the `Wkrótce` gone and not even an
-      // ellipsis to say something had been cut, in both themes. The word
-      // that makes an unavailable feature read as unavailable is the one
-      // thing this marker exists for, so the pill grows with its label
-      // instead: the label wraps, is never truncated, and the box follows it.
-      Container(
-        key: const ValueKey('server-podcast-recording-pill'),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: palette.surfaceMuted,
-          borderRadius: AppRadius.md,
-          border: Border.all(color: palette.border),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              Icons.radio_button_unchecked,
-              size: 16,
-              color: palette.textSecondary,
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                '${copy.serverRecording} · ${copy.serverComingSoon}',
-                style: AppTypography.labelLarge.copyWith(
-                  color: palette.textPrimary,
-                ),
+  /// Recording state is a Firestore projection written only by the backend.
+  /// The red mark is lit exclusively for an authoritative `recording` row.
+  Widget _recording(
+    BuildContext context,
+    AppLocalizations copy,
+    AppPalette palette,
+  ) {
+    final repository = widget.episodeRepository;
+    if (repository == null || _episodes == null) {
+      return Text(
+        copy.serverActionUnavailable,
+        key: const ValueKey('server-podcast-recording'),
+        style: AppTypography.bodySmall.copyWith(color: palette.textSecondary),
+      );
+    }
+    return StreamBuilder<ServerPodcastRecordingState?>(
+      stream: repository.watchPodcastRecording(
+        widget.server.id,
+        widget.channel.id,
+      ),
+      builder: (context, snapshot) {
+        final state = snapshot.data;
+        if (snapshot.hasError) {
+          return Semantics(
+            liveRegion: true,
+            child: Text(
+              serverActionFailureCopy(snapshot.error!, copy),
+              key: const ValueKey('server-podcast-recording'),
+              style: AppTypography.bodySmall.copyWith(
+                color: palette.dangerForeground,
               ),
             ),
+          );
+        }
+        if (!snapshot.hasData &&
+            snapshot.connectionState == ConnectionState.waiting) {
+          return const SizedBox(
+            key: ValueKey('server-podcast-recording-loading'),
+            height: 48,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: SizedBox.square(
+                dimension: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+        final active = state?.status == ServerPodcastEpisodeStatus.recording;
+        final statusLabel = switch (state?.status) {
+          ServerPodcastEpisodeStatus.recording =>
+            copy.serverPodcastRecordingActive,
+          ServerPodcastEpisodeStatus.processing =>
+            copy.serverPodcastRecordingProcessing,
+          ServerPodcastEpisodeStatus.ready => copy.serverPodcastEpisodeReady,
+          ServerPodcastEpisodeStatus.published =>
+            copy.serverPodcastEpisodePublished,
+          ServerPodcastEpisodeStatus.error => copy.serverPodcastRecordingError,
+          null => copy.serverRecording,
+        };
+        return Column(
+          key: const ValueKey('server-podcast-recording'),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              key: const ValueKey('server-podcast-recording-pill'),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: active ? palette.dangerSurface : palette.surfaceMuted,
+                borderRadius: AppRadius.md,
+                border: Border.all(
+                  color: active ? palette.dangerForeground : palette.border,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    active
+                        ? Icons.fiber_manual_record
+                        : Icons.radio_button_unchecked,
+                    size: 16,
+                    color: active
+                        ? palette.dangerForeground
+                        : palette.textSecondary,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      state == null
+                          ? statusLabel
+                          : '$statusLabel · ${state.title}',
+                      style: AppTypography.labelLarge.copyWith(
+                        color: active
+                            ? palette.dangerForeground
+                            : palette.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              state == null
+                  ? copy.serverPodcastRecordingIdle
+                  : _recordingStateBody(copy, state),
+              style: AppTypography.bodySmall.copyWith(
+                color: palette.textSecondary,
+              ),
+            ),
+            if (_recordingError != null) ...[
+              const SizedBox(height: 8),
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  serverActionFailureCopy(_recordingError!, copy),
+                  key: const ValueKey('server-podcast-recording-error'),
+                  style: AppTypography.bodySmall.copyWith(
+                    color: palette.dangerForeground,
+                  ),
+                ),
+              ),
+            ],
+            if (widget.role?.canModerate ?? false) ...[
+              const SizedBox(height: 10),
+              if (state == null &&
+                  _sessionId != null &&
+                  widget.session.phase == ServerSessionPhase.connected)
+                FilledButton.icon(
+                  key: const ValueKey('server-podcast-start-recording'),
+                  onPressed: _recordingBusy ? null : _startRecording,
+                  icon: const Icon(Icons.fiber_manual_record_rounded),
+                  label: Text(copy.serverPodcastStartRecording),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                  ),
+                )
+              else if (state?.status == ServerPodcastEpisodeStatus.recording)
+                FilledButton.icon(
+                  key: const ValueKey('server-podcast-stop-recording'),
+                  onPressed: _recordingBusy
+                      ? null
+                      : () => _stopRecording(state!),
+                  icon: const Icon(Icons.stop_rounded),
+                  label: Text(copy.serverPodcastStopRecording),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                    backgroundColor: palette.dangerForeground,
+                    foregroundColor: palette.dangerSurface,
+                  ),
+                )
+              else if (state != null && _episodes != null)
+                OutlinedButton.icon(
+                  key: const ValueKey('server-podcast-open-episodes'),
+                  onPressed: () => widget.onOpenChannel?.call(_episodes!),
+                  icon: const Icon(Icons.podcasts_rounded),
+                  label: Text(copy.serverRecentEpisodes),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                  ),
+                ),
+            ],
           ],
-        ),
-      ),
-      const SizedBox(height: 6),
-      Text(
-        copy.serverRecordingUnavailable,
-        style: AppTypography.bodySmall.copyWith(color: palette.textSecondary),
-      ),
-    ],
-  );
+        );
+      },
+    );
+  }
+
+  String _recordingStateBody(
+    AppLocalizations copy,
+    ServerPodcastRecordingState state,
+  ) => switch (state.status) {
+    ServerPodcastEpisodeStatus.recording => copy.text(
+      'Audio from this live session is being saved.',
+      'Dźwięk z tej transmisji jest zapisywany.',
+    ),
+    ServerPodcastEpisodeStatus.processing => copy.text(
+      'The recording is being prepared as an episode.',
+      'Nagranie jest przygotowywane jako odcinek.',
+    ),
+    ServerPodcastEpisodeStatus.ready => copy.text(
+      'The episode is ready for a host to publish.',
+      'Odcinek jest gotowy do publikacji przez prowadzącego.',
+    ),
+    ServerPodcastEpisodeStatus.published => copy.text(
+      'The episode is available in the archive.',
+      'Odcinek jest dostępny w archiwum.',
+    ),
+    ServerPodcastEpisodeStatus.error => copy.text(
+      'Open the archive to retry this recording.',
+      'Otwórz archiwum, aby ponowić nagrywanie.',
+    ),
+  };
 
   /// What this show says about itself, written at creation. When the owner
   /// left it empty the template's own sentence stands in — copy, not data
@@ -782,10 +991,11 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
           title: copy.serverNextEpisode,
           body: copy.serverNextEpisodeBody,
           colors: colors,
-          primaryLabel: copy.serverEpisodeRemind,
+          primaryLabel: copy.serverOpenProgram,
           primaryIcon: Icons.notifications_none_rounded,
           channel: program,
           onOpenChannel: widget.onOpenChannel,
+          available: true,
         ),
       if (episodes != null)
         ServerModuleCard(
@@ -798,6 +1008,7 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
           primaryIcon: Icons.play_arrow_rounded,
           channel: episodes,
           onOpenChannel: widget.onOpenChannel,
+          available: true,
         ),
     ];
     if (cards.isEmpty) return const SizedBox.shrink();
@@ -826,6 +1037,67 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Owns the title controller for the complete dialog route lifecycle.
+///
+/// `showDialog` completes when the route is popped, before its reverse
+/// transition has necessarily unmounted the text field. Keeping the controller
+/// in the dialog state lets Flutter dispose it after the final frame that can
+/// still read it.
+class _PodcastRecordingTitleDialog extends StatefulWidget {
+  const _PodcastRecordingTitleDialog();
+
+  @override
+  State<_PodcastRecordingTitleDialog> createState() =>
+      _PodcastRecordingTitleDialogState();
+}
+
+class _PodcastRecordingTitleDialogState
+    extends State<_PodcastRecordingTitleDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final normalized = _controller.text.trim();
+    if (normalized.isNotEmpty) Navigator.pop(context, normalized);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    return AlertDialog(
+      title: Text(copy.serverPodcastStartRecording),
+      content: TextField(
+        key: const ValueKey('server-podcast-recording-title'),
+        controller: _controller,
+        autofocus: true,
+        maxLength: 120,
+        textCapitalization: TextCapitalization.sentences,
+        decoration: InputDecoration(
+          labelText: copy.serverPodcastRecordingTitle,
+          hintText: copy.serverPodcastRecordingTitleHint,
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+        ),
+        FilledButton(
+          key: const ValueKey('server-podcast-confirm-recording'),
+          onPressed: _submit,
+          child: Text(copy.serverPodcastStartRecording),
+        ),
+      ],
     );
   }
 }
@@ -964,11 +1236,7 @@ class _StagePerson extends StatelessWidget {
             )
           : person.isMicrophoneEnabled
           ? null
-          : Icon(
-              Icons.mic_off_rounded,
-              size: 14,
-              color: palette.textTertiary,
-            ),
+          : Icon(Icons.mic_off_rounded, size: 14, color: palette.textTertiary),
     );
     return Semantics(
       label: [
@@ -987,8 +1255,18 @@ class _StagePerson extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(name, maxLines: 2, overflow: TextOverflow.ellipsis, style: nameStyle),
-                        Text(role, maxLines: 2, overflow: TextOverflow.ellipsis, style: roleStyle),
+                        Text(
+                          name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: nameStyle,
+                        ),
+                        Text(
+                          role,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: roleStyle,
+                        ),
                         const SizedBox(height: 4),
                         Align(
                           alignment: AlignmentDirectional.centerStart,
@@ -1193,12 +1471,11 @@ class _HandButton extends StatelessWidget {
         : FilledButton.icon(
             key: const ValueKey('server-podcast-hand'),
             onPressed: onPressed,
-            style:
-                FilledButton.styleFrom(
-                  backgroundColor: colors.cta,
-                  foregroundColor: colors.onCta,
-                  minimumSize: size,
-                ).copyWith(side: serverFocusRing(colors.onCta)),
+            style: FilledButton.styleFrom(
+              backgroundColor: colors.cta,
+              foregroundColor: colors.onCta,
+              minimumSize: size,
+            ).copyWith(side: serverFocusRing(colors.onCta)),
             icon: icon,
             label: Text(label),
           );

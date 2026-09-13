@@ -55,7 +55,7 @@ void main() {
 
       expect(find.text('Use your voice'), findsOneWidget);
       expect(
-        find.text('Create a Voice Moment or start a Voice Room here.'),
+        find.text('Create a Voice Moment or start a server here.'),
         findsOneWidget,
       );
       _expectCreateHighlightMatches(tester, anchors);
@@ -70,7 +70,7 @@ void main() {
       expect(find.text('Use your voice'), findsOneWidget);
       expect(
         find.text(
-          'Create a Voice Room here. Open Moments to record a Voice Moment.',
+          'Create a server here. Open Moments to record a Voice Moment.',
         ),
         findsOneWidget,
       );

@@ -41,8 +41,13 @@ enum _AvailabilityUnit { hours, days }
 
 /// Only presentation-owned, already localized messages may bypass the domain
 /// category mapping. Never wrap arbitrary exception or backend text in this.
-class _LocalizedVoiceNotice extends VoiceRecordingException {
-  const _LocalizedVoiceNotice(
+///
+/// Public so a host that supplies its own [VoiceMomentReplyPublisher] — the
+/// Reels voice-comment composer — can hand this screen a failure whose copy
+/// already names ITS operation, instead of meeting the Voice Moment wording
+/// that the category mapping would otherwise choose.
+class VoiceMomentPresentationNotice extends VoiceRecordingException {
+  const VoiceMomentPresentationNotice(
     super.problem,
     super.message, {
     super.action,
@@ -76,6 +81,27 @@ class _LocalizedVoiceNotice extends VoiceRecordingException {
         action: copy.text('Try again.', 'Spróbuj ponownie.'),
       );
 
+/// Publishes a finished recording somewhere OTHER than the Voice Moment
+/// pipeline this screen owns.
+///
+/// The one additive seam of the recorder. Everything a deliberate recording
+/// flow is — support probe, permission request, the meter, the 1–60 s bound,
+/// the 140-character caption, pre-send listening, cancel, retry with a frozen
+/// contract — is identical for a Voice Moment reply and for a Reel voice
+/// comment, and duplicating this screen to gain one different publish call
+/// would mean maintaining two of every one of those behaviours.
+///
+/// A publisher throws to report failure. Throwing a
+/// [VoiceMomentPresentationNotice] carries copy this screen shows verbatim,
+/// which is how a Reels comment reports a Reels refusal instead of borrowing
+/// Voice Moment wording.
+typedef VoiceMomentReplyPublisher =
+    Future<void> Function({
+      required RecordedAudio audio,
+      required int durationSeconds,
+      required String caption,
+    });
+
 /// Records and publishes a Voice Moment.
 ///
 /// One implementation for web and native: the state machine, the service
@@ -85,6 +111,7 @@ class RecordVoiceMomentScreen extends StatefulWidget {
   const RecordVoiceMomentScreen({
     this.replyToMomentId,
     this.replyToAuthorName,
+    this.publishReply,
     this.recorder,
     this.momentService,
     this.previewPlayerFactory,
@@ -93,6 +120,14 @@ class RecordVoiceMomentScreen extends StatefulWidget {
 
   final String? replyToMomentId;
   final String? replyToAuthorName;
+
+  /// Set by a host that owns its own publish contract — today the Reels
+  /// voice-comment composer. When it is present this screen is in reply
+  /// mode (no availability selector, the reply title and the reply bounds)
+  /// and hands the finished recording here instead of to [MomentService].
+  ///
+  /// Absent, nothing about the Voice Moment path changes.
+  final VoiceMomentReplyPublisher? publishReply;
 
   /// Injected by tests so every phase can be driven without hardware.
   final VoiceMomentRecorder? recorder;
@@ -255,7 +290,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   // Domain error copy is English and may include platform details. Only known
   // categories become catalog keys here; arbitrary exception text never renders.
   String _noticeMessage(VoiceRecordingException notice) {
-    if (notice is _LocalizedVoiceNotice) return notice.message;
+    if (notice is VoiceMomentPresentationNotice) return notice.message;
     return switch (notice.problem) {
       VoiceRecordingProblem.platformCannotRecord => _supportMessage(
         notice.message,
@@ -329,7 +364,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   }
 
   String? _noticeAction(VoiceRecordingException notice) {
-    if (notice is _LocalizedVoiceNotice) return notice.action;
+    if (notice is VoiceMomentPresentationNotice) return notice.action;
     return switch (notice.problem) {
       VoiceRecordingProblem.platformCannotRecord => _supportAction(
         notice.message,
@@ -487,7 +522,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   MomentService get _moments =>
       _momentService ??= (widget.momentService ?? MomentService());
 
-  bool get _isReply => widget.replyToMomentId != null;
+  /// Reply mode covers both targets: a Voice Moment reply names its parent
+  /// Moment, a Reel voice comment brings its own publisher. Neither picks an
+  /// availability of its own — the parent owns the lifetime.
+  bool get _isReply =>
+      widget.replyToMomentId != null || widget.publishReply != null;
 
   /// Speaks [message] on the assertive channel.
   ///
@@ -935,7 +974,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     } catch (error) {
       if (!mounted || attempt != _accessAttempt) return;
       _showNotice(
-        _LocalizedVoiceNotice(
+        VoiceMomentPresentationNotice(
           VoiceRecordingProblem.captureFailed,
           _copy.text(
             'Recording could not be started.',
@@ -1065,7 +1104,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     } catch (error) {
       if (!mounted) return;
       _showNotice(
-        _LocalizedVoiceNotice(
+        VoiceMomentPresentationNotice(
           VoiceRecordingProblem.captureFailed,
           _copy.text(
             'Recording could not be finished.',
@@ -1085,7 +1124,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       await audio.discard();
       if (!mounted) return;
       _showNotice(
-        _LocalizedVoiceNotice(
+        VoiceMomentPresentationNotice(
           VoiceRecordingProblem.recordingUnusable,
           _copy.text(
             'That was too short to publish — a Voice Moment needs at least '
@@ -1195,13 +1234,24 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     await _stopAndDisposePreview();
 
     try {
-      await _moments.publishRecordedMoment(
-        audio: audio,
-        durationSeconds: _durationSeconds,
-        caption: caption,
-        replyToMomentId: widget.replyToMomentId,
-        availability: availability,
-      );
+      // ONE seam, and the Voice Moment call below it is untouched: a host
+      // that supplies no publisher reaches exactly the code it always did.
+      final publishReply = widget.publishReply;
+      if (publishReply != null) {
+        await publishReply(
+          audio: audio,
+          durationSeconds: _durationSeconds,
+          caption: caption,
+        );
+      } else {
+        await _moments.publishRecordedMoment(
+          audio: audio,
+          durationSeconds: _durationSeconds,
+          caption: caption,
+          replyToMomentId: widget.replyToMomentId,
+          availability: availability,
+        );
+      }
     } catch (error) {
       if (!mounted) return;
       // The active-Moment cap is the SERVER'S refusal
@@ -1217,7 +1267,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       // The recording is kept: the capture succeeded, only publishing
       // failed, and making the user re-record would lose good audio.
       _showNotice(
-        _LocalizedVoiceNotice(
+        VoiceMomentPresentationNotice(
           VoiceRecordingProblem.uploadFailed,
           capRefusal
               ? _copy.text(

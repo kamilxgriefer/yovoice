@@ -29,10 +29,8 @@ import 'server_test_support.dart';
 /// * `HR` and `Zarząd` reach the panel through `users/{uid}/serverChannelRefs`
 ///   and through nothing else — a member without the pointer never sees the
 ///   row, because the query never returns it;
-/// * the whiteboard has no backend at all (G9) and says so;
 /// * the screen share is answered by one platform capability query (contract
-///   decision D), and the camera says plainly that publishing one is not
-///   built yet (contract §3).
+///   decision D), while camera publishing follows the signed meeting grant.
 Server companyServer({bool held = false, int members = 24}) => Server(
   id: 's',
   name: 'Studio North',
@@ -137,8 +135,7 @@ Finder get screenState =>
     find.byKey(const ValueKey('server-meeting-screen-state'));
 Finder get presentationTab =>
     find.byKey(const ValueKey('server-tab-presentation'));
-Finder get whiteboardTab =>
-    find.byKey(const ValueKey('server-tab-whiteboard'));
+Finder get whiteboardTab => find.byKey(const ValueKey('server-tab-whiteboard'));
 Finder get chatTab => find.byKey(const ValueKey('server-tab-chat'));
 Finder get shareControl => find.byKey(const ValueKey('server-dock-share'));
 Finder get cameraControl => find.byKey(const ValueKey('server-dock-camera'));
@@ -181,11 +178,7 @@ const team = [
     isSpeaking: true,
     isMicrophoneEnabled: true,
   ),
-  ServerMediaParticipant(
-    identity: 'marta',
-    name: 'Marta',
-    isLocal: false,
-  ),
+  ServerMediaParticipant(identity: 'marta', name: 'Marta', isLocal: false),
 ];
 
 Future<FakeServerMediaLink> joinMeeting(
@@ -293,8 +286,11 @@ void main() {
         );
         // The conversation is a tab exactly where it has nowhere else to be:
         // never twice, and never missing.
-        expect(chatTab, desktop ? findsNothing : findsOneWidget,
-            reason: reason);
+        expect(
+          chatTab,
+          desktop ? findsNothing : findsOneWidget,
+          reason: reason,
+        );
         expect(
           find.byKey(const ValueKey('server-context-panel')),
           desktop ? findsOneWidget : findsNothing,
@@ -335,7 +331,12 @@ void main() {
       expect(find.byKey(const ValueKey('server-panel')), findsOneWidget);
       // Opening the list is an action: nothing about the session changed.
       expect(connector.links.single.disconnects, 0);
-      await tester.tap(find.byKey(const ValueKey('server-channel-meeting')));
+      final meetingChannel = find.byKey(
+        const ValueKey('server-channel-meeting'),
+      );
+      await tester.ensureVisible(meetingChannel);
+      await tester.pumpAndSettle();
+      await tester.tap(meetingChannel);
       await tester.pumpAndSettle();
       expect(find.byType(ServerMeetingTile), findsNWidgets(team.length));
       expect(connector.links.single.disconnects, 0);
@@ -376,9 +377,7 @@ void main() {
         find.byKey(const ValueKey('server-panel-search-empty')),
         findsOneWidget,
       );
-      await tester.tap(
-        find.byKey(const ValueKey('server-panel-search-clear')),
-      );
+      await tester.tap(find.byKey(const ValueKey('server-panel-search-clear')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('server-channel-hr')), findsOneWidget);
       expect(
@@ -469,8 +468,10 @@ void main() {
         chatService: companyChat(firestore: firestore),
       );
       await pumpServers(tester, workspace(), size: const Size(1440, 900));
-      expect(find.byKey(const ValueKey('server-channel-general')),
-          findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('server-channel-general')),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('server-channel-hr')), findsNothing);
       expect(
         find.byKey(const ValueKey('server-channel-boardroom')),
@@ -580,8 +581,9 @@ void main() {
       expect(find.byType(ServerMeetingTile), findsNothing);
     });
 
-    testWidgets('the whiteboard is honestly unavailable and offers the real '
-        'channel', (tester) async {
+    testWidgets('the meeting tab is the real persistent whiteboard', (
+      tester,
+    ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final repository = TestServerRepository()
         ..servers = [companyServer()]
@@ -593,23 +595,23 @@ void main() {
       );
       await tester.tap(whiteboardTab);
       await tester.pumpAndSettle();
-      expect(find.text('Tablica zespołu'), findsOneWidget);
+      expect(find.text('Wspólna tablica'), findsOneWidget);
       expect(
         find.textContaining('Na razie nic się tu nie zapisuje'),
-        findsOneWidget,
+        findsNothing,
       );
-      expect(find.text('Wkrótce'), findsWidgets);
-      // The real `Tablica` channel is a destination, and taking it changes
-      // the channel rather than pretending the board exists.
-      await tester.tap(
-        find.descendant(
-          of: find.byKey(const ValueKey('server-meeting-board')),
-          matching: find.text('Tablica'),
-        ),
+      expect(find.text('Wkrótce'), findsNothing);
+      final canvas = find.byKey(const ValueKey('server-whiteboard-canvas'));
+      expect(canvas, findsOneWidget);
+      await tester.ensureVisible(canvas);
+      final rect = tester.getRect(canvas);
+      final gesture = await tester.startGesture(
+        Offset(rect.left + 24, rect.top + 28),
       );
+      await gesture.moveTo(Offset(rect.left + 120, rect.top + 100));
+      await gesture.up();
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('server-channel-header')), findsWidgets);
-      expect(repository.calls, isEmpty);
+      expect(repository.calls.single.$1, 'createServerWhiteboardStrokeV1');
     });
 
     testWidgets('switching between the meeting views never ends the meeting', (
@@ -685,8 +687,11 @@ void main() {
 
       // `Tablica` in the dock selects the view; the meeting carries on.
       await tester.tap(find.byKey(const ValueKey('server-dock-whiteboard')));
+      // First frame selects the view; the second receives the persisted
+      // board stream's initial snapshot.
+      await tester.pump();
       await tester.pump(const Duration(milliseconds: 30));
-      expect(find.text('Tablica zespołu'), findsOneWidget);
+      expect(find.text('Wspólna tablica'), findsOneWidget);
       expect(connector.links.single.disconnects, 0);
 
       // Two seconds of pumped time later the clock is still the same clock —
@@ -721,10 +726,7 @@ void main() {
       );
       await joinMeeting(tester, connector);
       expect(dock, findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('server-dock-elapsed')),
-        findsNothing,
-      );
+      expect(find.byKey(const ValueKey('server-dock-elapsed')), findsNothing);
     });
 
     testWidgets('every meeting control stays on screen at 320 px and 200 '
@@ -795,7 +797,7 @@ void main() {
       }
     });
 
-    testWidgets('the camera control is present, disabled and says why', (
+    testWidgets('camera starts only after a press and can be stopped again', (
       tester,
     ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -812,10 +814,47 @@ void main() {
         ),
         size: const Size(1440, 900),
       );
-      await joinMeeting(tester, connector);
-      expect(enabled(tester, cameraControl), isFalse);
+      final link = await joinMeeting(tester, connector);
+      expect(link.camera, isFalse);
+      expect(link.cameraCalls, isEmpty);
+      expect(enabled(tester, cameraControl), isTrue);
+
+      await tester.tap(cameraControl);
+      await tester.pumpAndSettle();
+      expect(link.cameraCalls, [true]);
+      expect(link.camera, isTrue);
+      expect(find.byIcon(Icons.videocam_rounded), findsWidgets);
+
+      await tester.tap(cameraControl);
+      await tester.pumpAndSettle();
+      expect(link.cameraCalls, [true, false]);
+      expect(link.camera, isFalse);
+    });
+
+    testWidgets('a denied camera request stays off and reports the failure', (
+      tester,
+    ) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final connector = FakeServerMediaConnector();
+      await pumpServers(
+        tester,
+        companyWorkspace(
+          TestServerRepository()
+            ..servers = [companyServer()]
+            ..channels = companyChannels()
+            ..permittedTrackSources = meetingHostSources,
+          connector: connector,
+          screenShare: ServerScreenShareCapability.web,
+        ),
+        size: const Size(1440, 900),
+      );
+      final link = await joinMeeting(tester, connector)
+        ..failCameraWith = StateError('permission denied');
+      await tester.tap(cameraControl);
+      await tester.pumpAndSettle();
+      expect(link.camera, isFalse);
       expect(
-        find.textContaining('Włączenie własnej kamery jeszcze nie działa'),
+        find.text('Nie udało się zmienić ustawienia kamery.'),
         findsOneWidget,
       );
     });
@@ -906,28 +945,31 @@ void main() {
       );
     });
 
-    test('the capability query answers per platform, never per feature flag', () {
-      expect(serverScreenShareCapability(isWeb: true).canStartShare, isTrue);
-      for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
-        final capability = serverScreenShareCapability(
-          isWeb: false,
-          platform: platform,
-        );
-        expect(capability.canStartShare, isFalse, reason: '$platform');
+    test(
+      'the capability query answers per platform, never per feature flag',
+      () {
+        expect(serverScreenShareCapability(isWeb: true).canStartShare, isTrue);
+        for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
+          final capability = serverScreenShareCapability(
+            isWeb: false,
+            platform: platform,
+          );
+          expect(capability.canStartShare, isFalse, reason: '$platform');
+          expect(
+            capability.reason,
+            ServerScreenShareReason.mobileNotBuilt,
+            reason: '$platform',
+          );
+        }
         expect(
-          capability.reason,
-          ServerScreenShareReason.mobileNotBuilt,
-          reason: '$platform',
+          serverScreenShareCapability(
+            isWeb: false,
+            platform: TargetPlatform.macOS,
+          ).reason,
+          ServerScreenShareReason.desktopUnverified,
         );
-      }
-      expect(
-        serverScreenShareCapability(
-          isWeb: false,
-          platform: TargetPlatform.macOS,
-        ).reason,
-        ServerScreenShareReason.desktopUnverified,
-      );
-    });
+      },
+    );
   });
 
   group('grants', () {

@@ -26,6 +26,9 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/models/server_type.dart';
+import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 
 /// Home reads a lot of the account's world. This pins how MUCH.
@@ -68,6 +71,23 @@ class _CountingRooms extends RoomService {
     participants++;
     participantRoomIds.add(roomId);
     return const Stream<List<RoomParticipant>>.empty();
+  }
+}
+
+class _CountingServers extends ServerService {
+  _CountingServers({
+    required super.firestore,
+    required super.auth,
+    this.servers = const <Server>[],
+  });
+
+  final List<Server> servers;
+  int calls = 0;
+
+  @override
+  Stream<List<Server>> watchMyServers() {
+    calls++;
+    return Stream<List<Server>>.value(servers);
   }
 }
 
@@ -163,6 +183,17 @@ Club _club(String id) => Club(
   updatedAt: null,
 );
 
+Server _server(String id) => Server(
+  id: id,
+  name: 'Serwer $id',
+  description: 'Rozmowy społeczności',
+  ownerId: 'owner',
+  type: ServerType.community,
+  privacy: ServerPrivacy.public,
+  schemaVersion: 1,
+  activationState: 'active',
+);
+
 void main() {
   const uid = 'budget-me';
   late FakeFirebaseFirestore db;
@@ -180,7 +211,7 @@ void main() {
   });
   tearDown(ProfileService.resetCurrentProfileCache);
 
-  testWidgets('one listener per source, and at most four rosters', (
+  testWidgets('one listener per current source and no legacy Home fan-out', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 2600);
@@ -188,6 +219,11 @@ void main() {
     addTearDown(tester.view.reset);
 
     final rooms = _CountingRooms(firestore: db, auth: auth);
+    final servers = _CountingServers(
+      firestore: db,
+      auth: auth,
+      servers: [for (var i = 0; i < 7; i++) _server('s$i')],
+    );
     final friends = _CountingFriends(firestore: db, auth: auth);
     final follow = _CountingFollow(firestore: db, auth: auth);
     final messages = _CountingMessages(firestore: db, auth: auth);
@@ -227,6 +263,7 @@ void main() {
           onSeeAllChats: () {},
           roomService: rooms,
           clubService: clubs,
+          serverRepository: servers,
           friendService: friends,
           followService: follow,
           profileService: ProfileService(firestore: db, auth: auth),
@@ -244,33 +281,31 @@ void main() {
       await tester.pump(const Duration(milliseconds: 60));
     }
 
-    expect(rooms.live, 1, reason: 'watchLivePublicRooms');
-    expect(rooms.owned, 1, reason: 'watchOwnedRooms');
+    expect(servers.calls, 1, reason: 'watchMyServers');
+    expect(rooms.live, 0, reason: 'legacy public rooms stay off Home');
+    expect(rooms.owned, 0, reason: 'legacy owned rooms stay off Home');
     expect(friends.calls, 1, reason: 'watchFriends');
-    expect(follow.calls, 1, reason: 'watchFollowing');
+    expect(follow.calls, 0, reason: 'Home has no follower surface');
     expect(messages.calls, 1, reason: 'watchConversations');
     expect(feed.calls, 1, reason: 'watchSocialMoments');
     expect(views.calls, 1, reason: 'momentViews');
-    expect(clubs.calls, 1, reason: 'watchMyClubs');
-    // Seven memberships, four lounge listeners: Home shows at most three
-    // live rows, so a fourth is the most the hero can add.
-    expect(rooms.loungeIds, hasLength(4), reason: 'watchClubLounge');
-    expect(
-      rooms.participantRoomIds.length,
-      lessThanOrEqualTo(4),
-      reason: 'watchParticipants',
-    );
+    expect(clubs.calls, 0, reason: 'Home has no Club surface');
+    expect(rooms.lounges, 0);
+    expect(rooms.participants, 0);
+    expect(rooms.loungeIds, isEmpty);
+    expect(rooms.participantRoomIds, isEmpty);
 
     // A rebuild of the same tree must not re-subscribe anything.
     await tester.pumpWidget(home());
     await tester.pump(const Duration(milliseconds: 60));
-    expect(rooms.live, 1);
-    expect(rooms.owned, 1);
+    expect(servers.calls, 1);
+    expect(rooms.live, 0);
+    expect(rooms.owned, 0);
     expect(friends.calls, 1);
-    expect(follow.calls, 1);
+    expect(follow.calls, 0);
     expect(messages.calls, 1);
-    expect(clubs.calls, 1);
-    expect(rooms.loungeIds, hasLength(4));
+    expect(clubs.calls, 0);
+    expect(rooms.loungeIds, isEmpty);
 
     // Returning to the retained Home refreshes the one-shot Moments page and
     // nothing else: the Firestore listeners stay exactly as they were.
@@ -280,9 +315,10 @@ void main() {
     visible.value = true;
     await tester.pump(const Duration(milliseconds: 60));
     expect(feed.calls, feedReads + 1);
-    expect(rooms.live, 1);
-    expect(clubs.calls, 1);
-    expect(rooms.loungeIds, hasLength(4));
+    expect(servers.calls, 1);
+    expect(rooms.live, 0);
+    expect(clubs.calls, 0);
+    expect(rooms.loungeIds, isEmpty);
     expect(views.calls, 1);
     expect(tester.takeException(), isNull);
   });
@@ -335,7 +371,13 @@ void main() {
             onOpenComments: (_) {},
             onOpenConversation: (_) {},
             onSeeAllChats: () {},
+            onOpenServer: (_) => writes.add('open-server'),
             roomService: RoomService(firestore: db, auth: auth),
+            serverRepository: _CountingServers(
+              firestore: db,
+              auth: auth,
+              servers: [_server('s1')],
+            ),
             clubService: _CountingClubs(
               firestore: db,
               auth: auth,
@@ -356,8 +398,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 60));
     }
 
-    // Merely rendering Home resolves a featured room and its roster — and
-    // writes nothing: no participant document, no voice session.
+    // Merely rendering Home resolves server cards but opens no workspace,
+    // room or media session and writes no participant document.
     final participants = await db
         .collection('rooms')
         .doc('r1')

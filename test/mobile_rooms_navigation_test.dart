@@ -51,7 +51,7 @@ void main() {
   for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
     for (final phase in ['loading', 'empty', 'error']) {
       testWidgets(
-        'Rooms Create CTA works during $phase, ${theme.brightness}, 320px/200%',
+        'Servers alias keeps its Create CTA during $phase, ${theme.brightness}, 320px/200%',
         (tester) async {
           tester.view.physicalSize = const Size(320, 700);
           tester.view.devicePixelRatio = 1;
@@ -93,7 +93,7 @@ void main() {
           await tester.pump();
           await tester.pump();
 
-          expect(find.text('Pokoje'), findsOneWidget);
+          expect(find.text('Serwery'), findsOneWidget);
           expect(find.text('Utwórz pokój'), findsOneWidget);
           expect(find.byKey(createKey), findsOneWidget);
           expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsNothing);

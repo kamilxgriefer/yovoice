@@ -77,6 +77,9 @@ abstract class ServerMediaLink extends ChangeNotifier {
   List<ServerMediaParticipant> get participants;
   bool get isMicrophoneEnabled;
 
+  /// True only while this device is publishing its own camera.
+  bool get isCameraEnabled;
+
   /// True while this device is publishing its own screen.
   bool get isScreenShareEnabled;
 
@@ -90,6 +93,10 @@ abstract class ServerMediaLink extends ChangeNotifier {
   /// Explicit capture control. Never called by a connect; the person
   /// presses the microphone control themselves.
   Future<void> setMicrophoneEnabled(bool enabled);
+
+  /// Starts or stops publishing this device's camera. Capture is requested
+  /// only from this explicit action; connecting never enables it.
+  Future<void> setCameraEnabled(bool enabled);
 
   /// Silences (or restores) every received audio track on this device only.
   Future<void> setDeafened(bool deafened);
@@ -207,6 +214,26 @@ class _LiveKitServerMediaLink extends ServerMediaLink {
   }
 
   @override
+  bool get isCameraEnabled {
+    final local = _room.localParticipant;
+    if (local == null) return false;
+    final publication = local.getTrackPublicationBySource(
+      lk.TrackSource.camera,
+    );
+    return publication != null && !publication.muted;
+  }
+
+  @override
+  Future<void> setCameraEnabled(bool enabled) async {
+    final local = _room.localParticipant;
+    if (_released || local == null) {
+      throw StateError('The media session is not connected.');
+    }
+    await local.setCameraEnabled(enabled);
+    _sync();
+  }
+
+  @override
   Future<void> setScreenShareEnabled(bool enabled) async {
     final local = _room.localParticipant;
     if (_released || local == null) {
@@ -278,10 +305,7 @@ class _LiveKitServerMediaLink extends ServerMediaLink {
     isMicrophoneEnabled: !participant.isMuted,
     sessionRole: _sessionRole(participant),
     cameraTrack: _videoTrack(participant, lk.TrackSource.camera),
-    screenShareTrack: _videoTrack(
-      participant,
-      lk.TrackSource.screenShareVideo,
-    ),
+    screenShareTrack: _videoTrack(participant, lk.TrackSource.screenShareVideo),
   );
 
   /// The role the server signed into this participant's own token.
@@ -350,6 +374,15 @@ class _LiveKitServerMediaLink extends ServerMediaLink {
       // microphone open behind a dock that already says "disconnected".
       try {
         await local.setMicrophoneEnabled(false);
+      } catch (_) {
+        // The room disposal below tears the track down regardless.
+      }
+    }
+    if (local != null && isCameraEnabled) {
+      // Camera capture can survive a slow signalling teardown just like
+      // microphone capture, so release it before the dock disappears.
+      try {
+        await local.setCameraEnabled(false);
       } catch (_) {
         // The room disposal below tears the track down regardless.
       }

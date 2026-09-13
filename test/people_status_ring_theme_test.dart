@@ -102,12 +102,12 @@ void main() {
         _host(theme: AppTheme.lightTheme, status: PeopleStatus.inClub),
       );
 
-      expect(find.text('In a club'), findsOneWidget);
+      expect(find.text('In a server'), findsOneWidget);
       final data = tester
           .getSemantics(find.byType(PeopleStatusAvatar))
           .getSemanticsData();
       expect(data.label, 'Ada Lovelace');
-      expect(data.value, 'In a club');
+      expect(data.value, 'In a server');
       expect(data.flagsCollection.isButton, isTrue);
       expect(data.hasAction(ui.SemanticsAction.tap), isTrue);
       semantics.dispose();

@@ -64,6 +64,7 @@ void main() {
       for (final key in const [
         'server-dock-microphone',
         'server-dock-headphones',
+        'server-dock-camera',
         'server-dock-leave',
       ]) {
         final node = dataOf(tester, key);
@@ -74,10 +75,10 @@ void main() {
         );
         expect(node.label, isNotEmpty, reason: '$key has no name');
       }
-      // The camera is deliberately unavailable: it must still be announced,
-      // and it must still say so rather than being silently absent.
+      // The signed meeting grant includes camera publishing, so its control is
+      // a real, named accessibility action before capture starts.
       final camera = dataOf(tester, 'server-dock-camera');
-      expect(camera.label, contains('—'));
+      expect(camera.label, 'Kamera wyłączona');
       expect(
         tester
             .widget<IconButton>(
@@ -87,7 +88,7 @@ void main() {
               ),
             )
             .onPressed,
-        isNull,
+        isNotNull,
       );
       handle.dispose();
     });

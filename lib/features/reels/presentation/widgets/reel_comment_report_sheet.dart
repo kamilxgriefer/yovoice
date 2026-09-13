@@ -67,10 +67,18 @@ class ReelCommentReportRequest {
 ///
 /// Returns null if the reporter backed out. Returning a request is a
 /// decision to send, not a sent report: the caller still has to succeed.
+///
+/// [voiceDurationSeconds] is set when the target is a VOICE comment. The
+/// sheet then names the recording and its length instead of quoting words:
+/// a voice comment's caption is optional, and an empty quote block would ask
+/// somebody to confirm they are reporting a blank. The report itself is
+/// unchanged — `createReelCommentReport` takes the same reason and note, and
+/// the server captures the duration and the storage reference on its side.
 Future<ReelCommentReportRequest?> showReelCommentReportSheet(
   BuildContext context, {
   required String authorName,
   required String commentText,
+  int? voiceDurationSeconds,
   ReportReason? initialReason,
   String initialNote = '',
   ReelCommentOverlayBuilder? overlayBuilder,
@@ -89,6 +97,7 @@ Future<ReelCommentReportRequest?> showReelCommentReportSheet(
       Widget contentBuilder(BuildContext context) => ReelCommentReportSheet(
         authorName: authorName,
         commentText: commentText,
+        voiceDurationSeconds: voiceDurationSeconds,
         initialReason: initialReason,
         initialNote: initialNote,
       );
@@ -104,6 +113,7 @@ class ReelCommentReportSheet extends StatefulWidget {
   const ReelCommentReportSheet({
     required this.authorName,
     required this.commentText,
+    this.voiceDurationSeconds,
     this.initialReason,
     this.initialNote = '',
     super.key,
@@ -111,6 +121,9 @@ class ReelCommentReportSheet extends StatefulWidget {
 
   final String authorName;
   final String commentText;
+
+  /// Non-null when the target is a recording rather than words.
+  final int? voiceDurationSeconds;
   final ReportReason? initialReason;
   final String initialNote;
 
@@ -153,6 +166,7 @@ class _ReelCommentReportSheetState extends State<ReelCommentReportSheet> {
     // device label. Past roughly 130% the header has to give up room so the
     // reason list is not pushed off screen — see the block that uses it.
     final bigType = media.textScaler.scale(1) > 1.3;
+    final voiceDuration = widget.voiceDurationSeconds;
     return Container(
       key: const ValueKey<String>('reel-comment-report-sheet'),
       decoration: BoxDecoration(
@@ -244,20 +258,58 @@ class _ReelCommentReportSheetState extends State<ReelCommentReportSheet> {
                                 ),
                               ),
                               const SizedBox(height: 2),
-                              Text(
-                                key: const ValueKey<String>(
-                                  'reel-comment-report-target',
+                              // A VOICE comment is named, not quoted. Its
+                              // caption is optional, so quoting it can show
+                              // an empty box — and what is being reported is
+                              // the recording either way. The reporter sees
+                              // that it is a recording and how long it is;
+                              // the caption follows only when there is one.
+                              if (voiceDuration != null) ...<Widget>[
+                                Text(
+                                  key: const ValueKey<String>(
+                                    'reel-comment-report-target-voice',
+                                  ),
+                                  copy.template(
+                                    'Voice comment · {duration}',
+                                    'Komentarz głosowy · {duration}',
+                                    values: <String, Object>{
+                                      'duration': _clock(voiceDuration),
+                                    },
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: palette.textSecondary,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
-                                widget.commentText,
-                                // Fewer lines as the type grows: this block
-                                // confirms WHICH comment, and the full text
-                                // is still on the row behind the sheet.
-                                maxLines: bigType ? 2 : 4,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: palette.textSecondary,
+                                if (widget.commentText.trim().isNotEmpty)
+                                  Text(
+                                    key: const ValueKey<String>(
+                                      'reel-comment-report-target',
+                                    ),
+                                    widget.commentText,
+                                    maxLines: bigType ? 2 : 3,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: palette.textSecondary,
+                                    ),
+                                  ),
+                              ] else
+                                Text(
+                                  key: const ValueKey<String>(
+                                    'reel-comment-report-target',
+                                  ),
+                                  widget.commentText,
+                                  // Fewer lines as the type grows: this block
+                                  // confirms WHICH comment, and the full text
+                                  // is still on the row behind the sheet.
+                                  maxLines: bigType ? 2 : 4,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: palette.textSecondary,
+                                  ),
                                 ),
-                              ),
                             ],
                           ),
                         ),
@@ -436,4 +488,10 @@ class _ReelCommentReportSheetState extends State<ReelCommentReportSheet> {
     ReportReason.impersonation => Icons.person_off_outlined,
     ReportReason.other => Icons.more_horiz_rounded,
   };
+}
+
+/// `m:ss`, the same clock the voice mini-player and the thread print.
+String _clock(int seconds) {
+  final safe = seconds < 0 ? 0 : seconds;
+  return '${safe ~/ 60}:${(safe % 60).toString().padLeft(2, '0')}';
 }

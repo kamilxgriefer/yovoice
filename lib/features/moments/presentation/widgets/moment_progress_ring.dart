@@ -220,7 +220,13 @@ class MomentListeningProgress extends StatelessWidget {
               key: const ValueKey('moment-detail-progress-percent'),
               maxLines: 1,
               style: AppTypography.labelLarge.copyWith(
-                color: palette.audioAccent,
+                // The accent means "this much has been heard". At 0 the ring
+                // arc, the waveform and the slider thumb are all already
+                // muted; the percentage was the one element still painting
+                // brand cyan over nothing played.
+                color: clamped > 0
+                    ? palette.audioAccent
+                    : palette.textSecondary,
                 fontWeight: FontWeight.w700,
               ),
             ),

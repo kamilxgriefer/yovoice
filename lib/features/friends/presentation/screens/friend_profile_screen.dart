@@ -13,6 +13,7 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/creator/presentation/widgets/creator_pinned_moment_card.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_pinned_moment_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
@@ -40,6 +41,7 @@ class FriendProfileScreen extends StatefulWidget {
     this.followService,
     this.socialGraphService,
     this.profileMediaService,
+    this.creatorPinnedPostService,
     super.key,
   });
 
@@ -55,6 +57,7 @@ class FriendProfileScreen extends StatefulWidget {
   final FollowService? followService;
   final SocialGraphService? socialGraphService;
   final ProfileMediaService? profileMediaService;
+  final CreatorPinnedPostService? creatorPinnedPostService;
 
   @override
   State<FriendProfileScreen> createState() => _FriendProfileScreenState();
@@ -426,11 +429,16 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                               const SizedBox(height: 14),
                               _mutualFriends(),
                               const SizedBox(height: 18),
-                              _profileActions(isFollowing),
+                              _profileActions(
+                                isFollowing,
+                                creatorAudienceVisible:
+                                    profile?.canExposeCreatorAudience == true,
+                              ),
                               if (profile != null &&
                                   profile.accountType != AccountType.personal)
                                 CreatorPinnedMomentCard(
                                   creatorId: widget.friend.id,
+                                  service: widget.creatorPinnedPostService,
                                   outerPadding: const EdgeInsets.only(top: 14),
                                   onOpen: (moment) =>
                                       Navigator.of(context).push<void>(
@@ -576,19 +584,27 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     );
   }
 
-  Widget _profileActions(bool isFollowing) {
+  Widget _profileActions(
+    bool isFollowing, {
+    required bool creatorAudienceVisible,
+  }) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
         final shouldStack = constraints.maxWidth < 360 || scaledBodySize >= 21;
+        // A hidden audience cannot gain new followers. Existing followers
+        // keep the Unfollow action so opting out never traps a relationship.
+        final showFollowAction = creatorAudienceVisible || isFollowing;
         if (shouldStack) {
           return Column(
             children: [
-              SizedBox(
-                width: double.infinity,
-                child: _followButton(isFollowing),
-              ),
-              const SizedBox(height: 10),
+              if (showFollowAction) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: _followButton(isFollowing),
+                ),
+                const SizedBox(height: 10),
+              ],
               SizedBox(width: double.infinity, child: _messageButton()),
             ],
           );
@@ -596,8 +612,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
 
         return Row(
           children: [
-            Expanded(child: _followButton(isFollowing)),
-            const SizedBox(width: 10),
+            if (showFollowAction) ...[
+              Expanded(child: _followButton(isFollowing)),
+              const SizedBox(width: 10),
+            ],
             Expanded(child: _messageButton()),
           ],
         );
@@ -643,6 +661,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       final copy = AppLocalizations.of(context);
       final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
       final shouldStack = constraints.maxWidth < 360 || scaledBodySize >= 21;
+      final showCreatorAudience = profile?.canExposeCreatorAudience == true;
       final stats = [
         _stat(
           profile?.friendCount ?? 0,
@@ -650,18 +669,20 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           null,
           keyName: 'friends',
         ),
-        _stat(
-          profile?.followerCount ?? 0,
-          copy.text('Followers', 'Obserwujący'),
-          () => _openList(FollowListType.followers),
-          keyName: 'followers',
-        ),
-        _stat(
-          profile?.followingCount ?? 0,
-          copy.text('Following', 'Obserwowani'),
-          () => _openList(FollowListType.following),
-          keyName: 'following',
-        ),
+        if (showCreatorAudience) ...[
+          _stat(
+            profile?.followerCount ?? 0,
+            copy.text('Followers', 'Obserwujący'),
+            () => _openList(FollowListType.followers),
+            keyName: 'followers',
+          ),
+          _stat(
+            profile?.followingCount ?? 0,
+            copy.text('Following', 'Obserwowani'),
+            () => _openList(FollowListType.following),
+            keyName: 'following',
+          ),
+        ],
       ];
 
       return Container(
@@ -675,11 +696,11 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         child: shouldStack
             ? Column(
                 children: [
-                  stats[0],
-                  Divider(height: 1, color: palette.border),
-                  stats[1],
-                  Divider(height: 1, color: palette.border),
-                  stats[2],
+                  for (var index = 0; index < stats.length; index++) ...[
+                    stats[index],
+                    if (index < stats.length - 1)
+                      Divider(height: 1, color: palette.border),
+                  ],
                 ],
               )
             : Row(children: [for (final stat in stats) Expanded(child: stat)]),

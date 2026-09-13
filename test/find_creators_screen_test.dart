@@ -36,6 +36,7 @@ void main() {
     required String uid,
     required String name,
     required String accountType,
+    bool creatorAudienceVisible = true,
   }) => {
     'uid': uid,
     'displayName': name,
@@ -46,6 +47,7 @@ void main() {
     'accountType': accountType,
     'premiumIdentity': accountType == 'creator',
     'followerCount': accountType == 'creator' ? 42 : 9,
+    'creatorAudienceVisible': creatorAudienceVisible,
     // A poisoned response must never become part of the directory model.
     'email': '$uid@private.invalid',
     'role': 'superAdmin',
@@ -87,6 +89,7 @@ void main() {
       expect(creator.accountType.label, 'Creator');
       expect(creator.isVerified, isFalse);
       expect(creator.followerCount, 42);
+      expect(creator.creatorAudienceVisible, isTrue);
 
       final verified = CreatorSearchResult.fromMap(
         result(uid: 'o1', name: 'YO Editorial', accountType: 'official'),
@@ -95,6 +98,13 @@ void main() {
       expect(verified.accountType.label, 'Creator');
       expect(verified.isVerified, isTrue);
       expect(verified.supportingText, isNot(contains('Official')));
+
+      final failClosed = CreatorSearchResult.fromMap(
+        {...result(uid: 'c2', name: 'Private Audience', accountType: 'creator')}
+          ..remove('creatorAudienceVisible'),
+      );
+      expect(failClosed.creatorAudienceVisible, isFalse);
+      expect(failClosed.followerCount, 0);
 
       expect(
         () => CreatorSearchResult.fromMap(
@@ -398,5 +408,91 @@ void main() {
     expect(calls, 1);
     pending.complete(const {});
     await tester.pump();
+  });
+
+  testWidgets(
+    'a creator without the public audience gate exposes no count or new Follow',
+    (tester) async {
+      useSize(tester, const Size(390, 844));
+      final directory = CreatorDirectoryService(
+        searchInvoker: (_) async => {
+          'profiles': [
+            result(
+              uid: 'hidden',
+              name: 'Private Audience',
+              accountType: 'creator',
+              creatorAudienceVisible: false,
+            ),
+          ],
+        },
+      );
+
+      await tester.pumpWidget(host(directory: directory));
+      await tester.enterText(
+        find.byKey(const ValueKey('find-creators-search')),
+        'private',
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('creator-followers-hidden')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('creator-follow-hidden')), findsNothing);
+      expect(find.text('42 followers'), findsNothing);
+      expect(find.text('View profile'), findsOneWidget);
+    },
+  );
+
+  testWidgets('a hidden creator still lets an existing follower unfollow', (
+    tester,
+  ) async {
+    useSize(tester, const Size(390, 844));
+    await db
+        .collection('users')
+        .doc('viewer')
+        .collection('following')
+        .doc('hidden')
+        .set(const {'uid': 'hidden'});
+    final payloads = <Map<String, dynamic>>[];
+    final follows = followService(
+      mutationInvoker: (payload) async {
+        payloads.add(Map<String, dynamic>.from(payload));
+        return const {};
+      },
+    );
+    final directory = CreatorDirectoryService(
+      searchInvoker: (_) async => {
+        'profiles': [
+          result(
+            uid: 'hidden',
+            name: 'Private Audience',
+            accountType: 'creator',
+            creatorAudienceVisible: false,
+          ),
+        ],
+      },
+    );
+
+    await tester.pumpWidget(host(directory: directory, follows: follows));
+    await tester.enterText(
+      find.byKey(const ValueKey('find-creators-search')),
+      'private',
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Following'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('creator-follow-hidden')));
+    await tester.pump();
+    expect(payloads, [
+      {'targetUserId': 'hidden', 'following': false},
+    ]);
+    expect(
+      find.byKey(const ValueKey('creator-followers-hidden')),
+      findsNothing,
+    );
   });
 }

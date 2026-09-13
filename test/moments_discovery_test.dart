@@ -803,24 +803,34 @@ void main() {
       expect(find.byKey(const ValueKey('moment-row-one')), findsOneWidget);
       expect(find.byKey(const ValueKey('moment-row-two')), findsOneWidget);
       expect(find.byKey(const ValueKey('moment-row-play-one')), findsOneWidget);
-      // The real count on the row that owns it…
-      expect(
+      // The real count on the row that owns it — both halves of it. Since
+      // the S1 fix the ROW draws the number and the CONTROL speaks the
+      // phrase (the word labels broke mid-word at 200 % text), so asserting
+      // only the visible half would pass on a row that says nothing, and
+      // only the spoken half would pass on a row that shows nothing.
+      final likeOne = tester.widget<Text>(
         find.descendant(
-          of: find.byKey(const ValueKey('moment-row-one')),
-          matching: find.text('Likes: 3'),
+          of: find.byKey(const ValueKey('moment-row-like-one')),
+          matching: find.byType(Text),
         ),
-        findsOneWidget,
       );
+      expect(likeOne.data, '3');
+      expect(likeOne.semanticsLabel, 'Likes: 3');
       // …and no fabricated numeric engagement for zero counters. The
       // elapsed transport value is separate, real playback information.
       expect(find.text('Likes: 0'), findsNothing);
       expect(find.text('Comments: 0'), findsNothing);
-      expect(
+      final likeTwo = tester.widget<Text>(
         find.descendant(
-          of: find.byKey(const ValueKey('moment-row-two')),
-          matching: find.text('Like'),
+          of: find.byKey(const ValueKey('moment-row-like-two')),
+          matching: find.byType(Text),
         ),
-        findsOneWidget,
+      );
+      expect(likeTwo.data, '0');
+      expect(
+        likeTwo.semanticsLabel,
+        'Like',
+        reason: 'a zero counter is the bare action, never "Likes: 0"',
       );
       // The creation entry the recorder tile used to own lives in the
       // header now, and reload is a visible control.

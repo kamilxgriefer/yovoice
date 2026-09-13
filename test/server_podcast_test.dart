@@ -8,6 +8,7 @@ import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
 import 'package:yovoice/features/servers/data/models/server_channel.dart';
 import 'package:yovoice/features/servers/data/models/server_member_role.dart';
+import 'package:yovoice/features/servers/data/models/server_podcast_episode.dart';
 import 'package:yovoice/features/servers/data/models/server_template.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_media_connector.dart';
@@ -18,17 +19,13 @@ import 'server_test_support.dart';
 
 /// Board 05 — `Dla podcastu`.
 ///
-/// Two things are asserted here over and over, because they are what this
-/// board is most tempting to fake. First, **no count**: the mockup prints
+/// Presence remains deliberately conservative: the mockup prints
 /// "84 słuchaczy" three times and nothing writes a listener count (contract
-/// G6), so the strongest cases below prove no such number is ever drawn —
-/// before or after joining. Second, **no recording claim**: recording has no
-/// contract at all (contract §3), so "Audycja jest nagrywana" can never
-/// appear, and what the studio says instead is the opposite.
+/// G6), so the strongest cases below prove no such number is ever drawn.
 ///
 /// What *is* real: the liveness projection, the reviewed token path,
-/// `setServerSessionHandV1`, the server's own questions channel, and the
-/// session role the server signs into each participant's access token.
+/// `setServerSessionHandV1`, persisted Questions/Q&A, recording lifecycle and
+/// episode archive, and the signed session role.
 Server podcastServer({
   bool held = false,
   String description = 'Rozmowy o tym, co dzieje się między słowami.',
@@ -106,10 +103,10 @@ Widget podcastWorkspace(
   connector: connector ?? FakeServerMediaConnector(),
 );
 
-/// Any phrasing that could only come from a presence, vote or recording
-/// writer — none of which exists.
+/// Any phrasing that could only come from a presence count, which does not
+/// exist.
 final fabricated = RegExp(
-  r'\d+\s*(widz|słuchacz|osob[ay]? rozmawia|głos(ów|y)?\b)|(?<!nie )jest\s+nagrywan',
+  r'\d+\s*(widz|słuchacz|osob[ay]? rozmawia)',
   caseSensitive: false,
 );
 
@@ -175,13 +172,12 @@ const broadcast = [
 
 /// The repository of somebody who joined a live generation as a listener:
 /// `deriveSessionGrant` gives that person no track source at all.
-TestServerRepository listenerRepository() =>
-    TestServerRepository()
-      ..servers = [podcastServer()]
-      ..channels = podcastChannels(studio: live, activeSessionId: 'gen-7')
-      ..myRole = ServerMemberRole.member
-      ..sessionRole = 'listener'
-      ..permittedTrackSources = const [];
+TestServerRepository listenerRepository() => TestServerRepository()
+  ..servers = [podcastServer()]
+  ..channels = podcastChannels(studio: live, activeSessionId: 'gen-7')
+  ..myRole = ServerMemberRole.member
+  ..sessionRole = 'listener'
+  ..permittedTrackSources = const [];
 
 Future<FakeServerMediaLink> joinAsListener(
   WidgetTester tester, {
@@ -257,8 +253,9 @@ void main() {
     expect(find.text('Oglądaj'), findsNothing);
   });
 
-  testWidgets('a quiet studio says so and offers a listener nothing to start',
-      (tester) async {
+  testWidgets('a quiet studio says so and offers a listener nothing to start', (
+    tester,
+  ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await pumpServers(
       tester,
@@ -354,18 +351,18 @@ void main() {
     expect(find.textContaining(fabricated), findsNothing);
   });
 
-  testWidgets('recording is never claimed, and the studio says the opposite', (
+  testWidgets('an idle recording state is explicit and never lights the mark', (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await joinAsListener(tester);
     expect(recording, findsOneWidget);
     expect(
-      find.descendant(of: recording, matching: find.text('Nagrywanie audycji · Wkrótce')),
+      find.descendant(of: recording, matching: find.text('Nagrywanie audycji')),
       findsOneWidget,
     );
     expect(
-      find.text('Nagrywanie jeszcze nie działa — nic z transmisji się nie zapisuje.'),
+      find.text('Ta transmisja nie jest teraz nagrywana.'),
       findsOneWidget,
     );
     // The board's lit red dot: there is no recording job to light it, so the
@@ -380,20 +377,101 @@ void main() {
     expect(find.textContaining(fabricated), findsNothing);
   });
 
-  // The gate's F-3. At 1100 x 200 % the marker rendered as `Nagrywanie
-  // audycji ·` — a dangling middle dot, the `Wkrótce` gone and not even an
-  // ellipsis to say something had been cut — in both themes, while at
-  // 1440 x 200 % the same marker rendered whole. The mechanism is `Chip`: it
-  // takes its label's intrinsic width, so the label was given a two-line
-  // layout inside a box sized for one and the second line was painted
-  // outside it and clipped. An unavailable feature that loses the word
-  // making it unavailable reads as a live one, which is the honesty rule
-  // this whole board is built around — so the marker may not be a `Chip` and
-  // its label may not be truncatable.
-  testWidgets('the recording marker keeps its "Wkrótce" whole at 1100 and '
-      '200 percent, in both themes', (tester) async {
+  testWidgets(
+    'a joined moderator starts a titled recording through the callable',
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = TestServerRepository()
+        ..servers = [podcastServer()]
+        ..channels = podcastChannels(studio: live, activeSessionId: 'gen-7')
+        ..myRole = ServerMemberRole.moderator
+        ..sessionRole = 'host';
+      await pumpServers(
+        tester,
+        podcastWorkspace(repository),
+        size: const Size(1100, 900),
+      );
+      await tester.tap(join);
+      await tester.pumpAndSettle();
+      final start = find.byKey(
+        const ValueKey('server-podcast-start-recording'),
+      );
+      expect(start, findsOneWidget);
+      await tester.tap(start);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('server-podcast-recording-title')),
+        '  Rozmowa o głosie  ',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('server-podcast-confirm-recording')),
+      );
+      await tester.pumpAndSettle();
+      final call = repository.calls.last;
+      expect(call.$1, 'startServerPodcastRecordingV1');
+      expect(call.$2, {
+        'serverId': 's',
+        'channelId': 'episodes',
+        'studioChannelId': 'studio',
+        'sessionId': 'gen-7',
+        'title': 'Rozmowa o głosie',
+        'requestId': isA<String>(),
+      });
+    },
+  );
+
+  testWidgets(
+    'recording is visible to listeners but only moderators can stop it',
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final state = ServerPodcastRecordingState(
+        serverId: 's',
+        studioChannelId: 'studio',
+        channelId: 'episodes',
+        episodeId: 'episode-1',
+        sessionId: 'gen-7',
+        title: 'Rozmowa o głosie',
+        status: ServerPodcastEpisodeStatus.recording,
+        providerStatus: ServerPodcastProviderStatus.active,
+        episodeRevision: 2,
+        updatedAt: DateTime.utc(2026, 9, 13, 12),
+      );
+      final listener = listenerRepository()
+        ..podcastRecording = state
+        ..myRole = ServerMemberRole.member;
+      await pumpServers(
+        tester,
+        podcastWorkspace(listener),
+        size: const Size(390, 844),
+      );
+      expect(find.textContaining('Nagrywanie trwa'), findsOneWidget);
+      expect(find.byIcon(Icons.fiber_manual_record), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('server-podcast-stop-recording')),
+        findsNothing,
+      );
+
+      final moderator = listenerRepository()
+        ..podcastRecording = state
+        ..myRole = ServerMemberRole.moderator;
+      await pumpServers(
+        tester,
+        podcastWorkspace(moderator),
+        size: const Size(390, 844),
+      );
+      final stop = find.byKey(const ValueKey('server-podcast-stop-recording'));
+      expect(stop, findsOneWidget);
+      await tester.tap(stop);
+      await tester.pumpAndSettle();
+      expect(moderator.calls.last.$1, 'stopServerPodcastRecordingV1');
+      expect(moderator.calls.last.$2['expectedRevision'], 2);
+    },
+  );
+
+  testWidgets('the recording marker remains whole at 1100 and 200 percent, '
+      'in both themes', (tester) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    const labelText = 'Nagrywanie audycji · Wkrótce';
+    const labelText = 'Nagrywanie audycji';
     for (final light in [false, true]) {
       final theme = light ? 'pearl' : 'dark';
       await pumpServers(
@@ -411,9 +489,8 @@ void main() {
       expect(
         find.descendant(of: recording, matching: find.byType(Chip)),
         findsNothing,
-        reason: '$theme — a Chip sizes to its label\'s intrinsic width and '
-            'clips what will not fit its own box; this marker has to be a '
-            'pill that grows with its label instead',
+        reason:
+            '$theme — the status uses a wrapping pill instead of a clipped Chip',
       );
       final labelFinder = find.descendant(
         of: recording,
@@ -424,7 +501,8 @@ void main() {
       expect(
         label.maxLines,
         isNull,
-        reason: '$theme — a line limit on this marker is a line the reader '
+        reason:
+            '$theme — a line limit on this marker is a line the reader '
             'never sees',
       );
       expect(
@@ -566,9 +644,10 @@ void main() {
     await tester.tap(ask);
     await tester.pumpAndSettle();
     expect(
-      find.byKey(const ValueKey('server-thread-questions')),
+      find.byKey(const ValueKey('server-podcast-questions-board')),
       findsOneWidget,
     );
+    expect(find.text('Pytania słuchaczy'), findsWidgets);
     expect(studio, findsNothing);
   });
 
@@ -657,10 +736,7 @@ void main() {
       size: const Size(390, 844),
     );
     expect(studio, findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('server-open-channels')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('server-open-channels')), findsOneWidget);
     expect(find.byKey(const ValueKey('server-tab-scene')), findsOneWidget);
     expect(find.byKey(const ValueKey('server-tab-chat')), findsOneWidget);
     // `Pytania` is a tab here, so the phone draws one control to that place,
@@ -674,46 +750,69 @@ void main() {
     expect(action.top, greaterThan(0));
   });
 
-  testWidgets('Następny odcinek and Ostatnie odcinki are honest modules with '
-      'a real channel behind each', (tester) async {
+  testWidgets('the real program and persisted episode archive both open', (
+    tester,
+  ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = TestServerRepository()
+      ..servers = [podcastServer()]
+      ..channels = podcastChannels(studio: live);
     await pumpServers(
       tester,
-      podcastWorkspace(
-        TestServerRepository()
-          ..servers = [podcastServer()]
-          ..channels = podcastChannels(studio: live),
-      ),
+      podcastWorkspace(repository),
       size: const Size(1440, 900),
     );
     final next = find.byKey(const ValueKey('server-podcast-next-episode'));
-    final recent = find.byKey(
-      const ValueKey('server-podcast-recent-episodes'),
-    );
+    final recent = find.byKey(const ValueKey('server-podcast-recent-episodes'));
     expect(next, findsOneWidget);
     expect(recent, findsOneWidget);
-    // Episodes have a channel kind and no persistence (contract G9): both
-    // actions are visibly disabled beside `Wkrótce`, and no episode title,
-    // date or length is drawn anywhere.
-    for (final label in ['Przypomnij', 'Odtwórz']) {
-      expect(
-        tester.widget<FilledButton>(
-          find.ancestor(
-            of: find.text(label),
-            matching: find.byType(FilledButton),
-          ),
-        ).onPressed,
-        isNull,
-      );
-    }
-    expect(find.text('Wkrótce'), findsWidgets);
-    await tester.ensureVisible(find.descendant(of: recent, matching: find.text('Odcinki')));
-    await tester.tap(find.descendant(of: recent, matching: find.text('Odcinki')));
-    await tester.pumpAndSettle();
     expect(
-      find.byKey(const ValueKey('server-module-episodes')),
-      findsOneWidget,
+      tester
+          .widget<FilledButton>(
+            find.descendant(of: next, matching: find.byType(FilledButton)),
+          )
+          .onPressed,
+      isNotNull,
     );
+    expect(
+      find.descendant(of: next, matching: find.text('Wkrótce')),
+      findsNothing,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.descendant(of: recent, matching: find.byType(FilledButton)),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    expect(
+      find.descendant(of: recent, matching: find.text('Wkrótce')),
+      findsNothing,
+    );
+
+    await tester.tap(
+      find.descendant(of: next, matching: find.text('Otwórz program')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('server-events-board')), findsOneWidget);
+
+    await pumpServers(
+      tester,
+      podcastWorkspace(repository),
+      size: const Size(1440, 900),
+    );
+    final recentAgain = find.byKey(
+      const ValueKey('server-podcast-recent-episodes'),
+    );
+    await tester.ensureVisible(
+      find.descendant(of: recentAgain, matching: find.text('Odcinki')),
+    );
+    await tester.tap(
+      find.descendant(of: recentAgain, matching: find.text('Odcinki')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Tutaj pojawią się Twoje odcinki'), findsOneWidget);
   });
 
   testWidgets('a podcast server without its module channels shows no card for '
@@ -839,11 +938,16 @@ void main() {
     expect(liveness.bottom, lessThanOrEqualTo(760));
   });
 
-  testWidgets('the studio survives six widths and 200 percent in both themes',
-      (tester) async {
+  testWidgets('the studio survives six widths and 200 percent in both themes', (
+    tester,
+  ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     for (final width in widths) {
-      for (final (scale, light) in const [(1.0, false), (2.0, false), (1.0, true)]) {
+      for (final (scale, light) in const [
+        (1.0, false),
+        (2.0, false),
+        (1.0, true),
+      ]) {
         await pumpServers(
           tester,
           podcastWorkspace(

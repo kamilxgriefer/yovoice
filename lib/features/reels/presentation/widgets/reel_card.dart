@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
@@ -7,6 +9,11 @@ import 'package:video_player/video_player.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moments_follow_panel.dart';
+import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
@@ -14,6 +21,7 @@ import 'package:yovoice/features/reels/presentation/sharing/reel_share.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_progress_row.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_overlay_measure.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_private_overlay_guard.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
@@ -58,12 +66,14 @@ class ReelCard extends StatefulWidget {
     this.autoplay = true,
     this.isActive = true,
     this.isHostVisible = true,
+    this.suspendPlayback = false,
     this.onDelete,
     this.onReport,
     this.onLike,
     this.onComments,
     this.onShare,
     this.onOpenAuthor,
+    this.followService,
     this.likePending = false,
     this.commentsOpen = false,
     this.showIdentity = true,
@@ -97,6 +107,18 @@ class ReelCard extends StatefulWidget {
   /// Host navigation obscures the same page; it is not a swipe away from it.
   /// Suspend without seeking or forgetting the viewer's deliberate pause.
   final bool isHostVisible;
+
+  /// Held true while something ELSE inside the host must be the only thing
+  /// sounding — today, a voice comment playing in the docked thread beside
+  /// this Reel.
+  ///
+  /// It is a suspension, not a pause: releasing it restarts only what
+  /// autoplay would have started on its own, so a video Reel resumes when
+  /// the comment finishes and a photo Reel (whose backing track is content,
+  /// never ambience) waits for a tap, exactly as each does after any other
+  /// suspension. Separate from [isHostVisible] because that answers a
+  /// different question — this Reel IS visible; it simply must not be heard.
+  final bool suspendPlayback;
   final Future<void> Function()? onDelete;
   final Future<void> Function()? onReport;
 
@@ -114,6 +136,11 @@ class ReelCard extends StatefulWidget {
   /// shared profile preview; tests inject a seam so they never touch
   /// Firestore.
   final void Function(Reel reel)? onOpenAuthor;
+
+  /// The follow graph, for the footer's "Obserwuj" (D2). Null where the host
+  /// has no Firebase app — widget coverage — and the control is then absent
+  /// rather than a button that cannot answer.
+  final FollowService? followService;
   final bool likePending;
 
   /// True while the wide layout already shows this Reel's thread beside it.
@@ -143,6 +170,11 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
   int _mediaRevision = 0;
   int _automaticRefreshes = 0;
   double _footerHeight = 0;
+
+  /// Board 08's caption is two lines that open to eight on the card itself —
+  /// the desktop stage has the room, so a reader never has to leave the Reel
+  /// to finish a sentence. The immersive stage keeps its detail sheet.
+  bool _captionExpanded = false;
   final Set<ValueNotifier<bool>> _detailLifetimes = {};
   DateTime get _now => (widget.now ?? DateTime.now)();
 
@@ -216,7 +248,14 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                       ),
                       if (reel.composition.caption.isNotEmpty) ...[
                         const SizedBox(height: 16),
-                        SelectableText(reel.composition.caption),
+                        Semantics(
+                          key: const ValueKey('reel-details-caption-semantics'),
+                          container: true,
+                          label: reel.composition.caption,
+                          child: ExcludeSemantics(
+                            child: SelectableText(reel.composition.caption),
+                          ),
+                        ),
                       ],
                       for (final link in reel.composition.linkOverlays)
                         ListTile(
@@ -427,8 +466,8 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
     } else if (oldWidget.isActive != widget.isActive) {
       unawaited(_playback.setActive(widget.isActive).catchError((Object _) {}));
     }
-    if (oldWidget.commentsOpen != widget.commentsOpen ||
-        oldWidget.isHostVisible != widget.isHostVisible) {
+    if (oldWidget.isHostVisible != widget.isHostVisible ||
+        oldWidget.suspendPlayback != widget.suspendPlayback) {
       unawaited(_applyPlaybackSuspension());
     }
     if (sourceChanged || oldWidget.isActive != widget.isActive) {
@@ -458,11 +497,17 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
   }
 
   /// Everything that must silence a Reel without counting as a hand-pause.
+  ///
+  /// A DOCKED thread is deliberately absent from this list (D5, the ADR-170
+  /// amendment): the wide panel sits beside the Reel and covers none of it,
+  /// so reading the conversation while the Reel plays is the whole point of
+  /// that layout. The phone SHEET does cover the Reel, and it still suspends
+  /// — through [_routeIsCurrent], because a sheet is a pushed route.
   bool get _playbackSuspended =>
       !_appResumed ||
       !_routeIsCurrent ||
       !widget.isHostVisible ||
-      widget.commentsOpen;
+      widget.suspendPlayback;
 
   Future<void> _applyPlaybackSuspension() {
     _syncWatchTimer();
@@ -503,6 +548,25 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
     }
   }
 
+  /// The backing-track line: attribution and, when the Reel has one, its own
+  /// play/pause. It predates board 08 and is kept on BOTH stages — removing a
+  /// Reel's only way to start its authored audio would be a regression, not a
+  /// redesign.
+  Widget? _buildSoundChip() {
+    final hasChip =
+        widget.reel.backingAudio != null ||
+        widget.reel.composition.audioAttribution.isNotEmpty;
+    if (!hasChip) return null;
+    return _SoundChip(
+      reel: widget.reel,
+      showToggle: widget.reel.backingAudio != null,
+      audioPlaying: _playback.isPlaying,
+      audioLoading: _playback.isLoading,
+      audioEnabled: _playback.canToggle,
+      onAudio: _togglePlayback,
+    );
+  }
+
   void _openAuthor() {
     final seam = widget.onOpenAuthor;
     if (seam != null) {
@@ -526,7 +590,18 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         service: widget.service,
       );
 
-  Widget _buildMedia(BuildContext context) {
+  /// The decoder must survive a change of SHAPE, not only of size: crossing
+  /// 600 swaps the immersive stack for the stacked card, and a short window
+  /// swaps it back. A global key reparents the one media subtree instead of
+  /// letting Flutter rebuild it — and build a second decoder with it
+  /// (`reels_immersive_redesign_test.dart` "one decoder survives responsive
+  /// reflow").
+  final GlobalKey _mediaKey = GlobalKey();
+
+  Widget _buildMedia(BuildContext context) =>
+      KeyedSubtree(key: _mediaKey, child: _buildMediaSource(context));
+
+  Widget _buildMediaSource(BuildContext context) {
     final copy = AppLocalizations.of(context);
     return FutureBuilder<Uri>(
       key: ValueKey(_mediaRevision),
@@ -600,9 +675,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
-    final radius = widget.borderRadius;
     return Semantics(
       container: true,
       label: copy.template(
@@ -610,115 +683,274 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
         'Reel użytkownika {author}',
         values: <String, Object>{'author': widget.reel.authorName},
       ),
-      child: LayoutBuilder(
-        builder: (context, viewport) => Center(
-          child: AspectRatio(
-            aspectRatio:
-                widget.fillViewport &&
-                    viewport.hasBoundedHeight &&
-                    viewport.maxHeight > 0
-                ? viewport.maxWidth / viewport.maxHeight
-                : 9 / 16,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final mediaHeight = constraints.maxHeight;
-                return DecoratedBox(
-                  decoration: BoxDecoration(
-                    // Only visible while the media loads or fails.
-                    color: palette.surfaceSunken,
-                    borderRadius: BorderRadius.circular(radius),
-                    border: widget.fillViewport
-                        ? null
-                        : Border.all(color: palette.border),
-                    boxShadow: widget.fillViewport
-                        ? null
-                        : reelCardShadow(context),
-                  ),
-                  child: ClipRRect(
-                    key: const ValueKey('reel-viewport'),
-                    borderRadius: BorderRadius.circular(
-                      (radius - 1).clamp(0, double.infinity),
-                    ),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: <Widget>[
-                        _buildMedia(context),
-                        // Autoplay is silent, so the way back to sound has to
-                        // be visible on the frame itself and never move: top
-                        // trailing corner, clear of the footer at every height.
-                        if (widget.reel.media.kind == ReelMediaKind.video &&
-                            !widget.fillViewport)
-                          PositionedDirectional(
-                            top: 8,
-                            end: 8,
-                            child: _SoundToggle(
-                              soundOn: _soundOn.value,
-                              onToggle: _toggleSound,
-                            ),
-                          ),
-                        // The empty area of this layer takes no hits — its scrim
-                        // is behind an IgnorePointer — so the playback surface
-                        // underneath still receives them.
-                        PositionedDirectional(
-                          start: 0,
-                          end: 0,
-                          bottom: 0,
-                          child: ReelOverlayMeasure(
-                            key: const ValueKey('reel-footer'),
-                            onSize: (size) {
-                              if (mounted &&
-                                  (_footerHeight - size.height).abs() > .5) {
-                                setState(() => _footerHeight = size.height);
-                              }
-                            },
-                            child: _OverlayFooter(
-                              reel: widget.reel,
-                              // Chrome consumes readable space even though it
-                              // overlays the video. Fold controls before they
-                              // cover authored links on a short/large-text view.
-                              mediaHeight:
-                                  mediaHeight -
-                                  (widget.fillViewport
-                                      ? widget.mediaTopInset
-                                      : 0),
-                              showIdentity: widget.showIdentity,
-                              audioPlaying: _playback.isPlaying,
-                              audioLoading: _playback.isLoading,
-                              audioEnabled: _playback.canToggle,
-                              showAudioToggle: widget.reel.backingAudio != null,
-                              onAudio: _togglePlayback,
-                              onOpenAuthor: _openAuthor,
-                              onCaption: () => _openDetails(),
-                              onMore: () => _openDetails(includeActions: true),
-                              onDelete: widget.onDelete,
-                              onReport: widget.onReport,
-                              onLike: widget.onLike,
-                              onComments: widget.onComments,
-                              onShare: _share,
-                              likePending: widget.likePending,
-                              commentsOpen: widget.commentsOpen,
-                              immersive: widget.fillViewport,
-                              soundToggle:
-                                  widget.fillViewport &&
-                                      widget.reel.media.kind ==
-                                          ReelMediaKind.video
-                                  ? _SoundToggle(
-                                      soundOn: _soundOn.value,
-                                      onToggle: _toggleSound,
-                                    )
-                                  : null,
-                            ),
-                          ),
+      child: widget.fillViewport
+          ? _buildImmersiveStage(context)
+          : _buildCardStage(context),
+    );
+  }
+
+  /// Below 600 inside the destination: the media IS the screen, and every
+  /// control is laid over it in the order board 08 stacks them.
+  ///
+  /// [asCard] is the same composition inside a bordered 9:16 card: the shape
+  /// a pointer width falls back to when the window is too short to stack a
+  /// frame and a footer bar at a legible size. Nothing is lost there — the
+  /// author, the caption and the four actions are the same controls, laid
+  /// over the media instead of under it.
+  Widget _buildImmersiveStage(BuildContext context, {bool asCard = false}) {
+    final palette = context.appPalette;
+    final radius = widget.borderRadius;
+    return LayoutBuilder(
+      builder: (context, viewport) => Center(
+        child: AspectRatio(
+          aspectRatio: asCard
+              ? 9 / 16
+              : viewport.hasBoundedHeight && viewport.maxHeight > 0
+              ? viewport.maxWidth / viewport.maxHeight
+              : 9 / 16,
+          child: LayoutBuilder(
+            builder: (context, constraints) => DecoratedBox(
+              decoration: BoxDecoration(
+                // Only visible while the media loads or fails.
+                color: palette.surfaceSunken,
+                borderRadius: BorderRadius.circular(radius),
+                border: asCard ? Border.all(color: palette.border) : null,
+                boxShadow: asCard ? reelCardShadow(context) : null,
+              ),
+              child: ClipRRect(
+                key: const ValueKey('reel-viewport'),
+                borderRadius: BorderRadius.circular(
+                  (radius - 1).clamp(0, double.infinity),
+                ),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: <Widget>[
+                    _buildMedia(context),
+                    // The empty area of this layer takes no hits — its scrim
+                    // is behind an IgnorePointer — so the playback surface
+                    // underneath still receives them.
+                    PositionedDirectional(
+                      start: 0,
+                      end: 0,
+                      bottom: 0,
+                      child: ReelOverlayMeasure(
+                        key: const ValueKey('reel-footer'),
+                        onSize: (size) {
+                          if (mounted &&
+                              (_footerHeight - size.height).abs() > .5) {
+                            setState(() => _footerHeight = size.height);
+                          }
+                        },
+                        child: _OverlayFooter(
+                          reel: widget.reel,
+                          // Chrome consumes readable space even though it
+                          // overlays the video. Fold controls before they
+                          // cover authored links on a short/large-text view.
+                          mediaHeight:
+                              constraints.maxHeight -
+                              (asCard ? 0 : widget.mediaTopInset),
+                          showIdentity: widget.showIdentity,
+                          audioPlaying: _playback.isPlaying,
+                          audioLoading: _playback.isLoading,
+                          audioEnabled: _playback.canToggle,
+                          showAudioToggle: widget.reel.backingAudio != null,
+                          position: _playback.position,
+                          timeline: _playback.timelineDuration,
+                          followService: widget.followService,
+                          viewerUid: widget.service.currentUserId,
+                          onAudio: _togglePlayback,
+                          onOpenAuthor: _openAuthor,
+                          onCaption: () => _openDetails(),
+                          onMore: () => _openDetails(includeActions: true),
+                          onDelete: widget.onDelete,
+                          onReport: widget.onReport,
+                          onLike: widget.onLike,
+                          onComments: widget.onComments,
+                          onShare: _share,
+                          likePending: widget.likePending,
+                          commentsOpen: widget.commentsOpen,
+                          soundToggle:
+                              widget.reel.media.kind == ReelMediaKind.video
+                              ? (showLabel) => _SoundToggle(
+                                  soundOn: _soundOn.value,
+                                  onToggle: _toggleSound,
+                                  showLabel: showLabel,
+                                )
+                              : null,
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-                );
-              },
+                  ],
+                ),
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// From 600 up: board 08's card — the authored frame on top, and under it
+  /// a real footer bar with the author, the follow control, the caption and
+  /// the four actions, on the card's own surface instead of over the media.
+  ///
+  /// The frame stays height-bound: it takes what the stage has left after the
+  /// footer, so a short window shrinks the Reel instead of pushing its
+  /// actions off the bottom.
+  /// Narrower than this and the stacked shape stops being a Reel: the frame
+  /// and its footer both give way to the overlay composition.
+  static const double _minimumStackedFrameWidth =
+      ReelStageFooterBar.minimumFrameWidth;
+
+  /// One derivation, owned by the footer bar itself, so the stage that has
+  /// to anchor overlays to this frame reads the same number the card does.
+  double _stageFooterHeight(BuildContext context, {required bool sideBySide}) =>
+      ReelStageFooterBar.heightFor(
+        context,
+        hasCaption: widget.reel.composition.caption.isNotEmpty,
+        sideBySide: sideBySide,
+      );
+
+  Widget _buildCardStage(BuildContext context) {
+    final palette = context.appPalette;
+    final radius = widget.borderRadius;
+    return LayoutBuilder(
+      builder: (context, viewport) {
+        double frameWidthFor({required bool sideBySide}) {
+          if (!viewport.hasBoundedHeight) return viewport.maxWidth;
+          final available = math.max(
+            0.0,
+            viewport.maxHeight -
+                _stageFooterHeight(context, sideBySide: sideBySide),
+          );
+          return math.min(viewport.maxWidth, available * 9 / 16);
+        }
+
+        // Two closed-form steps rather than a feedback loop: assume the
+        // roomy footer, and fall back to the folded one only if the frame
+        // that assumption produces is too narrow to hold it.
+        final wideFooter = frameWidthFor(sideBySide: true);
+        final frameWidth =
+            wideFooter >= ReelStageFooterBar.sideBySideWidthFor(context)
+            ? wideFooter
+            : frameWidthFor(sideBySide: false);
+        // A window short enough that stacking would leave a sliver of a Reel
+        // — a desktop browser at 420 px of height, or an accessibility text
+        // size that doubles every row of the footer — gets the overlay
+        // composition instead. A 79 px wide Reel is not a smaller design, it
+        // is a broken one.
+        if (frameWidth < _minimumStackedFrameWidth) {
+          return _buildImmersiveStage(context, asCard: true);
+        }
+        return Center(
+          child: SizedBox(
+            width: frameWidth > 0 ? frameWidth : viewport.maxWidth,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: palette.surface,
+                borderRadius: BorderRadius.circular(radius),
+                border: Border.all(color: palette.border),
+                boxShadow: reelCardShadow(context),
+              ),
+              child: ClipRRect(
+                key: const ValueKey('reel-viewport'),
+                borderRadius: BorderRadius.circular(
+                  (radius - 1).clamp(0, double.infinity),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    // Flexible as well as measured: on the very first frame
+                    // the footer's real height is not known yet, and the
+                    // frame must give way rather than overflow the stage.
+                    Flexible(
+                      // `Align` is here only to LOOSEN the stretch Column's
+                      // tight width for this one child. With a tight width
+                      // the 9:16 band keeps the card's width and gives up
+                      // height, and the media inside it letterboxes against
+                      // `surfaceSunken` — the ledge S13 named. Loosened, the
+                      // band gives up WIDTH instead: it stays exactly 9:16,
+                      // the sunken well is exactly the media, and anything
+                      // the footer overruns its budget by shows as the
+                      // card's own surface beside the frame. When the budget
+                      // holds — every width and text size the boards use —
+                      // the band is the card's full width and this changes
+                      // nothing. The reader-expanded caption is the case no
+                      // closed-form budget can predict.
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        heightFactor: 1,
+                        child: AspectRatio(
+                          key: const ValueKey<String>('reel-media-band'),
+                          aspectRatio: 9 / 16,
+                          child: ColoredBox(
+                            // Only visible while the media loads or fails.
+                            color: palette.surfaceSunken,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: <Widget>[
+                                _buildMedia(context),
+                                PositionedDirectional(
+                                  start: 0,
+                                  end: 0,
+                                  bottom: 0,
+                                  child: ReelOverlayMeasure(
+                                    key: const ValueKey('reel-footer'),
+                                    onSize: (size) {
+                                      if (mounted &&
+                                          (_footerHeight - size.height).abs() >
+                                              .5) {
+                                        setState(
+                                          () => _footerHeight = size.height,
+                                        );
+                                      }
+                                    },
+                                    child: _StageFrameControls(
+                                      position: _playback.position,
+                                      total: _playback.timelineDuration,
+                                      soundChip: _buildSoundChip(),
+                                      soundToggle:
+                                          widget.reel.media.kind ==
+                                              ReelMediaKind.video
+                                          ? (showLabel) => _SoundToggle(
+                                              soundOn: _soundOn.value,
+                                              onToggle: _toggleSound,
+                                              showLabel: showLabel,
+                                            )
+                                          : null,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    ReelStageFooterBar(
+                      key: const ValueKey('reel-stage-footer'),
+                      reel: widget.reel,
+                      followService: widget.followService,
+                      viewerUid: widget.service.currentUserId,
+                      captionExpanded: _captionExpanded,
+                      onToggleCaption: () =>
+                          setState(() => _captionExpanded = !_captionExpanded),
+                      onOpenAuthor: _openAuthor,
+                      onLike: widget.onLike,
+                      onComments: widget.onComments,
+                      onShare: _share,
+                      onMore: () => _openDetails(includeActions: true),
+                      likePending: widget.likePending,
+                      commentsOpen: widget.commentsOpen,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -765,24 +997,442 @@ class _ReelPhoto extends StatelessWidget {
 ///
 /// It exists because autoplay is silent: without a control on the frame the
 /// only way back to sound would be a second tap that also stops the video.
-/// It shows the state the viewer is in, not the action, which is why the
-/// glyph is a crossed-out speaker while muted.
+///
+/// Sound is not playback. This pill says which of the two states the AUDIO is
+/// in — glyph and words together, never colour alone — while pausing remains
+/// the tap on the frame itself. The spoken name stays the ACTION, because
+/// that is what activating it does, and the semantic `toggled` carries the
+/// state a second time for a reader who never sees the words.
 class _SoundToggle extends StatelessWidget {
-  const _SoundToggle({required this.soundOn, required this.onToggle});
+  const _SoundToggle({
+    required this.soundOn,
+    required this.onToggle,
+    this.showLabel = true,
+  });
 
   final bool soundOn;
   final VoidCallback onToggle;
 
+  /// False only on a frame with no room for the words. The control itself
+  /// never disappears — sound would then have no way back on — so it falls
+  /// back to the 48 px plate it was before board 08 gave it a label.
+  final bool showLabel;
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    return ReelOverlayPlateButton(
-      key: const ValueKey<String>('reel-sound-toggle'),
-      icon: soundOn ? Icons.volume_up_rounded : Icons.volume_off_rounded,
-      semanticLabel: soundOn
-          ? copy.text('Turn sound off', 'Wyłącz dźwięk')
-          : copy.text('Turn sound on', 'Włącz dźwięk'),
+    final action = soundOn
+        ? copy.text('Turn sound off', 'Wyłącz dźwięk')
+        : copy.text('Turn sound on', 'Włącz dźwięk');
+    final state = soundOn
+        ? copy.contextualText('reels.soundOn', 'Sound on', 'Dźwięk włączony')
+        : copy.contextualText(
+            'reels.soundOff',
+            'Sound off',
+            'Dźwięk wyłączony',
+          );
+    final icon = soundOn ? Icons.volume_up_rounded : Icons.volume_off_rounded;
+    if (!showLabel) {
+      return Semantics(
+        container: true,
+        button: true,
+        toggled: soundOn,
+        label: action,
+        onTap: onToggle,
+        excludeSemantics: true,
+        child: ReelOverlayPlateButton(
+          key: const ValueKey<String>('reel-sound-toggle'),
+          icon: icon,
+          semanticLabel: action,
+          onTap: onToggle,
+        ),
+      );
+    }
+    return Semantics(
+      container: true,
+      button: true,
+      toggled: soundOn,
+      label: action,
       onTap: onToggle,
+      excludeSemantics: true,
+      child: AccessibleTapRegion(
+        key: const ValueKey<String>('reel-sound-toggle'),
+        onTap: onToggle,
+        semanticLabel: action,
+        tooltip: action,
+        borderRadius: 999,
+        minimumSize: const Size(48, 48),
+        focusContrastColor: Colors.black,
+        child: Container(
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: const BoxDecoration(
+            color: reelOverlayPlateColor,
+            borderRadius: BorderRadius.all(Radius.circular(999)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(icon, size: 20, color: Colors.white),
+              const SizedBox(width: AppRhythm.tight),
+              Flexible(
+                child: Text(
+                  state,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.labelLarge.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    shadows: reelOverlayTextShadows,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// What board 08 draws inside the frame's own bottom inset: the sound state
+/// and the progress row, over the media and clear of the subject.
+class _StageFrameControls extends StatelessWidget {
+  const _StageFrameControls({
+    required this.position,
+    required this.total,
+    this.soundToggle,
+    this.soundChip,
+  });
+
+  final ValueListenable<Duration> position;
+  final Duration total;
+
+  /// Built with the frame's own answer to "is there room for the words".
+  final Widget Function(bool showLabel)? soundToggle;
+
+  /// The backing-track attribution and transport, where the Reel has one.
+  final Widget? soundChip;
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = MediaQuery.textScalerOf(context).scale(1);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // A frame narrower than its own labels keeps the progress bar and
+        // drops the plates: sound is still reachable from the frame tap and
+        // the bar still carries the spoken position.
+        final roomForLabels =
+            !constraints.hasBoundedWidth || constraints.maxWidth >= 200 * scale;
+        return _frameControls(
+          context,
+          toggle: soundToggle == null ? null : soundToggle!(roomForLabels),
+          chip: roomForLabels ? soundChip : null,
+        );
+      },
+    );
+  }
+
+  Widget _frameControls(
+    BuildContext context, {
+    required Widget? toggle,
+    required Widget? chip,
+  }) {
+    return Stack(
+      children: <Widget>[
+        // A sibling behind the controls, never their parent: a decorated box
+        // hit-tests as opaque over its whole area and would swallow the tap
+        // that pauses the video.
+        const Positioned.fill(
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: <Color>[Color(0x00000000), Color(0x99000000)],
+                ),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 32, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              if (toggle != null || chip != null) ...<Widget>[
+                Wrap(
+                  spacing: AppRhythm.tight,
+                  runSpacing: AppRhythm.tight,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: <Widget>[?toggle, ?chip],
+                ),
+                const SizedBox(height: AppRhythm.title),
+              ],
+              ReelProgressRow(position: position, total: total),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Board 08's footer bar: who published this Reel, whether you follow them,
+/// what they wrote, and the four things you can do about it — on the card's
+/// own surface, under the media, never over the subject.
+///
+/// Horizontal by contract (spec §7 line 127): the actions are a row of four,
+/// not a copied vertical column. The row folds onto a second line only when
+/// it is measured not to fit, so a long locale at an accessibility text size
+/// keeps every 48 px target instead of clipping one.
+class ReelStageFooterBar extends StatelessWidget {
+  const ReelStageFooterBar({
+    required this.reel,
+    required this.captionExpanded,
+    required this.onToggleCaption,
+    required this.onOpenAuthor,
+    required this.onShare,
+    required this.onMore,
+    required this.likePending,
+    required this.commentsOpen,
+    this.followService,
+    this.viewerUid,
+    this.onLike,
+    this.onComments,
+    super.key,
+  });
+
+  final Reel reel;
+  final FollowService? followService;
+  final String? viewerUid;
+  final bool captionExpanded;
+  final VoidCallback onToggleCaption;
+  final VoidCallback onOpenAuthor;
+  final Future<void> Function() onShare;
+  final VoidCallback onMore;
+  final bool likePending;
+  final bool commentsOpen;
+  final VoidCallback? onLike;
+  final VoidCallback? onComments;
+
+  static const double minimumHeight = 88;
+
+  /// Narrower than this and the stacked shape stops being a Reel: the frame
+  /// and its footer both give way to the overlay composition, and the card
+  /// then fills the column it is centred in.
+  static const double minimumFrameWidth = 200;
+
+  /// Below this the actions take their own line: four 48 px targets with
+  /// their counts need roughly 260, and the author's name needs the rest.
+  /// It grows with the reader's text size, because so do all of those.
+  static const double sideBySideWidth = 480;
+
+  static double sideBySideWidthFor(BuildContext context) =>
+      sideBySideWidth * MediaQuery.textScalerOf(context).scale(1);
+
+  /// What the footer bar will be tall, computed rather than measured.
+  ///
+  /// Measuring it would be circular — the footer's height decides the
+  /// frame's width, and the frame's width decides whether the footer's row
+  /// folds — and a layout that feeds its own measurement back into itself
+  /// never settles. Every part of this height is a known text metric at the
+  /// reader's own size, so it can simply be derived.
+  static double heightFor(
+    BuildContext context, {
+    required bool hasCaption,
+    required bool sideBySide,
+  }) {
+    final scaler = MediaQuery.textScalerOf(context);
+    // A 48 target that grows with the label inside it.
+    final control = math.max(48.0, scaler.scale(14) * 1.4 + 16);
+    // Both text runs are budgeted at the WHOLE pixel the engine lays them
+    // out on, and the caption at `bodyMedium`'s real 1.5 line height. The
+    // 1.45 this used to assume was 0.7 px short per line, which at x1 left
+    // the media 0.4 px narrower than the card it sits in on every width —
+    // a budget that is short by any amount is a ledge, not a rounding.
+    final name = (scaler.scale(18) * 1.4).ceilToDouble();
+    final captionLine = (scaler.scale(14) * 1.5).ceilToDouble();
+    // At an accessibility text size the name and the follow control take a
+    // line each; below that they share one — and the footer now lays them
+    // out that way, so this budget and the widget agree.
+    final identityRow = scaler.scale(1) >= 1.6
+        ? math.max(control, name) + AppRhythm.hairline + control
+        : math.max(control, name);
+    final identity =
+        identityRow + (hasCaption ? AppRhythm.tight + 2 * captionLine + 4 : 0);
+    final content = sideBySide
+        ? math.max(identity, control)
+        : identity + AppRhythm.item + control;
+    // The 16/16 vertical padding, and never less than the bar's own floor.
+    return math.max(minimumHeight, 32 + content);
+  }
+
+  /// The width the card — and therefore the media frame inside it — will
+  /// take in [viewport]. The stage uses it to anchor the `›` next
+  /// affordance to the frame rather than to the column the frame is
+  /// centred in, which is what left the plate standing in open background.
+  static double frameWidthFor(
+    BuildContext context,
+    BoxConstraints viewport, {
+    required bool hasCaption,
+  }) {
+    if (!viewport.hasBoundedHeight) return viewport.maxWidth;
+    double widthFor({required bool sideBySide}) {
+      final available = math.max(
+        0.0,
+        viewport.maxHeight -
+            heightFor(context, hasCaption: hasCaption, sideBySide: sideBySide),
+      );
+      return math.min(viewport.maxWidth, available * 9 / 16);
+    }
+
+    final wide = widthFor(sideBySide: true);
+    return wide >= sideBySideWidthFor(context)
+        ? wide
+        : widthFor(sideBySide: false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final follows = followService;
+    final viewer = viewerUid;
+    final caption = reel.composition.caption;
+
+    final actions = ReelEngagementBar(
+      likeCount: reel.likeCount,
+      commentCount: reel.commentCount,
+      liked: reel.callerLiked,
+      likePending: likePending,
+      commentsOpen: commentsOpen,
+      variant: ReelEngagementBarVariant.footer,
+      railAdditional: <Widget>[
+        ReelFooterAction(
+          actionKey: const ValueKey('reel-share-action'),
+          icon: Icons.send_outlined,
+          semanticLabel: copy.text('Share Reel', 'Udostępnij Reel'),
+          onTap: () => unawaited(onShare()),
+        ),
+      ],
+      railTrailing: ReelFooterAction(
+        actionKey: const ValueKey('reel-more-action'),
+        icon: Icons.more_horiz_rounded,
+        semanticLabel: MaterialLocalizations.of(context).moreButtonTooltip,
+        onTap: onMore,
+      ),
+      onLike: onLike,
+      onComments: onComments,
+    );
+
+    // At an accessibility text size the name and the follow control cannot
+    // share a line, and squeezing the name to nothing so a button can keep
+    // its width is not a layout — it is a Reel whose author has disappeared.
+    // Below that size they DO share one, which is what the board draws and
+    // what `_stageFooterHeight` budgets for: a Wrap that also ran at x1 cost
+    // the footer a whole 48-px row, and the media the height that row took.
+    final identityStacks = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    final author = ReelAuthorRow(
+      reel: reel,
+      variant: ReelAuthorRowVariant.panel,
+      onTap: onOpenAuthor,
+    );
+    final follow = follows != null && viewer != null && viewer != reel.authorId
+        ? MomentsFollowButton(
+            key: ValueKey<String>('reel-follow-${reel.authorId}'),
+            userId: reel.authorId,
+            displayName: reel.authorName,
+            viewerUid: viewer,
+            followService: follows,
+          )
+        : null;
+    final identity = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        if (identityStacks)
+          Wrap(
+            spacing: AppRhythm.item,
+            runSpacing: AppRhythm.hairline,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[author, ?follow],
+          )
+        else
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              // Flexible, not Expanded: a short name leaves the follow pill
+              // beside it instead of pushing it to the trailing edge.
+              Flexible(child: author),
+              if (follow != null) ...<Widget>[
+                const SizedBox(width: AppRhythm.item),
+                follow,
+              ],
+            ],
+          ),
+        if (caption.isNotEmpty) ...<Widget>[
+          const SizedBox(height: AppRhythm.tight),
+          Semantics(
+            container: true,
+            button: true,
+            expanded: captionExpanded,
+            label: caption,
+            onTap: onToggleCaption,
+            excludeSemantics: true,
+            child: InkWell(
+              key: const ValueKey<String>('reel-stage-caption'),
+              onTap: onToggleCaption,
+              borderRadius: AppRadius.sm,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  caption,
+                  maxLines: captionExpanded ? 8 : 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: palette.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+
+    return Container(
+      key: const ValueKey<String>('reel-stage-footer-bar'),
+      color: palette.surface,
+      constraints: const BoxConstraints(minHeight: minimumHeight),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final sideBySide =
+              constraints.maxWidth >= sideBySideWidthFor(context);
+          if (sideBySide) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: <Widget>[
+                Expanded(child: identity),
+                const SizedBox(width: AppRhythm.title),
+                Flexible(child: actions),
+              ],
+            );
+          }
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              identity,
+              const SizedBox(height: AppRhythm.item),
+              actions,
+            ],
+          );
+        },
+      ),
     );
   }
 }
@@ -1168,9 +1818,18 @@ class _LegibilityScrim extends StatelessWidget {
   }
 }
 
-/// Identity column bottom-start, action rail bottom-end, one footer scrim
-/// under both: a ~100 px ramp and then flat 84 % black beneath every line, so
-/// white text clears 4.5:1 even on a pure-white frame.
+/// The immersive phone stack of board 08, over the media, bottom-anchored.
+///
+/// Order from the bottom edge up: the action bar, the caption, the author
+/// row, the progress track, and the [mute pill … times] line above it. Every
+/// line sits inside one scrim — a ramp and then flat 84 % black — so white
+/// text clears 4.5:1 even on a pure-white frame, and the bar never reaches
+/// the middle third of the frame where the subject is.
+///
+/// The shell's dock is a real `bottomNavigationBar`, so the space it occupies
+/// is already outside this stage: the bar reserves the 12 px above the stage
+/// edge and nothing more. Re-reserving the dock height here would push the
+/// whole stack 130 px up, over the subject.
 class _OverlayFooter extends StatelessWidget {
   const _OverlayFooter({
     required this.reel,
@@ -1180,19 +1839,22 @@ class _OverlayFooter extends StatelessWidget {
     required this.audioLoading,
     required this.audioEnabled,
     required this.showAudioToggle,
+    required this.position,
+    required this.timeline,
     required this.likePending,
     required this.commentsOpen,
     required this.onOpenAuthor,
     required this.onCaption,
     required this.onMore,
-    required this.immersive,
+    required this.onShare,
+    this.followService,
+    this.viewerUid,
     this.soundToggle,
     this.onAudio,
     this.onDelete,
     this.onReport,
     this.onLike,
     this.onComments,
-    required this.onShare,
   });
 
   final Reel reel;
@@ -1202,77 +1864,119 @@ class _OverlayFooter extends StatelessWidget {
   final bool audioLoading;
   final bool audioEnabled;
   final bool showAudioToggle;
+  final ValueListenable<Duration> position;
+  final Duration timeline;
+  final FollowService? followService;
+  final String? viewerUid;
   final bool likePending;
   final bool commentsOpen;
   final VoidCallback onOpenAuthor;
   final VoidCallback onCaption;
   final VoidCallback onMore;
-  final bool immersive;
-  final Widget? soundToggle;
+
+  /// Built with this frame's own answer to "is there room for the words".
+  final Widget Function(bool showLabel)? soundToggle;
   final VoidCallback? onAudio;
   final Future<void> Function()? onDelete;
   final Future<void> Function()? onReport;
   final VoidCallback? onLike;
   final VoidCallback? onComments;
-  final VoidCallback onShare;
+  final Future<void> Function() onShare;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => _stack(
+      context,
+      width: constraints.hasBoundedWidth ? constraints.maxWidth : mediaHeight,
+    ),
+  );
+
+  Widget _stack(BuildContext context, {required double width}) {
     final copy = AppLocalizations.of(context);
-    // Short media (a phone with the header and the dock on screen) folds the
-    // rail into a row and trims the caption instead of covering the frame.
+    // Short media (a phone with the header and the dock on screen) trims the
+    // caption instead of covering the frame.
+    final scale = MediaQuery.textScalerOf(context).scale(1);
     final extraScale = (MediaQuery.textScalerOf(context).scale(14) / 14 - 1)
         .clamp(0.0, 2.0);
-    final compact = mediaHeight < 400 + extraScale * 180;
+    final compact = mediaHeight < 400 + extraScale * 180 || width < 260 * scale;
     // Smaller still — a 320x568 window with the shell's dock leaves a frame
-    // roughly 110 x 196, and three 48 px controls already fill it. The
+    // roughly 110 x 196, and four 48 px controls already fill it. The
     // identity column is dropped here rather than laid out and then clipped
     // off the top of the card: a half-cut name is worse than none, and the
     // author is still announced by the card's own semantics. This is a
-    // graceful floor, not a target — a viewport this short really wants a
-    // collapsed header or a dedicated immersive route.
-    final micro = mediaHeight < 320;
-    final captionLines = compact
-        ? 1
-        : mediaHeight < 560
-        ? 2
-        : 3;
+    // graceful floor, not a target.
+    final micro = mediaHeight < 320 || width < 200 * scale;
+    final follows = followService;
+    final viewer = viewerUid;
     final showSound =
         showAudioToggle || reel.composition.audioAttribution.isNotEmpty;
+    // The words go before the control does: a muted Reel with no way back to
+    // sound is the one shape this frame may never take.
+    final toggle = soundToggle?.call(!compact && !micro);
+
+    final progress = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        // The times take the width they need and the pill takes the rest,
+        // trimming its own words only if that is still not enough. Sharing
+        // the line evenly left "Dźwięk wyłączo…" beside a half-empty gap.
+        Row(
+          children: <Widget>[
+            if (toggle != null) Flexible(child: toggle),
+            if (toggle != null && !micro)
+              const SizedBox(width: AppRhythm.tight),
+            if (!micro) ReelProgressTimes(position: position, total: timeline),
+          ],
+        ),
+        const SizedBox(height: AppRhythm.tight),
+        ReelProgressBar(position: position, total: timeline),
+      ],
+    );
 
     final identity = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
+        if (showSound && !micro) ...<Widget>[
+          _SoundChip(
+            reel: reel,
+            showToggle: showAudioToggle,
+            audioPlaying: audioPlaying,
+            audioLoading: audioLoading,
+            audioEnabled: audioEnabled,
+            onAudio: onAudio,
+          ),
+          const SizedBox(height: AppRhythm.tight),
+        ],
         if (showIdentity && !micro) ...<Widget>[
-          if (compact)
-            Row(
-              children: [
-                Expanded(
-                  child: ReelAuthorRow(
-                    reel: reel,
-                    showAvatar: false,
-                    onTap: onOpenAuthor,
-                  ),
+          // A Wrap for the same reason as the card footer's: the name gives
+          // way to a second line, never to nothing.
+          Wrap(
+            spacing: AppRhythm.tight,
+            runSpacing: AppRhythm.hairline,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              ReelAuthorRow(reel: reel, onTap: onOpenAuthor),
+              if (follows != null && viewer != null && viewer != reel.authorId)
+                MomentsFollowButton(
+                  key: ValueKey<String>('reel-follow-${reel.authorId}'),
+                  userId: reel.authorId,
+                  displayName: reel.authorName,
+                  viewerUid: viewer,
+                  followService: follows,
+                  onMedia: true,
                 ),
-                if (reel.composition.caption.isNotEmpty)
-                  _ReelCaption(
-                    reel: reel,
-                    onTap: onCaption,
-                    child: const Icon(Icons.notes_rounded, color: Colors.white),
-                  ),
-              ],
-            )
-          else
-            ReelAuthorRow(reel: reel, onTap: onOpenAuthor),
+            ],
+          ),
           if (!compact && reel.composition.caption.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 6),
+            const SizedBox(height: AppRhythm.hairline),
             _ReelCaption(
               reel: reel,
               onTap: onCaption,
               child: Text(
                 reel.composition.caption,
-                maxLines: captionLines,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: Colors.white,
@@ -1283,56 +1987,73 @@ class _OverlayFooter extends StatelessWidget {
               ),
             ),
           ],
-        ],
-        if (showSound && !micro) ...<Widget>[
-          if (showIdentity) const SizedBox(height: 8),
-          _SoundChip(
-            reel: reel,
-            showToggle: showAudioToggle,
-            audioPlaying: audioPlaying,
-            audioLoading: audioLoading,
-            audioEnabled: audioEnabled,
-            onAudio: onAudio,
-          ),
+          if (compact && reel.composition.caption.isNotEmpty)
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: _ReelCaption(
+                reel: reel,
+                onTap: onCaption,
+                child: const Icon(Icons.notes_rounded, color: Colors.white),
+              ),
+            ),
         ],
       ],
     );
 
-    final rail = ReelEngagementBar(
+    // Board 08's horizontal bar, never a copied vertical rail (spec §7 line
+    // 127): one plate holding four equal targets.
+    //
+    // A frame too narrow for four 48 px targets side by side scrolls the bar
+    // sideways rather than folding it into four stacked rows — which would
+    // make the stack taller than the frame and push the sound control off
+    // the top of the media. A horizontal scroll never competes with the
+    // pager's vertical swipe.
+    final barFitsOneRow = width - 32 - 16 >= 4 * 48 + 3 * 10;
+    Widget actions = ReelEngagementBar(
       likeCount: reel.likeCount,
       commentCount: reel.commentCount,
       liked: reel.callerLiked,
       likePending: likePending,
       commentsOpen: commentsOpen,
-      railAxis: compact ? Axis.horizontal : Axis.vertical,
-      railAdditional: [
+      railAxis: Axis.horizontal,
+      // The bar is a plate of its own on the phone, so its four targets share
+      // the width evenly instead of hugging one end.
+      railAlignment: WrapAlignment.spaceEvenly,
+      railAdditional: <Widget>[
         ReelOverlayPlateButton(
           key: const ValueKey('reel-share-action'),
           icon: Icons.send_outlined,
           semanticLabel: copy.text('Share Reel', 'Udostępnij Reel'),
-          onTap: onShare,
+          onTap: () => unawaited(onShare()),
         ),
       ],
-      railTrailing: Wrap(
-        direction: compact ? Axis.horizontal : Axis.vertical,
-        spacing: 14,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          ?soundToggle,
-          _ReelOverflowButton(onTap: onMore),
-        ],
-      ),
+      railTrailing: _ReelOverflowButton(onTap: onMore),
       onLike: onLike,
       onComments: onComments,
     );
+    if (!barFitsOneRow) {
+      actions = SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: actions,
+      );
+    }
+    final bar = DecoratedBox(
+      decoration: const BoxDecoration(
+        color: reelOverlayPlateColor,
+        borderRadius: AppRadius.lg,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: AppRhythm.tight),
+        child: actions,
+      ),
+    );
 
-    // The scrim is a sibling behind the controls, not their parent: a
-    // BoxDecoration hit-tests as opaque over its whole box, so a gradient
-    // wrapped around this footer swallows every tap in the lower part of the
-    // frame — including the tap that pauses the video.
     return Stack(
       children: <Widget>[
+        // The scrim is a sibling behind the controls, not their parent: a
+        // BoxDecoration hit-tests as opaque over its whole box, so a gradient
+        // wrapped around this footer swallows every tap in the lower part of
+        // the frame — including the tap that pauses the video.
         const Positioned.fill(
           child: IgnorePointer(
             child: DecoratedBox(
@@ -1350,40 +2071,21 @@ class _OverlayFooter extends StatelessWidget {
         Padding(
           padding: EdgeInsetsDirectional.fromSTEB(
             16,
-            compact
-                ? 8
-                : immersive
-                ? 24
-                // The desktop context panel already carries the identity.
-                // Do not reserve its decorative fade above an empty column:
-                // that space belongs to the authored, large-text links.
-                : !showIdentity
-                ? 8
-                : 96,
-            12,
+            compact ? AppRhythm.tight : AppRhythm.section,
             16,
+            AppRhythm.item,
           ),
-          child: compact
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    identity,
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: AlignmentDirectional.centerEnd,
-                      child: rail,
-                    ),
-                  ],
-                )
-              : Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: <Widget>[
-                    Expanded(child: identity),
-                    const SizedBox(width: 16),
-                    rail,
-                  ],
-                ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              progress,
+              const SizedBox(height: AppRhythm.item),
+              identity,
+              const SizedBox(height: AppRhythm.tight),
+              bar,
+            ],
+          ),
         ),
       ],
     );

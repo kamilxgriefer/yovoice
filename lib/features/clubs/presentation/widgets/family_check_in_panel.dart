@@ -4,9 +4,10 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/clubs/data/models/family_check_in.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/features/servers/data/services/server_family_check_in_service.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
-/// Quick check-ins for a Family Room.
+/// Quick check-ins for a Family Server (and legacy Family Club clients).
 ///
 /// These are ORDINARY STATUS UPDATES between family members. They are
 /// deliberately NOT an emergency feature: nothing here contacts a service,
@@ -23,6 +24,7 @@ class FamilyCheckInPanel extends StatefulWidget {
     required this.currentUserId,
     required this.canManage,
     this.clubService,
+    this.serverRepository,
     super.key,
   });
 
@@ -35,19 +37,41 @@ class FamilyCheckInPanel extends StatefulWidget {
 
   final ClubService? clubService;
 
+  /// Versioned server adapter. Legacy Family Clubs continue to use
+  /// [clubService], while the Server facade uses callable-only V1 mutations.
+  final ServerFamilyCheckInRepository? serverRepository;
+
   @override
   State<FamilyCheckInPanel> createState() => _FamilyCheckInPanelState();
 }
 
 class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
-  late final ClubService _service = widget.clubService ?? ClubService();
+  late final ClubService _legacyService = widget.clubService ?? ClubService();
   bool _busy = false;
+
+  Stream<List<FamilyCheckIn>> _watch() =>
+      widget.serverRepository?.watchCheckIns(widget.clubId) ??
+      _legacyService.watchCheckIns(widget.clubId);
+
+  Future<void> _postToStore(FamilyCheckInStatus status) =>
+      widget.serverRepository?.postCheckIn(
+        serverId: widget.clubId,
+        status: status,
+      ) ??
+      _legacyService.postCheckIn(clubId: widget.clubId, status: status);
+
+  Future<void> _deleteFromStore(String checkInId) =>
+      widget.serverRepository?.deleteCheckIn(
+        serverId: widget.clubId,
+        checkInId: checkInId,
+      ) ??
+      _legacyService.deleteCheckIn(clubId: widget.clubId, checkInId: checkInId);
 
   Future<void> _post(FamilyCheckInStatus status) async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await _service.postCheckIn(clubId: widget.clubId, status: status);
+      await _postToStore(status);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
@@ -67,10 +91,7 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
 
   Future<void> _delete(FamilyCheckIn checkIn) async {
     try {
-      await _service.deleteCheckIn(
-        clubId: widget.clubId,
-        checkInId: checkIn.id,
-      );
+      await _deleteFromStore(checkIn.id);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
@@ -176,7 +197,7 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
           ),
           const SizedBox(height: 14),
           StreamBuilder<List<FamilyCheckIn>>(
-            stream: _service.watchCheckIns(widget.clubId),
+            stream: _watch(),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return Text(

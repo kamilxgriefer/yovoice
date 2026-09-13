@@ -67,8 +67,8 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
   };
   String get _previewLabel => switch ((widget._kind, widget.roomCover)) {
     (_, true) => _copy.text(
-      'Room cover crop preview',
-      'Podgląd kadru okładki pokoju',
+      'Server cover crop preview',
+      'Podgląd kadru okładki serwera',
     ),
     (ProfileImageKind.avatar, false) => _copy.text(
       'Avatar crop preview',
@@ -378,7 +378,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
           title: Text(
             _title,
             semanticsLabel: _isRoomCover
-                ? copy.text('Adjust room cover', 'Dopasuj okładkę pokoju')
+                ? copy.text('Adjust server cover', 'Dopasuj okładkę serwera')
                 : null,
           ),
           actions: [

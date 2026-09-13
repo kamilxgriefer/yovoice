@@ -435,9 +435,7 @@ void main() {
       final compactActions = <MoreDestination, String>{
         MoreDestination.friends: 'Friends, Your circle',
         MoreDestination.profile: 'Profile, You',
-        MoreDestination.discover: 'Discover, Find rooms',
         MoreDestination.findCreators: 'Find creators, People to follow',
-        MoreDestination.clubs: 'Clubs, Communities, Premium required',
         MoreDestination.notifications: 'Alerts, Updates',
         MoreDestination.achievements: 'Awards, Progress',
         MoreDestination.creatorStudio: 'Creator, Studio, Premium required',
@@ -476,9 +474,7 @@ void main() {
         // promoted into the dock — a 1:1 swap, still eight tiles.
         'Friends',
         'Profile',
-        'Discover',
         'Find creators',
-        'Clubs',
         'Alerts',
         'Awards',
         'Creator',
@@ -494,10 +490,8 @@ void main() {
       expect(find.text('Staff'), findsNothing);
       expect(find.text('Staff Center'), findsNothing);
       expect(find.text('Moderation Center'), findsNothing);
-      expect(
-        find.byKey(const ValueKey('mobile-premium-lock-clubs')),
-        findsOneWidget,
-      );
+      expect(find.text('Discover'), findsNothing);
+      expect(find.text('Clubs'), findsNothing);
       expect(
         find.byKey(const ValueKey('mobile-premium-lock-creatorStudio')),
         findsOneWidget,
@@ -522,27 +516,17 @@ void main() {
       await settle(tester);
       expect(find.text('Staff'), findsNothing);
       expect(find.text('Settings'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('mobile-premium-lock-clubs')),
-        findsOneWidget,
-        reason: 'a complimentary VIP badge is not a paid entitlement',
-      );
+      expect(find.text('Clubs'), findsNothing);
     });
 
-    testWidgets('paid Premium removes the Clubs and Creator locks', (
-      tester,
-    ) async {
+    testWidgets('paid Premium removes the Creator lock', (tester) async {
       useSize(tester, const Size(390, 844));
       await tester.pumpWidget(modalSheetHost(entitlements: _activePremium()));
       await tester.tap(find.byKey(const ValueKey('open-more-sheet')));
       await settle(tester);
 
-      expect(find.text('Clubs'), findsOneWidget);
+      expect(find.text('Clubs'), findsNothing);
       expect(find.text('Creator'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('mobile-premium-lock-clubs')),
-        findsNothing,
-      );
       expect(
         find.byKey(const ValueKey('mobile-premium-lock-creatorStudio')),
         findsNothing,
@@ -661,7 +645,7 @@ void main() {
       expect(find.text('Staff Center'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('mobile-premium-lock-clubs')),
-        findsOneWidget,
+        findsNothing,
       );
       expect(
         find.byKey(const ValueKey('mobile-premium-lock-creatorStudio')),
@@ -707,7 +691,7 @@ void main() {
       expect(find.byType(ModalBarrier), findsWidgets);
       expect(
         find.byKey(const ValueKey('mobile-premium-lock-clubs')),
-        findsOneWidget,
+        findsNothing,
       );
       expect(tester.takeException(), isNull);
     });
@@ -939,7 +923,7 @@ void main() {
     });
 
     testWidgets(
-      'the forged superAdmin sees only Moderation Center, Rooms & Spaces '
+      'the forged superAdmin sees only Moderation Center, live conversations '
       'and Sanctions — no Users, no role management, no audit',
       (tester) async {
         useSize(tester, const Size(390, 844));
@@ -949,7 +933,7 @@ void main() {
         await settle(tester);
 
         expect(find.text('Moderation Center'), findsWidgets);
-        expect(find.text('Rooms & Spaces'), findsWidgets);
+        expect(find.text('Live conversations'), findsWidgets);
         expect(find.text('Sanctions'), findsWidgets);
         expect(find.text('Users'), findsNothing);
         expect(find.text('Overview'), findsNothing);

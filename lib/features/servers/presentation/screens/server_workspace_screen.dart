@@ -15,23 +15,38 @@ import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
 import '../../data/models/server_member_role.dart';
 import '../../data/models/server_type.dart';
+import '../../data/services/server_company_file_service.dart';
+import '../../data/services/server_family_check_in_service.dart';
+import '../../data/services/server_family_memory_service.dart';
+import '../../data/services/server_follow_service.dart';
 import '../../data/services/server_media_connector.dart';
+import '../../data/services/server_podcast_episode_repository.dart';
 import '../../data/services/server_screen_share_capability.dart';
 import '../../data/services/server_service.dart';
 import '../../data/services/server_session_controller.dart';
+import '../../data/services/server_shared_list_service.dart';
+import '../../data/services/server_whiteboard_repository.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
 import '../widgets/server_channel_scene.dart';
 import '../widgets/server_community_stage.dart';
 import '../widgets/server_company_meeting.dart';
+import '../widgets/server_company_files_board.dart';
 import '../widgets/server_conversation_dock.dart';
 import '../widgets/server_create_channel_sheet.dart';
+import '../widgets/server_events_board.dart';
 import '../widgets/server_family_board.dart';
+import '../widgets/server_family_memory_album.dart';
 import '../widgets/server_invite_sheet.dart';
 import '../widgets/server_local_tabs.dart';
+import '../widgets/server_management_sheet.dart';
 import '../widgets/server_panel.dart';
+import '../widgets/server_podcast_questions_board.dart';
+import '../widgets/server_podcast_episodes_board.dart';
 import '../widgets/server_scrolling_details.dart';
+import '../widgets/server_shared_list_board.dart';
 import '../widgets/server_text_channel_scene.dart';
+import '../widgets/server_whiteboard_board.dart';
 
 export '../widgets/server_channel_scene.dart' show ServerChannelEmptyState;
 export '../widgets/server_panel.dart' show serverChannelIcon;
@@ -62,6 +77,14 @@ class ServerWorkspaceScreen extends StatefulWidget {
     this.anotherVoiceSessionActive,
     this.chatService,
     this.screenShare,
+    this.familyCheckIns,
+    this.familyMemories,
+    this.sharedList,
+    this.followRepository,
+    this.podcastEpisodeRepository,
+    this.whiteboardRepository,
+    this.companyFileRepository,
+    this.shareServer,
     this.isVisible,
     super.key,
   });
@@ -97,6 +120,17 @@ class ServerWorkspaceScreen extends StatefulWidget {
   /// D). Left null in production, where the real query answers.
   final ServerScreenShareCapability? screenShare;
 
+  /// Template-module seams. Production resolves the callable-backed services;
+  /// tests can keep every read and mutation in one in-memory repository.
+  final ServerFamilyCheckInRepository? familyCheckIns;
+  final ServerFamilyMemoryRepository? familyMemories;
+  final ServerSharedListRepository? sharedList;
+  final ServerFollowRepository? followRepository;
+  final ServerPodcastEpisodeRepository? podcastEpisodeRepository;
+  final ServerWhiteboardRepository? whiteboardRepository;
+  final ServerCompanyFileRepository? companyFileRepository;
+  final Future<void> Function(Uri link)? shareServer;
+
   /// Whether the surface hosting this workspace is on screen.
   ///
   /// A pushed route ends its conversation by being popped, which is what
@@ -126,6 +160,79 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
   late Stream<ServerMemberRole?> _role;
   late Stream<Set<String>> _moderators;
   String? _selectedId;
+  ServerFamilyCheckInRepository? _defaultFamilyCheckIns;
+  ServerFamilyMemoryRepository? _defaultFamilyMemories;
+  ServerSharedListRepository? _defaultSharedList;
+  ServerFollowRepository? _defaultFollowRepository;
+  ServerCompanyFileRepository? _defaultCompanyFiles;
+
+  ServerCompanyFileRepository get _companyFiles {
+    final supplied = widget.companyFileRepository;
+    if (supplied != null) return supplied;
+    final repository = _repository;
+    if (repository is ServerCompanyFileRepository) {
+      return repository as ServerCompanyFileRepository;
+    }
+    return _defaultCompanyFiles ??= ServerCompanyFileService();
+  }
+
+  ServerWhiteboardRepository? get _whiteboardRepository {
+    final supplied = widget.whiteboardRepository;
+    if (supplied != null) return supplied;
+    final repository = _repository;
+    return repository is ServerWhiteboardRepository
+        ? repository as ServerWhiteboardRepository
+        : null;
+  }
+
+  ServerPodcastEpisodeRepository? get _podcastEpisodes {
+    final supplied = widget.podcastEpisodeRepository;
+    if (supplied != null) return supplied;
+    final repository = _repository;
+    return repository is ServerPodcastEpisodeRepository
+        ? repository as ServerPodcastEpisodeRepository
+        : null;
+  }
+
+  ServerFamilyCheckInRepository get _familyCheckIns {
+    final supplied = widget.familyCheckIns;
+    if (supplied != null) return supplied;
+    final repository = _repository;
+    if (repository is ServerFamilyCheckInRepository) {
+      return repository as ServerFamilyCheckInRepository;
+    }
+    return _defaultFamilyCheckIns ??= ServerFamilyCheckInService();
+  }
+
+  ServerFamilyMemoryRepository get _familyMemories {
+    final supplied = widget.familyMemories;
+    if (supplied != null) return supplied;
+    final repository = _repository;
+    if (repository is ServerFamilyMemoryRepository) {
+      return repository as ServerFamilyMemoryRepository;
+    }
+    return _defaultFamilyMemories ??= ServerFamilyMemoryService();
+  }
+
+  ServerSharedListRepository get _sharedList {
+    final supplied = widget.sharedList;
+    if (supplied != null) return supplied;
+    final repository = _repository;
+    if (repository is ServerSharedListRepository) {
+      return repository as ServerSharedListRepository;
+    }
+    return _defaultSharedList ??= ServerSharedListService();
+  }
+
+  ServerFollowRepository get _followRepository {
+    final supplied = widget.followRepository;
+    if (supplied != null) return supplied;
+    final repository = _repository;
+    if (repository is ServerFollowRepository) {
+      return repository as ServerFollowRepository;
+    }
+    return _defaultFollowRepository ??= ServerFollowService();
+  }
 
   /// The phone's and tablet's local tab: 0 = the scene, 1 = the chat, and
   /// on the friends board 2 = the events module.
@@ -413,8 +520,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
           // A phone shows the whiteboard as a card in the meeting itself, so
           // only the widths that have the tab get the control that selects it.
           onOpenWhiteboard: meeting && !phone
-              ? () =>
-                    setState(() => _meetingTab = ServerMeetingTab.whiteboard)
+              ? () => setState(() => _meetingTab = ServerMeetingTab.whiteboard)
               : null,
         );
         // Board 02's phone surface keeps the broadcast on screen above the
@@ -431,6 +537,9 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                 session: _session,
                 role: role,
                 onOpenChannel: _select,
+                checkIns: _familyCheckIns,
+                memories: _familyMemories,
+                currentUserId: _repository.currentUserId,
                 compact: phone,
               )
             : selected == null
@@ -449,11 +558,14 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                   server,
                   channels,
                   selected,
+                  role,
                   moderators,
                   phone: true,
                 ),
                 onOpenChannels: () =>
                     _openChannels(context, server, role).ignore(),
+                followRepository: _followRepository,
+                shareServer: widget.shareServer,
                 compact: true,
               )
             : meeting
@@ -471,6 +583,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                 onOpenChannel: _select,
                 tab: _meetingTab,
                 onTabSelected: (tab) => setState(() => _meetingTab = tab),
+                whiteboardRepository: _whiteboardRepository,
                 // Tablet and phone have nowhere else for the conversation;
                 // a desktop keeps it permanently in the context panel.
                 chat: desktop || phone
@@ -480,6 +593,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                         server,
                         channels,
                         selected,
+                        role,
                         moderators,
                         phone: false,
                       ),
@@ -525,7 +639,8 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                   onChannels: () => _openChannels(context, server, role),
                   showChannelsButton:
                       boardTabs == null && !communityStage && !tabsOwnChannels,
-                  tabs: boardTabs ??
+                  tabs:
+                      boardTabs ??
                       (localTabs.isEmpty
                           ? null
                           : _tabStrip(context, server, localTabs, _localTab, (
@@ -549,10 +664,11 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                           server,
                           channels,
                           selected,
+                          role,
                           moderators,
                           phone: true,
                         )
-                      : _eventsModule(server, channels),
+                      : _eventsModule(server, channels, role),
                   // The stage carries the channel's name and its live state
                   // itself, directly under the picture; the shell's header
                   // above it would say the same thing twice.
@@ -598,6 +714,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                       onSelected: _select,
                       onInvite: _inviteAction(context, server, role),
                       onAddChannel: _addChannelAction(context, server, role),
+                      onManage: _manageAction(context, server, channels, role),
                       onBack: widget.onBack,
                       connectedChannelId: _session.isActive
                           ? _session.channel?.id
@@ -649,10 +766,11 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                                 server,
                                 channels,
                                 selected,
+                                role,
                                 moderators,
                                 phone: false,
                               )
-                            : _eventsModule(server, channels),
+                            : _eventsModule(server, channels, role),
                       ),
                     ),
                   ),
@@ -665,6 +783,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                         server,
                         channels,
                         selected,
+                        role,
                         moderators,
                         phone: false,
                         titled: true,
@@ -743,6 +862,103 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         child: builder(context, server, channel),
       );
     }
+    if (_isEventsChannel(server, channel) &&
+        _repository is ServerEventsRepository &&
+        !server.isHeld) {
+      return ServerEventsBoard(
+        server: server,
+        channel: channel,
+        repository: _repository,
+        role: role,
+        currentUserId: _repository.currentUserId,
+      );
+    }
+    if (server.type == ServerType.family &&
+        channel.kind == ServerChannelKind.list &&
+        !server.isHeld) {
+      return ServerSharedListBoard(
+        serverId: server.id,
+        channel: channel,
+        repository: _sharedList,
+        colors: ServerIdentity.of(
+          server.type,
+        ).resolve(Theme.of(context).brightness),
+        role: role,
+        compact: compact,
+      );
+    }
+    if (server.type == ServerType.family &&
+        channel.kind == ServerChannelKind.memories &&
+        !server.isHeld) {
+      return ServerFamilyMemoryAlbum(
+        serverId: server.id,
+        channelId: channel.id,
+        repository: _familyMemories,
+        currentUserId: _repository.currentUserId,
+        role: role,
+        colors: ServerIdentity.of(
+          server.type,
+        ).resolve(Theme.of(context).brightness),
+        serverHeld: server.isHeld,
+        compact: compact,
+      );
+    }
+    if (server.type == ServerType.podcast &&
+        channel.kind == ServerChannelKind.questions &&
+        !server.isHeld) {
+      return ServerPodcastQuestionsBoard(
+        server: server,
+        channel: channel,
+        repository: _repository,
+        role: role,
+        compact: compact,
+      );
+    }
+    if (server.type == ServerType.podcast &&
+        channel.kind == ServerChannelKind.episodes &&
+        !server.isHeld) {
+      final repository = _podcastEpisodes;
+      if (repository == null) {
+        return Center(
+          child: Text(AppLocalizations.of(context).serverActionUnavailable),
+        );
+      }
+      return ServerPodcastEpisodesBoard(
+        server: server,
+        channel: channel,
+        repository: repository,
+        role: role,
+        compact: compact,
+      );
+    }
+    if (server.type == ServerType.company &&
+        channel.kind == ServerChannelKind.whiteboard &&
+        !server.isHeld) {
+      final repository = _whiteboardRepository;
+      if (repository == null) {
+        return Center(
+          child: Text(AppLocalizations.of(context).serverActionUnavailable),
+        );
+      }
+      return ServerWhiteboardBoard(
+        server: server,
+        channel: channel,
+        repository: repository,
+        role: role,
+        compact: compact,
+      );
+    }
+    if (server.type == ServerType.company &&
+        channel.kind == ServerChannelKind.files &&
+        !server.isHeld) {
+      return ServerCompanyFilesBoard(
+        server: server,
+        channel: channel,
+        repository: _companyFiles,
+        role: role,
+        compact: compact,
+      );
+    }
     return ServerChannelScene(
       server: server,
       channel: channel,
@@ -753,15 +969,50 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
       channels: channels,
       onOpenChannel: _select,
       moderatorIds: moderators,
+      followRepository: server.type == ServerType.community
+          ? _followRepository
+          : null,
+      podcastEpisodeRepository: server.type == ServerType.podcast
+          ? _podcastEpisodes
+          : null,
+      shareServer: widget.shareServer,
       compact: compact,
     );
   }
 
-  /// The friends board's events tab and, when the events channel is gone,
-  /// nothing at all rather than an empty tab.
-  Widget _eventsModule(Server server, List<ServerChannel> channels) {
-    final events = _channelOfKind(channels, ServerChannelKind.events);
+  static bool _isEventsChannel(Server server, ServerChannel channel) =>
+      switch (server.type) {
+        ServerType.friends ||
+        ServerType.community ||
+        ServerType.podcast => channel.kind == ServerChannelKind.events,
+        ServerType.family => channel.kind == ServerChannelKind.calendar,
+        ServerType.company => false,
+      };
+
+  /// A template's calendar/program/events tab and, when its backing channel is
+  /// gone, an honest empty state rather than a synthetic module.
+  Widget _eventsModule(
+    Server server,
+    List<ServerChannel> channels,
+    ServerMemberRole? role,
+  ) {
+    final events = _channelOfKind(
+      channels,
+      server.type == ServerType.family
+          ? ServerChannelKind.calendar
+          : ServerChannelKind.events,
+    );
     if (events == null) return _noChannels(context);
+    if (_isEventsChannel(server, events) &&
+        _repository is ServerEventsRepository) {
+      return ServerEventsBoard(
+        server: server,
+        channel: events,
+        repository: _repository,
+        role: role,
+        currentUserId: _repository.currentUserId,
+      );
+    }
     return ServerChannelEmptyState(server: server, channel: events);
   }
 
@@ -772,6 +1023,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     Server server,
     List<ServerChannel> channels,
     ServerChannel? beside,
+    ServerMemberRole? role,
     Set<String> moderators, {
     required bool phone,
     bool titled = false,
@@ -794,15 +1046,31 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         ),
       );
     }
-    final scene = ServerTextChannelScene(
-      key: ValueKey('server-context-${thread.id}'),
-      server: server,
-      channel: thread,
-      currentUserId: _repository.currentUserId,
-      chatService: widget.chatService,
-      moderatorIds: moderators,
-      compact: true,
-    );
+    final podcastQuestions =
+        server.type == ServerType.podcast &&
+        beside?.kind == ServerChannelKind.stage &&
+        thread.kind == ServerChannelKind.questions &&
+        !server.isHeld;
+    final scene = podcastQuestions
+        ? KeyedSubtree(
+            key: ValueKey('server-context-${thread.id}'),
+            child: ServerPodcastQuestionsBoard(
+              server: server,
+              channel: thread,
+              repository: _repository,
+              role: role,
+              compact: true,
+            ),
+          )
+        : ServerTextChannelScene(
+            key: ValueKey('server-context-${thread.id}'),
+            server: server,
+            channel: thread,
+            currentUserId: _repository.currentUserId,
+            chatService: widget.chatService,
+            moderatorIds: moderators,
+            compact: true,
+          );
     if (!titled) return scene;
     return LayoutBuilder(
       builder: (context, constraints) => Column(
@@ -1077,6 +1345,36 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     };
   }
 
+  VoidCallback? _manageAction(
+    BuildContext context,
+    Server server,
+    List<ServerChannel> channels,
+    ServerMemberRole? role,
+  ) {
+    final effectiveRole = role;
+    if (effectiveRole == null ||
+        !effectiveRole.canModerate ||
+        _repository is! ServerManagementRepository) {
+      return null;
+    }
+    return () async {
+      final outcome = await showServerManagementSheet(
+        context,
+        server: server,
+        channels: channels,
+        role: effectiveRole,
+        repository: _repository,
+      );
+      if (!mounted || outcome == null) return;
+      final onBack = widget.onBack;
+      if (onBack != null) {
+        onBack();
+      } else {
+        await Navigator.of(this.context).maybePop();
+      }
+    };
+  }
+
   /// Phone: the whole server panel as a sheet.
   Future<void> _openChannels(
     BuildContext context,
@@ -1118,6 +1416,13 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
               onAddChannel: addChannel == null
                   ? null
                   : () => Navigator.of(sheetContext).pop(_SheetAction.add),
+              onManage:
+                  !(role?.canModerate ?? false) ||
+                      _repository is! ServerManagementRepository
+                  ? null
+                  : () => Navigator.of(
+                      sheetContext,
+                    ).pop(_ManageRequest(snapshot.data ?? const [])),
               connectedChannelId: _session.isActive
                   ? _session.channel?.id
                   : null,
@@ -1134,6 +1439,8 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         invite?.call();
       case _SheetAction.add:
         addChannel?.call();
+      case _ManageRequest request:
+        _manageAction(this.context, server, request.channels, role)?.call();
       default:
         break;
     }
@@ -1141,6 +1448,11 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
 }
 
 enum _SheetAction { invite, add }
+
+class _ManageRequest {
+  const _ManageRequest(this.channels);
+  final List<ServerChannel> channels;
+}
 
 /// Header + optional intro + optional local tabs + the scene, with the
 /// header area bounded so a long intro at 200 % never starves the scene.
@@ -1483,12 +1795,11 @@ class _InviteIntroduction extends StatelessWidget {
             child: FilledButton.icon(
               key: const ValueKey('server-invite-introduction-action'),
               onPressed: onInvite,
-              style:
-                  FilledButton.styleFrom(
-                    backgroundColor: colors.cta,
-                    foregroundColor: colors.onCta,
-                    minimumSize: const Size(48, 48),
-                  ).copyWith(side: serverFocusRing(colors.onCta)),
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.cta,
+                foregroundColor: colors.onCta,
+                minimumSize: const Size(48, 48),
+              ).copyWith(side: serverFocusRing(colors.onCta)),
               icon: const Icon(Icons.person_add_outlined, size: 18),
               label: Text(copy.serverInvite),
             ),

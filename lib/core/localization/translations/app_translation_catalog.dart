@@ -11,7 +11,10 @@ import 'translations_moments_listen.dart';
 import 'translations_moments_overview.dart';
 import 'translations_reels.dart';
 import 'translations_reels_feed_integration.dart';
+import 'translations_reels_stage.dart';
+import 'translations_reels_voice_comments.dart';
 import 'translations_reel_links.dart';
+import 'translations_server_surface.dart';
 import 'translations_gif_messages.dart';
 import 'translations_gif_composer.dart';
 import 'translations_auth_call_release.dart';
@@ -113,17 +116,12 @@ const appTranslationKeys = <String>{
   'Confirm password',
   'Already have an account?',
   'Welcome to YO Voice',
-  'Join live rooms, listen to Voice Moments, and catch up with your people.',
   'Use your voice',
-  'Create a Voice Moment or start a Voice Room here.',
-  'YO is your shortcut to a Voice Moment or a new Voice Room.',
   "Hear what's new",
   'Moments are short voice updates from people you follow.',
   'Keep conversations going',
   'Message friends, send photos or voice notes, and start a direct call.',
   'More, one tap away',
-  'Open Clubs, Creator Studio, Awards, alerts, and Settings. You can replay this tour in Settings anytime.',
-  'Find Friends, Clubs, your profile, and Settings here. Replay this tour from Settings anytime.',
   'Skip',
   'Back',
   'Done',
@@ -131,7 +129,6 @@ const appTranslationKeys = <String>{
   'unread',
   'CREATE',
   'MORE',
-  'Create Room',
   'Create Voice Moment',
   'Profile settings',
   'Choose the language used on this device.',
@@ -225,7 +222,26 @@ const appTranslationKeys = <String>{
   ...momentsCreationTranslationKeys,
   ...momentsOverviewTranslationKeys,
   ...momentsListenTranslationKeys,
+  ...reelsStageTranslationKeys,
+  ...reelsVoiceCommentTranslationKeys,
+  ...serverSurfaceTranslationKeys,
 };
+
+const _retiredServerSurfaceTranslationKeys = <String>{
+  'Join live rooms, listen to Voice Moments, and catch up with your people.',
+  'Create a Voice Moment or start a Voice Room here.',
+  'YO is your shortcut to a Voice Moment or a new Voice Room.',
+  'Open Clubs, Creator Studio, Awards, alerts, and Settings. You can replay this tour in Settings anytime.',
+  'Find Friends, Clubs, your profile, and Settings here. Replay this tour from Settings anytime.',
+  'Create Room',
+};
+
+Map<String, String> _activeTranslations(Map<String, String> translations) {
+  translations.removeWhere(
+    (key, _) => _retiredServerSurfaceTranslationKeys.contains(key),
+  );
+  return translations;
+}
 
 final appTranslations = <String, Map<String, String>>{
   for (final entry in <String, Map<String, String>>{
@@ -236,29 +252,34 @@ final appTranslations = <String, Map<String, String>>{
     ...globalExtendedOverrideTranslations,
     'zh_TW': traditionalChineseTranslations,
   }.entries)
-    entry.key: Map<String, String>.unmodifiable(<String, String>{
-      ...entry.value,
-      ...currentReleaseTranslations[entry.key]!,
-      ...currentReleaseCompactTranslations[entry.key]!,
-      ...currentReleaseChatMediaTranslations[entry.key]!,
-      ...currentReleaseAttachmentProgressTranslations[entry.key]!,
-      ...authCallReleaseTranslations[entry.key]!,
-      ...directCallRefusalTranslations[entry.key]!,
-      ...reelsTranslations[entry.key]!,
-      ...reelsFeedIntegrationTranslations[entry.key]!,
-      ...reelLinksTranslations[entry.key]!,
-      ...gifMessageTranslations[entry.key]!,
-      ...gifComposerTranslations[entry.key]!,
-      ...yoMomentsTranslations[entry.key]!,
-      ...mobileNavigationTranslations[entry.key]!,
-      ...homeTranslations[entry.key]!,
-      ...feedSurfaceReleaseTranslations[entry.key]!,
-      ...voiceTimeFooterTranslations[entry.key]!,
-      ...momentsCreationTranslations[entry.key]!,
-      ...momentsOverviewTranslations[entry.key]!,
-      ...momentsListenTranslations[entry.key]!,
-      ...localizedExtendedLanguageNames[entry.key]!,
-    }),
+    entry.key: Map<String, String>.unmodifiable(
+      _activeTranslations(<String, String>{
+        ...entry.value,
+        ...currentReleaseTranslations[entry.key]!,
+        ...currentReleaseCompactTranslations[entry.key]!,
+        ...currentReleaseChatMediaTranslations[entry.key]!,
+        ...currentReleaseAttachmentProgressTranslations[entry.key]!,
+        ...authCallReleaseTranslations[entry.key]!,
+        ...directCallRefusalTranslations[entry.key]!,
+        ...reelsTranslations[entry.key]!,
+        ...reelsFeedIntegrationTranslations[entry.key]!,
+        ...reelLinksTranslations[entry.key]!,
+        ...gifMessageTranslations[entry.key]!,
+        ...gifComposerTranslations[entry.key]!,
+        ...yoMomentsTranslations[entry.key]!,
+        ...mobileNavigationTranslations[entry.key]!,
+        ...homeTranslations[entry.key]!,
+        ...feedSurfaceReleaseTranslations[entry.key]!,
+        ...voiceTimeFooterTranslations[entry.key]!,
+        ...momentsCreationTranslations[entry.key]!,
+        ...momentsOverviewTranslations[entry.key]!,
+        ...momentsListenTranslations[entry.key]!,
+        ...reelsStageTranslations[entry.key]!,
+        ...reelsVoiceCommentTranslations[entry.key]!,
+        ...serverSurfaceTranslations[entry.key]!,
+        ...localizedExtendedLanguageNames[entry.key]!,
+      }),
+    ),
 };
 
 String? translatedPhrase(String localeKey, String english) =>

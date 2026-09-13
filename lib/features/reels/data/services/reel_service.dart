@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 
+import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_upload.dart';
@@ -15,6 +16,32 @@ import 'package:yovoice/features/reels/data/services/reel_upload_transport.dart'
 enum ReelAssetKind { media, backingAudio }
 
 enum ReelFeedScope { discover, own }
+
+/// What this service has learned about the DEPLOYED voice-comment contract.
+///
+/// The backend for voice comments exists in source and is registered through
+/// `REEL_CALLABLE_METHODS`, but nothing in this program deploys it. Until it
+/// is deployed, `reserveReelVoiceCommentDraft` answers `NOT_FOUND` and
+/// `getReelViewV2` refuses the `commentTypes` input with `invalid-argument`.
+///
+/// A client that assumed either way would be wrong somewhere: assuming the
+/// feature exists puts a mic on the composer that can only fail, and assuming
+/// it does not would keep it dark forever after the deploy. So it is
+/// *probed*, on the one call the thread already makes — see
+/// [ReelService.loadView].
+enum ReelVoiceCommentSupport {
+  /// No thread has been loaded yet in this service. The mic is not offered:
+  /// an unproven capability is not a capability.
+  unknown,
+
+  /// `getReelViewV2` accepted `commentTypes`, which only the deployment that
+  /// carries the two voice callables does.
+  supported,
+
+  /// The deployed backend predates voice comments. The mic is disabled and
+  /// labelled "Coming soon"; nothing is faked.
+  unsupported,
+}
 
 /// What this process has learned about the deployed `listReelsV2` input
 /// contract. See [ReelService._inlineGrantSupport].
@@ -64,6 +91,20 @@ typedef ReelUploadInvoker =
       required ReelUploadPayload payload,
       required Map<String, String> metadata,
       void Function(double progress)? onProgress,
+    });
+
+/// Uploads one finished voice-comment recording and returns the committed
+/// object's generation.
+///
+/// Separate from [ReelUploadInvoker] because the payload is different in
+/// kind: a Reel asset is a picked file the composer already measured, while
+/// this is a [RecordedAudio] the recorder owns and whose platform seam
+/// (`putFile` on native, `putBlob` on web) already exists in Moments.
+typedef ReelVoiceCommentUploadInvoker =
+    Future<String> Function({
+      required String storagePath,
+      required RecordedAudio audio,
+      required Map<String, String> metadata,
     });
 
 @immutable
@@ -142,6 +183,41 @@ class ReelPublishSession {
   }
 }
 
+/// Retry-stable state for ONE voice comment, from the first reserve to the
+/// finalize that publishes it.
+///
+/// It exists for exactly the reason [ReelPublishSession] does: reserve,
+/// upload and finalize are three calls, any of which can lose only its
+/// acknowledgement. Holding the request id, the server-derived comment id and
+/// storage path, and the committed generation across retries is what makes a
+/// second attempt replay to the SAME comment instead of publishing a person's
+/// voice twice.
+///
+/// It is created by the composer, held while the recorder screen is open, and
+/// discarded only once the comment is published or the recording is thrown
+/// away.
+class ReelVoiceCommentSession {
+  ReelVoiceCommentSession({
+    required this.reelId,
+    required this.durationSeconds,
+    required this.caption,
+    String? requestId,
+  }) : requestId = requestId ?? ReelPublishSession.newRequestId();
+
+  final String reelId;
+  final int durationSeconds;
+
+  /// Frozen at the first attempt: the server hashes it into the operation
+  /// identity, so a retry that changed it would be a different operation and
+  /// would answer `already-exists` instead of replaying.
+  final String caption;
+  final String requestId;
+
+  String? commentId;
+  String? storagePath;
+  String? objectGeneration;
+}
+
 class ReelService {
   ReelService({
     FirebaseAuth? auth,
@@ -149,12 +225,14 @@ class ReelService {
     FirebaseStorage? storage,
     ReelCallableInvoker? callableInvoker,
     ReelUploadInvoker? uploadInvoker,
+    ReelVoiceCommentUploadInvoker? voiceCommentUploadInvoker,
     FirebaseFirestore? firestore,
   }) : _auth = auth ?? FirebaseAuth.instance,
        _functionsOverride = functions,
        _storage = storage,
        _callableInvoker = callableInvoker,
        _uploadInvoker = uploadInvoker,
+       _voiceCommentUploadInvoker = voiceCommentUploadInvoker,
        _firestore = firestore;
 
   final FirebaseAuth _auth;
@@ -162,6 +240,7 @@ class ReelService {
   final FirebaseStorage? _storage;
   final ReelCallableInvoker? _callableInvoker;
   final ReelUploadInvoker? _uploadInvoker;
+  final ReelVoiceCommentUploadInvoker? _voiceCommentUploadInvoker;
   final FirebaseFirestore? _firestore;
   final Map<String, DateTime> _recordedViews = <String, DateTime>{};
 
@@ -208,6 +287,28 @@ class ReelService {
   static _InlineGrantSupport _inlineGrantSupport = _InlineGrantSupport.unknown;
   static _InlineGrantSupport _feedScopeSupport = _InlineGrantSupport.unknown;
   final Map<String, String> _deleteRequestIds = <String, String>{};
+
+  /// What THIS service has learned about the deployed voice-comment
+  /// contract, and the notifier a composer watches so the mic stops being a
+  /// promise the moment the answer lands.
+  ///
+  /// Deliberately per-instance rather than process-wide, unlike
+  /// [_inlineGrantSupport]: a wrong answer here decides whether a RECORDING
+  /// control is offered, so a single refusal must not silence the mic in
+  /// every other surface of the process, and a single acceptance must not
+  /// enable it in a surface that has never asked.
+  final ValueNotifier<ReelVoiceCommentSupport> _voiceCommentSupport =
+      ValueNotifier<ReelVoiceCommentSupport>(ReelVoiceCommentSupport.unknown);
+
+  /// Watchable so the composer can swap a disabled "Coming soon" mic for a
+  /// live one as soon as the first thread load answers.
+  ValueListenable<ReelVoiceCommentSupport> get voiceCommentSupport =>
+      _voiceCommentSupport;
+
+  /// True only once the deployed backend has PROVEN it accepts voice
+  /// comments. Unknown is not "probably yes".
+  bool get voiceCommentsSupported =>
+      _voiceCommentSupport.value == ReelVoiceCommentSupport.supported;
 
   /// Retry-stable request ids for the engagement callables, keyed by the exact
   /// intent they encode. A lost acknowledgement must replay to the identical
@@ -283,6 +384,11 @@ class ReelService {
   static const Map<String, Duration> _callableTimeouts = <String, Duration>{
     'reserveReelDraftV2': reserveTimeout,
     'finalizeReelDraftV2': finalizeTimeout,
+    // The voice pair carries the same deadlines for the same reasons: the
+    // reserve writes one document and answers, while the finalize
+    // range-reads and probes a committed object before it publishes.
+    'reserveReelVoiceCommentDraft': reserveTimeout,
+    'finalizeReelVoiceCommentDraft': finalizeTimeout,
   };
 
   Future<Map<Object?, Object?>> _call(
@@ -1298,11 +1404,12 @@ class ReelService {
       );
     }
     // A read carries no idempotency identity, so there is no id to keep.
-    final response = await _engagementCall('getReelViewV2', <String, Object?>{
+    final unflagged = <String, Object?>{
       'reelId': id,
       'commentLimit': commentLimit,
       'commentCursor': commentCursor,
-    });
+    };
+    final response = await _viewCall(unflagged);
     identity.ensureCurrent();
     final view = ReelView.fromWire(response);
     if (view.reel.id != id) {
@@ -1310,6 +1417,324 @@ class ReelService {
     }
     return view;
   });
+
+  /// Runs `getReelViewV2`, asking for voice comments while that is still
+  /// worth asking, and LEARNS the answer.
+  ///
+  /// `requireExactInput` refuses an unknown key outright, so a backend that
+  /// predates voice comments answers `invalid-argument` to the flag. Rather
+  /// than depend on a deploy order nobody can enforce on installed builds,
+  /// that refusal is *verified*: the identical request is replayed without
+  /// the flag, and only if that succeeds — proving the flag and nothing else
+  /// was the problem — is the feature recorded as undeployed. A refusal for
+  /// the request's own reasons (a poisoned cursor, an out-of-range limit) is
+  /// reported and teaches nothing, so the next thread asks again.
+  ///
+  /// Withholding is the server's own old-client protection: without the flag
+  /// it omits voice comments from the page, leaves `commentCount` alone and
+  /// still advances the cursor. So a client that never learns still shows a
+  /// correct, complete text thread.
+  Future<Map<Object?, Object?>> _viewCall(
+    Map<String, Object?> unflagged,
+  ) async {
+    if (_voiceCommentSupport.value == ReelVoiceCommentSupport.unsupported) {
+      return _engagementCall('getReelViewV2', unflagged);
+    }
+    try {
+      final response = await _engagementCall('getReelViewV2', <String, Object?>{
+        ...unflagged,
+        'commentTypes': const <String>['text', 'voice'],
+      });
+      _voiceCommentSupport.value = ReelVoiceCommentSupport.supported;
+      return response;
+    } on ReelEngagementException catch (error, stackTrace) {
+      if (error.reason != ReelEngagementFailure.invalid ||
+          _voiceCommentSupport.value == ReelVoiceCommentSupport.supported) {
+        rethrow;
+      }
+      Map<Object?, Object?>? recovered;
+      try {
+        recovered = await _engagementCall('getReelViewV2', unflagged);
+      } catch (_) {
+        recovered = null;
+      }
+      if (recovered == null) Error.throwWithStackTrace(error, stackTrace);
+      _voiceCommentSupport.value = ReelVoiceCommentSupport.unsupported;
+      return recovered;
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // Voice comments.
+  //
+  // The same two-phase shape the Voice Moment reply has had since it
+  // shipped, against the Reels contract: reserve a bounded upload, put the
+  // bytes under the name only that reservation authorizes, then finalize the
+  // object that landed. Every step is retry-stable through one
+  // [ReelVoiceCommentSession], because a lost acknowledgement must replay to
+  // the same comment rather than publish somebody's voice twice.
+  // -------------------------------------------------------------------
+
+  /// Publishes one recorded voice comment on [session.reelId].
+  ///
+  /// Returns the server's own comment id. Safe to call again with the SAME
+  /// session after any failure: the reservation, the storage object and the
+  /// finalize all replay.
+  ///
+  /// It deliberately does not pre-check [voiceCommentsSupported] — a
+  /// composer decides whether to OFFER the mic, and the server remains the
+  /// only authority on whether a recording may be published.
+  Future<String> publishVoiceComment(
+    ReelVoiceCommentSession session, {
+    required RecordedAudio audio,
+  }) => _withIdentity((identity) async {
+    final reelId = _requiredSafeId(session.reelId, 'reelId');
+    if (session.durationSeconds < ReelComment.minVoiceDurationSeconds ||
+        session.durationSeconds > ReelComment.maxVoiceDurationSeconds) {
+      throw ArgumentError.value(
+        session.durationSeconds,
+        'durationSeconds',
+        'Use ${ReelComment.minVoiceDurationSeconds} to '
+            '${ReelComment.maxVoiceDurationSeconds} seconds.',
+      );
+    }
+    final caption = session.caption.trim();
+    if (caption.length > ReelComment.maxVoiceCaptionLength) {
+      throw ArgumentError.value(
+        session.caption,
+        'caption',
+        'Use up to ${ReelComment.maxVoiceCaptionLength} characters.',
+      );
+    }
+    final unusable = validateRecordedAudio(audio);
+    if (unusable != null) throw unusable;
+
+    if (session.commentId == null || session.storagePath == null) {
+      final reserved = await _engagementCall(
+        'reserveReelVoiceCommentDraft',
+        <String, Object?>{
+          'durationSeconds': session.durationSeconds,
+          'reelId': reelId,
+          'requestId': session.requestId,
+          'text': caption,
+        },
+      );
+      identity.ensureCurrent();
+      final reservation = _exactWireMap(reserved, const <String>{
+        'reelId',
+        'commentId',
+        'storagePath',
+        'created',
+      }, 'Reel voice comment reservation');
+      final commentId = reservation['commentId'];
+      final storagePath = reservation['storagePath'];
+      if (reservation['reelId'] != reelId ||
+          commentId is! String ||
+          !_safeIdPattern.hasMatch(commentId) ||
+          storagePath is! String ||
+          storagePath !=
+              _voiceCommentStoragePath(identity.uid, reelId, commentId)) {
+        throw const FormatException(
+          'Malformed Reel voice comment reservation.',
+        );
+      }
+      session
+        ..commentId = commentId
+        ..storagePath = storagePath;
+    }
+
+    final commentId = session.commentId!;
+    final storagePath = session.storagePath!;
+    identity.ensureCurrent();
+
+    session.objectGeneration ??= await _uploadVoiceComment(
+      storagePath: storagePath,
+      audio: audio,
+      metadata: <String, String>{
+        'authorId': identity.uid,
+        'reelId': reelId,
+        'commentId': commentId,
+      },
+    );
+    identity.ensureCurrent();
+    final generation = session.objectGeneration;
+    if (generation == null || generation.isEmpty) {
+      throw const FormatException('The uploaded voice comment is invalid.');
+    }
+
+    // FROM HERE A TRANSPORT ERROR IS AMBIGUOUS: the server may already have
+    // created the comment and its ledger row. The recording is never
+    // deleted after an attempted finalize — retrying with this same session
+    // replays instead of publishing a second copy.
+    final finalized = await _engagementCall(
+      'finalizeReelVoiceCommentDraft',
+      <String, Object?>{
+        'commentId': commentId,
+        'objectGeneration': generation,
+        'reelId': reelId,
+        'requestId': session.requestId,
+      },
+    );
+    identity.ensureCurrent();
+    // The response is byte-identical to `createReelComment`'s, on purpose.
+    final result = ReelCommentResult.fromWire(finalized);
+    if (result.reelId != reelId || result.commentId != commentId) {
+      throw const FormatException(
+        'Malformed Reel voice comment publish response.',
+      );
+    }
+    return commentId;
+  });
+
+  /// The one object name a (owner, reel, comment) triple may hold, derived
+  /// exactly as `reelVoiceCommentStoragePath` derives it server-side. A
+  /// reservation that names anything else is refused rather than followed.
+  static String _voiceCommentStoragePath(
+    String ownerId,
+    String reelId,
+    String commentId,
+  ) => 'reel_voice_comments/$ownerId/$reelId/$commentId.m4a';
+
+  Future<String> _uploadVoiceComment({
+    required String storagePath,
+    required RecordedAudio audio,
+    required Map<String, String> metadata,
+  }) async {
+    final invoker = _voiceCommentUploadInvoker;
+    if (invoker != null) {
+      return invoker(
+        storagePath: storagePath,
+        audio: audio,
+        metadata: metadata,
+      );
+    }
+    final storage = _storage ?? FirebaseStorage.instance;
+    final reference = storage.ref(storagePath);
+    final declared = SettableMetadata(
+      contentType: normalizeAudioContentType(audio.contentType),
+      customMetadata: metadata,
+    );
+    try {
+      return await audio.uploadTo(reference, declared);
+    } catch (error, stackTrace) {
+      // Storage can commit an object and lose only the acknowledgement. An
+      // exact-metadata recovery makes the retry idempotent without ever
+      // accepting an unrelated object left at the deterministic path.
+      final recovered = await _recoverVoiceCommentUpload(
+        reference: reference,
+        audio: audio,
+        expectedMetadata: metadata,
+      );
+      if (recovered != null) return recovered;
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  Future<String?> _recoverVoiceCommentUpload({
+    required Reference reference,
+    required RecordedAudio audio,
+    required Map<String, String> expectedMetadata,
+  }) async {
+    try {
+      final recovered = await reference.getMetadata();
+      final generation = recovered.generation;
+      final custom = recovered.customMetadata ?? const <String, String>{};
+      if (recovered.size != audio.byteLength ||
+          generation == null ||
+          !RegExp(r'^[0-9]{1,30}$').hasMatch(generation) ||
+          expectedMetadata.entries.any(
+            (entry) => custom[entry.key] != entry.value,
+          )) {
+        return null;
+      }
+      return generation;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Already-minted playback URL for one voice comment, or null.
+  ///
+  /// Synchronous and non-throwing, exactly like [cachedMediaUri]: null means
+  /// "ask [resolveVoiceCommentUri]", never "unavailable".
+  Uri? cachedVoiceCommentUri(String reelId, {required String commentId}) {
+    final uid = currentUserId;
+    if (uid == null ||
+        !_safeIdPattern.hasMatch(reelId) ||
+        !_safeIdPattern.hasMatch(commentId)) {
+      return null;
+    }
+    final cached = _grantCache[_voiceCommentGrantKey(uid, reelId, commentId)];
+    if (cached == null) return null;
+    return cached.isUsableAt(DateTime.now().toUtc()) ? cached.uri : null;
+  }
+
+  /// Resolves a playable URL for ONE voice comment.
+  ///
+  /// A comment is its own asset with its own audience — the Reel's author
+  /// and the commenter are independent principals server-side — so it is
+  /// never an overload of [resolveMediaUri]'s `asset`, which is what the
+  /// deployed callable also refuses to let it be. Everything else is the
+  /// same discipline: one shared grant cache, the identity epoch, the
+  /// in-flight de-duplication, and [clearAllMediaAccessCaches] drops it with
+  /// every other grant on an account boundary.
+  Future<Uri> resolveVoiceCommentUri(
+    String reelId, {
+    required String commentId,
+    bool forceRefresh = false,
+  }) {
+    final uid = _auth.currentUser?.uid ?? '';
+    final cleanReelId = _requiredSafeId(reelId, 'reelId');
+    final cleanCommentId = _requiredSafeId(commentId, 'commentId');
+    if (uid.isEmpty) {
+      throw StateError('Sign in before playing a voice comment.');
+    }
+    final key = _voiceCommentGrantKey(uid, cleanReelId, cleanCommentId);
+    final now = DateTime.now().toUtc();
+    final cached = _grantCache[key];
+    if (!forceRefresh && cached != null && cached.isUsableAt(now)) {
+      return Future<Uri>.value(cached.uri);
+    }
+    return _pendingGrants.putIfAbsent(key, () async {
+      final epoch = _grantEpoch;
+      try {
+        final response = await _call('getReelMediaAccessV2', <String, Object?>{
+          'reelId': cleanReelId,
+          'asset': 'voiceComment',
+          'commentId': cleanCommentId,
+        });
+        // An answer that lands after the account changed must never play.
+        if (_auth.currentUser?.uid != uid || epoch != _grantEpoch) {
+          throw StateError('Reel media access was cleared. Try again.');
+        }
+        final grant = _ReelVoiceCommentGrant.fromWire(response);
+        final checkedAt = DateTime.now().toUtc();
+        if (!grant.expiresAt.isAfter(checkedAt) ||
+            !grant.availability.isAvailableAt(checkedAt) ||
+            (grant.availability.contentExpiresAt != null &&
+                grant.expiresAt.isAfter(
+                  grant.availability.contentExpiresAt!,
+                ))) {
+          throw const FormatException('Expired Reel voice comment grant.');
+        }
+        _grantCache[key] = _CachedReelGrant(
+          uri: grant.uri,
+          expiresAt: grant.expiresAt,
+          issuedAt: checkedAt,
+        );
+        _pruneGrantCache(checkedAt);
+        return grant.uri;
+      } finally {
+        _pendingGrants.remove(key);
+      }
+    });
+  }
+
+  static String _voiceCommentGrantKey(
+    String uid,
+    String reelId,
+    String commentId,
+  ) => '$uid:$reelId:voiceComment:$commentId';
 
   static void clearAllMediaAccessCaches() {
     _grantEpoch += 1;
@@ -1326,6 +1751,15 @@ class ReelService {
     _inlineGrantSupport = _InlineGrantSupport.unknown;
     _feedScopeSupport = _InlineGrantSupport.unknown;
   }
+
+  /// Forgets what this service learned about the deployed voice-comment
+  /// contract, so the next thread load probes again.
+  ///
+  /// Test-only. In production the latch is a fact about the deployment and
+  /// re-probing it per thread would spend a wasted round trip every time.
+  @visibleForTesting
+  void debugResetVoiceCommentSupport() =>
+      _voiceCommentSupport.value = ReelVoiceCommentSupport.unknown;
 
   /// Whether this process is still asking `listReelsV2` for inline grants.
   @visibleForTesting
@@ -1489,12 +1923,12 @@ class ReelCommentDeletion {
   final int commentCount;
 
   factory ReelCommentDeletion.fromWire(Map<Object?, Object?> raw) {
-    final map = _exactWireMap(raw, const <String>{
-      'reelId',
-      'commentId',
-      'deleted',
-      'commentCount',
-    }, 'Reel comment deletion');
+    final map = _exactWireMap(
+      raw,
+      const <String>{'reelId', 'commentId', 'deleted', 'commentCount'},
+      'Reel comment deletion',
+      optional: _additiveEngagementKeys,
+    );
     final commentCount = map['commentCount'];
     if (map['deleted'] != true || commentCount is! int || commentCount < 0) {
       throw const FormatException('Malformed Reel comment deletion.');
@@ -1559,13 +1993,18 @@ class ReelCommentRemoval {
   final String removedAuthorId;
 
   factory ReelCommentRemoval.fromWire(Map<Object?, Object?> raw) {
-    final map = _exactWireMap(raw, const <String>{
-      'reelId',
-      'commentId',
-      'removed',
-      'commentCount',
-      'removedAuthorId',
-    }, 'Reel comment removal');
+    final map = _exactWireMap(
+      raw,
+      const <String>{
+        'reelId',
+        'commentId',
+        'removed',
+        'commentCount',
+        'removedAuthorId',
+      },
+      'Reel comment removal',
+      optional: _additiveEngagementKeys,
+    );
     final commentCount = map['commentCount'];
     if (map['removed'] != true || commentCount is! int || commentCount < 0) {
       throw const FormatException('Malformed Reel comment removal.');
@@ -1831,23 +2270,123 @@ class _ReelMediaGrantV2 {
   }
 }
 
+/// One `getReelMediaAccessV2` answer for `asset: "voiceComment"`.
+///
+/// Its own parser rather than a relaxed [_ReelMediaGrantV2]: the voice-comment
+/// grant carries one field the Reel's own grant does not (`durationSeconds`),
+/// and loosening the exact-shape check of the media grant to accommodate it
+/// would stop that grant noticing a backend that answered with the wrong
+/// shape.
+@immutable
+class _ReelVoiceCommentGrant {
+  const _ReelVoiceCommentGrant({
+    required this.uri,
+    required this.expiresAt,
+    required this.generation,
+    required this.durationSeconds,
+    required this.availability,
+  });
+
+  final Uri uri;
+  final DateTime expiresAt;
+  final String generation;
+  final int durationSeconds;
+  final ReelAvailability availability;
+
+  factory _ReelVoiceCommentGrant.fromWire(Map<Object?, Object?> raw) {
+    final map = _exactWireMap(raw, const <String>{
+      'schemaVersion',
+      'url',
+      'expiresAtMillis',
+      'generation',
+      'durationSeconds',
+      'availabilityHours',
+      'contentExpiresAtMillis',
+    }, 'Reel voice comment grant');
+    if (map['schemaVersion'] != 2) {
+      throw const FormatException(
+        'Unsupported Reel voice comment grant schema.',
+      );
+    }
+    final rawUrl = map['url'];
+    final rawGeneration = map['generation'];
+    final duration = map['durationSeconds'];
+    if (rawUrl is! String ||
+        rawGeneration is! String ||
+        !RegExp(r'^[0-9]{1,30}$').hasMatch(rawGeneration) ||
+        duration is! int ||
+        duration < ReelComment.minVoiceDurationSeconds ||
+        duration > ReelComment.maxVoiceDurationSeconds) {
+      throw const FormatException('Malformed Reel voice comment grant.');
+    }
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host != 'storage.googleapis.com' ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasPort) {
+      throw const FormatException('Unsafe Reel voice comment grant.');
+    }
+    final choice = ReelAvailabilityChoice.fromWire(map['availabilityHours']);
+    return _ReelVoiceCommentGrant(
+      uri: uri,
+      expiresAt: _positiveTimestamp(map['expiresAtMillis'], 'expiresAtMillis'),
+      generation: rawGeneration,
+      durationSeconds: duration,
+      availability: ReelAvailability(
+        schemaVersion: 2,
+        choice: choice,
+        contentExpiresAt: _contentExpiry(
+          choice,
+          map['contentExpiresAtMillis'],
+          'contentExpiresAtMillis',
+        ),
+      ),
+    );
+  }
+}
+
+/// Strict wire shape, with a named allowance for ADDITIVE server fields.
+///
+/// [optional] keys may be present or absent; every other key must be present
+/// and nothing else may be. A strict-only reader turns a purely additive
+/// backend change into a visible client failure — a SUCCESSFUL deletion read
+/// as a malformed response — so readers written from here on name the fields
+/// they tolerate.
+///
+/// The allowance only protects builds that carry it. Every client installed
+/// before it parses these results with no allowance at all, so the server
+/// side of the rule is the binding one (ADR-187): `deleteReelComment` and
+/// `removeReelComment` return exactly the key set those installed readers
+/// accept, and a new key on a response an installed strict reader parses is a
+/// breaking change, not an additive one.
 Map<String, Object?> _exactWireMap(
   Map<Object?, Object?> raw,
   Set<String> expected,
-  String label,
-) {
+  String label, {
+  Set<String> optional = const <String>{},
+}) {
   final map = <String, Object?>{};
   for (final entry in raw.entries) {
     final key = entry.key;
     if (key is! String) throw FormatException('$label has an invalid key.');
     map[key] = entry.value;
   }
-  if (map.keys.toSet().difference(expected).isNotEmpty ||
-      expected.difference(map.keys.toSet()).isNotEmpty) {
+  final present = map.keys.toSet();
+  if (present.difference(expected.union(optional)).isNotEmpty ||
+      expected.difference(present).isNotEmpty) {
     throw FormatException('$label has an unsupported shape.');
   }
   return map;
 }
+
+/// Forward tolerance on the engagement results. The server does NOT send
+/// `audioQueued`: an earlier draft of the voice-comment backend did, and it
+/// was taken back out because installed clients refuse it (ADR-187). Were it
+/// ever to reappear it would be accepted and ignored — whether a voice
+/// comment's bytes were queued for deletion is the server's own bookkeeping,
+/// and there is nothing honest for a thread to say about it.
+const Set<String> _additiveEngagementKeys = <String>{'audioQueued'};
 
 DateTime _positiveTimestamp(Object? raw, String label) {
   if (raw is! int || raw <= 0) {

@@ -93,8 +93,8 @@ Future<void> _pump(
 void main() {
   setUp(resetRoomLinkCache);
 
-  group('a text message with a canonical room link', () {
-    testWidgets('keeps the text and adds a room card with Join', (
+  group('a text message with a canonical legacy voice link', () {
+    testWidgets('keeps the text and adds a server conversation card', (
       tester,
     ) async {
       final requested = <String>[];
@@ -114,11 +114,8 @@ void main() {
       expect(requested, ['room-1']);
       expect(find.byKey(const ValueKey('room-link-card')), findsOneWidget);
       expect(find.text('The Family Lounge'), findsOneWidget);
-      expect(
-        find.text('Community room · hosted by Host Hania'),
-        findsOneWidget,
-      );
-      expect(find.text('Join room'), findsOneWidget);
+      expect(find.text('Voice channel · hosted by Host Hania'), findsOneWidget);
+      expect(find.text('Open server'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('incoming-message-bubble')),
         findsOneWidget,

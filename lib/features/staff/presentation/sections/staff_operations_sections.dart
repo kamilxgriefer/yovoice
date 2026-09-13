@@ -32,10 +32,10 @@ class StaffRoomsSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         StaffSectionHeader(
-          title: copy.text('Rooms & Spaces', 'Pokoje i przestrzenie'),
+          title: copy.text('Live conversations', 'Rozmowy na żywo'),
           subtitle: copy.text(
-            'Live rooms across the platform. Staff room controls use the same tiered menu shown inside rooms.',
-            'Pokoje nadawane na żywo na całej platformie. Narzędzia zespołu są dostępne w tym samym menu co w pokojach.',
+            'Live voice conversations across the platform. Staff controls use the same tiered menu shown inside voice channels.',
+            'Rozmowy głosowe na żywo na całej platformie. Narzędzia zespołu są dostępne w tym samym menu co na kanałach głosowych.',
           ),
         ),
         Expanded(
@@ -46,8 +46,8 @@ class StaffRoomsSection extends StatelessWidget {
                 return StaffEmptyState(
                   icon: Icons.error_outline_rounded,
                   message: copy.text(
-                    'Live rooms could not be loaded.',
-                    'Nie udało się wczytać pokojów na żywo.',
+                    'Live conversations could not be loaded.',
+                    'Nie udało się wczytać rozmów na żywo.',
                   ),
                 );
               }
@@ -55,8 +55,8 @@ class StaffRoomsSection extends StatelessWidget {
                 return Center(
                   child: Semantics(
                     label: copy.text(
-                      'Loading live rooms',
-                      'Wczytywanie pokojów na żywo',
+                      'Loading live conversations',
+                      'Wczytywanie rozmów na żywo',
                     ),
                     child: const CircularProgressIndicator(),
                   ),
@@ -107,7 +107,7 @@ class StaffRoomsSection extends StatelessWidget {
                               ),
                               Text(
                                 copy.text(
-                                  'Hosted by ${room.hostName} · ${room.participantCount} in room',
+                                  'Hosted by ${room.hostName} · ${room.participantCount} in conversation',
                                   'Prowadzący: ${room.hostName} · ${localizedStaffParticipantCount(copy, room.participantCount)}',
                                 ),
                                 maxLines: 1,

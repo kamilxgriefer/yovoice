@@ -142,7 +142,7 @@ class _PremiumPresentationView extends StatelessWidget {
             const SizedBox(height: 18),
             Text(
               copy.text(
-                'More room\nfor your voice.',
+                'More space\nfor your voice.',
                 'Więcej przestrzeni\ndla Twojego głosu.',
               ),
               textAlign: TextAlign.center,
@@ -321,7 +321,7 @@ class _PremiumHero extends StatelessWidget {
                   top: height / 2 + 28,
                   child: _HeroPill(
                     icon: Icons.groups_rounded,
-                    label: copy.text('Club Owner', 'Właściciel klubu'),
+                    label: copy.text('Server Owner', 'Właściciel serwera'),
                   ),
                 ),
                 Positioned(
@@ -580,7 +580,7 @@ class _PremiumActiveView extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 copy.text(
-                  'Your voice just got more room to grow.',
+                  'Your voice just got more space to grow.',
                   'Twój głos ma teraz więcej przestrzeni, by się rozwijać.',
                 ),
                 textAlign: TextAlign.center,

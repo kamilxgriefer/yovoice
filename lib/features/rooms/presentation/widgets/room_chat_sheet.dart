@@ -230,9 +230,10 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
         mainAxisSize: MainAxisSize.min,
         children: [
           YoModalSheetChrome(
-            sheetLabel: copy.text(
-              'room message actions',
-              'opcje wiadomości w pokoju',
+            sheetLabel: copy.template(
+              'Conversation actions for {name}',
+              'Opcje rozmowy z użytkownikiem {name}',
+              values: {'name': message.senderName},
             ),
             surfaceColor: Color(0xFF171021),
           ),
@@ -352,7 +353,10 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  copy.text('Room chat', 'Czat pokoju'),
+                                  copy.text(
+                                    'Live conversation',
+                                    'Rozmowa na żywo',
+                                  ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
@@ -361,20 +365,6 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
                                     fontWeight: FontWeight.w900,
                                   ),
                                 ),
-                                if (!compact)
-                                  Text(
-                                    copy.text(
-                                      'Live conversation',
-                                      'Rozmowa na żywo',
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: Color(0xFF9C93AB),
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
                               ],
                             ),
                           ),
@@ -460,19 +450,6 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
                                       fontWeight: FontWeight.w900,
                                     ),
                                   ),
-                                  if (!compact) ...[
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      copy.text(
-                                        'Messages stay with this room.',
-                                        'Wiadomości pozostają w tym pokoju.',
-                                      ),
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        color: Color(0xFF9E92A8),
-                                      ),
-                                    ),
-                                  ],
                                 ],
                               ),
                             ),

@@ -61,7 +61,10 @@ class RoomStaffMenu extends StatelessWidget {
             value: _StaffAction.endWithReason,
             child: _MenuRow(
               icon: Icons.stop_circle_outlined,
-              label: copy.text('End public room…', 'Zakończ pokój publiczny…'),
+              label: copy.text(
+                'End public conversation…',
+                'Zakończ rozmowę publiczną…',
+              ),
             ),
           ),
         if (capabilities.endAnyRoom)
@@ -69,7 +72,7 @@ class RoomStaffMenu extends StatelessWidget {
             value: _StaffAction.end,
             child: _MenuRow(
               icon: Icons.stop_circle_outlined,
-              label: copy.text('End room…', 'Zakończ pokój…'),
+              label: copy.text('End conversation…', 'Zakończ rozmowę…'),
             ),
           ),
         if (capabilities.quarantineSpaces)
@@ -103,9 +106,9 @@ class RoomStaffMenu extends StatelessWidget {
           context,
           title: copy.text(
             'End "${room.name}"?',
-            'Zakończyć pokój „${room.name}”?',
+            'Zakończyć rozmowę „${room.name}”?',
           ),
-          confirmLabel: copy.text('End room', 'Zakończ pokój'),
+          confirmLabel: copy.text('End conversation', 'Zakończ rozmowę'),
           onConfirm: (reason) => _functions
               .httpsCallable('forceEndRoom')
               .call<Map<String, dynamic>>({
@@ -118,7 +121,7 @@ class RoomStaffMenu extends StatelessWidget {
           context,
           title: copy.text(
             'Quarantine "${room.name}"?',
-            'Poddaj pokój „${room.name}” kwarantannie?',
+            'Poddaj rozmowę „${room.name}” kwarantannie?',
           ),
           confirmLabel: copy.text('Quarantine', 'Poddaj kwarantannie'),
           onConfirm: (reason) => _functions
@@ -291,8 +294,8 @@ class _ReasonDialogState extends State<_ReasonDialog> {
           child: _busy
               ? Semantics(
                   label: copy.text(
-                    'Applying room action',
-                    'Wykonywanie działania w pokoju',
+                    'Applying conversation action',
+                    'Wykonywanie działania w rozmowie',
                   ),
                   child: const SizedBox(
                     width: 16,
@@ -368,8 +371,8 @@ class _OwnerDeleteRoomDialogState extends State<OwnerDeleteRoomDialog> {
           _error = friendlyErrorMessage(
             error,
             fallback: copy.text(
-              'Could not permanently delete the room. Please try again.',
-              'Nie udało się trwale usunąć pokoju. Spróbuj ponownie.',
+              'Could not permanently delete the conversation. Please try again.',
+              'Nie udało się trwale usunąć rozmowy. Spróbuj ponownie.',
             ),
             copy: copy,
           );
@@ -396,7 +399,7 @@ class _OwnerDeleteRoomDialogState extends State<OwnerDeleteRoomDialog> {
             Text(
               copy.text(
                 'This removes "${widget.room.name}" and everything in it. There is no undo.',
-                'Usuniesz pokój „${widget.room.name}” wraz z całą jego zawartością. Tej operacji nie można cofnąć.',
+                'Usuniesz rozmowę „${widget.room.name}” wraz z całą jej zawartością. Tej operacji nie można cofnąć.',
               ),
               style: const TextStyle(
                 color: Color(0xFFB6ACBB),
@@ -423,8 +426,8 @@ class _OwnerDeleteRoomDialogState extends State<OwnerDeleteRoomDialog> {
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 labelText: copy.text(
-                  'Type the room name to confirm',
-                  'Wpisz nazwę pokoju, aby potwierdzić',
+                  'Type the conversation name to confirm',
+                  'Wpisz nazwę rozmowy, aby potwierdzić',
                 ),
                 hintText: widget.room.name,
                 labelStyle: const TextStyle(color: Color(0xFFB8AFC2)),
@@ -458,8 +461,8 @@ class _OwnerDeleteRoomDialogState extends State<OwnerDeleteRoomDialog> {
           child: _busy
               ? Semantics(
                   label: copy.text(
-                    'Deleting room permanently',
-                    'Trwałe usuwanie pokoju',
+                    'Deleting conversation permanently',
+                    'Trwałe usuwanie rozmowy',
                   ),
                   child: const SizedBox(
                     width: 16,

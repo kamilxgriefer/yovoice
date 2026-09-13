@@ -89,6 +89,19 @@ class YoMomentsLayout {
   static const double localPanelBaseWidth = 240;
   static const double calmPanelWidth = 320;
 
+  /// The widest the three columns may spread before they stop being a
+  /// workspace and become two islands with a void between them. Visual
+  /// contract §9.1's 1920 cell: "local + main + calm, workspace centred
+  /// ≤ 1440". Beyond it the destination centres rather than stretches.
+  static const double workspaceMaxWidth = 1440;
+
+  /// How much of [slotWidth] the workspace gives back to the canvas on each
+  /// side. Zero at every width the boards were drawn at except 1920.
+  double get workspaceSideInset {
+    final overflow = slotWidth - workspaceMaxWidth;
+    return overflow > 0 ? overflow / 2 : 0;
+  }
+
   final double slotWidth;
   final YoMomentsLayoutTier tier;
   final double gutter;
@@ -313,10 +326,10 @@ class YoMomentsFilterChips extends StatelessWidget {
         Expanded(
           child: ImmersiveFilterRow(
             onCanvas: true,
-            padding: EdgeInsetsDirectional.only(
-              start: gutter,
-              end: trailing == null ? gutter : AppRhythm.tight,
-            ),
+            // The strip scrolls; its last chip has to be cut by a clean
+            // edge and not by the pinned control beside it, so the trailing
+            // inset is the full gutter with or without that control.
+            padding: EdgeInsetsDirectional.only(start: gutter, end: gutter),
             groupLabel: groupLabel,
             options: <ImmersiveChromeOption>[
               for (final option in options)

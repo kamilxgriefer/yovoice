@@ -151,7 +151,8 @@ void main() {
       expect(
         screen.isVisible,
         isNull,
-        reason: 'a pushed route ends its conversation by being popped; '
+        reason:
+            'a pushed route ends its conversation by being popped; '
             'null must keep meaning always visible',
       );
       expect(screen.isRootTab, isFalse);
@@ -163,14 +164,16 @@ void main() {
       expect(
         source,
         matches(RegExp(r'_serversVisible\s*=\s*ValueNotifier<bool>')),
-        reason: 'the shell must own the notifier beside _momentsVisible — '
+        reason:
+            'the shell must own the notifier beside _momentsVisible — '
             'the slot is built once and cached, so a constructor argument '
             'could never be updated',
       );
       expect(
         source,
         matches(RegExp(r'serversVisible:\s*_serversVisible')),
-        reason: 'the notifier has to reach the Servers slot through '
+        reason:
+            'the notifier has to reach the Servers slot through '
             'moreDestinationScreen, or the wiring stops at the shell',
       );
       expect(
@@ -178,7 +181,8 @@ void main() {
         matches(
           RegExp(r'_serversVisible\.value\s*=\s*index\s*==\s*_serversSlot'),
         ),
-        reason: 'selecting any other destination must publish false; this is '
+        reason:
+            'selecting any other destination must publish false; this is '
             'the line that ends the conversation on a rail or dock switch',
       );
       expect(
@@ -189,7 +193,8 @@ void main() {
       expect(
         source,
         isNot(contains('TickerMode.of(')),
-        reason: 'TickerMode is flipped by ANY opaque route pushed over the '
+        reason:
+            'TickerMode is flipped by ANY opaque route pushed over the '
             'shell (a profile, Settings, a moment detail), so it must never '
             'stand in for slot visibility — it would end a live conversation '
             'the person never left',
@@ -203,12 +208,16 @@ void main() {
         source,
         matches(
           RegExp(
+            r'MoreDestination\.discover\s*\|\|\s*'
+            r'MoreDestination\.clubs\s*\|\|\s*'
             r'MoreDestination\.servers\s*=>\s*ServersScreen\('
             r'[\s\S]{0,160}?isVisible:\s*serversVisible',
           ),
         ),
-        reason: 'the one Home call site for the servers feature is where the '
-            'shell\'s visibility becomes the screen\'s',
+        reason:
+            'the one Home call site for the servers feature is where the '
+            'shell\'s visibility becomes the screen\'s, including both '
+            'legacy space identities',
       );
     });
   });
@@ -260,7 +269,8 @@ void main() {
       expect(
         find.byType(ServersScreen, skipOffstage: false),
         findsOneWidget,
-        reason: 'the retained slot must still be mounted — otherwise this '
+        reason:
+            'the retained slot must still be mounted — otherwise this '
             'test proves a dispose, not the visibility contract',
       );
       expect(
@@ -272,7 +282,8 @@ void main() {
       expect(
         _dockAnywhere,
         findsNothing,
-        reason: 'a conversation with no surface has no dock; keeping one '
+        reason:
+            'a conversation with no surface has no dock; keeping one '
             'offstage is the defect, not the indicator',
       );
       expect(
@@ -283,8 +294,9 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('coming back finds the directory, not a phantom conversation',
-        (tester) async {
+    testWidgets('coming back finds the directory, not a phantom conversation', (
+      tester,
+    ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final repository = TestServerRepository()
         ..servers = [qaServer(ServerType.friends)]
@@ -321,7 +333,8 @@ void main() {
       expect(
         _dockAnywhere,
         findsNothing,
-        reason: 'a dock back on screen without a join would be a session '
+        reason:
+            'a dock back on screen without a join would be a session '
             'nobody asked for',
       );
       expect(
@@ -333,8 +346,7 @@ void main() {
     });
   });
 
-  group('F-2 — an inline workspace always has a way back to the directory',
-      () {
+  group('F-2 — an inline workspace always has a way back to the directory', () {
     Future<void> openInline(
       WidgetTester tester,
       TestServerRepository repository, {
@@ -372,7 +384,8 @@ void main() {
       expect(
         _stateBack,
         findsOneWidget,
-        reason: 'the panel and the phone header are drawn INSIDE the '
+        reason:
+            'the panel and the phone header are drawn INSIDE the '
             'workspace, which this state replaces — without a way out here '
             'the retained slot is a dead end for the rest of the session',
       );
@@ -412,7 +425,8 @@ void main() {
       expect(
         _stateBack,
         findsOneWidget,
-        reason: 'the owner deleting the server, or membership being revoked, '
+        reason:
+            'the owner deleting the server, or membership being revoked, '
             'is exactly when the person needs the directory back',
       );
       await tester.tap(_stateBack);
@@ -457,7 +471,8 @@ void main() {
       expect(
         _stateBack,
         findsNothing,
-        reason: 'a pushed route carries a real app bar with Back; a second '
+        reason:
+            'a pushed route carries a real app bar with Back; a second '
             'control would be chrome drawn twice',
       );
       expect(tester.takeException(), isNull);
@@ -492,19 +507,22 @@ void main() {
       expect(
         tester.takeException(),
         isNull,
-        reason: 'the rejected future was never caught, so the failure '
+        reason:
+            'the rejected future was never caught, so the failure '
             'escaped into the zone instead of reaching the person',
       );
       expect(
         _dockStatus(tester),
         'Nie udało się zmienić ustawienia dźwięku.',
-        reason: 'a control that looks live and silently does nothing is the '
+        reason:
+            'a control that looks live and silently does nothing is the '
             'shape the contract forbids',
       );
       expect(
         link.isMicrophoneEnabled,
         isFalse,
-        reason: 'the capture never opened, so the control must not claim it '
+        reason:
+            'the capture never opened, so the control must not claim it '
             'did',
       );
       expect(

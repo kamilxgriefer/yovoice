@@ -726,15 +726,18 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
                           fontSize: 13,
                         ),
                       ),
-                      SizedBox(height: denseGridCard ? 4 : 7),
-                      Text(
-                        _followersLabel(copy, creator.followerCount),
-                        style: const TextStyle(
-                          color: Color(0xFFD3A5FF),
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
+                      if (creator.creatorAudienceVisible) ...[
+                        SizedBox(height: denseGridCard ? 4 : 7),
+                        Text(
+                          _followersLabel(copy, creator.followerCount),
+                          key: ValueKey('creator-followers-${creator.uid}'),
+                          style: const TextStyle(
+                            color: Color(0xFFD3A5FF),
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -753,39 +756,46 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
               ),
               child: Text(copy.text('View profile', 'Zobacz profil')),
             );
-            final followButton = FilledButton.icon(
-              onPressed: _busy ? null : () => _toggle(following),
-              style: const ButtonStyle(
-                minimumSize: WidgetStatePropertyAll(Size(0, 44)),
-              ),
-              icon: _busy
-                  ? const SizedBox(
-                      width: 15,
-                      height: 15,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Icon(
-                      following
-                          ? Icons.check_rounded
-                          : Icons.person_add_alt_1_rounded,
-                      size: 18,
+            final showFollowAction =
+                creator.creatorAudienceVisible || following;
+            final followButton = showFollowAction
+                ? FilledButton.icon(
+                    key: ValueKey('creator-follow-${creator.uid}'),
+                    onPressed: _busy ? null : () => _toggle(following),
+                    style: const ButtonStyle(
+                      minimumSize: WidgetStatePropertyAll(Size(0, 44)),
                     ),
-              label: Text(
-                following
-                    ? copy.text('Following', 'Obserwujesz')
-                    : copy.text('Follow', 'Obserwuj'),
-              ),
-            );
+                    icon: _busy
+                        ? const SizedBox(
+                            width: 15,
+                            height: 15,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Icon(
+                            following
+                                ? Icons.check_rounded
+                                : Icons.person_add_alt_1_rounded,
+                            size: 18,
+                          ),
+                    label: Text(
+                      following
+                          ? copy.text('Following', 'Obserwujesz')
+                          : copy.text('Follow', 'Obserwuj'),
+                    ),
+                  )
+                : null;
             final actions = textScale > 1.35
                 ? Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       viewProfileButton,
-                      const SizedBox(height: 8),
-                      followButton,
+                      if (followButton != null) ...[
+                        const SizedBox(height: 8),
+                        followButton,
+                      ],
                     ],
                   )
                 : Row(
@@ -795,11 +805,13 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
                         Expanded(child: viewProfileButton)
                       else
                         viewProfileButton,
-                      const SizedBox(width: 8),
-                      if (compact)
-                        Expanded(child: followButton)
-                      else
-                        followButton,
+                      if (followButton != null) ...[
+                        const SizedBox(width: 8),
+                        if (compact)
+                          Expanded(child: followButton)
+                        else
+                          followButton,
+                      ],
                     ],
                   );
 

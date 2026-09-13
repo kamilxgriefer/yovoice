@@ -23,9 +23,6 @@ import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_greeting_header.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_here_now_hero.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_places_card.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_places_section.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_record_moment_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_section_header.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
@@ -38,6 +35,9 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/models/server_type.dart';
+import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 
 /// WIDE Home — the same state and widgets as the phone, a deliberately
@@ -56,14 +56,10 @@ class _Rooms extends RoomService {
   _Rooms({
     required super.firestore,
     required super.auth,
-    this.live = const [],
-    this.owned = const [],
     this.lounges = const {},
     this.rosters = const {},
   });
 
-  final List<VoiceRoom> live;
-  final List<VoiceRoom> owned;
   final Map<String, VoiceRoom> lounges;
   final Map<String, List<RoomParticipant>> rosters;
 
@@ -76,7 +72,7 @@ class _Rooms extends RoomService {
   Stream<List<VoiceRoom>> watchLivePublicRooms() {
     liveCalls++;
     return Stream<List<VoiceRoom>>.multi(
-      (controller) => controller.add(live),
+      (controller) => controller.add(const <VoiceRoom>[]),
       isBroadcast: true,
     );
   }
@@ -85,7 +81,7 @@ class _Rooms extends RoomService {
   Stream<List<VoiceRoom>> watchOwnedRooms() {
     ownedCalls++;
     return Stream<List<VoiceRoom>>.multi(
-      (controller) => controller.add(owned),
+      (controller) => controller.add(const <VoiceRoom>[]),
       isBroadcast: true,
     );
   }
@@ -171,11 +167,30 @@ class _Feed extends HomeFeedService {
 class _Views extends MomentViewsService {
   _Views({required super.firestore, required super.auth});
   @override
-  Stream<Set<String>> watchViewedMomentIds() =>
-      Stream<Set<String>>.multi(
-        (controller) => controller.add(const <String>{}),
-        isBroadcast: true,
-      );
+  Stream<Set<String>> watchViewedMomentIds() => Stream<Set<String>>.multi(
+    (controller) => controller.add(const <String>{}),
+    isBroadcast: true,
+  );
+}
+
+class _Servers extends ServerService {
+  _Servers({
+    required super.firestore,
+    required super.auth,
+    this.servers = const <Server>[],
+  });
+
+  final List<Server> servers;
+  int calls = 0;
+
+  @override
+  Stream<List<Server>> watchMyServers() {
+    calls++;
+    return Stream<List<Server>>.multi(
+      (controller) => controller.add(servers),
+      isBroadcast: true,
+    );
+  }
 }
 
 class _Clubs extends ClubService {
@@ -277,6 +292,27 @@ void main() {
     availability: 'available',
   );
 
+  Server server(
+    String id, {
+    String? name,
+    String description = 'Rozmowy, które możesz kontynuować',
+    ServerType type = ServerType.community,
+    int members = 12,
+    String activationState = 'active',
+  }) => Server(
+    id: id,
+    name: name ?? 'Serwer $id',
+    description: description,
+    ownerId: uid,
+    type: type,
+    privacy: type.allowsPublic
+        ? ServerPrivacy.public
+        : ServerPrivacy.inviteOnly,
+    memberCount: members,
+    schemaVersion: 1,
+    activationState: activationState,
+  );
+
   setUp(() async {
     ProfileService.resetCurrentProfileCache();
     db = FakeFirebaseFirestore();
@@ -315,6 +351,7 @@ void main() {
 
   DesktopHome buildHome({
     required _Rooms rooms,
+    _Servers? servers,
     _Clubs? clubs,
     _Friends? friends,
     _Follow? follow,
@@ -325,6 +362,7 @@ void main() {
     VoidCallback? onOpenServers,
     ValueChanged<Club>? onOpenClub,
     ValueChanged<Club>? onEnterClubLounge,
+    ValueChanged<Server>? onOpenServer,
     int unread = 0,
   }) => DesktopHome(
     key: const ValueKey('wide-home'),
@@ -344,6 +382,7 @@ void main() {
     onOpenNotifications: onOpenNotifications,
     onOpenProfile: onOpenProfile,
     onOpenServers: onOpenServers,
+    onOpenServer: onOpenServer,
     onEnterClubLounge: onEnterClubLounge,
     roomService: rooms,
     clubService:
@@ -355,6 +394,8 @@ void main() {
     feedService: feed ?? _Feed(firestore: db, auth: auth),
     messageService: messages ?? _Messages(firestore: db, auth: auth),
     momentViewsService: _Views(firestore: db, auth: auth),
+    serverRepository:
+        servers ?? _Servers(firestore: db, auth: auth, servers: const []),
     capabilityService: _Capabilities(),
   );
 
@@ -369,8 +410,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(app(home, scale: scale));
-    // Clubs → lounges → candidates → rosters: each hop is one frame, and
-    // the roster is what the hero's faces and summary are made of.
+    // Allow every injected stream to deliver its first repository snapshot.
     for (var frame = 0; frame < 4; frame++) {
       await tester.pump();
     }
@@ -384,45 +424,41 @@ void main() {
       (1280, 628),
       (1440, 788),
     ]) {
-      testWidgets(
-        'at ${viewport.toInt()} the main column is '
-        '${mainWidth.toInt()} beside a 300 px context column',
-        (tester) async {
-          final rooms = _Rooms(
-            firestore: db,
-            auth: auth,
-            lounges: {'c1': lounge('c1')},
-            rosters: {
-              'club_lounge_c1': [person('p1', 'Maja')],
-            },
-          );
-          await pumpAt(
-            tester,
-            buildHome(
-              rooms: rooms,
-              clubs: _Clubs(
-                firestore: db,
-                auth: auth,
-                storage: MockFirebaseStorage(),
-                clubs: [club('c1')],
-              ),
+      testWidgets('at ${viewport.toInt()} the main column is '
+          '${mainWidth.toInt()} beside a 300 px context column', (
+        tester,
+      ) async {
+        final rooms = _Rooms(
+          firestore: db,
+          auth: auth,
+          lounges: {'c1': lounge('c1')},
+          rosters: {
+            'club_lounge_c1': [person('p1', 'Maja')],
+          },
+        );
+        await pumpAt(
+          tester,
+          buildHome(
+            rooms: rooms,
+            clubs: _Clubs(
+              firestore: db,
+              auth: auth,
+              storage: MockFirebaseStorage(),
+              clubs: [club('c1')],
             ),
-            viewport: viewport,
-          );
+          ),
+          viewport: viewport,
+        );
 
-          expect(find.byKey(const ValueKey('home-main-column')), findsOneWidget);
-          expect(
-            find.byKey(const ValueKey('home-secondary-column')),
-            findsOneWidget,
-          );
-          expect(
-            widthOf(tester, const ValueKey('home-secondary-column')),
-            300,
-          );
-          expect(widthOf(tester, const ValueKey('home-main-column')), mainWidth);
-          expect(tester.takeException(), isNull);
-        },
-      );
+        expect(find.byKey(const ValueKey('home-main-column')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('home-secondary-column')),
+          findsOneWidget,
+        );
+        expect(widthOf(tester, const ValueKey('home-secondary-column')), 300);
+        expect(widthOf(tester, const ValueKey('home-main-column')), mainWidth);
+        expect(tester.takeException(), isNull);
+      });
     }
 
     testWidgets('at 1100 the context column folds into one flow, and the '
@@ -432,6 +468,11 @@ void main() {
         tester,
         buildHome(
           rooms: rooms,
+          servers: _Servers(
+            firestore: db,
+            auth: auth,
+            servers: [server('c1', name: 'Po godzinach')],
+          ),
           clubs: _Clubs(
             firestore: db,
             auth: auth,
@@ -444,10 +485,13 @@ void main() {
 
       expect(find.byKey(const ValueKey('home-secondary-column')), findsNothing);
       expect(find.byKey(const ValueKey('home-main-column')), findsNothing);
-      // Nothing is lost: places become the phone's tile rail, and the
-      // record card and the chats keep their place in the single flow.
-      expect(find.byType(HomePlacesRail), findsOneWidget);
-      expect(find.byType(HomePlacesCard), findsNothing);
+      // Nothing is lost: the same server overview, record card and chats
+      // continue in one vertical flow.
+      expect(
+        find.byKey(const ValueKey('home-servers-overview')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('home-server-row-c1')), findsOneWidget);
       expect(find.byType(HomeRecordMomentCard), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
@@ -525,8 +569,8 @@ void main() {
       }
     }
 
-    testWidgets('the phone shell at 768 keeps the same modules without an '
-        'overflow, and the hero is horizontal there too', (tester) async {
+    testWidgets('the phone shell at 768 keeps the server-first modules '
+        'without overflow', (tester) async {
       tester.view.physicalSize = const Size(768, 3200);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
@@ -545,6 +589,11 @@ void main() {
             onOpenComments: (_) {},
             onOpenConversation: (_) {},
             onSeeAllChats: () {},
+            serverRepository: _Servers(
+              firestore: db,
+              auth: auth,
+              servers: [server('c1', name: 'Podcasty nam bliskie i dalekie')],
+            ),
             roomService: _Rooms(
               firestore: db,
               auth: auth,
@@ -576,22 +625,23 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      final hero = tester.widget<HomeHereNowHero>(
-        find.byType(HomeHereNowHero),
+      expect(
+        find.byKey(const ValueKey('home-server-continue-c1')),
+        findsOneWidget,
       );
-      // 768 is the phone shell (the dock, not the rail) — so the hero uses
-      // the wide COMPOSITION but keeps the phone type ramp.
-      expect(hero.compact, isFalse);
-      expect(hero.expanded, isFalse);
-      expect(find.byType(HomePlacesRail), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('home-servers-overview')),
+        findsOneWidget,
+      );
       expect(find.byType(HomeRecordMomentCard), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });
 
-  group('the hero and the server rows change anatomy, not content', () {
-    testWidgets('the desktop hero takes the desktop ramp; the card is one '
-        'stage with copy left and portraits right', (tester) async {
+  group('the server cards change width without losing content', () {
+    testWidgets('the desktop continuation card uses the expanded treatment', (
+      tester,
+    ) async {
       final rooms = _Rooms(
         firestore: db,
         auth: auth,
@@ -608,6 +658,11 @@ void main() {
         tester,
         buildHome(
           rooms: rooms,
+          servers: _Servers(
+            firestore: db,
+            auth: auth,
+            servers: [server('c1', name: 'Po godzinach')],
+          ),
           clubs: _Clubs(
             firestore: db,
             auth: auth,
@@ -617,25 +672,16 @@ void main() {
         ),
         viewport: 1440,
       );
-      final hero = tester.widget<HomeHereNowHero>(find.byType(HomeHereNowHero));
-      expect(hero.expanded, isTrue);
-      expect(hero.compact, isFalse);
-      // The CTA and the portrait cluster are the two controls on the card,
-      // and the CTA sits to the LEFT of the portraits.
-      final cta = tester.getRect(find.byKey(const ValueKey('home-hero-join')));
-      final cluster = tester.getRect(
-        find.byKey(const ValueKey('home-hero-cluster')),
-      );
-      expect(cta.right, lessThanOrEqualTo(cluster.left));
-      expect(cta.height, greaterThanOrEqualTo(52));
-      expect(cta.width, greaterThanOrEqualTo(200));
+      final card = find.byKey(const ValueKey('home-server-continue-c1'));
+      expect(card, findsOneWidget);
+      expect(tester.getSize(card).height, greaterThanOrEqualTo(216));
+      expect(find.text('Po godzinach'), findsNWidgets(2));
+      expect(find.text('Wybierz kanał'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a 788 px main column gets the one-line server row; a 628 px '
-        'one keeps the stacked anatomy — same facts either way', (
-      tester,
-    ) async {
+    testWidgets('a server row fills the 788 and 628 px main columns with the '
+        'same name and type', (tester) async {
       Future<Rect> rowRect(double viewport) async {
         final rooms = _Rooms(
           firestore: db,
@@ -649,6 +695,13 @@ void main() {
           tester,
           buildHome(
             rooms: rooms,
+            servers: _Servers(
+              firestore: db,
+              auth: auth,
+              servers: [
+                server('c1', name: 'Nasz dom', type: ServerType.family),
+              ],
+            ),
             clubs: _Clubs(
               firestore: db,
               auth: auth,
@@ -658,216 +711,185 @@ void main() {
           ),
           viewport: viewport,
         );
-        expect(find.byType(HomeServerActivityCard), findsOneWidget);
-        // The pill, the name and the activity are on the page at both
-        // widths: only the shape changes.
-        expect(find.text('Zajrzyj'), findsOneWidget);
+        final row = find.byKey(const ValueKey('home-server-row-c1'));
+        expect(row, findsOneWidget);
         expect(find.text('Nasz dom'), findsWidgets);
-        return tester.getRect(find.byType(HomeServerActivityCard));
+        expect(find.text('Dla rodziny'), findsWidgets);
+        return tester.getRect(row);
       }
 
       final wide = await rowRect(1440);
       final narrow = await rowRect(1280);
       expect(wide.width, 788);
       expect(narrow.width, 628);
-      // One line is shorter than two.
-      expect(wide.height, lessThan(narrow.height));
+      expect(wide.height, narrow.height);
       expect(tester.takeException(), isNull);
     });
   });
 
-  group('the hero is about the reader\'s own world', () {
-    testWidgets('a live place beats an owned room, which beats the public '
-        'board — the same rule the phone uses', (tester) async {
-      VoiceRoom public(String id) => VoiceRoom(
-        id: id,
-        hostId: 'someone',
-        hostName: 'Ktoś',
-        hostPhotoUrl: null,
-        name: 'Otwarta rozmowa',
-        description: '',
-        category: 'talk',
-        visibility: 'public',
-        language: 'Polish',
-        maxParticipants: null,
-        participantCount: 40,
-        memberCount: 0,
-        isLive: true,
-        roomType: RoomType.community,
-        status: RoomStatus.active,
-        imageUrl: null,
-        approvalRequired: false,
-        slowModeSeconds: 0,
-        autoMuteNewUsers: false,
-        membersCanStartVoice: true,
-        createdAt: null,
-        updatedAt: null,
-        experience: 'community',
+  group('the continuation card is about the reader\'s own servers', () {
+    testWidgets('the first repository server is the concrete workspace CTA', (
+      tester,
+    ) async {
+      final primary = server(
+        'family',
+        name: 'Nasz dom',
+        type: ServerType.family,
       );
-      VoiceRoom mine(String id) => VoiceRoom(
-        id: id,
-        hostId: uid,
-        hostName: 'Kamil',
-        hostPhotoUrl: null,
-        name: 'Mój pokój',
-        description: '',
-        category: 'talk',
-        visibility: 'public',
-        language: 'Polish',
-        maxParticipants: null,
-        participantCount: 2,
-        memberCount: 0,
-        isLive: true,
-        roomType: RoomType.community,
-        status: RoomStatus.active,
-        imageUrl: null,
-        approvalRequired: false,
-        slowModeSeconds: 0,
-        autoMuteNewUsers: false,
-        membersCanStartVoice: true,
-        createdAt: null,
-        updatedAt: null,
-        experience: 'community',
+      final secondary = server(
+        'community',
+        name: 'Po godzinach',
+        type: ServerType.community,
       );
+      Server? opened;
 
       await pumpAt(
         tester,
         buildHome(
-          rooms: _Rooms(
+          rooms: _Rooms(firestore: db, auth: auth),
+          servers: _Servers(
             firestore: db,
             auth: auth,
-            live: [public('public-1')],
-            owned: [mine('mine-1')],
-            lounges: {'c1': lounge('c1')},
-            rosters: {
-              'club_lounge_c1': [person('p1', 'Maja')],
-            },
+            servers: [primary, secondary],
           ),
-          clubs: _Clubs(
-            firestore: db,
-            auth: auth,
-            storage: MockFirebaseStorage(),
-            clubs: [club('c1', name: 'Po godzinach')],
-          ),
+          onOpenServer: (value) => opened = value,
         ),
         viewport: 1440,
         height: 3600,
       );
 
-      final hero = tester.widget<HomeHereNowHero>(find.byType(HomeHereNowHero));
-      expect(hero.candidate.tier, HomeHereNowTier.place);
-      expect(hero.candidate.room.id, 'club_lounge_c1');
-      // The owned room is still reachable from its own section.
-      expect(find.text('Twoje aktywne pokoje'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('home-server-continue-family')),
+      );
+      await tester.pump();
+
+      expect(opened, same(primary));
+      expect(find.byKey(const ValueKey('home-featured-room')), findsNothing);
+      expect(find.text('Twoje aktywne pokoje'), findsNothing);
       expect(tester.takeException(), isNull);
     });
   });
 
-  group('the context column', () {
-    testWidgets('lists at most six places, then offers the way to the rest', (
+  group('the server overview', () {
+    testWidgets('lists at most three servers and keeps the directory CTA', (
       tester,
     ) async {
-      var servers = 0;
+      var directoryOpens = 0;
       await pumpAt(
         tester,
         buildHome(
           rooms: _Rooms(firestore: db, auth: auth),
-          clubs: _Clubs(
+          servers: _Servers(
             firestore: db,
             auth: auth,
-            storage: MockFirebaseStorage(),
-            clubs: [for (var i = 0; i < 9; i++) club('c$i')],
+            servers: [for (var i = 0; i < 9; i++) server('s$i')],
           ),
-          onOpenServers: () => servers++,
+          onOpenServers: () => directoryOpens++,
         ),
         viewport: 1440,
         height: 3200,
       );
 
-      expect(find.byType(HomePlaceRow), findsNWidgets(6));
-      expect(find.byKey(const ValueKey('home-places-see-all')), findsOneWidget);
+      for (var i = 0; i < 3; i++) {
+        expect(find.byKey(ValueKey('home-server-row-s$i')), findsOneWidget);
+      }
+      expect(find.byKey(const ValueKey('home-server-row-s3')), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('home-places-see-all')));
+      final overview = find.byKey(const ValueKey('home-servers-overview'));
+      final seeAll = find.descendant(
+        of: overview,
+        matching: find.text('Zobacz wszystkie'),
+      );
+      expect(seeAll, findsOneWidget);
+      await tester.tap(seeAll);
       await tester.pump();
-      expect(servers, 1);
+      expect(directoryOpens, 1);
 
-      await tester.tap(find.byKey(const ValueKey('home-places-create')));
+      await tester.tap(find.byKey(const ValueKey('home-quick-create-server')));
       await tester.pump();
-      expect(servers, 2);
+      expect(directoryOpens, 2);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a place prints a member count only where a real one exists', (
+    testWidgets('rows show repository-backed type and activation state only', (
       tester,
     ) async {
       await pumpAt(
         tester,
         buildHome(
           rooms: _Rooms(firestore: db, auth: auth),
-          clubs: _Clubs(
+          servers: _Servers(
             firestore: db,
             auth: auth,
-            storage: MockFirebaseStorage(),
-            clubs: [
-              club('counted', name: 'Po godzinach', members: 284),
-              club('uncounted', name: 'Nasza firma', members: 0),
+            servers: [
+              server(
+                'active',
+                name: 'Po godzinach',
+                type: ServerType.community,
+              ),
+              server(
+                'held',
+                name: 'Nasza firma',
+                type: ServerType.company,
+                activationState: 'provisioning',
+              ),
             ],
           ),
         ),
         viewport: 1440,
       );
 
-      expect(find.text('284 osoby'), findsOneWidget);
-      // Never "0 osób": a place with an unwritten counter has at least the
-      // reader in it, so the honest thing is to print no number at all.
-      expect(find.text('0 osób'), findsNothing);
+      expect(find.text('Dla społeczności'), findsWidgets);
+      expect(find.text('W przygotowaniu'), findsOneWidget);
+      expect(find.textContaining('online'), findsNothing);
+      expect(find.textContaining('osób'), findsNothing);
       expect(find.text('Nasza firma'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a place row opens the place, and no membership counter is '
-        'ever phrased as activity', (tester) async {
-      Club? opened;
+    testWidgets('a server row opens that exact server workspace', (
+      tester,
+    ) async {
+      final expected = server('c1', name: 'Nasz dom', type: ServerType.family);
+      Server? opened;
       await pumpAt(
         tester,
         buildHome(
           rooms: _Rooms(firestore: db, auth: auth),
-          clubs: _Clubs(
-            firestore: db,
-            auth: auth,
-            storage: MockFirebaseStorage(),
-            clubs: [club('c1', name: 'Nasz dom', members: 12)],
-          ),
-          onOpenClub: (club) => opened = club,
+          servers: _Servers(firestore: db, auth: auth, servers: [expected]),
+          onOpenServer: (value) => opened = value,
         ),
         viewport: 1440,
       );
-      await tester.tap(find.byKey(const ValueKey('home-place-c1')));
+      await tester.tap(find.byKey(const ValueKey('home-server-row-c1')));
       await tester.pump();
-      expect(opened?.id, 'c1');
-      expect(find.textContaining('online'), findsNothing);
+      expect(opened, same(expected));
       expect(tester.takeException(), isNull);
     });
   });
 
   group('one heading per promise', () {
-    testWidgets('the single-column places section prints "Twoje miejsca" '
-        'exactly once — the rail owns its own heading', (tester) async {
+    testWidgets('the single-column server overview prints its promise once', (
+      tester,
+    ) async {
       await pumpAt(
         tester,
         buildHome(
           rooms: _Rooms(firestore: db, auth: auth),
-          clubs: _Clubs(
+          servers: _Servers(
             firestore: db,
             auth: auth,
-            storage: MockFirebaseStorage(),
-            clubs: [club('c1'), club('c2')],
+            servers: [server('c1'), server('c2')],
           ),
         ),
         viewport: 1100,
       );
-      expect(find.text('Twoje miejsca'), findsOneWidget);
-      expect(find.byType(HomePlacesRail), findsOneWidget);
+      expect(find.text('W Twoich serwerach'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('home-servers-overview')),
+        findsOneWidget,
+      );
+      expect(find.text('Twoje miejsca'), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
@@ -875,7 +897,9 @@ void main() {
         'the main column keeps the desktop one', (tester) async {
       await pumpAt(
         tester,
-        buildHome(rooms: _Rooms(firestore: db, auth: auth)),
+        buildHome(
+          rooms: _Rooms(firestore: db, auth: auth),
+        ),
         viewport: 1440,
       );
 
@@ -900,7 +924,9 @@ void main() {
       // chats heading joins the desktop ramp with everything else.
       await pumpAt(
         tester,
-        buildHome(rooms: _Rooms(firestore: db, auth: auth)),
+        buildHome(
+          rooms: _Rooms(firestore: db, auth: auth),
+        ),
         viewport: 1100,
       );
       expect(scaleOf('Ostatnie czaty'), HomeSectionHeaderScale.expanded);
@@ -989,7 +1015,9 @@ void main() {
     ) async {
       await pumpAt(
         tester,
-        buildHome(rooms: _Rooms(firestore: db, auth: auth)),
+        buildHome(
+          rooms: _Rooms(firestore: db, auth: auth),
+        ),
         viewport: 1440,
       );
       expect(find.byType(PremiumDesktopCard), findsNothing);
@@ -1001,6 +1029,8 @@ void main() {
       // record affordance it carried survives as the "Masz chwilę?" card.
       expect(find.byType(DesktopMomentsStrip), findsNothing);
       expect(find.byType(HomeRecordMomentCard), findsOneWidget);
+      expect(find.text('Kluby'), findsNothing);
+      expect(find.text('Obserwowani'), findsNothing);
       expect(tester.takeException(), isNull);
     });
   });
@@ -1027,9 +1057,15 @@ void main() {
       final follow = _Follow(firestore: db, auth: auth);
       final messages = _Messages(firestore: db, auth: auth);
       final feed = _Feed(firestore: db, auth: auth);
+      final servers = _Servers(
+        firestore: db,
+        auth: auth,
+        servers: [server('c1')],
+      );
 
       final home = buildHome(
         rooms: rooms,
+        servers: servers,
         clubs: clubs,
         friends: friends,
         follow: follow,
@@ -1038,7 +1074,10 @@ void main() {
       );
 
       await pumpAt(tester, home, viewport: 1440);
-      expect(find.byKey(const ValueKey('home-secondary-column')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('home-secondary-column')),
+        findsOneWidget,
+      );
 
       tester.view.physicalSize = Size(slotFor(1100), 2400);
       await tester.pumpWidget(app(home));
@@ -1048,19 +1087,21 @@ void main() {
       tester.view.physicalSize = Size(slotFor(1440), 2400);
       await tester.pumpWidget(app(home));
       await tester.pump();
-      expect(find.byKey(const ValueKey('home-secondary-column')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('home-secondary-column')),
+        findsOneWidget,
+      );
 
-      expect(rooms.liveCalls, 1);
-      expect(rooms.ownedCalls, 1);
-      expect(clubs.calls, 1);
+      expect(servers.calls, 1);
+      expect(rooms.liveCalls, 0);
+      expect(rooms.ownedCalls, 0);
+      expect(clubs.calls, 0);
       expect(friends.calls, 1);
-      expect(follow.calls, 1);
+      expect(follow.calls, 0);
       expect(messages.calls, 1);
       expect(feed.calls, 1);
-      // One lounge listener for the one membership, and the roster pool
-      // stays inside its budget across both layouts.
-      expect(rooms.loungeCalls, 1);
-      expect(rooms.participantCalls, lessThanOrEqualTo(4));
+      expect(rooms.loungeCalls, 0);
+      expect(rooms.participantCalls, 0);
       expect(tester.takeException(), isNull);
     });
   });

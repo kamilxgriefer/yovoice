@@ -430,6 +430,12 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                             service: widget.reelService,
                             videoBuilder: widget.reelVideoBuilder,
                             isVisible: _reelsVisible,
+                            // The Reel footer's "Obserwuj" reads the same
+                            // follow graph as the Voice half's calm panel.
+                            // Null here is the production default: the feed
+                            // resolves the real service itself, and a host
+                            // with no Firebase app gets no control at all.
+                            followService: widget.followService,
                             onCreate: _openReelComposer,
                           )
                         else

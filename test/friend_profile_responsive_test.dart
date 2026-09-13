@@ -12,6 +12,7 @@ import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
+import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
@@ -124,10 +125,24 @@ void main() {
       followService: FollowService(firestore: db, auth: auth),
       socialGraphService: socialGraphService ?? _EmptySocialGraphService(),
       profileMediaService: profileMediaService,
+      creatorPinnedPostService: CreatorPinnedPostService(
+        firestore: db,
+        auth: auth,
+      ),
     );
   }
 
+  Future<void> enableCreatorAudience() =>
+      db.collection('publicProfiles').doc(friendId).update({
+        'accountType': 'creator',
+        'premiumIdentity': true,
+        'creatorAgeVerified': true,
+        'creatorAudienceEnabled': true,
+        'creatorAudienceVisible': true,
+      });
+
   testWidgets('rapid stat taps push one follow-list route', (tester) async {
+    await enableCreatorAudience();
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -157,6 +172,43 @@ void main() {
     expect(find.byType(FollowListScreen), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'an ordinary profile exposes friendship without follower surfaces',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(theme: AppTheme.darkTheme, home: buildScreen()),
+      );
+      for (var pump = 0; pump < 8; pump++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+
+      final friends = find.byKey(const ValueKey('friend-profile-stat-friends'));
+      final scrollable = find
+          .descendant(
+            of: find.byKey(const ValueKey('friend-profile-content-frame')),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      await tester.scrollUntilVisible(friends, 180, scrollable: scrollable);
+      expect(friends, findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('friend-profile-stat-followers')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('friend-profile-stat-following')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('friend-profile-follow-button')),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets('mutual avatar ignores legacy URL and uses viewer grant', (
     tester,
@@ -308,6 +360,7 @@ void main() {
 
   testWidgets('320px at 200% text stacks stats and actions with accessible '
       '44px targets', (tester) async {
+    await enableCreatorAudience();
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final semantics = tester.ensureSemantics();

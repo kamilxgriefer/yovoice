@@ -259,7 +259,7 @@ void main() {
         find.text('Servers'),
         find.text('Chats'),
         find.text('Moments'),
-        find.text('Create Room'),
+        find.text('Create Server'),
         find.byTooltip('Create Voice Moment'),
         find.text('More'),
         find.byTooltip('Profile settings'),
@@ -349,7 +349,7 @@ void main() {
       expect(find.text('MORE'), findsOneWidget);
       expect(
         tester.getCenter(find.text('CREATE')).dy,
-        lessThan(tester.getCenter(find.text('Create Room')).dy),
+        lessThan(tester.getCenter(find.text('Create Server')).dy),
       );
       expect(
         tester.getCenter(find.text('MORE')).dy,
@@ -374,12 +374,12 @@ void main() {
         );
       }
       // The rail's two creation actions, in order.
-      expect(find.text('Create Room'), findsOneWidget);
+      expect(find.text('Create Server'), findsOneWidget);
       expect(find.text('Create Voice Moment'), findsOneWidget);
 
-      // Create Voice Moment sits UNDER Create Room, and both stay above
+      // Create Voice Moment sits under Create Server, and both stay above
       // the pinned profile card.
-      final createRoom = tester.getCenter(find.text('Create Room'));
+      final createRoom = tester.getCenter(find.text('Create Server'));
       final createMoment = tester.getCenter(find.text('Create Voice Moment'));
       final profileCard = tester.getCenter(find.byTooltip('Profile settings'));
       expect(createMoment.dy, greaterThan(createRoom.dy));
@@ -414,7 +414,9 @@ void main() {
       // Every nav row is a 44 px target (docs/UI.md minimum).
       for (final item in ['home', 'servers', 'chats', 'moments', 'more']) {
         expect(
-          tester.getSize(find.byKey(ValueKey('desktop-nav-focus-$item'))).height,
+          tester
+              .getSize(find.byKey(ValueKey('desktop-nav-focus-$item')))
+              .height,
           44,
           reason: item,
         );
@@ -640,53 +642,57 @@ void main() {
       },
     );
 
-    testWidgets('keyboard focus reaches the bell, then the Home row, in order', (
-      tester,
-    ) async {
-      final tapped = <DesktopNavItem>[];
-      useDesktopWindow(tester);
-      await tester.pumpWidget(
-        host(
-          DesktopSidebar(
-            active: DesktopNavItem.home,
-            unreadConversationCount: 0,
-            unreadNotificationCount: 0,
-            onSelect: tapped.add,
-            onCreateRoom: () {},
-            onCreateMoment: () {},
-            onOpenProfile: () {},
-            onOpenProfileSettings: () {},
+    testWidgets(
+      'keyboard focus reaches the bell, then the Home row, in order',
+      (tester) async {
+        final tapped = <DesktopNavItem>[];
+        useDesktopWindow(tester);
+        await tester.pumpWidget(
+          host(
+            DesktopSidebar(
+              active: DesktopNavItem.home,
+              unreadConversationCount: 0,
+              unreadNotificationCount: 0,
+              onSelect: tapped.add,
+              onCreateRoom: () {},
+              onCreateMoment: () {},
+              onOpenProfile: () {},
+              onOpenProfileSettings: () {},
+            ),
           ),
-        ),
-      );
-      await tester.pump();
+        );
+        await tester.pump();
 
-      bool focusIsInside(Finder target) {
-        final focusedWidget = primaryFocus?.context?.widget;
-        return focusedWidget != null &&
-            find
-                .descendant(of: target, matching: find.byWidget(focusedWidget))
-                .evaluate()
-                .isNotEmpty;
-      }
+        bool focusIsInside(Finder target) {
+          final focusedWidget = primaryFocus?.context?.widget;
+          return focusedWidget != null &&
+              find
+                  .descendant(
+                    of: target,
+                    matching: find.byWidget(focusedWidget),
+                  )
+                  .evaluate()
+                  .isNotEmpty;
+        }
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.pump();
-      expect(focusIsInside(find.byTooltip('Notifications')), isTrue);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        expect(focusIsInside(find.byTooltip('Notifications')), isTrue);
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.pump();
-      final homeRow = find
-          .ancestor(of: find.text('Home'), matching: find.byType(InkWell))
-          .first;
-      expect(focusIsInside(homeRow), isTrue);
-      await tester.sendKeyEvent(LogicalKeyboardKey.space);
-      await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        final homeRow = find
+            .ancestor(of: find.text('Home'), matching: find.byType(InkWell))
+            .first;
+        expect(focusIsInside(homeRow), isTrue);
+        await tester.sendKeyEvent(LogicalKeyboardKey.space);
+        await tester.pump();
 
-      expect(tapped, [DesktopNavItem.notifications, DesktopNavItem.home]);
-    });
+        expect(tapped, [DesktopNavItem.notifications, DesktopNavItem.home]);
+      },
+    );
 
     testWidgets('Create Voice Moment reports its own callback — the rail '
         'never owns a second recorder', (tester) async {
@@ -714,7 +720,7 @@ void main() {
       expect(moments, 1);
       expect(rooms, 0, reason: 'the two actions are not the same button');
 
-      await tester.tap(find.text('Create Room'));
+      await tester.tap(find.text('Create Server'));
       await tester.pump();
       expect(rooms, 1);
       expect(moments, 1);
@@ -748,11 +754,11 @@ void main() {
         ),
         findsNothing,
       );
-      expect(find.text('Create Room'), findsOneWidget);
+      expect(find.text('Create Server'), findsOneWidget);
       expect(find.text('Create Voice Moment'), findsNothing);
       expect(find.byTooltip('Create Voice Moment'), findsOneWidget);
       expect(
-        tester.getCenter(find.text('Create Room')).dy,
+        tester.getCenter(find.text('Create Server')).dy,
         tester.getCenter(find.byTooltip('Create Voice Moment')).dy,
       );
       expect(
@@ -903,7 +909,7 @@ void main() {
         find.text('Servers'),
         find.text('Chats'),
         find.text('Moments'),
-        find.text('Create Room'),
+        find.text('Create Server'),
         find.byTooltip('Create Voice Moment'),
         find.text('More'),
         find.byTooltip('Profile settings'),
@@ -979,7 +985,7 @@ void main() {
         find.text('Serwery'),
         find.text('Czaty'),
         find.text('Momenty'),
-        find.text('Utwórz pokój'),
+        find.text('Stwórz serwer'),
         find.byTooltip('Nagraj Voice Moment'),
         find.text('Więcej'),
         find.text('CeoGriefer — właściciel'),
@@ -988,13 +994,17 @@ void main() {
         expect(target, findsOneWidget);
         expect(railRect.contains(tester.getCenter(target)), isTrue);
       }
-      expect(find.text('Główna'), findsNothing, reason: 'O11: the row says Start');
+      expect(
+        find.text('Główna'),
+        findsNothing,
+        reason: 'O11: the row says Start',
+      );
       expect(find.text('Twoje Momenty'), findsNothing, reason: 'O11: Momenty');
       expect(tester.getSize(find.byType(DesktopSidebar)).width, 528);
       for (final primaryLabel in [
         find.text('Serwery'),
         find.text('Momenty'),
-        find.text('Utwórz pokój'),
+        find.text('Stwórz serwer'),
       ]) {
         final paragraph = tester.renderObject<RenderParagraph>(primaryLabel);
         expect(
@@ -1059,66 +1069,63 @@ void main() {
       expect(MainShell.usesDesktopLayout(const Size(1099, 900)), isFalse);
     });
 
-    test(
-      'every destination is reachable: the rail owns Moments and Servers, '
-      'everything else is in More or the profile card',
-      () {
-        // The rail's own primary items (Home/Chats live in the shell's
-        // IndexedStack; Notifications is the header bell).
-        const railOwned = desktopRailDestinations;
-        expect(railOwned, {
-          // Moments and Servers are primary rail rows. They must therefore
-          // be OUT of the More popover, or they would be listed twice.
-          MoreDestination.moments,
-          MoreDestination.servers,
-        });
+    test('every destination is reachable: the rail owns Moments and Servers, '
+        'everything else is in More or the profile card', () {
+      // The rail's own primary items (Home/Chats live in the shell's
+      // IndexedStack; Notifications is the header bell).
+      const railOwned = desktopRailDestinations;
+      expect(railOwned, {
+        // Moments and Servers are primary rail rows. They must therefore
+        // be OUT of the More popover, or they would be listed twice.
+        MoreDestination.moments,
+        MoreDestination.servers,
+      });
 
-        // Reached from the profile card at the bottom of the rail.
-        const profileCardOwned = {
-          MoreDestination.profile,
-          MoreDestination.settings,
-        };
+      // Reached from the profile card at the bottom of the rail.
+      const profileCardOwned = {
+        MoreDestination.profile,
+        MoreDestination.settings,
+      };
 
-        // Anything else MUST be listed in the desktop More popover, or it
-        // would become unreachable at desktop width.
-        const inMorePopover = {
-          // Foundation: these three left the rail for the popover — kept,
-          // never deleted — so the five-row rail stays five rows.
-          MoreDestination.friends,
-          MoreDestination.discover,
-          MoreDestination.findCreators,
-          MoreDestination.clubs,
-          MoreDestination.creatorStudio,
-          MoreDestination.achievements,
-          MoreDestination.notifications,
-          MoreDestination.settings,
-          // Listed in the SAME popover, but only for accounts that pass
-          // the staff check — an ordinary user never sees it. It is not
-          // orphaned: for staff it is one popover entry like the rest.
-          MoreDestination.moderation,
-          // Same shape, one tier stricter: listed only for the confirmed
-          // protected owner (capabilities.manageRoles).
-          MoreDestination.staffCenter,
-        };
-        const compatibilityOnly = {MoreDestination.reels};
+      // Anything else MUST be listed in the desktop More popover, or it
+      // would become unreachable at desktop width.
+      const inMorePopover = {
+        // Foundation: these three left the rail for the popover — kept,
+        // never deleted — so the five-row rail stays five rows.
+        MoreDestination.friends,
+        MoreDestination.discover,
+        MoreDestination.findCreators,
+        MoreDestination.clubs,
+        MoreDestination.creatorStudio,
+        MoreDestination.achievements,
+        MoreDestination.notifications,
+        MoreDestination.settings,
+        // Listed in the SAME popover, but only for accounts that pass
+        // the staff check — an ordinary user never sees it. It is not
+        // orphaned: for staff it is one popover entry like the rest.
+        MoreDestination.moderation,
+        // Same shape, one tier stricter: listed only for the confirmed
+        // protected owner (capabilities.manageRoles).
+        MoreDestination.staffCenter,
+      };
+      const compatibilityOnly = {MoreDestination.reels};
 
-        final unreachable = MoreDestination.values
-            .where(
-              (destination) =>
-                  !railOwned.contains(destination) &&
-                  !profileCardOwned.contains(destination) &&
-                  !inMorePopover.contains(destination) &&
-                  !compatibilityOnly.contains(destination),
-            )
-            .toList();
+      final unreachable = MoreDestination.values
+          .where(
+            (destination) =>
+                !railOwned.contains(destination) &&
+                !profileCardOwned.contains(destination) &&
+                !inMorePopover.contains(destination) &&
+                !compatibilityOnly.contains(destination),
+          )
+          .toList();
 
-        expect(
-          unreachable,
-          isEmpty,
-          reason: 'no destination may be orphaned by the desktop rail',
-        );
-      },
-    );
+      expect(
+        unreachable,
+        isEmpty,
+        reason: 'no destination may be orphaned by the desktop rail',
+      );
+    });
 
     test('every destination still resolves to its real screen — moving '
         'items between rail and More changes no routes', () {
@@ -1285,7 +1292,7 @@ void main() {
       expect(find.text('Awards body'), findsOneWidget);
       // The persistent rail is present…
       expect(find.byType(DesktopSidebar), findsOneWidget);
-      expect(find.text('Create Room'), findsOneWidget);
+      expect(find.text('Create Server'), findsOneWidget);
       // …and the mobile dock is not: its Voice action never renders here.
       expect(find.byType(BottomNavigationBar), findsNothing);
     });
@@ -1568,7 +1575,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('Become a Creator'), findsOneWidget);
-      expect(find.text('Create your own Clubs'), findsOneWidget);
+      expect(find.text('Build your own Servers'), findsOneWidget);
       expect(find.text('Stand out'), findsOneWidget);
       // The retired card's crown/bullets/Upgrade Now must not come back.
       expect(find.text('Upgrade Now'), findsNothing);
@@ -1611,14 +1618,8 @@ void main() {
       await openPopover(tester, isStaff: false);
 
       expect(find.text('Moderation'), findsNothing);
-      // Every existing entry is still there.
-      for (final label in [
-        'Clubs',
-        'Creator Studio',
-        'Awards',
-        'Alerts',
-        'Settings',
-      ]) {
+      // Every retained entry is still there; Clubs has no standalone entry.
+      for (final label in ['Creator Studio', 'Awards', 'Alerts', 'Settings']) {
         expect(find.text(label), findsOneWidget, reason: '$label went missing');
       }
       // Moments was promoted to a rail item and must therefore NOT be
@@ -1630,10 +1631,8 @@ void main() {
         findsNothing,
         reason: 'Moments is a rail item; listing it here duplicates it',
       );
-      expect(
-        find.byKey(const ValueKey('desktop-premium-lock-clubs')),
-        findsOneWidget,
-      );
+      expect(find.text('Clubs'), findsNothing);
+      expect(find.text('Discover'), findsNothing);
       expect(
         find.byKey(const ValueKey('desktop-premium-lock-creatorStudio')),
         findsOneWidget,
@@ -1657,10 +1656,6 @@ void main() {
       );
 
       expect(
-        find.byKey(const ValueKey('desktop-premium-lock-clubs')),
-        findsNothing,
-      );
-      expect(
         find.byKey(const ValueKey('desktop-premium-lock-creatorStudio')),
         findsNothing,
       );
@@ -1672,15 +1667,11 @@ void main() {
 
       expect(find.text('Moderation'), findsOneWidget);
       expect(find.text('Review reported content'), findsOneWidget);
-      for (final label in [
-        'Clubs',
-        'Creator Studio',
-        'Awards',
-        'Alerts',
-        'Settings',
-      ]) {
+      for (final label in ['Creator Studio', 'Awards', 'Alerts', 'Settings']) {
         expect(find.text(label), findsOneWidget, reason: '$label went missing');
       }
+      expect(find.text('Clubs'), findsNothing);
+      expect(find.text('Discover'), findsNothing);
       // Moments was promoted to a rail item and must therefore NOT be
       // listed here as well. The popover's item list is hand-written
       // rather than filtered through desktopRailDestinations, so this is

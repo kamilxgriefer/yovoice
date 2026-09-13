@@ -41,10 +41,10 @@ void main() {
       final card = find.byKey(const ValueKey('profile-journey-card'));
       expect(card, findsOneWidget);
       expect(find.text('Your YO Voice journey'), findsOneWidget);
-      expect(find.text('Communities'), findsOneWidget);
+      expect(find.text('Servers joined'), findsOneWidget);
       expect(find.text('Messages'), findsOneWidget);
       expect(find.text('Voice time'), findsOneWidget);
-      expect(find.text('Rooms created'), findsOneWidget);
+      expect(find.text('Servers created'), findsOneWidget);
       expect(find.text('3'), findsOneWidget);
       expect(find.text('42'), findsOneWidget);
       expect(find.text('2h 5m'), findsOneWidget);
@@ -109,7 +109,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Your YO Voice journey'), findsOneWidget);
-    expect(find.text('Rooms created'), findsOneWidget);
+    expect(find.text('Servers created'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

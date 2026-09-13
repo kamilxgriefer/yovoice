@@ -662,7 +662,8 @@ class MomentAuthorCapsule extends StatelessWidget {
                       const SizedBox(width: AppRhythm.tight),
                       ConstrainedBox(
                         constraints: BoxConstraints(
-                          maxWidth: nameMaxWidth *
+                          maxWidth:
+                              nameMaxWidth *
                               MomentStoryTile.textScaleOf(context),
                         ),
                         child: Text(

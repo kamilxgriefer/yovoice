@@ -53,47 +53,53 @@ void main() {
   // is a net that quietly stops catching things. The strings below are the
   // mockups' own wording (contract §4.2) — the exact copy that must never be
   // renderable — and the member count, which must stay renderable.
-  group('the presence guard catches the mockups and spares the member count', () {
-    test('every presence claim the five boards were drawn with is caught', () {
-      for (final claim in const [
-        '4 osoby rozmawiają',
-        'LIVE · 126 widzów',
-        '84 słuchaczy',
-        'Publiczność · 84 słuchaczy',
-        'Teraz rozmawiają 3 osoby',
-        'Spotkanie zespołu / 6 uczestników',
-        '6 osób potwierdziło',
-        '12 reakcji',
-        '8 głosów',
-      ]) {
-        expect(
-          qaFabricatedCount.hasMatch(claim),
-          isTrue,
-          reason: 'the guard would let "$claim" through',
-        );
-      }
-    });
+  group(
+    'the presence guard catches the mockups and spares the member count',
+    () {
+      test(
+        'every presence claim the five boards were drawn with is caught',
+        () {
+          for (final claim in const [
+            '4 osoby rozmawiają',
+            'LIVE · 126 widzów',
+            '84 słuchaczy',
+            'Publiczność · 84 słuchaczy',
+            'Teraz rozmawiają 3 osoby',
+            'Spotkanie zespołu / 6 uczestników',
+            '6 osób potwierdziło',
+            '12 reakcji',
+            '8 głosów',
+          ]) {
+            expect(
+              qaFabricatedCount.hasMatch(claim),
+              isTrue,
+              reason: 'the guard would let "$claim" through',
+            );
+          }
+        },
+      );
 
-    test('the member count the backend really writes is not caught', () {
-      for (final honest in const [
-        '12 osób',
-        '12 osób w serwerze',
-        'Prywatny serwer · 12 osób',
-        'Społeczność · 248 osób',
-        'Przestrzeń firmowa · 24 osoby',
-        'Nikt jeszcze nie rozmawia',
-        'Pytania słuchaczy',
-        'Znajome głosy. Te same historie.',
-        'Rodzinne terminy i kto już potwierdził.',
-      ]) {
-        expect(
-          qaFabricatedCount.hasMatch(honest),
-          isFalse,
-          reason: 'the guard would fail the surface for "$honest"',
-        );
-      }
-    });
-  });
+      test('the member count the backend really writes is not caught', () {
+        for (final honest in const [
+          '12 osób',
+          '12 osób w serwerze',
+          'Prywatny serwer · 12 osób',
+          'Społeczność · 248 osób',
+          'Przestrzeń firmowa · 24 osoby',
+          'Nikt jeszcze nie rozmawia',
+          'Pytania słuchaczy',
+          'Znajome głosy. Te same historie.',
+          'Rodzinne terminy i kto już potwierdził.',
+        ]) {
+          expect(
+            qaFabricatedCount.hasMatch(honest),
+            isFalse,
+            reason: 'the guard would fail the surface for "$honest"',
+          );
+        }
+      });
+    },
+  );
 
   group('the states one surface has to be able to be in', () {
     testWidgets('loading draws a spoken spinner and calls nothing', (
@@ -107,8 +113,7 @@ void main() {
           // A subscription that has not produced its first snapshot yet:
           // never emits, never closes.
           ..serverStream = Completer<Server?>().future.asStream()
-          ..channelStream =
-              Completer<List<ServerChannel>>().future.asStream();
+          ..channelStream = Completer<List<ServerChannel>>().future.asStream();
         await pumpServers(
           tester,
           qaWorkspace(repository, channelId: qaFirstMedia(ServerType.friends)),
@@ -129,34 +134,36 @@ void main() {
       }
     });
 
-    testWidgets('a failed channel read shows an error whose retry resubscribes',
-        (tester) async {
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final repository = _FailingOnceRepository()
-        ..servers = [qaServer(ServerType.friends)]
-        ..channels = qaChannels(ServerType.friends);
-      await pumpServers(
-        tester,
-        qaWorkspace(repository, channelId: qaFirstMedia(ServerType.friends)),
-        size: const Size(768, 900),
-      );
-      expect(find.byType(YoErrorState), findsOneWidget);
-      expect(qaJoin, findsNothing);
-      expect(repository.subscriptions, 1);
+    testWidgets(
+      'a failed channel read shows an error whose retry resubscribes',
+      (tester) async {
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final repository = _FailingOnceRepository()
+          ..servers = [qaServer(ServerType.friends)]
+          ..channels = qaChannels(ServerType.friends);
+        await pumpServers(
+          tester,
+          qaWorkspace(repository, channelId: qaFirstMedia(ServerType.friends)),
+          size: const Size(768, 900),
+        );
+        expect(find.byType(YoErrorState), findsOneWidget);
+        expect(qaJoin, findsNothing);
+        expect(repository.subscriptions, 1);
 
-      final retry = find.descendant(
-        of: find.byType(YoErrorState),
-        matching: find.text('Spróbuj ponownie'),
-      );
-      expect(retry, findsOneWidget, reason: 'an error without a way out');
-      await tester.tap(retry);
-      await tester.pumpAndSettle();
+        final retry = find.descendant(
+          of: find.byType(YoErrorState),
+          matching: find.text('Spróbuj ponownie'),
+        );
+        expect(retry, findsOneWidget, reason: 'an error without a way out');
+        await tester.tap(retry);
+        await tester.pumpAndSettle();
 
-      expect(repository.subscriptions, greaterThan(1));
-      expect(find.byType(YoErrorState), findsNothing);
-      expect(qaPanel, findsOneWidget);
-      expect(repository.calls, isEmpty, reason: 'a retry is not a join');
-    });
+        expect(repository.subscriptions, greaterThan(1));
+        expect(find.byType(YoErrorState), findsNothing);
+        expect(qaPanel, findsOneWidget);
+        expect(repository.calls, isEmpty, reason: 'a retry is not a join');
+      },
+    );
 
     testWidgets('a server with no channels says so and offers no scene', (
       tester,
@@ -206,9 +213,7 @@ void main() {
               );
             }
             if (width >= 768) {
-              final invite = find.byKey(
-                const ValueKey('server-invite-action'),
-              );
+              final invite = find.byKey(const ValueKey('server-invite-action'));
               expect(invite, findsOneWidget, reason: reason);
               expect(
                 tester.widget<ButtonStyleButton>(invite).onPressed,
@@ -528,10 +533,7 @@ void main() {
         ..servers = [qaServer(ServerType.community)]
         ..channels = qaChannels(ServerType.community)
         ..failNextCall['startServerChannelSessionV1'] =
-            FirebaseFunctionsException(
-              code: 'not-found',
-              message: 'NOT_FOUND',
-            );
+            FirebaseFunctionsException(code: 'not-found', message: 'NOT_FOUND');
       final connector = FakeServerMediaConnector();
       await pumpServers(
         tester,
@@ -564,10 +566,7 @@ void main() {
         ..servers = [qaServer(ServerType.friends)]
         ..channels = qaChannels(ServerType.friends)
         ..failNextCall['startServerChannelSessionV1'] =
-            FirebaseFunctionsException(
-              code: 'unavailable',
-              message: 'Offline',
-            );
+            FirebaseFunctionsException(code: 'unavailable', message: 'Offline');
       final connector = FakeServerMediaConnector();
       await pumpServers(
         tester,
@@ -587,14 +586,11 @@ void main() {
       await tester.tap(retry);
       await tester.pumpAndSettle();
       expect(connector.connections, hasLength(1));
-      expect(
-        repository.calls.map((call) => call.$1).toList(),
-        [
-          'startServerChannelSessionV1',
-          'startServerChannelSessionV1',
-          'createServerChannelTokenV1',
-        ],
-      );
+      expect(repository.calls.map((call) => call.$1).toList(), [
+        'startServerChannelSessionV1',
+        'startServerChannelSessionV1',
+        'createServerChannelTokenV1',
+      ]);
     });
 
     testWidgets(
@@ -608,11 +604,7 @@ void main() {
         final connector = FakeServerMediaConnector();
         await pumpServers(
           tester,
-          qaWorkspace(
-            repository,
-            channelId: 'lounge',
-            connector: connector,
-          ),
+          qaWorkspace(repository, channelId: 'lounge', connector: connector),
           size: const Size(1440, 900),
         );
         final first = await qaJoinAndSettle(tester, connector);
@@ -625,15 +617,12 @@ void main() {
         await tester.pumpAndSettle();
         expect(first.disconnects, 1);
         expect(connector.links, hasLength(2));
-        expect(
-          repository.calls.map((call) => call.$1).toList(),
-          [
-            'startServerChannelSessionV1',
-            'createServerChannelTokenV1',
-            'startServerChannelSessionV1',
-            'createServerChannelTokenV1',
-          ],
-        );
+        expect(repository.calls.map((call) => call.$1).toList(), [
+          'startServerChannelSessionV1',
+          'createServerChannelTokenV1',
+          'startServerChannelSessionV1',
+          'createServerChannelTokenV1',
+        ]);
         expect(repository.calls[2].$2['channelId'], 'gaming');
       },
     );
@@ -685,11 +674,7 @@ void main() {
           final connector = FakeServerMediaConnector();
           await pumpServers(
             tester,
-            qaWorkspace(
-              repository,
-              channelId: stage,
-              connector: connector,
-            ),
+            qaWorkspace(repository, channelId: stage, connector: connector),
             size: const Size(1440, 900),
           );
           expect(
@@ -750,61 +735,56 @@ void main() {
       },
     );
 
-    testWidgets(
-      'the modules with no persistence are named, labelled and disabled, '
-      'never silently missing',
-      (tester) async {
-        addTearDown(() => tester.binding.setSurfaceSize(null));
-        // Each board's honest modules, on the destination that board is
-        // about (board 03's is the home view, which has no channel id).
-        const modules = <ServerType, List<String>>{
-          ServerType.friends: ['server-friends-event-card'],
-          ServerType.family: [
-            'server-family-plans',
-            'server-family-memories',
-            'server-family-shopping',
-          ],
-          ServerType.podcast: [
-            'server-podcast-next-episode',
-            'server-podcast-recent-episodes',
-          ],
-          ServerType.community: ['server-community-event-card'],
-        };
-        for (final entry in modules.entries) {
-          final type = entry.key;
-          final repository = TestServerRepository()
-            ..servers = [qaServer(type)]
-            ..channels = qaChannels(type);
-          await pumpServers(
-            tester,
-            qaWorkspace(repository, channelId: qaBoardChannel(type)),
-            size: const Size(1440, 940),
+    testWidgets('persisted modules are named, available and openable', (
+      tester,
+    ) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      // Each board's honest modules, on the destination that board is
+      // about (board 03's is the home view, which has no channel id).
+      const modules = <ServerType, List<String>>{
+        ServerType.friends: ['server-friends-event-card'],
+        ServerType.family: [
+          'server-family-plans',
+          'server-family-memories',
+          'server-family-shopping',
+        ],
+        ServerType.podcast: [
+          'server-podcast-next-episode',
+          'server-podcast-recent-episodes',
+        ],
+        ServerType.community: ['server-community-event-card'],
+      };
+      for (final entry in modules.entries) {
+        final type = entry.key;
+        final repository = TestServerRepository()
+          ..servers = [qaServer(type)]
+          ..channels = qaChannels(type);
+        await pumpServers(
+          tester,
+          qaWorkspace(repository, channelId: qaBoardChannel(type)),
+          size: const Size(1440, 940),
+        );
+        for (final key in entry.value) {
+          final card = find.byKey(ValueKey(key));
+          expect(card, findsOneWidget, reason: '$type is missing $key');
+          expect(
+            find.descendant(of: card, matching: find.textContaining('Wkrótce')),
+            findsNothing,
+            reason: '$key is backed by a persisted module',
           );
-          for (final key in entry.value) {
-            final card = find.byKey(ValueKey(key));
-            expect(card, findsOneWidget, reason: '$type is missing $key');
+          for (final button in tester.widgetList<ButtonStyleButton>(
+            find.descendant(of: card, matching: find.byType(ButtonStyleButton)),
+          )) {
             expect(
-              find.descendant(
-                of: card,
-                matching: find.textContaining('Wkrótce'),
-              ),
-              findsWidgets,
-              reason: '$key promises something without saying it cannot',
+              button.onPressed,
+              isNotNull,
+              reason: '$key must reach its persisted channel',
             );
-            for (final button in tester.widgetList<ButtonStyleButton>(
-              find.descendant(of: card, matching: find.byType(ButtonStyleButton)),
-            )) {
-              expect(
-                button.onPressed,
-                isNull,
-                reason: '$key carries a live action with nothing behind it',
-              );
-            }
           }
-          expect(repository.calls, isEmpty);
         }
-      },
-    );
+        expect(repository.calls, isEmpty);
+      }
+    });
 
     testWidgets(
       'a module card is not drawn at all when its channel does not exist',
@@ -840,49 +820,48 @@ void main() {
       },
     );
 
-    testWidgets(
-      'the podcast never claims a transmission is being recorded',
-      (tester) async {
-        addTearDown(() => tester.binding.setSurfaceSize(null));
-        for (final live in [false, true]) {
-          final repository = TestServerRepository()
-            ..servers = [qaServer(ServerType.podcast)]
-            ..channels = qaChannels(
-              ServerType.podcast,
-              liveness: live
-                  ? ServerChannelLiveness(
-                      isLive: true,
-                      startedAt: DateTime(2026, 9, 12, 19, 40),
-                    )
-                  : ServerChannelLiveness.idle,
-              activeSessionId: live ? 'session-live' : null,
-            );
-          final connector = FakeServerMediaConnector();
-          await pumpServers(
-            tester,
-            qaWorkspace(
-              repository,
-              channelId: qaFirstMedia(ServerType.podcast),
-              connector: connector,
-            ),
-            size: const Size(1440, 940),
+    testWidgets('the podcast never claims a transmission is being recorded', (
+      tester,
+    ) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      for (final live in [false, true]) {
+        final repository = TestServerRepository()
+          ..servers = [qaServer(ServerType.podcast)]
+          ..channels = qaChannels(
+            ServerType.podcast,
+            liveness: live
+                ? ServerChannelLiveness(
+                    isLive: true,
+                    startedAt: DateTime(2026, 9, 12, 19, 40),
+                  )
+                : ServerChannelLiveness.idle,
+            activeSessionId: live ? 'session-live' : null,
           );
+        final connector = FakeServerMediaConnector();
+        await pumpServers(
+          tester,
+          qaWorkspace(
+            repository,
+            channelId: qaFirstMedia(ServerType.podcast),
+            connector: connector,
+          ),
+          size: const Size(1440, 940),
+        );
+        qaExpectNoMatch(
+          tester,
+          qaRecordingClaim,
+          'the studio claimed a recording (live: $live)',
+        );
+        if (live) {
+          await qaJoinAndSettle(tester, connector, roster: qaRoster);
           qaExpectNoMatch(
             tester,
             qaRecordingClaim,
-            'the studio claimed a recording (live: $live)',
+            'the studio claimed a recording in session',
           );
-          if (live) {
-            await qaJoinAndSettle(tester, connector, roster: qaRoster);
-            qaExpectNoMatch(
-              tester,
-              qaRecordingClaim,
-              'the studio claimed a recording in session',
-            );
-          }
         }
-      },
-    );
+      }
+    });
 
     testWidgets(
       'no surface of any template renders a number of people, in any state',
@@ -972,25 +951,28 @@ void main() {
       auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'u')),
     );
 
-    test('a member with no pointer never receives the restricted rows', () async {
-      final firestore = await seedCompany();
-      final channels = await serviceFor(firestore).watchChannels('s').first;
-      expect(channels.map((channel) => channel.id), [
-        'general',
-        'announcements',
-        'team',
-        'projects',
-        'meeting',
-        'board',
-        'files',
-      ]);
-      expect(
-        channels.any(
-          (channel) => channel.access == ServerChannelAccess.restricted,
-        ),
-        isFalse,
-      );
-    });
+    test(
+      'a member with no pointer never receives the restricted rows',
+      () async {
+        final firestore = await seedCompany();
+        final channels = await serviceFor(firestore).watchChannels('s').first;
+        expect(channels.map((channel) => channel.id), [
+          'general',
+          'announcements',
+          'team',
+          'projects',
+          'meeting',
+          'board',
+          'files',
+        ]);
+        expect(
+          channels.any(
+            (channel) => channel.access == ServerChannelAccess.restricted,
+          ),
+          isFalse,
+        );
+      },
+    );
 
     test('one pointer opens exactly one row and never its sibling', () async {
       final firestore = await seedCompany();
@@ -1015,23 +997,20 @@ void main() {
       expect(ids.indexOf('hr'), ids.indexOf('projects') + 1);
     });
 
-    test(
-      'a pointer at a channel that no longer exists drops quietly and keeps '
-      'the rest of the list',
-      () async {
-        final firestore = await seedCompany();
-        await firestore.doc('users/u/serverChannelRefs/gone').set({
-          'serverId': 's',
-          'channelId': 'deleted-long-ago',
-        });
-        final channels = await serviceFor(firestore).watchChannels('s').first;
-        expect(channels.map((channel) => channel.id), contains('general'));
-        expect(
-          channels.map((channel) => channel.id),
-          isNot(contains('deleted-long-ago')),
-        );
-      },
-    );
+    test('a pointer at a channel that no longer exists drops quietly and keeps '
+        'the rest of the list', () async {
+      final firestore = await seedCompany();
+      await firestore.doc('users/u/serverChannelRefs/gone').set({
+        'serverId': 's',
+        'channelId': 'deleted-long-ago',
+      });
+      final channels = await serviceFor(firestore).watchChannels('s').first;
+      expect(channels.map((channel) => channel.id), contains('general'));
+      expect(
+        channels.map((channel) => channel.id),
+        isNot(contains('deleted-long-ago')),
+      );
+    });
 
     test('a pointer belonging to another server is not followed', () async {
       final firestore = await seedCompany();

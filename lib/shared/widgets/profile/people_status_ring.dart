@@ -65,8 +65,8 @@ enum PeopleStatus {
 
   String get label => switch (this) {
     PeopleStatus.speaking => 'Speaking',
-    PeopleStatus.inRoom => 'In a room',
-    PeopleStatus.inClub => 'In a club',
+    PeopleStatus.inRoom => 'In a voice channel',
+    PeopleStatus.inClub => 'In a server',
     PeopleStatus.online => 'Online',
     PeopleStatus.brb => 'Be right back',
     PeopleStatus.busy => 'Do not disturb',
@@ -77,8 +77,11 @@ enum PeopleStatus {
   /// [label] remains a stable English value for diagnostics and compatibility.
   String localizedLabel(AppLocalizations copy) => switch (this) {
     PeopleStatus.speaking => copy.text('Speaking', 'Mówi'),
-    PeopleStatus.inRoom => copy.text('In a room', 'W pokoju'),
-    PeopleStatus.inClub => copy.text('In a club', 'W klubie'),
+    PeopleStatus.inRoom => copy.text(
+      'In a voice channel',
+      'Na kanale głosowym',
+    ),
+    PeopleStatus.inClub => copy.text('In a server', 'Na serwerze'),
     PeopleStatus.online => copy.text('Online', 'Dostępny'),
     PeopleStatus.brb => copy.text('Be right back', 'Zaraz wracam'),
     PeopleStatus.busy => copy.text('Do not disturb', 'Nie przeszkadzać'),

@@ -37,6 +37,9 @@ class UserProfile {
     required this.photoUrl,
     required this.bannerUrl,
     this.premiumIdentity = false,
+    this.creatorAudienceVisible = false,
+    this.creatorAgeVerified = false,
+    this.creatorAudienceEnabled = false,
     this.statusMessage = '',
     this.isOnline = false,
     this.availability = UserAvailability.available,
@@ -79,6 +82,22 @@ class UserProfile {
   /// firestore.rules, which is what makes it safe for other users'
   /// clients to render the premium ring from it.
   final bool premiumIdentity;
+
+  /// Safe public projection of the complete Creator audience decision.
+  ///
+  /// The server writes this only after it has checked Creator identity,
+  /// Premium, age verification and the owner's explicit opt-in. Public UI
+  /// must use this field instead of reconstructing the decision from private
+  /// eligibility data.
+  final bool creatorAudienceVisible;
+
+  /// Legacy owner-document field retained for stored-data compatibility.
+  /// Public audience rendering never consults it.
+  final bool creatorAgeVerified;
+
+  /// Legacy owner-document preference retained for stored-data compatibility.
+  /// Public audience rendering never consults it.
+  final bool creatorAudienceEnabled;
 
   /// The "vibe" line — a short, social status ("Music + late night
   /// talks", "Gaming tonight 🎮"). The profile's headline, unlike [bio]
@@ -130,6 +149,9 @@ class UserProfile {
   DateTime? get nextDisplayNameChangeAt =>
       displayNameChangedAt?.add(const Duration(days: 30));
 
+  /// The single fail-closed gate used by follower/following surfaces.
+  bool get canExposeCreatorAudience => creatorAudienceVisible;
+
   factory UserProfile.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
   ) {
@@ -142,6 +164,8 @@ class UserProfile {
             .toList(growable: false);
 
     final fallbackName = (data['username'] as String?)?.trim();
+    final creatorAudienceVisible =
+        data['creatorAudienceVisible'] as bool? ?? false;
 
     return UserProfile(
       uid: document.id,
@@ -160,14 +184,17 @@ class UserProfile {
       photoUrl: null,
       bannerUrl: null,
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,
+      creatorAudienceVisible: creatorAudienceVisible,
+      creatorAgeVerified: data['creatorAgeVerified'] as bool? ?? false,
+      creatorAudienceEnabled: data['creatorAudienceEnabled'] as bool? ?? false,
       statusMessage: data['statusMessage'] as String? ?? '',
       isOnline: data['isOnline'] as bool? ?? false,
       availability: UserAvailability.fromWire(data['availability']),
       website: data['website'] as String? ?? '',
       accountType: AccountType.fromValue(data['accountType']),
       friendCount: readInt('friendCount'),
-      followerCount: readInt('followerCount'),
-      followingCount: readInt('followingCount'),
+      followerCount: creatorAudienceVisible ? readInt('followerCount') : 0,
+      followingCount: creatorAudienceVisible ? readInt('followingCount') : 0,
       roomCount: readInt('roomCount'),
       communityCount: readInt('communityCount'),
       voiceMinutes: readInt('voiceMinutes'),

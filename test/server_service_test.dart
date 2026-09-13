@@ -123,4 +123,14 @@ void main() {
     expect(ids.toSet().length, ids.length);
     expect(ids.every((id) => RegExp(r'^[0-9a-f]{48}$').hasMatch(id)), isTrue);
   });
+
+  test(
+    'account-scoped reads fail closed when no Firebase app exists',
+    () async {
+      final service = ServerService(firestore: FakeFirebaseFirestore());
+
+      expect(await service.watchMyRole('server').first, isNull);
+      expect(await service.watchInviteCandidates().first, isEmpty);
+    },
+  );
 }

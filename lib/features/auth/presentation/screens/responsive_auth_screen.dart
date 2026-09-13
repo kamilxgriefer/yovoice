@@ -986,8 +986,8 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
           _FormHeading(
             title: copy.text('Create your voice', 'Utwórz konto'),
             subtitle: copy.text(
-              'One account for rooms, moments and real conversations.',
-              'Jedno konto — pokoje, Voice Moments i prawdziwe rozmowy.',
+              'One account for servers, Moments and real conversations.',
+              'Jedno konto — serwery, Voice Moments i prawdziwe rozmowy.',
             ),
           ),
           const SizedBox(height: 20),

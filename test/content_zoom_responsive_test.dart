@@ -67,7 +67,7 @@ void main() {
     'Creator Studio horizontal modules grow safely at 320px and 200% text',
     (tester) async {
       _useNarrowPhone(tester);
-      var analyticsOpened = 0;
+      var serverToolsOpened = 0;
       var pinnedOpened = 0;
 
       await tester.pumpWidget(
@@ -91,7 +91,7 @@ void main() {
                   ),
                   const SizedBox(height: 12),
                   CreatorStudioToolsRow(
-                    onAnalytics: () => analyticsOpened += 1,
+                    onAnalytics: () => serverToolsOpened += 1,
                     onPinnedPosts: () => pinnedOpened += 1,
                   ),
                   const SizedBox(height: 12),
@@ -118,11 +118,11 @@ void main() {
       );
       expect(find.textContaining(_longRoomName), findsOneWidget);
       expect(find.text('Monetization'), findsNothing);
-      await tester.ensureVisible(find.text('Analytics'));
-      await tester.tap(find.text('Analytics'));
+      await tester.ensureVisible(find.text('Server tools'));
+      await tester.tap(find.text('Server tools'));
       await tester.ensureVisible(find.text('Pinned post'));
       await tester.tap(find.text('Pinned post'));
-      expect(analyticsOpened, 1);
+      expect(serverToolsOpened, 1);
       expect(pinnedOpened, 1);
       expect(tester.takeException(), isNull);
     },

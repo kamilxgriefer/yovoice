@@ -37,101 +37,103 @@ String localizedStaffOfficialRole(AppLocalizations copy, String role) =>
       _ => localizedStaffRole(copy, role),
     };
 
-String localizedStaffAuditAction(AppLocalizations copy, String action) =>
-    switch (action) {
-      'warn_user' => copy.text('warn user', 'Ostrzeżenie użytkownika'),
-      'communication_mute' => copy.text(
-        'communication mute',
-        'Wyciszenie komunikacji',
-      ),
-      'lift_communication_mute' => copy.text(
-        'lift communication mute',
-        'Zdjęcie wyciszenia komunikacji',
-      ),
-      'ban_user' => copy.text('ban user', 'Blokada użytkownika'),
-      'unban_user' => copy.text('unban user', 'Zdjęcie blokady'),
-      'assign_user_role' => copy.text('assign user role', 'Zmiana roli'),
-      'security_alert_non_owner_super_admin' => copy.text(
-        'security alert non owner super admin',
-        'Alert bezpieczeństwa',
-      ),
-      'denied_sanction_attempt' => copy.text(
-        'denied sanction attempt',
-        'Odrzucona próba nałożenia sankcji',
-      ),
-      'bootstrap_super_admin' => copy.text(
-        'bootstrap super admin',
-        'Utworzenie konta superadministratora',
-      ),
-      'report_claim' => copy.text('report claim', 'Przejęcie zgłoszenia'),
-      'report_release' => copy.text('report release', 'Zwolnienie zgłoszenia'),
-      'report_resolve' => copy.text('report resolve', 'Rozwiązanie zgłoszenia'),
-      'report_removeAndResolve' => copy.text(
-        'report removeAndResolve',
-        'Usunięcie treści i rozwiązanie zgłoszenia',
-      ),
-      'report_dismiss' => copy.text('report dismiss', 'Odrzucenie zgłoszenia'),
-      'adminDeleteMessage' => copy.text(
-        'adminDeleteMessage',
-        'Usunięcie wiadomości',
-      ),
-      'delete_global_message' => copy.text(
-        'delete global message',
-        'Usunięcie wiadomości',
-      ),
-      'livekit_control_failure' => copy.text(
-        'livekit control failure',
-        'Błąd sterowania LiveKit',
-      ),
-      'suspend_room' => copy.text('suspend room', 'Zawieszenie pokoju'),
-      'restore_room' => copy.text('restore room', 'Przywrócenie pokoju'),
-      'force_end_room' => copy.text(
-        'force end room',
-        'Wymuszone zakończenie pokoju',
-      ),
-      'remove_room_participant' => copy.text(
-        'remove room participant',
-        'Usunięcie uczestnika z pokoju',
-      ),
-      'mute_room_participant' => copy.text(
-        'mute room participant',
-        'Wyciszenie uczestnika pokoju',
-      ),
-      'unmute_room_participant' => copy.text(
-        'unmute room participant',
-        'Cofnięcie wyciszenia uczestnika pokoju',
-      ),
-      'delete_room' => copy.text('delete room', 'Usunięcie pokoju'),
-      'suspend_club' => copy.text('suspend club', 'Zawieszenie klubu'),
-      'restore_club' => copy.text('restore club', 'Przywrócenie klubu'),
-      'remove_club_member' => copy.text(
-        'remove club member',
-        'Usunięcie członka klubu',
-      ),
-      'ban_club_member' => copy.text(
-        'ban club member',
-        'Zablokowanie członka klubu',
-      ),
-      'unban_club_member' => copy.text(
-        'unban club member',
-        'Odblokowanie członka klubu',
-      ),
-      'transfer_club_ownership' => copy.text(
-        'transfer club ownership',
-        'Przeniesienie własności klubu',
-      ),
-      'delete_club' => copy.text('delete club', 'Usunięcie klubu'),
-      'delete_club_self' => copy.text(
-        'delete club self',
-        'Usunięcie własnego klubu',
-      ),
-      _ => action.replaceAll('_', ' '),
-    };
+String localizedStaffAuditAction(
+  AppLocalizations copy,
+  String action,
+) => switch (action) {
+  'warn_user' => copy.text('warn user', 'Ostrzeżenie użytkownika'),
+  'communication_mute' => copy.text(
+    'communication mute',
+    'Wyciszenie komunikacji',
+  ),
+  'lift_communication_mute' => copy.text(
+    'lift communication mute',
+    'Zdjęcie wyciszenia komunikacji',
+  ),
+  'ban_user' => copy.text('ban user', 'Blokada użytkownika'),
+  'unban_user' => copy.text('unban user', 'Zdjęcie blokady'),
+  'assign_user_role' => copy.text('assign user role', 'Zmiana roli'),
+  'security_alert_non_owner_super_admin' => copy.text(
+    'security alert non owner super admin',
+    'Alert bezpieczeństwa',
+  ),
+  'denied_sanction_attempt' => copy.text(
+    'denied sanction attempt',
+    'Odrzucona próba nałożenia sankcji',
+  ),
+  'bootstrap_super_admin' => copy.text(
+    'bootstrap super admin',
+    'Utworzenie konta superadministratora',
+  ),
+  'report_claim' => copy.text('report claim', 'Przejęcie zgłoszenia'),
+  'report_release' => copy.text('report release', 'Zwolnienie zgłoszenia'),
+  'report_resolve' => copy.text('report resolve', 'Rozwiązanie zgłoszenia'),
+  'report_removeAndResolve' => copy.text(
+    'report removeAndResolve',
+    'Usunięcie treści i rozwiązanie zgłoszenia',
+  ),
+  'report_dismiss' => copy.text('report dismiss', 'Odrzucenie zgłoszenia'),
+  'adminDeleteMessage' => copy.text(
+    'adminDeleteMessage',
+    'Usunięcie wiadomości',
+  ),
+  'delete_global_message' => copy.text(
+    'delete global message',
+    'Usunięcie wiadomości',
+  ),
+  'livekit_control_failure' => copy.text(
+    'livekit control failure',
+    'Błąd sterowania LiveKit',
+  ),
+  'suspend_room' => copy.text('suspend conversation', 'Zawieszenie rozmowy'),
+  'restore_room' => copy.text('restore conversation', 'Przywrócenie rozmowy'),
+  'force_end_room' => copy.text(
+    'force end conversation',
+    'Wymuszone zakończenie rozmowy',
+  ),
+  'remove_room_participant' => copy.text(
+    'remove conversation participant',
+    'Usunięcie uczestnika z rozmowy',
+  ),
+  'mute_room_participant' => copy.text(
+    'mute conversation participant',
+    'Wyciszenie uczestnika rozmowy',
+  ),
+  'unmute_room_participant' => copy.text(
+    'unmute conversation participant',
+    'Cofnięcie wyciszenia uczestnika rozmowy',
+  ),
+  'delete_room' => copy.text('delete conversation', 'Usunięcie rozmowy'),
+  'suspend_club' => copy.text('suspend server', 'Zawieszenie serwera'),
+  'restore_club' => copy.text('restore server', 'Przywrócenie serwera'),
+  'remove_club_member' => copy.text(
+    'remove server member',
+    'Usunięcie członka serwera',
+  ),
+  'ban_club_member' => copy.text(
+    'ban server member',
+    'Zablokowanie członka serwera',
+  ),
+  'unban_club_member' => copy.text(
+    'unban server member',
+    'Odblokowanie członka serwera',
+  ),
+  'transfer_club_ownership' => copy.text(
+    'transfer server ownership',
+    'Przeniesienie własności serwera',
+  ),
+  'delete_club' => copy.text('delete server', 'Usunięcie serwera'),
+  'delete_club_self' => copy.text(
+    'delete own server',
+    'Usunięcie własnego serwera',
+  ),
+  _ => action.replaceAll('_', ' '),
+};
 
 String localizedStaffParticipantCount(AppLocalizations copy, int count) =>
     copy.text(
-      '$count in room',
-      '$count ${_polishNoun(count, 'osoba', 'osoby', 'osób')} w pokoju',
+      '$count in conversation',
+      '$count ${_polishNoun(count, 'osoba', 'osoby', 'osób')} w rozmowie',
     );
 
 String localizedStaffResultCount(

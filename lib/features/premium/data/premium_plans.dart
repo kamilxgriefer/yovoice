@@ -7,7 +7,7 @@ class PremiumPlans {
   /// place, so copy can't drift between the app and the marketing site.
   static const List<(String, String)> benefits = [
     ('Become a Creator', 'Unlock real Creator tools'),
-    ('Create your own Clubs', 'Build spaces for your people'),
+    ('Build your audience', 'Verified tools for Creators'),
     ('Stand out', 'Premium look across YO Voice'),
   ];
 
@@ -15,7 +15,7 @@ class PremiumPlans {
   /// plans on purpose — the plans differ in billing, not capabilities.
   static const List<String> planChecklist = [
     'Creator access',
-    'Create Clubs',
+    'Audience tools',
     'Premium identity',
     'Exclusive features',
   ];
@@ -23,8 +23,8 @@ class PremiumPlans {
   /// The "Everything Premium includes" list on the plans screen.
   static const List<String> everythingIncluded = [
     'Creator profile & tools',
-    'Club creation (up to 3 clubs)',
-    'Premium presence in rooms',
+    'Verified audience tools',
+    'Premium presence in conversations',
     'More benefits coming soon',
   ];
 }

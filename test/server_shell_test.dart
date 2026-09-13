@@ -543,14 +543,10 @@ void main() {
       'createServerChannelTokenV1',
     ]);
     expect(dockText(tester), 'połączono');
-    // Camera and screen share are still labelled unavailable and still never
-    // controls that fail — board 04 now says so in words and keeps both in
-    // the dock, disabled. (Board 04's own suite proves the platform query
-    // behind the share; here the point is only that neither can be pressed.)
-    for (final control in const [
-      'server-dock-camera',
-      'server-dock-share',
-    ]) {
+    // This fixture grants microphone only and runs on a platform that cannot
+    // start screen capture, so both controls stay disabled and explain the
+    // current reason. Other Company tests cover working camera/share grants.
+    for (final control in const ['server-dock-camera', 'server-dock-share']) {
       expect(
         tester
             .widget<IconButton>(
@@ -564,9 +560,17 @@ void main() {
         reason: control,
       );
     }
+    final cameraSemantics = tester.widget<Semantics>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('server-dock-camera')),
+            matching: find.byType(Semantics),
+          )
+          .first,
+    );
     expect(
-      find.textContaining('Włączenie własnej kamery jeszcze nie działa'),
-      findsOneWidget,
+      cameraSemantics.properties.label,
+      contains('Twoja rola nie może udostępniać obrazu z kamery'),
     );
     expect(
       find.textContaining('działa na razie w przeglądarce'),

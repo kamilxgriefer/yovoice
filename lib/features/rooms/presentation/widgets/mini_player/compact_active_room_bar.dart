@@ -71,8 +71,14 @@ class CompactActiveRoomBar extends StatelessWidget {
       const SizedBox(width: 5),
       _CompactCircleButton(
         key: const ValueKey('mini-player-more'),
-        semanticLabel: copy.text('More room controls', 'Więcej opcji pokoju'),
-        tooltip: copy.text('More room controls', 'Więcej opcji pokoju'),
+        semanticLabel: copy.text(
+          'More conversation controls',
+          'Więcej opcji rozmowy',
+        ),
+        tooltip: copy.text(
+          'More conversation controls',
+          'Więcej opcji rozmowy',
+        ),
         icon: Icons.more_horiz_rounded,
         foreground: palette.textPrimary,
         fill: palette.surfaceMuted,
@@ -166,7 +172,7 @@ class _CompactRoomInfo extends StatelessWidget {
         : copy.text('Live', 'Na żywo');
     final latestText = _latestLabel(latest, copy);
     final countText = participantCount > 0
-        ? copy.text('$participantCount inside', '$participantCount w pokoju')
+        ? copy.text('$participantCount inside', '$participantCount w rozmowie')
         : null;
     final metadata = reconnecting
         ? status
@@ -243,7 +249,7 @@ class _CompactRoomInfo extends StatelessWidget {
       button: true,
       label: copy.text(
         'Return to $roomName. $metadata',
-        'Wróć do pokoju $roomName. $metadata',
+        'Wróć do rozmowy $roomName. $metadata',
       ),
       excludeSemantics: true,
       onTap: onTap,
@@ -340,10 +346,10 @@ class _CompactChatButton extends StatelessWidget {
         _CompactCircleButton(
           key: const ValueKey('mini-player-expand-chat'),
           semanticLabel: copy.text(
-            'Expand room chat$unreadLabel$latestLabel',
-            'Rozwiń czat pokoju$unreadLabel$latestLabel',
+            'Expand channel chat$unreadLabel$latestLabel',
+            'Rozwiń czat kanału$unreadLabel$latestLabel',
           ),
-          tooltip: copy.text('Room chat', 'Czat pokoju'),
+          tooltip: copy.text('Channel chat', 'Czat kanału'),
           icon: Icons.chat_bubble_rounded,
           foreground: AppColors.voice,
           fill: palette.surfaceMuted,
@@ -615,7 +621,7 @@ class _CompactRoomMoreSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             YoModalSheetChrome(
-              sheetLabel: copy.text('room controls', 'opcje pokoju'),
+              sheetLabel: copy.text('conversation controls', 'opcje rozmowy'),
               surfaceColor: palette.surfaceRaised,
               onClose: () => Navigator.of(context).pop(),
             ),
@@ -624,7 +630,7 @@ class _CompactRoomMoreSheet extends StatelessWidget {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  copy.text('Room controls', 'Opcje pokoju'),
+                  copy.text('Conversation controls', 'Opcje rozmowy'),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 20,
@@ -638,10 +644,10 @@ class _CompactRoomMoreSheet extends StatelessWidget {
               child: _SheetAction(
                 key: const ValueKey('mini-player-return'),
                 icon: Icons.arrow_forward_rounded,
-                title: copy.text('Return to room', 'Wróć do pokoju'),
+                title: copy.text('Return to conversation', 'Wróć do rozmowy'),
                 subtitle: copy.text(
-                  'Open the live room',
-                  'Otwórz pokój na żywo',
+                  'Open the live conversation',
+                  'Otwórz rozmowę na żywo',
                 ),
                 accent: colorScheme.primary,
                 onTap: () => onSelected(CompactRoomMoreAction.returnToRoom),
@@ -653,10 +659,13 @@ class _CompactRoomMoreSheet extends StatelessWidget {
                 key: const ValueKey('mini-player-leave'),
                 icon: Icons.logout_rounded,
                 title: !authorityResolved
-                    ? copy.text('Leave / end room', 'Opuść lub zakończ pokój')
+                    ? copy.text(
+                        'Leave / end conversation',
+                        'Opuść lub zakończ rozmowę',
+                      )
                     : (endsRoomNow
-                          ? copy.text('End room', 'Zakończ pokój')
-                          : copy.text('Leave room', 'Opuść pokój')),
+                          ? copy.text('End conversation', 'Zakończ rozmowę')
+                          : copy.text('Leave conversation', 'Opuść rozmowę')),
                 subtitle: !authorityResolved
                     ? copy.text(
                         'Confirmation required',

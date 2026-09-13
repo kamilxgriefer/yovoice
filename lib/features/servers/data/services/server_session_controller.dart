@@ -87,6 +87,8 @@ class ServerSessionController extends ChangeNotifier {
   Object? _error;
   bool _microphoneBusy = false;
   bool _headphonesBusy = false;
+  bool _cameraBusy = false;
+  Object? _cameraError;
   bool _screenShareBusy = false;
   Object? _screenShareError;
 
@@ -148,12 +150,11 @@ class ServerSessionController extends ChangeNotifier {
   List<ServerMediaParticipant> get participants =>
       _link?.participants ?? const [];
 
-  /// The camera half of the meeting grant. The token really does permit it
-  /// (`mediaMode ∈ {video, meeting}`), but no publishing lifecycle exists on
-  /// this side yet — permission, requested vs. actual state and cleanup per
-  /// source (contract §3) — so no surface offers to turn a camera on.
-  /// Receiving other people's video is unaffected and real.
+  /// The camera half of the signed meeting grant.
   bool get canPublishCamera => _connection?.canPublishCamera ?? false;
+  bool get isCameraEnabled => _link?.isCameraEnabled ?? false;
+  bool get cameraBusy => _cameraBusy;
+  Object? get cameraError => _cameraError;
 
   /// True only when both halves of contract decision D hold: the server
   /// signed `screen_share` into this token (meeting host only) and this
@@ -196,6 +197,7 @@ class ServerSessionController extends ChangeNotifier {
     _channel = target;
     _connection = null;
     _error = null;
+    _cameraError = null;
     _screenShareError = null;
     _privacyError = null;
     if (_anotherVoiceSessionActive()) {
@@ -360,6 +362,28 @@ class ServerSessionController extends ChangeNotifier {
 
   Future<void> toggleDeafened() => setDeafened(!isDeafened);
 
+  /// Starts or stops this person's camera after an explicit press. The
+  /// provider owns the permission prompt and the actual publication state;
+  /// a cancelled or denied request is surfaced in the persistent dock.
+  Future<void> setCameraEnabled(bool enabled) async {
+    final link = _link;
+    if (link == null || !isConnected || _cameraBusy) return;
+    if (enabled && !canPublishCamera) return;
+    _cameraBusy = true;
+    _cameraError = null;
+    notifyListeners();
+    try {
+      await link.setCameraEnabled(enabled);
+    } catch (error) {
+      _cameraError = error;
+    } finally {
+      _cameraBusy = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<void> toggleCamera() => setCameraEnabled(!isCameraEnabled);
+
   /// Starts or stops publishing this device's screen.
   ///
   /// Explicit, like the microphone, and refused outright unless the grant and
@@ -406,6 +430,7 @@ class ServerSessionController extends ChangeNotifier {
     }
     _connection = null;
     _error = null;
+    _cameraError = null;
     _screenShareError = null;
     _privacyError = null;
     _set(ServerSessionPhase.idle);
@@ -416,6 +441,7 @@ class ServerSessionController extends ChangeNotifier {
     if (!_isTerminal) return;
     _epoch++;
     _error = null;
+    _cameraError = null;
     _screenShareError = null;
     _privacyError = null;
     _connection = null;

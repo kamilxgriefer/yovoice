@@ -684,23 +684,34 @@ void main() {
           final comments = find.byKey(
             const ValueKey('moment-row-comments-localized'),
           );
+          // Board 06's action row draws a glyph and the count; the whole
+          // localized phrase is the control's SPOKEN name. Word labels
+          // never fitted the row at any width and broke mid-word at 200 %
+          // text, so the phrase moved to the semantic label — where it is
+          // still required to be complete and correct in this locale.
+          Text labelOf(Finder button) => tester.widget<Text>(
+            find.descendant(of: button, matching: find.byType(Text)),
+          );
+          expect(labelOf(like).data, '$count');
           expect(
-            find.descendant(
-              of: like,
-              matching: find.text(
-                expected[count == 0 ? 'like' : 'likes$count']!,
-              ),
-            ),
-            findsOneWidget,
+            labelOf(like).semanticsLabel,
+            expected[count == 0 ? 'like' : 'likes$count'],
+            reason: 'the exact total stays in the spoken name',
+          );
+          expect(labelOf(comments).data, '$count');
+          expect(
+            labelOf(comments).semanticsLabel,
+            expected[count == 0 ? 'comments' : 'comments$count'],
           );
           expect(
-            find.descendant(
-              of: comments,
-              matching: find.text(
-                expected[count == 0 ? 'comments' : 'comments$count']!,
-              ),
-            ),
-            findsOneWidget,
+            _spokenNames(tester),
+            containsAll(<String>[
+              expected[count == 0 ? 'like' : 'likes$count']!,
+              expected[count == 0 ? 'comments' : 'comments$count']!,
+            ]),
+            reason:
+                'both totals must reach assistive technology by their '
+                'localized names, not only the widget tree',
           );
           expect(
             find.text('Voice caption {count} stays unchanged.'),
@@ -1081,7 +1092,9 @@ void main() {
           ),
           findsNothing,
         );
-        await tester.tap(find.byKey(const ValueKey('home-quick-create-room')));
+        await tester.tap(
+          find.byKey(const ValueKey('home-quick-create-server')),
+        );
         expect(created, 1);
         await tester.ensureVisible(find.text(expected['viewAll']!));
         await tester.tap(find.text(expected['viewAll']!));

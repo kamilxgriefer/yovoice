@@ -571,13 +571,18 @@ void main() {
             );
             final card = _card(f, 1);
             final viewport = tester.getRect(_inside(card, 'reel-viewport'));
+            // The pool filters live in the overlaid/stacked chrome at most
+            // widths and in the destination's docked local panel at wide-3
+            // (board 08 §9.3). Either way it is the block an authored link
+            // must not end up under, so the lookup follows the filter itself.
+            final chromeHosts = find.ancestor(
+              of: find.byKey(const ValueKey('reels-discover-filter')),
+              matching: find.byType(ReelOverlayMeasure),
+            );
             final chrome = tester.getRect(
-              find
-                  .ancestor(
-                    of: find.byKey(const ValueKey('reels-discover-filter')),
-                    matching: find.byType(ReelOverlayMeasure),
-                  )
-                  .first,
+              chromeHosts.evaluate().isEmpty
+                  ? find.byKey(const ValueKey<String>('yo-moments-local-panel'))
+                  : chromeHosts.first,
             );
             final rail = tester.getRect(
               find

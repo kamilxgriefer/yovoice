@@ -510,7 +510,15 @@ class Reel {
   };
 }
 
-/// One text comment on a Reel, exactly as `getReelViewV2` projects it.
+/// What one Reel comment actually is.
+///
+/// `voice` is additive, not a fork: the projection has emitted `type` and
+/// `durationSeconds` since the thread shipped, and the backend widened
+/// `REEL_COMMENT_TYPES` rather than inventing a second document shape. A
+/// value outside this set is still a refusal — see [ReelComment.fromWire].
+enum ReelCommentKind { text, voice }
+
+/// One comment on a Reel, exactly as `getReelViewV2` projects it.
 ///
 /// Parsing is strict on purpose: the projection is server-owned, versioned,
 /// and already drops documents it could not validate, so an unexpected shape
@@ -524,15 +532,35 @@ class ReelComment {
     required this.authorName,
     required this.text,
     required this.createdAt,
+    this.kind = ReelCommentKind.text,
+    this.durationSeconds,
   });
 
   static const int maxTextLength = 1000;
+
+  /// A voice comment's caption is a LABEL for a recording, not a second
+  /// comment, so it is bounded far tighter than [maxTextLength] and may be
+  /// empty. Both bounds are the deployed contract's
+  /// (`MAX_REEL_VOICE_COMMENT_TEXT_LENGTH`).
+  static const int maxVoiceCaptionLength = 140;
+
+  /// The recording bound the backend enforces in four places — the reserve
+  /// input, the finalize re-check, Storage Rules, and the stored document's
+  /// own validation on every read.
+  static const int minVoiceDurationSeconds = 1;
+  static const int maxVoiceDurationSeconds = 60;
 
   final String id;
   final String authorId;
   final String authorName;
   final String text;
   final DateTime createdAt;
+  final ReelCommentKind kind;
+
+  /// Present only on a voice comment, and then always 1–60.
+  final int? durationSeconds;
+
+  bool get isVoice => kind == ReelCommentKind.voice;
 
   factory ReelComment.fromWire(Object? value) {
     final map = _map(value, 'comment');
@@ -550,12 +578,29 @@ class ReelComment {
     if (map['schemaVersion'] != 1) {
       throw const FormatException('Unsupported Reel comment schema.');
     }
-    // `type` and `durationSeconds` are the fields a later voice reply would
-    // use. Today the contract emits only text with a null duration, and this
-    // client renders only text; accepting anything else would mean inventing
-    // a presentation for content that does not exist yet.
-    if (map['type'] != 'text' || map['durationSeconds'] != null) {
-      throw const FormatException('Unsupported Reel comment type.');
+    // THE TYPE PICKS THE KEY RULES, AND AN UNKNOWN TYPE PICKS NOTHING — the
+    // same order the server's own `validateReelComment` reads them in. A
+    // third type this build has no presentation for is still a refusal
+    // rather than an invented rendering.
+    final rawDuration = map['durationSeconds'];
+    final ReelCommentKind kind;
+    switch (map['type']) {
+      case 'text':
+        // Unchanged from the original contract, and still the assertion that
+        // keeps the two shapes apart.
+        if (rawDuration != null) {
+          throw const FormatException('Unsupported Reel comment type.');
+        }
+        kind = ReelCommentKind.text;
+      case 'voice':
+        if (rawDuration is! int ||
+            rawDuration < minVoiceDurationSeconds ||
+            rawDuration > maxVoiceDurationSeconds) {
+          throw const FormatException('Malformed Reel voice comment.');
+        }
+        kind = ReelCommentKind.voice;
+      default:
+        throw const FormatException('Unsupported Reel comment type.');
     }
     final photo = map['authorPhotoUrl'];
     if (photo != null && photo is! String) {
@@ -570,11 +615,20 @@ class ReelComment {
         _integer(map['createdAtMillis'], 'createdAtMillis'),
         isUtc: true,
       ),
+      kind: kind,
+      durationSeconds: kind == ReelCommentKind.voice
+          ? rawDuration as int
+          : null,
     );
+    // A voice comment's content IS the recording, so an empty caption is
+    // canonical there and malformed on a text comment.
+    final captionValid = kind == ReelCommentKind.voice
+        ? comment.text.length <= maxVoiceCaptionLength
+        : comment.text.trim().isNotEmpty &&
+              comment.text.length <= maxTextLength;
     if (comment.authorName.isEmpty ||
         comment.authorName.length > 120 ||
-        comment.text.trim().isEmpty ||
-        comment.text.length > maxTextLength) {
+        !captionValid) {
       throw const FormatException('Malformed Reel comment.');
     }
     return comment;

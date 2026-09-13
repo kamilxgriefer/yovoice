@@ -281,7 +281,7 @@ Future<void> _pump(
 Future<void> _openMore(WidgetTester tester) async {
   await tester.tap(find.byKey(const ValueKey('mini-player-more')));
   await tester.pumpAndSettle();
-  expect(find.text('Room controls'), findsOneWidget);
+  expect(find.text('Conversation controls'), findsOneWidget);
 }
 
 void main() {
@@ -329,7 +329,7 @@ void main() {
           ..poke();
         await tester.pumpAndSettle();
 
-        expect(find.text('Room controls'), findsNothing);
+        expect(find.text('Conversation controls'), findsNothing);
         expect(find.byKey(const ValueKey('mini-player')), findsNothing);
         expect(find.byType(Scaffold), findsOneWidget);
 
@@ -355,7 +355,7 @@ void main() {
         await tester.pumpAndSettle();
 
         await _openMore(tester);
-        expect(find.text('Leave room'), findsOneWidget);
+        expect(find.text('Leave conversation'), findsOneWidget);
       },
     );
 
@@ -716,7 +716,7 @@ void main() {
       );
       expect(harness.voice.isMuted, isTrue);
       expect(find.byKey(const ValueKey('room-chat-surface')), findsNothing);
-      expect(find.text('Room controls'), findsNothing);
+      expect(find.text('Conversation controls'), findsNothing);
       expect(harness.voice.disconnectCalls, 0);
     });
 
@@ -809,7 +809,7 @@ void main() {
 
       expect(harness.openedRooms, isEmpty);
       expect(harness.rooms.mutePersistCalls, isEmpty);
-      expect(find.text('Room controls'), findsNothing);
+      expect(find.text('Conversation controls'), findsNothing);
       expect(
         find.byKey(const ValueKey('room-chat-surface')),
         findsOneWidget,
@@ -830,8 +830,8 @@ void main() {
           findsOneWidget,
         );
         expect(find.byKey(const ValueKey('mini-player-leave')), findsOneWidget);
-        expect(find.text('Return to room'), findsOneWidget);
-        expect(find.text('Leave room'), findsOneWidget);
+        expect(find.text('Return to conversation'), findsOneWidget);
+        expect(find.text('Leave conversation'), findsOneWidget);
         expect(find.byKey(const ValueKey('room-chat-surface')), findsNothing);
         expect(harness.openedRooms, isEmpty);
         expect(harness.rooms.mutePersistCalls, isEmpty);
@@ -984,7 +984,7 @@ void main() {
       expect(harness.voice.disconnectCalls, 0);
       expect(harness.rooms.leaveCalls, isEmpty);
       expect(find.byKey(const ValueKey('room-chat-surface')), findsNothing);
-      expect(find.text('Room controls'), findsNothing);
+      expect(find.text('Conversation controls'), findsNothing);
     });
 
     testWidgets(
@@ -1007,7 +1007,7 @@ void main() {
           ..poke();
         await tester.pumpAndSettle();
 
-        expect(find.text('Room controls'), findsNothing);
+        expect(find.text('Conversation controls'), findsNothing);
         expect(find.byKey(const ValueKey('sentinel-screen')), findsOneWidget);
         expect(
           find.byKey(const ValueKey('base-screen')),
@@ -1309,7 +1309,7 @@ void main() {
       await _pump(tester, harness, viewport: const Size(1280, 800));
 
       // Dock layout renders the desktop subtitle.
-      expect(find.text('Go back to live room'), findsOneWidget);
+      expect(find.text('Go back to live conversation'), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('mini-player-expand-chat')));
       await tester.pump(const Duration(milliseconds: 300));
@@ -1436,17 +1436,17 @@ void main() {
 
         await tester.tap(find.byKey(const ValueKey('mini-player-more')));
         await tester.pump();
-        expect(find.text('Room controls'), findsNothing);
+        expect(find.text('Conversation controls'), findsNothing);
         expect(harness.voice.disconnectCalls, 0);
 
         authorityGate.complete();
         await tester.pumpAndSettle();
-        expect(find.text('End room'), findsOneWidget);
-        expect(find.text('Leave room'), findsNothing);
+        expect(find.text('End conversation'), findsOneWidget);
+        expect(find.text('Leave conversation'), findsNothing);
 
         await tester.tap(find.byKey(const ValueKey('mini-player-leave')));
         await tester.pumpAndSettle();
-        expect(find.text('End room?'), findsOneWidget);
+        expect(find.text('End conversation?'), findsOneWidget);
         expect(harness.voice.disconnectCalls, 0);
       },
     );
@@ -1459,11 +1459,11 @@ void main() {
         await _pump(tester, harness);
 
         await _openMore(tester);
-        expect(find.text('Leave / end room'), findsOneWidget);
+        expect(find.text('Leave / end conversation'), findsOneWidget);
         await tester.tap(find.byKey(const ValueKey('mini-player-leave')));
         await tester.pumpAndSettle();
 
-        expect(find.text('Leave or end room?'), findsOneWidget);
+        expect(find.text('Leave or end conversation?'), findsOneWidget);
         expect(find.text('Leave anyway'), findsOneWidget);
         expect(harness.voice.disconnectCalls, 0);
       },
@@ -1481,15 +1481,15 @@ void main() {
         };
         await _pump(tester, harness, viewport: const Size(1280, 800));
 
-        expect(find.text('Leave / end room'), findsOneWidget);
+        expect(find.text('Leave / end conversation'), findsOneWidget);
         await tester.tap(find.byKey(const ValueKey('mini-player-leave')));
         await tester.pump();
         expect(harness.voice.disconnectCalls, 0);
-        expect(find.text('End room?'), findsNothing);
+        expect(find.text('End conversation?'), findsNothing);
 
         authorityGate.complete();
         await tester.pumpAndSettle();
-        expect(find.text('End room?'), findsOneWidget);
+        expect(find.text('End conversation?'), findsOneWidget);
         expect(harness.voice.disconnectCalls, 0);
       },
     );
@@ -1501,11 +1501,11 @@ void main() {
       harness.rooms.getRoomOverride = (_) async => throw Exception('offline');
       await _pump(tester, harness, viewport: const Size(1280, 800));
 
-      expect(find.text('Leave / end room'), findsOneWidget);
+      expect(find.text('Leave / end conversation'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('mini-player-leave')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Leave or end room?'), findsOneWidget);
+      expect(find.text('Leave or end conversation?'), findsOneWidget);
       expect(find.text('Leave anyway'), findsOneWidget);
       expect(harness.voice.disconnectCalls, 0);
     });
@@ -1515,8 +1515,8 @@ void main() {
       await _pump(tester, harness);
 
       await _openMore(tester);
-      expect(find.text('Leave room'), findsOneWidget);
-      expect(find.text('End room'), findsNothing);
+      expect(find.text('Leave conversation'), findsOneWidget);
+      expect(find.text('End conversation'), findsNothing);
     });
 
     testWidgets('host sees End room and confirms before ending', (
@@ -1526,8 +1526,8 @@ void main() {
       await _pump(tester, harness);
 
       await _openMore(tester);
-      expect(find.text('End room'), findsOneWidget);
-      expect(find.text('Leave room'), findsNothing);
+      expect(find.text('End conversation'), findsOneWidget);
+      expect(find.text('Leave conversation'), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey('mini-player-leave')));
       await tester.pumpAndSettle();
@@ -1559,7 +1559,7 @@ void main() {
         await _openMore(tester);
         await tester.tap(find.byKey(const ValueKey('mini-player-leave')));
         await tester.pumpAndSettle();
-        expect(find.text('End room?'), findsOneWidget);
+        expect(find.text('End conversation?'), findsOneWidget);
 
         harness.voice
           ..statusValue = VoiceCallStatus.disconnected
@@ -1567,7 +1567,7 @@ void main() {
           ..poke();
         await tester.pumpAndSettle();
 
-        expect(find.text('End room?'), findsNothing);
+        expect(find.text('End conversation?'), findsNothing);
         expect(harness.voice.disconnectCalls, 0);
         expect(harness.rooms.leaveCalls, isEmpty);
         expect(find.byType(Scaffold), findsOneWidget);

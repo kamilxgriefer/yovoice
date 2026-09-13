@@ -2,8 +2,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
-import 'package:yovoice/features/clubs/presentation/screens/club_invite_response_screen.dart';
 import 'package:yovoice/features/calls/presentation/screens/direct_call_screen.dart';
 import 'package:yovoice/features/calls/presentation/direct_call_route_registry.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
@@ -11,8 +9,9 @@ import 'package:yovoice/features/friends/presentation/screens/friends_screen.dar
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
-import 'package:yovoice/features/rooms/data/models/voice_room.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/server_invite_response_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
 /// Global navigator handle used purely for notification-tap routing. The
@@ -38,7 +37,7 @@ enum NotificationDestination {
 /// Routes a tapped notification (from a push, or from the in-app
 /// notification center) to its destination screen. Every target is
 /// re-fetched fresh from Firestore rather than trusting the notification
-/// doc's own denormalized fields, so a deleted club/room/conversation/user
+/// doc's own denormalized fields, so a deleted server/conversation/user
 /// or a since-revoked read permission fails closed — silently does
 /// nothing — instead of opening a broken or unauthorized screen.
 class NotificationRouter {
@@ -93,11 +92,11 @@ class NotificationRouter {
         case NotificationDestination.profile:
           await _openProfile(navigator, actorId);
         case NotificationDestination.clubInvite:
-          await _openClubInvite(navigator, targetId);
+          await _openServerInvite(navigator, targetId);
         case NotificationDestination.club:
-          await _openClub(navigator, targetId);
+          await _openServer(navigator, targetId);
         case NotificationDestination.room:
-          await _openRoom(navigator, targetId);
+          await _openLegacyRoom(navigator, targetId);
         case NotificationDestination.conversation:
           await _openConversation(navigator, targetId);
         case NotificationDestination.directCall:
@@ -148,37 +147,39 @@ class NotificationRouter {
     );
   }
 
-  static Future<void> _openClub(
+  static Future<void> _openServer(
     NavigatorState navigator,
-    String? clubId,
+    String? serverId,
   ) async {
-    if (clubId == null || clubId.isEmpty) return;
+    if (serverId == null || serverId.isEmpty) return;
     final doc = await FirebaseFirestore.instance
         .collection('clubs')
-        .doc(clubId)
+        .doc(serverId)
         .get();
-    if (!doc.exists) return;
-    navigator.push(
-      MaterialPageRoute(builder: (_) => ClubOverviewScreen(clubId: clubId)),
-    );
-  }
-
-  static Future<void> _openClubInvite(
-    NavigatorState navigator,
-    String? clubId,
-  ) async {
-    if (clubId == null || clubId.isEmpty) return;
-    // Intentionally bypasses the Premium Clubs hub. Receiving and responding
-    // to an invitation is free; the destination re-fetches the invitee's
-    // canonical pending invite and exposes only Accept/Decline.
-    navigator.push(
-      MaterialPageRoute(
-        builder: (_) => ClubInviteResponseScreen(clubId: clubId),
+    if (!doc.exists || !navigator.mounted) return;
+    await navigator.push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ServerWorkspaceScreen(serverId: serverId),
       ),
     );
   }
 
-  static Future<void> _openRoom(
+  static Future<void> _openServerInvite(
+    NavigatorState navigator,
+    String? serverId,
+  ) async {
+    if (serverId == null || serverId.isEmpty || !navigator.mounted) return;
+    // A private Server root is not readable before acceptance. The response
+    // screen reads only the invitee-owned preview and the callable re-proves
+    // the invitation before creating membership.
+    await navigator.push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ServerInviteResponseScreen(serverId: serverId),
+      ),
+    );
+  }
+
+  static Future<void> _openLegacyRoom(
     NavigatorState navigator,
     String? roomId,
   ) async {
@@ -187,10 +188,14 @@ class NotificationRouter {
         .collection('rooms')
         .doc(roomId)
         .get();
-    if (!doc.exists) return;
-    final room = VoiceRoom.fromFirestore(doc);
-    navigator.push(
-      MaterialPageRoute(builder: (_) => RoomEntryScreen(room: room)),
+    if (!doc.exists || !navigator.mounted) return;
+    final serverId = (doc.data()?['clubId'] as String?)?.trim();
+    if (serverId != null && serverId.isNotEmpty) {
+      await _openServer(navigator, serverId);
+      return;
+    }
+    await navigator.push<void>(
+      MaterialPageRoute<void>(builder: (_) => const ServersScreen()),
     );
   }
 

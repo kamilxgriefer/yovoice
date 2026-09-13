@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/features/premium/premium_gates.dart';
+import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:share_plus/share_plus.dart';
 
-import 'package:yovoice/features/clubs/data/models/club.dart';
-import 'package:yovoice/features/clubs/data/services/club_service.dart';
-import 'package:yovoice/features/clubs/presentation/screens/create_club_screen.dart';
-import 'package:yovoice/features/creator/presentation/screens/creator_analytics_screen.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_pinned_posts_screen.dart';
+import 'package:yovoice/features/creator/presentation/widgets/creator_audience_setting.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
@@ -22,9 +19,11 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
-import 'package:yovoice/features/rooms/data/services/room_service.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/services/server_service.dart';
+import 'package:yovoice/features/servers/presentation/screens/create_server_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
+import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
@@ -39,9 +38,10 @@ class CreatorStudioScreen extends StatefulWidget {
   const CreatorStudioScreen({
     this.isRootTab = false,
     this.profileService,
-    this.roomService,
-    this.clubService,
+    this.serverRepository,
     this.momentService,
+    this.creatorAudienceService,
+    this.entitlementService,
     super.key,
   });
 
@@ -51,9 +51,10 @@ class CreatorStudioScreen extends StatefulWidget {
   /// has nothing to pop.
   final bool isRootTab;
   final ProfileService? profileService;
-  final RoomService? roomService;
-  final ClubService? clubService;
+  final ServerRepository? serverRepository;
   final MomentService? momentService;
+  final CreatorAudienceService? creatorAudienceService;
+  final EntitlementService? entitlementService;
 
   @override
   State<CreatorStudioScreen> createState() => _CreatorStudioScreenState();
@@ -61,16 +62,15 @@ class CreatorStudioScreen extends StatefulWidget {
 
 class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
   late final ProfileService _profileService;
-  late final RoomService _roomService;
-  late final ClubService _clubService;
   late final MomentService _momentService;
+  late final CreatorAudienceService _creatorAudienceService;
+  late final EntitlementService _entitlementService;
 
   // Created once instead of inline in build() -- see ADR-018 for why a
   // fresh watchX() call inside a StreamBuilder's `stream:` argument tears
   // down and re-registers a live Firestore listener on every rebuild.
   late final Stream<UserProfile> _profile;
-  late final Stream<List<VoiceRoom>> _rooms;
-  late final Stream<List<Club>> _clubs;
+  late final Stream<List<Server>> _servers;
   late final Stream<List<VoiceMoment>> _moments;
   final FocusNode _expiryRecoveryFocus = FocusNode(
     debugLabel: 'Creator Studio heading after expiry',
@@ -81,12 +81,16 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
   void initState() {
     super.initState();
     _profileService = widget.profileService ?? ProfileService();
-    _roomService = widget.roomService ?? RoomService();
-    _clubService = widget.clubService ?? ClubService();
     _momentService = widget.momentService ?? MomentService();
+    _creatorAudienceService =
+        widget.creatorAudienceService ?? CreatorAudienceService();
+    _entitlementService = widget.entitlementService ?? EntitlementService();
     _profile = _profileService.watchCurrentProfile();
-    _rooms = _roomService.watchOwnedRooms();
-    _clubs = _clubService.watchMyClubs();
+    try {
+      _servers = (widget.serverRepository ?? ServerService()).watchMyServers();
+    } catch (error) {
+      _servers = Stream<List<Server>>.error(error);
+    }
     _moments = _momentService.watchMyMoments();
   }
 
@@ -143,86 +147,65 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
                   ),
                 );
               }
-              return StreamBuilder<List<VoiceRoom>>(
-                stream: _rooms,
-                builder: (context, roomsSnapshot) {
-                  if (roomsSnapshot.hasError) {
+              return StreamBuilder<List<Server>>(
+                stream: _servers,
+                builder: (context, serversSnapshot) {
+                  if (serversSnapshot.hasError) {
                     return _ErrorBody(
                       message: copy.text(
-                        'Your room data could not be loaded.',
-                        'Nie udało się wczytać danych Twoich pokojów.',
+                        'Your server data could not be loaded.',
+                        'Nie udało się wczytać danych Twoich serwerów.',
                       ),
                     );
                   }
-                  if (!roomsSnapshot.hasData) {
+                  if (!serversSnapshot.hasData) {
                     return _CreatorLoading(
                       label: copy.text(
-                        'Loading your rooms',
-                        'Wczytywanie Twoich pokojów',
+                        'Loading your servers',
+                        'Wczytywanie Twoich serwerów',
                       ),
                     );
                   }
-                  final rooms = roomsSnapshot.data!;
-                  return StreamBuilder<List<Club>>(
-                    stream: _clubs,
-                    builder: (context, clubsSnapshot) {
-                      if (clubsSnapshot.hasError) {
+                  final servers = serversSnapshot.data!;
+                  return StreamBuilder<List<VoiceMoment>>(
+                    stream: _moments,
+                    builder: (context, momentsSnapshot) {
+                      if (momentsSnapshot.hasError) {
                         return _ErrorBody(
                           message: copy.text(
-                            'Your club data could not be loaded.',
-                            'Nie udało się wczytać danych Twoich klubów.',
+                            'Your Voice Moments could not be loaded.',
+                            'Nie udało się wczytać Twoich materiałów Voice Moment.',
                           ),
                         );
                       }
-                      if (!clubsSnapshot.hasData) {
+                      if (!momentsSnapshot.hasData) {
                         return _CreatorLoading(
                           label: copy.text(
-                            'Loading your clubs',
-                            'Wczytywanie Twoich klubów',
+                            'Loading your Voice Moments',
+                            'Wczytywanie Twoich materiałów Voice Moment',
                           ),
                         );
                       }
-                      final clubs = clubsSnapshot.data!;
-                      return StreamBuilder<List<VoiceMoment>>(
-                        stream: _moments,
-                        builder: (context, momentsSnapshot) {
-                          if (momentsSnapshot.hasError) {
-                            return _ErrorBody(
-                              message: copy.text(
-                                'Your Voice Moments could not be loaded.',
-                                'Nie udało się wczytać Twoich materiałów Voice Moment.',
-                              ),
-                            );
-                          }
-                          if (!momentsSnapshot.hasData) {
-                            return _CreatorLoading(
-                              label: copy.text(
-                                'Loading your Voice Moments',
-                                'Wczytywanie Twoich materiałów Voice Moment',
-                              ),
-                            );
-                          }
-                          final snapshotMoments = momentsSnapshot.data!;
-                          return MomentExpiryListBuilder(
-                            moments: snapshotMoments,
-                            onDeadline: _handleExpiryDeadline,
-                            builder: (context, now) {
-                              final visibleMoments = snapshotMoments
-                                  .where(
-                                    (moment) =>
-                                        !moment.isPublished ||
-                                        moment.isActiveAt(now),
-                                  )
-                                  .toList(growable: false);
-                              return _CreatorStudioContent(
-                                profile: profile,
-                                rooms: rooms,
-                                clubs: clubs,
-                                moments: visibleMoments,
-                                isRootTab: widget.isRootTab,
-                                expiryRecoveryFocus: _expiryRecoveryFocus,
-                              );
-                            },
+                      final snapshotMoments = momentsSnapshot.data!;
+                      return MomentExpiryListBuilder(
+                        moments: snapshotMoments,
+                        onDeadline: _handleExpiryDeadline,
+                        builder: (context, now) {
+                          final visibleMoments = snapshotMoments
+                              .where(
+                                (moment) =>
+                                    !moment.isPublished ||
+                                    moment.isActiveAt(now),
+                              )
+                              .toList(growable: false);
+                          return _CreatorStudioContent(
+                            profile: profile,
+                            servers: servers,
+                            moments: visibleMoments,
+                            isRootTab: widget.isRootTab,
+                            expiryRecoveryFocus: _expiryRecoveryFocus,
+                            creatorAudienceService: _creatorAudienceService,
+                            entitlementService: _entitlementService,
                           );
                         },
                       );
@@ -239,33 +222,161 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
   }
 }
 
-class _CreatorStudioContent extends StatelessWidget {
+class _CreatorStudioContent extends StatefulWidget {
   const _CreatorStudioContent({
     required this.profile,
-    required this.rooms,
-    required this.clubs,
+    required this.servers,
     required this.moments,
     required this.expiryRecoveryFocus,
+    required this.creatorAudienceService,
+    required this.entitlementService,
     this.isRootTab = false,
   });
 
   final UserProfile profile;
-  final List<VoiceRoom> rooms;
-  final List<Club> clubs;
+  final List<Server> servers;
   final List<VoiceMoment> moments;
   final FocusNode expiryRecoveryFocus;
+  final CreatorAudienceService creatorAudienceService;
+  final EntitlementService entitlementService;
   final bool isRootTab;
 
   @override
+  State<_CreatorStudioContent> createState() => _CreatorStudioContentState();
+}
+
+class _CreatorStudioContentState extends State<_CreatorStudioContent> {
+  Stream<CreatorAudienceProjection>? _audienceProjection;
+  late final Stream<SubscriptionEntitlements> _entitlements;
+  CreatorAudienceProjection? _savedProjection;
+
+  bool get _canReadAudienceProjection =>
+      widget.profile.accountType == AccountType.creator ||
+      widget.profile.creatorAudienceEnabled;
+
+  @override
+  void initState() {
+    super.initState();
+    try {
+      _entitlements = widget.entitlementService.watchCurrentEntitlements();
+    } catch (_) {
+      _entitlements = Stream.value(SubscriptionEntitlements.free);
+    }
+    _configureAudienceProjection();
+  }
+
+  @override
+  void didUpdateWidget(_CreatorStudioContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final identityChanged = oldWidget.profile.uid != widget.profile.uid;
+    final projectionScopeChanged =
+        (oldWidget.profile.accountType == AccountType.creator ||
+            oldWidget.profile.creatorAudienceEnabled) !=
+        _canReadAudienceProjection;
+    if (identityChanged || projectionScopeChanged) {
+      _savedProjection = null;
+      _configureAudienceProjection();
+    } else if (oldWidget.profile.creatorAudienceEnabled !=
+        widget.profile.creatorAudienceEnabled) {
+      _savedProjection = null;
+    }
+  }
+
+  void _configureAudienceProjection() {
+    _audienceProjection = _canReadAudienceProjection
+        ? widget.creatorAudienceService.watchPublicProjection(
+            widget.profile.uid,
+          )
+        : null;
+  }
+
+  void _handleAudienceSaved(CreatorAudienceUpdate update) {
+    setState(() {
+      _savedProjection = CreatorAudienceProjection(
+        visible: update.visible,
+        followerCount: update.visible ? widget.profile.followerCount : 0,
+        followingCount: update.visible ? widget.profile.followingCount : 0,
+      );
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    return StreamBuilder<SubscriptionEntitlements>(
+      stream: _entitlements,
+      builder: (context, snapshot) {
+        final resolved = snapshot.hasData && !snapshot.hasError;
+        final entitlements = resolved
+            ? snapshot.data!
+            : SubscriptionEntitlements.free;
+        return _buildWithEntitlements(
+          context,
+          entitlements,
+          resolved: resolved,
+        );
+      },
+    );
+  }
+
+  Widget _buildWithEntitlements(
+    BuildContext context,
+    SubscriptionEntitlements entitlements, {
+    required bool resolved,
+  }) {
+    final audience = _audienceProjection;
+    if (audience == null) {
+      return _buildContent(
+        context,
+        const CreatorAudienceProjection.hidden(),
+        entitlements,
+        entitlementsResolved: resolved,
+      );
+    }
+    return StreamBuilder<CreatorAudienceProjection>(
+      stream: audience,
+      initialData: widget.profile.creatorAudienceVisible
+          ? CreatorAudienceProjection(
+              visible: true,
+              followerCount: widget.profile.followerCount,
+              followingCount: widget.profile.followingCount,
+            )
+          : const CreatorAudienceProjection.hidden(),
+      builder: (context, snapshot) {
+        final streamed = snapshot.hasError
+            ? const CreatorAudienceProjection.hidden()
+            : snapshot.data ?? const CreatorAudienceProjection.hidden();
+        final saved = _savedProjection;
+        final projection = saved != null && streamed.visible != saved.visible
+            ? saved
+            : streamed;
+        return _buildContent(
+          context,
+          projection,
+          entitlements,
+          entitlementsResolved: resolved,
+        );
+      },
+    );
+  }
+
+  Widget _buildContent(
+    BuildContext context,
+    CreatorAudienceProjection audience,
+    SubscriptionEntitlements entitlements, {
+    required bool entitlementsResolved,
+  }) {
     final copy = AppLocalizations.of(context);
-    final publishedMoments = moments
+    final publishedMoments = widget.moments
         .where((item) => item.isPublished)
         .toList(growable: false);
-    final draftMoments = moments
+    final draftMoments = widget.moments
         .where((item) => !item.isPublished)
         .toList(growable: false);
-    final liveRoomCount = rooms.where((item) => item.isLive).length;
+    final showCreatorAudience =
+        widget.profile.accountType == AccountType.creator && audience.visible;
+    final profile = widget.profile;
+    final servers = widget.servers;
+    final moments = widget.moments;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 6, 18, 48),
@@ -274,7 +385,7 @@ class _CreatorStudioContent extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
           child: Row(
             children: [
-              if (!isRootTab) ...[
+              if (!widget.isRootTab) ...[
                 YoIconButton(
                   icon: Icons.arrow_back_ios_new_rounded,
                   iconSize: 18,
@@ -289,7 +400,7 @@ class _CreatorStudioContent extends StatelessWidget {
               ],
               Expanded(
                 child: MomentExpiryFocusTarget(
-                  focusNode: expiryRecoveryFocus,
+                  focusNode: widget.expiryRecoveryFocus,
                   semanticLabel: copy.text('Creator Studio', 'Studio twórcy'),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -317,7 +428,7 @@ class _CreatorStudioContent extends StatelessWidget {
             ],
           ),
         ),
-        _ProfileOverviewCard(profile: profile, liveRoomCount: liveRoomCount),
+        _ProfileOverviewCard(profile: profile, serverCount: servers.length),
         const SizedBox(height: 14),
         if (profile.accountType == AccountType.personal) ...[
           _PersonalAccountBanner(profile: profile),
@@ -326,55 +437,59 @@ class _CreatorStudioContent extends StatelessWidget {
         // Expiration policy (ADR-024): a Creator whose Premium lapsed
         // keeps every byte of Creator data — the paused banner explains
         // why premium tools are unavailable instead of hiding them.
-        if (profile.accountType != AccountType.personal)
-          StreamBuilder<SubscriptionEntitlements>(
-            stream: EntitlementService().watchCurrentEntitlements(),
-            builder: (context, snapshot) {
-              final entitlements =
-                  snapshot.data ?? SubscriptionEntitlements.free;
-              if (!snapshot.hasData || entitlements.canUseCreator) {
-                return const SizedBox.shrink();
-              }
-              return const Padding(
-                padding: EdgeInsets.only(bottom: 14),
-                child: _CreatorPausedBanner(),
-              );
-            },
+        if (profile.accountType != AccountType.personal &&
+            entitlementsResolved &&
+            !entitlements.canUseCreator)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 14),
+            child: _CreatorPausedBanner(),
           ),
-        _QuickActionsRow(),
+        if (creatorAudienceSettingIsAvailable(profile, entitlements)) ...[
+          CreatorAudienceSetting(
+            ownerEnabled: profile.creatorAudienceEnabled,
+            publicVisible: audience.visible,
+            canEnable: creatorAudienceCanEnable(profile, entitlements),
+            service: widget.creatorAudienceService,
+            onSaved: _handleAudienceSaved,
+          ),
+          const SizedBox(height: 14),
+        ],
+        const _QuickActionsRow(),
         const SizedBox(height: 24),
 
         // A slim, glanceable strip rather than a grid of tiles -- these
         // numbers matter, but they're context, not the main event.
         CreatorStudioStatStrip(
           items: [
-            CreatorStudioStatItem(
-              value: '${profile.followerCount}',
-              label: copy.text('Followers', 'Obserwujący'),
-              onTap: () => Navigator.of(context).push<void>(
-                MaterialPageRoute<void>(
-                  builder: (_) => FollowListScreen(
-                    userId: profile.uid,
-                    type: FollowListType.followers,
+            if (showCreatorAudience)
+              CreatorStudioStatItem(
+                value: '${audience.followerCount}',
+                label: copy.text('Followers', 'Obserwujący'),
+                onTap: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => FollowListScreen(
+                      userId: profile.uid,
+                      type: FollowListType.followers,
+                    ),
                   ),
                 ),
               ),
-            ),
-            CreatorStudioStatItem(
-              value: '${profile.followingCount}',
-              label: copy.text('Following', 'Obserwowani'),
-              onTap: () => Navigator.of(context).push<void>(
-                MaterialPageRoute<void>(
-                  builder: (_) => FollowListScreen(
-                    userId: profile.uid,
-                    type: FollowListType.following,
+            if (showCreatorAudience)
+              CreatorStudioStatItem(
+                value: '${audience.followingCount}',
+                label: copy.text('Following', 'Obserwowani'),
+                onTap: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => FollowListScreen(
+                      userId: profile.uid,
+                      type: FollowListType.following,
+                    ),
                   ),
                 ),
               ),
-            ),
             CreatorStudioStatItem(
-              value: '${clubs.length}',
-              label: copy.text('Communities', 'Społeczności'),
+              value: '${servers.length}',
+              label: copy.text('Servers', 'Serwery'),
             ),
             CreatorStudioStatItem(
               value: _formatMinutes(profile.hostMinutes, copy),
@@ -391,24 +506,24 @@ class _CreatorStudioContent extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: _SectionLabel(copy.text('Your rooms', 'Twoje pokoje')),
+              child: _SectionLabel(copy.text('Your servers', 'Twoje serwery')),
             ),
             Text(
-              _hostedRoomsLabel(rooms.length, copy),
+              _serverCountLabel(servers.length, copy),
               style: const TextStyle(color: _muted, fontSize: 12.5),
             ),
           ],
         ),
         const SizedBox(height: 10),
-        rooms.isEmpty
+        servers.isEmpty
             ? _EmptySection(
-                icon: Icons.meeting_room_outlined,
+                icon: Icons.hub_outlined,
                 message: copy.text(
-                  'Host your first room to start building a stage.',
-                  'Poprowadź pierwszy pokój i zacznij tworzyć własną scenę.',
+                  'Create your first server to bring your people together.',
+                  'Stwórz pierwszy serwer i zbierz swoich ludzi w jednym miejscu.',
                 ),
               )
-            : CreatorStudioRoomsList(rooms: rooms),
+            : _CreatorStudioServersList(servers: servers),
         const SizedBox(height: 26),
 
         Row(
@@ -438,21 +553,14 @@ class _CreatorStudioContent extends StatelessWidget {
 
         _SectionLabel(copy.text('Recent activity', 'Ostatnia aktywność')),
         const SizedBox(height: 10),
-        _RecentActivityCard(rooms: rooms, moments: moments),
+        _RecentActivityCard(rooms: const <VoiceRoom>[], moments: moments),
         const SizedBox(height: 26),
 
         _SectionLabel(copy.text('Creator tools', 'Narzędzia twórcy')),
         const SizedBox(height: 10),
         CreatorStudioToolsRow(
           onAnalytics: () => Navigator.of(context).push<void>(
-            MaterialPageRoute<void>(
-              builder: (_) => CreatorAnalyticsScreen(
-                profile: profile,
-                rooms: rooms,
-                clubs: clubs,
-                moments: moments,
-              ),
-            ),
+            MaterialPageRoute<void>(builder: (_) => const ServersScreen()),
           ),
           onPinnedPosts: () => Navigator.of(context).push<void>(
             MaterialPageRoute<void>(
@@ -478,10 +586,10 @@ class _CreatorStudioContent extends StatelessWidget {
 class _ProfileOverviewCard extends StatelessWidget {
   const _ProfileOverviewCard({
     required this.profile,
-    required this.liveRoomCount,
+    required this.serverCount,
   });
   final UserProfile profile;
-  final int liveRoomCount;
+  final int serverCount;
 
   @override
   Widget build(BuildContext context) {
@@ -583,12 +691,12 @@ class _ProfileOverviewCard extends StatelessWidget {
               ],
             ),
           ),
-          if (liveRoomCount > 0) ...[
+          if (serverCount > 0) ...[
             const SizedBox(width: 10),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: const Color(0xFFFF335C),
+                color: _accent,
                 borderRadius: BorderRadius.circular(99),
               ),
               child: Row(
@@ -605,12 +713,8 @@ class _ProfileOverviewCard extends StatelessWidget {
                   const SizedBox(width: 5),
                   Text(
                     copy.isPolish
-                        ? liveRoomCount > 1
-                              ? '$liveRoomCount NA ŻYWO'
-                              : 'NA ŻYWO'
-                        : liveRoomCount > 1
-                        ? '$liveRoomCount LIVE'
-                        : 'LIVE',
+                        ? '$serverCount ${serverCount == 1 ? 'SERWER' : 'SERWERY'}'
+                        : '$serverCount ${serverCount == 1 ? 'SERVER' : 'SERVERS'}',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 10.5,
@@ -679,29 +783,18 @@ class _PersonalAccountBanner extends StatelessWidget {
 }
 
 class _QuickActionsRow extends StatelessWidget {
+  const _QuickActionsRow();
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final actions = <Widget>[
       _QuickAction(
-        icon: Icons.meeting_room_rounded,
-        label: copy.text('Create Room', 'Utwórz pokój'),
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => const RoomTypeSelectorScreen(),
-          ),
-        ),
-      ),
-      _QuickAction(
         icon: Icons.hub_rounded,
-        label: copy.text('Create Club', 'Utwórz klub'),
-        onTap: () async {
-          if (!await PremiumGates.ensureCanCreateClub(context)) return;
-          if (!context.mounted) return;
-          await Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const CreateClubScreen()),
-          );
-        },
+        label: copy.text('Create Server', 'Stwórz serwer'),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const CreateServerScreen()),
+        ),
       ),
       _QuickAction(
         icon: Icons.mic_rounded,
@@ -718,8 +811,8 @@ class _QuickActionsRow extends StatelessWidget {
         onTap: () => SharePlus.instance.share(
           ShareParams(
             text: copy.text(
-              'Join me on YO Voice — the app for live voice rooms and communities: https://yovoice.app/download',
-              'Dołącz do mnie w YO Voice — aplikacji z pokojami głosowymi na żywo i społecznościami: https://yovoice.app/download',
+              'Join me on YO Voice — one place for voice, Moments and servers: https://yovoice.app/download',
+              'Dołącz do mnie w YO Voice — jednym miejscu na głos, Momenty i serwery: https://yovoice.app/download',
             ),
           ),
         ),
@@ -952,11 +1045,11 @@ class CreatorStudioToolsRow extends StatelessWidget {
     final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
     final tools = [
       _CreatorTool(
-        Icons.bar_chart_rounded,
-        copy.text('Analytics', 'Statystyki'),
+        Icons.hub_rounded,
+        copy.text('Server tools', 'Narzędzia serwera'),
         copy.text(
-          'See honest snapshots from your rooms, clubs and Voice Moments.',
-          'Zobacz rzetelne dane z pokojów, klubów i materiałów Voice Moment.',
+          'Open your servers, channels and member tools.',
+          'Otwórz swoje serwery, kanały i narzędzia dla członków.',
         ),
         onAnalytics,
       ),
@@ -1007,7 +1100,11 @@ class _CreatorToolCard extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     return Semantics(
       button: true,
-      label: copy.text('Open ${tool.title}', 'Otwórz: ${tool.title}'),
+      label: copy.template(
+        'Open {title}',
+        'Otwórz: {title}',
+        values: {'title': tool.title},
+      ),
       child: Material(
         color: _surface,
         shape: RoundedRectangleBorder(
@@ -1072,6 +1169,91 @@ class _CreatorToolCard extends StatelessWidget {
   }
 }
 
+class _CreatorStudioServersList extends StatelessWidget {
+  const _CreatorStudioServersList({required this.servers});
+
+  final List<Server> servers;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final shown = servers.take(5).toList(growable: false);
+    final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+    return SizedBox(
+      height: 96 + ((textScale - 1) * 100),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: shown.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final server = shown[index];
+          return Semantics(
+            button: true,
+            label: copy.template(
+              'Open server {name}',
+              'Otwórz serwer {name}',
+              values: {'name': server.name},
+            ),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(18),
+              onTap: () => Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) => ServerWorkspaceScreen(serverId: server.id),
+                ),
+              ),
+              child: Container(
+                width: 168 + ((textScale - 1) * 72),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF150C1D),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFF382741)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CircleAvatar(
+                      radius: 16,
+                      backgroundColor: const Color(0xFF6D1CAB),
+                      child: Text(
+                        server.initial,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      server.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      server.isHeld
+                          ? copy.text('Preparing', 'W przygotowaniu')
+                          : copy.text('Open channels', 'Otwórz kanały'),
+                      style: const TextStyle(color: _muted, fontSize: 10.5),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Compatibility renderer for legacy server-bound voice documents.
 class CreatorStudioRoomsList extends StatelessWidget {
   const CreatorStudioRoomsList({required this.rooms, super.key});
 
@@ -1095,17 +1277,23 @@ class CreatorStudioRoomsList extends StatelessWidget {
           final hasImage = room.imageUrl?.trim().isNotEmpty == true;
           return Semantics(
             button: true,
-            label: copy.text(
-              'Open room ${room.name}',
-              'Otwórz pokój ${room.name}',
+            label: copy.template(
+              'Open server conversation {name}',
+              'Otwórz rozmowę na serwerze {name}',
+              values: {'name': room.name},
             ),
             child: InkWell(
               borderRadius: BorderRadius.circular(18),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => RoomEntryScreen(room: room),
-                ),
-              ),
+              onTap: () {
+                final serverId = room.clubId?.trim();
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => serverId == null || serverId.isEmpty
+                        ? const ServersScreen()
+                        : ServerWorkspaceScreen(serverId: serverId),
+                  ),
+                );
+              },
               child: Container(
                 width: 168 + ((textScale - 1) * 72),
                 padding: const EdgeInsets.all(12),
@@ -1200,7 +1388,11 @@ class _RecentActivityCard extends StatelessWidget {
         if (room.createdAt != null)
           (
             Icons.meeting_room_rounded,
-            copy.text('Created "${room.name}"', 'Utworzono „${room.name}”'),
+            copy.template(
+              'Started "{name}"',
+              'Rozpoczęto „{name}”',
+              values: {'name': room.name},
+            ),
             _relativeTime(room.createdAt!, copy),
             room.createdAt!,
           ),
@@ -1225,8 +1417,8 @@ class _RecentActivityCard extends StatelessWidget {
         ),
         child: Text(
           copy.text(
-            'Host a room or publish a Voice Moment to see your creator activity here.',
-            'Poprowadź pokój lub opublikuj Voice Moment, aby zobaczyć tutaj swoją aktywność.',
+            'Create a server or publish a Voice Moment to see your creator activity here.',
+            'Stwórz serwer lub opublikuj Voice Moment, aby zobaczyć tutaj swoją aktywność.',
           ),
           style: const TextStyle(color: _muted, fontSize: 12.5, height: 1.4),
         ),
@@ -1397,9 +1589,9 @@ class _CreatorPausedBanner extends StatelessWidget {
   }
 }
 
-String _hostedRoomsLabel(int count, AppLocalizations copy) {
-  if (!copy.isPolish) return '$count hosted';
-  return '$count ${_polishPlural(count, 'prowadzony pokój', 'prowadzone pokoje', 'prowadzonych pokojów')}';
+String _serverCountLabel(int count, AppLocalizations copy) {
+  if (!copy.isPolish) return count == 1 ? '1 server' : '$count servers';
+  return '$count ${_polishPlural(count, 'serwer', 'serwery', 'serwerów')}';
 }
 
 String _momentSummaryLabel(int published, int drafts, AppLocalizations copy) {

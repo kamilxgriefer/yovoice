@@ -1218,8 +1218,8 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
         children: [
           StaffPanelTitle(
             title: copy.text(
-              'Public rooms hosted',
-              'Prowadzone pokoje publiczne',
+              'Voice conversations hosted',
+              'Prowadzone rozmowy głosowe',
             ),
           ),
           if (rooms == null)
@@ -1232,7 +1232,7 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
             )
           else if (rooms.isEmpty)
             Text(
-              copy.text('No public rooms.', 'Brak pokojów publicznych.'),
+              copy.text('No voice conversations.', 'Brak rozmów głosowych.'),
               style: const TextStyle(
                 color: StaffCenterStyle.muted,
                 fontSize: 12,
@@ -1257,7 +1257,7 @@ class _UserDetailDrawerState extends State<UserDetailDrawer> {
                     Expanded(
                       child: Text(
                         room.name.isEmpty
-                            ? copy.text('Room', 'Pokój')
+                            ? copy.text('Voice conversation', 'Rozmowa głosowa')
                             : room.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,

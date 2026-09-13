@@ -320,14 +320,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Adjust cover'), findsOneWidget);
-      expect(find.bySemanticsLabel('Adjust room cover'), findsOneWidget);
+      expect(find.bySemanticsLabel('Adjust server cover'), findsOneWidget);
       expect(find.text('Use cover'), findsOneWidget);
       expect(
         find.textContaining('Keep faces, logos and text inside the center'),
         findsOneWidget,
       );
       expect(find.text('COMPACT SAFE'), findsOneWidget);
-      final preview = find.bySemanticsLabel('Room cover crop preview');
+      final preview = find.bySemanticsLabel('Server cover crop preview');
       expect(preview, findsOneWidget);
       final frame = tester.getRect(find.byType(InteractiveViewer));
       expect(frame.width / frame.height, closeTo(21 / 9, .01));

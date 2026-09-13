@@ -29,7 +29,7 @@ void main() {
     expect(AppLocalizations.supportedLocales, hasLength(43));
     expect(translatedLocaleKeys, hasLength(41));
     expect(momentsOverviewTranslations.keys.toSet(), translatedLocaleKeys);
-    expect(momentsOverviewTranslationKeys.toSet(), hasLength(16));
+    expect(momentsOverviewTranslationKeys.toSet(), hasLength(17));
     expect(appTranslationKeys, containsAll(momentsOverviewTranslationKeys));
     for (final localeKey in translatedLocaleKeys) {
       final entries = momentsOverviewTranslations[localeKey]!;
@@ -41,8 +41,16 @@ void main() {
       for (final key in momentsOverviewTranslationKeys) {
         final value = entries[key]!;
         expect(value.trim(), isNotEmpty, reason: '$localeKey: $key');
-        expect(_placeholders(value), _placeholders(key), reason: '$localeKey: $key');
-        expect(translatedPhrase(localeKey, key), value, reason: '$localeKey: $key');
+        expect(
+          _placeholders(value),
+          _placeholders(key),
+          reason: '$localeKey: $key',
+        );
+        expect(
+          translatedPhrase(localeKey, key),
+          value,
+          reason: '$localeKey: $key',
+        );
         if (!key.startsWith('yoMoments.') && key.length > 10) {
           expect(value, isNot(key), reason: '$localeKey: no English fallback');
         }
@@ -54,19 +62,36 @@ void main() {
       'unrelated meaning of the same English word', () {
     const english = AppLocalizations(Locale('en'));
     const polish = AppLocalizations(Locale('pl'));
-    expect(english.contextualText('yoMoments.create', 'Create', 'Utwórz'), 'Create');
-    expect(polish.contextualText('yoMoments.create', 'Create', 'Utwórz'), 'Utwórz');
     expect(
-      polish.contextualText('yoMoments.followingState', 'Following', 'Obserwujesz'),
+      english.contextualText('yoMoments.create', 'Create', 'Utwórz'),
+      'Create',
+    );
+    expect(
+      polish.contextualText('yoMoments.create', 'Create', 'Utwórz'),
+      'Utwórz',
+    );
+    expect(
+      polish.contextualText(
+        'yoMoments.followingState',
+        'Following',
+        'Obserwujesz',
+      ),
       'Obserwujesz',
     );
     expect(polish.text('Following', 'Obserwowani'), 'Obserwowani');
     const german = AppLocalizations(Locale('de'));
     expect(
-      german.contextualText('yoMoments.followingState', 'Following', 'Obserwujesz'),
+      german.contextualText(
+        'yoMoments.followingState',
+        'Following',
+        'Obserwujesz',
+      ),
       'Du folgst',
     );
-    expect(german.text('Reply with voice', 'Odpowiedz głosem'), 'Mit Stimme antworten');
+    expect(
+      german.text('Reply with voice', 'Odpowiedz głosem'),
+      'Mit Stimme antworten',
+    );
     expect(
       german.template(
         'Follow {name}',

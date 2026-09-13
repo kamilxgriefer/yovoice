@@ -4,6 +4,8 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 
@@ -14,7 +16,11 @@ import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 /// [panel] sits on an ordinary app surface in the wide layout and uses
 /// semantic palette roles plus written labels, because a pointer-first screen
 /// has room to say the words.
-enum ReelEngagementBarVariant { rail, panel }
+///
+/// [footer] is the horizontal bar of board 08's card footer: the same actions
+/// on the card's own surface, under the media rather than over it — icon,
+/// count, and nothing else, so ♡ 💬 ↗ ⋯ read as one row of four.
+enum ReelEngagementBarVariant { rail, panel, footer }
 
 /// These atoms moved to `shared/widgets/overlays/immersive_overlay_atoms.dart`
 /// because the immersive Voice/Reels chrome paints the same plates. The names
@@ -49,6 +55,7 @@ class ReelEngagementBar extends StatelessWidget {
     this.commentsOpen = false,
     this.variant = ReelEngagementBarVariant.rail,
     this.railAxis = Axis.vertical,
+    this.railAlignment = WrapAlignment.end,
     this.railTrailing,
     this.railAdditional = const [],
     super.key,
@@ -73,6 +80,10 @@ class ReelEngagementBar extends StatelessWidget {
   /// screen) has no room for a column, so the same plates line up in a row
   /// with their counts beside them.
   final Axis railAxis;
+
+  /// Horizontal rail only. A bar that IS its own plate spreads its targets
+  /// across it; a rail laid straight on the media hugs the trailing edge.
+  final WrapAlignment railAlignment;
 
   /// Rail only. The moderation control for this Reel — report, or delete on
   /// your own — laid out by the rail itself so the three plates share one
@@ -136,6 +147,55 @@ class ReelEngagementBar extends StatelessWidget {
       );
     }
 
+    if (variant == ReelEngagementBarVariant.footer) {
+      // The card footer sits on `surface`, so the plate disappears and the
+      // glyph takes the readable foreground. Everything else — the keys, the
+      // spoken labels, the 48 px targets, the nullable onLike contract — is
+      // the rail's, unchanged.
+      //
+      // The four totals STAY here at every size the card is drawn at. The
+      // footer's height is budgeted as one control row
+      // (`ReelStageFooterBar.heightFor`) and the frame above it is sized from
+      // what that budget leaves, so a second run would be height the media
+      // loses — but in the face the app ships the labelled row fits every
+      // width and text size these boards use, and the card that cannot hold
+      // it has already given way to the overlay composition
+      // (`_minimumStackedFrameWidth`). The residual case — a reader-expanded
+      // caption — is absorbed by the media band giving up WIDTH rather than
+      // letterboxing against `surfaceSunken`.
+      return Wrap(
+        alignment: WrapAlignment.end,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: AppRhythm.tight,
+        runSpacing: AppRhythm.hairline,
+        children: <Widget>[
+          ReelFooterAction(
+            actionKey: const ValueKey<String>('reel-like-action'),
+            icon: liked
+                ? Icons.favorite_rounded
+                : Icons.favorite_border_rounded,
+            iconColor: liked ? AppColors.secondary : null,
+            value: reelCompactCount(likeCount),
+            semanticLabel: likeLabel,
+            selected: liked,
+            onTap: likePending ? null : onLike,
+          ),
+          ReelFooterAction(
+            actionKey: const ValueKey<String>('reel-comments-action'),
+            icon: commentsOpen
+                ? Icons.mode_comment_rounded
+                : Icons.mode_comment_outlined,
+            value: reelCompactCount(commentCount),
+            semanticLabel: commentLabel,
+            selected: commentsOpen,
+            onTap: onComments,
+          ),
+          ...railAdditional,
+          ?railTrailing,
+        ],
+      );
+    }
+
     final horizontal = railAxis == Axis.horizontal;
     final trailing = railTrailing;
     List<Widget> actionsFor({required bool showCounts}) => <Widget>[
@@ -194,13 +254,29 @@ class ReelEngagementBar extends StatelessWidget {
     // totals stay in every control's spoken label either way.
     return LayoutBuilder(
       builder: (context, constraints) {
-        final count = 2 + railAdditional.length + (trailing == null ? 0 : 1);
+        final plates = railAdditional.length + (trailing == null ? 0 : 1);
+        // The two counted actions cost a plate plus their own digits; share
+        // and the overflow are plates and cost nothing more. Budgeting every
+        // item at the widest possible total is what made the counts
+        // impossible on a phone: four worst-case items needed 406 px and a
+        // 390 phone offers 358 inside its inset.
+        //
+        // The digits are MEASURED, not costed at a per-character constant:
+        // that constant is wrong in every typeface but the one it was taken
+        // from, and wrong by half at 200 % text. An underestimate here keeps
+        // labels on a rail that cannot hold them, the rail wraps to a second
+        // 48-px run, and on the stacked card the frame above it loses that
+        // height — which is the ledge board 08's S13 named, arrived at from
+        // the rail instead of from the budget.
+        final needed =
+            _labelledRailItemWidth(context, reelCompactCount(likeCount)) +
+            _labelledRailItemWidth(context, reelCompactCount(commentCount)) +
+            plates * 48 +
+            10 * (1 + plates);
         final labelled =
-            constraints.hasBoundedWidth &&
-            constraints.maxWidth >=
-                count * _labelledRailItemWidth + 10 * (count - 1);
+            constraints.hasBoundedWidth && constraints.maxWidth >= needed;
         return Wrap(
-          alignment: WrapAlignment.end,
+          alignment: railAlignment,
           crossAxisAlignment: WrapCrossAlignment.center,
           spacing: 10,
           runSpacing: 8,
@@ -212,9 +288,120 @@ class ReelEngagementBar extends StatelessWidget {
 }
 
 /// A horizontal rail item that still shows its count: the 48 px plate, the
-/// gap, room for a four-character total such as "1.2K", and the trailing gap
-/// that keeps two of them apart.
-const double _labelledRailItemWidth = 48 + 6 + 32 + 8;
+/// 6 px gap, the digits that will actually be painted, and the trailing gap
+/// that keeps two of them apart. Measured from the real total rather than
+/// from "1.2K", because a worst case nobody is showing is still paid for by
+/// everybody.
+double _labelledRailItemWidth(BuildContext context, String value) =>
+    48 + 6 + _countWidth(context, value, _railCountStyle) + 8;
+
+/// The rail count's style, shared with the control that paints it so the
+/// measurement and the painting cannot drift apart, and the footer count's
+/// style beside it for the same reason.
+const TextStyle _railCountStyle = TextStyle(
+  fontSize: 13,
+  fontWeight: FontWeight.w700,
+  height: 1.2,
+);
+final TextStyle _footerCountStyle = AppTypography.labelLarge.copyWith(
+  fontWeight: FontWeight.w700,
+);
+
+/// What [value] will really be wide in [style], at this reader's text size
+/// and in the typeface the app actually loaded.
+double _countWidth(BuildContext context, String value, TextStyle style) {
+  final painter = TextPainter(
+    text: TextSpan(text: value, style: style),
+    textDirection: Directionality.of(context),
+    textScaler: MediaQuery.textScalerOf(context),
+    maxLines: 1,
+  )..layout();
+  return painter.width;
+}
+
+/// One action of the card footer: a 24 px glyph, its total beside it when it
+/// has one, inside a 48 px target on the card's own surface.
+///
+/// Public so the card can build share and ⋯ with exactly this geometry — a
+/// footer where two of the four controls were overlay plates would be four
+/// controls in two vocabularies.
+class ReelFooterAction extends StatelessWidget {
+  const ReelFooterAction({
+    required this.actionKey,
+    required this.icon,
+    required this.semanticLabel,
+    required this.onTap,
+    this.value,
+    this.iconColor,
+    this.selected,
+    super.key,
+  });
+
+  final Key actionKey;
+  final IconData icon;
+
+  /// Null for an action that counts nothing (share, ⋯).
+  final String? value;
+  final String semanticLabel;
+  final Color? iconColor;
+  final bool? selected;
+
+  /// Null only when there is no viewer to act as. An unverified account keeps
+  /// a live control that explains the gate — a dead button teaches nothing.
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final enabled = onTap != null;
+    final foreground = iconColor ?? palette.textPrimary;
+    final total = value;
+    return AccessibleTapRegion(
+      key: actionKey,
+      onTap: onTap,
+      semanticLabel: semanticLabel,
+      tooltip: semanticLabel,
+      selected: selected,
+      // The glyph already carries the state; a ring on top of it would be the
+      // one asymmetric control in the row.
+      selectedBorderColor: Colors.transparent,
+      borderRadius: 24,
+      minimumSize: const Size(48, 48),
+      child: Padding(
+        padding: EdgeInsetsDirectional.only(end: total == null ? 0 : 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              icon,
+              size: 24,
+              color: enabled ? foreground : foreground.withValues(alpha: .55),
+            ),
+            if (total != null) ...<Widget>[
+              const SizedBox(width: 6),
+              // The exact number is always in the spoken label, so the
+              // visible total is the part that may be trimmed rather than
+              // the 48 px target beside it.
+              Flexible(
+                child: Text(
+                  total,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  // As on the rail: the measured style and the painted one
+                  // are the same object.
+                  style: _footerCountStyle.copyWith(
+                    color: palette.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _RailAction extends StatefulWidget {
   const _RailAction({
@@ -315,11 +502,10 @@ class _RailActionState extends State<_RailAction>
       widget.value,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: const TextStyle(
+      // The same style the rail's own width measurement lays out, so what
+      // decides whether the counts fit is what gets painted.
+      style: _railCountStyle.copyWith(
         color: Colors.white,
-        fontSize: 13,
-        fontWeight: FontWeight.w700,
-        height: 1.2,
         shadows: reelOverlayTextShadows,
       ),
     );

@@ -58,7 +58,7 @@ class ExpandedMiniChat extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           YoModalSheetChrome(
-            sheetLabel: copy.text('room chat', 'czat pokoju'),
+            sheetLabel: copy.text('channel chat', 'czat kanału'),
             surfaceColor: const Color(0xFF110B19),
             onClose: onCollapse,
           ),

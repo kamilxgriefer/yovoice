@@ -13,9 +13,6 @@ import 'package:yovoice/features/achievements/data/services/achievement_service.
 import 'package:yovoice/features/achievements/presentation/screens/achievements_screen.dart';
 import 'package:yovoice/features/achievements/presentation/widgets/title_badge.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
-import 'package:yovoice/features/rooms/data/models/voice_room.dart';
-import 'package:yovoice/features/rooms/data/services/room_service.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
@@ -23,9 +20,9 @@ import 'package:yovoice/features/profile/presentation/screens/follow_list_screen
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_journey_card.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
-import 'package:yovoice/features/clubs/data/models/club.dart';
-import 'package:yovoice/features/clubs/data/services/club_service.dart';
-import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/services/server_service.dart';
+import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
 import 'package:yovoice/features/creator/presentation/widgets/creator_pinned_moment_card.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_pinned_moment_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -41,8 +38,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _profileService = ProfileService();
   final _achievementService = AchievementService();
   final _authService = AuthService();
-  final _roomService = RoomService();
-  final _clubService = ClubService();
+  final ServerRepository _serverRepository = ServerService();
+  late final Stream<List<Server>> _servers = _serverRepository.watchMyServers();
   final _firebaseAuth = FirebaseAuth.instance;
   final _firebaseFunctions = FirebaseFunctions.instanceFor(
     region: 'europe-west1',
@@ -209,69 +206,59 @@ class _ProfileScreenState extends State<ProfileScreen> {
           );
         }
 
-        return StreamBuilder<List<VoiceRoom>>(
-          stream: _roomService.watchMyCommunities(),
-          builder: (context, communitiesSnapshot) {
-            final communities = communitiesSnapshot.data ?? const <VoiceRoom>[];
-            return StreamBuilder<List<Club>>(
-              stream: _clubService.watchMyClubs(),
-              builder: (context, clubsSnapshot) {
-                final clubs = clubsSnapshot.data ?? const <Club>[];
-                return Scaffold(
-                  backgroundColor: context.appPalette.background,
-                  body: YoPageBackground(
-                    child: ResponsiveContentFrame(
-                      width: ResponsiveContentWidth.feed,
-                      child: _ProfileContent(
-                        profile: profile,
-                        communities: communities,
-                        clubs: clubs,
-                        communitiesLoading:
-                            communitiesSnapshot.connectionState ==
-                                ConnectionState.waiting ||
-                            clubsSnapshot.connectionState ==
-                                ConnectionState.waiting,
-                        onEdit: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) =>
-                                  EditProfileScreen(profile: profile),
-                            ),
-                          );
-                        },
-                        onAchievements: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) =>
-                                  AchievementsScreen(profile: profile),
-                            ),
-                          );
-                        },
-                        onOpenCommunity: (room) {
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => RoomEntryScreen(room: room),
-                            ),
-                          );
-                        },
-                        onOpenClub: (club) {
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) =>
-                                  ClubOverviewScreen(clubId: club.id),
-                            ),
-                          );
-                        },
-                        showSuperAdminActivation: _isOwnerAccount,
-                        isActivatingSuperAdmin: _isActivatingSuperAdmin,
-                        currentRole: _currentRole,
-                        onActivateSuperAdmin: _activateSuperAdmin,
-                        onLogout: _authService.signOut,
-                      ),
-                    ),
+        return StreamBuilder<List<Server>>(
+          stream: _servers,
+          builder: (context, serversSnapshot) {
+            if (serversSnapshot.hasError) {
+              return _ErrorView(
+                message: copy.text(
+                  'Your servers could not be loaded.',
+                  'Nie udało się wczytać Twoich serwerów.',
+                ),
+              );
+            }
+            final servers = serversSnapshot.data ?? const <Server>[];
+            return Scaffold(
+              backgroundColor: context.appPalette.background,
+              body: YoPageBackground(
+                child: ResponsiveContentFrame(
+                  width: ResponsiveContentWidth.feed,
+                  child: _ProfileContent(
+                    profile: profile,
+                    servers: servers,
+                    serversLoading:
+                        serversSnapshot.connectionState ==
+                        ConnectionState.waiting,
+                    onEdit: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => EditProfileScreen(profile: profile),
+                        ),
+                      );
+                    },
+                    onAchievements: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => AchievementsScreen(profile: profile),
+                        ),
+                      );
+                    },
+                    onOpenServer: (server) {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) =>
+                              ServerWorkspaceScreen(serverId: server.id),
+                        ),
+                      );
+                    },
+                    showSuperAdminActivation: _isOwnerAccount,
+                    isActivatingSuperAdmin: _isActivatingSuperAdmin,
+                    currentRole: _currentRole,
+                    onActivateSuperAdmin: _activateSuperAdmin,
+                    onLogout: _authService.signOut,
                   ),
-                );
-              },
+                ),
+              ),
             );
           },
         );
@@ -283,13 +270,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
 class _ProfileContent extends StatelessWidget {
   const _ProfileContent({
     required this.profile,
-    required this.communities,
-    required this.clubs,
-    required this.communitiesLoading,
+    required this.servers,
+    required this.serversLoading,
     required this.onEdit,
     required this.onAchievements,
-    required this.onOpenCommunity,
-    required this.onOpenClub,
+    required this.onOpenServer,
     required this.showSuperAdminActivation,
     required this.isActivatingSuperAdmin,
     required this.currentRole,
@@ -298,13 +283,11 @@ class _ProfileContent extends StatelessWidget {
   });
 
   final UserProfile profile;
-  final List<VoiceRoom> communities;
-  final List<Club> clubs;
-  final bool communitiesLoading;
+  final List<Server> servers;
+  final bool serversLoading;
   final VoidCallback onEdit;
   final VoidCallback onAchievements;
-  final ValueChanged<VoiceRoom> onOpenCommunity;
-  final ValueChanged<Club> onOpenClub;
+  final ValueChanged<Server> onOpenServer;
   final bool showSuperAdminActivation;
   final bool isActivatingSuperAdmin;
   final String currentRole;
@@ -332,6 +315,7 @@ class _ProfileContent extends StatelessWidget {
             children: [
               _SocialStats(
                 profile: profile,
+                showCreatorAudience: profile.canExposeCreatorAudience,
                 onFollowers: () => Navigator.of(context).push<void>(
                   MaterialPageRoute<void>(
                     builder: (_) => FollowListScreen(
@@ -363,19 +347,19 @@ class _ProfileContent extends StatelessWidget {
                 ),
               const SizedBox(height: 14),
               ProfileJourneyCard(
-                communitiesCount: communities.length + clubs.length,
+                communitiesCount: servers.length,
                 messageCount: profile.messageCount,
                 voiceMinutes: profile.voiceMinutes,
-                roomCount: profile.roomCount,
+                roomCount: servers
+                    .where((server) => server.ownerId == profile.uid)
+                    .length,
               ),
               const SizedBox(height: 14),
-              _CommunitiesCard(
-                communities: communities,
-                clubs: clubs,
+              _ServersCard(
+                servers: servers,
                 currentUid: profile.uid,
-                isLoading: communitiesLoading,
-                onOpen: onOpenCommunity,
-                onOpenClub: onOpenClub,
+                isLoading: serversLoading,
+                onOpen: onOpenServer,
               ),
               const SizedBox(height: 14),
               _AchievementsCard(
@@ -403,11 +387,13 @@ class _ProfileContent extends StatelessWidget {
 class _SocialStats extends StatelessWidget {
   const _SocialStats({
     required this.profile,
+    required this.showCreatorAudience,
     required this.onFollowers,
     required this.onFollowing,
   });
 
   final UserProfile profile;
+  final bool showCreatorAudience;
   final VoidCallback onFollowers;
   final VoidCallback onFollowing;
 
@@ -419,18 +405,20 @@ class _SocialStats extends StatelessWidget {
       child: Row(
         children: [
           _Stat(value: profile.friendCount, label: copy.friends),
-          const _Divider(),
-          _Stat(
-            value: profile.followerCount,
-            label: copy.text('Followers', 'Obserwujący'),
-            onTap: onFollowers,
-          ),
-          const _Divider(),
-          _Stat(
-            value: profile.followingCount,
-            label: copy.text('Following', 'Obserwowani'),
-            onTap: onFollowing,
-          ),
+          if (showCreatorAudience) ...[
+            const _Divider(),
+            _Stat(
+              value: profile.followerCount,
+              label: copy.text('Followers', 'Obserwujący'),
+              onTap: onFollowers,
+            ),
+            const _Divider(),
+            _Stat(
+              value: profile.followingCount,
+              label: copy.text('Following', 'Obserwowani'),
+              onTap: onFollowing,
+            ),
+          ],
         ],
       ),
     );
@@ -601,35 +589,31 @@ class ProfileVoiceIdentityCard extends StatelessWidget {
   }
 }
 
-class _CommunitiesCard extends StatelessWidget {
-  const _CommunitiesCard({
-    required this.communities,
-    required this.clubs,
+class _ServersCard extends StatelessWidget {
+  const _ServersCard({
+    required this.servers,
     required this.currentUid,
     required this.isLoading,
     required this.onOpen,
-    required this.onOpenClub,
   });
 
-  final List<VoiceRoom> communities;
-  final List<Club> clubs;
+  final List<Server> servers;
   final String currentUid;
   final bool isLoading;
-  final ValueChanged<VoiceRoom> onOpen;
-  final ValueChanged<Club> onOpenClub;
+  final ValueChanged<Server> onOpen;
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final total = communities.length + clubs.length;
+    final total = servers.length;
     return _Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _Header(
             icon: Icons.hub_rounded,
-            title: copy.text('My communities', 'Moje społeczności'),
+            title: copy.text('My servers', 'Moje serwery'),
             action: total == 0 ? null : '$total',
           ),
           const SizedBox(height: 14),
@@ -643,8 +627,8 @@ class _CommunitiesCard extends StatelessWidget {
           else if (total == 0)
             Text(
               copy.text(
-                'Your communities and clubs will appear here after you join or create one.',
-                'Społeczności i kluby pojawią się tutaj, gdy do nich dołączysz lub je utworzysz.',
+                'Your servers will appear here after you join or create one.',
+                'Serwery pojawią się tutaj, gdy do nich dołączysz lub je utworzysz.',
               ),
               style: TextStyle(color: palette.textSecondary, height: 1.4),
             )
@@ -654,34 +638,18 @@ class _CommunitiesCard extends StatelessWidget {
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 children: [
-                  ...clubs.map(
-                    (club) => Padding(
+                  ...servers.map(
+                    (server) => Padding(
                       padding: const EdgeInsets.only(right: 10),
                       child: _CommunityTile(
-                        name: club.name,
-                        imageUrl: club.avatarUrl,
+                        name: server.name,
+                        imageUrl: null,
                         subtitle:
-                            '${_memberCount(copy, club.memberCount)}'
-                            '${club.ownerId == currentUid ? copy.text(' · Owner', ' · Właściciel') : ''}',
-                        badge: copy.text('CLUB', 'KLUB'),
-                        isOwner: club.ownerId == currentUid,
-                        onTap: () => onOpenClub(club),
-                      ),
-                    ),
-                  ),
-                  ...communities.map(
-                    (room) => Padding(
-                      padding: const EdgeInsets.only(right: 10),
-                      child: _CommunityTile(
-                        name: room.name,
-                        imageUrl: room.imageUrl,
-                        subtitle: room.isLive
-                            ? _liveCount(copy, room.participantCount)
-                            : _memberCount(copy, room.memberCount),
-                        badge: room.isLive
-                            ? copy.text('LIVE', 'NA ŻYWO')
-                            : copy.text('ROOM', 'POKÓJ'),
-                        onTap: () => onOpen(room),
+                            '${_memberCount(copy, server.memberCount)}'
+                            '${server.ownerId == currentUid ? copy.text(' · Owner', ' · Właściciel') : ''}',
+                        badge: copy.text('SERVER', 'SERWER'),
+                        isOwner: server.ownerId == currentUid,
+                        onTap: () => onOpen(server),
                       ),
                     ),
                   ),
@@ -695,17 +663,6 @@ class _CommunitiesCard extends StatelessWidget {
 
   String _memberCount(AppLocalizations copy, int count) =>
       copy.text('$count members', count == 1 ? '1 członek' : '$count członków');
-
-  String _liveCount(AppLocalizations copy, int count) {
-    final polish = count == 1
-        ? '1 osoba na żywo'
-        : (count % 10 >= 2 &&
-              count % 10 <= 4 &&
-              (count % 100 < 12 || count % 100 > 14))
-        ? '$count osoby na żywo'
-        : '$count osób na żywo';
-    return copy.text('$count live now', polish);
-  }
 }
 
 class _CommunityTile extends StatelessWidget {

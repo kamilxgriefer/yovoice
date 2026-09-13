@@ -63,22 +63,22 @@ class _PremiumUpsellSheet extends StatelessWidget {
         ),
       ),
       PremiumUpsellContext.clubs => (
-        Icons.groups_2_rounded,
+        Icons.hub_rounded,
         copy.text(
-          'Clubs are included with YO Voice Premium',
-          'Kluby są dostępne w YO Voice Premium',
+          'Your spaces are now in Servers',
+          'Twoje przestrzenie są teraz w Serwerach',
         ),
         copy.text(
-          'Activate your Premium identity to open the Clubs hub and build your own communities.',
-          'Aktywuj tożsamość Premium, aby otworzyć centrum klubów i budować własne społeczności.',
+          'Open Servers to manage channels, members and conversations.',
+          'Otwórz Serwery, aby zarządzać kanałami, członkami i rozmowami.',
         ),
       ),
       PremiumUpsellContext.clubCreation => (
         Icons.workspace_premium_rounded,
         copy.text('Create your own space', 'Stwórz własną przestrzeń'),
         copy.text(
-          'Club creation is included with YO Voice Premium. Joining and participating in Clubs stays free for everyone.',
-          'Tworzenie klubów jest dostępne w YO Voice Premium. Dołączanie do klubów i udział w nich pozostają bezpłatne dla wszystkich.',
+          'Create and manage your space from the Servers tab.',
+          'Twórz swoją przestrzeń i zarządzaj nią w karcie Serwery.',
         ),
       ),
     };

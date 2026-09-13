@@ -52,8 +52,8 @@ void main() {
         await tester.pump(const Duration(milliseconds: 80));
 
         expect(find.byKey(const ValueKey('room-chat-surface')), findsOneWidget);
-        expect(find.text('Room chat'), findsOneWidget);
-        final titleContext = tester.element(find.text('Room chat'));
+        expect(find.text('Live conversation'), findsOneWidget);
+        final titleContext = tester.element(find.text('Live conversation'));
         expect(MediaQuery.textScalerOf(titleContext).scale(17), 34);
         expect(find.text('Write…'), findsOneWidget);
         expect(

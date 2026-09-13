@@ -14,12 +14,14 @@ import '../../data/models/server_member_role.dart';
 import '../../data/services/server_media_connector.dart';
 import '../../data/services/server_screen_share_capability.dart';
 import '../../data/services/server_session_controller.dart';
+import '../../data/services/server_whiteboard_repository.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
 import 'server_channel_scene.dart';
 import 'server_local_tabs.dart';
 import 'server_module_card.dart';
 import 'server_panel.dart';
+import 'server_whiteboard_board.dart';
 
 /// Which view of the meeting is on screen. The conversation is a view like
 /// the other two, so switching to it is a tab change and nothing else — it
@@ -42,13 +44,12 @@ enum ServerMeetingTab { presentation, whiteboard, chat }
 ///   is answered by [ServerScreenShareCapability] (contract decision D): the
 ///   browser can, a phone cannot yet, and the control says which — it is
 ///   never hidden and never drawn as something that fails.
-/// * **Publishing your own camera has no lifecycle on this side yet**
-///   (contract §3: permission, requested vs. actual, cleanup per source), so
-///   no surface offers to turn it on and the scene says so.
-/// * **The whiteboard has no backend at all** (contract G9) — no document, no
-///   callable, no rule. Its tab is an honest `Wkrótce` state that states
-///   plainly that nothing drawn would be kept, and offers the server's real
-///   `Tablica` channel as the destination.
+/// * **Publishing your own camera is explicit**: the provider asks for
+///   permission only after the camera control is pressed, the tile follows
+///   the actual track, and leaving releases capture before the room.
+/// * **The whiteboard is durable**: a completed line is persisted in the
+///   server's own `whiteboard` channel, member undo removes only that person's
+///   line, and a manager can clear the shared canvas for everyone.
 ///
 /// Switching tabs is pure presentation: the session lives in the shell, so a
 /// meeting survives every tab change, and only `Opuść` ends it.
@@ -59,6 +60,7 @@ class ServerCompanyMeeting extends StatelessWidget {
     required this.session,
     required this.tab,
     required this.onTabSelected,
+    this.whiteboardRepository,
     this.role,
     this.channels = const [],
     this.onOpenChannel,
@@ -72,6 +74,7 @@ class ServerCompanyMeeting extends StatelessWidget {
   final ServerChannel channel;
   final ServerSessionController session;
   final ServerMemberRole? role;
+  final ServerWhiteboardRepository? whiteboardRepository;
 
   /// The view on screen, owned by the shell so the dock's `Tablica` can
   /// change it without reaching into this widget's state.
@@ -164,7 +167,7 @@ class ServerCompanyMeeting extends StatelessWidget {
               palette,
               colors,
             ),
-            ServerMeetingTab.whiteboard => _whiteboard(copy, colors),
+            ServerMeetingTab.whiteboard => _whiteboard(context),
             ServerMeetingTab.chat => chat ?? const SizedBox.shrink(),
           },
         ),
@@ -280,12 +283,28 @@ class ServerCompanyMeeting extends StatelessWidget {
     );
   }
 
-  Widget _whiteboard(AppLocalizations copy, ServerIdentityVisuals colors) =>
-      SingleChildScrollView(
-        key: const ValueKey('server-channel-content-scroll'),
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: _board(copy, colors),
+  Widget _whiteboard(BuildContext context) {
+    final boardChannel = _boardChannel;
+    final repository = whiteboardRepository;
+    if (boardChannel == null || repository == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Text(
+            AppLocalizations.of(context).serverActionUnavailable,
+            textAlign: TextAlign.center,
+          ),
+        ),
       );
+    }
+    return ServerWhiteboardBoard(
+      server: server,
+      channel: boardChannel,
+      repository: repository,
+      role: role,
+      compact: compact,
+    );
+  }
 
   Widget _board(AppLocalizations copy, ServerIdentityVisuals colors) =>
       ServerModuleCard(
@@ -296,6 +315,7 @@ class ServerCompanyMeeting extends StatelessWidget {
         colors: colors,
         channel: _boardChannel,
         onOpenChannel: onOpenChannel,
+        available: true,
       );
 
   List<_MeetingTab> _tabs(AppLocalizations copy) => [
@@ -367,9 +387,7 @@ class _Screen extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     return Align(
-      alignment: compact
-          ? Alignment.center
-          : AlignmentDirectional.centerStart,
+      alignment: compact ? Alignment.center : AlignmentDirectional.centerStart,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: maxHeight * 16 / 9),
         child: AspectRatio(
@@ -531,10 +549,9 @@ class _PresenterRow extends StatelessWidget {
   }
 }
 
-/// The two facts a person in a company meeting has to be told before they
-/// look for a control that is not there: this device cannot start a share
-/// (contract decision D), and turning your own camera on is not built yet
-/// (contract §3). Both are stated, never implied by a greyed button alone.
+/// Explains the one meeting capability that still depends on the current
+/// platform or role: starting a screen share. Camera capture is available
+/// from the dock and needs no placeholder note.
 class _MediaNotes extends StatelessWidget {
   const _MediaNotes({required this.session, required this.compact});
   final ServerSessionController session;
@@ -556,20 +573,14 @@ class _MediaNotes extends StatelessWidget {
               !(session.connection?.canPublishScreenShare ?? false)
         ? copy.serverShareScreenHostOnly
         : null;
+    if (shareNote == null) return const SizedBox.shrink();
     return Column(
       key: const ValueKey('server-meeting-notes'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (shareNote != null)
-          _Note(
-            icon: Icons.screen_share_outlined,
-            text: shareNote,
-            color: palette.textSecondary,
-          ),
-        if (shareNote != null) SizedBox(height: compact ? 6 : 8),
         _Note(
-          icon: Icons.videocam_off_outlined,
-          text: copy.serverCameraUnavailable,
+          icon: Icons.screen_share_outlined,
+          text: shareNote,
           color: palette.textSecondary,
         ),
       ],

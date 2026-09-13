@@ -60,17 +60,34 @@ class _ServerScrollingDetailsState extends State<ServerScrollingDetails> {
         ),
       ),
     );
-    if (!_more) return scroller;
+    // Keep the scroller at one stable element location. Moving it in and out
+    // of a conditional ShaderMask remounts every child when overflow first
+    // becomes known; that also tries to subscribe a second time to any
+    // single-subscription stream already owned by a child module.
     return ShaderMask(
-      key: widget.fadeKey,
       blendMode: BlendMode.dstIn,
-      shaderCallback: (bounds) => const LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Colors.white, Colors.white, Colors.transparent],
-        stops: [0, .86, 1],
-      ).createShader(bounds),
-      child: scroller,
+      shaderCallback: (bounds) =>
+          (_more
+                  ? const LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.white, Colors.white, Colors.transparent],
+                      stops: [0, .86, 1],
+                    )
+                  : const LinearGradient(colors: [Colors.white, Colors.white]))
+              .createShader(bounds),
+      child: Stack(
+        // Pass through the exact constraints so the scroller preserves both
+        // its old natural size and its old Expanded/Flexible behaviour.
+        fit: StackFit.passthrough,
+        children: [
+          scroller,
+          if (_more)
+            Positioned.fill(
+              child: IgnorePointer(child: SizedBox.expand(key: widget.fadeKey)),
+            ),
+        ],
+      ),
     );
   }
 }

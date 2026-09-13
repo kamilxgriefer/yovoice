@@ -88,6 +88,187 @@ extension ServerLocalizedCopy on AppLocalizations {
   String get serverChannels => text('Channels', 'Kanały');
   String get serverInvite => text('Invite', 'Zaproś');
   String get serverComingSoon => text('Coming soon', 'Wkrótce');
+  String get serverAvailableAfterJoining =>
+      text('Available after joining', 'Dostępne po dołączeniu');
+  String get serverManage => text('Manage server', 'Zarządzaj serwerem');
+  String get serverSettings => text('Server settings', 'Ustawienia serwera');
+  String get serverOverview => text('Overview', 'Serwer');
+  String get serverMembersTitle => text('Members', 'Członkowie');
+  String get serverSaveChanges => text('Save changes', 'Zapisz zmiany');
+  String get serverNameLabel => text('Server name', 'Nazwa serwera');
+  String get serverDescriptionLabel => text('Description', 'Opis');
+  String get serverPrivacyLabel => text('Privacy', 'Prywatność');
+  String get serverSaved => text('Changes saved.', 'Zmiany zostały zapisane.');
+  String get serverRenameChannel =>
+      text('Rename channel', 'Zmień nazwę kanału');
+  String get serverChannelAccess => text('Channel access', 'Dostęp do kanału');
+  String get serverEveryoneInServer =>
+      text('Everyone in the server', 'Wszyscy na serwerze');
+  String get serverRestrictedChannel =>
+      text('Restricted — owner access', 'Ograniczony — dostęp właściciela');
+  String get serverMoveUp => text('Move up', 'Przenieś wyżej');
+  String get serverMoveDown => text('Move down', 'Przenieś niżej');
+  String get serverArchiveChannel =>
+      text('Archive channel', 'Archiwizuj kanał');
+  String get serverDeleteChannel => text('Delete channel', 'Usuń kanał');
+  String get serverArchiveChannelQuestion => text(
+    'Archive this channel? An active conversation will end.',
+    'Zarchiwizować ten kanał? Aktywna rozmowa zostanie zakończona.',
+  );
+  String get serverDeleteChannelQuestion => text(
+    'Delete this channel and its content?',
+    'Usunąć ten kanał wraz z jego zawartością?',
+  );
+  String get serverChangeRole => text('Change role', 'Zmień rolę');
+  String get serverTransferOwnership =>
+      text('Transfer ownership', 'Przekaż własność');
+  String get serverRemoveMember => text('Remove member', 'Usuń członka');
+  String get serverBanMember => text('Ban member', 'Zablokuj członka');
+  String get serverUnbanMember => text('Lift ban', 'Zdejmij blokadę');
+  String get serverBanReason => text('Reason for the ban', 'Powód blokady');
+  String get serverLeave => text('Leave server', 'Opuść serwer');
+  String get serverDelete => text('Delete server', 'Usuń serwer');
+  String get serverLeaveQuestion => text(
+    'Leave this server? You will lose access to its channels.',
+    'Opuścić ten serwer? Stracisz dostęp do jego kanałów.',
+  );
+  String get serverDeleteQuestion => text(
+    'Delete this server permanently? This cannot be undone.',
+    'Usunąć ten serwer na stałe? Tej operacji nie można cofnąć.',
+  );
+  String get serverConfirm => text('Confirm', 'Potwierdź');
+  String get serverCancel => text('Cancel', 'Anuluj');
+  String get serverOwnerRole => text('Owner', 'Właściciel');
+  String get serverCoOwnerRole => text('Co-owner', 'Współwłaściciel');
+  String get serverAdminRole => text('Administrator', 'Administrator');
+  String get serverMemberRoleLabel => text('Member', 'Członek');
+  String get serverGuestRole => text('Guest', 'Gość');
+  String get serverBannedLabel => text('Banned', 'Zablokowany');
+  String get serverNoMembers => text(
+    'No members are available to manage.',
+    'Brak członków dostępnych do zarządzania.',
+  );
+  String get serverFriendsEvents =>
+      text('Plans with your friends', 'Plany z ekipą');
+  String get serverFriendsEventsBody => text(
+    'Choose a date, let everyone respond and keep the plan in one place.',
+    'Wybierz termin, zbierz odpowiedzi i trzymaj wspólny plan w jednym miejscu.',
+  );
+  String serverEventsTitle(ServerType type) => switch (type) {
+    ServerType.friends => serverFriendsEvents,
+    ServerType.community => text('Community events', 'Wydarzenia społeczności'),
+    ServerType.family => text('Family calendar', 'Rodzinny kalendarz'),
+    ServerType.podcast => text('Show program', 'Program audycji'),
+    ServerType.company => text('Team calendar', 'Kalendarz zespołu'),
+  };
+  String serverEventsBody(ServerType type) => switch (type) {
+    ServerType.friends => serverFriendsEventsBody,
+    ServerType.community => text(
+      'Schedule community meetups and let every member respond.',
+      'Planuj spotkania społeczności i zbieraj odpowiedzi członków.',
+    ),
+    ServerType.family => text(
+      'Keep family dates, responses and reminders together.',
+      'Trzymaj rodzinne terminy, odpowiedzi i przypomnienia w jednym miejscu.',
+    ),
+    ServerType.podcast => text(
+      'Publish the upcoming show program and let listeners set reminders.',
+      'Publikuj program audycji i pozwól słuchaczom ustawić przypomnienia.',
+    ),
+    ServerType.company => text(
+      'Keep team dates and responses together.',
+      'Trzymaj terminy zespołu i odpowiedzi w jednym miejscu.',
+    ),
+  };
+  String serverCreateEventFor(ServerType type) => switch (type) {
+    ServerType.family => text('Add a family plan', 'Dodaj rodzinny termin'),
+    ServerType.podcast => text('Schedule a show', 'Zaplanuj audycję'),
+    _ => serverCreateEvent,
+  };
+  String get serverCreateEvent => text('Plan an event', 'Zaplanuj wydarzenie');
+  String get serverEditEvent => text('Edit event', 'Edytuj wydarzenie');
+  String get serverCancelEvent => text('Cancel event', 'Odwołaj wydarzenie');
+  String get serverCancelEventQuestion => text(
+    'Cancel this event for everyone?',
+    'Odwołać to wydarzenie dla wszystkich?',
+  );
+  String get serverEventTitle => text('Event name', 'Nazwa wydarzenia');
+  String get serverEventDescription => text('Details', 'Szczegóły');
+  String get serverEventStarts => text('Starts', 'Początek');
+  String get serverEventEnds => text('Ends', 'Koniec');
+  String get serverEventTimeZone => text('Time zone', 'Strefa czasowa');
+  String get serverEventTimeZoneHint =>
+      text('For example Europe/Warsaw', 'Na przykład Europe/Warsaw');
+  String get serverNoUpcomingEvents => text(
+    'There are no upcoming plans yet.',
+    'Nie ma jeszcze żadnych nadchodzących planów.',
+  );
+  String get serverEventGoing => text('Going', 'Będę');
+  String get serverEventMaybe => text('Maybe', 'Może');
+  String get serverEventDeclined => text("Can't go", 'Nie mogę');
+  String get serverEventReminder => text('Remind me', 'Przypomnij mi');
+  String get serverEventStarted => text(
+    'Responses closed when this event started.',
+    'Odpowiedzi zostały zamknięte wraz z rozpoczęciem wydarzenia.',
+  );
+  String get serverEventCreated =>
+      text('The event was added.', 'Wydarzenie zostało dodane.');
+  String get serverEventUpdated =>
+      text('The event was updated.', 'Wydarzenie zostało zaktualizowane.');
+  String get serverEventCancelled =>
+      text('The event was cancelled.', 'Wydarzenie zostało odwołane.');
+  String get serverEventResponseSaved =>
+      text('Your response was saved.', 'Twoja odpowiedź została zapisana.');
+  String get serverEventReminderSaved => text(
+    'Your reminder preference was saved.',
+    'Ustawienie przypomnienia zostało zapisane.',
+  );
+  String get serverOpenEvents => text('Open events', 'Otwórz wydarzenia');
+  String get serverOpenCalendar => text('Open calendar', 'Otwórz kalendarz');
+  String get serverOpenProgram => text('Open program', 'Otwórz program');
+  String get serverOpenSharedList =>
+      text('Open shared list', 'Otwórz wspólną listę');
+  String get serverFollowing => text('Following', 'Obserwujesz');
+  String get serverEventResponses => text('responses', 'odpowiedzi');
+  String get serverEventCreateAction =>
+      text('Create event', 'Utwórz wydarzenie');
+  String get serverEventUpdateAction => text('Save event', 'Zapisz wydarzenie');
+  String get serverPodcastQuestionsTitle =>
+      text('Listener questions', 'Pytania słuchaczy');
+  String get serverPodcastQuestionsBody => text(
+    'Ask during the show, vote for what matters and follow the question currently on air.',
+    'Pytaj podczas audycji, głosuj na ważne tematy i śledź pytanie aktualnie na antenie.',
+  );
+  String get serverPodcastAskQuestion =>
+      text('Ask a question', 'Zadaj pytanie');
+  String get serverPodcastQuestionHint => text(
+    'What would you like the hosts to answer?',
+    'O co chcesz zapytać prowadzących?',
+  );
+  String get serverPodcastSendQuestion =>
+      text('Send question', 'Wyślij pytanie');
+  String get serverPodcastNoQuestions => text(
+    'There are no listener questions yet.',
+    'Nie ma jeszcze pytań od słuchaczy.',
+  );
+  String get serverPodcastVote => text('Vote', 'Głosuj');
+  String get serverPodcastRemoveVote => text('Remove vote', 'Cofnij głos');
+  String get serverPodcastOnAir => text('On air', 'Na antenie');
+  String get serverPodcastPutOnAir => text('Put on air', 'Dodaj na antenę');
+  String get serverPodcastRemoveFromAir =>
+      text('Remove from on air', 'Zdejmij z anteny');
+  String serverPodcastVotes(int count) {
+    if (isPolish) {
+      if (count == 1) return '1 głos';
+      final lastTwo = count % 100;
+      final last = count % 10;
+      if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
+        return '$count głosy';
+      }
+      return '$count głosów';
+    }
+    return count == 1 ? '1 vote' : '$count votes';
+  }
 
   // ---------------------------------------------------------------- creation
 
@@ -256,7 +437,7 @@ extension ServerLocalizedCopy on AppLocalizations {
     ),
     ServerChannelKind.list => text('Your shared list', 'Wasza wspólna lista'),
     ServerChannelKind.whiteboard => text(
-      'Room for your ideas',
+      'Space for your ideas',
       'Miejsce na Wasze pomysły',
     ),
     ServerChannelKind.files => text('Your shared files', 'Wasze wspólne pliki'),
@@ -472,7 +653,7 @@ extension ServerLocalizedCopy on AppLocalizations {
       text('Leave the conversation', 'Opuść rozmowę');
   String get serverLeaveShort => text('Leave', 'Opuść');
   String get serverOtherVoiceActive => text(
-    'Finish your current call or room first.',
+    'Finish your current call or voice conversation first.',
     'Najpierw zakończ trwającą rozmowę.',
   );
   String get serverJoinFailed =>
@@ -487,6 +668,16 @@ extension ServerLocalizedCopy on AppLocalizations {
   String get serverHeadphonesOn => text('Sound on', 'Dźwięk włączony');
   String get serverHeadphonesOff => text('Sound off', 'Dźwięk wyłączony');
   String get serverCamera => text('Camera', 'Kamera');
+  String get serverCameraOn => text('Camera on', 'Kamera włączona');
+  String get serverCameraOff => text('Camera off', 'Kamera wyłączona');
+  String get serverCameraControlFailed => text(
+    'The camera setting could not be changed.',
+    'Nie udało się zmienić ustawienia kamery.',
+  );
+  String get serverCameraNotAllowed => text(
+    'Your role cannot publish camera video in this meeting.',
+    'Twoja rola nie może udostępniać obrazu z kamery w tym spotkaniu.',
+  );
   String get serverShareScreen => text('Share screen', 'Udostępnij ekran');
   String get serverVideoPreview => text('Video preview', 'Podgląd wideo');
   String get serverYou => text('you', 'Ty');
@@ -531,16 +722,14 @@ extension ServerLocalizedCopy on AppLocalizations {
 
   // ------------------------------------------------------- friends (board 01)
 
-  /// The board's event CTA. No events module exists (contract G9), so it is
-  /// drawn disabled beside `Wkrótce` and never sends anything.
+  /// The board's event CTA, backed by the server-scoped events service.
   String get serverEventRsvp => text("I'll join", 'Dołączę');
 
-  /// The card under the salon. It names the module, never an event: no
-  /// event exists to name.
+  /// The card under the salon. It names the shared events module.
   String get serverNextEvent => text('Next event', 'Najbliższe wydarzenie');
   String get serverEventsModuleBody => text(
-    'Plans for your group will live here — a date, a time and who is coming. Nothing is saved yet.',
-    'Tu zamieszkają plany ekipy — data, godzina i kto się wybiera. Na razie nic się tu nie zapisuje.',
+    'Plan a date and time, then see who is coming.',
+    'Zaplanuj datę i godzinę, a potem sprawdź, kto się wybiera.',
   );
 
   // -------------------------------------------------------- family (board 03)
@@ -557,21 +746,21 @@ extension ServerLocalizedCopy on AppLocalizations {
   );
   String get serverFamilyPlans => text('Upcoming plans', 'Najbliższe plany');
   String get serverFamilyPlansBody => text(
-    'Family dates, with who has said yes. Nothing is saved here yet.',
-    'Rodzinne terminy i kto już potwierdził. Na razie nic się tu nie zapisuje.',
+    'Family dates and everyone’s response, kept together.',
+    'Rodzinne terminy i odpowiedzi wszystkich w jednym miejscu.',
   );
   String get serverFamilyPlansRsvp => text("I'll be there", 'Będę');
   String get serverFamilyMemories =>
       text('Family memories', 'Rodzinne wspomnienia');
   String get serverFamilyMemoriesBody => text(
-    'Photos and voice notes you keep for each other. Nothing is saved here yet.',
-    'Zdjęcia i głosowe wiadomości, które zostają dla Was. Na razie nic się tu nie zapisuje.',
+    'A private album where every photo keeps the voice behind it.',
+    'Prywatny album, w którym każde zdjęcie zachowuje głos tej chwili.',
   );
-  String get serverFamilyMemoriesPlay => text('Play', 'Odtwórz');
+  String get serverFamilyMemoriesPlay => text('Open album', 'Otwórz album');
   String get serverFamilyShopping => text('To buy', 'Do kupienia');
   String get serverFamilyShoppingBody => text(
-    'One shared list everybody can tick off. Nothing is saved here yet.',
-    'Jedna wspólna lista, którą każdy może odhaczyć. Na razie nic się tu nie zapisuje.',
+    'One shared list everyone can add to and tick off.',
+    'Jedna wspólna lista, do której każdy może dopisywać i odhaczać rzeczy.',
   );
   String get serverFamilyShoppingAdd => text('Add product', 'Dodaj produkt');
 
@@ -588,10 +777,8 @@ extension ServerLocalizedCopy on AppLocalizations {
   /// The 16:9 scene before a join. Video arrives with the token, so there is
   /// nothing to show until the person has joined; that is stated instead of
   /// drawing an empty player.
-  String get serverStageJoinToWatch => text(
-    'Join to watch and listen.',
-    'Dołącz, aby oglądać i słuchać.',
-  );
+  String get serverStageJoinToWatch =>
+      text('Join to watch and listen.', 'Dołącz, aby oglądać i słuchać.');
 
   /// Connected, but nobody on stage is sending a picture. The conversation
   /// carries on in sound; the scene says which of the two is happening.
@@ -604,10 +791,7 @@ extension ServerLocalizedCopy on AppLocalizations {
   /// in-session presence there is (contract G3).
   String get serverStageOnAir => text('On air', 'Na antenie');
 
-  /// Board 02's secondary actions. Following a broadcast and sharing a
-  /// server both need a backend that does not exist — there is no server
-  /// follow, and no deep link the app can open on the other side — so both
-  /// are drawn disabled beside `Wkrótce` rather than as controls that fail.
+  /// Board 02's persisted follow action and canonical Server share action.
   String get serverFollow => text('Follow', 'Obserwuj');
   String get serverShare => text('Share', 'Udostępnij');
 
@@ -615,10 +799,8 @@ extension ServerLocalizedCopy on AppLocalizations {
   String get serverRaiseHand => text('Ask to speak', 'Poproś o głos');
   String get serverLowerHand =>
       text('Cancel the request', 'Anuluj prośbę o głos');
-  String get serverHandRaised => text(
-    'Your request is with the hosts.',
-    'Prowadzący widzą Twoją prośbę.',
-  );
+  String get serverHandRaised =>
+      text('Your request is with the hosts.', 'Prowadzący widzą Twoją prośbę.');
   String get serverHandSending => text('Sending…', 'Wysyłanie…');
   String get serverHandFailed => text(
     'Could not send your request. Try again.',
@@ -646,10 +828,8 @@ extension ServerLocalizedCopy on AppLocalizations {
 
   /// The audio stage before a join: sound arrives with the token, so there is
   /// nothing to play until the person has joined.
-  String get serverPodcastJoinToListen => text(
-    'Join to listen live.',
-    'Dołącz, aby słuchać na żywo.',
-  );
+  String get serverPodcastJoinToListen =>
+      text('Join to listen live.', 'Dołącz, aby słuchać na żywo.');
 
   /// Connected, and the provider reports nobody holding a stage role.
   String get serverPodcastNobodyOnAir => text(
@@ -673,35 +853,58 @@ extension ServerLocalizedCopy on AppLocalizations {
   String get serverListenerQuestions =>
       text('Listener questions', 'Pytania słuchaczy');
 
-  /// Recording has **no contract at all** — no egress configuration, no job
-  /// document, no callable, no signed callback (contract §3). Board 05's red
-  /// "Audycja jest nagrywana" can therefore never be drawn: there is no
-  /// authoritative job state to derive it from. What is drawn instead is the
-  /// unlit state and the plain fact that nothing is being saved.
   String get serverRecording => text('Recording', 'Nagrywanie audycji');
-  ///
-  /// Phrased so that it is true whether or not anybody is on the air: a host
-  /// has to know before they start that nothing will be kept, not after.
-  String get serverRecordingUnavailable => text(
-    'Recording is not available yet — nothing from a broadcast is saved.',
-    'Nagrywanie jeszcze nie działa — nic z transmisji się nie zapisuje.',
+  String get serverPodcastRecordingIdle => text(
+    'This live session is not being recorded.',
+    'Ta transmisja nie jest teraz nagrywana.',
+  );
+  String get serverPodcastRecordingActive =>
+      text('Recording', 'Nagrywanie trwa');
+  String get serverPodcastRecordingProcessing =>
+      text('Processing', 'Przetwarzanie');
+  String get serverPodcastRecordingError =>
+      text('Recording error', 'Błąd nagrywania');
+  String get serverPodcastEpisodeReady => text('Ready', 'Gotowy');
+  String get serverPodcastEpisodePublished => text('Published', 'Opublikowany');
+  String get serverPodcastStartRecording =>
+      text('Start recording', 'Rozpocznij nagrywanie');
+  String get serverPodcastStopRecording =>
+      text('Stop recording', 'Zatrzymaj nagrywanie');
+  String get serverPodcastRecordingTitle =>
+      text('Episode title', 'Tytuł odcinka');
+  String get serverPodcastRecordingTitleHint => text(
+    'Give this recording a clear title',
+    'Nadaj nagraniu czytelny tytuł',
+  );
+  String get serverPodcastFinalize =>
+      text('Check processing', 'Sprawdź przetwarzanie');
+  String get serverPodcastRetryRecording =>
+      text('Retry recording', 'Ponów nagrywanie');
+  String get serverPodcastPublishEpisode =>
+      text('Publish episode', 'Opublikuj odcinek');
+  String get serverEpisodePause => text('Pause', 'Pauza');
+  String get serverPodcastEpisodesTitle =>
+      text('Episode archive', 'Archiwum odcinków');
+  String get serverPodcastEpisodesBody => text(
+    'Listen to published episodes. Hosts can finish processing and publish new recordings here.',
+    'Słuchaj opublikowanych odcinków. Prowadzący mogą tu kończyć przetwarzanie i publikować nowe nagrania.',
+  );
+  String get serverPodcastEpisodesEmpty => text(
+    'Published recordings will appear here.',
+    'Tutaj pojawią się opublikowane nagrania.',
   );
 
-  /// Board 05's `Następny odcinek` and `Ostatnie odcinki`. Episodes have a
-  /// channel kind and no persistence (contract G9), so both cards name the
-  /// module, keep the board's action visibly disabled and offer the real
-  /// channel as the way in.
   String get serverNextEpisode => text('Next episode', 'Następny odcinek');
   String get serverNextEpisodeBody => text(
-    'The schedule for your show will live here — a date, a time and a reminder. Nothing is saved yet.',
-    'Tu zamieszka program audycji — data, godzina i przypomnienie. Na razie nic się tu nie zapisuje.',
+    'Open the show schedule to see upcoming live episodes and reminders.',
+    'Otwórz program audycji, aby zobaczyć transmisje i przypomnienia.',
   );
   String get serverEpisodeRemind => text('Remind me', 'Przypomnij');
   String get serverRecentEpisodes =>
       text('Recent episodes', 'Ostatnie odcinki');
   String get serverRecentEpisodesBody => text(
-    'Recorded episodes will be listed here once recording exists. Nothing is saved yet.',
-    'Tutaj pojawią się nagrane odcinki, gdy nagrywanie zacznie działać. Na razie nic się tu nie zapisuje.',
+    'Open the archive to play published episodes and manage new recordings.',
+    'Otwórz archiwum, aby odtwarzać odcinki i zarządzać nowymi nagraniami.',
   );
   String get serverEpisodePlay => text('Play', 'Odtwórz');
 
@@ -739,8 +942,7 @@ extension ServerLocalizedCopy on AppLocalizations {
     'Join the meeting to see what is being shared.',
     'Dołącz do spotkania, aby zobaczyć, co jest udostępniane.',
   );
-  String get serverStopSharing =>
-      text('Stop sharing', 'Zakończ udostępnianie');
+  String get serverStopSharing => text('Stop sharing', 'Zakończ udostępnianie');
   String get serverShareFailed => text(
     'The screen share did not start.',
     'Nie udało się rozpocząć udostępniania.',
@@ -760,25 +962,61 @@ extension ServerLocalizedCopy on AppLocalizations {
     'Ekran udostępnia osoba, która rozpoczęła spotkanie.',
   );
 
-  /// The camera grant exists; the publishing lifecycle on this side does not
-  /// (contract §3). Said so that nobody waits for a picture they cannot send.
-  String get serverCameraUnavailable => text(
-    'Turning your own camera on is not available yet — you still see everybody else.',
-    'Włączenie własnej kamery jeszcze nie działa — obraz innych osób widzisz normalnie.',
-  );
-
   /// Board 04's right-hand tiles. They are the provider's in-session roster
   /// and nothing else, so the heading names the room, never a number.
   String get serverMeetingPeople => text('In the meeting', 'W spotkaniu');
 
-  /// Board 04's whiteboard. There is no document, callable or rule behind it
-  /// (contract G9), so the honest state says outright that nothing drawn
-  /// would be kept.
+  /// Board 04's durable Company whiteboard. The canvas persists each completed
+  /// line in the server's whiteboard channel and updates every connected view.
   String get serverMeetingBoard => text('Team whiteboard', 'Tablica zespołu');
   String get serverMeetingBoardBody => text(
-    'A shared whiteboard for your meetings will live here. Nothing is saved yet — anything drawn would be lost.',
-    'Tu zamieszka wspólna tablica spotkań. Na razie nic się tu nie zapisuje — rysunek nie zostałby zachowany.',
+    'Open the shared canvas. Completed lines are saved for everyone on this server.',
+    'Otwórz wspólny obszar. Ukończone linie zapisują się dla wszystkich na tym serwerze.',
   );
+
+  String get serverCompanyFilesTitle => text('Team files', 'Pliki zespołu');
+  String get serverCompanyFilesBody => text(
+    'Share private PDFs, images and notes with everyone who can access this channel.',
+    'Udostępniaj prywatne PDF-y, obrazy i notatki osobom z dostępem do tego kanału.',
+  );
+  String get serverCompanyFilesEmptyTitle =>
+      text('No shared files yet', 'Nie ma jeszcze wspólnych plików');
+  String get serverCompanyFilesEmptyBody => text(
+    'Upload the first PDF, image or text file for your team.',
+    'Dodaj pierwszy PDF, obraz lub plik tekstowy dla zespołu.',
+  );
+  String get serverCompanyFileUpload => text('Upload file', 'Dodaj plik');
+  String get serverCompanyFileOpen => text('Open file', 'Otwórz plik');
+  String get serverCompanyFileDelete => text('Delete', 'Usuń');
+  String get serverCompanyFileDeleteTitle =>
+      text('Delete this file?', 'Usunąć ten plik?');
+  String serverCompanyFileDeleteBody(String name) => template(
+    '{name} will be removed for everyone with access to this channel.',
+    '{name} zostanie usunięty dla wszystkich osób z dostępem do tego kanału.',
+    values: {'name': name},
+  );
+  String serverCompanyFileUploading(String name) => template(
+    'Uploading {name}',
+    'Przesyłanie {name}',
+    values: {'name': name},
+  );
+  String get serverCompanyFileRetry => text('Retry', 'Spróbuj ponownie');
+  String get serverCompanyFileActionFailed => text(
+    'The file operation could not be completed. Try again.',
+    'Nie udało się wykonać operacji na pliku. Spróbuj ponownie.',
+  );
+  String get serverCompanyFilesOfflineTitle =>
+      text('Files are offline', 'Pliki są teraz offline');
+  String get serverCompanyFilesOfflineBody => text(
+    'Reconnect to load, upload or open team files.',
+    'Połącz się z internetem, aby wczytać, dodać lub otworzyć pliki zespołu.',
+  );
+  String get serverCompanyFilesOfflineCached => text(
+    'You are offline. Saved file names remain visible, but opening and changes need a connection.',
+    'Jesteś offline. Zapisane nazwy plików nadal są widoczne, ale otwieranie i zmiany wymagają połączenia.',
+  );
+  String get serverCompanyFileTextType => text('Text file', 'Plik tekstowy');
+  String get serverCompanyFileGenericType => text('File', 'Plik');
 
   /// The dock's elapsed time. It counts from the instant the server wrote
   /// into the channel's liveness projection when this generation started —

@@ -5,10 +5,8 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/presentation/screens/achievements_screen.dart';
-import 'package:yovoice/features/clubs/presentation/screens/clubs_screen.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_studio_screen.dart';
 import 'package:yovoice/features/creator/presentation/screens/find_creators_screen.dart';
-import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/moderation/presentation/screens/moderation_center_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
@@ -32,6 +30,8 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 
 enum MoreDestination {
   friends,
+
+  /// Legacy route identity. It resolves to Servers and is never listed.
   discover,
 
   /// The account's own places (clubs and V1 servers) — a primary
@@ -40,6 +40,8 @@ enum MoreDestination {
   /// list it, exactly like Moments.
   servers,
   findCreators,
+
+  /// Legacy route identity. It resolves to Servers and is never listed.
   clubs,
   moments,
   reels,
@@ -66,7 +68,6 @@ enum MoreDestination {
 PremiumFeature? premiumFeatureForMoreDestination(MoreDestination destination) =>
     switch (destination) {
       MoreDestination.creatorStudio => PremiumFeature.creatorStudio,
-      MoreDestination.clubs => PremiumFeature.clubs,
       _ => null,
     };
 
@@ -84,7 +85,7 @@ bool moreDestinationIsLocked(
 /// deliberately untouched.
 ///
 /// Everything NOT listed here is reachable from the desktop More
-/// popover (Friends, Discover, Find creators, Clubs, Creator Studio,
+/// popover (Friends, Find creators, Creator Studio,
 /// Awards, Alerts, Settings) or from the rail's profile card (Profile, and
 /// its gear → Settings).
 ///
@@ -167,15 +168,15 @@ Widget moreDestinationScreen(
 }) {
   final screen = switch (destination) {
     MoreDestination.friends => FriendsScreen(isRootTab: isRootTab),
-    MoreDestination.discover => DiscoverScreen(isRootTab: isRootTab),
-    // The one call site for the servers feature from Home. The screen owns
-    // its own loading, error and empty states and the create gate.
+    // Old Discover/Club links remain parseable, but the former standalone
+    // products no longer have a user-facing surface.
+    MoreDestination.discover ||
+    MoreDestination.clubs ||
     MoreDestination.servers => ServersScreen(
       isRootTab: isRootTab,
       isVisible: serversVisible,
     ),
     MoreDestination.findCreators => FindCreatorsScreen(isRootTab: isRootTab),
-    MoreDestination.clubs => ClubsScreen(isRootTab: isRootTab),
     MoreDestination.moments => MomentsScreen(isRootTab: isRootTab),
     MoreDestination.reels => ReelsDestinationScreen(isRootTab: isRootTab),
     MoreDestination.notifications => NotificationPreferencesScreen(
@@ -223,8 +224,7 @@ Future<MoreDestination?> showDesktopMoreMenu(
   final lockColor = palette.warningForeground;
   // Moments and Servers are deliberately absent: they are rail items, and
   // listing them here as well would show the same destination twice.
-  // Friends, Discover and Find creators left the rail for this popover and
-  // keep the mobile sheet's exact labels.
+  // Friends and Find creators remain secondary destinations in this popover.
   final items = <(MoreDestination, IconData, String, String)>[
     (
       MoreDestination.friends,
@@ -233,34 +233,16 @@ Future<MoreDestination?> showDesktopMoreMenu(
       copy.text('Your circle', 'Twój krąg'),
     ),
     (
-      MoreDestination.discover,
-      Icons.explore_rounded,
-      copy.discover,
-      copy.text('Find rooms', 'Znajdź pokoje'),
-    ),
-    (
       MoreDestination.findCreators,
       Icons.person_search_rounded,
       copy.findCreators,
       copy.text('People to follow', 'Osoby warte obserwowania'),
     ),
     (
-      MoreDestination.clubs,
-      Icons.groups_2_rounded,
-      copy.text('Clubs', 'Kluby'),
-      copy.text(
-        'Communities you belong to',
-        'Społeczności, do których należysz',
-      ),
-    ),
-    (
       MoreDestination.creatorStudio,
       Icons.auto_graph_rounded,
       copy.text('Creator Studio', 'Studio twórcy'),
-      copy.text(
-        'Your rooms, clubs and Moments',
-        'Twoje pokoje, kluby i Momenty',
-      ),
+      copy.text('Your servers and Moments', 'Twoje serwery i Momenty'),
     ),
     (
       MoreDestination.achievements,
@@ -386,8 +368,7 @@ Future<MoreDestination?> showDesktopMoreMenu(
 ///   owner (manageRoles)                    Moderation Center + Staff Center
 ///   super moderation (liftSuspensions /
 ///   viewAllQueues)                         Staff Center, coral — it opens
-///                                          with exactly Reports, Rooms &
-///                                          Spaces and Sanctions
+///                                          with Reports, Servers & Sanctions
 ///   moderation (handleAssignedReports)     Moderation Center, violet
 ///
 /// Auditor, Support and Guide Master deliberately get NOTHING here: their
@@ -432,7 +413,7 @@ staffEntriesFor(StaffCapabilities capabilities) {
     entries.add((
       destination: MoreDestination.staffCenter,
       label: 'Staff Center',
-      subtitle: 'Reports, rooms and sanctions',
+      subtitle: 'Reports, servers and sanctions',
       color: AppColors.roleSuperModerator,
     ));
   }
@@ -512,26 +493,10 @@ class _MoreSheetState extends State<MoreSheet> {
         subtitle: copy.text('You', 'Ty'),
       ),
       _MoreEntry(
-        destination: MoreDestination.discover,
-        icon: Icons.explore_rounded,
-        label: copy.discover,
-        subtitle: copy.text('Find rooms', 'Znajdź pokoje'),
-      ),
-      _MoreEntry(
         destination: MoreDestination.findCreators,
         icon: Icons.person_search_rounded,
         label: copy.findCreators,
         subtitle: copy.text('People to follow', 'Osoby warte obserwowania'),
-      ),
-      _MoreEntry(
-        destination: MoreDestination.clubs,
-        icon: Icons.groups_2_rounded,
-        label: copy.text('Clubs', 'Kluby'),
-        subtitle: copy.text('Communities', 'Społeczności'),
-        isLocked: moreDestinationIsLocked(
-          MoreDestination.clubs,
-          widget.entitlements,
-        ),
       ),
       _MoreEntry(
         destination: MoreDestination.notifications,
@@ -780,7 +745,7 @@ class _MoreSheetState extends State<MoreSheet> {
                 ? 'Przeglądaj zgłoszone treści'
                 : entries[index].subtitle.startsWith('Owner')
                 ? 'Panel właściciela — wszystkie sekcje'
-                : 'Zgłoszenia, pokoje i sankcje',
+                : 'Zgłoszenia, serwery i sankcje',
           ),
           accentColor: entries[index].color,
         ),

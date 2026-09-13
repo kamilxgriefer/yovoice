@@ -1422,7 +1422,12 @@ class _TiledWaveformPainter extends CustomPainter {
     final rtl = textDirection == TextDirection.rtl;
     final playedWidth = runWidth * progress;
     final playedRect = rtl
-        ? Rect.fromLTWH(start + runWidth - playedWidth, 0, playedWidth, size.height)
+        ? Rect.fromLTWH(
+            start + runWidth - playedWidth,
+            0,
+            playedWidth,
+            size.height,
+          )
         : Rect.fromLTWH(start, 0, playedWidth, size.height);
     final playedPaint = Paint()
       ..color = playedColor

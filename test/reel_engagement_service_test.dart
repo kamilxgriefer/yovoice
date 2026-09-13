@@ -519,10 +519,15 @@ void main() {
       );
 
       expect(calls.single.name, 'getReelViewV2');
+      // Slice 5 added ONE optional input: the client declares which comment
+      // types it can render. A backend that predates voice comments refuses
+      // the key, the refusal is verified, and the request is replayed
+      // without it — see reel_voice_comment_publish_test.dart.
       expect(calls.single.payload, <String, Object?>{
         'reelId': 'reel_1',
         'commentLimit': 2,
         'commentCursor': 'cursor_1',
+        'commentTypes': <String>['text', 'voice'],
       });
       // Oldest first: the order the thread is rendered in.
       expect(view.comments.map((comment) => comment.text), <String>[

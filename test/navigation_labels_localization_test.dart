@@ -35,9 +35,10 @@ void main() {
       // O11: the destination heading inside Momenty stays the product name.
       expect(pl.moments, 'YO Moments');
       expect(en.moments, 'YO Moments');
-      // The retained Rooms label (Odkrywaj's root) is unchanged.
-      expect(pl.navigationRooms, 'Pokoje');
-      expect(en.navigationRooms, 'Rooms');
+      // The old getter stays source-compatible for legacy call sites, but it
+      // resolves to the one user-facing Servers destination.
+      expect(pl.navigationRooms, 'Serwery');
+      expect(en.navigationRooms, 'Servers');
     });
 
     test('navigation.servers is catalogued for every locale the file lists, '

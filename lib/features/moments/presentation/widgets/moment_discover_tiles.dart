@@ -137,6 +137,9 @@ class MomentPlayControl extends StatelessWidget {
     return Semantics(
       button: enabled,
       label: label,
+      // `excludeSemantics` drops the InkWell's node, so the action has to be
+      // declared here or the bridge has an enabled button it cannot press.
+      onTap: enabled ? onTap : null,
       excludeSemantics: true,
       child: Tooltip(
         message: label,
@@ -200,6 +203,8 @@ class MomentAvatarPlayControl extends StatelessWidget {
     return Semantics(
       button: enabled,
       label: '$label, ${MomentSeenAvatar.stateLabel(context, seen: seen)}',
+      // As above: the excluded InkWell's tap action has to be re-declared.
+      onTap: enabled ? onTap : null,
       excludeSemantics: true,
       child: Tooltip(
         message: label,

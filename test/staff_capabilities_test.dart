@@ -102,12 +102,12 @@ void main() {
       await tester.tap(find.byIcon(Icons.shield_rounded));
       await tester.pumpAndSettle();
       expect(find.text('Delete permanently…'), findsOneWidget);
-      expect(find.text('End room…'), findsOneWidget);
+      expect(find.text('End conversation…'), findsOneWidget);
       expect(find.text('Quarantine…'), findsOneWidget);
     });
 
     testWidgets('a super moderator gets coral, close/quarantine and '
-        'permanent room deletion', (tester) async {
+        'permanent conversation deletion', (tester) async {
       useSize(tester, const Size(1440, 900));
       await tester.pumpWidget(
         host(RoomStaffMenu(room: room(), capabilities: superMod)),
@@ -117,12 +117,12 @@ void main() {
 
       await tester.tap(find.byIcon(Icons.shield_rounded));
       await tester.pumpAndSettle();
-      expect(find.text('End room…'), findsOneWidget);
+      expect(find.text('End conversation…'), findsOneWidget);
       expect(find.text('Quarantine…'), findsOneWidget);
       expect(find.text('Delete permanently…'), findsOneWidget);
     });
 
-    testWidgets('a moderator gets violet and ONLY the end-public-room '
+    testWidgets('a moderator gets violet and ONLY the end-public-conversation '
         'action', (tester) async {
       useSize(tester, const Size(1440, 900));
       await tester.pumpWidget(
@@ -133,7 +133,7 @@ void main() {
 
       await tester.tap(find.byIcon(Icons.shield_rounded));
       await tester.pumpAndSettle();
-      expect(find.text('End public room…'), findsOneWidget);
+      expect(find.text('End public conversation…'), findsOneWidget);
       expect(find.text('Quarantine…'), findsNothing);
       expect(find.text('Delete permanently…'), findsNothing);
     });
@@ -288,7 +288,7 @@ void main() {
         'spam room',
       );
       await tester.enterText(
-        find.widgetWithText(TextField, 'Type the room name to confirm'),
+        find.widgetWithText(TextField, 'Type the conversation name to confirm'),
         'Evening Talk', // one letter short
       );
       await tester.pump();
@@ -298,7 +298,7 @@ void main() {
       // error shows, and the button re-enables for a retry.
       functions.failNext = true;
       await tester.enterText(
-        find.widgetWithText(TextField, 'Type the room name to confirm'),
+        find.widgetWithText(TextField, 'Type the conversation name to confirm'),
         'Evening Talks',
       );
       await tester.pump();
@@ -309,7 +309,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(functions.calls, hasLength(1));
       expect(
-        find.text('Could not permanently delete the room. Please try again.'),
+        find.text(
+          'Could not permanently delete the conversation. Please try again.',
+        ),
         findsOneWidget,
       );
       expect(find.textContaining('rejected'), findsNothing);

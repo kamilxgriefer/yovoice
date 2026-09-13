@@ -136,6 +136,20 @@ Future<double> _rowContentTop(WidgetTester tester, String id) async {
       scroll.position.pixels;
 }
 
+/// Board 06's action row draws a glyph and the NUMBER; the whole phrase is
+/// the control's spoken name. Both halves are read here, so a regression in
+/// either one — a word back in the row, or a count with no phrase behind it —
+/// fails rather than passing quietly.
+({String visible, String spoken}) countOf(WidgetTester tester, String key) {
+  final label = tester.widget<Text>(
+    find.descendant(
+      of: find.byKey(ValueKey<String>(key)),
+      matching: find.byType(Text),
+    ),
+  );
+  return (visible: label.data ?? '', spoken: label.semanticsLabel ?? '');
+}
+
 void main() {
   late PublicIdentityRepository originalIdentity;
 
@@ -305,13 +319,12 @@ void main() {
 
       final loudTop = await _rowContentTop(tester, 'loud');
       // The real count travels with the actual action, not decorative copy.
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('moment-row-like-loud')),
-          matching: find.text('Likes: 40'),
-        ),
-        findsOneWidget,
-      );
+      // Since the S1 fix the ROW draws the number and the control SPEAKS the
+      // phrase, so both halves are asserted here.
+      expect(countOf(tester, 'moment-row-like-loud'), (
+        visible: '40',
+        spoken: 'Likes: 40',
+      ));
       final talkedTop = await _rowContentTop(tester, 'talked');
       final quietTop = await _rowContentTop(tester, 'quiet');
       expect(
@@ -531,16 +544,15 @@ void main() {
       final like = find.byKey(const ValueKey('moment-row-like-solo'));
       final comments = find.byKey(const ValueKey('moment-row-comments-solo'));
       // First paint already shows the real loaded count...
-      expect(
-        find.descendant(of: like, matching: find.text('Likes: 1')),
-        findsOneWidget,
-      );
-      // ...and zero comments have an honest action label, no invented count.
-      expect(
-        find.descendant(of: comments, matching: find.text('Comments')),
-        findsOneWidget,
-      );
-      expect(find.text('Comments: 0'), findsNothing);
+      expect(countOf(tester, 'moment-row-like-solo'), (
+        visible: '1',
+        spoken: 'Likes: 1',
+      ));
+      // ...and zero comments have an honest action name, no invented count.
+      expect(countOf(tester, 'moment-row-comments-solo'), (
+        visible: '0',
+        spoken: 'Comments',
+      ));
       expect(discovery.loads, 1);
 
       // A like landing afterwards arrives without any reload.
@@ -550,14 +562,17 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(
-        find.descendant(of: like, matching: find.text('Likes: 7')),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: comments, matching: find.text('Comments: 3')),
-        findsOneWidget,
-      );
+      expect(countOf(tester, 'moment-row-like-solo'), (
+        visible: '7',
+        spoken: 'Likes: 7',
+      ));
+      expect(countOf(tester, 'moment-row-comments-solo'), (
+        visible: '3',
+        spoken: 'Comments: 3',
+      ));
+      // `like` and `comments` are the controls those counts belong to.
+      expect(like, findsOneWidget);
+      expect(comments, findsOneWidget);
       expect(
         discovery.loads,
         1,
@@ -589,10 +604,10 @@ void main() {
 
       final row = find.byKey(const ValueKey('moment-row-solo'));
       expect(row, findsOneWidget);
-      expect(
-        find.descendant(of: row, matching: find.text('Likes: 4')),
-        findsOneWidget,
-      );
+      expect(countOf(tester, 'moment-row-like-solo'), (
+        visible: '4',
+        spoken: 'Likes: 4',
+      ));
       expect(tester.takeException(), isNull);
     });
 

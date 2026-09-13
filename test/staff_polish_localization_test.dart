@@ -93,9 +93,9 @@ void main() {
   test('Staff count and identifier labels use Polish grammar', () {
     const copy = AppLocalizations(Locale('pl'));
 
-    expect(localizedStaffParticipantCount(copy, 1), '1 osoba w pokoju');
-    expect(localizedStaffParticipantCount(copy, 2), '2 osoby w pokoju');
-    expect(localizedStaffParticipantCount(copy, 5), '5 osób w pokoju');
+    expect(localizedStaffParticipantCount(copy, 1), '1 osoba w rozmowie');
+    expect(localizedStaffParticipantCount(copy, 2), '2 osoby w rozmowie');
+    expect(localizedStaffParticipantCount(copy, 5), '5 osób w rozmowie');
     expect(localizedStaffResultCount(copy, 12), '12 wyników');
     expect(
       localizedStaffResultCount(copy, 22, moreAvailable: true),
@@ -105,7 +105,7 @@ void main() {
     expect(localizedStaffStatus(copy, 'BANNED'), 'ZABLOKOWANE');
     expect(
       localizedStaffAuditAction(copy, 'force_end_room'),
-      'Wymuszone zakończenie pokoju',
+      'Wymuszone zakończenie rozmowy',
     );
   });
 
@@ -206,7 +206,7 @@ void main() {
     await tester.tap(find.byIcon(Icons.shield_rounded));
     await tester.pumpAndSettle();
 
-    expect(find.text('Zakończ pokój…'), findsOneWidget);
+    expect(find.text('Zakończ rozmowę…'), findsOneWidget);
     expect(find.text('Poddaj kwarantannie…'), findsOneWidget);
     expect(find.text('Usuń trwale…'), findsOneWidget);
 
@@ -214,7 +214,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Poddaj pokój „Wieczorne rozmowy” kwarantannie?'),
+      find.text('Poddaj rozmowę „Wieczorne rozmowy” kwarantannie?'),
       findsOneWidget,
     );
     expect(find.text('Powód (wymagany)'), findsOneWidget);

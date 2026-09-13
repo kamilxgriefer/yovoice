@@ -177,12 +177,12 @@ void main() {
         ),
       );
 
-      expect(find.text('W pokoju'), findsOneWidget);
+      expect(find.text('Na kanale głosowym'), findsOneWidget);
       final data = tester
           .getSemantics(find.byType(PeopleStatusAvatar))
           .getSemanticsData();
       expect(data.label, 'Ada Lovelace');
-      expect(data.value, 'W pokoju');
+      expect(data.value, 'Na kanale głosowym');
       expect(data.flagsCollection.isButton, isTrue);
       expect(data.hasAction(ui.SemanticsAction.tap), isTrue);
       semantics.dispose();

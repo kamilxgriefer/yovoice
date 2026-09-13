@@ -37,6 +37,8 @@ class ModerationReport {
     required this.reportedUserId,
     required this.contextPath,
     required this.targetText,
+    required this.targetCommentType,
+    required this.targetDurationSeconds,
     required this.targetMediaUrl,
     required this.reason,
     required this.note,
@@ -88,6 +90,27 @@ class ModerationReport {
   /// harassment. It is also the only evidence that outlives the removal, and
   /// therefore the only thing an appeal can be judged against.
   final String? targetText;
+
+  /// Which kind of Reel comment was reported, exactly as the server stamped
+  /// it: `text` or `voice`.
+  ///
+  /// ABSENT on every report filed before voice comments existed, and absent
+  /// means text — the same reading `moderateReport` applies. It matters for
+  /// what [targetText] means: on a text report it is the reported words, on a
+  /// voice report it is only the recording's optional caption, and an empty
+  /// caption is NOT a missing snapshot.
+  final String? targetCommentType;
+
+  /// How long the reported recording is, in whole seconds (1–60), when the
+  /// report is on a voice comment. Null for text, for reports that predate
+  /// voice comments, and for any value outside the contract — a number the
+  /// server would refuse is not shown as if it were evidence.
+  final int? targetDurationSeconds;
+
+  /// True when this report is on a Reel VOICE comment.
+  bool get isReelVoiceComment =>
+      targetType == ReportTargetType.reelComment &&
+      targetCommentType == 'voice';
 
   /// The reported media itself, snapshotted onto the report at creation.
   ///
@@ -174,6 +197,10 @@ class ModerationReport {
       targetText: data['targetTextSnapshot'] is String
           ? data['targetTextSnapshot'] as String
           : null,
+      targetCommentType: _nonEmptyString(data['targetCommentType']),
+      targetDurationSeconds: _voiceDurationSeconds(
+        data['targetDurationSeconds'],
+      ),
       targetMediaUrl: _nonEmptyString(data['targetMediaUrl']),
       reason: _enumByName(ReportReason.values, data['reason'] as String?),
       note: data['note'] as String? ?? '',
@@ -203,6 +230,13 @@ class ModerationReport {
       if (value.name == name) return value;
     }
     return null;
+  }
+
+  /// The 1–60 second bound every voice-comment writer enforces
+  /// (`functions/reels/engagement.js`). Anything else reads as not retained.
+  static int? _voiceDurationSeconds(Object? value) {
+    if (value is! int || value < 1 || value > 60) return null;
+    return value;
   }
 
   static String? _nonEmptyString(Object? value) {

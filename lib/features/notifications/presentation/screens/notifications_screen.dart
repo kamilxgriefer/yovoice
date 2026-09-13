@@ -902,9 +902,9 @@ class _NotificationCard extends StatelessWidget {
     NotificationType.friendRequest: Icons.person_add_alt_1_rounded,
     NotificationType.friendAccepted: Icons.people_alt_rounded,
     NotificationType.follow: Icons.favorite_rounded,
-    NotificationType.clubInvite: Icons.groups_rounded,
-    NotificationType.clubInviteAccepted: Icons.groups_rounded,
-    NotificationType.roomInvite: Icons.mic_rounded,
+    NotificationType.clubInvite: Icons.hub_rounded,
+    NotificationType.clubInviteAccepted: Icons.hub_rounded,
+    NotificationType.roomInvite: Icons.spatial_audio_off_rounded,
     NotificationType.broadcastInvite: Icons.campaign_rounded,
     NotificationType.liveStarted: Icons.sensors_rounded,
     NotificationType.directMessage: Icons.chat_bubble_rounded,
@@ -950,36 +950,36 @@ class _NotificationCard extends StatelessWidget {
         hasLabel
             ? copy.template(
                 '{actor} invited you to {label}',
-                '{actor} zaprasza Cię do klubu {label}',
+                '{actor} zaprasza Cię do serwera {label}',
                 values: {'actor': actor, 'label': label},
               )
             : copy.template(
-                '{actor} invited you to a club',
-                '{actor} zaprasza Cię do klubu',
+                '{actor} invited you to a server',
+                '{actor} zaprasza Cię do serwera',
                 values: {'actor': actor},
               ),
       NotificationType.clubInviteAccepted =>
         hasLabel
             ? copy.template(
                 '{actor} joined {label}',
-                '{actor} dołącza do klubu {label}',
+                '{actor} dołącza do serwera {label}',
                 values: {'actor': actor, 'label': label},
               )
             : copy.template(
-                '{actor} accepted your club invitation',
-                '{actor} przyjmuje Twoje zaproszenie do klubu',
+                '{actor} accepted your server invitation',
+                '{actor} przyjmuje Twoje zaproszenie do serwera',
                 values: {'actor': actor},
               ),
       NotificationType.roomInvite =>
         hasLabel
             ? copy.template(
                 '{actor} invited you to {label}',
-                '{actor} zaprasza Cię do pokoju {label}',
+                '{actor} zaprasza Cię do kanału głosowego {label}',
                 values: {'actor': actor, 'label': label},
               )
             : copy.template(
-                '{actor} invited you to a room',
-                '{actor} zaprasza Cię do pokoju',
+                '{actor} invited you to a voice channel',
+                '{actor} zaprasza Cię do kanału głosowego',
                 values: {'actor': actor},
               ),
       NotificationType.broadcastInvite =>

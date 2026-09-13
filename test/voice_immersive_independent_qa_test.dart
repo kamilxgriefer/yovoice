@@ -67,7 +67,9 @@ VoiceMoment _moment(
   commentCount: comments,
   isPublished: true,
   createdAt: _time.subtract(const Duration(hours: 1)),
-  expiresAt: permanent ? null : (expiresAt ?? _time.add(const Duration(hours: 1))),
+  expiresAt: permanent
+      ? null
+      : (expiresAt ?? _time.add(const Duration(hours: 1))),
   schemaVersion: 2,
   status: 'published',
   hasAuthorizedMedia: true,
@@ -171,7 +173,10 @@ class _Discovery implements MomentDiscoveryService {
       StreamController<Map<String, MomentEngagement>>.broadcast();
 
   @override
-  Future<MomentDiscoveryFeed> loadDiscoveryFeed({int poolSize = 60, int? seed}) {
+  Future<MomentDiscoveryFeed> loadDiscoveryFeed({
+    int poolSize = 60,
+    int? seed,
+  }) {
     loads++;
     return onLoad?.call() ?? Future<MomentDiscoveryFeed>.value(_page(items));
   }
@@ -257,8 +262,10 @@ class _Moments implements MomentService {
       Stream<VoiceMoment>.value(_moment(momentId));
 
   @override
-  Stream<List<MomentComment>> watchComments(String momentId, {int limit = 80}) =>
-      Stream<List<MomentComment>>.value(const <MomentComment>[]);
+  Stream<List<MomentComment>> watchComments(
+    String momentId, {
+    int limit = 80,
+  }) => Stream<List<MomentComment>>.value(const <MomentComment>[]);
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -512,6 +519,25 @@ Future<void> _tapPlay(WidgetTester tester, String id) async {
 
 Finder _card(String id) => find.byKey(ValueKey<String>('moment-row-$id'));
 
+/// Both halves of one counter on the card's action row.
+///
+/// Since the board-06 action row the ROW draws the glyph and the bare
+/// NUMBER, and the exact total is the control's spoken name ("Likes: 4") —
+/// the word labels broke mid-word at 200 % text, so they moved into the
+/// semantic name rather than being dropped. Reading only the digits would
+/// pass on a control that says nothing, and reading only the phrase would
+/// pass on one that shows nothing, so every counter assertion here pins the
+/// pair. Same shape as test/moments_board_test.dart's `countOf`.
+({String visible, String spoken}) _countOf(WidgetTester tester, String key) {
+  final label = tester.widget<Text>(
+    find.descendant(
+      of: find.byKey(ValueKey<String>(key)),
+      matching: find.byType(Text),
+    ),
+  );
+  return (visible: label.data ?? '', spoken: label.semanticsLabel ?? '');
+}
+
 void main() {
   late PublicIdentityRepository previousIdentity;
 
@@ -561,11 +587,9 @@ void main() {
     release.complete();
     await tester.pumpAndSettle();
 
-    expect(
-      harness.driver.audible,
-      <String>[_media('b').toString()],
-      reason: 'exactly one Moment is audible, and it is B',
-    );
+    expect(harness.driver.audible, <String>[
+      _media('b').toString(),
+    ], reason: 'exactly one Moment is audible, and it is B');
     expect(
       harness.driver.overlapped,
       isFalse,
@@ -737,15 +761,22 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Likes: 99'),
-      findsOneWidget,
-      reason: 'the live counter must reach the rendered number',
+      _countOf(tester, 'moment-row-like-a'),
+      (visible: '99', spoken: 'Likes: 99'),
+      reason:
+          'the live counter must reach the rendered number, and the name '
+          'the control is spoken by',
     );
-    expect(find.text('Comments: 42'), findsOneWidget);
+    expect(
+      _countOf(tester, 'moment-row-comments-a'),
+      (visible: '42', spoken: 'Comments: 42'),
+      reason: 'the live comment counter must reach both halves too',
+    );
     expect(
       tester.getTopLeft(_card('b')).dy,
       lessThan(tester.getTopLeft(_card('a')).dy),
-      reason: 'a like landing mid-swipe must not reorder the feed under the '
+      reason:
+          'a like landing mid-swipe must not reorder the feed under the '
           'finger',
     );
     expect(tester.takeException(), isNull);
@@ -767,8 +798,8 @@ void main() {
     await tester.pump();
 
     expect(
-      find.text('Likes: 4'),
-      findsOneWidget,
+      _countOf(tester, 'moment-row-like-a'),
+      (visible: '4', spoken: 'Likes: 4'),
       reason: 'the optimistic count is shown while the write is in flight',
     );
 
@@ -779,11 +810,9 @@ void main() {
       isNull,
       reason: 'the like control must be inert while its write is in flight',
     );
-    expect(
-      harness.feed.writes,
-      <String>['a:true'],
-      reason: 'an in-flight like must not be sent twice',
-    );
+    expect(harness.feed.writes, <String>[
+      'a:true',
+    ], reason: 'an in-flight like must not be sent twice');
 
     // The write then refuses: the optimistic number must go back, not stick.
     harness.feed.likeShouldFail = true;
@@ -791,12 +820,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Likes: 3'),
-      findsOneWidget,
+      _countOf(tester, 'moment-row-like-a'),
+      (visible: '3', spoken: 'Likes: 3'),
       reason: 'a refused like must revert the optimistic count',
     );
     expect(
-      find.text('Likes: 4'),
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('moment-row-like-a')),
+        matching: find.text('4'),
+      ),
       findsNothing,
       reason: 'a refused like must not leave an invented count on screen',
     );
@@ -830,7 +862,9 @@ void main() {
     await harness.mount(tester);
 
     // Somebody else's Moment: Report, never Delete.
-    await tester.tap(find.byKey(const ValueKey<String>('moment-row-menu-other')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('moment-row-menu-other')),
+    );
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey<String>('moment-row-report-other')),
@@ -857,7 +891,9 @@ void main() {
     await tester.pumpAndSettle();
 
     // Your own Moment: Delete, never Report.
-    await tester.tap(find.byKey(const ValueKey<String>('moment-row-menu-mine')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('moment-row-menu-mine')),
+    );
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey<String>('moment-row-delete-mine')),
@@ -878,7 +914,9 @@ void main() {
       findsOneWidget,
       reason: 'delete is destructive and must be confirmed',
     );
-    await tester.tap(find.byKey(const ValueKey<String>('moment-delete-cancel')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('moment-delete-cancel')),
+    );
     await tester.pumpAndSettle();
     expect(
       harness.moments.deleted,
@@ -886,7 +924,9 @@ void main() {
       reason: 'cancelling must not delete',
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('moment-row-menu-mine')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('moment-row-menu-mine')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(const ValueKey<String>('moment-row-delete-mine')),
@@ -898,7 +938,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(harness.moments.deleted, <String>['mine']);
-    expect(_card('mine'), findsNothing, reason: 'a deleted Moment leaves at once');
+    expect(
+      _card('mine'),
+      findsNothing,
+      reason: 'a deleted Moment leaves at once',
+    );
     expect(_card('other'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await harness.close(tester);
@@ -909,11 +953,7 @@ void main() {
     final harness = _Harness(
       items: <VoiceMoment>[_moment('a', caption: _longCaption)],
     );
-    await harness.mount(
-      tester,
-      size: const Size(320, 844),
-      scale: 2,
-    );
+    await harness.mount(tester, size: const Size(320, 844), scale: 2);
 
     expect(
       tester.takeException(),
@@ -1003,7 +1043,8 @@ void main() {
     expect(
       find.byKey(const ValueKey<String>('moments-load-more')),
       findsOneWidget,
-      reason: 'a page the privacy filter emptied still has work behind its '
+      reason:
+          'a page the privacy filter emptied still has work behind its '
           'cursor',
     );
     expect(find.text('No Voice Moments yet'), findsNothing);
@@ -1027,6 +1068,12 @@ void main() {
       final views = _Views();
       final auth = _Auth();
       final visible = ValueNotifier<bool>(true);
+      // The fixtures in this file are anchored to `_time`, not to the wall
+      // clock, so the screen has to read that same clock. Without it the
+      // production clock applies, every fixture is already past its
+      // `expiresAt`, the feed correctly renders its empty state — and the
+      // case then measures nothing at all.
+      final clock = _Clock(_time);
 
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = size;
@@ -1054,6 +1101,8 @@ void main() {
             body: MomentsScreen(
               isRootTab: true,
               auth: auth,
+              expiryClock: () => clock.now,
+              expiryTimerFactory: clock.create,
               discoveryService: discovery,
               feedService: feed,
               momentService: moments,
@@ -1090,7 +1139,8 @@ void main() {
       }
       // The primary transport control carries the product's 48 px promise.
       expect(
-        tester.getSize(find.byKey(const ValueKey<String>('moment-row-play-a')))
+        tester
+            .getSize(find.byKey(const ValueKey<String>('moment-row-play-a')))
             .shortestSide,
         greaterThanOrEqualTo(48),
         reason: '$label: the play control must keep a 48 px target',
@@ -1140,7 +1190,8 @@ void main() {
           expect(
             text.style?.decoration,
             anyOf(isNull, TextDecoration.none),
-            reason: 'selection must never be carried by an underline '
+            reason:
+                'selection must never be carried by an underline '
                 '(format=$format)',
           );
         }
@@ -1166,7 +1217,8 @@ void main() {
     expect(
       find.byType(PageView),
       findsNothing,
-      reason: 'the immersive Voice pager the owner asked for is NOT built; '
+      reason:
+          'the immersive Voice pager the owner asked for is NOT built; '
           'this assertion is the scope marker and must be inverted by the '
           'change that lands it',
     );

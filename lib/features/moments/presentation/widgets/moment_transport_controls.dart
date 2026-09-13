@@ -147,9 +147,7 @@ class MomentTransportControls extends StatelessWidget {
                   enabledThumbRadius: 8,
                   disabledThumbRadius: 6,
                 ),
-                overlayShape: const RoundSliderOverlayShape(
-                  overlayRadius: 24,
-                ),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 24),
                 showValueIndicator: ShowValueIndicator.never,
               ),
               child: Slider(
@@ -158,9 +156,8 @@ class MomentTransportControls extends StatelessWidget {
                 max: maxMs > 0 ? maxMs.toDouble() : 1,
                 padding: EdgeInsets.zero,
                 onChanged: seekable
-                    ? (value) => onSeek(
-                        _clamp(Duration(milliseconds: value.round())),
-                      )
+                    ? (value) =>
+                          onSeek(_clamp(Duration(milliseconds: value.round())))
                     : null,
               ),
             ),
@@ -315,9 +312,15 @@ class _PlayDisc extends StatelessWidget {
         ? copy.contextualText('yoMoments.pause', 'Pause', 'Pauza')
         : copy.contextualText('yoMoments.play', 'Play', 'Odtwórz');
     return Semantics(
+      container: true,
       button: true,
       toggled: isPlaying,
       label: label,
+      // The InkWell below is excluded from the tree, so its tap action would
+      // never reach the accessibility bridge. Forward it here: without this
+      // the node is a button that TalkBack, Switch Access and
+      // `accessibilityActivate` cannot operate.
+      onTap: busy ? null : onPressed,
       excludeSemantics: true,
       child: Material(
         color: palette.surfaceMuted,
@@ -339,7 +342,9 @@ class _PlayDisc extends StatelessWidget {
                       ),
                     )
                   : Icon(
-                      isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      isPlaying
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
                       size: 32,
                       color: palette.textPrimary,
                     ),

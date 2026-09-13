@@ -166,7 +166,7 @@ void main() {
       // Dark to Pearl; wait past that transition before inspecting tokens.
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.text('More room\nfor your voice.'), findsOneWidget);
+      expect(find.text('More space\nfor your voice.'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('Check plans'),
         300,
@@ -256,7 +256,7 @@ void main() {
       tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
       AppPalette.dark.background,
     );
-    expect(find.text('More room\nfor your voice.'), findsOneWidget);
+    expect(find.text('More space\nfor your voice.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

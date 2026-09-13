@@ -12,6 +12,8 @@ import '../../data/models/server_channel.dart';
 import '../../data/models/server_member_role.dart';
 import '../../data/models/server_type.dart';
 import '../../data/services/server_session_controller.dart';
+import '../../data/services/server_follow_service.dart';
+import '../../data/services/server_podcast_episode_repository.dart';
 import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
@@ -182,6 +184,9 @@ class ServerChannelScene extends StatelessWidget {
     this.chatService,
     this.channels = const [],
     this.onOpenChannel,
+    this.followRepository,
+    this.podcastEpisodeRepository,
+    this.shareServer,
     this.moderatorIds = const {},
     this.compact = false,
     super.key,
@@ -201,6 +206,9 @@ class ServerChannelScene extends StatelessWidget {
   /// module belongs to (the friends board's `Wydarzenia`).
   final List<ServerChannel> channels;
   final ValueChanged<ServerChannel>? onOpenChannel;
+  final ServerFollowRepository? followRepository;
+  final ServerPodcastEpisodeRepository? podcastEpisodeRepository;
+  final Future<void> Function(Uri link)? shareServer;
   final bool compact;
 
   /// Board 02's `Scena LIVE` is a scene of its own: a 16:9 broadcast, not the
@@ -234,6 +242,8 @@ class ServerChannelScene extends StatelessWidget {
         role: role,
         channels: channels,
         onOpenChannel: onOpenChannel,
+        followRepository: followRepository,
+        shareServer: shareServer,
         compact: compact,
       );
     }
@@ -243,6 +253,7 @@ class ServerChannelScene extends StatelessWidget {
         server: server,
         channel: channel,
         session: session,
+        episodeRepository: podcastEpisodeRepository,
         role: role,
         channels: channels,
         onOpenChannel: onOpenChannel,
@@ -285,8 +296,9 @@ class ServerChannelScene extends StatelessWidget {
 ///
 /// Before joining it shows the liveness the channel document carries and
 /// one explicit action; after joining, the people the provider reports.
-/// Camera and screen share have no adapter yet (contract D), so they are
-/// labelled unavailable rather than drawn as buttons that fail.
+/// Camera and screen sharing are presented here as capabilities that become
+/// available after joining; their working controls live in the connected
+/// conversation dock.
 class ServerSessionScene extends StatelessWidget {
   const ServerSessionScene({
     required this.server,
@@ -348,7 +360,8 @@ class ServerSessionScene extends StatelessWidget {
                   // Tiles exist only while the provider reports a roster, so
                   // before a join the scene is the identity orb and nothing
                   // else; there is no readable pre-join presence (G3).
-                  if (_video) _VideoSlot(copy: copy, colors: colors),
+                  if (_video)
+                    _VideoSlot(copy: copy, colors: colors, connected: inRoom),
                   if (inRoom) ...[
                     if (_video) const SizedBox(height: 20),
                     ServerVoiceStage(
@@ -400,7 +413,11 @@ class ServerSessionScene extends StatelessWidget {
                   ],
                   const SizedBox(height: 20),
                   if (server.isHeld)
-                    ServerSessionHeld(copy: copy, palette: palette, colors: colors)
+                    ServerSessionHeld(
+                      copy: copy,
+                      palette: palette,
+                      colors: colors,
+                    )
                   else if (here)
                     ServerSessionStatus(
                       session: session,
@@ -428,13 +445,13 @@ class ServerSessionScene extends StatelessWidget {
                         _SoonChip(
                           icon: Icons.videocam_outlined,
                           label:
-                              '${copy.serverCamera} · ${copy.serverComingSoon}',
+                              '${copy.serverCamera} · ${copy.serverAvailableAfterJoining}',
                         ),
                         if (channel.mediaMode == ServerMediaMode.meeting)
                           _SoonChip(
                             icon: Icons.screen_share_outlined,
                             label:
-                                '${copy.serverShareScreen} · ${copy.serverComingSoon}',
+                                '${copy.serverShareScreen} · ${copy.serverAvailableAfterJoining}',
                           ),
                       ],
                     ),
@@ -454,12 +471,9 @@ class ServerSessionScene extends StatelessWidget {
 
   /// The board's card under the voice scene.
   ///
-  /// Board 01 puts an event card ("Dziś, 20:00 · Wieczór gier · Dołączę")
-  /// beneath the Salon. Events have a channel kind and nothing else —
-  /// no document, no callable, no Rules (contract G9) — so the card names
-  /// the module, says `Wkrótce`, keeps `Dołączę` visibly disabled and offers
-  /// the real `Wydarzenia` channel as the way in. It is drawn only when that
-  /// channel actually exists in this server.
+  /// Board 01 puts the persisted Events module beneath the Salon. The card
+  /// opens the real Events V1 board and is drawn only when that channel exists
+  /// in this server.
   Widget? _boardModule(
     BuildContext context,
     AppLocalizations copy,
@@ -480,10 +494,11 @@ class ServerSessionScene extends StatelessWidget {
       title: copy.serverNextEvent,
       body: copy.serverEventsModuleBody,
       colors: colors,
-      primaryLabel: copy.serverEventRsvp,
+      primaryLabel: copy.serverOpenEvents,
       primaryIcon: Icons.event_available_outlined,
       channel: events,
       onOpenChannel: onOpenChannel,
+      available: true,
     );
   }
 }
@@ -517,36 +532,50 @@ class _Orb extends StatelessWidget {
 }
 
 class _VideoSlot extends StatelessWidget {
-  const _VideoSlot({required this.copy, required this.colors});
+  const _VideoSlot({
+    required this.copy,
+    required this.colors,
+    required this.connected,
+  });
   final AppLocalizations copy;
   final ServerIdentityVisuals colors;
+  final bool connected;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    return AspectRatio(
-      aspectRatio: 16 / 9,
-      child: Container(
-        decoration: BoxDecoration(
-          color: palette.surfaceSunken,
-          borderRadius: AppRadius.md,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.videocam_off_outlined,
-              color: colors.foreground,
-              size: 44,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '${copy.serverVideoPreview} · ${copy.serverComingSoon}',
-              style: AppTypography.labelMedium.copyWith(
-                color: palette.textSecondary,
+    return LayoutBuilder(
+      builder: (context, constraints) => ConstrainedBox(
+        // Keep the normal preview at 16:9, while allowing accessibility text
+        // to make the empty state taller instead of overflowing a fixed frame.
+        constraints: BoxConstraints(minHeight: constraints.maxWidth * 9 / 16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+          decoration: BoxDecoration(
+            color: palette.surfaceSunken,
+            borderRadius: AppRadius.md,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.videocam_off_outlined,
+                color: colors.foreground,
+                size: 44,
               ),
-            ),
-          ],
+              const SizedBox(height: 8),
+              Text(
+                connected
+                    ? copy.serverStageNoVideo
+                    : '${copy.serverVideoPreview} · ${copy.serverAvailableAfterJoining}',
+                textAlign: TextAlign.center,
+                style: AppTypography.labelMedium.copyWith(
+                  color: palette.textSecondary,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -646,15 +675,12 @@ class ServerJoinAction extends StatelessWidget {
     return FilledButton.icon(
       key: const ValueKey('server-join'),
       onPressed: onJoin,
-      style:
-          FilledButton.styleFrom(
-            backgroundColor: colors.cta,
-            foregroundColor: colors.onCta,
-            minimumSize: fullWidth
-                ? const Size.fromHeight(56)
-                : const Size(48, 48),
-            textStyle: fullWidth ? AppTypography.titleSmall : null,
-          ).copyWith(side: serverFocusRing(colors.onCta)),
+      style: FilledButton.styleFrom(
+        backgroundColor: colors.cta,
+        foregroundColor: colors.onCta,
+        minimumSize: fullWidth ? const Size.fromHeight(56) : const Size(48, 48),
+        textStyle: fullWidth ? AppTypography.titleSmall : null,
+      ).copyWith(side: serverFocusRing(colors.onCta)),
       icon: Icon(
         channel.kind == ServerChannelKind.stage && live
             ? (watch ? Icons.live_tv_rounded : Icons.headphones_rounded)
@@ -754,12 +780,11 @@ class ServerSessionStatus extends StatelessWidget {
                         session.join(server, channel);
                       }
                     },
-                    style:
-                        FilledButton.styleFrom(
-                          backgroundColor: colors.cta,
-                          foregroundColor: colors.onCta,
-                          minimumSize: const Size(48, 48),
-                        ).copyWith(side: serverFocusRing(colors.onCta)),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: colors.cta,
+                      foregroundColor: colors.onCta,
+                      minimumSize: const Size(48, 48),
+                    ).copyWith(side: serverFocusRing(colors.onCta)),
                     icon: const Icon(Icons.refresh_rounded, size: 18),
                     label: Text(copy.serverTryAgain),
                   ),
@@ -820,9 +845,9 @@ class _SoonChip extends StatelessWidget {
   );
 }
 
-/// Module channels (events, episodes, calendar, memories, lists, whiteboard,
-/// files) have kinds but no persistence yet (contract G9): an honest
-/// "Wkrótce" state without fictitious activity or media.
+/// Fallback for a module kind that has no mounted product surface. Persisted
+/// Events, Episodes, Family tools, Whiteboard and Company Files are routed by
+/// the workspace before this fallback is considered.
 class ServerChannelEmptyState extends StatelessWidget {
   const ServerChannelEmptyState({
     required this.server,

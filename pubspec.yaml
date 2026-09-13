@@ -61,6 +61,10 @@ dependencies:
   firebase_crashlytics: ^5.2.7
   crypto: ^3.0.7
   shared_preferences: ^2.5.3
+  # Friends events store an absolute instant and an IANA time-zone id. The
+  # client needs the same zone database as the callable to turn a picked wall
+  # clock into that instant without depending on the viewer's device zone.
+  timezone: ^0.11.1
 
 dev_dependencies:
   flutter_test:

@@ -1001,7 +1001,26 @@ void main() {
         expect(fixture.feed.writes, ['a:true']);
         write.completeError(StateError('secret backend failure'));
         await tester.pumpAndSettle();
-        expect(find.text('Likes: 3'), findsOneWidget);
+        // The rolled-back optimistic like is visible as the count the board
+        // draws; the exact phrase stays in the control's spoken name.
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('moment-row-like-a')),
+            matching: find.text('3'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widget<Text>(
+                find.descendant(
+                  of: find.byKey(const ValueKey('moment-row-like-a')),
+                  matching: find.byType(Text),
+                ),
+              )
+              .semanticsLabel,
+          'Likes: 3',
+        );
         expect(find.textContaining('secret backend'), findsNothing);
         expect(
           tester.getTopLeft(find.byKey(const ValueKey('moment-row-a'))).dy,

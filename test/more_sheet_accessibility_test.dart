@@ -39,23 +39,16 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
+      expect(find.text('Clubs'), findsNothing);
+      expect(find.text('Communities'), findsNothing);
       expect(
-        tester.getCenter(find.text('Clubs')).dy,
-        greaterThan(tester.getCenter(find.text('Profile')).dy),
-        reason: 'large text must use full-width rows in reading order',
+        find.byKey(const ValueKey('more-destination-clubs')),
+        findsNothing,
       );
       expect(
-        tester
-            .getCenter(find.byKey(const ValueKey('more-destination-clubs')))
-            .dx,
-        closeTo(
-          tester
-              .getCenter(find.byKey(const ValueKey('more-destination-profile')))
-              .dx,
-          1,
-        ),
+        find.byKey(const ValueKey('more-destination-discover')),
+        findsNothing,
       );
-      expect(find.text('Communities'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('more-sheet-scroll-view')),
         findsOneWidget,
@@ -64,9 +57,7 @@ void main() {
       final actions = <MoreDestination, String>{
         MoreDestination.friends: 'Friends, Your circle',
         MoreDestination.profile: 'Profile, You',
-        MoreDestination.discover: 'Discover, Find rooms',
         MoreDestination.findCreators: 'Find creators, People to follow',
-        MoreDestination.clubs: 'Clubs, Communities, Premium required',
         MoreDestination.notifications: 'Alerts, Updates',
         MoreDestination.achievements: 'Awards, Progress',
         MoreDestination.creatorStudio: 'Creator, Studio, Premium required',

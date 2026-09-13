@@ -539,6 +539,10 @@ class StubMomentService extends MomentService {
   RecordedAudio? abandonedAudio;
   int? publishedDuration;
   String? publishedCaption;
+
+  /// The parent this publish named, so a test can prove a Voice Moment
+  /// reply still reaches the Voice pipeline with its parent intact.
+  String? publishedReplyToMomentId;
   MomentAvailability? publishedAvailability;
   final List<String> publishedCaptions = [];
   final List<MomentAvailability> publishedAvailabilities = [];
@@ -564,6 +568,7 @@ class StubMomentService extends MomentService {
     publishedAudio = audio;
     publishedDuration = durationSeconds;
     publishedCaption = caption;
+    publishedReplyToMomentId = replyToMomentId;
     publishedAvailability = availability;
     publishedCaptions.add(caption);
     publishedAvailabilities.add(availability);

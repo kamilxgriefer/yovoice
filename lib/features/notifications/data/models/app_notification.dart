@@ -54,7 +54,7 @@ class AppNotification {
   final String actorName;
   final String? actorPhotoUrl;
 
-  /// What this notification is about — a clubId, roomId, conversationId,
+  /// What this notification is about — a serverId, legacy roomId, conversationId,
   /// etc, depending on [type]. Used for deep-linking when tapped.
   final String? targetId;
   final String? targetLabel;
@@ -84,15 +84,15 @@ class AppNotification {
         return '$actorName started following you';
       case NotificationType.clubInvite:
         return targetLabel == null
-            ? '$actorName invited you to a club'
+            ? '$actorName invited you to a server'
             : '$actorName invited you to $targetLabel';
       case NotificationType.clubInviteAccepted:
         return targetLabel == null
-            ? '$actorName accepted your club invitation'
+            ? '$actorName accepted your server invitation'
             : '$actorName joined $targetLabel';
       case NotificationType.roomInvite:
         return targetLabel == null
-            ? '$actorName invited you to a room'
+            ? '$actorName invited you to a voice channel'
             : '$actorName invited you to $targetLabel';
       case NotificationType.broadcastInvite:
         return targetLabel == null

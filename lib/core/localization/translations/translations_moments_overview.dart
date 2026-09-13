@@ -24,6 +24,7 @@ const momentsOverviewTranslationKeys = <String>[
   'Unfollow {name}',
   'Could not update follow. Try again.',
   'Open profile of {name}',
+  'Open Voice Moment: {caption}, {author}, {age}',
 ];
 
 const momentsOverviewTranslations = <String, Map<String, String>>{
@@ -45,6 +46,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Folgen konnte nicht geändert werden. Versuche es erneut.',
     'Open profile of {name}': 'Profil von {name} öffnen',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Voice Moment öffnen: {caption}, {author}, {age}',
   },
   'es': {
     'yoMoments.create': 'Crear',
@@ -64,6 +67,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'No se pudo cambiar el seguimiento. Inténtalo de nuevo.',
     'Open profile of {name}': 'Abrir el perfil de {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Abrir Voice Moment: {caption}, {author}, {age}',
   },
   'pt': {
     'yoMoments.create': 'Criar',
@@ -83,6 +88,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Não foi possível alterar o seguimento. Tenta novamente.',
     'Open profile of {name}': 'Abrir o perfil de {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Abrir Voice Moment: {caption}, {author}, {age}',
   },
   'pt_BR': {
     'yoMoments.create': 'Criar',
@@ -102,6 +109,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Não foi possível alterar o seguimento. Tente novamente.',
     'Open profile of {name}': 'Abrir o perfil de {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Abrir Voice Moment: {caption}, {author}, {age}',
   },
   'fr': {
     'yoMoments.create': 'Créer',
@@ -121,6 +130,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         "L'abonnement n'a pas pu être modifié. Réessayez.",
     'Open profile of {name}': 'Ouvrir le profil de {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Ouvrir le Voice Moment : {caption}, {author}, {age}',
   },
   'it': {
     'yoMoments.create': 'Crea',
@@ -140,6 +151,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Impossibile modificare il seguito. Riprova.',
     'Open profile of {name}': 'Apri il profilo di {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Apri il Voice Moment: {caption}, {author}, {age}',
   },
   'uk': {
     'yoMoments.create': 'Створити',
@@ -159,6 +172,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Не вдалося змінити підписку. Спробуйте ще раз.',
     'Open profile of {name}': 'Відкрити профіль {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Відкрити Voice Moment: {caption}, {author}, {age}',
   },
   'ru': {
     'yoMoments.create': 'Создать',
@@ -178,6 +193,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Не удалось изменить подписку. Попробуйте ещё раз.',
     'Open profile of {name}': 'Открыть профиль {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Открыть Voice Moment: {caption}, {author}, {age}',
   },
   'cs': {
     'yoMoments.create': 'Vytvořit',
@@ -197,6 +214,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Sledování se nepodařilo změnit. Zkuste to znovu.',
     'Open profile of {name}': 'Otevřít profil {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Otevřít Voice Moment: {caption}, {author}, {age}',
   },
   'sk': {
     'yoMoments.create': 'Vytvoriť',
@@ -216,6 +235,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Sledovanie sa nepodarilo zmeniť. Skúste to znova.',
     'Open profile of {name}': 'Otvoriť profil {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Otvoriť Voice Moment: {caption}, {author}, {age}',
   },
   'bg': {
     'yoMoments.create': 'Създай',
@@ -235,6 +256,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Следването не можа да бъде променено. Опитай отново.',
     'Open profile of {name}': 'Отвори профила на {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Отваряне на Voice Moment: {caption}, {author}, {age}',
   },
   'nl': {
     'yoMoments.create': 'Maken',
@@ -254,6 +277,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Volgen kon niet worden gewijzigd. Probeer het opnieuw.',
     'Open profile of {name}': 'Profiel van {name} openen',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Voice Moment openen: {caption}, {author}, {age}',
   },
   'ro': {
     'yoMoments.create': 'Creează',
@@ -273,6 +298,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Urmărirea nu a putut fi modificată. Încearcă din nou.',
     'Open profile of {name}': 'Deschide profilul lui {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Deschide Voice Moment: {caption}, {author}, {age}',
   },
   'tr': {
     'yoMoments.create': 'Oluştur',
@@ -292,6 +319,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Takip durumu değiştirilemedi. Tekrar dene.',
     'Open profile of {name}': '{name} profilini aç',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Voice Moment’ı aç: {caption}, {author}, {age}',
   },
   'el': {
     'yoMoments.create': 'Δημιουργία',
@@ -311,6 +340,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Δεν ήταν δυνατή η αλλαγή της παρακολούθησης. Δοκίμασε ξανά.',
     'Open profile of {name}': 'Άνοιγμα προφίλ {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Άνοιγμα Voice Moment: {caption}, {author}, {age}',
   },
   'hu': {
     'yoMoments.create': 'Létrehozás',
@@ -330,6 +361,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'A követést nem sikerült módosítani. Próbáld újra.',
     'Open profile of {name}': '{name} profiljának megnyitása',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Voice Moment megnyitása: {caption}, {author}, {age}',
   },
   'hr': {
     'yoMoments.create': 'Stvori',
@@ -349,6 +382,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Praćenje nije moguće promijeniti. Pokušaj ponovno.',
     'Open profile of {name}': 'Otvori profil {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Otvori Voice Moment: {caption}, {author}, {age}',
   },
   'sr': {
     'yoMoments.create': 'Направи',
@@ -368,6 +403,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Праћење није могуће променити. Покушај поново.',
     'Open profile of {name}': 'Отвори профил {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Otvori Voice Moment: {caption}, {author}, {age}',
   },
   'sv': {
     'yoMoments.create': 'Skapa',
@@ -387,6 +424,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Det gick inte att ändra följningen. Försök igen.',
     'Open profile of {name}': 'Öppna profilen för {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Öppna Voice Moment: {caption}, {author}, {age}',
   },
   'da': {
     'yoMoments.create': 'Opret',
@@ -406,6 +445,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Følgningen kunne ikke ændres. Prøv igen.',
     'Open profile of {name}': 'Åbn profilen for {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Åbn Voice Moment: {caption}, {author}, {age}',
   },
   'nb': {
     'yoMoments.create': 'Opprett',
@@ -425,6 +466,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Kunne ikke endre følgingen. Prøv igjen.',
     'Open profile of {name}': 'Åpne profilen til {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Åpne Voice Moment: {caption}, {author}, {age}',
   },
   'fi': {
     'yoMoments.create': 'Luo',
@@ -444,6 +487,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Seuraamista ei voitu muuttaa. Yritä uudelleen.',
     'Open profile of {name}': 'Avaa profiili: {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Avaa Voice Moment: {caption}, {author}, {age}',
   },
   'lt': {
     'yoMoments.create': 'Kurti',
@@ -463,6 +508,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Nepavyko pakeisti sekimo. Bandykite dar kartą.',
     'Open profile of {name}': 'Atidaryti {name} profilį',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Atidaryti „Voice Moment“: {caption}, {author}, {age}',
   },
   'lv': {
     'yoMoments.create': 'Izveidot',
@@ -482,6 +529,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Neizdevās mainīt sekošanu. Mēģini vēlreiz.',
     'Open profile of {name}': 'Atvērt {name} profilu',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Atvērt Voice Moment: {caption}, {author}, {age}',
   },
   'et': {
     'yoMoments.create': 'Loo',
@@ -501,6 +550,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Jälgimist ei õnnestunud muuta. Proovi uuesti.',
     'Open profile of {name}': 'Ava profiil: {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Ava Voice Moment: {caption}, {author}, {age}',
   },
   'id': {
     'yoMoments.create': 'Buat',
@@ -520,6 +571,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Tidak dapat mengubah status mengikuti. Coba lagi.',
     'Open profile of {name}': 'Buka profil {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Buka Voice Moment: {caption}, {author}, {age}',
   },
   'vi': {
     'yoMoments.create': 'Tạo',
@@ -539,6 +592,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Không thể thay đổi theo dõi. Hãy thử lại.',
     'Open profile of {name}': 'Mở hồ sơ của {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Mở Voice Moment: {caption}, {author}, {age}',
   },
   'zh_CN': {
     'yoMoments.create': '创建',
@@ -557,6 +612,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Unfollow {name}': '取消关注 {name}',
     'Could not update follow. Try again.': '无法更改关注状态，请重试。',
     'Open profile of {name}': '打开 {name} 的个人资料',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        '打开 Voice Moment：{caption}，{author}，{age}',
   },
   'zh_TW': {
     'yoMoments.create': '建立',
@@ -575,6 +632,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Unfollow {name}': '取消追蹤 {name}',
     'Could not update follow. Try again.': '無法變更追蹤狀態，請再試一次。',
     'Open profile of {name}': '開啟 {name} 的個人檔案',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        '開啟 Voice Moment：{caption}，{author}，{age}',
   },
   'ja': {
     'yoMoments.create': '作成',
@@ -591,9 +650,10 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Find people': 'ユーザーを探す',
     'Follow {name}': '{name} をフォロー',
     'Unfollow {name}': '{name} のフォローを解除',
-    'Could not update follow. Try again.':
-        'フォローを変更できませんでした。もう一度お試しください。',
+    'Could not update follow. Try again.': 'フォローを変更できませんでした。もう一度お試しください。',
     'Open profile of {name}': '{name} のプロフィールを開く',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Voice Moment を開く: {caption}、{author}、{age}',
   },
   'ko': {
     'yoMoments.create': '만들기',
@@ -610,9 +670,10 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Find people': '사람 찾기',
     'Follow {name}': '{name}님 팔로우',
     'Unfollow {name}': '{name}님 팔로우 취소',
-    'Could not update follow. Try again.':
-        '팔로우를 변경할 수 없습니다. 다시 시도하세요.',
+    'Could not update follow. Try again.': '팔로우를 변경할 수 없습니다. 다시 시도하세요.',
     'Open profile of {name}': '{name}님의 프로필 열기',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Voice Moment 열기: {caption}, {author}, {age}',
   },
   'ar': {
     'yoMoments.create': 'إنشاء',
@@ -632,6 +693,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'تعذّر تغيير المتابعة. حاول مرة أخرى.',
     'Open profile of {name}': 'فتح الملف الشخصي لـ {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'فتح Voice Moment: {caption}، {author}، {age}',
   },
   'hi': {
     'yoMoments.create': 'बनाएँ',
@@ -651,6 +714,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'फ़ॉलो बदला नहीं जा सका। फिर से कोशिश करें।',
     'Open profile of {name}': '{name} की प्रोफ़ाइल खोलें',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Voice Moment खोलें: {caption}, {author}, {age}',
   },
   'bn': {
     'yoMoments.create': 'তৈরি করুন',
@@ -670,6 +735,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'অনুসরণ পরিবর্তন করা যায়নি। আবার চেষ্টা করুন।',
     'Open profile of {name}': '{name}-এর প্রোফাইল খুলুন',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Voice Moment খুলুন: {caption}, {author}, {age}',
   },
   'ur': {
     'yoMoments.create': 'بنائیں',
@@ -689,6 +756,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'فالو تبدیل نہیں ہو سکا۔ دوبارہ کوشش کریں۔',
     'Open profile of {name}': '{name} کا پروفائل کھولیں',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Voice Moment کھولیں: {caption}، {author}، {age}',
   },
   'th': {
     'yoMoments.create': 'สร้าง',
@@ -708,6 +777,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'ไม่สามารถเปลี่ยนการติดตามได้ โปรดลองอีกครั้ง',
     'Open profile of {name}': 'เปิดโปรไฟล์ของ {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'เปิด Voice Moment: {caption}, {author}, {age}',
   },
   'ms': {
     'yoMoments.create': 'Cipta',
@@ -727,6 +798,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Tidak dapat mengubah ikutan. Cuba lagi.',
     'Open profile of {name}': 'Buka profil {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Buka Voice Moment: {caption}, {author}, {age}',
   },
   'fil': {
     'yoMoments.create': 'Gumawa',
@@ -746,6 +819,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Hindi mabago ang pag-follow. Subukan ulit.',
     'Open profile of {name}': 'Buksan ang profile ni {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Buksan ang Voice Moment: {caption}, {author}, {age}',
   },
   'he': {
     'yoMoments.create': 'יצירה',
@@ -765,6 +840,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'לא ניתן היה לשנות את המעקב. נסה שוב.',
     'Open profile of {name}': 'פתיחת הפרופיל של {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'פתיחת Voice Moment: {caption}, {author}, {age}',
   },
   'fa': {
     'yoMoments.create': 'ایجاد',
@@ -784,6 +861,8 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'تغییر دنبال کردن ممکن نشد. دوباره تلاش کنید.',
     'Open profile of {name}': 'باز کردن نمایه {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'باز کردن Voice Moment: {caption}، {author}، {age}',
   },
   'sw': {
     'yoMoments.create': 'Unda',
@@ -803,5 +882,7 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Could not update follow. Try again.':
         'Imeshindwa kubadilisha ufuataji. Jaribu tena.',
     'Open profile of {name}': 'Fungua wasifu wa {name}',
+    'Open Voice Moment: {caption}, {author}, {age}':
+        'Fungua Voice Moment: {caption}, {author}, {age}',
   },
 };

@@ -252,7 +252,7 @@ void main() {
         'Overview',
         'Moderation Center',
         'Users',
-        'Rooms & Spaces',
+        'Live conversations',
         'Sanctions',
         'Staff & Roles',
         'Audit Log',
@@ -270,7 +270,7 @@ void main() {
       await settle(tester);
 
       expect(find.text('Moderation Center'), findsWidgets);
-      expect(find.text('Rooms & Spaces'), findsWidgets);
+      expect(find.text('Live conversations'), findsWidgets);
       expect(find.text('Sanctions'), findsWidgets);
       expect(find.text('Users'), findsNothing);
       expect(find.text('Overview'), findsNothing);

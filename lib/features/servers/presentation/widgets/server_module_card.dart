@@ -11,12 +11,9 @@ import 'server_panel.dart';
 
 /// An honest module card.
 ///
-/// Events, the calendar, memories and the shared list have channel kinds but
-/// no persistence, callable or Rules yet (contract G9). The card names the
-/// module the board shows, says `Wkrótce`, keeps the board's own action as a
-/// visibly disabled control next to that label, and offers the real channel
-/// as the way in. It never shows a date, a photo, a count or a list item that
-/// no one wrote.
+/// Persisted modules use their primary action to open the real channel.
+/// Modules without a backend say `Wkrótce` and keep that action disabled. The
+/// card never invents a date, photo, count, or list item that nobody wrote.
 class ServerModuleCard extends StatelessWidget {
   const ServerModuleCard({
     required this.icon,
@@ -27,6 +24,8 @@ class ServerModuleCard extends StatelessWidget {
     this.primaryIcon,
     this.channel,
     this.onOpenChannel,
+    this.available = false,
+    this.onPrimary,
     this.large = false,
     super.key,
   });
@@ -36,14 +35,18 @@ class ServerModuleCard extends StatelessWidget {
   final String body;
   final ServerIdentityVisuals colors;
 
-  /// The board's own action (`Dołączę`, `Będę`, `Odtwórz`, `Dodaj produkt`),
-  /// drawn disabled beside the `Wkrótce` label — never a control that fails.
+  /// The board's own action. Its availability follows [available].
   final String? primaryLabel;
   final IconData? primaryIcon;
 
   /// The channel this module lives in, offered as a real destination.
   final ServerChannel? channel;
   final ValueChanged<ServerChannel>? onOpenChannel;
+
+  /// A real persisted module can make the board's primary action open its
+  /// channel. Unavailable modules retain the explicit Coming soon treatment.
+  final bool available;
+  final VoidCallback? onPrimary;
 
   /// The family template's larger type and targets.
   final bool large;
@@ -110,13 +113,19 @@ class ServerModuleCard extends StatelessWidget {
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Chip(
-                avatar: const Icon(Icons.schedule_rounded, size: 16),
-                label: Text(copy.serverComingSoon),
-              ),
+              if (!available)
+                Chip(
+                  avatar: const Icon(Icons.schedule_rounded, size: 16),
+                  label: Text(copy.serverComingSoon),
+                ),
               if (primaryLabel != null)
                 FilledButton.icon(
-                  onPressed: null,
+                  onPressed: available
+                      ? onPrimary ??
+                            (target != null && open != null
+                                ? () => open(target)
+                                : null)
+                      : null,
                   style: FilledButton.styleFrom(
                     minimumSize: Size(48, large ? 52 : 48),
                   ),

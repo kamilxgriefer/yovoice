@@ -183,10 +183,13 @@ class MiniPlayerReturnButton extends StatelessWidget {
     return _ControlTile(
       key: const ValueKey('mini-player-return'),
       icon: Icons.arrow_forward_rounded,
-      title: copy.text('Return to room', 'Wróć do pokoju'),
+      title: copy.text('Return to conversation', 'Wróć do rozmowy'),
       subtitle: horizontal
-          ? copy.text('Go to room', 'Przejdź do pokoju')
-          : copy.text('Go back to live room', 'Wróć do pokoju na żywo'),
+          ? copy.text('Go to conversation', 'Przejdź do rozmowy')
+          : copy.text(
+              'Go back to live conversation',
+              'Wróć do rozmowy na żywo',
+            ),
       accent: miniPlayerReturnAccent,
       horizontal: horizontal,
       onTap: onReturnToRoom,
@@ -216,9 +219,9 @@ class MiniPlayerLeaveButton extends StatelessWidget {
       icon: Icons.logout_rounded,
       title: authorityResolved
           ? (isHost
-                ? copy.text('End room', 'Zakończ pokój')
-                : copy.text('Leave room', 'Opuść pokój'))
-          : copy.text('Leave / end room', 'Opuść lub zakończ pokój'),
+                ? copy.text('End conversation', 'Zakończ rozmowę')
+                : copy.text('Leave conversation', 'Opuść rozmowę'))
+          : copy.text('Leave / end conversation', 'Opuść lub zakończ rozmowę'),
       subtitle: authorityResolved
           ? copy.text('End session', 'Zakończ sesję')
           : copy.text('Confirmation required', 'Wymagane potwierdzenie'),

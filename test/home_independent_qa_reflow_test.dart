@@ -1,27 +1,25 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
-import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
-import 'package:yovoice/features/clubs/data/models/club.dart';
-import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_greeting_header.dart';
+import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
-import 'package:yovoice/features/profile/data/models/follow_user.dart';
-import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
-import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/models/server_type.dart';
+import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 
 /// INDEPENDENT QA — the widths and text sizes the owner actually asked for,
@@ -32,16 +30,17 @@ import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 /// width × 100 % / 200 % text is the assertion. What it cannot prove is what
 /// the screen LOOKS like; that stays the Visual Quality Specialist's step.
 
-class _Clubs extends ClubService {
-  _Clubs({
+class _Servers extends ServerService {
+  _Servers({
     required super.firestore,
     required super.auth,
-    required super.storage,
-    this.clubs = const <Club>[],
+    required this.servers,
   });
-  final List<Club> clubs;
+
+  final List<Server> servers;
+
   @override
-  Stream<List<Club>> watchMyClubs() => Stream<List<Club>>.value(clubs);
+  Stream<List<Server>> watchMyServers() => Stream<List<Server>>.value(servers);
 }
 
 class _SilentFeed extends HomeFeedService {
@@ -49,13 +48,6 @@ class _SilentFeed extends HomeFeedService {
   @override
   Stream<List<VoiceMoment>> watchSocialMoments({int limit = 40}) =>
       Stream<List<VoiceMoment>>.value(const <VoiceMoment>[]);
-}
-
-class _SilentFollow extends FollowService {
-  _SilentFollow({required super.firestore, required super.auth});
-  @override
-  Stream<List<FollowUser>> watchFollowing(String userId) =>
-      const Stream<List<FollowUser>>.empty();
 }
 
 class _SilentViews extends MomentViewsService {
@@ -71,30 +63,20 @@ class _NoCapabilities extends StaffCapabilityService {
       StaffCapabilities.none;
 }
 
-/// The longest realistic Polish fixtures the brief names, plus a club with no
-/// avatar and a room with no cover: the data Home must survive, not the data
-/// it was designed against.
+/// The longest realistic Polish fixtures the brief names, plus a server with
+/// no image: the data Home must survive, not the data it was designed against.
 const _longName = 'Bartłomiej-Krzysztof Wojciechowski';
 const _longPlace = 'Podcasty nam bliskie i dalekie';
-const _longRoom = 'Salon po godzinach — rozmowy o wszystkim i o niczym';
-
-Club _club(String id, String name, {int members = 12}) => Club(
-  id: id,
-  name: name,
-  description: 'Opis miejsca',
-  ownerId: 'owner-$id',
-  ownerName: _longName,
-  avatarUrl: null,
-  bannerUrl: null,
-  privacy: ClubPrivacy.private,
+const _server = Server(
+  id: 's1',
+  name: _longPlace,
+  description: 'Rozmowy społeczności po godzinach.',
+  ownerId: 'reflow-me',
+  type: ServerType.community,
+  privacy: ServerPrivacy.public,
   defaultLanguage: 'Polish',
-  memberCount: members,
-  onlineCount: 0,
-  defaultChatChannelId: '',
-  defaultVoiceChannelId: '',
-  announcementChannelId: '',
-  createdAt: null,
-  updatedAt: null,
+  schemaVersion: 1,
+  activationState: 'active',
 );
 
 void main() {
@@ -118,42 +100,6 @@ void main() {
       'displayName': _longName,
       'email': 'bartlomiej@yovoice.app',
     });
-    // One live public room with a long name, no cover, a speaker and a
-    // listener — the populated hero.
-    await db.collection('rooms').doc('r1').set({
-      'hostId': 'host-r1',
-      'hostName': _longName,
-      'name': _longRoom,
-      'description': '',
-      'category': 'community',
-      'visibility': 'public',
-      'language': 'Polish',
-      'participantCount': 22,
-      'memberCount': 0,
-      'isLive': true,
-      'roomType': 'community',
-      'status': 'active',
-      'experience': 'community',
-      'createdAt': Timestamp.now(),
-    });
-    for (final (id, role, name) in [
-      ('sp1', 'host', 'Małgorzata Wiśniewska-Kowalczyk'),
-      ('sp2', 'speaker', 'Ola'),
-      ('li1', 'listener', 'Bartek'),
-    ]) {
-      await db
-          .collection('rooms')
-          .doc('r1')
-          .collection('participants')
-          .doc(id)
-          .set({
-            'userId': id,
-            'displayName': name,
-            'role': role,
-            'isMuted': false,
-            'isSpeaker': role != 'listener',
-          });
-    }
     // Friends with no avatar at all.
     for (final (id, name) in [
       ('f1', 'Aleksandra Nowakowska-Zielińska'),
@@ -172,7 +118,10 @@ void main() {
     }
     await db.collection('conversations').doc('c1').set({
       'participantIds': [uid, 'f1'],
-      'participantNames': {uid: _longName, 'f1': 'Aleksandra Nowakowska-Zielińska'},
+      'participantNames': {
+        uid: _longName,
+        'f1': 'Aleksandra Nowakowska-Zielińska',
+      },
       'participantEmails': <String, String>{},
       'participantPhotoUrls': <String, String>{},
       'unreadCounts': {uid: 3, 'f1': 0},
@@ -187,40 +136,26 @@ void main() {
   });
   tearDown(ProfileService.resetCurrentProfileCache);
 
-  ClubService clubs() => _Clubs(
-    firestore: db,
-    auth: auth,
-    storage: MockFirebaseStorage(),
-    clubs: [
-      _club('c1', _longPlace),
-      _club('c2', 'Klub Ł', members: 1),
-      _club('c3', 'Rodzinny salon'),
-    ],
-  );
-
-  Widget app(
-    Widget child, {
-    required Size size,
-    required double textScale,
-  }) => MaterialApp(
-    theme: AppTheme.darkTheme,
-    locale: const Locale('pl'),
-    supportedLocales: AppLocalizations.supportedLocales,
-    localizationsDelegates: const [
-      AppLocalizationsDelegate(),
-      GlobalMaterialLocalizations.delegate,
-      GlobalWidgetsLocalizations.delegate,
-      GlobalCupertinoLocalizations.delegate,
-    ],
-    home: MediaQuery(
-      data: MediaQueryData(
-        size: size,
-        textScaler: TextScaler.linear(textScale),
-        disableAnimations: true,
-      ),
-      child: Scaffold(body: child),
-    ),
-  );
+  Widget app(Widget child, {required Size size, required double textScale}) =>
+      MaterialApp(
+        theme: AppTheme.darkTheme,
+        locale: const Locale('pl'),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: const [
+          AppLocalizationsDelegate(),
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        home: MediaQuery(
+          data: MediaQueryData(
+            size: size,
+            textScaler: TextScaler.linear(textScale),
+            disableAnimations: true,
+          ),
+          child: Scaffold(body: child),
+        ),
+      );
 
   MobileHome mobileHome({
     VoidCallback? onOpenFriends,
@@ -230,9 +165,9 @@ void main() {
     VoidCallback? onOpenNotifications,
     VoidCallback? onOpenProfile,
     VoidCallback? onSeeAllChats,
-    ValueChanged<Club>? onOpenClub,
-    ValueChanged<Club>? onEnterClubLounge,
-    ClubService? clubService,
+    ValueChanged<Server>? onOpenServer,
+    ValueChanged<Conversation>? onOpenConversation,
+    List<Server> servers = const [_server],
   }) => MobileHome(
     currentUserId: uid,
     unreadNotificationCount: 7,
@@ -245,15 +180,12 @@ void main() {
     onCreateRoom: () {},
     onOpenMoment: (_) {},
     onOpenComments: (_) {},
-    onOpenConversation: (_) {},
+    onOpenConversation: onOpenConversation ?? (_) {},
     onSeeAllChats: onSeeAllChats ?? () {},
     onOpenServers: onOpenServers,
-    onOpenClub: onOpenClub,
-    onEnterClubLounge: onEnterClubLounge,
-    roomService: RoomService(firestore: db, auth: auth),
-    clubService: clubService ?? clubs(),
+    onOpenServer: onOpenServer,
+    serverRepository: _Servers(firestore: db, auth: auth, servers: servers),
     friendService: FriendService(firestore: db, auth: auth),
-    followService: _SilentFollow(firestore: db, auth: auth),
     profileService: ProfileService(firestore: db, auth: auth),
     feedService: _SilentFeed(firestore: db, auth: auth),
     messageService: MessageService(firestore: db, auth: auth),
@@ -263,29 +195,33 @@ void main() {
 
   DesktopHome desktopHome({
     VoidCallback? onOpenServers,
+    VoidCallback? onOpenFriends,
+    VoidCallback? onCreateMoment,
+    VoidCallback? onSeeAllChats,
     VoidCallback? onOpenNotifications,
     VoidCallback? onOpenProfile,
+    ValueChanged<Server>? onOpenServer,
+    ValueChanged<Conversation>? onOpenConversation,
+    List<Server> servers = const [_server],
   }) => DesktopHome(
     currentUserId: uid,
     unreadNotificationCount: 7,
     onOpenRoom: (_) {},
     onSeeAllRooms: () {},
-    onViewAllFriends: () {},
+    onViewAllFriends: onOpenFriends ?? () {},
     onStartRoom: () {},
     onOpenMoment: (_) {},
-    onCreateMoment: () {},
+    onCreateMoment: onCreateMoment ?? () {},
     onSeeAllMoments: () {},
-    onOpenConversation: (_) {},
-    onOpenClub: (_) {},
-    onSeeAllChats: () {},
+    onOpenConversation: onOpenConversation ?? (_) {},
+    onSeeAllChats: onSeeAllChats ?? () {},
     onOpenClubs: () {},
     onOpenServers: onOpenServers,
+    onOpenServer: onOpenServer,
     onOpenNotifications: onOpenNotifications,
     onOpenProfile: onOpenProfile,
-    roomService: RoomService(firestore: db, auth: auth),
-    clubService: clubs(),
+    serverRepository: _Servers(firestore: db, auth: auth, servers: servers),
     friendService: FriendService(firestore: db, auth: auth),
-    followService: _SilentFollow(firestore: db, auth: auth),
     profileService: ProfileService(firestore: db, auth: auth),
     feedService: _SilentFeed(firestore: db, auth: auth),
     messageService: MessageService(firestore: db, auth: auth),
@@ -314,14 +250,12 @@ void main() {
         expect(box.size.width, lessThanOrEqualTo(width + 0.5));
       }
     }
-    final page = tester.renderObject<RenderBox>(
-      find.byType(Scaffold).first,
-    );
+    final page = tester.renderObject<RenderBox>(find.byType(Scaffold).first);
     expect(page.size.width, lessThanOrEqualTo(width + 0.5));
   }
 
-  group('the phone shell: 360 / 390 / 430 / 768 × 1.0 and 2.0 text', () {
-    for (final width in [360.0, 390.0, 430.0, 768.0]) {
+  group('the phone shell: 320 / 360 / 390 / 430 / 768 × 1.0 and 2.0 text', () {
+    for (final width in [320.0, 360.0, 390.0, 430.0, 768.0]) {
       for (final scale in [1.0, 2.0]) {
         testWidgets('populated Home at ${width.toInt()} × $scale text', (
           tester,
@@ -338,18 +272,32 @@ void main() {
 
           expect(tester.takeException(), isNull);
           expectNoHorizontalOverrun(tester, width);
-          // The page still says what it is for at 200 %.
-          expect(find.byKey(const ValueKey('home-hero-join')), findsOneWidget);
+          final friend = find.byKey(const ValueKey('home-person-f1'));
+          final continueServer = find.byKey(
+            const ValueKey('home-server-continue-s1'),
+          );
+          expect(continueServer, findsOneWidget);
           expect(
             find.byKey(const ValueKey('home-record-moment')),
             findsOneWidget,
           );
-          expect(find.byKey(const ValueKey('home-places-rail')), findsOneWidget);
           expect(
-            find.byKey(const ValueKey('home-person-f1')),
+            find.byKey(const ValueKey('home-servers-overview')),
+            findsOneWidget,
+          );
+          expect(
+            friend,
             findsOneWidget,
             reason: 'a real friend with a long name and no avatar',
           );
+          expect(
+            tester.getTopLeft(friend).dy,
+            lessThan(tester.getTopLeft(continueServer).dy),
+            reason: 'friends stay above the server-first activity card',
+          );
+          expect(find.text('Do zobaczenia w sobotę!'), findsOneWidget);
+          expect(find.text('Obserwowani'), findsNothing);
+          expect(find.text('Followers'), findsNothing);
         });
       }
     }
@@ -359,30 +307,20 @@ void main() {
       tester.view.physicalSize = size;
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      await db.collection('rooms').doc('r1').delete();
-
       await tester.pumpWidget(
-        app(
-          mobileHome(
-            clubService: _Clubs(
-              firestore: db,
-              auth: auth,
-              storage: MockFirebaseStorage(),
-            ),
-          ),
-          size: size,
-          textScale: 2,
-        ),
+        app(mobileHome(servers: const []), size: size, textScale: 2),
       );
       await settle(tester);
 
       expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('home-servers-empty')), findsOneWidget);
+      expect(find.byKey(const ValueKey('home-servers-overview')), findsNothing);
       expect(
-        find.byKey(const ValueKey('home-conversation-invitation')),
+        find.byKey(const ValueKey('home-quick-create-server')),
         findsOneWidget,
       );
-      expect(find.byKey(const ValueKey('home-places-empty')), findsOneWidget);
-      expect(find.byKey(const ValueKey('home-quick-create-room')), findsOneWidget);
+      expect(find.text('Kluby'), findsNothing);
+      expect(find.text('Clubs'), findsNothing);
       expectNoHorizontalOverrun(tester, 360);
     });
   });
@@ -407,11 +345,27 @@ void main() {
 
           expect(tester.takeException(), isNull);
           expectNoHorizontalOverrun(tester, slot);
-          expect(find.byKey(const ValueKey('home-hero-join')), findsOneWidget);
+          final friend = find.byKey(const ValueKey('home-person-f1'));
+          final continueServer = find.byKey(
+            const ValueKey('home-server-continue-s1'),
+          );
+          expect(continueServer, findsOneWidget);
           expect(
             find.byKey(const ValueKey('home-record-moment')),
             findsOneWidget,
           );
+          expect(
+            find.byKey(const ValueKey('home-servers-overview')),
+            findsOneWidget,
+          );
+          expect(friend, findsOneWidget);
+          expect(
+            tester.getTopLeft(friend).dy,
+            lessThan(tester.getTopLeft(continueServer).dy),
+          );
+          expect(find.text('Do zobaczenia w sobotę!'), findsOneWidget);
+          expect(find.text('Obserwowani'), findsNothing);
+          expect(find.text('Followers'), findsNothing);
         });
       }
     }
@@ -432,13 +386,13 @@ void main() {
           mobileHome(
             onOpenFriends: () => ring('friends'),
             onOpenServers: () => ring('servers'),
+            onOpenServer: (_) => ring('workspace'),
             onOpenDiscover: () => ring('discover'),
             onCreateMoment: () => ring('record'),
             onOpenNotifications: () => ring('notifications'),
             onOpenProfile: () => ring('profile'),
             onSeeAllChats: () => ring('chats'),
-            onOpenClub: (_) => ring('club'),
-            onEnterClubLounge: (_) => ring('lounge'),
+            onOpenConversation: (_) => ring('conversation'),
           ),
           size: size,
           textScale: 1,
@@ -456,10 +410,14 @@ void main() {
       }
 
       await tapKey('home-people-see-all');
-      await tapKey('home-servers-see-all');
-      await tapKey('home-places-create');
+      await tapKey('home-quick-create-server');
       await tapKey('home-record-moment');
-      await tapKey('home-place-c1');
+      await tapKey('home-server-row-s1');
+      final recentChat = find.text('Do zobaczenia w sobotę!');
+      expect(recentChat, findsOneWidget);
+      await tester.ensureVisible(recentChat);
+      await tester.tap(recentChat, warnIfMissed: false);
+      await tester.pump();
 
       // The header controls carry no key; they are found by their spoken
       // label, which is what a screen-reader user has.
@@ -473,11 +431,13 @@ void main() {
       await tester.pump();
 
       expect(doors['friends'], 1, reason: '"Zobacz wszystkich" → Znajomi');
-      expect(doors['servers'], 2, reason: '"Zobacz wszystkie" and "Stwórz serwer"');
+      expect(doors['servers'], 1, reason: '"Stwórz serwer" → Serwery');
+      expect(doors['workspace'], 1, reason: 'server row → exact workspace');
       expect(doors['record'], 1);
-      expect(doors['club'], 1, reason: 'a place tile opens the place');
+      expect(doors['conversation'], 1, reason: 'recent chat → conversation');
       expect(doors['notifications'], 1);
       expect(doors['profile'], 1);
+      expect(find.text('Kluby'), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
@@ -494,6 +454,10 @@ void main() {
         app(
           desktopHome(
             onOpenServers: () => ring('servers'),
+            onOpenServer: (_) => ring('workspace'),
+            onOpenFriends: () => ring('friends'),
+            onCreateMoment: () => ring('record'),
+            onOpenConversation: (_) => ring('conversation'),
             onOpenNotifications: () => ring('notifications'),
             onOpenProfile: () => ring('profile'),
           ),
@@ -511,15 +475,31 @@ void main() {
       );
       await tester.pump();
 
-      final create = find.byKey(const ValueKey('home-places-create'));
-      expect(create, findsOneWidget);
-      await tester.ensureVisible(create);
-      await tester.tap(create, warnIfMissed: false);
+      Future<void> tapKey(String key) async {
+        final finder = find.byKey(ValueKey(key));
+        expect(finder, findsOneWidget, reason: 'missing door: $key');
+        await tester.ensureVisible(finder);
+        await tester.tap(finder, warnIfMissed: false);
+        await tester.pump();
+      }
+
+      await tapKey('home-people-see-all');
+      await tapKey('home-quick-create-server');
+      await tapKey('home-record-moment');
+      await tapKey('home-server-row-s1');
+      final recentChat = find.text('Do zobaczenia w sobotę!');
+      await tester.ensureVisible(recentChat);
+      await tester.tap(recentChat, warnIfMissed: false);
       await tester.pump();
 
       expect(doors['notifications'], 1);
       expect(doors['profile'], 1);
       expect(doors['servers'], 1);
+      expect(doors['workspace'], 1);
+      expect(doors['friends'], 1);
+      expect(doors['record'], 1);
+      expect(doors['conversation'], 1);
+      expect(find.text('Kluby'), findsNothing);
       expect(tester.takeException(), isNull);
     });
   });

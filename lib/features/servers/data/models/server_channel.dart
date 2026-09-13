@@ -80,6 +80,10 @@ class ServerChannel {
     this.schemaVersion,
     this.status = 'active',
     this.liveness = ServerChannelLiveness.idle,
+    this.revision = 0,
+    this.aclRevision = 0,
+    this.accessRoleIds = const [],
+    this.accessUserIds = const [],
   });
 
   final String id;
@@ -97,6 +101,10 @@ class ServerChannel {
   final int? schemaVersion;
   final String status;
   final ServerChannelLiveness liveness;
+  final int revision;
+  final int aclRevision;
+  final List<String> accessRoleIds;
+  final List<String> accessUserIds;
 
   bool get isLegacy => schemaVersion == null;
 
@@ -164,6 +172,15 @@ class ServerChannel {
     if (!legacy && kind.isMedia && roomId == null) {
       throw const FormatException('Media channel has no room binding.');
     }
+    final policy = data['accessPolicy'];
+    final roleIds = policy is Map
+        ? _serverStringList(policy['roleIds'])
+        : access == ServerChannelAccess.restricted
+        ? const <String>['owner']
+        : const <String>[];
+    final userIds = policy is Map
+        ? _serverStringList(policy['userIds'])
+        : const <String>[];
     return ServerChannel(
       id: id,
       serverId: serverId,
@@ -182,6 +199,20 @@ class ServerChannel {
       liveness: kind.isMedia
           ? ServerChannelLiveness.fromMap(data['liveness'])
           : ServerChannelLiveness.idle,
+      revision: serverInt(data['revision']),
+      aclRevision: serverInt(data['aclRevision']),
+      accessRoleIds: roleIds,
+      accessUserIds: userIds,
     );
   }
+}
+
+List<String> _serverStringList(Object? value) {
+  if (value is! List) return const [];
+  final result = <String>[];
+  for (final item in value) {
+    final text = serverString(item);
+    if (text != null && !result.contains(text)) result.add(text);
+  }
+  return List.unmodifiable(result);
 }

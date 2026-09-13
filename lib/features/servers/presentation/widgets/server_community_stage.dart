@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
+import 'package:share_plus/share_plus.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
@@ -13,6 +14,8 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
 import '../../data/models/server_member_role.dart';
+import '../../data/server_links.dart';
+import '../../data/services/server_follow_service.dart';
 import '../../data/services/server_media_connector.dart';
 import '../../data/services/server_session_controller.dart';
 import '../server_action_failure.dart';
@@ -43,9 +46,10 @@ import 'server_scrolling_details.dart';
 ///   drawn;
 /// * **no episode, recording or transport row** — a live generation has no
 ///   seek, and recording has no contract at all;
-/// * `Obserwuj` and `Udostępnij` are drawn **disabled beside `Wkrótce`**:
-///   there is no server-follow document and no server deep link the app can
-///   open on the other side, so neither is wired to something that fails.
+/// * following is backed by the community-follow projection and sharing emits
+///   the canonical Server link, so both actions have a real destination;
+/// * a host/invitee with a camera source can publish video through the same
+///   joined provider session.
 ///
 /// `Poproś o głos` is real: it calls the registered `setServerSessionHandV1`,
 /// and only from inside a joined session, because the callable refuses
@@ -63,6 +67,8 @@ class ServerCommunityStage extends StatefulWidget {
     this.role,
     this.channels = const [],
     this.onOpenChannel,
+    this.followRepository,
+    this.shareServer,
     this.chat,
     this.onOpenChannels,
     this.compact = false,
@@ -78,6 +84,8 @@ class ServerCommunityStage extends StatefulWidget {
   /// `Wydarzenia` channel instead of a module that does not exist.
   final List<ServerChannel> channels;
   final ValueChanged<ServerChannel>? onOpenChannel;
+  final ServerFollowRepository? followRepository;
+  final Future<void> Function(Uri link)? shareServer;
 
   /// Phone only: the live chat that sits under the local tabs, and the way
   /// into the channel list. Both null at tablet and desktop width, where the
@@ -107,6 +115,10 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
   String? _raisedSessionId;
   bool _busy = false;
   Object? _error;
+  bool _followBusy = false;
+  bool _shareBusy = false;
+  bool? _followOverride;
+  Object? _actionError;
 
   /// The phone's local tab when the surface is too small to stack the
   /// conversation under the broadcast: 0 = what this stage is, 1 = the
@@ -181,6 +193,52 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
     }
   }
 
+  Future<void> _toggleFollow(bool following) async {
+    final repository = widget.followRepository;
+    if (repository == null || _followBusy) return;
+    setState(() {
+      _followBusy = true;
+      _actionError = null;
+    });
+    try {
+      final result = await repository.setCommunityFollow(
+        serverId: widget.server.id,
+        following: !following,
+      );
+      if (mounted) setState(() => _followOverride = result);
+    } catch (error) {
+      if (mounted) setState(() => _actionError = error);
+    } finally {
+      if (mounted) setState(() => _followBusy = false);
+    }
+  }
+
+  Future<void> _share() async {
+    if (_shareBusy) return;
+    setState(() {
+      _shareBusy = true;
+      _actionError = null;
+    });
+    try {
+      final link = buildServerLink(
+        widget.server.id,
+        channelId: widget.channel.id,
+      );
+      final override = widget.shareServer;
+      if (override != null) {
+        await override(link);
+      } else {
+        await SharePlus.instance.share(
+          ShareParams(text: '${widget.server.name}\n$link'),
+        );
+      }
+    } catch (error) {
+      if (mounted) setState(() => _actionError = error);
+    } finally {
+      if (mounted) setState(() => _shareBusy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: widget.session,
@@ -241,10 +299,11 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
               title: copy.serverNextEvent,
               body: copy.serverEventsModuleBody,
               colors: colors,
-              primaryLabel: copy.serverEventRsvp,
+              primaryLabel: copy.serverOpenEvents,
               primaryIcon: Icons.event_available_outlined,
               channel: events,
               onOpenChannel: widget.onOpenChannel,
+              available: true,
             ),
           ],
         ],
@@ -318,10 +377,11 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
                     title: copy.serverNextEvent,
                     body: copy.serverEventsModuleBody,
                     colors: colors,
-                    primaryLabel: copy.serverEventRsvp,
+                    primaryLabel: copy.serverOpenEvents,
                     primaryIcon: Icons.event_available_outlined,
                     channel: events,
                     onOpenChannel: widget.onOpenChannel,
+                    available: true,
                   ),
                 ],
                 const SizedBox(height: 8),
@@ -607,7 +667,9 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
             children: [
               if (glyph) ...[
                 Icon(
-                  _inRoom ? Icons.videocam_off_outlined : Icons.podcasts_rounded,
+                  _inRoom
+                      ? Icons.videocam_off_outlined
+                      : Icons.podcasts_rounded,
                   size: widget.compact ? 36 : 48,
                   color: colors.foreground,
                 ),
@@ -648,8 +710,9 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
           key: const ValueKey('server-community-title'),
           maxLines: 3,
           overflow: TextOverflow.ellipsis,
-          style: (large ? AppTypography.headlineSmall : AppTypography.titleLarge)
-              .copyWith(color: palette.textPrimary),
+          style:
+              (large ? AppTypography.headlineSmall : AppTypography.titleLarge)
+                  .copyWith(color: palette.textPrimary),
         ),
         const SizedBox(height: 4),
         Text(
@@ -713,7 +776,7 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
     ),
   );
 
-  /// Wide: the primary action and the two honest-unavailable ones in one row.
+  /// Wide: the primary action and the available community actions in one row.
   Widget _actions(
     AppLocalizations copy,
     AppPalette palette,
@@ -739,47 +802,123 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
           ? const EdgeInsets.symmetric(horizontal: 12)
           : null,
     );
-    return Wrap(
+    final cameraError = widget.session.cameraError;
+    final actionError = _actionError ?? cameraError;
+    return Column(
       key: const ValueKey('server-community-secondary-actions'),
-      spacing: 8,
-      runSpacing: 8,
-      crossAxisAlignment: WrapCrossAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Chip(
-          avatar: const Icon(Icons.schedule_rounded, size: 16),
-          label: Text(copy.serverComingSoon),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            if (_inRoom && widget.session.canPublishCamera)
+              OutlinedButton.icon(
+                key: const ValueKey('server-community-camera'),
+                onPressed: widget.session.cameraBusy
+                    ? null
+                    : widget.session.toggleCamera,
+                style: style,
+                icon: Icon(
+                  widget.session.isCameraEnabled
+                      ? Icons.videocam_rounded
+                      : Icons.videocam_off_outlined,
+                  size: 18,
+                ),
+                label: Text(
+                  widget.session.isCameraEnabled
+                      ? copy.serverCameraOn
+                      : copy.serverCameraOff,
+                ),
+              ),
+            // The phone draws this one beside the title instead — except at
+            // 200 % text, where it does not fit there and belongs back here.
+            if (!widget.compact ||
+                MediaQuery.textScalerOf(context).scale(16) > 22)
+              _follow(copy, compactPadding: widget.compact),
+            OutlinedButton.icon(
+              key: const ValueKey('server-community-share'),
+              onPressed: _shareBusy ? null : _share,
+              style: style,
+              icon: _shareBusy
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.ios_share_rounded, size: 18),
+              label: Text(copy.serverShare),
+            ),
+          ],
         ),
-        // The phone draws this one beside the title instead — except at
-        // 200 % text, where it does not fit there and belongs back here.
-        if (!widget.compact ||
-            MediaQuery.textScalerOf(context).scale(16) > 22)
-          _follow(copy, compactPadding: widget.compact),
-        OutlinedButton.icon(
-          key: const ValueKey('server-community-share'),
-          onPressed: null,
-          style: style,
-          icon: const Icon(Icons.ios_share_rounded, size: 18),
-          label: Text(copy.serverShare),
-        ),
+        if (actionError != null) ...[
+          const SizedBox(height: 8),
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              serverActionFailureCopy(
+                actionError,
+                copy,
+                fallback: cameraError != null
+                    ? copy.serverCameraControlFailed
+                    : copy.text(
+                        'That action could not be completed.',
+                        'Nie udało się wykonać tej czynności.',
+                      ),
+              ),
+              key: const ValueKey('server-community-action-error'),
+              style: AppTypography.bodySmall.copyWith(
+                color: context.appPalette.dangerForeground,
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
 
-  /// `Obserwuj` — offered, visibly unavailable, and never wired to anything
-  /// that would fail (there is no follow backend for a server).
-  Widget _follow(AppLocalizations copy, {required bool compactPadding}) =>
-      OutlinedButton.icon(
+  Widget _follow(AppLocalizations copy, {required bool compactPadding}) {
+    final repository = widget.followRepository;
+    if (repository == null) {
+      return OutlinedButton.icon(
         key: const ValueKey('server-community-follow'),
         onPressed: null,
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(48, 48),
-          padding: compactPadding
-              ? const EdgeInsets.symmetric(horizontal: 12)
-              : null,
-        ),
         icon: const Icon(Icons.notifications_none_rounded, size: 18),
         label: Text(copy.serverFollow),
       );
+    }
+    return StreamBuilder<bool>(
+      stream: repository.watchCommunityFollow(widget.server.id),
+      initialData: _followOverride,
+      builder: (context, snapshot) {
+        final following = _followOverride ?? snapshot.data ?? false;
+        return OutlinedButton.icon(
+          key: const ValueKey('server-community-follow'),
+          onPressed: _followBusy || snapshot.hasError
+              ? null
+              : () => _toggleFollow(following),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(48, 48),
+            padding: compactPadding
+                ? const EdgeInsets.symmetric(horizontal: 12)
+                : null,
+          ),
+          icon: _followBusy
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(
+                  following
+                      ? Icons.notifications_active_rounded
+                      : Icons.notifications_none_rounded,
+                  size: 18,
+                ),
+          label: Text(following ? copy.serverFollowing : copy.serverFollow),
+        );
+      },
+    );
+  }
 
   /// The one control that changes what this person is doing: join the stage,
   /// see what the join is doing, or — once the provider really has them in
@@ -950,12 +1089,11 @@ class _HandButton extends StatelessWidget {
         : FilledButton.icon(
             key: const ValueKey('server-community-hand'),
             onPressed: onPressed,
-            style:
-                FilledButton.styleFrom(
-                  backgroundColor: colors.cta,
-                  foregroundColor: colors.onCta,
-                  minimumSize: size,
-                ).copyWith(side: serverFocusRing(colors.onCta)),
+            style: FilledButton.styleFrom(
+              backgroundColor: colors.cta,
+              foregroundColor: colors.onCta,
+              minimumSize: size,
+            ).copyWith(side: serverFocusRing(colors.onCta)),
             icon: icon,
             label: Text(label),
           );
@@ -996,11 +1134,7 @@ class _OnAir extends StatelessWidget {
           runSpacing: 8,
           children: [
             for (final person in participants)
-              _PersonChip(
-                person: person,
-                colors: colors,
-                speaking: speaking,
-              ),
+              _PersonChip(person: person, colors: colors, speaking: speaking),
           ],
         ),
       ],

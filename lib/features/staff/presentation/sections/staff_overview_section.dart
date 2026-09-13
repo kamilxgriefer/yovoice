@@ -125,7 +125,7 @@ class _StaffOverviewSectionState extends State<StaffOverviewSection> {
                 onTap: () => widget.onOpenUsers('all'),
               ),
               _StatCard(
-                label: copy.text('Active rooms', 'Aktywne pokoje'),
+                label: copy.text('Live conversations', 'Rozmowy na żywo'),
                 value: counts.activeRooms,
                 icon: Icons.podcasts_rounded,
                 color: StaffCenterStyle.good,
@@ -202,7 +202,7 @@ class _StaffOverviewSectionState extends State<StaffOverviewSection> {
                         ],
                 ),
                 _listPanel(
-                  copy.text('Active rooms', 'Aktywne pokoje'),
+                  copy.text('Live conversations', 'Rozmowy na żywo'),
                   widget.onOpenRooms,
                   overview.activeRooms.isEmpty
                       ? [

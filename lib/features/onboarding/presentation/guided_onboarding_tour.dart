@@ -79,8 +79,8 @@ class _GuidedOnboardingTourState extends State<GuidedOnboardingTour> {
         icon: Icons.waving_hand_rounded,
         title: copy.text('Welcome to YO Voice', 'Witaj w YO Voice'),
         body: copy.text(
-          'Join live rooms, listen to Voice Moments, and catch up with your people.',
-          'Dołączaj do pokojów na żywo, słuchaj Voice Moments i bądź na bieżąco ze swoją społecznością.',
+          'Open your servers, listen to Voice Moments, and catch up with your people.',
+          'Otwieraj swoje serwery, słuchaj Voice Moments i bądź na bieżąco ze swoimi ludźmi.',
         ),
       ),
       _GuidedTourStep(
@@ -89,15 +89,15 @@ class _GuidedOnboardingTourState extends State<GuidedOnboardingTour> {
         title: copy.text('Use your voice', 'Użyj swojego głosu'),
         body: desktop
             ? copy.text(
-                'Create a Voice Moment or start a Voice Room here.',
-                'Tutaj szybko nagrasz Voice Moment lub utworzysz pokój głosowy.',
+                'Create a Voice Moment or start a server here.',
+                'Tutaj szybko nagrasz Voice Moment lub utworzysz serwer.',
               )
             // The sentence names the tab by the label the dock actually
             // shows (O11: "Moments" / "Momenty"). Its 41 catalog values are
             // already registered in translations_mobile_navigation.dart.
             : copy.text(
-                'Create a Voice Room here. Open Moments to record a Voice Moment.',
-                'Tutaj utworzysz pokój głosowy. Otwórz Momenty, aby nagrać Voice Moment.',
+                'Create a server here. Open Moments to record a Voice Moment.',
+                'Tutaj utworzysz serwer. Otwórz Momenty, aby nagrać Voice Moment.',
               ),
       ),
       _GuidedTourStep(
@@ -124,12 +124,12 @@ class _GuidedOnboardingTourState extends State<GuidedOnboardingTour> {
         title: copy.text('More, one tap away', 'Wszystko inne pod ręką'),
         body: desktop
             ? copy.text(
-                'Open Clubs, Creator Studio, Awards, alerts, and Settings. You can replay this tour in Settings anytime.',
-                'Otwórz kluby, Creator Studio, nagrody, powiadomienia i ustawienia. Ten przewodnik możesz odtworzyć ponownie w ustawieniach.',
+                'Open Creator Studio, Awards, alerts, and Settings. You can replay this tour in Settings anytime.',
+                'Otwórz Studio twórcy, nagrody, powiadomienia i ustawienia. Ten przewodnik możesz odtworzyć ponownie w ustawieniach.',
               )
             : copy.text(
-                'Find Friends, Clubs, your profile, and Settings here. Replay this tour from Settings anytime.',
-                'Tutaj znajdziesz znajomych, kluby, profil i ustawienia. Przewodnik możesz zawsze odtworzyć w ustawieniach.',
+                'Find friends, your profile, and Settings here. Replay this tour from Settings anytime.',
+                'Tutaj znajdziesz znajomych, profil i ustawienia. Przewodnik możesz zawsze odtworzyć w ustawieniach.',
               ),
       ),
     ];

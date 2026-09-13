@@ -205,11 +205,10 @@ class AppLocalizations {
       contextualText('home.liveForYou', 'Live for you', 'Na żywo dla Ciebie');
   String get homeYourCircle =>
       contextualText('home.yourCircle', 'Your circle', 'Twój krąg');
-  String get homeCreateRoom =>
-      // "Utwórz pokój" is what every other room entry point in the app says
-      // — Discover, the desktop sidebar, the room board, Creator Studio — and
-      // what the sentence above this button says. One action, one verb.
-      contextualText('home.createRoom', 'Create room', 'Utwórz pokój');
+
+  /// Compatibility getter for callers that have not renamed their field yet.
+  /// Current product copy always presents the Servers creation flow.
+  String get homeCreateRoom => homeCreateServer;
   String get homeStartConversation => contextualText(
     'home.startConversation',
     'Invite and talk',
@@ -321,24 +320,26 @@ class AppLocalizations {
     'Nagraj Voice Moment',
   );
 
-  /// Empty hero (nothing live): headline, body and the Discover link. The
-  /// actions reuse the existing [homeCreateRoom] and [friends] keys.
+  /// Empty Home hero and its route into Servers.
   String get homeInvitationHeadline => contextualText(
     'home.invitationHeadline',
     'A good conversation starts here.',
     'Tu zaczyna się dobra rozmowa.',
   );
-  String get homeInvitationBody => contextualText(
-    'home.invitationBody',
-    "It's quiet right now. Create a room or check on your friends.",
-    'Teraz jest cicho. Utwórz pokój albo zajrzyj do znajomych.',
-  );
-  String get homeDiscoverRooms =>
-      contextualText('home.discoverRooms', 'Discover rooms', 'Odkrywaj pokoje');
+  String get homeInvitationBody {
+    if (locale.languageCode == 'en') {
+      return "It's quiet right now. Create a server or check on your friends.";
+    }
+    if (isPolish) {
+      return 'Teraz jest cicho. Utwórz serwer albo zajrzyj do znajomych.';
+    }
+    return '$homeCreateServer. $homeGrowYourCircle.';
+  }
 
-  /// Mobile room-directory destination, distinct from desktop Discover.
-  String get navigationRooms =>
-      contextualText('navigation.rooms', 'Rooms', 'Pokoje');
+  String get homeDiscoverRooms => navigationServers;
+
+  /// Compatibility label for routes that now resolve to Servers.
+  String get navigationRooms => navigationServers;
 
   /// The Servers destination (dock slot 1, desktop rail row 2): the account's
   /// own places. Lives in core localization because Home may not import the
@@ -483,8 +484,10 @@ class AppLocalizations {
     'Voice actions — private call active',
     'Opcje głosowe — trwa rozmowa prywatna',
   );
-  String get voiceActionsRoomActive =>
-      text('Voice actions — live in a room', 'Opcje głosowe — aktywny pokój');
+  String get voiceActionsRoomActive => text(
+    'Voice actions — active conversation',
+    'Opcje głosowe — aktywna rozmowa',
+  );
 
   String get email => text('Email', 'E-mail');
   String get password => text('Password', 'Hasło');

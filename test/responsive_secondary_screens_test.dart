@@ -18,7 +18,6 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_image_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
 
 void main() {
   const sizes = <Size>[
@@ -85,91 +84,6 @@ void main() {
     updatedAt: null,
     type: ClubType.family,
   );
-
-  group('Room type selector responsive composition', () {
-    for (final size in sizes) {
-      testWidgets('renders without overflow at ${size.width.toInt()} px', (
-        tester,
-      ) async {
-        useSurface(tester, size);
-        await tester.pumpWidget(host(const RoomTypeSelectorScreen()));
-        await tester.pump();
-
-        expect(tester.takeException(), isNull);
-        expect(find.text('Community Room'), findsOneWidget);
-        expect(find.text('Podcast Room'), findsOneWidget);
-        expect(find.text('Club'), findsOneWidget);
-        expect(find.text('Family Room'), findsOneWidget);
-      });
-    }
-
-    testWidgets('uses one column below the wide breakpoint', (tester) async {
-      useSurface(tester, const Size(768, 1024));
-      await tester.pumpWidget(host(const RoomTypeSelectorScreen()));
-      await tester.pump();
-
-      final community = tester.getTopLeft(find.text('Community Room'));
-      final podcast = tester.getTopLeft(find.text('Podcast Room'));
-      final clubTitle = tester.getTopLeft(find.text('Club'));
-      final family = tester.getTopLeft(find.text('Family Room'));
-
-      expect(community.dx, closeTo(podcast.dx, 1));
-      expect(podcast.dx, closeTo(clubTitle.dx, 1));
-      expect(clubTitle.dx, closeTo(family.dx, 1));
-      expect(community.dy, lessThan(podcast.dy));
-      expect(podcast.dy, lessThan(clubTitle.dy));
-      expect(clubTitle.dy, lessThan(family.dy));
-    });
-
-    for (final width in const [1100.0, 1440.0]) {
-      testWidgets('uses a compact two by two grid at ${width.toInt()} px', (
-        tester,
-      ) async {
-        useSurface(tester, Size(width, 900));
-        await tester.pumpWidget(host(const RoomTypeSelectorScreen()));
-        await tester.pump();
-
-        final community = tester.getTopLeft(find.text('Community Room'));
-        final podcast = tester.getTopLeft(find.text('Podcast Room'));
-        final clubTitle = tester.getTopLeft(find.text('Club'));
-        final family = tester.getTopLeft(find.text('Family Room'));
-
-        expect(community.dy, closeTo(podcast.dy, 1));
-        expect(clubTitle.dy, closeTo(family.dy, 1));
-        expect(community.dx, lessThan(podcast.dx));
-        expect(clubTitle.dx, lessThan(family.dx));
-        expect(community.dy, lessThan(clubTitle.dy));
-
-        final cardFinder = find
-            .ancestor(
-              of: find.text('Community Room'),
-              matching: find.byType(Material),
-            )
-            .first;
-        expect(tester.getSize(cardFinder).width, lessThan(520));
-        expect(tester.takeException(), isNull);
-      });
-    }
-
-    testWidgets('remains scrollable at 320 px with 200 percent text', (
-      tester,
-    ) async {
-      useSurface(tester, const Size(320, 568));
-      await tester.pumpWidget(
-        host(const RoomTypeSelectorScreen(), textScale: 2),
-      );
-      await tester.pump();
-
-      expect(tester.takeException(), isNull);
-      await tester.scrollUntilVisible(
-        find.text('Family Room'),
-        400,
-        scrollable: find.byType(Scrollable).first,
-      );
-      expect(find.text('Family Room'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-  });
 
   group('Club created responsive composition', () {
     for (final size in sizes) {

@@ -7,7 +7,6 @@ import 'dart:ui' as ui;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
-import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -17,7 +16,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
-import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
@@ -31,8 +29,9 @@ import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
-import 'package:yovoice/features/rooms/data/models/voice_room.dart';
-import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/models/server_type.dart';
+import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'support/material_icons_font.dart';
@@ -41,20 +40,13 @@ const _capture = bool.fromEnvironment('QA_CAPTURE_HOME');
 const _uid = 'independent-home-viewer';
 const _friendId = 'independent-home-friend';
 const _name = 'Alexandra Nowakowska-Kowalska';
-const _roomTitle = 'Porozmawiajmy o nadchodzącym weekendzie';
+const _serverTitle = 'Porozmawiajmy o nadchodzącym weekendzie';
 
-/// The one primary "go into the conversation" control.
-///
-/// Both Homes now carry it on the "Tu i teraz" hero: one card, one primary
-/// action, one pre-join boundary, whatever the width.
-Finder _joinControl({required bool desktop}) => _key('home-hero-join');
+/// The one primary continuation control opens the exact server workspace.
+Finder _serverControl() => _key('home-server-continue-qa-community');
 
-/// "The followed Moment is marked on this screen".
-///
-/// The followed rail left both Homes for the Momenty destination. What
-/// remains is the mark on a FRIEND's own face — the same page, gated by real
-/// friendship, on both form factors.
-bool _followedMark(WidgetTester tester, {required bool desktop}) {
+/// A friend's Voice Moment is marked on their tile; Home has no follower rail.
+bool _friendVoiceMark(WidgetTester tester) {
   final tile = _key('home-person-$_friendId');
   if (tile.evaluate().isEmpty) return false;
   return tester.widget<HomeFriendTile>(tile).voice != null;
@@ -105,18 +97,16 @@ class _Probe<T> {
   Future<void> dispose() => _events.close();
 }
 
-class _QaRooms extends RoomService {
-  _QaRooms(this.f) : super(firestore: f.db, auth: f.auth);
+class _QaServers extends ServerService {
+  _QaServers(this.f) : super(firestore: f.db, auth: f.auth);
   final _HomeFixture f;
   int reads = 0;
-  @override
-  Stream<List<VoiceRoom>> watchLivePublicRooms() {
-    reads++;
-    return f.rooms.listenFresh();
-  }
 
   @override
-  Stream<List<VoiceRoom>> watchOwnedRooms() => f.owned.listenFresh();
+  Stream<List<Server>> watchMyServers() {
+    reads++;
+    return f.servers.listenFresh();
+  }
 }
 
 class _QaFriends extends FriendService {
@@ -167,28 +157,21 @@ class _QaCapabilities extends StaffCapabilityService {
 class _HomeFixture {
   final db = FakeFirebaseFirestore();
   final auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _uid));
-  late final clubService = ClubService(
-    firestore: db,
-    auth: auth,
-    storage: MockFirebaseStorage(),
-  );
-  final rooms = _Probe<List<VoiceRoom>>();
-  final owned = _Probe<List<VoiceRoom>>();
+  final servers = _Probe<List<Server>>();
   final friends = _Probe<List<FriendUser>>();
   final following = _Probe<List<FollowUser>>();
   final chats = _Probe<List<Conversation>>();
   final feedPages = <_Probe<List<VoiceMoment>>>[_Probe<List<VoiceMoment>>()];
   _Probe<List<VoiceMoment>> get feedGeneration => feedPages.last;
   final visible = ValueNotifier(true);
-  late final roomService = _QaRooms(this);
+  late final serverService = _QaServers(this);
   late final friendService = _QaFriends(this);
   late final followService = _QaFollowing(this);
   late final feedService = _QaFeed(this);
   late final messageService = _QaChats(this);
   late final profileService = ProfileService(firestore: db, auth: auth);
   final actions = <String>[];
-  late VoiceRoom liveRoom;
-  late VoiceRoom ownedRoom;
+  late Server communityServer;
   late Conversation conversation;
   late VoiceMoment moment;
 
@@ -199,30 +182,17 @@ class _HomeFixture {
       'username': 'qa-alexandra',
       'availability': 'available',
     });
-    for (final (id, hostId) in [('qa-live', _friendId), ('qa-owned', _uid)]) {
-      await db.doc('rooms/$id').set({
-        'name': hostId == _uid
-            ? 'My retained room'
-            : longContent
-            ? _roomTitle
-            : 'Weekend conversation',
-        'hostId': hostId,
-        'hostName': hostId == _uid ? 'Alexandra' : 'Michał',
-        'description': 'A real fixture description, without invented activity.',
-        'category': 'community',
-        'visibility': 'public',
-        'language': 'English',
-        'participantCount': hostId == _uid ? 0 : 2,
-        'memberCount': 0,
-        'isLive': hostId != _uid,
-        'roomType': 'community',
-        'status': 'active',
-        'experience': 'community',
-        'createdAt': Timestamp.now(),
-      });
-    }
-    liveRoom = VoiceRoom.fromFirestore(await db.doc('rooms/qa-live').get());
-    ownedRoom = VoiceRoom.fromFirestore(await db.doc('rooms/qa-owned').get());
+    communityServer = Server(
+      id: 'qa-community',
+      name: longContent ? _serverTitle : 'Weekend community',
+      description: 'A real fixture description, without invented activity.',
+      ownerId: _uid,
+      type: ServerType.community,
+      privacy: ServerPrivacy.public,
+      defaultLanguage: 'English',
+      schemaVersion: 1,
+      activationState: 'active',
+    );
     await db.doc('conversations/qa-conversation').set({
       'participantIds': [_uid, _friendId],
       'participantNames': {_uid: 'Alexandra', _friendId: 'Michał'},
@@ -256,8 +226,7 @@ class _HomeFixture {
   }
 
   void populate() {
-    rooms.emit([liveRoom]);
-    owned.emit([ownedRoom]);
+    servers.emit([communityServer]);
     friends.emit([
       const FriendUser(
         id: _friendId,
@@ -282,20 +251,10 @@ class _HomeFixture {
     feedGeneration.emit([moment]);
   }
 
-  List<int> get subscriptions => [
-    rooms.listens,
-    owned.listens,
-    friends.listens,
-    following.listens,
-    chats.listens,
-    for (final page in feedPages) page.listens,
-  ];
-
   Widget home(bool desktop) => desktop
       ? DesktopHome(
           key: const ValueKey('independent-home'),
           currentUserId: _uid,
-          onOpenRoom: (room) => actions.add('room:${room.id}'),
           onSeeAllRooms: () => actions.add('discover'),
           onViewAllFriends: () => actions.add('friends'),
           onStartRoom: () => actions.add('create'),
@@ -305,9 +264,10 @@ class _HomeFixture {
           onSeeAllMoments: () => actions.add('moments'),
           onOpenConversation: (item) => actions.add('chat:${item.id}'),
           onSeeAllChats: () => actions.add('chats'),
-          onOpenClub: (_) => actions.add('club'),
           onOpenClubs: () => actions.add('clubs'),
-          roomService: roomService,
+          onOpenServers: () => actions.add('servers'),
+          onOpenServer: (server) => actions.add('server:${server.id}'),
+          serverRepository: serverService,
           friendService: friendService,
           followService: followService,
           profileService: profileService,
@@ -319,7 +279,6 @@ class _HomeFixture {
       : MobileHome(
           key: const ValueKey('independent-home'),
           currentUserId: _uid,
-          onOpenRoom: (room) => actions.add('room:${room.id}'),
           onOpenDiscover: () => actions.add('discover'),
           onOpenFriends: () => actions.add('friends'),
           onCreateRoom: () => actions.add('create'),
@@ -333,8 +292,9 @@ class _HomeFixture {
           onOpenComments: (_) => actions.add('comments'),
           onOpenConversation: (item) => actions.add('chat:${item.id}'),
           onSeeAllChats: () => actions.add('chats'),
-          roomService: roomService,
-          clubService: clubService,
+          onOpenServers: () => actions.add('servers'),
+          onOpenServer: (server) => actions.add('server:${server.id}'),
+          serverRepository: serverService,
           friendService: friendService,
           followService: followService,
           profileService: profileService,
@@ -347,8 +307,7 @@ class _HomeFixture {
   Future<void> dispose() async {
     visible.dispose();
     await Future.wait([
-      rooms.dispose(),
-      owned.dispose(),
+      servers.dispose(),
       friends.dispose(),
       following.dispose(),
       chats.dispose(),
@@ -507,8 +466,8 @@ void main() {
           isEmpty,
           reason: 'Merely rendering must not join audio.',
         );
-        await _tap(tester, _joinControl(desktop: desktop).first);
-        await _tap(tester, _key('home-quick-create-room'));
+        await _tap(tester, _serverControl());
+        await _tap(tester, _key('home-quick-create-server'));
         await _tap(tester, _key('home-quick-friends'));
         // The same chain, from the one surface that hosts it on both
         // platforms: the friend's own tile.
@@ -516,8 +475,8 @@ void main() {
         await _tap(tester, _key('home-record-moment'));
         await _tap(tester, find.text('Independent callback sentinel'));
         expect(f.actions, [
-          'room:qa-live',
-          'create',
+          'server:qa-community',
+          'servers',
           'friends',
           'chain:qa-followed-moment',
           'record',
@@ -538,7 +497,7 @@ void main() {
         final chatSubscriptions = f.chats.listens;
         oldFeed.fail();
         await _pump(tester);
-        expect(_followedMark(tester, desktop: desktop), isFalse);
+        expect(_friendVoiceMark(tester), isFalse);
         final newFeed = _Probe<List<VoiceMoment>>();
         f.feedPages.add(newFeed);
         // Neither Home has an error to retry any more (the page only marks
@@ -552,9 +511,9 @@ void main() {
         expect(oldFeed.cancels, oldFeed.listens);
         oldFeed.emit([f.moment]); // A stale completed request is now unowned.
         await _pump(tester);
-        expect(_followedMark(tester, desktop: desktop), isFalse);
+        expect(_friendVoiceMark(tester), isFalse);
         expect(f.chats.listens, chatSubscriptions);
-        expect(find.text('My retained room'), findsOneWidget);
+        expect(find.text('Weekend community'), findsWidgets);
         newFeed.emit([]);
         await _pump(tester);
         expect(_key('home-moments-error'), findsNothing);
@@ -565,32 +524,29 @@ void main() {
       },
     );
 
-    testWidgets(
-      'independent Home $desktop room retry is scoped and retains owned',
-      (tester) async {
-        final f = _HomeFixture();
-        await f.initialize();
-        await _mount(tester, f, desktop);
-        final ownedSubscriptions = f.owned.listens;
-        final feedReads = f.feedService.reads;
-        f.rooms.fail();
-        await _pump(tester);
-        expect(_key('home-conversation-invitation'), findsNothing);
-        expect(_joinControl(desktop: desktop), findsNothing);
-        expect(find.text('My retained room'), findsOneWidget);
-        await _tap(tester, _retry('home-rooms-error'));
-        expect(f.roomService.reads, 2);
-        expect(f.owned.listens, ownedSubscriptions);
-        expect(f.feedService.reads, feedReads);
-        f.rooms.emit([]);
-        await _pump(tester);
-        expect(_key('home-rooms-error'), findsNothing);
-        expect(_key('home-conversation-invitation'), findsOneWidget);
-        expect(find.text('My retained room'), findsOneWidget);
-        expect(tester.takeException(), isNull);
-        await tester.pumpWidget(const SizedBox());
-      },
-    );
+    testWidgets('independent Home $desktop server retry is scoped', (
+      tester,
+    ) async {
+      final f = _HomeFixture();
+      await f.initialize();
+      await _mount(tester, f, desktop);
+      final feedReads = f.feedService.reads;
+      final chatSubscriptions = f.chats.listens;
+      f.servers.fail();
+      await _pump(tester);
+      expect(_serverControl(), findsNothing);
+      expect(_key('home-servers-error'), findsOneWidget);
+      await _tap(tester, _retry('home-servers-error'));
+      expect(f.serverService.reads, 2);
+      expect(f.chats.listens, chatSubscriptions);
+      expect(f.feedService.reads, feedReads);
+      f.servers.emit([]);
+      await _pump(tester);
+      expect(_key('home-servers-error'), findsNothing);
+      expect(_key('home-servers-empty'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
 
     testWidgets('independent Home $desktop relationship denial is not empty', (
       tester,
@@ -598,6 +554,7 @@ void main() {
       final f = _HomeFixture();
       await f.initialize();
       await _mount(tester, f, desktop);
+      expect(f.following.listens, 0);
       f.following.fail();
       f.friends.fail();
       await _pump(tester);
@@ -612,9 +569,10 @@ void main() {
       // destination with the rail.
       expect(_key('home-moments-error'), findsNothing);
       expect(_key('home-people-me'), findsOneWidget);
-      expect(_joinControl(desktop: desktop), findsOneWidget);
-      await _tap(tester, _key('home-quick-create-room'));
-      expect(f.actions, ['create']);
+      expect(f.following.listens, 0);
+      expect(_serverControl(), findsOneWidget);
+      await _tap(tester, _key('home-quick-create-server'));
+      expect(f.actions, ['servers']);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     });
@@ -645,14 +603,11 @@ void main() {
           final f = _HomeFixture();
           await f.initialize();
           await _mount(tester, f, desktop);
-          f.rooms.fail();
+          f.servers.fail();
           f.feedGeneration.fail();
           f.chats.fail();
           await _pump(tester);
-          expect(
-            find.byType(HomeSectionError),
-            findsNWidgets(desktop ? 3 : 2),
-          );
+          expect(find.byType(HomeSectionError), findsNWidgets(2));
           final liveNodes = <SemanticsNode>[];
           void visit(SemanticsNode node) {
             if (node.getSemanticsData().flagsCollection.isLiveRegion) {
@@ -754,24 +709,20 @@ void main() {
           final prefix =
               '${pearl ? 'pearl' : 'dark'}-${width.toInt()}-${scale.toInt()}x-en';
           await _screenshot(tester, captureKey, '$prefix-top');
-          await _revealLazy(tester, _key('home-featured-room'));
-          await _screenshot(tester, captureKey, '$prefix-featured');
-          await _revealLazy(tester, _joinControl(desktop: desktop));
-          await _screenshot(tester, captureKey, '$prefix-join');
-          final joinBounds = tester.getRect(
-            _joinControl(desktop: desktop).first,
-          );
+          await _revealLazy(tester, _serverControl());
+          await _screenshot(tester, captureKey, '$prefix-server');
+          final serverBounds = tester.getRect(_serverControl());
           final bodyBounds = tester.getRect(
             find.byType(desktop ? DesktopHome : MobileHome),
           );
-          expect(joinBounds.height, greaterThanOrEqualTo(44));
-          expect(joinBounds.left, greaterThanOrEqualTo(bodyBounds.left));
-          expect(joinBounds.right, lessThanOrEqualTo(bodyBounds.right));
-          expect(joinBounds.bottom, lessThanOrEqualTo(bodyBounds.bottom));
+          expect(serverBounds.height, greaterThanOrEqualTo(44));
+          expect(serverBounds.left, greaterThanOrEqualTo(bodyBounds.left));
+          expect(serverBounds.right, lessThanOrEqualTo(bodyBounds.right));
+          expect(serverBounds.bottom, lessThanOrEqualTo(bodyBounds.bottom));
           expect(tester.takeException(), isNull, reason: prefix);
-          await _revealLazy(tester, _key('home-quick-create-room'));
+          await _revealLazy(tester, _key('home-quick-create-server'));
           await _screenshot(tester, captureKey, '$prefix-create');
-          final button = _key('home-quick-create-room');
+          final button = _key('home-quick-create-server');
           final focus = Focus.of(
             tester.element(
               find.descendant(of: button, matching: find.byType(Text)).first,

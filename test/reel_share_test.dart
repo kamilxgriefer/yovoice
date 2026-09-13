@@ -147,10 +147,17 @@ void main() {
         callableInvoker: (name, payload) {
           calls.add(name);
           expect(name, 'getReelViewV2');
+          // The share sheet's authorization read carries the SAME optional
+          // comment-type declaration every thread read does (slice 5): the
+          // client says which comment types it can render, and a backend
+          // that predates voice comments refuses the key and is replayed
+          // without it. Sharing reads no comments either way — the limit
+          // stays 1 and nothing here renders one.
           expect(payload, {
             'reelId': 'reel_1',
             'commentLimit': 1,
             'commentCursor': null,
+            'commentTypes': <String>['text', 'voice'],
           });
           return ready.future;
         },

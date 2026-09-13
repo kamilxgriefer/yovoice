@@ -11,11 +11,11 @@ import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
-/// Two real routes, with no permission request or room connection on Home.
+/// Two real routes, with no permission request or media connection on Home.
 ///
 /// One 44 px pill row rather than two 66 px cards: the routes are the same
-/// (`home-quick-create-room`, `home-quick-friends`), the former subtitles
-/// survive as tooltips, and Home gives the space back to people and rooms.
+/// (`home-quick-create-server`, `home-quick-friends`), the former subtitles
+/// survive as tooltips, and Home gives the space back to people and servers.
 class HomeQuickActions extends StatelessWidget {
   const HomeQuickActions({
     required this.onCreateRoom,
@@ -55,8 +55,8 @@ class HomeQuickActions extends StatelessWidget {
         // Layout follows the actual localized labels, not a blanket text-
         // scale switch: a wide column can still keep both actions at 200%.
         final minimumActionWidth =
-            (labelWidth(copy.homeCreateRoom) > labelWidth(copy.friends)
-                ? labelWidth(copy.homeCreateRoom)
+            (labelWidth(copy.homeCreateServer) > labelWidth(copy.friends)
+                ? labelWidth(copy.homeCreateServer)
                 : labelWidth(copy.friends)) +
             (AppRhythm.title * 2) +
             20 +
@@ -71,7 +71,7 @@ class HomeQuickActions extends StatelessWidget {
           child: Tooltip(
             message: copy.homeStartConversation,
             child: FilledButton.icon(
-              key: const ValueKey('home-quick-create-room'),
+              key: const ValueKey('home-quick-create-server'),
               onPressed: onCreateRoom,
               style: FilledButton.styleFrom(
                 // Shrink-wrapped: Material otherwise inflates the LAYOUT
@@ -88,7 +88,7 @@ class HomeQuickActions extends StatelessWidget {
                 shape: const StadiumBorder(),
               ),
               icon: const Icon(Icons.add_rounded, size: 20),
-              label: Text(copy.homeCreateRoom, textAlign: TextAlign.center),
+              label: Text(copy.homeCreateServer, textAlign: TextAlign.center),
             ),
           ),
         );
@@ -139,7 +139,7 @@ class HomeQuickActions extends StatelessWidget {
   }
 }
 
-/// A genuine empty room directory is an invitation, not a blank live hero.
+/// A genuine empty server directory is an invitation, not a blank hero.
 /// The two actions remain the same shell routes; displaying this card does
 /// not create a room, join audio, or request microphone permission.
 class HomeConversationInvitation extends StatelessWidget {
@@ -151,9 +151,7 @@ class HomeConversationInvitation extends StatelessWidget {
 
   final Widget actions;
 
-  /// The room directory. Needed here because the dock no longer carries a
-  /// Rooms destination: without this link an account with nothing live and
-  /// no friends has no way from Home to the rooms other people are in.
+  /// The Servers destination used by the compatibility empty-state widget.
   final VoidCallback? onDiscover;
 
   @override

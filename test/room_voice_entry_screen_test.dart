@@ -993,8 +993,8 @@ void main() {
     });
 
     testWidgets(
-      'a Family Room lounge keeps its identity line and still says it is not '
-      'live',
+      'a family voice channel keeps its identity line and still says it is '
+      'not live',
       (tester) async {
         await db.collection('rooms').doc('club_lounge_family_host').set({
           'hostId': 'host',
@@ -1048,7 +1048,7 @@ void main() {
         await tester.pump();
         await tester.pump();
 
-        expect(find.text('FAMILY ROOM · NOT LIVE YET'), findsOneWidget);
+        expect(find.text('FAMILY CHANNEL · NOT LIVE YET'), findsOneWidget);
         expect(find.text('Start voice'), findsOneWidget);
       },
     );
@@ -1104,7 +1104,7 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(find.text('This room has ended'), findsOneWidget);
+      expect(find.text('This conversation has ended'), findsOneWidget);
       expect(find.text('Start voice'), findsNothing);
       expect(find.text('NOT LIVE YET'), findsNothing);
     },

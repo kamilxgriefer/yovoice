@@ -155,9 +155,7 @@ class _MomentsFollowPanelState extends State<MomentsFollowPanel> {
     _followingSubscription = following.listen(
       (value) {
         if (!mounted) return;
-        setState(
-          () => _followingIds = value.map((user) => user.uid).toSet(),
-        );
+        setState(() => _followingIds = value.map((user) => user.uid).toSet());
         _reportPool();
       },
       onError: (Object _) {
@@ -370,28 +368,46 @@ class _PersonRow extends StatelessWidget {
         ),
       );
     }
+    final person = AccessibleTapRegion(
+      onTap: onOpenProfile,
+      semanticLabel: openLabel,
+      minimumSize: const Size(
+        AppSizing.minimumTouchTarget,
+        AppSizing.standardControlHeight,
+      ),
+      child: identity,
+    );
+    final follow = MomentsFollowButton(
+      userId: friend.id,
+      displayName: friend.displayName,
+      viewerUid: viewerUid,
+      followService: service,
+    );
+    // At 200 % text the pill kept its full width and the name was squeezed
+    // to "B…" with the handle at "@…" — a row whose only job is to name a
+    // person naming nobody. Above that size the name takes the whole run
+    // and the control moves under it.
+    if (MediaQuery.textScalerOf(context).scale(1) >= 1.6) {
+      return Padding(
+        padding: const EdgeInsets.only(top: AppRhythm.tight),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            person,
+            const SizedBox(height: AppRhythm.hairline),
+            follow,
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.only(top: AppRhythm.tight),
       child: Row(
         children: <Widget>[
-          Expanded(
-            child: AccessibleTapRegion(
-              onTap: onOpenProfile,
-              semanticLabel: openLabel,
-              minimumSize: const Size(
-                AppSizing.minimumTouchTarget,
-                AppSizing.standardControlHeight,
-              ),
-              child: identity,
-            ),
-          ),
+          Expanded(child: person),
           const SizedBox(width: AppRhythm.tight),
-          MomentsFollowButton(
-            userId: friend.id,
-            displayName: friend.displayName,
-            viewerUid: viewerUid,
-            followService: service,
-          ),
+          follow,
         ],
       ),
     );
@@ -410,6 +426,7 @@ class MomentsFollowButton extends StatefulWidget {
     required this.viewerUid,
     required this.followService,
     this.compact = true,
+    this.onMedia = false,
     super.key,
   });
 
@@ -421,6 +438,12 @@ class MomentsFollowButton extends StatefulWidget {
   /// Visible ink 36 tall inside the 48 target (the theme's padded tap
   /// target supplies the rest).
   final bool compact;
+
+  /// True on a Reel frame, where the control sits on footage of unknown
+  /// luminance in BOTH appearances: white outline and white label rather
+  /// than the semantic roles, which would vanish in Pearl over dark media
+  /// (the media-overlay exception, `app_immersive_colors.dart:7-9`).
+  final bool onMedia;
 
   @override
   State<MomentsFollowButton> createState() => _MomentsFollowButtonState();
@@ -509,6 +532,10 @@ class _MomentsFollowButtonState extends State<MomentsFollowButton> {
           // The theme's padded tap target supplies the 48 box around the
           // 36 ink; a compact visual density would shrink that box to 40.
           shape: const StadiumBorder(),
+          foregroundColor: widget.onMedia ? Colors.white : null,
+          side: widget.onMedia
+              ? BorderSide(color: Colors.white.withValues(alpha: .72))
+              : null,
         );
         final icon = _busy
             ? const SizedBox.square(
@@ -516,7 +543,9 @@ class _MomentsFollowButtonState extends State<MomentsFollowButton> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : Icon(
-                following ? Icons.check_rounded : Icons.person_add_alt_1_rounded,
+                following
+                    ? Icons.check_rounded
+                    : Icons.person_add_alt_1_rounded,
                 size: 18,
               );
         final enabled = known && !_busy;

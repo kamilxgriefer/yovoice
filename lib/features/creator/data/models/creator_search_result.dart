@@ -31,6 +31,7 @@ class CreatorSearchResult {
     required this.accountType,
     required this.premiumIdentity,
     required this.followerCount,
+    this.creatorAudienceVisible = false,
   });
 
   final String uid;
@@ -42,6 +43,9 @@ class CreatorSearchResult {
   final CreatorDirectoryAccountType accountType;
   final bool premiumIdentity;
   final int followerCount;
+
+  /// Server-written public gate. Missing or malformed values fail closed.
+  final bool creatorAudienceVisible;
 
   bool get isVerified => accountType.isVerified;
 
@@ -64,6 +68,8 @@ class CreatorSearchResult {
     final username = (data['username'] as String?)?.trim() ?? '';
     final photoUrl = (data['photoUrl'] as String?)?.trim();
     final followerCount = (data['followerCount'] as num?)?.toInt() ?? 0;
+    final creatorAudienceVisible =
+        data['creatorAudienceVisible'] as bool? ?? false;
     return CreatorSearchResult(
       uid: uid,
       displayName: displayName.isEmpty
@@ -75,7 +81,10 @@ class CreatorSearchResult {
       statusMessage: (data['statusMessage'] as String?)?.trim() ?? '',
       accountType: type,
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,
-      followerCount: followerCount.clamp(0, 1 << 31),
+      followerCount: creatorAudienceVisible
+          ? followerCount.clamp(0, 1 << 31)
+          : 0,
+      creatorAudienceVisible: creatorAudienceVisible,
     );
   }
 }

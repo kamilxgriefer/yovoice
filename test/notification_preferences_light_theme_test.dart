@@ -35,6 +35,7 @@ void main() {
           child: NotificationPreferencesScreen(
             isRootTab: true,
             notificationService: service,
+            creatorAudienceVisibleStream: Stream.value(false),
           ),
         ),
       ),
@@ -48,13 +49,7 @@ void main() {
     expect(find.text('Notification preferences'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
-    for (final label in const [
-      'Friends & follows',
-      'Clubs',
-      'Rooms',
-      'Calls',
-      'Messages',
-    ]) {
+    for (final label in const ['Friends', 'Servers', 'Calls', 'Messages']) {
       await tester.scrollUntilVisible(
         find.text(label),
         180,
@@ -63,5 +58,39 @@ void main() {
       expect(find.text(label), findsOneWidget);
       expect(tester.takeException(), isNull);
     }
+    expect(find.text('New followers'), findsNothing);
   });
+
+  testWidgets(
+    'new follower preference exists only for a visible Creator audience',
+    (tester) async {
+      final firestore = FakeFirebaseFirestore();
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'creator-owner'),
+      );
+      await firestore.collection('users').doc('creator-owner').set({
+        'uid': 'creator-owner',
+        'notificationPreferences': <String, bool>{},
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          home: NotificationPreferencesScreen(
+            isRootTab: true,
+            notificationService: NotificationService(
+              firestore: firestore,
+              auth: auth,
+            ),
+            creatorAudienceVisibleStream: Stream.value(true),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Friends & follows'), findsOneWidget);
+      expect(find.text('New followers'), findsOneWidget);
+    },
+  );
 }

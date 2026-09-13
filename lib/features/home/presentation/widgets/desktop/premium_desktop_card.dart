@@ -62,8 +62,8 @@ class PremiumDesktopCard extends StatelessWidget {
                       title: switch (i) {
                         0 => copy.text('Become a Creator', 'Zostań twórcą'),
                         1 => copy.text(
-                          'Create your own Clubs',
-                          'Twórz własne kluby',
+                          'Build your own Servers',
+                          'Buduj własne serwery',
                         ),
                         _ => copy.text('Stand out', 'Wyróżnij się'),
                       },

@@ -532,7 +532,6 @@ class _ModerationWorkspace extends StatelessWidget {
                 // the unchanged queue/filter state.
                 if (!detailOnly) ...[
                   _SummaryStrip(
-                    narrow: narrow,
                     statusCounts: statusCounts,
                     loadedCount: loaded.length,
                     status: status,
@@ -777,18 +776,16 @@ class _WorkspaceHeader extends StatelessWidget {
 }
 
 /// Compact, truthful numbers: server-side aggregates where they exist,
-/// the loaded-page count for the current view, nothing invented. On a
-/// phone it is a horizontally scrollable strip that stays out of the
-/// way.
+/// the loaded-page count for the current view, nothing invented. The strip
+/// scrolls horizontally when its intrinsic width no longer fits, including
+/// medium windows with enlarged text.
 class _SummaryStrip extends StatelessWidget {
   const _SummaryStrip({
-    required this.narrow,
     required this.statusCounts,
     required this.loadedCount,
     required this.status,
   });
 
-  final bool narrow;
   final Map<ReportStatus, int?> statusCounts;
   final int loadedCount;
   final ReportStatus status;
@@ -826,7 +823,6 @@ class _SummaryStrip extends StatelessWidget {
         for (final card in cards) ...[card, const SizedBox(width: 8)],
       ],
     );
-    if (!narrow) return row;
     return SingleChildScrollView(scrollDirection: Axis.horizontal, child: row);
   }
 }
@@ -1611,6 +1607,12 @@ class _QueueRowState extends State<_QueueRow> {
                   Text(
                     report.targetType == null
                         ? report.targetId
+                        // A voice report says so in the queue itself, so a
+                        // moderator triaging the list is never led to expect
+                        // words that a recording's report does not carry.
+                        : report.isReelVoiceComment
+                        ? '${_Filters.targetLabel(report.targetType!, copy: copy)}'
+                              ' · ${_voiceCommentLabel(report, copy)}'
                         : _Filters.targetLabel(report.targetType!, copy: copy),
                     style: const TextStyle(
                       color: Color(0xFF9A90AC),
@@ -1928,6 +1930,7 @@ class _DetailState extends State<_Detail> {
     final service = widget.service;
 
     return ListView(
+      key: const ValueKey<String>('moderation-detail-scroll'),
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 18),
       children: [
         Row(
@@ -1983,7 +1986,54 @@ class _DetailState extends State<_Detail> {
         // this snapshot is the only place a moderator can see what was
         // actually said — and the only evidence that survives the removal for
         // a later appeal.
-        if (report.targetType == ReportTargetType.reelComment) ...[
+        // A VOICE comment's evidence is the recording, and its caption is
+        // optional. Rendering it through the text branch below would show an
+        // empty caption as "the reported text was not retained" — a false
+        // statement about the evidence, on a report that has no words at all.
+        // So a voice report is NAMED and TIMED, and says plainly what a
+        // moderator cannot do with it yet.
+        if (report.isReelVoiceComment) ...[
+          _Field(
+            key: const ValueKey<String>('moderation-voice-comment-target'),
+            label: copy.text(
+              'Reported voice comment',
+              'Zgłoszony komentarz głosowy',
+            ),
+            value: _voiceCommentLabel(report, copy),
+            meta: copy.text(
+              'The recording cannot be played here yet. Its length is the '
+                  'length the commenter\'s app declared.',
+              'Nagrania nie można jeszcze tu odtworzyć. Jego długość to '
+                  'długość podana przez aplikację autora.',
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Isolated for the same reason the text snapshot below is: the
+          // caption is another account's free text, rendered verbatim.
+          Directionality(
+            textDirection: TextDirection.ltr,
+            child: _Field(
+              key: const ValueKey<String>('moderation-voice-comment-caption'),
+              label: copy.text('Caption', 'Podpis'),
+              value: switch (report.targetText) {
+                null => copy.text(
+                  'The caption was not retained in this report.',
+                  'To zgłoszenie nie zawiera zapisanego podpisu.',
+                ),
+                '' => copy.text(
+                  'No caption was posted with this recording.',
+                  'Do tego nagrania nie dodano podpisu.',
+                ),
+                final String caption => caption,
+              },
+              meta: copy.text(
+                'Copied when the report was filed; it outlives the removal.',
+                'Kopia zapisana w chwili zgłoszenia; zostaje po usunięciu.',
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ] else if (report.targetType == ReportTargetType.reelComment) ...[
           // TEXT-DIRECTION ISOLATED, DELIBERATELY. This is the one field in
           // the panel that renders another account's free text verbatim, and
           // the person who wrote it chose every character — including any
@@ -2763,8 +2813,30 @@ class _TargetMessage extends StatelessWidget {
   }
 }
 
+/// "Voice comment · 0:42" for a reported Reel voice comment, through the same
+/// catalog entry the reporter's own sheet uses, so the staff queue and the
+/// person who filed the report name the recording identically. A duration the
+/// report did not retain prints as a dash rather than as an invented clock.
+String _voiceCommentLabel(ModerationReport report, AppLocalizations copy) {
+  final seconds = report.targetDurationSeconds;
+  return copy.template(
+    'Voice comment · {duration}',
+    'Komentarz głosowy · {duration}',
+    values: <String, Object>{
+      'duration': seconds == null
+          ? '—'
+          : '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}',
+    },
+  );
+}
+
 class _Field extends StatelessWidget {
-  const _Field({required this.label, required this.value, this.meta});
+  const _Field({
+    super.key,
+    required this.label,
+    required this.value,
+    this.meta,
+  });
 
   final String label;
   final String value;

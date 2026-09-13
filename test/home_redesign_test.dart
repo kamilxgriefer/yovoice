@@ -7,7 +7,6 @@ import 'dart:ui' as ui;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
-import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -17,7 +16,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
-import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
@@ -25,7 +23,6 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_momen
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -33,8 +30,9 @@ import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
-import 'package:yovoice/features/rooms/data/models/voice_room.dart';
-import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/models/server_type.dart';
+import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'support/material_icons_font.dart';
@@ -86,13 +84,16 @@ class _Source<T> {
   Future<void> close() => _events.close();
 }
 
-class _Rooms extends RoomService {
-  _Rooms(this.fixture) : super(firestore: fixture.db, auth: fixture.auth);
+class _Servers extends ServerService {
+  _Servers(this.fixture) : super(firestore: fixture.db, auth: fixture.auth);
   final _Fixture fixture;
+  int reads = 0;
+
   @override
-  Stream<List<VoiceRoom>> watchLivePublicRooms() => fixture.rooms.stream;
-  @override
-  Stream<List<VoiceRoom>> watchOwnedRooms() => fixture.owned.stream;
+  Stream<List<Server>> watchMyServers() {
+    reads++;
+    return fixture.servers.stream.map((value) => value);
+  }
 }
 
 class _Friends extends FriendService {
@@ -144,27 +145,20 @@ class _Capabilities extends StaffCapabilityService {
 class _Fixture {
   final db = FakeFirebaseFirestore();
   final auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _me));
-  final rooms = _Source<List<VoiceRoom>>();
-  final owned = _Source<List<VoiceRoom>>();
+  final servers = _Source<List<Server>>();
   final friends = _Source<List<FriendUser>>();
   final following = _Source<List<FollowUser>>();
   final moments = _Source<List<VoiceMoment>>();
   final chats = _Source<List<Conversation>>();
   final visible = ValueNotifier<bool>(true);
-  late final roomService = _Rooms(this);
+  late final serverService = _Servers(this);
   late final friendService = _Friends(this);
   late final followService = _Following(this);
   late final feedService = _Feed(this);
   late final messageService = _Messages(this);
   late final profileService = ProfileService(firestore: db, auth: auth);
-  late final clubService = ClubService(
-    firestore: db,
-    auth: auth,
-    storage: MockFirebaseStorage(),
-  );
   final actions = <String>[];
-  late VoiceRoom liveRoom;
-  late VoiceRoom ownedRoom;
+  late Server communityServer;
 
   Future<void> initialize({
     bool populated = true,
@@ -177,26 +171,17 @@ class _Fixture {
       'username': 'aleksandra',
       'availability': 'available',
     });
-    for (final (id, owner) in [('qa-live', 'qa-friend'), ('qa-owned', _me)]) {
-      await db.doc('rooms/$id').set({
-        'hostId': owner,
-        'hostName': owner == _me ? 'Aleksandra' : 'Ola',
-        'name': owner == _me ? 'Twój pokój' : 'Wieczorne rozmowy',
-        'description': 'Rozmowy, pomysły i codzienne historie.',
-        'category': 'community',
-        'visibility': 'public',
-        'language': 'Polish',
-        'participantCount': owner == _me ? 0 : 3,
-        'memberCount': 0,
-        'isLive': owner != _me,
-        'roomType': 'community',
-        'status': 'active',
-        'experience': 'community',
-        'createdAt': Timestamp.now(),
-      });
-    }
-    liveRoom = VoiceRoom.fromFirestore(await db.doc('rooms/qa-live').get());
-    ownedRoom = VoiceRoom.fromFirestore(await db.doc('rooms/qa-owned').get());
+    communityServer = const Server(
+      id: 'qa-community',
+      name: 'Głos miasta',
+      description: 'Rozmowy, pomysły i codzienne historie.',
+      ownerId: _me,
+      type: ServerType.community,
+      privacy: ServerPrivacy.public,
+      defaultLanguage: 'Polish',
+      schemaVersion: 1,
+      activationState: 'active',
+    );
     await db.doc('conversations/qa-chat').set({
       'participantIds': [_me, 'qa-friend'],
       'participantNames': {_me: 'Aleksandra', 'qa-friend': 'Ola'},
@@ -208,8 +193,7 @@ class _Fixture {
       'createdAt': Timestamp.now(),
     });
     if (loading) return;
-    rooms.add(populated ? [liveRoom] : []);
-    owned.add(populated ? [ownedRoom] : []);
+    servers.add(populated ? [communityServer] : []);
     friends.add(
       populated
           ? [
@@ -272,7 +256,6 @@ class _Fixture {
       ? DesktopHome(
           key: const ValueKey('redesign-home'),
           currentUserId: _me,
-          onOpenRoom: (r) => actions.add('room:${r.id}'),
           onSeeAllRooms: () => actions.add('discover'),
           onViewAllFriends: () => actions.add('friends'),
           onStartRoom: () => actions.add('create'),
@@ -282,22 +265,21 @@ class _Fixture {
           onSeeAllMoments: () => actions.add('moments'),
           onOpenConversation: (c) => actions.add('chat:${c.id}'),
           onSeeAllChats: () => actions.add('chats'),
-          onOpenClub: (_) {},
           onOpenClubs: () {},
-          roomService: roomService,
+          onOpenServers: () => actions.add('servers'),
+          onOpenServer: (server) => actions.add('server:${server.id}'),
+          serverRepository: serverService,
           friendService: friendService,
           followService: followService,
           profileService: profileService,
           feedService: feedService,
           messageService: messageService,
-          clubService: clubService,
           capabilityService: _Capabilities(),
           isVisible: visible,
         )
       : MobileHome(
           key: const ValueKey('redesign-home'),
           currentUserId: _me,
-          onOpenRoom: (r) => actions.add('room:${r.id}'),
           onOpenDiscover: () => actions.add('discover'),
           onOpenFriends: () => actions.add('friends'),
           onCreateRoom: () => actions.add('create'),
@@ -311,8 +293,9 @@ class _Fixture {
           onOpenComments: (_) {},
           onOpenConversation: (c) => actions.add('chat:${c.id}'),
           onSeeAllChats: () => actions.add('chats'),
-          roomService: roomService,
-          clubService: clubService,
+          onOpenServers: () => actions.add('servers'),
+          onOpenServer: (server) => actions.add('server:${server.id}'),
+          serverRepository: serverService,
           friendService: friendService,
           followService: followService,
           profileService: profileService,
@@ -323,8 +306,7 @@ class _Fixture {
         );
 
   List<int> get listens => [
-    rooms.listens,
-    owned.listens,
+    servers.listens,
     friends.listens,
     following.listens,
     moments.listens,
@@ -334,8 +316,7 @@ class _Fixture {
   Future<void> dispose() async {
     visible.dispose();
     await Future.wait([
-      rooms.close(),
-      owned.close(),
+      servers.close(),
       friends.close(),
       following.close(),
       moments.close(),
@@ -431,15 +412,9 @@ Future<void> _shoot(WidgetTester tester, GlobalKey key, String name) async {
   });
 }
 
-/// What "the followed Moment is on this screen" means.
-///
-/// The followed-Moments rail left BOTH Homes for the Momenty destination,
-/// which owns its own loading, empty and error states. What survives on Home
-/// — on the phone and on the desktop alike — is the fact that matters to a
-/// person opening the app: a FRIEND has an unheard Voice Moment, marked on
-/// their own face in the friends row. Same underlying page, one presentation
-/// on both form factors, so these contracts keep their meaning.
-bool _followedMomentShown(WidgetTester tester, {required bool desktop}) {
+/// Home can decorate an actual friend with their latest unheard voice. It
+/// does not render a separate follower/following surface.
+bool _friendVoiceShown(WidgetTester tester) {
   final tiles = find.byKey(const ValueKey('home-person-qa-friend'));
   if (tiles.evaluate().isEmpty) return false;
   return tester.widget<HomeFriendTile>(tiles).voice != null;
@@ -457,6 +432,48 @@ void main() {
   tearDown(ProfileService.resetCurrentProfileCache);
 
   for (final desktop in [false, true]) {
+    testWidgets(
+      'Home $desktop exposes loading, empty, ready and error states',
+      (tester) async {
+        final size = Size(desktop ? 1440 : 430, 3000);
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final f = _Fixture();
+        await f.initialize(loading: true);
+        addTearDown(f.dispose);
+        await tester.pumpWidget(_app(f.home(desktop: desktop), size));
+        await _settle(tester);
+        expect(
+          find.byKey(const ValueKey('home-servers-loading')),
+          findsOneWidget,
+        );
+
+        f.servers.add([]);
+        await _settle(tester);
+        expect(
+          find.byKey(const ValueKey('home-servers-empty')),
+          findsOneWidget,
+        );
+
+        f.servers.add([f.communityServer]);
+        await _settle(tester);
+        expect(
+          find.byKey(const ValueKey('home-server-continue-qa-community')),
+          findsOneWidget,
+        );
+
+        f.servers.deny();
+        await _settle(tester);
+        expect(
+          find.byKey(const ValueKey('home-servers-error')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+
     testWidgets('Home $desktop errors announce once per active episode', (
       tester,
     ) async {
@@ -471,11 +488,11 @@ void main() {
       await tester.pumpWidget(_app(f.home(desktop: desktop), size));
       await _settle(tester);
       messages.clear();
-      f.rooms.deny();
+      f.servers.deny();
       f.moments.deny();
       f.chats.deny();
       await _settle(tester);
-      // Rooms and chats always report; the Moments page is a decoration on
+      // Servers and chats always report; the Moments page is a decoration on
       // Home (it only marks friend tiles), so its denial is silent on both
       // form factors — never a stale badge, and never an error about a rail
       // that is no longer on this screen. The rail's own error state went
@@ -488,13 +505,13 @@ void main() {
       // as separate facts — they used to collapse into ONE unattributable
       // "Nie masz uprawnień, aby to zrobić." because every card printed the
       // identical sentence.
-      const roomsMessage =
-          'Nie udało się wczytać pokojów na żywo. Sprawdź połączenie i '
-          'spróbuj ponownie. Nie masz uprawnień, aby to zrobić.';
+      const serversMessage =
+          'Nie udało się wczytać Twoich serwerów. '
+          'Nie masz uprawnień, aby to zrobić.';
       const chatsMessage =
           'Nie udało się wczytać ostatnich czatów. '
           'Nie masz uprawnień, aby to zrobić.';
-      expect(messages.single['message'], '$roomsMessage\n$chatsMessage');
+      expect(messages.single['message'], '$serversMessage\n$chatsMessage');
 
       // The real Home scope, including a desktop column reparent, retains
       // its active episode through localization-independent presentation.
@@ -505,18 +522,18 @@ void main() {
       );
       await _settle(tester);
       expect(messages, hasLength(1));
-      f.rooms.add([]);
+      f.servers.add([]);
       f.moments.add([]);
       f.chats.add([]);
       await _settle(tester);
       expect(find.byType(HomeSectionError), findsNothing);
-      f.rooms.deny();
+      f.servers.deny();
       await _settle(tester);
       expect(messages, hasLength(2));
-      // Only the rooms read is denied this time, so only its sentence is
+      // Only the server read is denied this time, so only its sentence is
       // announced — which is the whole point of keeping the section's own
       // copy instead of replacing it with the bare cause.
-      expect(messages.last['message'], roomsMessage);
+      expect(messages.last['message'], serversMessage);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       await _settle(tester);
@@ -538,7 +555,7 @@ void main() {
       await _settle(tester);
       messages.clear();
       f.visible.value = false;
-      f.rooms.deny();
+      f.servers.deny();
       f.chats.deny();
       await _settle(tester);
       expect(messages, isEmpty);
@@ -555,7 +572,7 @@ void main() {
     });
 
     testWidgets(
-      'Home $desktop following denial removes only followed content',
+      'Home $desktop has no follower surface or following subscription',
       (tester) async {
         const size = Size(1440, 2400);
         tester.view.physicalSize = size;
@@ -566,26 +583,113 @@ void main() {
         addTearDown(f.dispose);
         await tester.pumpWidget(_app(f.home(desktop: desktop), size));
         await _settle(tester);
-        final before = f.listens;
-        f.following.deny();
+        expect(f.following.listens, 0);
+        f.following.add([]);
         await _settle(tester);
-        expect(_followedMomentShown(tester, desktop: desktop), isFalse);
+        expect(_friendVoiceShown(tester), isTrue);
         expect(find.byKey(const ValueKey('home-moments-error')), findsNothing);
-        // The person is still on Home — a friend is not followed content.
         expect(
           find.byKey(const ValueKey('home-person-qa-friend')),
           findsOneWidget,
         );
         expect(
-          find.byKey(const ValueKey('home-featured-room')),
+          find.byKey(const ValueKey('home-server-continue-qa-community')),
           findsOneWidget,
         );
-        expect(find.text('Twój pokój'), findsOneWidget);
-        expect(f.listens, before);
+        expect(find.text('Głos miasta'), findsWidgets);
+        expect(find.text('Obserwowani'), findsNothing);
+        expect(find.text('Followers'), findsNothing);
+        expect(f.following.listens, 0);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
       },
     );
+
+    testWidgets(
+      'Home $desktop keeps friends first and opens server-first doors',
+      (tester) async {
+        final size = Size(desktop ? 1440 : 430, 3000);
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final f = _Fixture();
+        await f.initialize();
+        addTearDown(f.dispose);
+        await tester.pumpWidget(_app(f.home(desktop: desktop), size));
+        await _settle(tester);
+
+        final friend = find.byKey(const ValueKey('home-person-qa-friend'));
+        final continueServer = find.byKey(
+          const ValueKey('home-server-continue-qa-community'),
+        );
+        final serverRow = find.byKey(
+          const ValueKey('home-server-row-qa-community'),
+        );
+        expect(friend, findsOneWidget);
+        expect(continueServer, findsOneWidget);
+        expect(serverRow, findsOneWidget);
+        expect(
+          tester.getTopLeft(friend).dy,
+          lessThan(tester.getTopLeft(continueServer).dy),
+        );
+        expect(
+          find.byKey(const ValueKey('home-quick-create-server')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('home-recent-chats')),
+          desktop ? findsNothing : findsOneWidget,
+        );
+        expect(find.text('Masz chwilę na rozmowę?'), findsOneWidget);
+        expect(find.text('Obserwowani'), findsNothing);
+        expect(find.text('Followers'), findsNothing);
+
+        await tester.tap(continueServer);
+        await tester.tap(serverRow);
+        await tester.tap(find.text('Masz chwilę na rozmowę?'));
+        expect(f.actions, [
+          'server:qa-community',
+          'server:qa-community',
+          'chat:qa-chat',
+        ]);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+
+    testWidgets('Home $desktop server denial has an independent fresh retry', (
+      tester,
+    ) async {
+      const size = Size(1440, 2400);
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final f = _Fixture();
+      await f.initialize();
+      addTearDown(f.dispose);
+      await tester.pumpWidget(_app(f.home(desktop: desktop), size));
+      await _settle(tester);
+      f.servers.deny();
+      await _settle(tester);
+      final error = find.byKey(const ValueKey('home-servers-error'));
+      expect(error, findsOneWidget);
+      final chatReads = f.messageService.reads;
+      await tester.tap(
+        find.descendant(of: error, matching: find.byType(OutlinedButton)),
+      );
+      await _settle(tester);
+      expect(f.serverService.reads, 2);
+      expect(f.messageService.reads, chatReads);
+      f.servers.add([f.communityServer]);
+      await _settle(tester);
+      expect(error, findsNothing);
+      expect(
+        find.byKey(const ValueKey('home-server-continue-qa-community')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
 
     testWidgets('Home $desktop chat denial has an independent fresh retry', (
       tester,
@@ -604,7 +708,7 @@ void main() {
       final error = find.byKey(const ValueKey('home-chats-error'));
       expect(error, findsOneWidget);
       expect(find.text('Masz chwilę na rozmowę?'), findsNothing);
-      expect(_followedMomentShown(tester, desktop: desktop), isTrue);
+      expect(_friendVoiceShown(tester), isTrue);
       await tester.tap(
         find.descendant(of: error, matching: find.byType(OutlinedButton)),
       );
@@ -630,16 +734,16 @@ void main() {
         addTearDown(f.dispose);
         await tester.pumpWidget(_app(f.home(desktop: desktop), size));
         await _settle(tester);
-        expect(_followedMomentShown(tester, desktop: desktop), isTrue);
+        expect(_friendVoiceShown(tester), isTrue);
         final chatReads = f.chats.listens;
         f.moments.deny();
         await _settle(tester);
         // A denied page never leaves a stale mark behind.
-        expect(_followedMomentShown(tester, desktop: desktop), isFalse);
+        expect(_friendVoiceShown(tester), isFalse);
         final error = find.byKey(const ValueKey('home-moments-error'));
         expect(error, findsNothing);
         expect(
-          find.byKey(const ValueKey('home-featured-room')),
+          find.byKey(const ValueKey('home-server-continue-qa-community')),
           findsOneWidget,
         );
         // The failure stays local: the chats subscription is untouched.
@@ -647,7 +751,7 @@ void main() {
         f.moments.add([]);
         await _settle(tester);
         expect(error, findsNothing);
-        expect(_followedMomentShown(tester, desktop: desktop), isFalse);
+        expect(_friendVoiceShown(tester), isFalse);
         expect(
           find.byKey(const ValueKey('home-record-moment')),
           findsOneWidget,
@@ -666,14 +770,17 @@ void main() {
         addTearDown(tester.view.reset);
         final f = _Fixture();
         await f.initialize();
-        f.rooms.add([]);
+        f.servers.add([]);
         f.moments.add([]);
         addTearDown(f.dispose);
         await tester.pumpWidget(_app(f.home(desktop: desktop), size));
         await _settle(tester);
-        expect(find.byType(HomeConversationInvitation), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('home-servers-empty')),
+          findsOneWidget,
+        );
         final listens = f.listens;
-        final action = find.byKey(const ValueKey('home-quick-create-room'));
+        final action = find.byKey(const ValueKey('home-quick-create-server'));
         final focus = Focus.of(
           tester.element(
             find.descendant(of: action, matching: find.byType(Text)).first,
@@ -681,14 +788,17 @@ void main() {
         );
         focus.requestFocus();
         await tester.pump();
-        f.rooms.add([f.liveRoom]);
+        f.servers.add([f.communityServer]);
         await _settle(tester);
-        expect(find.byType(HomeConversationInvitation), findsNothing);
+        expect(
+          find.byKey(const ValueKey('home-server-continue-qa-community')),
+          findsOneWidget,
+        );
         expect(f.listens, listens);
         expect(focus.hasFocus, isTrue);
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-        expect(f.actions, ['create']);
-        expect(find.text('Twój pokój'), findsOneWidget);
+        expect(f.actions, ['servers']);
+        expect(find.text('Głos miasta'), findsWidgets);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
       },
@@ -860,7 +970,7 @@ void main() {
     await frame(1440, 2);
     expect(find.byKey(const ValueKey('home-secondary-column')), findsOneWidget);
     expect(f.listens, listens);
-    expect(find.text('Twój pokój'), findsOneWidget);
+    expect(find.text('Głos miasta'), findsWidgets);
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -880,7 +990,7 @@ void main() {
             longName: scale == 2,
           );
           if (state == 'error') {
-            f.rooms.deny();
+            f.servers.deny();
             f.moments.deny();
             f.chats.deny();
           }
@@ -908,6 +1018,8 @@ void main() {
             await _settle(tester);
             final prefix =
                 '${pearl ? 'pearl' : 'dark'}-${width.toInt()}-${scale.toInt()}x-$state';
+            expect(find.text('Obserwowani'), findsNothing, reason: prefix);
+            expect(find.text('Followers'), findsNothing, reason: prefix);
             await _shoot(tester, captureKey, '$prefix-top');
             expect(tester.takeException(), isNull, reason: prefix);
             // Traverse the entire lazy page, not just the first viewport.

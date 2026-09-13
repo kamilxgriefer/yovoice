@@ -7,7 +7,6 @@ import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
-import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
@@ -26,6 +25,7 @@ import 'package:yovoice/features/rooms/presentation/widgets/room_header.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/invite_to_room_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_hero_banner.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
+import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
@@ -412,12 +412,12 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     );
   }
 
-  void _openClubOverview() {
+  void _openServerWorkspace() {
     final clubId = widget.room.clubId;
     if (clubId == null) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => ClubOverviewScreen(clubId: clubId),
+        builder: (_) => ServerWorkspaceScreen(serverId: clubId),
       ),
     );
   }
@@ -639,9 +639,9 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
           ? null
           : RoomHeroLinkAction(
               label: club.isFamilyRoom
-                  ? copy.text('Open family space', 'Otwórz przestrzeń rodzinną')
-                  : copy.text('View club', 'Zobacz klub'),
-              onTap: _openClubOverview,
+                  ? copy.text('Open family server', 'Otwórz serwer rodzinny')
+                  : copy.text('Open server', 'Otwórz serwer'),
+              onTap: _openServerWorkspace,
               identity: identity,
               // Width alone decides. The family room previously forced
               // the icon-only variant at EVERY width, leaving a lone ↗ in
@@ -653,10 +653,10 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       speakers: roomPeople,
       identity: identity,
       fill: fill,
-      title: copy.text('People here', 'Osoby w pokoju'),
+      title: copy.text('People here', 'Osoby na kanale'),
       emptyMessage: copy.text(
-        'Join the room to start the conversation.',
-        'Dołącz do pokoju, aby rozpocząć rozmowę.',
+        'Join the channel to start the conversation.',
+        'Dołącz do kanału, aby rozpocząć rozmowę.',
       ),
       icon: Icons.groups_rounded,
       onOverflowTap: () => _openParticipants(_latestParticipants),
@@ -714,9 +714,9 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   String _subtitleText(Club? club) {
     final copy = AppLocalizations.of(context);
     final subtitle = club?.isFamilyRoom == true
-        ? copy.text('FAMILY ROOM', 'POKÓJ RODZINNY')
+        ? copy.text('FAMILY CHANNEL', 'KANAŁ RODZINNY')
         : _isClubRoom
-        ? copy.text('CLUB ROOM', 'POKÓJ KLUBOWY')
+        ? copy.text('SERVER CHANNEL', 'KANAŁ SERWERA')
         : null;
     if (!_live) {
       final dormant = copy.text('NOT LIVE YET', 'JESZCZE NIE NA ŻYWO');

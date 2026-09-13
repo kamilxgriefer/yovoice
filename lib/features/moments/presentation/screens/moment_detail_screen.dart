@@ -171,6 +171,15 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   bool _playbackBusy = false;
   bool _openingNeighbour = false;
 
+  /// One intended playback, identified. A media grant is a network round
+  /// trip: while it is in flight the viewer can hand off to a neighbour,
+  /// let a voice reply take the floor, push a route over this screen, send
+  /// the app to the background, or watch the Moment reach its deadline.
+  /// Every one of those bumps the epoch, so the answer that lands
+  /// afterwards can tell it is stale and stop instead of sounding over
+  /// whatever replaced it. `mounted` alone cannot see any of that.
+  int _playEpoch = 0;
+
   /// The ONE position this screen owns. The ring, the waveform, the slider
   /// and the clock all read it, and a position tick repaints exactly those
   /// four — it must never rebuild the route (the thread used to rebuild on
@@ -259,13 +268,37 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   }
 
   @override
+  void didPushNext() {
+    // A route covering the expanded player takes the recording with it —
+    // the comments screen, a profile preview, a report sheet, the recorder
+    // and an incoming 1:1 call alike. The Voice feed
+    // (`moments_feed_view.dart`) and every Reel card already do this; this
+    // surface is the one that owns board 07's transport.
+    unawaited(_releasePlayback());
+  }
+
+  @override
   void didPopNext() {
     unawaited(_loadView(trigger: _MomentDetailRefreshTrigger.routeReturn));
   }
 
   @override
+  void didPop() {
+    // The route is leaving. It stays MOUNTED for the length of the pop
+    // transition, so without this a grant landing mid-animation starts a
+    // recording on a screen the viewer has already dismissed.
+    unawaited(_releasePlayback());
+  }
+
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
+    if (state != AppLifecycleState.resumed) {
+      // `ios/Runner/Info.plist` declares `UIBackgroundModes: audio` for
+      // LiveKit, so a backgrounded recording really does keep sounding,
+      // with no lock-screen controls and no way to stop it.
+      unawaited(_releasePlayback());
+      return;
+    }
     unawaited(_loadView(trigger: _MomentDetailRefreshTrigger.appResume));
   }
 
@@ -391,6 +424,13 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   /// Returning here re-reads the view through [didPopNext], so a comment
   /// posted there shows up on this page.
   Future<void> _openAllComments() async {
+    // `MomentCommentsScreen` builds its own arbiter with no main-player
+    // callback — correctly, it owns no transport — so a voice reply played
+    // there has no way to reach this screen's recording. It is stopped
+    // here, before the push, and not only through `didPushNext`, so the
+    // rule holds even where no route observer is installed.
+    await _releasePlayback();
+    if (!mounted) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => MomentCommentsScreen(
@@ -410,6 +450,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   @override
   void dispose() {
     _viewLoadGeneration += 1;
+    _playEpoch += 1;
     WidgetsBinding.instance.removeObserver(this);
     appRouteObserver.unsubscribe(this);
     _neighbourQueue.removeListener(_handleNeighbours);
@@ -460,6 +501,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   }
 
   void _stopPlaybackForGone({bool notify = true}) {
+    // A grant minted before the deadline is still valid on the server for
+    // its whole TTL, so the client is the only guard that can keep an
+    // expired recording from sounding after the gone state is announced.
+    _playEpoch += 1;
     final player = _player;
     if (player != null) {
       unawaited(player.stop().catchError((Object _) {}));
@@ -591,6 +636,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     // The main recording takes the floor: any voice reply that is sounding
     // stops before this one starts.
     _arbiter.mainPlaybackStarted();
+    final epoch = ++_playEpoch;
+    final requestedId = _moment.id;
 
     final resuming = _everPlayed && _position.value > Duration.zero;
     setState(() {
@@ -610,9 +657,19 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
         await player.resume();
       } else {
         _everPlayed = true;
-        final uri = await moments.resolveMediaUri(momentId: _moment.id);
-        if (!mounted || _missing) return;
+        final uri = await moments.resolveMediaUri(momentId: requestedId);
+        if (!_playbackStillWanted(epoch, requestedId)) {
+          _abandonStalePlayback();
+          return;
+        }
         await player.play(UrlSource(uri.toString()));
+        if (!_playbackStillWanted(epoch, requestedId)) {
+          // The floor moved while `play()` itself was in flight: stop what
+          // was just started rather than leaving two sources sounding.
+          unawaited(player.stop().catchError((Object _) {}));
+          _abandonStalePlayback();
+          return;
+        }
       }
       if (mounted) setState(() => _playbackBusy = false);
     } catch (_) {
@@ -628,15 +685,80 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     }
   }
 
+  /// Is the playback that started under [epoch] for [momentId] still the
+  /// one this screen wants to hear? Checked after the grant resolves and
+  /// again after `play()` returns.
+  bool _playbackStillWanted(int epoch, String momentId) =>
+      mounted &&
+      epoch == _playEpoch &&
+      _moment.id == momentId &&
+      !_missing &&
+      !_gone &&
+      _arbiter.activeReplyId == null;
+
+  /// A grant landed for playback nobody is waiting for any more. The state
+  /// that replaced it has already been set by whoever bumped the epoch; all
+  /// that is left is to clear the "starting" flags this attempt raised.
+  void _abandonStalePlayback() {
+    if (!mounted || (!_isPlaying && !_playbackBusy)) return;
+    setState(() {
+      _isPlaying = false;
+      _playbackBusy = false;
+    });
+  }
+
   /// Pauses the main recording so a voice reply can be heard. A deliberate
   /// pause is never manufactured: this is a no-op unless audio is running.
   void _pauseForReply() {
+    // Unconditional: a grant in flight has to be invalidated even in the
+    // frame between the tap and the first sound, which is exactly the
+    // window in which a reply can take the floor.
+    _playEpoch += 1;
     if (!_isPlaying) return;
     final player = _player;
     if (player != null) {
       unawaited(player.pause().catchError((Object _) {}));
     }
     if (mounted) setState(() => _isPlaying = false);
+  }
+
+  /// Stops the recording and lets go of the platform player.
+  ///
+  /// Every path that takes the recording away from this screen arrives
+  /// here: a route pushed over the expanded player, the app leaving the
+  /// foreground, the recorder opening for a voice reply. It RELEASES rather
+  /// than pausing, the way the Voice feed does — a paused `audioplayers`
+  /// instance still owns its native player and, on iOS, its audio session,
+  /// which the recorder needs as `playAndRecord`.
+  Future<void> _releasePlayback() async {
+    _playEpoch += 1;
+    // A sounding voice reply belongs to this host too, and goes quiet with
+    // the recording rather than outliving the screen that hosts it.
+    _arbiter.mainPlaybackStarted();
+    final player = _player;
+    _player = null;
+    _isPlaying = false;
+    _playbackBusy = false;
+    _everPlayed = false;
+    _position.value = Duration.zero;
+    _duration.value = null;
+    _publishProgress();
+    if (mounted) setState(() {});
+    if (player == null) return;
+    for (final subscription in _playerSubscriptions) {
+      unawaited(subscription.cancel());
+    }
+    _playerSubscriptions.clear();
+    try {
+      await player.stop();
+    } catch (_) {
+      // Nothing was playing.
+    }
+    try {
+      await player.dispose();
+    } catch (_) {
+      // The native player is already gone.
+    }
   }
 
   /// Seeks the MAIN player only, clamped to the recording — the ±15 s
@@ -665,7 +787,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   /// The loaded, active, authorised neighbours this viewer may hand off to.
   List<VoiceMoment> _neighbourPool() {
     final explicit = widget.neighbours;
-    final pool = explicit ??
+    final pool =
+        explicit ??
         (_neighbourQueue.value.belongsTo(_uid)
             ? _neighbourQueue.value.moments
             : const <VoiceMoment>[]);
@@ -680,7 +803,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   /// Moment in the pool the feed loaded, capped by the list itself.
   List<VoiceMoment> _upcomingNeighbours() {
     final explicit = widget.neighbours;
-    final pool = explicit ??
+    final pool =
+        explicit ??
         (_neighbourQueue.value.belongsTo(_uid)
             ? _neighbourQueue.value.moments
             : const <VoiceMoment>[]);
@@ -713,6 +837,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       }
       if (!mounted) return;
       _arbiter.mainPlaybackStarted();
+      _playEpoch += 1;
       _canonicalRefreshesInFlight.clear();
       _viewLoadGeneration += 1;
       _position.value = Duration.zero;
@@ -923,8 +1048,13 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   /// inside it, on its own control. The main recording pauses first, so the
   /// viewer never records over what they are answering.
   Future<void> _replyWithVoice() async {
+    // Silence first — that is the arbiter's contract and what the viewer
+    // hears — and then RELEASE, because the recorder needs the audio
+    // session and a paused `audioplayers` instance still owns it on iOS.
     _pauseForReply();
     _arbiter.mainPlaybackStarted();
+    await _releasePlayback();
+    if (!mounted) return;
     final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
         builder: (_) => RecordVoiceMomentScreen(
@@ -989,7 +1119,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
             // transport stays above the fold.
             final shortHeight = constraints.maxHeight < 560;
             final compact = layout.isNarrow;
-            final threadPanel = layout.tier == YoMomentsLayoutTier.wide2 ||
+            final threadPanel =
+                layout.tier == YoMomentsLayoutTier.wide2 ||
                 layout.tier == YoMomentsLayoutTier.wide3;
             final threadWidth = layout.slotWidth >= 1440 ? 400.0 : 360.0;
 
@@ -1007,8 +1138,11 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
                   Expanded(
                     child: Center(
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          maxWidth: YoMomentsLayout.mainMaxWidth,
+                        // The OUTER measure: the contract's 640 card plus
+                        // its two gutters. Capping the scroll view itself at
+                        // 640 left a 592 card inside it at every width.
+                        constraints: BoxConstraints(
+                          maxWidth: layout.mainColumnOuterWidth,
                         ),
                         child: ListView(
                           key: const ValueKey('moment-detail-scroll'),
@@ -1043,46 +1177,52 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       if (layout.tier == YoMomentsLayoutTier.wide3) ...[
-                        SizedBox(
-                          width: layout.localPanelWidth,
-                          child: SingleChildScrollView(
-                            padding: EdgeInsets.only(
-                              left: layout.gutter,
-                              bottom: AppRhythm.page,
-                            ),
-                            child: MomentsQueueList(
-                              current: _moment,
-                              upcoming: _upcomingNeighbours(),
-                              progress: _progress,
-                              onOpen: (moment) =>
-                                  unawaited(_openNeighbour(moment)),
+                        FocusTraversalGroup(
+                          child: SizedBox(
+                            width: layout.localPanelWidth,
+                            child: SingleChildScrollView(
+                              padding: EdgeInsets.only(
+                                left: layout.gutter,
+                                bottom: AppRhythm.page,
+                              ),
+                              child: MomentsQueueList(
+                                current: _moment,
+                                upcoming: _upcomingNeighbours(),
+                                progress: _progress,
+                                onOpen: (moment) =>
+                                    unawaited(_openNeighbour(moment)),
+                              ),
                             ),
                           ),
                         ),
                         SizedBox(width: layout.gutter),
                       ],
                       Expanded(
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(
-                              maxWidth: YoMomentsLayout.mainMaxWidth,
-                            ),
-                            child: ListView(
-                              key: const ValueKey('moment-detail-scroll'),
-                              padding: EdgeInsets.fromLTRB(
-                                layout.gutter,
-                                AppRhythm.hairline,
-                                layout.gutter,
-                                AppRhythm.page,
+                        child: FocusTraversalGroup(
+                          child: Center(
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: layout.mainColumnOuterWidth,
                               ),
-                              children: [body],
+                              child: ListView(
+                                key: const ValueKey('moment-detail-scroll'),
+                                padding: EdgeInsets.fromLTRB(
+                                  layout.gutter,
+                                  AppRhythm.hairline,
+                                  layout.gutter,
+                                  AppRhythm.page,
+                                ),
+                                children: [body],
+                              ),
                             ),
                           ),
                         ),
                       ),
-                      SizedBox(
-                        width: threadWidth,
-                        child: _threadPanel(),
+                      FocusTraversalGroup(
+                        child: SizedBox(
+                          width: threadWidth,
+                          child: _threadPanel(),
+                        ),
                       ),
                     ],
                   ),
@@ -1115,19 +1255,21 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
           const SizedBox(height: AppRhythm.tight),
           ValueListenableBuilder<Duration>(
             valueListenable: _position,
-            builder: (context, position, _) => ValueListenableBuilder<Duration?>(
-              valueListenable: _duration,
-              builder: (context, duration, __) => MomentTransportControls(
-                position: position,
-                total: duration ?? Duration(seconds: _moment.durationSeconds),
-                isPlaying: _isPlaying,
-                busy: _playbackBusy,
-                canSeek: _everPlayed,
-                compact: compact,
-                onTogglePlay: () => unawaited(_togglePlay()),
-                onSeek: (target) => unawaited(_seek(target)),
-              ),
-            ),
+            builder: (context, position, _) =>
+                ValueListenableBuilder<Duration?>(
+                  valueListenable: _duration,
+                  builder: (context, duration, __) => MomentTransportControls(
+                    position: position,
+                    total:
+                        duration ?? Duration(seconds: _moment.durationSeconds),
+                    isPlaying: _isPlaying,
+                    busy: _playbackBusy,
+                    canSeek: _everPlayed,
+                    compact: compact,
+                    onTogglePlay: () => unawaited(_togglePlay()),
+                    onSeek: (target) => unawaited(_seek(target)),
+                  ),
+                ),
           ),
           if (_playbackError != null) ...[
             const SizedBox(height: AppRhythm.tight),
@@ -1163,7 +1305,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
         progress: progress,
         compact: !sideBySide,
         avatar: UserAvatar(
-          radius: (sideBySide
+          radius:
+              (sideBySide
                   ? MomentProgressRing.expandedAvatar
                   : MomentProgressRing.compactAvatar) /
               2,
@@ -1190,10 +1333,11 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
           caption.isEmpty ? copy.text('Voice Moment', 'Voice Moment') : caption,
           key: const ValueKey('moment-detail-caption'),
           textAlign: sideBySide ? TextAlign.start : TextAlign.center,
-          style: (sideBySide
-                  ? AppTypography.headlineLarge
-                  : AppTypography.headlineMedium)
-              .copyWith(color: palette.textPrimary),
+          style:
+              (sideBySide
+                      ? AppTypography.headlineLarge
+                      : AppTypography.headlineMedium)
+                  .copyWith(color: palette.textPrimary),
         ),
         const SizedBox(height: AppRhythm.tight),
         _authorLine(centred: !sideBySide),
@@ -1203,7 +1347,11 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     if (!sideBySide) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.center,
-        children: [ring, const SizedBox(height: AppRhythm.title), text],
+        children: [
+          ring,
+          const SizedBox(height: AppRhythm.title),
+          text,
+        ],
       );
     }
     return Row(
@@ -1859,10 +2007,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   /// Moment's author, the thread's own participants, and the viewer's
   /// friends.
   MentionDirectory _readDirectory() => MentionDirectory(<MentionCandidate>[
-    MentionCandidate(
-      userId: _moment.authorId,
-      displayName: _moment.authorName,
-    ),
+    MentionCandidate(userId: _moment.authorId, displayName: _moment.authorName),
     for (final comment in _comments ?? const <MomentComment>[])
       if (comment.authorId.isNotEmpty && comment.authorName.trim().isNotEmpty)
         MentionCandidate(

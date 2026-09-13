@@ -58,7 +58,7 @@ class SpaceIdentity {
 
   static const community = SpaceIdentity(
     kind: SpaceKind.community,
-    label: 'Community Room',
+    label: 'Community Channel',
     primary: Color(0xFF8A2BE2),
     accent: Color(0xFFC026FF),
     // The existing YO Voice violet surface, unchanged — community is the
@@ -70,7 +70,7 @@ class SpaceIdentity {
 
   static const podcast = SpaceIdentity(
     kind: SpaceKind.podcast,
-    label: 'Podcast Room',
+    label: 'Podcast Channel',
     primary: Color(0xFFFF3D68),
     accent: Color(0xFFFF6B81),
     surface: Color(0xFF241318),
@@ -80,7 +80,7 @@ class SpaceIdentity {
 
   static const club = SpaceIdentity(
     kind: SpaceKind.club,
-    label: 'Club',
+    label: 'Server Channel',
     primary: Color(0xFFD9A441),
     accent: Color(0xFFFFD166),
     surface: Color(0xFF231C10),
@@ -90,7 +90,7 @@ class SpaceIdentity {
 
   static const family = SpaceIdentity(
     kind: SpaceKind.family,
-    label: 'Family Room',
+    label: 'Family Channel',
     primary: Color(0xFF28D17C),
     accent: Color(0xFF35E58D),
     surface: Color(0xFF12231D),

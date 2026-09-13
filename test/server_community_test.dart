@@ -96,6 +96,7 @@ Widget communityWorkspace(
   String channelId = 'stage',
   FakeServerMediaConnector? connector,
   ClubChatService? chat,
+  Future<void> Function(Uri link)? shareServer,
 }) => ServerWorkspaceScreen(
   key: UniqueKey(),
   serverId: 's',
@@ -104,6 +105,7 @@ Widget communityWorkspace(
   initialChannelId: channelId,
   chatService: chat ?? communityChat(),
   connector: connector ?? FakeServerMediaConnector(),
+  shareServer: shareServer,
 );
 
 /// Any phrasing that could only come from a presence or reaction writer.
@@ -196,10 +198,7 @@ void main() {
     // The pill rides on the scene itself, as the board draws it.
     final pillOnStage = find.descendant(of: stage, matching: livePill);
     expect(pillOnStage, findsOneWidget);
-    expect(
-      find.text('Dołącz, aby oglądać i słuchać.'),
-      findsOneWidget,
-    );
+    expect(find.text('Dołącz, aby oglądać i słuchać.'), findsOneWidget);
   });
 
   testWidgets('the ordinary Salon stays a conversation, not a stage', (
@@ -226,42 +225,76 @@ void main() {
     expect(stage, findsOneWidget);
   });
 
-  testWidgets('Obserwuj and Udostępnij are labelled unavailable, not broken', (
+  testWidgets('Obserwuj and Udostępnij execute their real server actions', (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    Uri? shared;
     final repository = TestServerRepository()
       ..servers = [communityServer()]
       ..channels = communityChannels();
     await pumpServers(
       tester,
-      communityWorkspace(repository),
+      communityWorkspace(
+        repository,
+        shareServer: (link) async => shared = link,
+      ),
       size: const Size(1440, 900),
     );
 
-    for (final key in const [
-      ValueKey('server-community-follow'),
-      ValueKey('server-community-share'),
-    ]) {
-      final finder = find.byKey(key);
-      expect(finder, findsOneWidget, reason: '$key');
-      expect(
-        tester.widget<OutlinedButton>(finder).onPressed,
-        isNull,
-        reason: '$key is not wired to anything that would fail',
-      );
-    }
+    final follow = find.byKey(const ValueKey('server-community-follow'));
+    final share = find.byKey(const ValueKey('server-community-share'));
+    expect(tester.widget<OutlinedButton>(follow).onPressed, isNotNull);
+    expect(tester.widget<OutlinedButton>(share).onPressed, isNotNull);
+
+    await tester.tap(follow);
+    await tester.pumpAndSettle();
+    expect(repository.calls.single.$1, 'setCommunityServerFollowV1');
+    expect(repository.calls.single.$2, {'serverId': 's', 'following': true});
+    expect(find.text('Obserwujesz'), findsOneWidget);
+
+    await tester.tap(share);
+    await tester.pumpAndSettle();
     expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('server-community-secondary-actions')),
-        matching: find.text('Wkrótce'),
-      ),
-      findsOneWidget,
+      shared.toString(),
+      'https://app.yovoice.app/?server=s&channel=stage',
     );
+    expect(tester.takeException(), isNull);
   });
 
-  testWidgets('the next-event card is honest and only when the channel exists',
-      (tester) async {
+  testWidgets('a stage host controls their real camera after joining', (
+    tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = TestServerRepository()
+      ..servers = [communityServer()]
+      ..channels = communityChannels()
+      ..permittedTrackSources = const ['microphone', 'camera'];
+    final connector = FakeServerMediaConnector();
+    await pumpServers(
+      tester,
+      communityWorkspace(repository, connector: connector),
+      size: const Size(1440, 900),
+    );
+
+    expect(find.byKey(const ValueKey('server-community-camera')), findsNothing);
+    await tester.tap(join);
+    await tester.pumpAndSettle();
+
+    final camera = find.byKey(const ValueKey('server-community-camera'));
+    expect(camera, findsOneWidget);
+    expect(find.text('Kamera wyłączona'), findsOneWidget);
+    await tester.tap(camera);
+    await tester.pumpAndSettle();
+
+    expect(connector.links.single.cameraCalls, [true]);
+    expect(find.text('Kamera włączona'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the events card opens its real board only when channel exists', (
+    tester,
+  ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final repository = TestServerRepository()
       ..servers = [communityServer()]
@@ -274,7 +307,7 @@ void main() {
     final card = find.byKey(const ValueKey('server-community-event-card'));
     expect(card, findsOneWidget);
     expect(
-      find.descendant(of: card, matching: find.text('Dołączę')),
+      find.descendant(of: card, matching: find.text('Otwórz wydarzenia')),
       findsOneWidget,
     );
     expect(
@@ -283,15 +316,18 @@ void main() {
             find.descendant(of: card, matching: find.byType(FilledButton)),
           )
           .onPressed,
-      isNull,
+      isNotNull,
     );
-    // The real channel is the way in.
-    final way = find.descendant(of: card, matching: find.text('Wydarzenia'));
+    final way = find.descendant(
+      of: card,
+      matching: find.text('Otwórz wydarzenia'),
+    );
     await tester.ensureVisible(way);
     await tester.pumpAndSettle();
     await tester.tap(way);
     await tester.pumpAndSettle();
     expect(stage, findsNothing);
+    expect(find.byKey(const ValueKey('server-events-board')), findsOneWidget);
 
     final without = TestServerRepository()
       ..servers = [communityServer()]
@@ -307,20 +343,25 @@ void main() {
     );
   });
 
-  testWidgets('the desktop context panel is the live chat over a real channel',
-      (tester) async {
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    final repository = TestServerRepository()
-      ..servers = [communityServer()]
-      ..channels = communityChannels();
-    await pumpServers(
-      tester,
-      communityWorkspace(repository),
-      size: const Size(1440, 900),
-    );
-    expect(find.byKey(const ValueKey('server-context-panel')), findsOneWidget);
-    expect(find.text('Czat na żywo · #ogólny'), findsOneWidget);
-  });
+  testWidgets(
+    'the desktop context panel is the live chat over a real channel',
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = TestServerRepository()
+        ..servers = [communityServer()]
+        ..channels = communityChannels();
+      await pumpServers(
+        tester,
+        communityWorkspace(repository),
+        size: const Size(1440, 900),
+      );
+      expect(
+        find.byKey(const ValueKey('server-context-panel')),
+        findsOneWidget,
+      );
+      expect(find.text('Czat na żywo · #ogólny'), findsOneWidget);
+    },
+  );
 
   testWidgets('the phone surface leads with the video and Czat | Kanały', (
     tester,
@@ -498,7 +539,10 @@ void main() {
     ]);
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('server-community-on-air')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('server-community-on-air')),
+      findsOneWidget,
+    );
     expect(find.text('Maja'), findsWidgets);
     expect(find.text('Bartek'), findsWidgets);
     // Nobody is publishing a camera, so the scene says exactly that instead
@@ -540,10 +584,7 @@ void main() {
       ..moderators = const {'mod'};
     await pumpServers(
       tester,
-      communityWorkspace(
-        repository,
-        chat: communityChat(firestore: firestore),
-      ),
+      communityWorkspace(repository, chat: communityChat(firestore: firestore)),
       size: const Size(1440, 900),
     );
     await tester.pumpAndSettle();
@@ -672,12 +713,19 @@ void main() {
       expect(scene.width / scene.height, closeTo(16 / 9, 0.02), reason: reason);
       expect(scene.top, greaterThanOrEqualTo(0), reason: reason);
       // The picture holds its own place above the scroll…
-      expect(scene.bottom, lessThanOrEqualTo(viewport.top + 0.5), reason: reason);
+      expect(
+        scene.bottom,
+        lessThanOrEqualTo(viewport.top + 0.5),
+        reason: reason,
+      );
       // …and the channel's name and its live line hold their own place
       // between the picture and the scroll, whole, at every text setting.
       expect(title.top, greaterThan(scene.bottom - 1), reason: reason);
-      expect(liveness.bottom, lessThanOrEqualTo(viewport.top + 0.5),
-          reason: reason);
+      expect(
+        liveness.bottom,
+        lessThanOrEqualTo(viewport.top + 0.5),
+        reason: reason,
+      );
       expect(liveness.bottom, lessThanOrEqualTo(760), reason: reason);
       expect(find.text('Na żywo od 19:40'), findsWidgets, reason: reason);
       expect(find.textContaining(fabricated), findsNothing, reason: reason);
@@ -711,7 +759,10 @@ void main() {
     expect(conversation, findsOneWidget);
     expect(find.byKey(const ValueKey('server-open-channels')), findsOneWidget);
     expect(stage, findsOneWidget);
-    expect(find.byKey(const ValueKey('server-community-details')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('server-community-details')),
+      findsOneWidget,
+    );
     expect(find.text('Nie ma jeszcze wiadomości'), findsNothing);
 
     await tester.tap(conversation);
@@ -722,11 +773,17 @@ void main() {
     // its own composer.
     expect(stage, findsNothing);
     expect(find.text('Nie ma jeszcze wiadomości'), findsOneWidget);
-    expect(find.byKey(const ValueKey('server-community-details')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('server-community-details')),
+      findsNothing,
+    );
 
     await tester.tap(scene);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('server-community-details')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('server-community-details')),
+      findsOneWidget,
+    );
     expect(find.text('Nie ma jeszcze wiadomości'), findsNothing);
     expect(repository.calls, isEmpty);
   });
@@ -780,11 +837,15 @@ void main() {
       size: const Size(1440, 900),
     );
     expect(
-      tester.widget<Text>(find.descendant(of: join, matching: find.byType(Text))).data,
+      tester
+          .widget<Text>(find.descendant(of: join, matching: find.byType(Text)))
+          .data,
       'Oglądaj',
     );
-    expect(find.descendant(of: join, matching: find.byIcon(Icons.live_tv_rounded)),
-        findsOneWidget);
+    expect(
+      find.descendant(of: join, matching: find.byIcon(Icons.live_tv_rounded)),
+      findsOneWidget,
+    );
 
     final audio = TestServerRepository()
       ..servers = [communityServer()]
@@ -801,7 +862,9 @@ void main() {
       size: const Size(1440, 900),
     );
     expect(
-      tester.widget<Text>(find.descendant(of: join, matching: find.byType(Text))).data,
+      tester
+          .widget<Text>(find.descendant(of: join, matching: find.byType(Text)))
+          .data,
       'Słuchaj',
     );
   });

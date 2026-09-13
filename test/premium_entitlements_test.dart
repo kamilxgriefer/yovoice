@@ -554,7 +554,7 @@ void main() {
       // pumpAndSettle would never settle.
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(find.text('More room\nfor your voice.'), findsOneWidget);
+      expect(find.text('More space\nfor your voice.'), findsOneWidget);
       expect(find.text('YO VOICE PREMIUM'), findsOneWidget);
 
       // The benefit cards and CTA sit below the fold.
@@ -565,7 +565,7 @@ void main() {
       );
       await tester.pump();
       expect(find.text('Become a Creator'), findsOneWidget);
-      expect(find.text('Create your own Clubs'), findsOneWidget);
+      expect(find.text('Build your audience'), findsOneWidget);
       expect(find.text('Stand out'), findsOneWidget);
       // No pricing on the presentation — that's the plans screen's job.
       expect(find.text('19,99 zł'), findsNothing);
@@ -773,26 +773,29 @@ void main() {
       );
     });
 
-    testWidgets('open Clubs locks exactly when Premium expires, without a '
-        'new Firestore snapshot', (tester) async {
-      final db = FakeFirebaseFirestore();
-      final periodEnd = DateTime.now().add(const Duration(days: 20));
-      var clock = periodEnd.subtract(const Duration(seconds: 1));
-      await _seedEntitlements(db, status: 'active', periodEnd: periodEnd);
-      await tester.pumpWidget(
-        guarded(db: db, feature: PremiumFeature.clubs, now: () => clock),
-      );
-      await tester.pump(const Duration(milliseconds: 50));
+    testWidgets(
+      'legacy paid-space gate uses Server copy when Premium expires, without a '
+      'new Firestore snapshot',
+      (tester) async {
+        final db = FakeFirebaseFirestore();
+        final periodEnd = DateTime.now().add(const Duration(days: 20));
+        var clock = periodEnd.subtract(const Duration(seconds: 1));
+        await _seedEntitlements(db, status: 'active', periodEnd: periodEnd);
+        await tester.pumpWidget(
+          guarded(db: db, feature: PremiumFeature.clubs, now: () => clock),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
 
-      expect(find.text('Protected destination content'), findsOneWidget);
-      expect(find.text('Clubs requires Premium'), findsNothing);
+        expect(find.text('Protected destination content'), findsOneWidget);
+        expect(find.text('Server tools requires Premium'), findsNothing);
 
-      clock = periodEnd.add(const Duration(milliseconds: 1));
-      await tester.pump(const Duration(seconds: 2));
+        clock = periodEnd.add(const Duration(milliseconds: 1));
+        await tester.pump(const Duration(seconds: 2));
 
-      expect(find.text('Protected destination content'), findsNothing);
-      expect(find.text('Clubs requires Premium'), findsOneWidget);
-    });
+        expect(find.text('Protected destination content'), findsNothing);
+        expect(find.text('Server tools requires Premium'), findsOneWidget);
+      },
+    );
 
     testWidgets('paid expiry does not evict an active moderator, but demotion '
         'does', (tester) async {

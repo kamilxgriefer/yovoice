@@ -511,7 +511,7 @@ class _NotificationCard extends StatelessWidget {
     NotificationType.broadcastInvite ||
     NotificationType.liveStarted => Icons.graphic_eq_rounded,
     NotificationType.clubInvite ||
-    NotificationType.clubInviteAccepted => Icons.groups_outlined,
+    NotificationType.clubInviteAccepted => Icons.hub_outlined,
     NotificationType.moderation => Icons.shield_outlined,
     _ => Icons.notifications_none_rounded,
   };

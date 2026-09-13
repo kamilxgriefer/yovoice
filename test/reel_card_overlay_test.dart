@@ -113,7 +113,10 @@ Future<List<Reel>> _pumpFeed(
 }
 
 void main() {
-  testWidgets('the rail runs like, comment, share, more down one column', (
+  // Board 08 replaced the copied vertical column of actions with the YO Voice
+  // horizontal bar (spec §7 line 127). The order is the same and so are the
+  // keys; what changed is the axis and the surface they sit on.
+  testWidgets('the action bar runs like, comment, share, more across one row', (
     tester,
   ) async {
     await _pumpFeed(tester);
@@ -123,15 +126,23 @@ void main() {
     final share = tester.getCenter(_inCard(find.byKey(_share)));
     final more = tester.getCenter(_inCard(find.byKey(_more)));
 
-    expect(like.dy, lessThan(comment.dy));
-    expect(comment.dy, lessThan(share.dy));
-    expect(share.dy, lessThan(more.dy));
-    // One column, not a scattered set of controls.
-    expect(comment.dx, closeTo(like.dx, 1));
-    expect(share.dx, closeTo(like.dx, 1));
-    expect(more.dx, closeTo(like.dx, 1));
-    // The rail sits against the trailing edge, the identity against the other.
-    expect(like.dx, greaterThan(tester.getCenter(find.byType(ReelCard)).dx));
+    expect(like.dx, lessThan(comment.dx));
+    expect(comment.dx, lessThan(share.dx));
+    expect(share.dx, lessThan(more.dx));
+    // One row, not a scattered set of controls.
+    expect(comment.dy, closeTo(like.dy, 1));
+    expect(share.dy, closeTo(like.dy, 1));
+    expect(more.dy, closeTo(like.dy, 1));
+    // Under the media, never over the subject.
+    final frame = tester.getRect(
+      find
+          .descendant(
+            of: find.byType(ReelCard),
+            matching: find.byType(ClipRRect),
+          )
+          .first,
+    );
+    expect(like.dy, greaterThan(frame.center.dy));
   });
 
   testWidgets('your own Reel offers delete where a stranger offers report', (
@@ -143,7 +154,7 @@ void main() {
     expect(find.text('Report Reel'), findsNothing);
     final like = tester.getCenter(_inCard(find.byKey(_like)));
     final more = tester.getCenter(_inCard(find.byKey(_more)));
-    expect(more.dy, greaterThan(like.dy));
+    expect(more.dx, greaterThan(like.dx));
     await tester.tap(_inCard(find.byKey(_more)));
     await tester.pumpAndSettle();
     expect(find.text('Delete Reel'), findsOneWidget);
@@ -176,11 +187,11 @@ void main() {
     }
   });
 
-  testWidgets('a frame too short for a column folds the rail into a row', (
-    tester,
-  ) async {
-    // A short stage: the 9:16 frame ends up under 400 px tall, which is the
-    // point at which a vertical rail would start covering the media.
+  testWidgets('a window too short to stack keeps the authored aspect and the '
+      'whole bar', (tester) async {
+    // A short stage: stacking a frame and an 88 px footer would leave a
+    // sliver of a Reel, so the composition falls back to the overlay shape.
+    // The authored frame keeps its ratio and every control stays reachable.
     await _pumpFeed(tester, size: const Size(560, 466));
 
     final frame = tester.getSize(
@@ -231,19 +242,22 @@ void main() {
     expect(opened.single.authorId, 'creator_1');
   });
 
-  testWidgets('the wide panel author opens the same profile seam', (
+  testWidgets('the wide card footer carries the author and the same seam', (
     tester,
   ) async {
     final opened = await _pumpFeed(tester, size: const Size(1440, 900));
 
-    // Wide moves identity into the docked panel; the frame keeps the rail.
+    // Board 08 moved identity ONTO the card, under the media, at every
+    // non-immersive width. The docked column beside it is the conversation
+    // alone, so the author is named exactly once in the view.
     expect(
       find.descendant(
         of: find.byType(ReelCard),
         matching: find.text('Creator One'),
       ),
-      findsNothing,
+      findsOneWidget,
     );
+    expect(find.text('Creator One'), findsOneWidget);
 
     await tester.tap(find.text('Creator One'));
     await tester.pumpAndSettle();

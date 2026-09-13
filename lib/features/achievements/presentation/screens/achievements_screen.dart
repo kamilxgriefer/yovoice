@@ -1357,10 +1357,10 @@ class _RecentUnlocks extends StatelessWidget {
             ),
             child: Text(
               copy.text(
-                'No achievements unlocked yet. Chat, host rooms and connect with '
-                    'friends to earn your first title.',
+                'No achievements unlocked yet. Chat, host voice conversations '
+                    'and connect with friends to earn your first title.',
                 'Nie masz jeszcze odblokowanych osiągnięć. Rozmawiaj, prowadź '
-                    'pokoje i poznawaj ludzi, aby zdobyć pierwszy tytuł.',
+                    'rozmowy głosowe i poznawaj ludzi, aby zdobyć pierwszy tytuł.',
               ),
               style: const TextStyle(
                 color: _inkMuted,

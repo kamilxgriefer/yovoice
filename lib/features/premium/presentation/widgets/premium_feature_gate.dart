@@ -185,10 +185,10 @@ class _PremiumLockedDestination extends StatelessWidget {
         ),
       ),
       PremiumFeature.clubs => (
-        copy.text('Clubs', 'Kluby'),
+        copy.text('Server tools', 'Narzędzia serwera'),
         copy.text(
-          'Activate Premium to open the Clubs hub and build communities.',
-          'Aktywuj Premium, aby otworzyć centrum klubów i budować społeczności.',
+          'Open Servers to manage your spaces and channels.',
+          'Otwórz Serwery, aby zarządzać przestrzeniami i kanałami.',
         ),
       ),
     };

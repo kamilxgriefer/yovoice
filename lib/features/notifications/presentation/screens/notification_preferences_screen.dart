@@ -1,8 +1,10 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -24,12 +26,10 @@ const _kPreferenceGroups = [
     ],
   ),
   _PreferenceGroup(
-    title: 'Clubs',
-    types: [NotificationType.clubInvite, NotificationType.clubInviteAccepted],
-  ),
-  _PreferenceGroup(
-    title: 'Rooms',
+    title: 'Servers',
     types: [
+      NotificationType.clubInvite,
+      NotificationType.clubInviteAccepted,
       NotificationType.roomInvite,
       NotificationType.broadcastInvite,
       NotificationType.liveStarted,
@@ -50,12 +50,12 @@ const _kPreferenceGroups = [
 ];
 
 String _groupTitle(AppLocalizations copy, String title) => switch (title) {
+  'Friends' => copy.text('Friends', 'Znajomi'),
   'Friends & follows' => copy.text(
     'Friends & follows',
     'Znajomi i obserwowani',
   ),
-  'Clubs' => copy.text('Clubs', 'Kluby'),
-  'Rooms' => copy.text('Rooms', 'Pokoje'),
+  'Servers' => copy.text('Servers', 'Serwery'),
   'Calls' => copy.text('Calls', 'Połączenia'),
   'Messages' => copy.text('Messages', 'Wiadomości'),
   _ => title,
@@ -73,14 +73,17 @@ String _labelFor(AppLocalizations copy, NotificationType type) {
     case NotificationType.follow:
       return copy.text('New followers', 'Nowi obserwujący');
     case NotificationType.clubInvite:
-      return copy.text('Club invitations', 'Zaproszenia do klubów');
+      return copy.text('Server invitations', 'Zaproszenia do serwerów');
     case NotificationType.clubInviteAccepted:
       return copy.text(
-        'Club invitation accepted',
-        'Przyjęte zaproszenie do klubu',
+        'Server invitation accepted',
+        'Przyjęte zaproszenie do serwera',
       );
     case NotificationType.roomInvite:
-      return copy.text('Room invitations', 'Zaproszenia do pokoi');
+      return copy.text(
+        'Voice channel invitations',
+        'Zaproszenia do kanałów głosowych',
+      );
     case NotificationType.broadcastInvite:
       return copy.text('Podcast invitations', 'Zaproszenia do podcastów');
     case NotificationType.liveStarted:
@@ -111,6 +114,9 @@ class NotificationPreferencesScreen extends StatefulWidget {
   const NotificationPreferencesScreen({
     this.isRootTab = false,
     this.notificationService,
+    this.auth,
+    this.creatorAudienceService,
+    this.creatorAudienceVisibleStream,
     super.key,
   });
 
@@ -124,6 +130,16 @@ class NotificationPreferencesScreen extends StatefulWidget {
   /// process-global Firebase instance in widget tests.
   final NotificationService? notificationService;
 
+  /// Public-safe audience eligibility. Raw Premium and age verification are
+  /// intentionally absent: only the server-written public projection decides
+  /// whether a follower notification can exist for this account.
+  final FirebaseAuth? auth;
+  final CreatorAudienceService? creatorAudienceService;
+
+  /// Focused-test/host seam. Production resolves the same boolean from
+  /// `publicProfiles/{uid}.creatorAudienceVisible`.
+  final Stream<bool>? creatorAudienceVisibleStream;
+
   @override
   State<NotificationPreferencesScreen> createState() =>
       _NotificationPreferencesScreenState();
@@ -134,6 +150,7 @@ class _NotificationPreferencesScreenState
   late final NotificationService _notificationService =
       widget.notificationService ?? NotificationService();
   late final Stream<Map<String, bool>> _preferencesStream;
+  late final Stream<bool> _creatorAudienceVisibleStream;
 
   final Set<NotificationType> _pending = <NotificationType>{};
 
@@ -141,6 +158,27 @@ class _NotificationPreferencesScreenState
   void initState() {
     super.initState();
     _preferencesStream = _notificationService.watchPreferences();
+    _creatorAudienceVisibleStream =
+        widget.creatorAudienceVisibleStream ?? _watchCreatorAudience();
+  }
+
+  Stream<bool> _watchCreatorAudience() async* {
+    try {
+      final auth = widget.auth ?? FirebaseAuth.instance;
+      final uid = auth.currentUser?.uid ?? '';
+      if (uid.isEmpty) {
+        yield false;
+        return;
+      }
+      final service = widget.creatorAudienceService ?? CreatorAudienceService();
+      await for (final projection in service.watchPublicProjection(uid)) {
+        yield projection.visible;
+      }
+    } catch (_) {
+      // This optional preference fails closed when the public projection is
+      // unavailable. Friends, Servers, Calls and Messages remain usable.
+      yield false;
+    }
   }
 
   Future<void> _toggle(NotificationType type, bool enabled) async {
@@ -222,82 +260,114 @@ class _NotificationPreferencesScreenState
                 ),
               ),
               Expanded(
-                child: StreamBuilder<Map<String, bool>>(
-                  stream: _preferencesStream,
-                  builder: (context, snapshot) {
-                    final preferences = snapshot.data ?? const <String, bool>{};
-                    return ListView(
-                      padding: const EdgeInsets.fromLTRB(18, 4, 18, 32),
-                      children: [
-                        Text(
-                          copy.text(
-                            'Choose which activity sends you a push '
-                                'notification. In-app activity is always recorded '
-                                'in your notification center regardless of these '
-                                'settings.',
-                            'Wybierz, o jakiej aktywności chcesz otrzymywać '
-                                'powiadomienia push. Aktywność w aplikacji zawsze '
-                                'pozostaje widoczna w centrum powiadomień.',
-                          ),
-                          style: TextStyle(
-                            color: palette.textSecondary,
-                            fontSize: 12.5,
-                            height: 1.5,
-                          ),
+                child: StreamBuilder<bool>(
+                  stream: _creatorAudienceVisibleStream,
+                  initialData: false,
+                  builder: (context, audienceSnapshot) {
+                    final audienceVisible = audienceSnapshot.data == true;
+                    final groups = <_PreferenceGroup>[
+                      for (final group in _kPreferenceGroups)
+                        _PreferenceGroup(
+                          title:
+                              group.title == 'Friends & follows' &&
+                                  !audienceVisible
+                              ? 'Friends'
+                              : group.title,
+                          types: group.types
+                              .where(
+                                (type) =>
+                                    type != NotificationType.follow ||
+                                    audienceVisible,
+                              )
+                              .toList(growable: false),
                         ),
-                        const SizedBox(height: 20),
-                        for (final group in _kPreferenceGroups) ...[
-                          Text(
-                            _groupTitle(copy, group.title),
-                            style: TextStyle(
-                              color: palette.textPrimary,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w800,
+                    ];
+                    return StreamBuilder<Map<String, bool>>(
+                      stream: _preferencesStream,
+                      builder: (context, snapshot) {
+                        final preferences =
+                            snapshot.data ?? const <String, bool>{};
+                        return ListView(
+                          padding: const EdgeInsets.fromLTRB(18, 4, 18, 32),
+                          children: [
+                            Text(
+                              copy.text(
+                                'Choose which activity sends you a push '
+                                    'notification. In-app activity is always recorded '
+                                    'in your notification center regardless of these '
+                                    'settings.',
+                                'Wybierz, o jakiej aktywności chcesz otrzymywać '
+                                    'powiadomienia push. Aktywność w aplikacji zawsze '
+                                    'pozostaje widoczna w centrum powiadomień.',
+                              ),
+                              style: TextStyle(
+                                color: palette.textSecondary,
+                                fontSize: 12.5,
+                                height: 1.5,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: palette.surface,
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: palette.border),
-                            ),
-                            child: Column(
-                              children: [
-                                for (
-                                  var index = 0;
-                                  index < group.types.length;
-                                  index++
-                                ) ...[
-                                  if (index > 0)
-                                    Divider(
-                                      height: 1,
-                                      color: palette.border,
-                                      indent: 16,
-                                      endIndent: 16,
-                                    ),
-                                  _PreferenceRow(
-                                    label: _labelFor(copy, group.types[index]),
-                                    // Preferences are opt-out: an absent key
-                                    // means enabled, matching
-                                    // onNotificationCreated's default in
-                                    // functions/notifications/push.js.
-                                    value:
-                                        preferences[group.types[index].name] !=
-                                        false,
-                                    isPending: _pending.contains(
-                                      group.types[index],
-                                    ),
-                                    onChanged: (enabled) =>
-                                        _toggle(group.types[index], enabled),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                        ],
-                      ],
+                            const SizedBox(height: 20),
+                            for (final group in groups) ...[
+                              Text(
+                                _groupTitle(copy, group.title),
+                                style: TextStyle(
+                                  color: palette.textPrimary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: palette.surface,
+                                  borderRadius: BorderRadius.circular(18),
+                                  border: Border.all(color: palette.border),
+                                ),
+                                child: Column(
+                                  children: [
+                                    for (
+                                      var index = 0;
+                                      index < group.types.length;
+                                      index++
+                                    ) ...[
+                                      if (index > 0)
+                                        Divider(
+                                          height: 1,
+                                          color: palette.border,
+                                          indent: 16,
+                                          endIndent: 16,
+                                        ),
+                                      _PreferenceRow(
+                                        label: _labelFor(
+                                          copy,
+                                          group.types[index],
+                                        ),
+                                        // Preferences are opt-out: an absent key
+                                        // means enabled, matching
+                                        // onNotificationCreated's default in
+                                        // functions/notifications/push.js.
+                                        value:
+                                            preferences[group
+                                                .types[index]
+                                                .name] !=
+                                            false,
+                                        isPending: _pending.contains(
+                                          group.types[index],
+                                        ),
+                                        onChanged: (enabled) => _toggle(
+                                          group.types[index],
+                                          enabled,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 18),
+                            ],
+                          ],
+                        );
+                      },
                     );
                   },
                 ),
