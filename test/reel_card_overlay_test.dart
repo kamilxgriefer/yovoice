@@ -187,28 +187,46 @@ void main() {
     }
   });
 
-  testWidgets('a window too short to stack keeps the authored aspect and the '
-      'whole bar', (tester) async {
-    // A short stage: stacking a frame and an 88 px footer would leave a
-    // sliver of a Reel, so the composition falls back to the overlay shape.
-    // The authored frame keeps its ratio and every control stays reachable.
+  testWidgets('a short window gives its usable stage to the media-first '
+      'fallback', (tester) async {
+    // A short stage cannot hold separate media and footer surfaces. The
+    // overlay fallback gives the usable pager height to the footage and keeps
+    // every action on that viewport at an accessible size.
     await _pumpFeed(tester, size: const Size(560, 466));
 
-    final frame = tester.getSize(
-      find
-          .descendant(
-            of: find.byType(ReelCard),
-            matching: find.byType(ClipRRect),
-          )
-          .first,
+    final stage = tester.getRect(
+      find.byKey(const ValueKey<String>('reels-stage-slot')),
     );
-    expect(frame.height, lessThan(400));
-    expect(frame.width / frame.height, closeTo(9 / 16, .01));
+    final viewport = tester.getRect(
+      _inCard(find.byKey(const ValueKey<String>('reel-viewport'))),
+    );
+    expect(
+      viewport.height,
+      greaterThan(stage.height * .95),
+      reason: 'the footage should consume the short stage, minus its gutters',
+    );
+    expect(viewport.top, greaterThanOrEqualTo(stage.top));
+    expect(viewport.bottom, lessThanOrEqualTo(stage.bottom));
+    expect(
+      _inCard(find.byKey(const ValueKey<String>('reel-stage-footer'))),
+      findsNothing,
+      reason: 'a separate footer would squeeze the media in this short stage',
+    );
 
-    final like = tester.getCenter(_inCard(find.byKey(_like)));
-    final comment = tester.getCenter(_inCard(find.byKey(_comments)));
-    expect(like.dy, closeTo(comment.dy, 1));
-    expect(like.dx, lessThan(comment.dx));
+    for (final finder in <Finder>[
+      _inCard(find.byKey(_like)),
+      _inCard(find.byKey(_comments)),
+      _inCard(find.byKey(_share)),
+      _inCard(find.byKey(_more)),
+    ]) {
+      final action = tester.getRect(finder);
+      expect(action.shortestSide, greaterThanOrEqualTo(44));
+      expect(viewport.contains(action.topLeft), isTrue);
+      expect(
+        viewport.contains(action.bottomRight - const Offset(.01, .01)),
+        isTrue,
+      );
+    }
     expect(tester.takeException(), isNull);
   });
 

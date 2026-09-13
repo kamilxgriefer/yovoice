@@ -404,8 +404,8 @@ void main() {
       );
     });
 
-    testWidgets('the sound switch keeps its place and its target at every '
-        'width', (tester) async {
+    testWidgets('the sound switch follows the responsive media chrome at '
+        'every width', (tester) async {
       for (final size in const <Size>[
         Size(320, 568),
         Size(390, 844),
@@ -420,55 +420,87 @@ void main() {
         final players = _Players();
         await _pumpFeed(tester, players: players, count: 1, size: size);
 
-        final toggle = find.byKey(const ValueKey<String>('reel-sound-toggle'));
+        final card = find.byType(ReelCard);
+        Finder inCard(Finder finder) =>
+            find.descendant(of: card, matching: finder);
+        final toggle = inCard(
+          find.byKey(const ValueKey<String>('reel-sound-toggle')),
+        );
         expect(toggle, findsOneWidget, reason: 'missing at $size');
         final target = tester.getSize(toggle);
         expect(target.width, greaterThanOrEqualTo(44), reason: '$size');
         expect(target.height, greaterThanOrEqualTo(44), reason: '$size');
 
-        // Board 08 puts the sound state where the playback state is: the
-        // frame's bottom leading corner, inside the frame, on the same line
-        // of the stack as the progress it sits above.
-        final frame = tester.getRect(
-          find
-              .descendant(
-                of: find.byType(ReelCard),
-                matching: find.byType(ClipRRect),
-              )
-              .first,
+        final viewport = inCard(
+          find.byKey(const ValueKey<String>('reel-viewport')),
         );
+        expect(viewport, findsOneWidget, reason: '$size');
+        final frame = tester.getRect(viewport);
         final rect = tester.getRect(toggle);
-        expect(frame.contains(rect.topLeft), isTrue, reason: '$size');
-        expect(frame.contains(rect.bottomRight), isTrue, reason: '$size');
-        expect(rect.center.dx, lessThan(frame.center.dx), reason: '$size');
-        // Its place in the stack is what pins it: directly above the bar it
-        // names the state of, and above the actions below that. Which third
-        // of the frame that lands in depends on how tall the stack is at
-        // this size, and is not what this test is about.
-        // Never over the bar it names the state of.
-        final bar = tester.getRect(
-          find.descendant(
-            of: find.byType(ReelCard),
-            matching: find.byKey(const ValueKey<String>('reel-progress-bar')),
-          ),
+        expect(rect.left, greaterThanOrEqualTo(frame.left), reason: '$size');
+        expect(rect.top, greaterThanOrEqualTo(frame.top), reason: '$size');
+        expect(rect.right, lessThanOrEqualTo(frame.right), reason: '$size');
+        expect(rect.bottom, lessThanOrEqualTo(frame.bottom), reason: '$size');
+
+        final rail = inCard(
+          find.byKey(const ValueKey<String>('reel-action-rail')),
         );
-        expect(rect.bottom, lessThanOrEqualTo(bar.top + .01), reason: '$size');
-        expect(
-          rect.bottom,
-          lessThan(
-            tester
-                .getRect(
-                  find.descendant(
-                    of: find.byType(ReelCard),
-                    matching: find.byKey(
-                      const ValueKey<String>('reel-like-action'),
-                    ),
-                  ),
-                )
-                .top,
-          ),
-          reason: '$size',
-        );
+        if (rail.evaluate().isNotEmpty) {
+          // The media-first mobile fallback owns one trailing rail. Sound is
+          // a separate top/end target, so neither it nor any action can mask
+          // the other even when the viewport is very short.
+          final overlay = tester.getRect(
+            inCard(find.byKey(const ValueKey<String>('reel-footer'))),
+          );
+          final railRect = tester.getRect(rail);
+          expect(rect.center.dx, greaterThan(frame.center.dx), reason: '$size');
+          expect(rect.top, closeTo(overlay.top + 8, .01), reason: '$size');
+          expect(rect.right, closeTo(frame.right - 12, .01), reason: '$size');
+          expect(rect.overlaps(railRect), isFalse, reason: '$size');
+          for (final key in const <String>[
+            'reel-like-action',
+            'reel-comments-action',
+            'reel-share-action',
+            'reel-more-action',
+          ]) {
+            final action = tester.getRect(
+              inCard(find.byKey(ValueKey<String>(key))),
+            );
+            expect(rect.overlaps(action), isFalse, reason: '$key at $size');
+          }
+        } else {
+          // A wide card keeps sound inside the authored media band, directly
+          // above its progress bar. Engagement lives in the keyed footer
+          // below the media and must remain independently tappable.
+          final media = tester.getRect(
+            inCard(find.byKey(const ValueKey<String>('reel-media-band'))),
+          );
+          final footer = tester.getRect(
+            inCard(find.byKey(const ValueKey<String>('reel-stage-footer'))),
+          );
+          final bar = tester.getRect(
+            inCard(find.byKey(const ValueKey<String>('reel-progress-bar'))),
+          );
+          expect(rect.left, closeTo(media.left + 16, .01), reason: '$size');
+          expect(rect.center.dx, lessThan(media.center.dx), reason: '$size');
+          expect(
+            rect.bottom,
+            lessThanOrEqualTo(bar.top + .01),
+            reason: '$size',
+          );
+          expect(rect.overlaps(footer), isFalse, reason: '$size');
+          for (final key in const <String>[
+            'reel-like-action',
+            'reel-comments-action',
+            'reel-share-action',
+            'reel-more-action',
+          ]) {
+            final action = tester.getRect(
+              inCard(find.byKey(ValueKey<String>(key))),
+            );
+            expect(rect.overlaps(action), isFalse, reason: '$key at $size');
+          }
+        }
         expect(tester.takeException(), isNull, reason: '$size');
       }
     });
