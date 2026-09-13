@@ -112,10 +112,19 @@ async function activate(serverId, uid) {
 }
 async function invite(serverId, inviterId, inviteeId) {
   const inviter = (await db.doc(`clubs/${serverId}/members/${inviterId}`).get()).data();
-  await db.doc(`clubs/${serverId}/invites/${inviteeId}`).set({
-    serverSchemaVersion: 1, serverId, inviteeId, inviterId, inviterAuthorizationRevision: inviter.authorizationRevision,
-    generation: 1, status: "pending", expiresAt: Timestamp.fromMillis(nowMs + 60_000),
-  });
+  const establishedAt = Timestamp.fromMillis(nowMs);
+  await Promise.all([
+    db.doc(`friendshipGuards/${inviterId}/friends/${inviteeId}`).set({
+      schemaVersion: 1, ownerId: inviterId, friendId: inviteeId, establishedAt,
+    }),
+    db.doc(`friendshipGuards/${inviteeId}/friends/${inviterId}`).set({
+      schemaVersion: 1, ownerId: inviteeId, friendId: inviterId, establishedAt,
+    }),
+    db.doc(`clubs/${serverId}/invites/${inviteeId}`).set({
+      serverSchemaVersion: 1, serverId, inviteeId, inviterId, inviterAuthorizationRevision: inviter.authorizationRevision,
+      generation: 1, status: "pending", expiresAt: Timestamp.fromMillis(nowMs + 60_000),
+    }),
+  ]);
 }
 
 after(async () => { if (app) await require("firebase-admin/app").deleteApp(app); });

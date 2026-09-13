@@ -95,6 +95,17 @@ async function activate(serverId, uid) {
   const anchors = await db.collection("rooms").where("serverId", "==", serverId).get();
   for (const anchor of anchors.docs) await anchor.ref.update({ status: "active", serverActivationState: "active", hostId: uid });
 }
+async function friends(first, second) {
+  const establishedAt = Timestamp.fromMillis(nowMs);
+  await Promise.all([
+    db.doc(`friendshipGuards/${first}/friends/${second}`).set({
+      schemaVersion: 1, ownerId: first, friendId: second, establishedAt,
+    }),
+    db.doc(`friendshipGuards/${second}/friends/${first}`).set({
+      schemaVersion: 1, ownerId: second, friendId: first, establishedAt,
+    }),
+  ]);
+}
 async function joinedServer(service, uid, member) {
   const created = await service.createServerV1(request(uid, input({ serverType: "community", privacy: "public" })));
   await activate(created.serverId, uid);
@@ -578,6 +589,7 @@ emulatorTest("(i) a locked room guard is never rewritten to unlocked: refused fr
   const family = await service.createServerV1(request(source, input({ serverType: "family" })));
   await activate(family.serverId, source);
   const inviter = await doc(`clubs/${family.serverId}/members/${source}`);
+  await friends(source, locked);
   await db.doc(`clubs/${family.serverId}/invites/${locked}`).set({
     serverSchemaVersion: 1, serverId: family.serverId, inviteeId: locked, inviterId: source,
     inviterAuthorizationRevision: inviter.authorizationRevision, generation: 1, status: "pending",

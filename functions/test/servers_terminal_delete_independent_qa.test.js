@@ -284,14 +284,18 @@ qa("one failed removal waits for every started peer before releasing its lease",
   assert.equal((await job.get()).data().leaseId, null);
 });
 
-qa("participant NOT_FOUND cannot be substituted for a positive cutoff receipt", async () => {
+qa("participant NOT_FOUND with revokeTokenTs is a positive cutoff receipt", async () => {
   const f = await fixture();
-  f.hooks.remove = () => { throw Object.assign(new Error("Offline, not a cutoff ACK"), { code: "not_found" }); };
-  assert.equal((await f.end()).cleanupPending, true);
+  f.hooks.remove = () => { throw Object.assign(new Error("Offline after cutoff request"), { code: "not_found" }); };
+  assert.equal((await f.end()).cleanupPending, false);
   const job = await f.job();
-  assert.equal((await job.get()).data().cursor, null);
-  assert.equal((await f.recipient().get()).data().revocationState, "revoking");
-  assert.deepEqual(f.calls.map((call) => call.type), ["remove"]);
+  assert.equal((await job.get()).data().status, "completed");
+  const recipient = (await f.recipient().get()).data();
+  assert.equal(recipient.revocationState, "revoked");
+  const removal = f.calls.find((call) => call.type === "remove");
+  assert.ok(removal.options.revokeTokenTs > 0n);
+  assert.equal(recipient.revokedBeforeMillis, Number(removal.options.revokeTokenTs) * 1000);
+  assert.deepEqual(f.calls.map((call) => call.type), ["remove", "delete"]);
 });
 
 qa("late terminal ACK after lease takeover cannot disturb an actually started new generation", async () => {

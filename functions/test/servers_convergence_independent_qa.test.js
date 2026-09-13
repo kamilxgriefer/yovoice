@@ -113,9 +113,20 @@ async function fixture({ type = "community", activate = true } = {}) {
     else {
       const currentOwner = (await root.get()).data().ownerId;
       const currentMember = (await root.collection("members").doc(currentOwner).get()).data();
-      await root.collection("invites").doc(uid).set({ serverSchemaVersion: 1, serverId: root.id, inviteeId: uid,
-        inviterId: currentOwner, inviterAuthorizationRevision: currentMember.authorizationRevision,
-        generation: 1, status: "pending", expiresAt: Timestamp.fromMillis(clock() + 60_000) });
+      const establishedAt = Timestamp.fromMillis(clock());
+      await Promise.all([
+        db.doc(`friendshipGuards/${currentOwner}/friends/${uid}`).set({
+          schemaVersion: 1, ownerId: currentOwner, friendId: uid, establishedAt,
+        }),
+        db.doc(`friendshipGuards/${uid}/friends/${currentOwner}`).set({
+          schemaVersion: 1, ownerId: uid, friendId: currentOwner, establishedAt,
+        }),
+        root.collection("invites").doc(uid).set({
+          serverSchemaVersion: 1, serverId: root.id, inviteeId: uid,
+          inviterId: currentOwner, inviterAuthorizationRevision: currentMember.authorizationRevision,
+          generation: 1, status: "pending", expiresAt: Timestamp.fromMillis(clock() + 60_000),
+        }),
+      ]);
       await mutate("respondToServerInviteV1", { response: "accept" }, uid);
     }
     return uid;
