@@ -74,15 +74,15 @@
     },
     {
       "metric": "rooms",
-      "descriptionNoun": "created rooms",
+      "descriptionNoun": "created servers",
       "titles": [
-        "Room Opener",
+        "Server Opener",
         "Gatherer",
-        "Room Founder",
+        "Server Founder",
         "Social Host",
         "Community Builder",
-        "Room Curator",
-        "Room Architect",
+        "Server Curator",
+        "Server Architect",
         "Network Founder",
         "Realm Builder",
         "Realm Founder"
@@ -142,7 +142,7 @@
       "thresholds": [1, 30, 120, 300, 600, 1200, 3000, 6000, 12000, 30000],
       "titles": [
         "First Host",
-        "Room Guide",
+        "Server Guide",
         "Conversation Lead",
         "Voice Captain",
         "Voice Director",

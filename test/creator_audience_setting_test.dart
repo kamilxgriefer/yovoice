@@ -62,6 +62,40 @@ SubscriptionEntitlements paidCreatorEntitlements({
 );
 
 void main() {
+  test('Creator age picker and payload use the UTC calendar contract', () {
+    expect(creatorAgeCalendarTimeZone, 'UTC');
+
+    // It is already 14 September in UTC+14, but the contract remains on the
+    // 13 September UTC calendar day used by the callable.
+    final eastOfUtc = creatorAgePickerRange(
+      DateTime.parse('2026-09-14T00:30:00+14:00'),
+    );
+    expect(creatorBirthDateValue(eastOfUtc.lastDate), '2008-09-13');
+
+    // It is still 13 September in UTC-11, while the callable's UTC day has
+    // advanced to 14 September.
+    final westOfUtc = creatorAgePickerRange(
+      DateTime.parse('2026-09-13T23:30:00-11:00'),
+    );
+    expect(creatorBirthDateValue(westOfUtc.lastDate), '2008-09-14');
+  });
+
+  test('Creator age picker clamps leap-day limits to real dates', () {
+    final range = creatorAgePickerRange(DateTime.utc(2028, 2, 29, 12));
+
+    expect(creatorBirthDateValue(range.lastDate), '2010-02-28');
+    expect(creatorBirthDateValue(range.firstDate), '1907-03-01');
+    expect(range.lastDate.month, 2);
+    expect(range.firstDate.isBefore(range.lastDate), isTrue);
+  });
+
+  test('Creator age picker includes the callable maximum-age boundary', () {
+    final range = creatorAgePickerRange(DateTime.utc(2026, 9, 14, 12));
+
+    expect(creatorBirthDateValue(range.firstDate), '1905-09-15');
+    expect(creatorBirthDateValue(range.lastDate), '2008-09-14');
+  });
+
   test('the service sends the exact callable contract', () async {
     String? callable;
     Map<String, Object?>? payload;

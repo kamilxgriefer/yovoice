@@ -59,6 +59,7 @@ const CREATOR_AGE_CONFIRMATION_RATE_LIMIT = Object.freeze({
 });
 const CREATOR_MINIMUM_AGE_YEARS = 18;
 const CREATOR_MAXIMUM_AGE_YEARS = 120;
+const CREATOR_AGE_CALENDAR_TIME_ZONE = "UTC";
 
 const PUBLIC_PROFILE_FIELDS = new Set([
   "uid",
@@ -212,6 +213,8 @@ function requireAdultBirthDate(value, nowMs) {
   ) {
     throw new HttpsError("invalid-argument", "birthDate is not a real date.");
   }
+  // Contract shared with the client picker: YYYY-MM-DD is a date-only value,
+  // and adulthood changes at 00:00 UTC regardless of the device time zone.
   const today = new Date(nowMs);
   let age = today.getUTCFullYear() - year;
   const birthdayPending =
@@ -1161,6 +1164,7 @@ module.exports = {
   CREATOR_AGE_CONFIRMATION_RATE_SCOPE,
   CREATOR_MAXIMUM_AGE_YEARS,
   CREATOR_MINIMUM_AGE_YEARS,
+  CREATOR_AGE_CALENDAR_TIME_ZONE,
   PUBLIC_PROFILE_FIELDS,
   PUBLIC_PROFILE_SCHEMA_VERSION,
   SOCIAL_PRESENCE_FIELDS,

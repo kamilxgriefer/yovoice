@@ -10,6 +10,57 @@ typedef CreatorAudienceMutationInvoker =
     );
 typedef CreatorAudienceRequestIdFactory = String Function();
 
+/// Creator age eligibility uses one date-only calendar on every client and on
+/// the callable: UTC. A birth date is sent as calendar components rather than
+/// as an instant, and the picker derives its limits from the current UTC day.
+const creatorAgeCalendarTimeZone = 'UTC';
+const creatorMinimumAgeYears = 18;
+const creatorMaximumAgeYears = 120;
+
+class CreatorAgePickerRange {
+  const CreatorAgePickerRange({
+    required this.initialDate,
+    required this.firstDate,
+    required this.lastDate,
+  });
+
+  final DateTime initialDate;
+  final DateTime firstDate;
+  final DateTime lastDate;
+}
+
+CreatorAgePickerRange creatorAgePickerRange(DateTime currentInstant) {
+  final utcToday = currentInstant.toUtc();
+  final year = utcToday.year;
+  final month = utcToday.month;
+  final day = utcToday.day;
+
+  DateTime dateInYear(int targetYear) {
+    final lastDay = DateTime(targetYear, month + 1, 0).day;
+    return DateTime(targetYear, month, day.clamp(1, lastDay));
+  }
+
+  // Maximum age is inclusive. Someone born one day after today's calendar
+  // date 121 years ago is still 120 according to the callable's UTC calendar.
+  final priorYearBoundary = dateInYear(year - creatorMaximumAgeYears - 1);
+  final oldestAllowedDate = DateTime(
+    priorYearBoundary.year,
+    priorYearBoundary.month,
+    priorYearBoundary.day + 1,
+  );
+  return CreatorAgePickerRange(
+    initialDate: dateInYear(year - 25),
+    firstDate: oldestAllowedDate,
+    lastDate: dateInYear(year - creatorMinimumAgeYears),
+  );
+}
+
+String creatorBirthDateValue(DateTime calendarDate) => [
+  calendarDate.year.toString().padLeft(4, '0'),
+  calendarDate.month.toString().padLeft(2, '0'),
+  calendarDate.day.toString().padLeft(2, '0'),
+].join('-');
+
 enum CreatorAudienceFailure {
   unauthenticated,
   eligibility,
@@ -212,12 +263,9 @@ class CreatorAudienceService {
         CreatorAudienceFailure.invalidRequest,
       );
     }
-    final date = DateTime.utc(birthDate.year, birthDate.month, birthDate.day);
-    final birthDateValue = [
-      date.year.toString().padLeft(4, '0'),
-      date.month.toString().padLeft(2, '0'),
-      date.day.toString().padLeft(2, '0'),
-    ].join('-');
+    // Date-picker values are date-only calendar components. Do not reinterpret
+    // them as an instant in the device zone before sending the UTC contract.
+    final birthDateValue = creatorBirthDateValue(birthDate);
     final payload = <String, Object?>{
       'birthDate': birthDateValue,
       'requestId': requestId,

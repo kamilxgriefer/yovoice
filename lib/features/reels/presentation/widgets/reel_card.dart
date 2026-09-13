@@ -35,6 +35,11 @@ import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
 typedef ReelVideoBuilder =
     Widget Function(BuildContext context, Uri mediaUri, Reel reel);
 
+/// Test seam for the built-in network decoder. Production leaves this null so
+/// [VideoPlayerController.networkUrl] keeps owning the platform configuration.
+typedef ReelNetworkVideoControllerFactory =
+    VideoPlayerController Function(Uri mediaUri);
+
 /// Shadow under the Reel stage in each appearance: heavier in Dark where the
 /// card floats over the moments-studio atmosphere, restrained plum in Pearl.
 List<BoxShadow> reelCardShadow(BuildContext context) {
@@ -64,6 +69,7 @@ class ReelCard extends StatefulWidget {
     this.videoBuilder,
     this.audioPlaybackFactory,
     this.videoPlaybackFactory,
+    this.videoControllerFactory,
     this.soundOn,
     this.autoplay = true,
     this.isActive = true,
@@ -97,6 +103,9 @@ class ReelCard extends StatefulWidget {
   /// leaves it null; a host that already owns a player — and the autoplay
   /// coverage, which must not start a platform decoder — provides one.
   final ReelVideoPlaybackFactory? videoPlaybackFactory;
+
+  @visibleForTesting
+  final ReelNetworkVideoControllerFactory? videoControllerFactory;
 
   /// The viewer's sound preference, shared by every card in a feed so it is
   /// turned on once rather than per Reel. Null gives this card its own, which
@@ -781,6 +790,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
               uri: uri,
               reel: widget.reel,
               playback: _playback,
+              controllerFactory: widget.videoControllerFactory,
               onToggle: _togglePlayback,
               onRetry: _refreshMedia,
               onFailure: () => _refreshMedia(automatic: true),
@@ -2107,6 +2117,7 @@ class _DefaultReelVideoPlayer extends StatefulWidget {
     required this.uri,
     required this.reel,
     required this.playback,
+    this.controllerFactory,
     required this.onToggle,
     required this.onRetry,
     required this.onFailure,
@@ -2117,6 +2128,7 @@ class _DefaultReelVideoPlayer extends StatefulWidget {
   final Uri uri;
   final Reel reel;
   final ReelPlaybackCoordinator playback;
+  final ReelNetworkVideoControllerFactory? controllerFactory;
   final Future<void> Function() onToggle;
   final VoidCallback onRetry;
   final VoidCallback onFailure;
@@ -2132,8 +2144,11 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
   VideoPlayerController? _controller;
   _VideoPlayerPlayback? _playbackDriver;
   ReelPlaybackCoordinator? _attachedPlayback;
+  final Map<VideoPlayerController, Future<void>> _controllerRetirements =
+      Map<VideoPlayerController, Future<void>>.identity();
   Object? _error;
   bool _lastPlaying = false;
+  int _controllerGeneration = 0;
 
   @override
   void initState() {
@@ -2146,46 +2161,80 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.uri != widget.uri ||
         oldWidget.reel.id != widget.reel.id ||
-        !identical(oldWidget.playback, widget.playback)) {
+        !identical(oldWidget.playback, widget.playback) ||
+        !identical(oldWidget.controllerFactory, widget.controllerFactory)) {
       _disposeController();
       _initialize();
     }
   }
 
   Future<void> _initialize() async {
-    final controller = VideoPlayerController.networkUrl(
-      widget.uri,
-      // A Reel that starts itself must never take the audio route away from
-      // something the person is actually in. AVAudioSession is process-global
-      // on iOS and the codebase keeps it under LiveKit/recording control, so
-      // this player mixes rather than interrupting a live room or a recording.
-      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-    );
+    final generation = ++_controllerGeneration;
+    final reel = widget.reel;
+    final playback = widget.playback;
+    final controller =
+        widget.controllerFactory?.call(widget.uri) ??
+        VideoPlayerController.networkUrl(
+          widget.uri,
+          // A Reel that starts itself must never take the audio route away from
+          // something the person is actually in. AVAudioSession is process-global
+          // on iOS and the codebase keeps it under LiveKit/recording control, so
+          // this player mixes rather than interrupting a live room or a recording.
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
     _controller = controller;
     try {
       await controller.initialize();
+      if (!_isCurrentController(generation, controller)) {
+        await _retireController(controller);
+        return;
+      }
       await controller.setLooping(false);
-      await controller.setVolume(
-        widget.reel.composition.originalAudioVolume / 100,
-      );
+      if (!_isCurrentController(generation, controller)) {
+        await _retireController(controller);
+        return;
+      }
+      await controller.setVolume(reel.composition.originalAudioVolume / 100);
+      if (!_isCurrentController(generation, controller)) {
+        await _retireController(controller);
+        return;
+      }
       await controller.seekTo(
-        Duration(milliseconds: widget.reel.composition.trimStartMs),
+        Duration(milliseconds: reel.composition.trimStartMs),
       );
+      if (!_isCurrentController(generation, controller)) {
+        await _retireController(controller);
+        return;
+      }
       final driver = _VideoPlayerPlayback(controller);
       _playbackDriver = driver;
-      _attachedPlayback = widget.playback;
+      _attachedPlayback = playback;
       _lastPlaying = controller.value.isPlaying;
       controller.addListener(_handlePlayback);
-      await widget.playback.attachVideo(driver);
-      if (!mounted || !identical(_controller, controller)) return;
-      if (mounted) setState(() => _error = null);
+      if (!_isCurrentController(generation, controller)) {
+        await _retireController(controller, driver: driver, playback: playback);
+        return;
+      }
+      await playback.attachVideo(driver);
+      if (!_isCurrentController(generation, controller)) {
+        await _retireController(controller, driver: driver, playback: playback);
+        return;
+      }
+      setState(() => _error = null);
     } catch (error) {
-      if (mounted && identical(_controller, controller)) {
+      if (_isCurrentController(generation, controller)) {
         setState(() => _error = error);
         widget.onFailure();
+      } else {
+        await _retireController(controller);
       }
     }
   }
+
+  bool _isCurrentController(int generation, VideoPlayerController controller) =>
+      mounted &&
+      generation == _controllerGeneration &&
+      identical(_controller, controller);
 
   void _handlePlayback() {
     final controller = _controller;
@@ -2211,17 +2260,38 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
   }
 
   void _disposeController() {
+    _controllerGeneration += 1;
     final controller = _controller;
     final driver = _playbackDriver;
     final attachedPlayback = _attachedPlayback;
     _controller = null;
     _playbackDriver = null;
     _attachedPlayback = null;
-    if (driver != null) attachedPlayback?.detachVideo(driver);
     if (controller != null) {
-      controller.removeListener(_handlePlayback);
-      unawaited(controller.dispose());
+      unawaited(
+        _retireController(
+          controller,
+          driver: driver,
+          playback: attachedPlayback,
+        ),
+      );
     }
+  }
+
+  Future<void> _retireController(
+    VideoPlayerController controller, {
+    _VideoPlayerPlayback? driver,
+    ReelPlaybackCoordinator? playback,
+  }) {
+    if (driver != null) playback?.detachVideo(driver);
+    controller.removeListener(_handlePlayback);
+    final existing = _controllerRetirements[controller];
+    if (existing != null) return existing;
+    final retirement = Future<void>.sync(
+      controller.dispose,
+    ).catchError((Object _) {});
+    _controllerRetirements[controller] = retirement;
+    return retirement;
   }
 
   @override

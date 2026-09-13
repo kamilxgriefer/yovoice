@@ -151,8 +151,7 @@ class _CreatorAudienceSettingState extends State<CreatorAudienceSetting> {
 
   Future<void> _confirmAdultEligibility() async {
     if (_busy || _ageVerified || !widget.canConfirmAge) return;
-    final now = DateTime.now();
-    final latestAdultDate = DateTime(now.year - 18, now.month, now.day);
+    final pickerRange = creatorAgePickerRange(DateTime.now());
     final pendingBirthDate = _pendingBirthDate;
     final injectedSelector = widget.birthDateSelector;
     DateTime? birthDate = pendingBirthDate;
@@ -166,9 +165,9 @@ class _CreatorAudienceSettingState extends State<CreatorAudienceSetting> {
         );
         birthDate = await showDatePicker(
           context: context,
-          initialDate: DateTime(now.year - 25, now.month, now.day),
-          firstDate: DateTime(now.year - 120, now.month, now.day),
-          lastDate: latestAdultDate,
+          initialDate: pickerRange.initialDate,
+          firstDate: pickerRange.firstDate,
+          lastDate: pickerRange.lastDate,
           helpText: helpText,
         );
       }

@@ -20,6 +20,7 @@ if (enabled) {
 
 const {
   CREATOR_AGE_CONFIRMATION_RATE_SCOPE,
+  CREATOR_AGE_CALENDAR_TIME_ZONE,
   CREATOR_AUDIENCE_RATE_SCOPE,
   confirmCreatorAdultEligibility,
   confirmCreatorAdultEligibilityHandler,
@@ -128,6 +129,7 @@ test('callable keeps App Check in the current rollout mode', () => {
 });
 
 test('adult-date validation uses a real UTC calendar boundary', () => {
+  assert.equal(CREATOR_AGE_CALENDAR_TIME_ZONE, 'UTC');
   assert.doesNotThrow(() => requireAdultBirthDate(
     birthDateYearsAgo(18),
     NOW_MS,
@@ -142,6 +144,30 @@ test('adult-date validation uses a real UTC calendar boundary', () => {
       (error) => error.code === 'invalid-argument',
     );
   }
+});
+
+test('adult eligibility changes only at the UTC calendar boundary', () => {
+  const eighteenthBirthday = '2008-09-14';
+  assert.throws(
+    () => requireAdultBirthDate(
+      eighteenthBirthday,
+      Date.parse('2026-09-13T23:59:59.999Z'),
+    ),
+    (error) => error.code === 'failed-precondition',
+  );
+  assert.doesNotThrow(() => requireAdultBirthDate(
+    eighteenthBirthday,
+    Date.parse('2026-09-14T00:00:00.000Z'),
+  ));
+});
+
+test('adult-date validation keeps the inclusive maximum-age boundary', () => {
+  const now = Date.parse('2026-09-14T12:00:00.000Z');
+  assert.doesNotThrow(() => requireAdultBirthDate('1905-09-15', now));
+  assert.throws(
+    () => requireAdultBirthDate('1905-09-14', now),
+    (error) => error.code === 'invalid-argument',
+  );
 });
 
 emulatorTest('paid Creator can confirm adulthood without retaining birth date', async () => {
