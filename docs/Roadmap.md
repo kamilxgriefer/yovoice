@@ -55,6 +55,18 @@ Reels voice replies remain unavailable against the older production backend.
 Flag activation, the ordered Firebase deployment, post-deploy smoke checks,
 two-device/provider validation and any tester build remain separate held gates.
 
+## Build 26 internal tester availability — 2026-09-13
+
+**Status: released to the existing internal cohorts.** Mobile source commit
+`d1c036b75fea16e8962e7af932166cf95aa8f0ab`, version `2.0.0+26`, is available
+to the fifteen-account Google Play Internal list and is **Testing** in the
+existing one-account TestFlight internal group. No external TestFlight group,
+public store track, tester list, release note or **What to Test** field changed.
+The build carries the new Servers UI, media-first Yeels, clearer Chats/Friends,
+full-screen private media and the client-side call corrections. Servers backend
+activation, Podcast Egress and the warm direct-call Function remain held behind
+their separate production-deployment gates.
+
 ## Done
 
 > **Reading the Build 22 round below (2026-09-06 → 2026-09-07).** Everything
