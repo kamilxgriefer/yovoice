@@ -85,6 +85,11 @@ dependency_overrides:
   connectivity_plus: 7.0.0
 
 flutter:
+  # Keep iOS plugin resolution on CocoaPods until Flutter's generated Swift
+  # package inherits the app's iOS 15 deployment target before resolution.
+  config:
+    enable-swift-package-manager: false
+
   uses-material-design: true
 
   assets:
