@@ -170,7 +170,7 @@ Keep existing root fields, including `name`, `description`, `ownerId`,
 | Field | Meaning and authority |
 | --- | --- |
 | `serverSchemaVersion: 1` | Server-owned boundary selector; immutable to clients |
-| `serverActivationState` | `held` during implementation; only a separately reviewed future activation may set `active` |
+| `serverActivationState` | Raw factories and migrations seed `held`; only the exact registered creation runtime may seed a brand-new V1 graph as `active` in its original transaction |
 | `serverType` | `friends`, `community`, `podcast`, `family`, `company` |
 | `templateVersion: 1` | Server-owned seed definition version |
 | `entitlementPolicyId` | Server-owned allocation policy, independent of type and local role |
@@ -199,12 +199,17 @@ presence/session data. Do not seed fake activity. `memberCount: 1` is valid
 after the canonical owner membership commits; creation alone does not make
 other people or a media session present.
 
-The current creation implementation deliberately seeds `status: preparing`
-with `serverActivationState: held`. Only the canonical owner can read its
-preparation metadata; content, rosters, media and voice remain closed. Runtime
-authority requires the exact `status: active` / activation `active` pair.
-Unknown or mismatched pairs do not receive legacy fallback. There is no
-authorized production activation in this task.
+The raw creation factory and every migration deliberately seed
+`status: preparing` with `serverActivationState: held`. Only the canonical
+owner can read held preparation metadata; content, rosters, media and voice
+remain closed. The runtime constructed by `servers/registration.js` may seed
+an **absent** root and all of its room anchors directly as `active` in that
+same atomic creation transaction. Request payloads cannot select this mode,
+and replay against an existing held or migrated graph returns it unchanged.
+Runtime authority still requires the exact `status: active` / activation
+`active` pair; unknown or mismatched pairs do not receive legacy fallback.
+The production environment does not set `YOVOICE_SERVERS_V1`, so this
+creation capability is not currently registered or deployed.
 
 ### Channels and categories
 
@@ -379,7 +384,7 @@ the next. Keep the old `roomId` RTC adapter until idle cutover. Update every
 active-session mirror, control outbox, cleanup worker and achievement webhook
 binding together; changing only JWT room names would strand revocation.
 
-The held V1 end worker has a two-phase terminal cleanup. Durable positive
+The V1 end worker has a two-phase terminal cleanup. Durable positive
 revocation receipts and a fully scanned recipient cursor precede the private
 `serverControlOutbox/{endOperationId}.terminalDelete` checkpoint. Its exact
 fields are `version: 1`, `endOperationId`, `bindingFingerprint`,
@@ -393,11 +398,14 @@ After a fresh owned-lease check the adapter sends one direct SDK DeleteRoom,
 without roster queries or automatic retry, then commits a separately fenced
 final ACK. Lost provider/final-commit ACKs retry only that old immutable RTC
 generation, without repeating settled removals. Terminal-room NOT_FOUND is
-idempotent; participant NOT_FOUND remains insufficient cutoff evidence. Every
-pass uses at most twenty SDK requests with at most four concurrent removals;
-a full twenty-removal pass leaves deletion for the next invocation. All
-started requests settle before a failed batch releases its lease. This is
-local held-runtime behavior, not a registered worker or provider acceptance.
+idempotent. Participant NOT_FOUND is terminal only when the adapter proves the
+same RemoveParticipant request carried the explicit `revokeTokenTs`; a generic
+absence receipt still fails closed. Every pass uses at most twenty SDK requests
+with at most four concurrent removals; a full twenty-removal pass leaves
+deletion for the next invocation. Every bounded batch is dispatched even when
+an earlier recipient fails, then the first failure releases the lease without
+committing a partial cursor. This is local held-runtime behavior, not provider
+acceptance evidence.
 
 ## Callable contract
 
@@ -413,18 +421,51 @@ Never fall back to direct writes after a callable denies an action.
 | --- | --- |
 | `createServerV1` | `{requestId, serverType, templateVersion, name, description, privacy, defaultLanguage}`; returns `{serverId, defaultChannelId, channelIds, alreadyExisted}` |
 | `updateServerV1` | `{serverId, requestId, expectedRevision, patch}`; exact metadata patch, returns updated revision |
+| `deleteServerV1` | `{serverId, requestId}`; owner only; refuses while any channel in the server holds a live generation, releases a family's one-per-owner reservation, marks `deletionInProgress` (which every canonical read already treats as closed) and stages bounded resumable cleanup after RTC acknowledgement; returns `{serverId, deleted, revision, cleanupPending, contentCleanupPending}` |
 | `createServerChannelV1` | `{serverId, requestId, kind, name, categoryId, accessMode}` plus validated media configuration when applicable; returns channel and reciprocal room IDs |
 | `updateServerChannelV1` | `{serverId, channelId, requestId, expectedRevision, patch}`; no silent room/history rebinding |
 | `reorderServerChannelsV1` | `{serverId, requestId, expectedRevision, channelIds}`; exact permitted channel set, no duplicate or foreign IDs |
 | `setServerChannelAccessV1` | `{serverId, channelId, requestId, expectedAclRevision, policy}`; validates local subjects, bumps ACL revision and queues convergence |
 | `archiveServerChannelV1` | `{serverId, channelId, requestId}`; ends affected media and retains authorized history |
-| `deleteServerChannelV1` | `{serverId, channelId, requestId}`; explicit destructive action, durable scoped cleanup |
+| `deleteServerChannelV1` | `{serverId, channelId, requestId}`; explicit destructive action; marks the exact channel/room/revision and stages durable bounded cleanup after every captured RTC generation is positively ended |
+| `createServerEventV1` | `{serverId, channelId, requestId, title, description, startsAtMillis, endsAtMillis, timeZone}`; only Friends/Community `events`, Family `calendar` and Podcast `events` (Program) modules; derives the immutable profile and persists a canonical scheduled event |
+| `updateServerEventV1` | `{serverId, channelId, eventId, requestId, expectedRevision, patch}`; author or moderator only; upcoming scheduled event and exact revision required |
+| `cancelServerEventV1` | `{serverId, channelId, eventId, requestId, expectedRevision}`; author or moderator only; cancellation is retained as a revisioned status transition |
+| `respondToServerEventV1` | `{serverId, channelId, eventId, requestId, expectedRevision, response: going | maybe | declined, reminderRequested?}`; one canonical response per member; response and supported Family/Podcast reminder opt-in counts change in one transaction |
+| `createServerPodcastQuestionV1` | `{serverId, channelId, requestId, body}`; Podcast `questions` channel only; member-only write with canonical author identity and a stable operation-derived question ID; returns `{serverId, channelId, questionId, status, revision}` |
+| `setServerPodcastQuestionVoteV1` | `{serverId, channelId, questionId, requestId, expectedRevision, voted}`; one vote row per member UID and the aggregate `voteCount` change in one transaction; returns `{…, voted, changed, voteCount, questionRevision}` |
+| `setServerPodcastQuestionOnAirV1` | `{serverId, channelId, questionId, requestId, expectedRevision, onAir}`; moderator-capable roles only; selects or clears the single `onAir` question for a Podcast Questions channel and revision-demotes the previous selection atomically; returns `{…, onAir, changed, revision, previousQuestionId}` |
+| `startServerPodcastRecordingV1` | `{serverId, channelId, studioChannelId, sessionId, title, requestId}`; Podcast moderator only; binds the active audio Studio generation to one deterministic episode ID and durable Egress job, then idempotently starts or discovers the canonical MP3 output; returns `{schemaVersion, serverId, channelId, studioChannelId, episodeId, sessionId, status, revision, providerStatus}` |
+| `stopServerPodcastRecordingV1` | `{serverId, channelId, studioChannelId, episodeId, expectedRevision, requestId}`; exact-revision Podcast moderator transition to `processing`, and a durable stop job that survives provider timeouts and retries |
+| `finalizeServerPodcastEpisodeV1` | Same exact mutation input as stop; rechecks both channels and current moderator authority, polls the generation-bound Egress job, validates the private MP3 MIME/size/provider duration and moves the episode to `ready` only after the object matches |
+| `retryServerPodcastRecordingV1` | Same exact mutation input; only an explicit provider-error episode may restart, with the same canonical output path and idempotent Egress discovery so a retry cannot create a second recording |
+| `publishServerPodcastEpisodeV1` | Same exact mutation input; Podcast moderator only; atomically promotes an exact `ready` revision into the member-visible `published` archive |
+| `getServerPodcastEpisodeAccessV1` | `{serverId, channelId, episodeId}`; current channel reader for published audio, or current moderator for a ready preview; probes the exact stored generation and returns a generation-bound HTTPS grant valid for at most 90 seconds after a second authority/revision check |
+| `createServerListItemV1` | `{serverId, channelId, requestId, text}`; Family `list` channel only; creates one canonical unchecked item with a stable operation-derived ID |
+| `updateServerListItemV1` | `{serverId, channelId, itemId, requestId, expectedRevision, patch: {text?, checked?}}`; authorized Family member; exact revision and non-empty patch required |
+| `deleteServerListItemV1` | `{serverId, channelId, itemId, requestId, expectedRevision}`; item author or server moderator; exact revision required and retry remains stable after deletion |
+| `createServerFamilyCheckInV1` | `{serverId, requestId, status: home | onMyWay | allGood | callMe}`; Family member only; persists one immutable location-free status snapshot |
+| `deleteServerFamilyCheckInV1` | `{serverId, checkInId, requestId}`; check-in author or server manager; retry remains stable after deletion |
+| `reserveServerFamilyMemoryV1` | `{serverId, channelId, requestId, caption, photoContentType, photoSize, voiceContentType, voiceSize, voiceDurationMs}`; Family `memories` channel only; reserves exactly one canonical private photo and one `audio/mp4` voice note for at most ten minutes |
+| `finalizeServerFamilyMemoryV1` | `{serverId, channelId, memoryId, requestId, photoGeneration, voiceGeneration}`; rechecks current membership, exact reservation and both object generations, then probes image/audio bytes and publishes immutable descriptors without durable download URLs |
+| `getServerFamilyMemoryMediaAccessV1` | `{serverId, channelId, memoryId, requestId}`; current authorized member only; returns generation-bound signed photo and voice URLs valid for at most 90 seconds after a second authority check |
+| `deleteServerFamilyMemoryV1` | `{serverId, channelId, memoryId, requestId, expectedRevision}`; author or moderator; tombstones the exact revision and drains a durable generation-bound media deletion job before removing the document |
+| `setCommunityServerFollowV1` | `{serverId, requestId, following}`; active Community member only; writes or removes the private server preference and the caller's private mirror atomically; it is discovery state, never access authority |
+| `createServerWhiteboardStrokeV1` | `{serverId, channelId, requestId, points, color, lineWidth}`; Company `whiteboard` channel only; active non-guest member; persists one immutable operation-derived normalized polyline with 2-64 points, an allowlisted color and 1-16 px width; returns `{serverId, channelId, strokeId, generation, sequence, revision, boardRevision}` |
+| `undoServerWhiteboardStrokeV1` | `{serverId, channelId, strokeId, requestId, expectedRevision}`; removes only the caller's own exact-revision stroke from the active board generation and transactionally updates the count; returns `{serverId, channelId, strokeId, undone, boardRevision}` |
+| `clearServerWhiteboardV1` | `{serverId, channelId, requestId, expectedRevision}`; server manager only; atomically deletes the current generation's bounded stroke set and advances generation/revision; returns `{serverId, channelId, cleared, deletedCount, generation, revision}` |
+| `reserveServerCompanyFileV1` | `{serverId, channelId, requestId, displayName, contentType, size}`; Company `files` channel only; active non-guest member; reserves one canonical private object for ten minutes, bounded to 1 byte-25 MiB and the PDF/JPEG/PNG/WebP/plain-text allowlist; returns the stable file ID, exact Storage path and required immutable metadata |
+| `finalizeServerCompanyFileV1` | `{serverId, channelId, fileId, requestId, generation}`; rechecks current channel authority, reservation, metadata, generation, declared size and bounded file bytes before publishing a descriptor without a durable download token |
+| `getServerCompanyFileAccessV1` | `{serverId, channelId, fileId, requestId}`; current channel reader only; returns a generation-bound HTTPS read grant valid for at most 90 seconds after a second authority/revision check |
+| `deleteServerCompanyFileV1` | `{serverId, channelId, fileId, requestId, expectedRevision}`; file author or server moderator; exact-revision transition to a durable deletion job, with generation-bound object removal and retry-safe descriptor cleanup |
 | `joinServerV1` | `{serverId, requestId}`; only canonical public admission or applicable invitation, never arbitrary role assignment |
 | `createServerInviteV1` | `{serverId, inviteeId, requestId}`; inviter-capable roles only, active server only, friends only, blocks and sanctions fail closed; writes the pending generation, its expiry and the invitee's private pointer; returns `{serverId, inviteeId, generation, status, expiresAtMillis, alreadyExisted}` |
 | `revokeServerInviteV1` | `{serverId, inviteeId, requestId}`; inviter-capable roles only; pending → revoked as a status transition bound to the current generation, removes the pointer; returns `{…, status, revoked}` |
 | `respondToServerInviteV1` | `{serverId, requestId, response: accept | decline}`; binds the invite to the caller, current status and generation |
 | `leaveServerV1` | `{serverId, requestId}`; member/mirror/count transition and all-channel access/media cleanup |
 | `setServerMemberRoleV1` | `{serverId, memberId, requestId, role}`; existing role hierarchy, revision and media consequences |
+| `removeServerMemberV1` | `{serverId, memberId, requestId}`; the four removal-capable roles Club already uses (`owner`, `coOwner`, `admin`, `moderator`), strict rank, never the owner and never self (that is `leaveServerV1`); bumps the target's `authorizationRevision`, drops every private grant and discovery pointer and stages the revocation that ends their live session; returns `{serverId, memberId, removed, membershipRevision, cleanupPending}` |
+| `setServerMemberBanV1` | `{serverId, memberId, requestId, banned, reason}`; same authority as removal; sets AND lifts, because a ban nobody can lift is a second defect; a reason is required to set one and refused to lift one; the membership document survives so the ban is durable and `memberCount` is unchanged; every change bumps `authorizationRevision` and stages the revocation; returns `{serverId, memberId, banned, changed, membershipRevision, cleanupPending}` |
 | `transferServerOwnershipV1` | `{serverId, newOwnerId, requestId}`; both owner guards, canonical memberships, policy quota and all-channel cleanup |
 | `startServerChannelSessionV1` | `{serverId, channelId, requestId}`; returns canonical `{roomId, sessionId}` after authorized start or compatible concurrent join |
 | `createServerChannelTokenV1` | `{serverId, channelId, sessionId, requestId}`; returns existing connection fields plus canonical binding and explicit permitted track sources |
@@ -445,6 +486,32 @@ Retain adapters for `createCommunityClub`, `finalizeClubMedia`,
 room and moderation operations. They must enforce V1 authority when their
 target is versioned. A new callable facade must not leave a permissive old
 callable that can bypass it.
+
+### The admin and staff surface on a versioned root (ADR-188)
+
+Trust & Safety does not get a second set of callables. `functions/admin/clubs.js`
+keeps staff authentication, step-up and the audit log and delegates the
+versioned branch of four of its callables to staff adapters in
+`functions/servers/management.js`, required lazily so a legacy-only staff
+action loads none of the server domain:
+
+| Staff callable | Versioned root | What the adapter adds that a raw admin write would skip |
+| --- | --- | --- |
+| `listAdminClubs`, `getAdminClub` | unchanged | Neither ever refused a versioned root; they read it as they always did |
+| `setClubModerationStatus` | `staffSetServerModerationStatus` | Root `status` → `suspended` (which `canonicalServer` and `isClubMember()` both already treat as closed) AND an authorized end for every live generation — a suspension that leaves the voice channel running suspends nothing, and the legacy per-room batch cannot end an `srv_` generation |
+| `removeClubMember` | `staffRemoveServerMember` | `authorizationRevision` bump, the `memberAuthorizations` record, the private grant and discovery-pointer sweep, and the outbox job that revokes the bearer |
+| `setClubMemberBan` | `staffSetServerMemberBan` | The writer for `member.banned`, in both directions, with the same revision fence and revocation |
+| `adminDeleteClub` | `staffDeleteServer` | Ends every live generation, marks `deletionInProgress` and stages the same bounded, revision-fenced cleanup as owner deletion. The legacy recursive sweep is NOT reused: it would delete the root while V1 sessions, grants and reciprocal bindings are still live |
+| `transferClubOwnership` | **still refuses** | The only V1 transfer is the owner-initiated `transferServerOwnershipV1`. Staff recovery of an absent owner needs transfer's entitlement and guard adapter and is a separate slice |
+
+A staff adapter takes no `requestId`, because its legacy caller has none:
+idempotence is idempotence of STATE. Re-running a suspension, a ban, a removal
+or a deletion converges on the same document and reports `changed: false`.
+
+Every adapter refuses a **held** root with the uniform `permission-denied`.
+A held root has never been activated and nobody but its owner can reach it;
+refusing it is what keeps the legacy staff path from becoming the activation
+writer this surface deliberately does not have.
 
 Use structured existing error codes for unauthenticated/permission-denied,
 invalid argument, stale revision, unavailable, exhausted capacity and
@@ -527,11 +594,25 @@ Discovery reuses the `serverChannelRefs` precedent rather than opening a
 query: `users/{inviteeId}/serverInviteRefs/{serverId}` holds
 `{serverId, generation, expiresAt}` only — no name, no inviter — is
 owner-readable, never client-writable, and is removed by revocation,
-acceptance and decline. It is discovery, never authority: the client
+acceptance and decline. Because expiry itself emits no document write, the
+bounded `sweepExpiredServerInvitesSchedule` queries at most 50 expired
+pointers every 15 minutes and transactionally removes each pointer plus only
+the matching generation-bound notification. The invitation document remains
+as history and still fences the next generation. It is discovery, never authority: the client
 point-reads the invitation, whose rule rechecks the invitee, and a stale or
 forged pointer opens nothing. The pre-existing self-scoped
 `collectionGroup('invites')` rule is untouched and still returns only the
 caller's own invitations.
+
+`onServerInviteWritten` is the V1 notification authority. It re-proves the
+active V1 root, the inviter's exact role and authorization revision, both
+canonical friendship guards, the absent invitee membership, the exact pending
+generation and its pointer before writing `type: clubInvite`,
+`targetId: serverId`, `sourceGeneration: String(generation)`. Its hashed
+notification id is generation-bound, so a re-issue cannot reuse or resurrect
+the prior bell row. Accept, decline, revoke, delete and malformed transitions
+remove only a notification whose source path and generation still match. The
+legacy on-create trigger ignores `serverSchemaVersion: 1` documents.
 
 Revocation is a status transition, not a delete, so the revoked generation
 stays on record and a "revoked or expired invite must not gain new life"
@@ -566,18 +647,81 @@ do not expose family data through public Voice Moments or duplicate bytes.
 
 | Module | Target persistence and lifecycle |
 | --- | --- |
-| Events/calendar/program | Channel `events/{eventId}` and `responses/{uid}`; UTC timestamp plus IANA timezone; updated/cancelled events invalidate obsolete reminder outbox jobs |
+| Events/calendar/program | Channel `events/{eventId}` and `responses/{uid}`; UTC timestamp plus IANA timezone; cancelled rows remain revisioned. Friends/Community events, Family calendar and Podcast Program share the implemented RSVP contract; Family/Podcast responses also persist reminder opt-in state and a transactional count |
 | Questions | Channel `questions/{questionId}` and `votes/{uid}`; one vote per authorized member, server-derived count, explicit host selection for On air |
 | Episodes | Channel `episodes/{episodeId}`; draft/recording/processing/ready/published/error/deleting; canonical immutable media path/generation and private recording job outbox |
 | Shared list | Channel `listItems/{itemId}`; validated text, checked state and revision; concurrent edits/retries converge |
-| Whiteboard | Channel `boards/{boardId}/boardElements/{elementId}`; drawing/text/notes/shapes, durable ordered changes and author-owned operation receipts for undo; ephemeral cursor leases with bounded retention |
-| Files/memories | Canonical private descriptors and upload reservations; actual probe/finalization, authorized read, deletion and abandoned-upload cleanup |
+| Whiteboard | Company channel `whiteboardState/main` plus `whiteboardStrokes/{strokeId}`; durable ordered normalized polylines, one active generation capped at 180 strokes, author-only undo and manager-only atomic clear |
+| Files/memories | Canonical private descriptors and upload reservations; actual probe/finalization, authorized read, deletion and abandoned-upload cleanup. Company Files accepts PDF/JPEG/PNG/WebP/plain text up to 25 MiB, enforces a 256 MiB per-user daily reservation budget and returns only 90-second generation-bound signed reads |
 
 Module callables use the same exact-input, retry, limits, authority and cleanup
 patterns. Their specific schemas and numeric processing/storage limits must
 be recorded with the implemented module before acceptance; a metadata-only
 placeholder is not a completed module. Whiteboard viewing and collaboration
 do not depend on opening another media session.
+
+Company Files stores descriptors under
+`clubs/{serverId}/channels/{channelId}/files/{fileId}` and immutable bytes under
+`server_company_files/{serverId}/{channelId}/{ownerId}/{fileId}.{ext}`. A client
+may create the object only while its exact server-written reservation is live;
+clients cannot list or delete Storage objects and cannot write descriptors.
+Finalize performs a bounded trusted probe before publication and removes any
+download token. Delete, abandoned-upload expiry and server/channel teardown use
+durable fenced cleanup jobs, generation checks and resumable checkpoints. A
+replay after expiry or completed deletion fails closed instead of returning a
+historical receipt that suggests a file still exists.
+
+The implemented Events V1 service accepts exactly four canonical root/channel
+pairs: `friends/events`, `community/events`, `family/calendar` and
+`podcast/events` (the seeded Program channel). The server derives and persists
+`serverType`, `channelKind`, `eventKind`, RSVP support and reminder capability;
+clients cannot submit those authority-bearing fields. Events start from now
+through two years ahead, last at most seven days and carry a validated IANA
+timezone. `going`, `maybe` and `declined` counts change in the same transaction
+as the member's response. Family and Podcast members may additionally set the
+exact optional boolean `reminderRequested`; its count changes atomically with
+the response. This stores reminder intent only. A delivery/scheduling worker is
+a separate integration and is not claimed by this contract.
+
+Firestore clients may read events and response rows only through the parent
+channel ACL; every client write is closed and all mutations go through the four
+callables above. Deleting the channel or server drains response rows before
+event rows as part of the same bounded content-cleanup state machine.
+
+The implemented Family shared list is confined to a canonical Family root and
+`list` channel. Items have stable operation-derived IDs, validated text, a
+boolean checked state, the member who checked them and a monotonic revision.
+All Family members with channel write access may add, edit and toggle; only the
+author or a moderator may delete. Clients read through the active channel ACL
+and write only through the three exact-input callables. Channel/server deletion
+drains `listItems` in bounded validated pages before removing the channel.
+
+The implemented V1 Family check-in adapter keeps the existing four statuses
+(`home`, `onMyWay`, `allGood`, `callMe`) and deliberately accepts no location
+field. Each immutable row snapshots the canonical author display name and is
+private to active Family members. The author or a server manager may remove a
+row through the callable; V1 clients have no direct write path. Root cleanup
+already drains `checkIns` in bounded pages.
+
+The implemented Family Memories adapter pairs one image with one short
+`audio/mp4` voice note in the existing `clubs/{serverId}/moments` collection
+and `family_moments/{serverId}/...` Storage namespace. A ten-minute,
+server-owned reservation fixes both paths, MIME types, sizes and the claimed
+voice duration. Finalization rechecks the active Family Memories channel,
+object generations and trusted media probes before publishing descriptors;
+it removes durable Firebase download tokens. Playback is callable-authorized
+and returns generation-bound V4 URLs with a 90-second expiry. Author/moderator
+deletion uses a durable job, and whole-server deletion first retires every
+upload reservation and pending deletion job, then drains the isolated Storage
+prefix in bounded leased pages before removing the root. This order prevents a
+late upload from racing an apparently empty prefix.
+
+Community Follow stores only the current member's boolean preference in
+`clubs/{serverId}/followers/{uid}` plus the private
+`users/{uid}/serverFollows/{serverId}` mirror. Both projections are exact,
+callable-owned and transactionally identical; neither grants membership or
+channel access. Server deletion drains primary rows and any orphaned private
+mirrors in bounded pages before the server root disappears.
 
 ## Media and lifecycle safety
 
@@ -699,12 +843,110 @@ Large membership graphs use a staged migration state with bounded pages and
 remain behind the legacy gate until final validation. A partially copied
 membership graph is not exposed as a complete V1 server.
 
+**The engine (ADR-182).** `functions/servers/migration_apply.js` implements
+steps 4-6 above. Three stages per root, in the only safe order — **members**
+(add `authorizationRevision`, create `memberAuthorizations`), **channels**
+(derive `kind`, pin `accessMode: "members"`, write `accessPolicy`, revisions,
+`historySource`), then **root**. The first two are additive and inert while the
+root is unversioned, so legacy Rules still govern the space and an interrupted
+run leaves a Club that behaves exactly as it did. "Inert" is load-bearing and
+has one sharp edge: the `liveness` projection is deliberately NOT written by
+the channels stage, because `noClientChannelLiveness()` refuses a legacy
+manager's channel update whose post-write document carries a `liveness` map —
+staging it would break rename, reorder and delete for that Club's managers for
+as long as the window lasted. It is written in the same transaction that
+versions the root, where that legacy rule no longer applies to anyone. Writing the
+root is the only irreversible step, so it goes last, it is what the client gate
+guards, and its transaction re-reads liveness so a session that starts mid-run
+defers the root instead of racing the write. Each stage is one transaction that
+buffers its writes and flushes them only after every validation passed; the
+run's step record — stage, member cursor, member count, source fingerprint — is
+written in that same transaction, which is what makes resume exact. Every write
+is a patch reduced against the observed document, so a re-run is a zero-write
+no-op. Write mode refuses anywhere but a local emulator and `applyReady` is
+permanently `false`.
+
+**Refusals come from one registry, not from prose.** `V1_CLIENT_READ_PATHS`
+records what a client can still read once a root is versioned, read off the
+committed Rules. Legacy content whose read path is `false` and which is
+**non-empty** refuses the root by name: `clubs/{id}/moments`,
+`clubs/{id}/checkIns`, a bound room's `rooms/{id}/messages`, a bound room's
+cover (`imageUrl`, whose only read path is `getRoomCoverMediaAccess` and which
+denies once the parent is versioned), Club artwork under
+`/clubs/{uid}/{clubId}/**`, and any legacy `status: "pending"` invitation.
+ADR-E's family exclusion is the conjunction of the three family flags, so it
+stops firing by itself when those Rules branches land.
+
+**A Club's rooms are found from the room side, not only from the Club's
+pointers (ADR-189, proven in ADR-190).** The boundary the migration crosses is
+keyed on `room.clubId` — `firestore.rules` `isLegacyRoomData()` reads it, and
+`functions/clubs/deletion.js` and `functions/clubs/voice.js` both enumerate with
+`rooms.where("clubId","==",clubId)`. The liveness, transient-participant,
+stranded-history and bound-cover probes therefore run over the UNION of
+`channel.roomId`, `root.loungeRoomId`, the lazy `club_lounge_{clubId}`
+convention, and a bounded back-pointer query that refuses the root
+(`bound-room-set-exceeds-bounded-page-budget`) rather than paging past its
+budget. Forward pointers alone missed a room a deleted voice channel left
+behind, a lazily created lounge the root never recorded, and a room whose
+channel pointer names something that is gone — each one live and
+history-bearing, each one reading clean. `counts.boundRooms` in the manifest
+counts rooms that exist, never the ids that were probed. `serverMigrationRuns/{runId}`
+and its `rootSteps` subcollection are the run ledger and are denied to every
+client.
+
 ### Old-client gate
 
-The old client queries every channel with bare `orderBy(position)`. Once a
-collection contains properly protected restricted documents, Rules deny that
-whole query; they do not filter it. Additive fields do not by themselves make
-that read backward compatible.
+The old client queries every channel with bare `orderBy(position)`. Rules deny
+that whole query; they do not filter it. Additive fields do not by themselves
+make that read backward compatible.
+
+**Corrected 2026-09-12, measured on the emulator, not assumed.** The sentence
+that used to stand here said the denial began "once a collection contains
+properly protected restricted documents". It does not. `isLegacyClub()` reads
+the **root**, so the denial begins the instant the root carries any of the
+three server markers — with every channel `accessMode: "members"` and no
+restricted document anywhere in the collection.
+`firestore-tests/server_rules.test.js` proves both halves against a live
+emulator: the real bare `orderBy('position')` query succeeds against an
+unversioned twin and is denied, wholesale, against a migrated root; adding a
+restricted channel changes neither result. The installed client renders that
+`permission-denied` as an empty channel list, because its `StreamBuilder` has
+no error branch — so the failure is silent to the person using it, which is why
+the gate must be enforced before the write rather than detected after it.
+
+**The mechanism (ADR-183).** Two published pieces, both required before any
+root is versioned:
+
+- `serverMigrationGates/clientCompatibilityV1` — server-written, readable by any
+  signed-in caller, writable by nobody
+  (`firestore.rules`, `match /serverMigrationGates/{gateId}`). It carries
+  `minimumClientVersion`, `minimumClientBuild`, a `platformMinimumBuild` floor
+  for every platform the app builds for, `status` (`open`/`satisfied`), a
+  monotonic `revision`, and the uid and time of whoever attested it. A platform
+  floor may be stricter than the global minimum and never laxer; a missing or
+  malformed gate is an OPEN gate, never an absent constraint.
+- An operator-supplied installed-base census of `{platform, build, sessions}`.
+  Nothing in this repository observes live client versions, so this is evidence
+  a person supplies. An absent census is `unknown` and refuses; any incompatible
+  session refuses; an unrecognised platform counts as incompatible.
+  **Zero observations is the same `unknown` (ADR-189).** An empty census, a
+  census whose rows all report `sessions: 0`, and a census that does not
+  observe every platform in `CLIENT_PLATFORMS` are each `supplied: false` and
+  refuse through the same `client-compatibility-census-not-supplied` reason.
+  An empty array used to satisfy the gate outright, which made the one control
+  standing between a migration and every installed client losing its channel
+  list pass by the *absence* of evidence. A run therefore needs a row with a
+  real session count for each of the six platforms.
+
+`functions/servers/migration_gate.js` is the contract and its pure evaluator;
+`functions/servers/migration_apply.js` reads the gate **inside** the
+transaction that versions the root and pins its `revision` to the one the
+operator reviewed. The apply engine refuses a missing, malformed or stale
+`expectedGateRevision` before it creates a run ledger or stages a write, and
+the CLI requires `--gate-revision`. The root transaction re-reads that exact
+revision, closing the review-to-apply TOCTOU window. The three reversible
+stages may be resumed only within the pinned run; only the root flip crosses
+the client compatibility boundary.
 
 Keep existing spaces on the legacy contract until the compatible client cohort
 and idle-upgrade conditions are met. New restricted V1 spaces require the new
@@ -870,8 +1112,10 @@ The subsequent immutable-target convergence bridge passed independent
 Node22 emulator QA **111/111** and Principal/security/realtime review, with a
 fresh **28/28** reviewer subset. It connects mutation receipts to internal
 ledger cleanup without completing uncertain work or restoring stale grants.
-It remains unexported/inactive; dispatch, global consumers, content cleanup and
-provider acceptance are still gates, not completed integration. The historical
+The later registration and bounded Firestore cleanup slices connect this
+runtime behind exact `YOVOICE_SERVERS_V1=enabled`; the production flag remains
+absent, so the endpoints are still inactive. Global consumer cutover and
+provider acceptance remain release gates. The historical
 V1 endRoom fanout caveat is closed by the subsequent reviewed adapter slice:
 direct terminal DeleteRoom follows durable revocation readiness. The extended
 runtime/bridge union passed 128/128 and a new independent terminal set passed
@@ -956,9 +1200,10 @@ sequence is a plan, not an instruction to deploy now.
 Activation is the moment held anchors become discoverable and joinable by legacy
 queries and RTC consumers. Three preconditions are named here because each is
 invisible to the emulator and to every suite that passes today, so none can
-be closed by running tests. None is reachable right now — V1 is unregistered
-and clients cannot write a versioned anchor — which is why they are
-preconditions rather than defects to hotfix.
+be closed by running tests. None is reachable in production right now — the
+exact `YOVOICE_SERVERS_V1=enabled` registration boundary is absent from
+`functions/.env`, so clients cannot call the staged V1 exports — which is why
+they are preconditions rather than defects to hotfix.
 
 1. **The `channelSessions.livekitRoomName` collection-group index must be
    verified as deployed, not merely committed.** The field override exists in

@@ -265,6 +265,54 @@ URL. A previously disclosed Firebase download-token URL is a bearer capability
 and is not revoked by a later Rules denial; expiry is therefore an exact
 in-app visibility and engagement boundary, not a promise of byte destruction.
 
+### Reel voice comments (ADR-187 / ADR-191, source only, NOT deployed)
+
+New surface: `storage.rules` `match /reel_voice_comments/{userId}/{reelId}/{fileName}`,
+Firestore `reelVoiceCommentReservations/{commentId}` (`allow read, write: if
+false`), the callables `reserveReelVoiceCommentDraft` and
+`finalizeReelVoiceCommentDraft`, the schedule
+`expireAbandonedReelVoiceCommentDraftsSchedule`, `getReelMediaAccessV2` with
+`asset: "voiceComment"`, and a `reelVoiceComment` kind in `reelCleanupOutbox`.
+What holds, verified by the emulator suites and the 2026-09-12 adversarial
+audit (`yovoice-evidence/2026-09-12/voice-comments-security.md`, no P0/P1):
+
+- **Upload authority is a live reservation, never the path.** Create requires
+  `isVerified() && isActiveUser() && isValidAudioPayload()`, a matching
+  unexpired reservation (owner, Reel, 40-hex comment id, path, `kind:
+  "reelVoiceComment"`, duration 1–60) and metadata keys exactly
+  `authorId, reelId, commentId`. A Voice reply reservation cannot authorize a
+  Reel object. Update and delete are denied to every client in every state.
+- **The object path is re-derived, never trusted,** from
+  `(authorId, reelId, commentId)` in six independent places: the comment
+  validator, Storage Rules, the cleanup-row validator, the abandoned sweep, the
+  report validator and the client upload.
+- **Who may hear a comment is exactly who may watch the Reel,** and the
+  commenter's own blocks, restrictions and account state apply too. The grant
+  is a 90-second, generation-bound V4 URL, re-authorized after signing; a
+  minted URL is still a bearer capability for its lifetime.
+- **Installed clients never see a voice comment** (withheld from
+  `getReelViewV2` unless `commentTypes` is sent) and **the delete/remove result
+  shapes are frozen** — an additive key there breaks every installed client
+  (ADR-187).
+
+Open, and blocking or recorded, not fixed:
+
+- **No staff listening path** (ADR-187 known gap) — blocks deploy.
+- **Finalize never inspects the bytes** (audit F1, P2): content type and
+  duration are the uploader's declaration, so a moderator's report evidence
+  describes a declaration, not the object.
+- **`canonicalPublicProfile` can truncate a legal 81–120 character display name
+  to one ending in a space** that every comment reader rejects (audit F2, P2;
+  pre-existing on the deployed text-comment path).
+- Audit P3s: thread cleanup ceiling of ~8,000 voice comments per Reel before
+  the purge row dead-letters (F3); the abandoned sweep drains 600/h against a
+  permitted 1,200 reservations/h per account (F4); the voice grant's distinct
+  refusal codes are a per-comment state oracle (F5); a commenter's audio is
+  retained for the Reel's 30-day expiry evidence window (F6); account deletion
+  does not purge `reel_voice_comments/{uid}`, same as `voice_replies/{uid}`
+  (M9).
+- App Check is not enforced on these callables, like every other callable.
+
 ## Secrets
 
 LiveKit's API key and secret are Google Secret Manager secrets

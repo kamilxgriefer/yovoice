@@ -9,14 +9,18 @@
 > **Speak. Connect. Be heard.**
 
 YO Voice is a premium, voice-first social platform built with Flutter and
-Firebase. It combines live Community and Broadcast rooms, Voice Moments,
-messaging, Clubs, Friends, creator tools and role-aware staff moderation in one
-responsive product for mobile, web and desktop.
+Firebase. It combines persistent Servers for Friends, Community, Podcast,
+Family and Company groups with YO Moments, messaging, Friends, creator tools
+and role-aware staff moderation in one responsive product for mobile, web and
+desktop.
 
 ## ✨ Product scope
 
-- distinct Community and Broadcast voice-room experiences powered by LiveKit;
-- Voice Moments, direct messaging, Friends, Clubs and creator/follow flows;
+- exactly five purpose-built Server types: Friends, Community, Podcast, Family
+  and Company, with persistent channels and LiveKit media where appropriate;
+- YO Moments with a shared Voice and Reels experience, text comments and voice
+  replies;
+- direct messaging, Friends and an opt-in audience for eligible Creators;
 - responsive navigation and purpose-built mobile, tablet and desktop layouts;
 - Firebase Authentication, Firestore, Storage, Cloud Functions, Cloud Messaging,
   App Check and Crashlytics integration;

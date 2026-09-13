@@ -5,19 +5,23 @@ rules below are not suggestions — follow them exactly.
 
 ## What YO Voice is
 
-A premium consumer social **voice-first** product: live voice rooms, voice
-moments, and messaging, with a dark/cosmic visual identity. The Flutter app
-in this repo is the primary product. Main areas: Home, Rooms
-(Community + Broadcast), Chats, Friends, Clubs, Profile, creator/follow,
-Settings. Product detail lives in [docs/Vision.md](docs/Vision.md) and
-[docs/Features.md](docs/Features.md).
+A premium consumer social **voice-first** product: persistent Servers with
+live voice/video conversations and text channels, YO Moments (Voice + Reels),
+and messaging, with a dark/cosmic visual identity. The Flutter app in this
+repo is the primary product. Main areas: Home, Servers, Chats, Friends,
+YO Moments, Profile, creator tools and Settings. Product detail lives in
+[docs/Vision.md](docs/Vision.md) and [docs/Features.md](docs/Features.md).
 
 ## Product invariants
 
-- **Community rooms and Broadcast rooms are different products**, not two
-  labels for one thing. `RoomExperience` (`lib/features/rooms/data/models/room_experience.dart`)
-  is a real two-value enum and they route to different screens. Never
-  collapse, merge, or "unify" them without being explicitly asked.
+- **Servers are the only user-facing shared-space product.** The creation
+  selector exposes exactly five persistent templates: Friends, Community,
+  Podcast, Family and Company. Standalone Rooms, Discover and Clubs are retired
+  surfaces and must not be restored in navigation, links, notifications or
+  copy. Existing `rooms`/`clubs` collections, models and `RoomExperience`
+  variants remain internal compatibility contracts while data and installed
+  clients converge; preserve them behind the Server facade rather than
+  renaming or deleting their schema.
 - **Never invent backend functionality, fake users, or fake activity.** If
   something has no backend, show it disabled/"Coming soon" (see the Hard
   rules below).

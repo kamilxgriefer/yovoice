@@ -46,6 +46,65 @@ and 2560 px where relevant, plus a 2.0 text scale. The acceptance bar is no
 overflow, no clipped primary text, 44x44 minimum interactive targets,
 keyboard/focus access on desktop, and preserved safe-area/keyboard insets.
 
+## Vertical rhythm
+
+`AppRhythm` in `lib/core/theme/app_spacing.dart` names the six vertical
+steps a page may use — 4 / 8 / 12 / 16 / 24 / 32 — and what each one MEANS:
+
+| step | value | what it separates |
+| --- | --- | --- |
+| `hairline` | 4 | inside one lockup (greeting → name, label → value) |
+| `tight` | 8 | parts of one control, or two rows in one card |
+| `item` | 12 | sibling blocks in a section; a rail's tile pitch |
+| `title` | 16 | a section title → its content; card padding; the page's top band |
+| `section` | 24 | content → the NEXT section title |
+| `page` | 32 | the last content → the end of the scroll |
+
+Only the horizontal gutter varies with width (16 / 24 / 32 above). The
+vertical steps do not: they are identical at every breakpoint, every text
+scale, in every locale, and in every state.
+
+**The rule the scale depends on: a page child's LAYOUT box equals its INK
+box.** Spacing lives BETWEEN boxes, never inside a hit target, so the number
+in the source is the number the reader sees. A control that must reserve a
+44 px target around smaller ink subtracts that air from the gap it declares
+rather than adding it — see `HomeSectionHeader`
+(`lib/features/home/presentation/widgets/shared/home_section_header.dart`),
+whose layout box is exactly `section + title-ink + title` whether or not it
+carries a "View all" and however the title wraps. Watch for the two usual
+sources of invisible air: `MaterialTapTargetSize.padded` inflates a 44 px
+button's box to 48, and a rail tile's own padding adds to the pitch the rail
+already declares. Shrink-wrap the button; give the tile `EdgeInsets.zero`
+and let the rail own the gap.
+
+A heading's trailing "View all" moves under the title only when it would
+otherwise cost more than a third of the row — a width test, not a text-scale
+one. A phone at 200 % text stacks; a 768 px slate or a 1440 px desktop at the
+same text scale keeps the action on its heading's line rather than pushing it
+a full row width away from the words it belongs to. Because every heading on
+a page carries the same label, the test answers the same for all of them and
+a page never mixes the two arrangements.
+
+Home is the reference implementation on both platforms, and
+`test/home_rhythm_test.dart` pins it: every gap is asserted against the
+named step, not a literal, at 320/390/430/768, at 1.0 and 2.0 text scale, in
+English and Polish, empty and populated. `test/.screenshots/home_rhythm_capture.dart`
+renders the frames that back the numbers.
+
+Horizontal rails (the people strip, the Moments strip) are **full-bleed**:
+the page gutter is the scroll view's own padding, so the first tile's ink
+starts exactly at the margin and the rest scroll under the frame's edge.
+Everything else on the page is inset to the margin and paints nothing
+outside it.
+
+**A section title is a promise about content.** A heading over a single
+button is not a section: with no followed Moments, Home draws no "From
+people you follow" heading and the rail's Record affordance becomes a
+labelled full-width action beside the page's other real routes — under
+"Create server" and "Friends", on both form factors, not floating at the top
+of a column with nothing above it. The control keeps its key, focus node,
+semantics and callback; only its shape and its place change.
+
 ## YO Moments creation and Reel identity
 
 Reels has separate Discover and Your Reels filters, a persistent labeled Create
@@ -319,6 +378,68 @@ number on the screen, real ones included, the moment it's noticed). See
 what's shown this way (2FA, profile visibility, multi-device sessions, app
 language, Creator Studio analytics/monetization, self-serve account
 deletion).
+
+## Finishing a text field while the keyboard is up
+
+**Every text field must offer a visible way to finish typing, and the
+screen's primary action must never be stranded behind the keyboard.** A
+tester's words for the failure: writing should be straightforward, not a
+puzzle about how to hide the keyboard. Never rely on tap-outside or
+drag-to-dismiss as the only exit — neither is discoverable, and on native
+iOS and Android a touch outside a field does not unfocus at all.
+
+Exactly one of three mechanisms applies, chosen by the kind of field, not by
+the screen:
+
+- **R1 — the return key completes the field.** Every single-line field and
+  every short caption declares its action rather than inheriting one:
+  `search` for a search box, `next` for a field followed by another, `done`
+  for the last one, `send` for a composer. A short caption also sets
+  `keyboardType: TextInputType.text` so the platform draws a confirm key
+  instead of a newline arrow even though `maxLines > 1`.
+- **R2 — the primary action is docked above the keyboard.** An adjacent send
+  button (chat and comment composers), an app-bar action (Edit profile or
+  Server settings), or a pinned footer (Create server or a stage settings
+  sheet). Only fields covered by R2 or R3 may keep Return
+  as a line break.
+- **R3 — the shared `YoKeyboardDoneBar`** (`lib/shared/widgets/inputs/`),
+  for genuinely long-form fields: bios, Server descriptions,
+  guidelines, moderator notes. It renders only while a field has focus and
+  the keyboard is open, and can carry the screen's primary action next to
+  Done (`action:`) when the screen's own footer has nowhere to sit.
+
+Left to the multiline default Flutter sends `TextInputAction.newline`, and
+`performAction` deliberately ignores newline — so on such a field `Return`
+can only insert a line break and an `onSubmitted` callback is dead code.
+Declare the action or delete the callback; do not ship both.
+
+### Placement invariant
+
+**`Scaffold` does not lift `bottomNavigationBar` above the keyboard.** It
+shrinks the body and leaves the bottom slot pinned to the bottom of the
+window, so bottom chrome placed there is drawn *behind* the keyboard —
+present in the widget tree, invisible on the device. Measured on 390x844
+with a 336 px keyboard: a bare `bottomNavigationBar` lands at y 796–844,
+entirely covered.
+
+Bottom chrome that must stay visible while typing therefore sits in one of
+three places, and a widget test measures its rendered rectangle against the
+top of the keyboard:
+
+1. `Scaffold.bottomNavigationBar` wrapped in `YoKeyboardSafeBottomBar`,
+   which pads it by the keyboard inset (same surface: y 460–508).
+2. The last child of a `Column` inside `Scaffold.body` whose other child is
+   `Expanded` — the body has already been shrunk above the keyboard.
+3. The last child of a sheet's `Column` inside its own `viewInsets` padding.
+
+`Scaffold` strips the bottom view inset from the **body** slot, so in
+placement 2 the inherited `viewInsets.bottom` reads 0 while the keyboard is
+open; `YoKeyboardDoneBar` falls back to the `FlutterView`'s own inset for
+exactly that case. A bar that only checks `MediaQuery.viewInsetsOf` renders
+nothing there.
+
+Full reasoning:
+[ADR-169](Decisions.md#adr-169-one-keyboard-contract-for-every-text-field-and-bottom-chrome-that-is-actually-above-the-keyboard).
 
 ## Empty/loading/error states
 

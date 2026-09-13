@@ -2068,6 +2068,86 @@ Weights are overridable at deploy time without a code change via
 `REEL_FEED_RANKING` (a JSON object; unknown or malformed keys fall back to
 the frozen defaults rather than failing the feed).
 
+### Pending, not yet deployed: Reel voice comments (ADR-187, ADR-191)
+
+Source and emulator-tested only. Nothing below has been run against
+`yovoice-ec54a`. **Deploy is additionally blocked** until an owner decision on
+staff listening (ADR-187, "Known gap") and the outstanding review cells in
+`yovoice-evidence/2026-09-12/voice-comments-principal-1.md` are closed.
+
+**The order is mandatory, and the reason is the client, not the rules.** The
+app decides whether to offer the microphone from one signal: `getReelViewV2`
+accepting the optional `commentTypes` input (ADR-191). That proves the
+**Functions** deploy and nothing else. Storage Rules are a separate manual
+deploy with no code-level link to it, so if Functions land first the mic goes
+live, the reservation succeeds, and every upload is refused by a Storage
+ruleset that has no `reel_voice_comments/**` block — the person records,
+listens, publishes, fails, and every retry fails the same way. Nothing in code
+can prevent that; only this order can.
+
+1. **Firestore Rules.** Snapshot the released ruleset first (see *Reading the
+   deployed ruleset* below), then
+   `firebase deploy --only firestore:rules --project yovoice-ec54a`, then
+   fetch the released source and diff it against `firestore.rules` at the
+   deployed commit. The slice's delta is deny-only:
+   `reelVoiceCommentReservations/{commentId}` `allow read, write: if false`.
+   *Why first:* not because the collection would otherwise be writable — it
+   would not; Firestore denies any path no rule matches — but so the ruleset
+   the emulator suite certified is the one serving before any server code
+   writes the collection. `firestore.indexes.json` needs no deploy (the purge
+   filter `comments where type == "voice"` is single-field).
+2. **Storage Rules.** Run the IAM service-agent check in
+   [Storage rules (manual)](#storage-rules-manual) — the new block reads
+   `users/{uid}` and `reelVoiceCommentReservations/{commentId}` through
+   `firestore.get()`, and without that binding it fails closed exactly like the
+   Voice reply block. Then `firebase deploy --only storage --project
+   yovoice-ec54a` and read the release back the same way as Firestore:
+
+   ```bash
+   curl -s -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+     https://firebaserules.googleapis.com/v1/projects/yovoice-ec54a/releases/firebase.storage/yovoice-ec54a.firebasestorage.app
+   ```
+
+   Diff the released source against `storage.rules`, and confirm the
+   `match /reel_voice_comments/{userId}/{reelId}/{fileName}` block is present.
+   **Do not continue to step 3 until it is.**
+3. **Cloud Functions**, last. `moderateReport` first, so a voice comment can
+   never exist without a staff removal path that also queues its audio (the
+   2026-09-07 moderation-first precedent):
+   `firebase deploy --only functions:moderateReport --project yovoice-ec54a`,
+   then `firebase deploy --only functions --project yovoice-ec54a`. The Reel
+   surface this changes is `reserveReelVoiceCommentDraft` and
+   `finalizeReelVoiceCommentDraft` (new), `expireAbandonedReelVoiceCommentDraftsSchedule`
+   (new), and `getReelViewV2`, `getReelMediaAccessV2`, `deleteReelComment`,
+   `removeReelComment`, `createReelCommentReport`,
+   `processPendingReelCleanupSchedule`, `onReelCleanupOutboxCreated` and
+   `expirePublishedReelsSchedule` (changed). Read the deployed function list
+   back and confirm the two new callables and the new schedule are present.
+4. **After deploy, before telling anyone.** One real authenticated voice
+   comment end to end from a verified tester account: record, publish, play it
+   from a second account, delete it, and confirm the object is gone from
+   `reel_voice_comments/{uid}/{reelId}/`. A green step 3 without this is a
+   Functions deploy, not a working feature.
+
+**Result shapes are frozen by installed clients.** `deleteReelComment` and
+`removeReelComment` must return exactly the keys installed builds parse
+(`reelId, commentId, deleted, commentCount` and `reelId, commentId, removed,
+commentCount, removedAuthorId`). An earlier draft of this change added
+`audioQueued` to both and would have made every installed client report a
+committed deletion as a failure; it was removed before release (ADR-187).
+
+**Rollback.** Functions first (redeploy the previous revision). A session
+started after the rollback probes afresh, sees `commentTypes` refused,
+verifies the refusal and shows the mic disabled with "coming soon"; published
+voice comments are withheld from every client again. **A session that already
+learned support before the rollback does not downgrade**: its latch stays
+`supported`, it keeps sending the flag, and its Reel threads fail to load with
+a retryable error until the service is rebuilt (app restart or an account
+change resets the latch, `reel_service.dart` `_viewCall`). Treat a Functions
+rollback as needing an app restart on affected devices. Leave the Storage and Firestore blocks in place — they are
+deny-by-default and reservation-bound, and removing them strands any
+in-flight reservation's object with no rule able to describe it.
+
 ### Before editing `fieldOverrides`, read the trap
 
 A `fieldOverrides` entry **replaces** Firestore's automatic single-field
@@ -3793,7 +3873,8 @@ before build 11 is available to their permanent tester group.
    firebase deploy --only \
      functions:onDirectMessageCreated,functions:onRoomLiveChanged,\
      functions:sendClubInvite,functions:onClubInviteCreated,\
-     functions:onClubMemberCreated,functions:startDirectCall,\
+     functions:onClubMemberCreated,functions:onServerInviteWritten,\
+     functions:sweepExpiredServerInvitesSchedule,functions:startDirectCall,\
      functions:acceptDirectCall,functions:declineDirectCall,\
      functions:cancelDirectCall,functions:endDirectCall \
      --project yovoice-ec54a
@@ -3936,3 +4017,154 @@ revoked and the feature is degrading silently. Watch the cache hit ratio
 (target >80%; below that a beta key is not viable), provider calls per hour
 against the portal's quota, the `resource-exhausted` rate, and the document
 count of `gifAssets`, which grows monotonically by design.
+
+## Club → Servers migration runbook (dry run only; production migration unauthorised)
+
+Source: `functions/servers/migration_apply.js` (ADR-182),
+`functions/servers/migration_gate.js` (ADR-183), `docs/Servers.md`
+"Deterministic migration and compatibility". **Nothing in this section is a
+deploy instruction.** No production data has been migrated, no Firebase
+resource has been deployed for it, and `YOVOICE_SERVERS_V1` remains absent from
+`functions/.env`, so the fifty-four V1 callables, two dispatcher exports and
+four maintenance sweeps remain unregistered in production.
+
+### What the engine actually does, in one paragraph
+
+Three stages per root. **members** adds `authorizationRevision` to each member
+document and creates `clubs/{id}/memberAuthorizations/{uid}`. **channels**
+derives `kind` from the legacy `type`, pins `accessMode: "members"`, and writes
+`accessPolicy`, `aclRevision`, `revision`, `liveness`, `historySource`,
+`activeSessionId` and the media configuration. Both are additive and inert
+while the root is unversioned — legacy Rules still govern the space. **root**
+writes `serverSchemaVersion`, `serverType`, `templateVersion`,
+`entitlementPolicyId`, `serverActivationState: "held"`, `status: "preparing"`,
+`revision`, the recounted `memberCount`, `onlineCount: 0` and
+`migration {version, sourceKind, sourceId, state}`. That third stage is the
+irreversible one and the only one the client gate guards.
+
+**The staged window is designed to be invisible to the Club sitting in it.**
+While a root has had its members and channels staged but has not yet been
+versioned, legacy Rules still govern the space: members read, write and manage
+exactly as before, because no legacy rule reads `authorizationRevision`,
+`memberAuthorizations`, `kind`, `accessMode`, `accessPolicy` or `historySource`.
+The one exception was found by reading `noClientChannelLiveness()` rather than
+by a test: a legacy manager's channel update is refused if the post-write
+document carries a `liveness` map, so the migration writes that projection with
+the ROOT, not with the channels. If you ever see channel rename or reorder fail
+on an unversioned Club during a migration window, check for a `liveness` map on
+its channels first.
+
+### Order of operations, when this is eventually authorised
+
+1. **Publish the client gate.** Write `serverMigrationGates/clientCompatibilityV1`
+   with the Admin SDK (clients cannot write it): `schemaVersion: 1`,
+   `gateId: "clientCompatibilityV1"`, `minimumClientVersion`,
+   `minimumClientBuild`, a `platformMinimumBuild` entry for **every** platform
+   (`android`, `ios`, `web`, `macos`, `windows`, `linux`), `status: "open"`,
+   `revision: 1`. A platform floor may be stricter than the global minimum and
+   never laxer.
+2. **Ship a client that reads it.** The minimum build is useless until a
+   released client renders an honest "update required" state from it. That is
+   the client slice, and it must land and propagate *before* step 4.
+3. **Measure the installed base.** Produce a census file — a JSON array of
+   `{platform, build, sessions}` — from a real measurement (store console,
+   analytics, or session-reported build). **Do not invent a zero.** The engine
+   treats an absent census as unknown and refuses.
+4. **Attest the gate.** Only when the census shows zero incompatible sessions,
+   set `status: "satisfied"`, `attestedBy` (the attester's uid), `attestedAt`,
+   and bump `revision`. Record the revision; every apply pins it.
+5. **Deploy the compatible backend first**, per the existing
+   "Authorized-later deployment order" in `docs/Servers.md`: Functions, then
+   `firestore.indexes.json` (and verify the `channels` and
+   `channelSessions.livekitRoomName` indexes are actually DEPLOYED, not merely
+   committed), then `firestore.rules` and `storage.rules`.
+6. **Run the read-only dry run and review it by hand**:
+
+   ```
+   node functions/scripts/servers_migration_apply_dry_run.js \
+     --out <empty dir> --gate-revision <revision> --census <census.json> \
+     --allow-project <projectId>
+   ```
+
+   The script has **no flag that writes**. It refuses (exit 2) unless
+   `FIRESTORE_EMULATOR_HOST` names a local emulator or `--allow-project`
+   exactly matches the admin app's project id. It writes
+   `apply-manifest.json` and `apply-manifest.sha256` 0600 inside a 0700
+   directory and never overwrites an existing manifest.
+7. **Read the refusals before anything else.** Each one is a named, real
+   blocker, not noise. The common set and what closes each:
+
+   | Refusal | What it means | What closes it |
+   | --- | --- | --- |
+   | `club-artwork-would-lose-its-read-path` | The root has an avatar or banner and `storage.rules` `isOrdinaryClubMedia()` gates **read** on the absence of the server markers | A V1 read branch in `storage.rules`, reviewed under the SECURITY.md checklist (ADR-H) |
+   | `bound-room-history-would-lose-its-read-path` | A bound room holds `messages` and `canAccessRoom()` is legacy-gated | A V1 read path for legacy room history, or an explicit accepted loss |
+   | `legacy-pending-invitation-has-no-v1-acceptance-path` | A `status: "pending"` legacy invite exists and cannot be accepted after migration | Revoke or expire it first, or add a legacy→V1 invitation adapter |
+   | `club-moments-would-lose-their-read-path` / `club-check-ins-would-lose-their-read-path` | `clubs/{id}/moments` / `checkIns` are `isLegacyClub`-gated | The V1 Rules branches (also ADR-E's first two legs) |
+   | `family-migration-deferred-until-v1-rules-branches-exist` | ADR-E | All three family branches, in Rules and Storage Rules |
+   | `standalone-room-adoption-has-no-v1-client-read-path` | Adoption would strand the room anchor and its history | A V1 room/history read path |
+   | `restricted-legacy-channel-requires-access-mapping` | A legacy `isPrivate: true` channel needs a reviewed access mapping | An explicit per-channel access decision |
+   | `active-session-must-not-be-migrated` / `transient-participants-present` | Deferred, not refused: retry when idle | Nothing — the root is retried later |
+   | `client-compatibility-*` | The gate is unpublished, open, drifted, or the census is missing or dirty | Steps 1-4 |
+
+8. **A production apply is a separate authorised step that this repository
+   cannot perform.** `separate-production-migration-approval` is the eighth
+   required gate and has no in-code evidence source; `applyReady` is
+   permanently `false` and write mode refuses anywhere but a local emulator.
+9. **Migration is not activation.** A migrated root is written
+   `held`/`preparing`, so it is owner-only: members cannot read the root, list
+   channels, read messages or send. Activation is its own step with the four
+   named preconditions in `docs/Servers.md` ("Named activation preconditions"),
+   none of them discharged. Any release note that mentions migration must say
+   this.
+
+### Rollback
+
+Per `docs/Servers.md` "Rollback", and unchanged by this engine: removing
+`serverSchemaVersion` is **not** a safe generic inverse, because it reopens the
+legacy read branch over data that may since have become private. The staged
+members and channels writes are additive and need no inverse — legacy Rules do
+not read `authorizationRevision`, `memberAuthorizations`, `kind`, `accessMode`,
+`accessPolicy` or `historySource`. (`liveness` is the one exception, which is
+exactly why it is written with the root and not with the channels — see the
+staged-window note above.) The root write is the one to
+plan an inverse for, and the plan is to roll back the **entry/capability flag**
+and leave the data for forward repair. No media or history is ever deleted by
+this engine; it constructs no Storage client at all.
+
+### Emergency LiveKit disconnect during a Servers V1 rollback
+
+Turning off `YOVOICE_SERVERS_V1` prevents new V1 endpoints from registering on
+the next Functions revision, but it does not disconnect WebSocket sessions
+that already reached LiveKit. Before removing any V1 control worker, enumerate
+active V1 session anchors and keep the provider control plane available until
+each immutable `srv_...` room is absent:
+
+1. Freeze new V1 admission first. Keep Firestore Rules fail-closed and leave the
+   outbox/scheduled cleanup exports running.
+2. For every active or ending V1 `channelSessions` document, verify that its
+   `livekitRoomName` equals the canonical value derived from server, channel and
+   session IDs. Never copy a client-supplied provider room name.
+3. Let the owned `serverControlOutbox` session-end worker drain normally. If an
+   incident requires an immediate provider cut, use LiveKit's operator console
+   or reviewed CLI credentials to delete that exact `srv_...` room. Record the
+   server/channel/session IDs, provider room, operator and timestamp. Do not put
+   credentials in the repository or an incident note.
+4. Re-run the bounded worker. Provider-room NOT_FOUND is an idempotent terminal
+   result for the immutable generation; the worker still commits its Firestore
+   checkpoint and removes matching mirrors under its normal fences.
+5. Verify no active `srv_...` room, live channel projection, active voice-session
+   mirror or pending/reconciliation outbox row remains before removing the
+   control exports. A flag change or Functions rollback alone is not evidence
+   that provider connections ended.
+
+This checklist is prepared source guidance only. No production LiveKit room was
+listed or deleted in this work, and a real-provider drill remains an activation
+precondition.
+
+### The run ledger
+
+`serverMigrationRuns/{runId}` and `serverMigrationRuns/{runId}/rootSteps/{sourceKind_sourceId}`
+are server-only (`read, write: if false`) and hold the stage, member cursor,
+member count and source fingerprint for resume. They are operator state about
+other people's spaces; do not widen those rules to "let staff see progress" —
+give staff a callable, as `docs/SECURITY.md` principle 3 requires.

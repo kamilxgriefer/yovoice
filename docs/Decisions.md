@@ -6830,6 +6830,31 @@ activation and Enter/Space activation. No backend, rules, schema or index
 change is involved. Deployed through the byte-verified Hosting release from
 `5377aa6` on 2026-08-25.
 
+### Amendment, 2026-09-12 — the inline follow control returns, as one shared control
+
+ADR-110 ruled that People & Moments "contains no `Follow` button and no follow
+mutation". Boards 06 and 08 reverse that for two named surfaces, and only
+those: the **calm panel**'s friends-not-yet-followed rows and the **Reel stage
+footer**'s author line. Both use one widget, `MomentsFollowButton`
+(`moments_follow_panel.dart`), which reads `FollowService.watchIsFollowing` for
+its own label, keeps exactly one mutation in flight, draws nothing on the
+viewer's own row, and hands the whole 48-px target to the accessibility bridge
+with the person's name in it.
+
+**Reasoning.** ADR-110's objection was a *chip competing with Moment playback
+in a cramped mixed-purpose strip*, and that objection still holds where it was
+made — the discovery rail has no follow control. It does not hold on a footer
+whose whole job is "who made this, and do you want more of it", where the
+alternative is a round trip through a profile sheet to act on a decision the
+viewer has already made. One shared control rather than three is the part that
+keeps ADR-110's real guarantee: the three surfaces cannot disagree about what
+following means or about double-submit protection.
+
+**Consequence.** `FollowService` is now a dependency of the Reels stage, which
+is why `ReelStageFooterBar` takes it as a nullable and draws no control at all
+when the host has none (a signed-out or service-less embed). Any fourth
+surface that wants a follow control uses this widget or does without.
+
 ## ADR-111: Desktop recent chats use current profile artwork as a bounded full-bleed backdrop
 
 **Context.** The desktop `Your recent chats` cards were 148 px tall but placed
@@ -10176,11 +10201,14 @@ serial, and *then* a paused video.
 - A hand-pause outranks autoplay (`_viewerPaused`), and is cleared when the
   page is left — scrolling back to a Reel is a fresh visit and plays.
 - `setAutoplaySuspended(bool)` is the single lever for "something is in front
-  of this Reel": an open thread, any pushed route, the app in the background.
-  `ReelCard` derives it from `widget.commentsOpen`, `ModalRoute.of(context)
-  ?.isCurrent` and the lifecycle state. Route currency covers the comment
-  sheet, the profile preview, the report sheet and the delete dialog with one
-  signal instead of a callback per surface.
+  of this Reel": any pushed route, a host that is no longer showing this
+  Reel, the app in the background. `ReelCard` derives it from
+  `ModalRoute.of(context)?.isCurrent`, `widget.isHostVisible` and the
+  lifecycle state. Route currency covers the comment sheet, the profile
+  preview, the report sheet and the delete dialog with one signal instead of
+  a callback per surface. *(Amended 2026-09-12 — see "Amendment A" at the end
+  of this ADR: `widget.commentsOpen` is no longer a term, because on a wide
+  layout the thread is docked BESIDE the Reel and covers none of it.)*
 - The Reel's `VideoPlayerController` is created with
   `VideoPlayerOptions(mixWithOthers: true)`. AVAudioSession is process-global
   on iOS and this codebase keeps it under LiveKit/recording control
@@ -10204,6 +10232,43 @@ ADR-166/ADR-168 is now load-bearing rather than merely nice. `ReelService`'s
 grant cache is `static`, so any future test that needs an *outstanding* or
 *failing* grant must use a Reel id no earlier test in the process has
 resolved.
+
+### Amendment A, 2026-09-12 — a docked thread is not "in front of" the Reel
+
+`commentsOpen` was dropped from the suspension predicate. On a wide layout
+the conversation is a docked column **beside** the Reel and covers none of
+it; suspending playback because the reader opened it is the opposite of what
+that layout is for. The phone's comment **sheet** does cover the Reel, and it
+still suspends — through route currency, because a sheet is a pushed route,
+which is the signal this ADR already chose. The predicate is now
+`!_appResumed || !_routeIsCurrent || !widget.isHostVisible`
+(`reel_card.dart`, `_playbackSuspended`); `isHostVisible` is the new term and
+it is the host telling the card it is no longer the Reel on screen.
+
+**Consequence.** A wide reader can read the thread while the Reel plays, which
+is the point of the docked column; anyone reinstating a `commentsOpen` term
+has to justify it against that, and `reel_panel_thread_reachability_test.dart`
+holds the line.
+
+### Amendment B, 2026-09-12 — the sound switch moved, and it says which state it is in
+
+The switch is no longer a bare 48-px plate in the frame's top trailing corner.
+It sits with the backing-track chip in the frame's **bottom leading** control
+group, above the progress row (`_StageFrameControls`), and it carries a word:
+`Dźwięk włączony` / `Dźwięk wyłączony` — the STATE — while its spoken name
+stays the ACTION, `Włącz dźwięk` / `Wyłącz dźwięk`. On a frame narrower than
+`200 × the reader's text scale` there is no room for the words and it falls
+back to the 48-px plate. **It never disappears**: sound would then have no way
+back on.
+
+**Reasoning.** The corner plate was a glyph a first-time viewer had to
+interpret, on the part of the frame their thumb does not reach; the bottom
+group is where the frame's other transport already is. A toggle that shows
+its state and speaks its action is the pattern the rest of the app uses.
+
+**Consequence.** The label is a width the frame has to find, which is why the
+fallback exists and why `reel_sound_pill_test.dart` pins both forms. The 48-px
+target is unchanged in either form.
 
 ## ADR-171: Home's vertical rhythm is six named steps, and a page child's layout box is its ink box
 
@@ -10966,3 +11031,691 @@ fresh request as "re-request with a new `requestId` after the barrier", not
 as an error. The session's own `authorizationRevision` never moves for a
 participant change, so nobody else's token is disturbed. Nothing is deployed
 and `YOVOICE_SERVERS_V1` stays absent.
+
+## ADR-182: The migration apply engine refuses from a capability registry, versions the root last, and stages everything reversible before it
+
+**Context.** `migration_plan.js`, `migration_collector.js` and
+`migration_inventory.js` could decide and evidence a Club→Servers mapping but
+could not perform one; `REQUIRED_NEXT_GATES` listed eight gates and nothing
+existed to close any of them. Building the writer surfaced a fact the mapping
+work had not: **migrating a root is not only additive.** Six committed rule
+branches are written as "this root carries none of the three server markers",
+so versioning a root silently turns them off — `clubs/{id}/moments` and
+`clubs/{id}/checkIns` (`firestore.rules`), `rooms/{id}` and its `messages`
+through `canAccessRoom()`'s `isLegacyRoomData()` guard, `/clubs/{uid}/{clubId}/**`
+Storage **read** through `isOrdinaryClubMedia()`, and the acceptance path for
+any legacy `status: "pending"` invitation. Each of those is data a real Club
+already has.
+
+**Decision.** `functions/servers/migration_apply.js` owns the write, and it is
+organised around refusal rather than around copying.
+
+- One frozen registry, `V1_CLIENT_READ_PATHS`, records what a client can still
+  read once a root is versioned, read off the committed Rules. Every legacy
+  resource that would be stranded is probed with a bounded existence check and,
+  when it is **non-empty** and its capability flag is `false`, the root is
+  refused with a named reason. An empty resource strands nothing and does not
+  refuse.
+- **ADR-E is computed, not quoted.** `familyMigrationAllowed()` is the
+  conjunction of the three registry flags for `checkIns`, `moments` and
+  `family_moments` Storage. The family refusal disappears by itself when those
+  branches land; no second edit, and no comment that can drift.
+- Three stages per root, in one safe order: **members** (add
+  `authorizationRevision`, create `memberAuthorizations`), **channels** (derive
+  `kind`, pin `accessMode: "members"`, write `accessPolicy`, revisions,
+  `historySource`), then **root**. The `liveness` projection is written with
+  the ROOT, not with the channels: `noClientChannelLiveness()` refuses a legacy
+  manager's channel update whose post-write document carries a `liveness` map,
+  so staging it would have silently broken channel rename, reorder and delete
+  for every Club sitting in the staged window. That is exactly the class of
+  quiet breakage this whole design exists to catch, and it was caught by
+  reading the rule rather than by a test. Members and channels are additive
+  and inert while the root is unversioned — legacy Rules still govern the space
+  — so they can be staged, re-run and abandoned. Writing the root is the only
+  irreversible step, so it goes last and is the step the client gate guards.
+- Each stage is one transaction that buffers its writes as intents and flushes
+  them only after every validation for that stage passed, so a refusal cannot
+  leave a half-applied stage. The run's step record — stage, member cursor,
+  member count, source fingerprint — is written in that **same** transaction,
+  which is what makes resume exact rather than approximate.
+- Idempotence is structural: every write is `reduceToChanges(observed, desired)`,
+  so a patch that would change nothing becomes no write at all. A re-run of the
+  same run id is a zero-write no-op and a fresh run id over a migrated root
+  reports `already-migrated` by matching `migration.sourceKind`/`sourceId`.
+- Liveness and transient participation are re-probed in **every** stage
+  transaction, including the one that versions the root, so a session that
+  starts mid-run defers the root instead of racing the write.
+- `rooms/{id}/participants` is reachable only through
+  `probeTransientParticipants`, which returns a count and lets the snapshot go
+  out of scope. The durable member sources are a frozen three-item list that a
+  participation roster is not in, and `assertDurableMemberSource` is the single
+  door every membership read passes through.
+- `avatarUrl`, `bannerUrl`, `imageUrl`, `ownerId`, `name`, `createdAt` and the
+  rest of identity are on immutable-field lists; `assertPatchPreserves` throws
+  if a computed patch names one. No Storage client is constructed. Media
+  survives by being left alone.
+- `onlineCount` is written `0` and member `isOnline` `false`: presence has no V1
+  writer (gap G6), so a carried count would be fabricated.
+- The root post-image is run through the SAME `classifyServerAllocation` the
+  capacity accounting uses, and a Club whose policy lands in
+  `FREE_ALLOCATION_POLICIES` fails the write. A paid Club keeps
+  `legacyCommunityPremiumV1` and cannot consume one of the 20 free servers; an
+  adopted room must carry `migration.sourceKind: "room"` because
+  `readOwnerAllocations()` de-duplicates on exactly that provenance.
+- The root is written `serverActivationState: "held"` + `status: "preparing"`.
+  Writing `active`/`active` would be the cutover, and the cutover has four
+  separately named, undischarged preconditions.
+- Write mode refuses unless the target is a local emulator, and `applyReady` is
+  permanently `false` because `separate-production-migration-approval` has no
+  in-code evidence source. The CLI (`servers_migration_apply_dry_run.js`) has no
+  flag that writes at all.
+
+**Reasoning.** The dangerous half of this migration was never the copying; the
+mapping was already deterministic. It is the six branches that fail **silently**
+at the instant of the write, and a comment saying "families migrate last" does
+not stop a future run. Putting the whole set behind one registry means a reader
+sees the complete list of what is still broken in one place, an emulator test
+asserts each refusal by name, and closing a gap is a flag flip landed in the
+same release as the Rules branch it claims. Staging the reversible work ahead of
+the irreversible flip means an interrupted run leaves a Club that still behaves
+exactly as it did — additive fields no legacy rule reads — rather than a
+half-versioned space.
+
+**Consequences.** Against a realistic emulator fixture most roots refuse, and
+that is the correct result, not a defect of the engine: a Club with artwork, a
+lounge room holding history, or a pending invitation cannot be migrated until
+its read path exists. New server-only collection `serverMigrationRuns/{runId}`
+with `rootSteps/{sourceKind_sourceId}`, denied to every client. A migrated root
+is owner-only until activation, which must be stated in any release note that
+mentions migration. `firestore.indexes.json` gains nothing: every query the
+engine issues is document-id ordered or a bounded existence probe.
+
+## ADR-183: The old-client gate is a published minimum build plus an operator census, enforced in the transaction that versions the root
+
+**Context.** `ClubService.watchChannels()` issues
+`collection('clubs/{id}/channels').orderBy('position')` with no equality
+filters. The V1 `list` rule requires the query itself to pin
+`accessMode == 'members' && status == 'active'`, and a list rule is evaluated
+against the query's constraints rather than the documents that come back. The
+Stage 1 contract recorded this as "once a channel collection holds restricted
+documents"; that is **wrong in the direction that matters**. `isLegacyClub()`
+reads the ROOT, so the denial starts the instant a root carries a server
+marker, with every channel `accessMode: "members"` and no restricted document
+anywhere. Measured on the emulator, both halves:
+`firestore-tests/server_rules.test.js` runs the real bare query against a
+migrated root and its unversioned twin. Worse, the old client renders the
+`permission-denied` as an empty channel list, because its `StreamBuilder` has no
+error branch — a silent, total loss of the channel list for every installed
+client on day one of migration.
+
+**Decision.** No rule can make the unpinned query legal without also making
+restricted documents readable, so the enforcement is to refuse to version a root
+until the incompatible cohort is gone, in two published pieces.
+
+1. `serverMigrationGates/clientCompatibilityV1` — server-written, readable by
+   any signed-in caller, writable by nobody. It carries
+   `minimumClientVersion` (for humans), `minimumClientBuild` and a
+   `platformMinimumBuild` floor for **every** platform the app builds for, a
+   `status` of `open`/`satisfied`, a monotonic `revision`, and — when
+   `satisfied` — the uid and time of whoever attested it. A platform floor may
+   be stricter than the global minimum and never laxer. A missing or malformed
+   gate is an OPEN gate, never an absent constraint. It is deliberately readable
+   before an account is fully active: a client too old to read anything else
+   must still be able to learn why.
+2. An **operator-supplied installed-base census**, `{platform, build, sessions}`
+   entries evaluated by `clientMeetsGate`. Nothing in this repository observes
+   live client versions, so the census is evidence a person supplies. An absent
+   census is `unknown` and refuses; a census with any incompatible session
+   refuses; a session on an unrecognised platform counts as incompatible.
+
+The apply engine reads the gate **inside** the transaction that versions the
+root, pins `revision` to the one the operator reviewed, and refuses on
+`client-compatibility-gate-not-satisfied`,
+`client-compatibility-gate-revision-mismatch`,
+`client-compatibility-census-not-supplied` or
+`incompatible-client-cohort-observed`. The three reversible stages run without
+it; only the flip is gated.
+
+**Reasoning.** The gate has to be server-authoritative and readable, because the
+client half of the retirement is a later slice that cannot ship first: the
+minimum has to exist as data before the client that honours it exists. Pinning
+the revision stops a gate edited between review and apply from quietly
+authorising a different decision. Refusing an absent census rather than assuming
+zero is the same rule this project applies to every other piece of evidence:
+`docs/SECURITY.md` treats an unmeasured claim as unproven, and an invented zero
+here would take every installed client's channel list away.
+
+**Consequences.** Migration cannot begin until someone publishes the gate,
+attests it and supplies a census — deliberately. The minimum build has no
+producer yet: the client slice must read
+`serverMigrationGates/clientCompatibilityV1` and render an honest "update
+required" state, and the census must come from a real measurement (store
+console, analytics, or a session-reported build), not from this repository.
+`compatible-client-and-idle-session-cutover-gate` is therefore closable in
+mechanism and still open in evidence until that measurement exists.
+
+
+## ADR-184: One voice at a time inside a thread, arbitrated by a value, not by a service
+
+**Context.** A Voice Moment surface owns one main transport — the expanded
+player's recording, or the feed's shared player — and a conversation under it
+that can hold many voice replies, each with its own tiny player.
+`moment_comments_screen.dart` created an `AudioPlayer` per voice comment with
+no cross-talk at all: starting a reply left the recording it answers playing
+underneath it, and two replies could sound over each other. On a voice-first
+product that is not a polish defect; it is the product failing to do the one
+thing it is for.
+
+**Decision.** `ReplyPlaybackArbiter` (a `ValueNotifier<String?>` in
+`lib/features/moments/presentation/widgets/reply_playback_arbiter.dart`) holds
+the id of the reply that is sounding right now, and nothing else.
+
+- `replyStarted(id)` calls the host's `onPauseMainPlayback` and publishes the
+  id; every other reply observes the change and stops itself.
+- `replyStopped(id)` clears it when that reply pauses or completes.
+- `mainPlaybackStarted()` clears it when the recording takes over, which the
+  sounding reply observes and stops on.
+- Disposal belongs to the widget that created it — one arbiter per thread
+  host, never a singleton.
+
+The host's `onPauseMainPlayback` **must** be a no-op when nothing is playing:
+a deliberate pause must never be manufactured out of a reply that started.
+
+**Reasoning.** The alternative — a playback service that owns every player —
+is a much larger seam than the problem needs, and it would have to know about
+surfaces it does not own (a Reel's coordinator, the recorder preview). A
+notifier holding one id is small enough to be obviously correct, testable
+without a platform channel, and replaceable per test. Holding the *id* rather
+than a player reference is what lets a reply that was rebuilt, scrolled out of
+view, or disposed lose the floor without anyone tracking objects.
+
+**Consequences.** Every surface that plays a reply has to take an arbiter and
+honour it; a new one that forgets will overlap again, which is why
+`moments_independent_qa_playback_test.dart` asserts the floor across a
+hand-off and a slow grant. The arbiter is deliberately ignorant of *why* the
+floor changed, so a host that grants media asynchronously must re-check that
+it still holds the floor **after** the grant returns and again after `play()` —
+the `_stillHoldsFloor` / `_playbackStillWanted` predicates in
+`voice_reply_mini_player.dart` and `moment_detail_screen.dart` exist for
+exactly that race.
+
+## ADR-185: The Moment hand-off list is a published snapshot of the feed's own pool, not a queue
+
+**Context.** Board 07's expanded player offers "KOLEJNE MOMENTY" — what else
+is here when this one ends. The obvious implementations are both wrong for
+this product: a transport queue that pre-loads the next Moment mints a media
+grant nobody asked for (a capability leak, and a view the author did not get),
+and a second fetch from the detail screen duplicates the feed's own filtering,
+blocking and expiry rules where they can silently drift apart.
+
+**Decision.** `MomentNeighbourQueue` (`moments_queue_list.dart`) is a
+`ValueNotifier<MomentNeighbourSnapshot>` that the FEED publishes into and the
+expanded player reads. The snapshot carries the viewer's uid and the list the
+feed has already loaded, filtered and authorised for that account.
+
+- Nothing is fetched for it, and **no media grant is minted for it**.
+- Nothing in it ever starts playing on its own; it is a hand-off, and the
+  reader chooses.
+- It is keyed to the viewer: `belongsTo(uid)` refuses a snapshot published for
+  another account, and signing out clears it.
+- Production wires one `static` instance; tests construct their own.
+
+**Reasoning.** The list is a *view* of state the feed already owns, so the
+feed is the only place that can publish it without a second source of truth.
+Keying it to the account is not paranoia: the account-keyed feed is rebuilt on
+every auth epoch, and a stale neighbour list is a list of Moments the new
+viewer may not be allowed to see. Refusing to pre-grant media is the same rule
+as everywhere else in this codebase — a grant nobody plays is a leaked
+capability.
+
+**Consequences.** The hand-off is only as fresh as the feed's last emission,
+and the expanded player must re-read the Moment it hands off to rather than
+trusting the snapshot's copy (`moments_queue_list_test.dart`,
+`moment_playback_currency_test.dart`). A surface that is opened without the
+feed behind it — a deep link into one Moment — shows no hand-off list at all,
+which is honest: there is no pool to offer.
+
+## ADR-186: Boards 06 / 07 / 08 — what the Moments and Reels slices decided, and what a claim of "fixed" has to show
+
+**Context.** The 2026-09-12 Moments/Reels program (boards 06 "Your Moments",
+07 "Voice", 08 "Reels") changed enough of the three surfaces that the
+individual decisions were being carried in review reports rather than in this
+log. Two review rounds found the same category of problem twice — a control
+that announced itself as a button and could not be pressed — and the second
+round found a NEW instance of it introduced by the first round's own fix.
+That is the shape of a defect a record exists to prevent.
+
+**Decision.** The rules below are the ones a future change to these surfaces
+has to keep.
+
+- **A count is drawn; the phrase is spoken.** The engagement controls render
+  the bare number and carry `Likes: 3` / `Komentarze: 8` on the semantic
+  label (`moments_feed_view.dart`, `reel_engagement_bar.dart`). Word labels
+  never fitted one line and broke mid-word at 200 % text
+  ("Polubieni / a: 3"), which reads as a rendering fault. A zero counter
+  speaks the bare action (`Like`), never `Likes: 0` — an invented total is
+  the one thing this product does not do.
+- **Every node that says "button" carries a tap action.** `excludeSemantics`
+  and `explicitChildNodes` both move a child's `SemanticsAction.tap` out of
+  the node that owns the role and the name, so the action has to be declared
+  on the annotated node itself. This is enforced, not remembered:
+  `moments_semantics_activation_test.dart` walks every enabled button node on
+  the overview, the expanded player and the Reels stage and operates it
+  through `SemanticsOwner.performAction`, which is what Android's
+  `AccessibilityBridge` dispatches for `ACTION_CLICK`.
+- **The card body is one named affordance.** Board 06's Moment card announces
+  `Open Voice Moment: {caption}, {author}, {age}`, carries the same action the
+  finger has, and its `InkWell` is `excludeFromSemantics: true` so there is no
+  second, unnamed tap node under the name.
+- **The stage footer's height is a closed-form budget, and the frame is sized
+  from what it leaves** (`ReelStageFooterBar.heightFor`). Measuring it would
+  be circular — the footer's height decides the frame's width and the frame's
+  width decides whether the footer folds — so every term is a text metric at
+  the reader's own size, taken at the **whole pixel the engine lays it out
+  on**. A budget that is short by any amount is a visible ledge, not a
+  rounding error: the 9:16 frame gives up height, and a 9:16 frame that gives
+  up height gives up width.
+- **What is measured is what will be painted.** The rails keep their totals
+  while the row can hold them, step back to glyphs when it cannot, and wrap
+  only as a last resort — and the decision is made by laying the digits out
+  in the style that will paint them (`_countWidth`), not by costing a
+  character at a constant. A constant is wrong in every typeface but one and
+  wrong by half at 200 % text.
+- **The media band gives up width, never the card's surface.** The 9:16 band
+  is loosened out of the stretch column (`Align(heightFactor: 1)`), so if a
+  footer ever does overrun its budget — a reader expanding the caption from
+  two lines to eight is the case no closed form can predict — what shows
+  beside the frame is the card's own surface, never a `surfaceSunken` ledge.
+- **A widget test that asserts a width loads the shipping typeface.**
+  `flutter_test`'s default font draws every glyph one em wide, so a digit is
+  twice Inter's width and a card 30 px narrower; a width-dependent outcome
+  decided in it is decided by metrics no user will ever see
+  (`loadStageFonts`).
+
+**Reasoning.** Each of these is a defect that shipped once and was found by a
+different cell than the one that wrote it — the accessibility audit, the
+visual review's pixel measurements, the localization pass. Writing them as
+rules is cheaper than finding them again, and each one names the test that
+holds it so the rule and its enforcement cannot drift apart.
+
+**Consequences.** The a11y rule costs a semantic-tree walk in two suites and
+makes some widget code more verbose than the framework's defaults suggest.
+The budget rule means any new footer row has to be added to `heightFor` in the
+same change, or the frame above it silently loses width. The typeface rule
+means a suite that asserts widths pays a font load in `setUpAll`.
+
+**What this ADR does NOT record.** The M13 delta list also names
+`docs/Roadmap.md` (the In Progress block and the superseded "actions on the
+right" note), `docs/UI.md` (the three-column step, the 48-px surface rule and
+the 24-px destination-gutter exception), `docs/Features.md` (voice comments on
+Reels) and `docs/Bugs.md` (the unarbitrated reply players; the detail screen's
+per-tick rebuild). Those files are **not** updated by this entry and remain
+open — recorded here so the gap is visible rather than assumed closed.
+
+---
+
+## ADR-187: A Reel voice comment is the Voice reply contract re-aimed, not a second upload pipeline
+
+**Status:** Accepted (2026-09-12). Built, emulator-tested, **not deployed**.
+
+**Context.** The owner's extended scope puts voice comments on Reels beside
+text comments, superseding the original spec's "no voice replies on Reels".
+Voice Moments already have a complete, deployed voice-reply pipeline —
+reservation, reservation-bound Storage write, finalize, short-lived
+generation-bound playback grant, deletion, moderation and cleanup — and Reels
+already have a text-comment contract that was deliberately shaped so a voice
+branch would be additive (`functions/reels/engagement.js`: `type` and an
+always-null `durationSeconds` were reserved on day one). The question was
+whether to generalise the Voice pipeline across both products or to re-aim it
+at the Reels contract.
+
+**Decision.** Re-aim it, reusing by IMPORT where the code is genuinely shared
+and by CLONE where the two products' authority models differ.
+
+- **Imported, not copied.** `validateStoredAudio`
+  (`functions/moments/integrity.js`) is re-exported from
+  `functions/reels/engagement.js` as `validateReelVoiceCommentAudio` — an
+  alias, asserted by reference in `functions/test/reel_voice_comments.test.js`,
+  so the 512 B–12 MiB bound, the three audio MIME types, the generation match
+  and the exact custom-metadata identity cannot drift between the two
+  products. That module requires `node:crypto`, `../utils/server_access`,
+  `../integrity/guards`, `./capacity` and `../profile/media_contract` — the
+  last two require only `../integrity/guards` — so the import adds no SDK to
+  the cold start and no cycle.
+- **Cloned, because the authority differs.** `assertVoiceMomentAudience` has a
+  friends-only `profileVisibility` branch that Reels have no concept of.
+  A Reel voice comment is therefore authorized by exactly the pair a Reel TEXT
+  comment is authorized by — `engageableReel` plus
+  `assertReelAudienceInTransaction` — so who may leave a voice comment is
+  precisely who may leave a text one, and who may hear it is precisely who may
+  watch the Reel. The Storage block is cloned rather than widened for the same
+  reason: `voiceMomentUploadReservations` is keyed by `momentId` and
+  `reelVoiceCommentReservations` by `reelId`, and one rule answering for both
+  would let a Moment reservation authorize a Reel object.
+- **The comment document is extended, not forked.** `REEL_COMMENT_TYPES`
+  gains `"voice"`; `validateReelComment` picks its exact key set from the
+  type. A text comment keeps the same eight keys, the same `schemaVersion: 1`
+  and a null duration — no backfill, nothing already written changes meaning.
+- **The object path is derived, never trusted.** A voice comment's
+  `storagePath` must equal
+  `reel_voice_comments/{authorId}/{reelId}/{commentId}.m4a` recomputed from
+  the document's own author and its own document id. One comment therefore
+  cannot describe another comment's bytes, and neither can a cleanup row or a
+  moderation report — the same derivation guards all three.
+- **Old clients are protected by a flag, not by a version bump.**
+  `ReelComment.fromWire` throws on any non-text type in every installed build,
+  so `getReelViewV2` WITHHOLDS voice comments unless the caller passes
+  `commentTypes`. The aggregate `commentCount` is unchanged (a per-viewer
+  count leaks what is hidden) and the page cursor still advances past a
+  withheld document — exactly how a blocked commenter is already handled.
+  This is the ADR-168 probe pattern. **The flag protects the view only**; it
+  says nothing about the other responses an installed client parses, which is
+  the next rule.
+- **A response an installed strict reader parses is frozen, and a new key on
+  it is a breaking change, not an additive one.** *(Amended 2026-09-13 after
+  the principal gate, `voice-comments-principal-1.md` F1.)* The first draft
+  added an `audioQueued` boolean to the results of `deleteReelComment` and
+  `removeReelComment`. Every shipped build parses those results with
+  `_exactWireMap`, which refuses any key it does not expect, and the operation
+  ledger replays the stored result verbatim — so the server would have
+  committed the deletion, decremented `commentCount`, and every installed
+  client would have told the person the removal failed. Nothing consumed the
+  flag. It was removed: both results are exactly the key sets installed builds
+  accept (`reelId, commentId, deleted, commentCount`; `reelId, commentId,
+  removed, commentCount, removedAuthorId`), pinned by deep-equality on the
+  result and its ledger replay in `functions/test/reel_voice_comments.test.js`,
+  `reels_engagement.test.js`, `reel_comment_moderation.test.js` and
+  `moderate_reel_comment_report.test.js`. A client-side allowance for named
+  extra keys (ADR-191) protects only builds that carry it; it can never be the
+  reason a server adds a field.
+
+**Reasoning.** Generalising one pipeline across both products would have meant
+a shared audience abstraction spanning a model that consults
+`profileVisibility` and a model that must not. That abstraction is where the
+next authorization bug lives. Re-aiming keeps each product's authority
+statement local and provable, and confines the sharing to the parts that are
+genuinely identical — the bytes.
+
+**Consequences.**
+
+- Two reservation collections and two Storage blocks exist with near-identical
+  text. That duplication is deliberate and is pinned by emulator tests on both
+  paths; a change to one is not silently a change to the other.
+- Publishing a voice comment charges the `comment` budget twice (reserve and
+  finalize), which is the honest price of a two-phase upload.
+- `purgeReelEngagement` now enumerates voice comments and queues their objects
+  BEFORE `recursiveDelete` clears the thread, page by page, deleting each page
+  it has queued so a retry resumes from a strictly smaller set. Without this,
+  a deleted or expired Reel would leave every voice comment's recording in the
+  bucket with nothing in Firestore remembering it exists.
+- `isCanonicalCleanupPath` was deliberately NOT widened. It guards the Reel's
+  own media/backing-audio pair through positional `index === 0 ? media :
+  backingAudio` reasoning that a voice comment has nothing to do with; the new
+  kind uses its own predicate (`isCanonicalReelVoiceCommentPath`). This is a
+  conscious deviation from the design note in
+  `yovoice-evidence/2026-09-12/moments-contract-architecture.md` §3.3 item 6.
+- A report on a voice comment carries `targetCommentType`,
+  `targetDurationSeconds`, `targetStoragePath` and `targetMediaGeneration`;
+  absent `targetCommentType` means text, so every report already in the queue
+  stays actionable. *(Amended 2026-09-13, principal gate F3.)* The first
+  landing claimed a moderator "sees that the target is a recording and how
+  long it is"; no client code read either field, and an uncaptioned voice
+  report rendered in the Moderation Center as a text report whose snapshot
+  "was not retained". `ModerationReport` now parses `targetCommentType` and
+  `targetDurationSeconds` (a length outside 1–60 reads as not retained), and
+  the Moderation Center names a voice target "Voice comment · m:ss" in the
+  queue row and the detail panel, shows the caption — or says there was none —
+  as a separate field, and states that the recording cannot be played there.
+  Pinned by `test/moderation_center_voice_comment_report_test.dart`.
+- **Deploy order is Firestore Rules → Storage Rules → Functions, each read
+  back** — written as a mandatory procedure in
+  [DEPLOYMENT.md](DEPLOYMENT.md#pending-not-yet-deployed-reel-voice-comments-adr-187-adr-191).
+  The client's capability signal proves only the Functions deploy, so Storage
+  Rules landing late would turn every voice publish into a failure no retry
+  can fix. The reason Firestore Rules go first is not that
+  `reelVoiceCommentReservations` would be writable without them — Firestore
+  denies any path no rule matches — but that the certified ruleset should be
+  serving before server code writes the collection.
+
+**KNOWN GAP, recorded rather than hidden: a moderator still cannot LISTEN to a
+reported voice comment.** `reels/{id}/comments/{id}` is `allow read, write: if
+false` for every client including staff (ADR-162), and no staff media-grant
+path exists for Reels — nor for Voice replies, whose
+`authorizeVoiceMomentMediaAccess` has no staff branch either. A moderator
+therefore decides a voice-harassment report on the caption (which may be
+empty), the duration and the reporter's account — and the duration is the
+uploading app's declaration: finalize checks the object's size, content-type
+header, generation and metadata identity, never its bytes (the adversarial
+audit's F1, ranked P2 and open). The report carries the
+recording's exact identity so a staff grant can be built later without a
+migration, and that grant is a prerequisite for deploying this feature, not
+for landing it.
+
+**Not deployed.** Functions, Firestore Rules and Storage Rules from this
+change are all undeployed. Until they are, the client must probe: the callables
+return NOT_FOUND and the mic must be honestly unavailable.
+
+## ADR-188: Club's management and safety half gets V1 equivalents before any root is migrated, and the migration engine refuses until it does
+
+**Context.** `yovoice-evidence/2026-09-12/club-retirement-inventory.md` proved
+that the MEMBER-facing spine of Club (create, join, invite, channels, text,
+voice, sessions, participation, liveness) had V1 equivalents while its
+MANAGEMENT AND SAFETY half had none:
+
+- **R1** no V1 member removal. `leaveServerV1` is self-only
+  (`functions/servers/memberships.js`) and `setServerMemberRoleV1` refuses
+  `auth.uid === memberId`, so nobody could remove anybody.
+- **R2** no V1 ban writer. V1 already *honoured* `member.banned` — in
+  `functions/servers/authority.js` `canonicalMember`, and in
+  `firestore.rules` `isClubMember()` and `validServerMember()` — and nothing
+  anywhere could set it. A moderation model that is honoured but never applied
+  is worse than none, because it reads as protection that does not exist.
+- **R3** no `deleteServerV1` at all. A migrated server was undeletable by its
+  owner and by staff.
+- **R4** no V1 admin/staff surface. Five admin callables refused a versioned
+  root outright, so Trust & Safety lost suspension, removal, ban and deletion
+  the moment a root was migrated.
+
+**Decision.**
+
+1. `functions/servers/management.js` adds `removeServerMemberV1`,
+   `setServerMemberBanV1` (set AND lift — a ban nobody can lift is a second
+   defect) and `deleteServerV1`, registered in `SERVER_CALLABLE_METHODS` and
+   in the `docs/Servers.md` Callable contract table in the same change. The
+   documented count moves 21 → 24 and the registered export count 24 → 27.
+2. `functions/admin/clubs.js` keeps staff authentication, step-up and the audit
+   log and DELEGATES the versioned branch of `setClubModerationStatus`,
+   `removeClubMember`, `setClubMemberBan` and `adminDeleteClub` to four staff
+   adapters in the same module. The adapters are required lazily, so a
+   legacy-only staff action still loads none of the server domain — the posture
+   `utils/server_access.js` already established.
+3. Removal and ban reuse Club's own authority by reference: `REMOVAL_ROLES` IS
+   `MODERATOR_ROLES` (owner, coOwner, admin, moderator), with the same strict
+   rank comparison `functions/clubs/members.js` uses, never the owner, never
+   self. A ban is the same authority as a removal because a ban is a removal
+   plus a re-entry block on the same target set.
+4. Every writer bumps the target's `authorizationRevision`, writes the matching
+   `memberAuthorizations/{uid}` record, sweeps the private grants and discovery
+   pointers, and stages a `serverControlOutbox` job. A removal or a ban that
+   only edited a document would leave the person connected to the room they
+   were just thrown out of; the outbox is what actually ends their session.
+5. Deletion asymmetry, deliberate: `deleteServerV1` REFUSES a server holding a
+   live generation (the owner has `endServerChannelSessionV1`), while the staff
+   adapter ENDS it, because Trust & Safety must not be blocked by an abuser
+   holding a session open. Both mark `deletionInProgress` — which every
+   `canonicalServer` read and `isClubMember()` already treat as closed — and
+   park `contentCleanupPending` on the outbox exactly as
+   `deleteServerChannelV1` parks a channel's.
+6. ADR-F becomes a computed flag, not a comment: `V1_MANAGEMENT_CAPABILITIES`
+   in `functions/servers/migration_apply.js`, checked beside `ADR-E`'s family
+   flag, refusing with `management-parity-slice-does-not-exist-yet`. It is
+   pinned against the real registration table and the real staff adapters by
+   `functions/test/servers_management_independent_qa.test.js`, so a flag cannot
+   stay true after its callable is deleted or renamed.
+
+**Reasoning.** A migrated server with no removal, no ban and no deletion is a
+Trust & Safety regression that cannot be hotfixed from the client, and
+moderation is exactly the category `docs/SECURITY.md` says this project has
+historically got wrong. Reusing the outbox, the ledger, the revision fence and
+the uniform `permission-denied` rather than inventing a second mechanism is
+what keeps "removed" and "left" from becoming two different kinds of
+non-member.
+
+**Consequences.**
+
+- No new client write path exists: every write these operations make lands on a
+  path `firestore.rules` already denies. `clubs/{id}/memberAuthorizations/{uid}`
+  and `serverControlOutbox/{id}` were previously closed only by the default
+  deny and are now denied EXPLICITLY, with a comment, the way
+  `integrityOperationLedgers` is.
+- Five new outbox kinds exist — `memberRemoved`, `memberBanned`,
+  `memberBanLifted`, `serverModeration`, `serverDelete` — validated by the
+  same reviewed worker. `contentCleanupPending` is now permitted for
+  `serverDelete` as well as `channelDelete`, and for nothing else.
+- **Still open, stated rather than hidden.** Staff ownership transfer
+  (`transferClubOwnership`) still refuses a versioned root; the only V1
+  transfer is the owner-initiated `transferServerOwnershipV1`. Recovering a
+  server whose owner is gone needs the entitlement/guard adapter that transfer
+  carries, and duplicating that inside a staff callable is where bugs live.
+- **No content-cleanup worker exists for V1**, for a channel or for a root.
+  `deleteServerV1` marks and parks; the dispatcher reports
+  `contentCleanupPending` and never settles it. That is the same honest state
+  `deleteServerChannelV1` has had since it landed, and it is a prerequisite for
+  deploying this, not for landing it.
+- Nothing here activates anything: `serverActivationState: held` stays held,
+  `YOVOICE_SERVERS_V1` stays absent, so none of the twenty-four callables is
+  registered in production.
+
+## ADR-189: An empty census is zero observations, not an observation of zero; and a Club's rooms are discovered by the back-pointer
+
+**Context.** Two CONFIRMED P1s in
+`yovoice-evidence/2026-09-12/club-migration-security.md`, both in parts the
+migration report states as absolute.
+
+1. `evaluateClientCensus` treated `[]` as SUPPLIED, yielding
+   `incompatibleSessions: 0` and satisfying the old-client gate with literally
+   zero observations. A census of all-zero rows did the same. `null` correctly
+   refused; the semantically identical empty case gave the opposite answer, and
+   `[]` is exactly what an analytics export returning no rows, or a
+   hand-written placeholder, produces. The one control standing between a
+   migration and every installed client losing its channel list passed by the
+   ABSENCE of evidence.
+2. `readBoundRooms` discovered a Club's rooms by FORWARD pointer
+   (`channel.roomId`, `root.loungeRoomId`) while `firestore.rules`
+   (`isLegacyRoomData`), `functions/clubs/deletion.js` and
+   `functions/clubs/voice.js` all key on the `clubId` BACK-pointer. A room
+   bound by `clubId` but named by no channel was invisible to `probeLiveness`
+   and to the stranded-history probe simultaneously — measured: a root planned
+   `applied` while that room was live with seven participants and held five
+   messages, with every count reading clean.
+
+**Decision.**
+
+- An empty census, an all-zero census and a census that does not observe every
+  platform in `CLIENT_PLATFORMS` are all `supplied: false`, refusing through
+  the `client-compatibility-census-not-supplied` reason that already existed.
+  `observedPlatforms` is reported so the gap is visible in the manifest.
+- `readBoundRooms` unions three sources: the forward pointers, `loungeRoomId`
+  plus the lazy `club_lounge_{clubId}` fallback `clubs/deletion.js` asserts is
+  a real state, and a bounded `rooms.where("clubId","==",sourceId)` page that
+  refuses on overflow rather than reading further.
+- A bound room's cover image joins `STRANDED_IF_NON_EMPTY` as
+  `bound-room-artwork-would-lose-its-read-path`, consuming the `roomAnchor`
+  flag that was already declared `false` and that no refusal consulted.
+- Write mode now OBSERVES what it used to assert: `mode: "apply"` additionally
+  requires a localhost `FIRESTORE_EMULATOR_HOST` and a `demo-` project id, not
+  only the caller's `emulator: true` boolean.
+- `rootPostImage` receives `mapping.provenance.sourceKind` instead of a
+  hardcoded `"club"`, so the day `standaloneRoomAdoption` flips, an adopted
+  room is refused with the right diagnosis instead of throwing `internal` and
+  aborting the whole run.
+
+**Consequences.** The census requirement is stricter than the operator
+instructions in `docs/DEPLOYMENT.md` currently describe: a run now needs a
+census row with a real session count for each of the six platforms. That is
+the intended reading of "an absent census is unknown", and the alternative is a
+gate that opens on a one-character mistake in a JSON file. `applyReady` remains
+permanently `false` and write mode remains emulator-only either way.
+
+## ADR-191: The Reel voice-comment client — one recorder seam, a per-service capability latch, and strict readers that name what they tolerate
+
+**Status:** Accepted (2026-09-12, amended 2026-09-13 after the principal
+gate). Client source and widget tests only. **Not published, not visually
+verified**; the review cells in
+`yovoice-evidence/2026-09-12/voice-comments-principal-1.md` are outstanding.
+The backend half is ADR-187.
+
+**Context.** ADR-187 gives Reels a voice-comment contract that is undeployed
+and may stay undeployed for a while. The client has to offer a recording flow
+where the backend exists, say honestly that it is coming where it does not,
+never open a microphone the person did not ask for, and reuse the recorder,
+mini-player and playback floor the Voice side already has — without changing
+the Voice reply path.
+
+**Decision.**
+
+- **One additive seam in the recorder, not a second recorder.**
+  `RecordVoiceMomentScreen` takes an optional `publishReply` callback
+  (`VoiceMomentReplyPublisher`). Present, the finished recording goes to the
+  host; absent, the Moment publish call is reached exactly as before. Reel
+  comments get reply mode (no availability selector, reply bounds) for the
+  same reason Moment replies do: the parent owns the lifetime.
+- **The capability is learned from the deployment, per service instance.**
+  `ReelService` sends `commentTypes: ['text','voice']` on `getReelViewV2`. A
+  deployment that predates voice comments refuses the unknown key; that
+  refusal is verified by replaying the identical request without the flag, and
+  only a successful replay records `unsupported`. `unknown` and `unsupported`
+  both render the mic disabled — `unsupported` labelled "Reply with voice —
+  coming soon". The latch is per service rather than process-wide (unlike the
+  ADR-168 inline-grant latch) because it decides whether a RECORDING control
+  is offered. **What the latch proves is the Functions deploy, nothing more**:
+  it cannot see Storage Rules, which is why DEPLOYMENT.md makes Storage Rules
+  a hard predecessor of Functions. A latch that has learned `supported` does
+  not downgrade on a later refusal; a Functions rollback therefore needs an
+  app restart on devices that had already learned support.
+- **A comment-scoped grant has its own entry point**,
+  `resolveVoiceCommentUri(reelId, commentId:)`, sharing the Reel grant cache,
+  identity epoch, in-flight de-duplication and `clearAllMediaAccessCaches`.
+  The server refuses a `commentId` without `asset: "voiceComment"` and the
+  reverse, so one overloaded client method that could be called both ways
+  would rebuild the ambiguity the server refuses.
+- **Strict readers written from here on name the extra keys they tolerate.**
+  `_exactWireMap(optional: …)` accepts a named set and still refuses any other
+  extra key. This is forward tolerance only. It does not license the server to
+  add keys: installed builds carry no allowance, and ADR-187's rule — a
+  response an installed strict reader parses is frozen — is the binding one.
+  `audioQueued` stays in the allowance as a tolerated key the server does not
+  send.
+- **One sounding voice at a time.** The wide feed owns a
+  `ReplyPlaybackArbiter`: starting a voice comment suspends the docked Reel,
+  and finishing lets autoplay resume it. On the phone sheet and the link
+  destination the thread is a pushed route and the Reel is already suspended
+  by route currency. In every host, opening the recorder clears the floor
+  first, so nothing is sounding when the microphone prompt can appear.
+- **An icon control that excludes its child's semantics carries the tap
+  action itself.** The mic's `Semantics(excludeSemantics: true, …)` sets
+  `onTap` to the same callback as `onPressed` (null while disabled), matching
+  `reel_card.dart` and `voice_reply_mini_player.dart`. Without it Switch
+  Control, screen-reader activation paths and semantics automation find a
+  "button" with no action (principal gate F4; pinned in
+  `test/reel_voice_comment_support_probe_test.dart` by performing
+  `SemanticsAction.tap` on the node).
+
+**Reasoning.** Every alternative duplicated something whose drift would be a
+bug: a second recorder (two permission and silence paths), a build-time flag
+(an installed build that can never learn the backend arrived, or one that
+offers a mic against a backend that is not there), or a single grant method
+with an optional comment id (a contradictory call the server must refuse).
+
+**Consequences.**
+
+- The mini-player's own copy still says "voice reply", including its
+  unavailable snackbar, and the recorder's too-short refusal still names a
+  Voice Moment when a Reel comment opened it. Both are open copy items.
+- `voice_reply_mini_player.dart`'s `_playToken` staleness guard is what makes
+  "a second comment stops the first" true, and it is uncommitted working-tree
+  work that must ship with this client.
+- Visual verification at narrow, medium and wide widths in both themes, and
+  the Realtime Voice, QA, Visual Quality, Accessibility and Privacy review
+  cells, have not run. Widget tests at 320/768/1440 and 200% text prove the
+  composer does not overflow; they do not prove it renders correctly.

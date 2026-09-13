@@ -4,6 +4,60 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
+## Server-first cutover source gate — 2026-09-13
+
+This gate covers the coordinated product cutover in the current source: the
+single user-facing shared-space surface is now **Servers**, with exactly five
+templates (Friends, Community, Podcast, Family and Company); Home is
+server-first; YO Moments shares one Voice/Reels language; both Voice Moments
+and Reels have voice-reply source; and ordinary Personal accounts no longer
+receive follower/following UI. Creator audience visibility requires an
+eligible verified Creator, active Premium and explicit opt-in. The established
+navigation geometry and behavior are preserved, with the former Rooms entry
+changing only to the Servers label and hub icon. Legacy `rooms` and `clubs`
+models and collections remain internal compatibility contracts.
+
+The first complete Flutter snapshot was **4598 PASS / 65 FAIL** and was not
+accepted as green. It exposed current responsive, localization and navigation
+blockers alongside obsolete Rooms/Clubs test contracts. After those corrections,
+the second complete `flutter test --no-pub --concurrency=1` run passed
+**4634/4634**, with **0 failures and 0 skips** (Flutter reporter 14:01; wall
+14:32.83). Prechecks also passed: `git diff --check`, scoped formatting over
+232 Dart files with zero changes, and `flutter analyze --no-pub` with no issues.
+The complete log is `/tmp/yovoice_flutter_full_second.log`.
+
+Backend and authorization evidence remains separated by suite because several
+focused sets exercise overlapping paths:
+
+| Suite | Result |
+| --- | --- |
+| Global Firestore Rules | **564/564** |
+| Global Storage Rules | **75/75** |
+| Dedicated Servers Rules | **67/67** |
+| Podcast lifecycle and cleanup | **8/8** |
+| Servers registration/export surface | **60/60**: 54 callables, 2 dispatchers and 4 sweeps |
+| Focused emulator after security fixes | **21/21** |
+| Related backend regression | **88/88** |
+| Membership authorization | **11/11** |
+| Cold-start/registration | **24 passed**, with 7 emulator-only cases intentionally skipped outside the emulator |
+| Adversarial selective emulator | **29/29** |
+| Adversarial export map | **34/34** |
+
+These results are not summed into one backend total. The live visual gate also
+passed for the inspected redesign with no P0/P1 finding: the real Flutter Web
+preview was checked on desktop for the five-card Server selector, Home, Voice,
+Reels and Podcast configuration, and at 390x844 for the selector with the
+unchanged mobile dock. Reel caption semantics were retested at normal and 200%
+text. The known Flutter Web keyboard traversal debt in the unchanged dock and
+the lower-priority modal route-label warning remain recorded in
+[Bugs.md](Bugs.md).
+
+This is source, automated and local live-render evidence. It is not a physical
+native-device or production acceptance result. Production still has
+`YOVOICE_SERVERS_V1` absent, and the Servers V1 backend, Rules and indexes were
+not activated or deployed in this cutover. Reels voice replies therefore keep
+their honest unavailable state until their coordinated backend deployment.
+
 ## Build 19 tester-release evidence (2026-09-03)
 
 This is the latest evidence for the exact Build 19 source and bounded tester

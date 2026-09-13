@@ -68,6 +68,8 @@ Top-level collections (from `firestore.rules`):
 | `clubs/{clubId}` | `members`, `invites`, `channels` → `messages` |
 | `rooms/{roomId}` | `participants`, `roomMembers`, `messages`, `handRequests` (legacy-client compatibility only) |
 | `voiceMoments/{momentId}` | `likes`, `comments` |
+| `reels/{reelId}` (server-owned; every client read and write denied, served through callables) | `likes`, `comments` |
+| `reelVoiceCommentReservations/{commentId}` (server-only upload reservation; ADR-187, **not deployed**) | — |
 | `momentCapacityLedgers/{userId}` (server-only revision/mutex; deployed 2026-08-27) | — |
 | `creatorPinnedPosts/{creatorId}` (server-owned exact pointer) | — |
 | `directCalls/{callId}` (server-owned; two participants get only) | — |
@@ -91,6 +93,25 @@ Notable fields:
   `momentCapacityLedgers/{uid}` document is a transaction mutex/version, not a
   capacity counter: exact published roots remain the source of truth, so the
   change needs no backfill.
+
+- **Reel voice comments (ADR-187/ADR-191, source only, NOT deployed)** — a Reel
+  comment document keeps its exact eight text keys (`authorId, authorName,
+  createdAt, durationSeconds, reelId, schemaVersion, text, type`) and
+  `schemaVersion: 1`. `type` is `"text"` (duration `null`, text 1–1000) or
+  `"voice"`, which adds exactly `storagePath, mediaGeneration, mediaSize,
+  mediaContentType`, an integer `durationSeconds` 1–60 and a caption of 0–140
+  characters. `storagePath` must equal
+  `reel_voice_comments/{authorId}/{reelId}/{commentId}.m4a` recomputed from the
+  document's own author and id. No backfill: existing text comments are
+  unchanged. `getReelViewV2` withholds voice comments unless the caller sends
+  `commentTypes`, so installed clients never receive one; `commentCount`
+  counts both kinds. A report on a voice comment adds `targetCommentType`,
+  `targetDurationSeconds`, `targetStoragePath` and `targetMediaGeneration`
+  (absent type means text). Server-only
+  `reelVoiceCommentReservations/{commentId}` rows (`kind: "reelVoiceComment"`,
+  30-minute `expiresAt`) authorize the upload and are deleted by finalize or by
+  `expireAbandonedReelVoiceCommentDraftsSchedule`; audio deletion goes through
+  `reelCleanupOutbox` kind `reelVoiceComment`.
 
 - **Display-name cooldown** — `users/{userId}.displayNameChangedAt` is an
   optional, server-owned Firestore Timestamp. Its absence means the account is
@@ -197,7 +218,7 @@ document, never trust the request — are collected in
 
 ## Composite indexes
 
-`firestore.indexes.json` currently holds **26** composite indexes and **5**
+`firestore.indexes.json` currently holds **36** composite indexes and **10**
 `fieldOverrides`. The 2026-08-19 live reading of 19 and 4 is historical, not
 proof of today's production state; re-read production before every release
 rather than subtracting one stale count from another. ADR-115's
@@ -298,6 +319,17 @@ surfaced it: the emulator does not require composite indexes, so the
 Functions suite was green throughout, and the failure lived only in
 Cloud Scheduler logs. Deployed 2026-08-16.
 
+**The same trap is already loaded for Servers V1.** The all-member channel
+query is `accessMode ==` + `status ==` ordered by `position`, and the file
+carried **no `channels` entry at all** until 2026-09-12; the
+`channels(accessMode ASC, status ASC, position ASC)` COLLECTION-scope composite
+is now committed. Committed is not deployed. Every emulator suite passes
+without it — the emulator creates indexes on demand — so the first failure
+would be in production, on the first real channel list. It is recorded as a
+named activation precondition in [Servers.md](Servers.md) alongside the
+`channelSessions.livekitRoomName` collection-group override, which has the same
+committed-but-unverified status.
+
 The lesson generalizes: **a new server-side query is an index change until
 proven otherwise**, and the only place that proof exists is production.
 After deploying a scheduled function that queries, check Console →
@@ -305,7 +337,7 @@ Functions → Logs for its first real run rather than assuming it works.
 
 ## Storage
 
-`storage.rules` — the six client-upload path families below, each
+`storage.rules` — the client-upload path families below, each
 size/content-type limited:
 
 | Path | Purpose | Read |
@@ -315,6 +347,7 @@ size/content-type limited:
 | `clubs/{userId}/{clubId}/{kind}_{ts}.ext` | Club images | Public |
 | `voice_moments/{userId}/{fileName}` | Voice Moment root audio | Draft/expired/deleting: author through the authenticated SDK; published: signed-in users |
 | `voice_replies/{userId}/{momentId}/{fileName}` | Voice Moment reply audio | Signed-in only |
+| `reel_voice_comments/{userId}/{reelId}/{commentId}.m4a` | Reel voice-comment audio (ADR-187, **not deployed**) | Uploader only while reserved; published audio only through a server-authorized, generation-bound V4 grant |
 | `message_attachments/{ownerId}/{conversationId}/{messageId}.{ext}` | Private DM photos and voice messages | Active conversation participants only |
 
 Profile and room-cover uploads require a verified account plus an exact,
@@ -359,6 +392,27 @@ finalization: bounded abandoned-reservation cleanup removes an unfinished
 object, while `finalizeVoiceCommentDraft` creates the comment and removes the
 reservation atomically. Already-existing mixed-case reply objects remain
 signed-in readable, but receive no legacy create/delete exception.
+
+Reel voice-comment allocation (ADR-187, **not deployed**) is a clone of the
+Voice reply block, not a widening of it. A new object must use the lowercase
+40-hex comment id, the exact path `reel_voice_comments/{uid}/{reelId}/{commentId}.m4a`
+and exactly `{authorId, reelId, commentId}` metadata from an unexpired
+server-owned `reelVoiceCommentReservations/{commentId}` row
+(`kind: "reelVoiceComment"`, `status: "uploading"`, duration 1–60), under
+`isVerified() && isActiveUser() && isValidAudioPayload()` (1 KiB–12 MiB, audio
+MIME allowlist). The uploader may read it back only while reserved; update and
+delete are denied to every client, including after finalization. Published
+audio is never readable directly: `getReelMediaAccessV2` with
+`asset: "voiceComment"` and a `commentId` re-checks the viewer against BOTH
+the Reel author and the comment author and returns a V4 URL bound to the
+comment's `mediaGeneration` for at most 90 seconds (and never past the Reel's
+own expiry). Finalize validates the object's size, declared content type,
+generation and metadata identity — it does not inspect the bytes, so the stored
+duration is the uploading app's declaration. The block reads Firestore through
+`firestore.get()`, so it depends on the same Storage service-agent IAM binding
+as every other reservation-bound path — see
+[DEPLOYMENT.md](DEPLOYMENT.md#pending-not-yet-deployed-reel-voice-comments-adr-187-adr-191)
+for the mandatory Firestore Rules → Storage Rules → Functions order.
 
 **Club image names accept two shapes, and this matters** (fixed in
 `56e7ea7`, deployed 2026-08-16): `validClubImageUpload()` previously

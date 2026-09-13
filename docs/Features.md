@@ -4,113 +4,95 @@ What's actually built, feature by feature — not aspirational. "Coming
 soon" markers below match what the app itself shows the user; see
 [Roadmap.md](Roadmap.md) for planned work and priority order.
 
-## Voice Rooms
+## Servers
 
-Two room types, sharing a moderation model but with distinct visual
-languages and interaction patterns:
+The current source is built around persistent **Servers**, with one responsive
+workspace for phone, tablet and desktop. The creation flow starts with the
+full-screen five-card selector, in this fixed order:
 
-- **Community Room** (`lib/features/rooms/presentation/screens/community_voice_room_screen.dart`)
-  — cosmic animated background with orbit rings, a "Heart of the
-  Community" core that reacts live to the LiveKit room's energy, orbiting
-  participants with a speaking glow, no raise-hand action. Clickable
-  Speaking/Listeners counters open a participant list. Owner moderation:
-  mute/unmute and remove — removal disconnects the user the moment their
-  participant document disappears, and a moderator's mute is synced to the
-  target's local microphone, not just a Firestore flag.
-- **Broadcast Room** (`lib/features/rooms/presentation/screens/broadcast_room/`)
-  — red stage-and-audience visual system, a raise-hand queue, host
-  speaker invitations. Same clickable-counters/participant-sheet pattern.
-  Owner moderation: mute, move-to-audience, and remove.
+- **Friends** — compact text, voice, events and rules channels.
+- **Community** — text and voice plus a moderated LIVE video stage, events,
+  questions, announcements and rules.
+- **Podcast** — LIVE studio, persistent episode recording/archive, programme,
+  listener questions, discussion, announcements and rules.
+- **Family** — private family conversation, lounge, calendar, shared shopping
+  list, check-ins and a private photo-and-voice Memories album.
+- **Company** — team and project channels, restricted HR and Management
+  channels, meetings, web-desktop screen sharing, a collaborative whiteboard
+  and controlled company files.
 
-**Going live** (source `b0f1062`, **not yet released** — this is the state of
-the repository, not of production): `createLiveKitToken` refuses a token
-unless the room says status active and `isLive` true, and **entering a room
-performs that transition** for anyone the deployed rules would accept, through
-one coordinator running liveness → roster → token. There is no lobby and no
-second tap: the room board labels a dormant room's button "Start", and the
-screen renders a stage, a live status line and a microphone the moment it
-opens. Exposure is host-opt-in — `membersCanStartVoice` defaults false, so
-only the host starts an ordinary room; Club and Family lounges are private and
-auto-started. Someone without authority sees a "Not live" state that explains
-itself on tap, with chat and People intact. Legacy room documents are
-tolerated by design (most production rooms predate these fields), so every
-read defaults rather than raising. **Until this ships, voice does not work in
-any Community room or lounge**, and did not for the product's life — see
-[ADR-088](Decisions.md#adr-088-entering-a-room-performs-the-liveness-transition-through-one-ordered-coordinator-that-mirrors-the-deployed-rule).
+The selector preserves the approved typography, color identity and responsive
+breakpoints. Choosing a card opens actual configuration; changing the template
+keeps the entered name and description. The shell keeps its established global
+navigation layout and behavior. Its former Rooms destination now shows the
+Servers hub with a server-hub icon and Server label. The standalone Rooms,
+Discover and Clubs destinations are no longer exposed in the product UI.
 
-Both: host/speaker/listener roles, live participant management, real-time
-audio via LiveKit (see [Backend.md](Backend.md) for token minting).
-Publish permission (`canPublish`) is computed server-side from the
-caller's actual participant role — never trusted from the client.
-Meaningful voice actions have original, short YO Voice cues: room creation,
-the local join/leave transition, remote participant join/leave, and confirmed
-microphone mute/unmute. The cues are throttled during bursts and can be turned
-off with the device-local **Sound effects** setting. ADR-116 replaces the
-melodic cues with the non-musical Velvet Prism material system;
-room creation consumes its immediate join confirmation instead of producing a
-two-cue jingle. The v3 pack is live on Hosting; native build `+4`, physical
-listening and the FCM payload cutover remain held. User speech, Voice Moments
-and voice messages are media and are deliberately outside this effects system.
+Servers use a versioned facade over the existing `clubs` and `rooms` Firebase
+graph so existing identities, membership, moderation and media history remain
+compatible. Those collection names and legacy model types are implementation
+details, not separate user-facing products. Current `?server=` links and
+historic `?club=` links open the corresponding Server workspace. A historic
+`?room=` link whose room has a related `clubId` also opens that workspace; a
+standalone legacy room without `clubId` lands in the Servers catalog instead of
+reviving the removed Rooms screen. Server invitations resolve through the same
+Server surface. New V1 invitations are generation-bound, expire, can be
+accepted or declined idempotently and notify only the intended recipient. See
+[Servers.md](Servers.md) for the complete schema and rollout contract.
 
-**Legacy note**: room documents may still contain `experience: 'podcast'`
-from before the room-type rename; the client maps that to `broadcast` for
-backward compatibility. Do not remove that mapping until production data
-is confirmed migrated — see
-[ADR-001](Decisions.md#adr-001-legacy-podcast-room-experience-stays-supported).
+Voice and video participation still use LiveKit. Roles and publish sources are
+derived from current server membership and channel policy on the backend.
+Community stages can grant camera publishing; Company meetings can grant
+screen sharing when the participant uses the web desktop client. The native
+macOS, Windows and Linux clients can join and view a Company meeting but cannot
+yet start a screen share. Podcast stages can record into their persistent
+episode archive. Removing membership or ending a session revokes the
+corresponding provider-room access. The retained legacy `RoomExperience`
+mapping remains a compatibility layer, including old persisted `podcast`
+values.
+
+This section describes the coordinated local source change. Production
+activation, migration and Firebase deployment remain separate release actions.
 
 ## Profile
 
 `lib/features/profile/` — editable identity/media, account type and real
-activity counters. `Your YO Voice journey` presents Communities, Messages,
-Voice time and Rooms created as one compact four-row list with intrinsic
+activity counters. `Your YO Voice journey` presents Servers joined, Messages,
+Voice time and Servers created as one compact four-row list with intrinsic
 height, so desktop width no longer turns four short metrics into oversized
 cards. Changing a Personal profile into Creator requires the trusted Creator
 capability and is checked again on Save; an existing Creator profile and its
 content are not erased when Premium expires.
 
-## Clubs
+Follower and following controls are absent for an ordinary Personal account.
+They appear only when a user has a verified Creator identity, active Premium
+access, completed eligibility checks and explicitly enables the audience
+feature. That decision is projected by the server and fails closed when the
+projection is missing or Premium expires.
 
-Persistent communities (`lib/features/clubs/`): channels (chat + voice),
-member roles (`owner`/`coOwner`/regular member, ranked by
-`clubRolePower()`), invites, self-service ownership transfer
-(`transferClubOwnershipSelf` Cloud Function). Club rosters are readable by
-members; role changes are power-ranked so a `coOwner` can't promote someone
-above their own level or touch the `owner` role directly.
+## Home
 
-The More → Clubs hub and ordinary Club creation require the trusted Clubs
-capability. This is not a membership paywall: existing club membership,
-invites and direct participation remain free. Family Rooms use the same Club
-primitives but keep their separate free, invite-only, deterministic-id path.
-Creation is one atomic seven-document batch (Club, owner member, user
-projection, three default channels and lounge room); rules validate the new
-root with `getAfter()` so the dependent writes see the same commit.
-
-**Club chat moderation** (source `b3c27fd`/`f817b41`, **not yet released**):
-a club owner, admin or moderator can remove another member's message from
-club chat; an author can retract their own. Removal freezes content to empty
-and records `deletedBy`/`deletedAt`; **editing is not available to anyone**,
-by construction rather than by convention. The action is offered only where it
-would succeed — a moderator who is communication-muted or whose email is
-unverified is not shown it, matching what the rules would answer, and the
-club owner's own messages are refused locally with product copy rather than a
-round-trip. Removals are **not** audit-logged today, there is no rate limit,
-no restore path, and no rank ordering (a moderator can clear a co-owner's
-messages) — all four named as accepted gaps. Not yet rendered and reviewed;
-see [Bugs.md](Bugs.md#moderation--safety).
+Home is server-first. It keeps the compact strip of friends and their current
+Voice activity at the top, then presents the signed-in user's Servers, a direct
+create-server action and recent chats. The former general Followers panel and
+ordinary-user follow discovery are removed. Creator audience discovery remains
+available through YO Moments and the Find creators destination in More; both
+surfaces expose only eligible, opted-in Creators.
 
 ## Friends & Social
 
 `lib/features/friends/`: friend requests (must exist before a friendship
-record can be created — no forcing a friendship via direct write), a
-social graph of `following`/`followers` (separate from friends), blocking,
-plus two Cloud Functions for discovery: `getMutualFriends` and
-`getFriendSuggestions`.
+record can be created — no forcing a friendship via direct write), blocking,
+mutual-friend discovery and friend suggestions. Friendship remains available
+to every active user. Creator following is a separate, server-gated audience
+relationship and is never treated as friendship or Server membership.
 
 ## Messages
 
-Direct messages (`conversations/{id}/messages`) and club channel chat
-(`clubs/{clubId}/channels/{channelId}/messages`) — `lib/features/messages/`
-and `lib/features/chats/`.
+Direct messages (`conversations/{id}/messages`) and Server channel chat
+(`clubs/{serverId}/channels/{channelId}/messages`, retaining the collection
+name for compatibility) — `lib/features/messages/` and
+`lib/features/chats/`.
 
 Direct conversations support text, private photos and private voice messages
 (1–60 seconds). Photo and voice uploads use a server-issued, expiring
@@ -150,24 +132,37 @@ reported.** Room and club message reports can be triaged but not yet actioned
 by a moderator, and the Moderation Center does not yet render them correctly
 — see [Bugs.md](Bugs.md#moderation--safety) and Roadmap item 0o.
 
-## Voice Moments
+## YO Moments
 
-Short (≤60s) recorded audio posts (`lib/features/moments/`): likes,
-comments including voice replies, a public feed
+YO Moments is one responsive destination with a shared title, visual language
+and top-level **Voice | Reels** switch. It uses an original content-stage and
+conversation design inspired by familiar short-form interaction patterns,
+without copying another product's branding, assets or exact layout.
+
+The Voice format contains short (≤60s) recorded audio posts
+(`lib/features/moments/`): likes, text comments and recorded voice replies, a
+public feed
 (`MomentService.watchPublishedMoments`) and a per-user feed
 (`MomentService.watchMyMoments`, published + drafts) used by Creator
 Studio. Like/comment counters are transactionally validated against the
 actual `likes` subcollection — not client-settable to an arbitrary value.
 
+Reels uses the same YO Moments chrome around an immersive video/photo stage.
+Its comment thread accepts text and voice replies. Recording opens an explicit
+composer and does not start the microphone before the user acts. Published
+voice replies have their own compact player and share one playback arbiter with
+the primary Voice Moment or Reel, so competing audio does not overlap. Reels
+voice publishing probes backend support and fails honestly when that coordinated
+backend is not yet deployed.
+
 **Moments is a primary destination** (source `cef05e6`, deployed
-2026-08-20): it sits directly above Discover in the desktop rail and takes a
-slot in the mobile dock, which displaced Friends from the five-slot dock —
-Friends keeps its desktop rail entry, its More entry, its screen and its state.
-The screen behind it is a global discovery feed showing
-Moments from every user rather than only people you follow: a bounded popular
-pool weighted by engagement, shuffled under a held seed so paging stays
-stable, with authors spaced apart. Ranking happens client-side because
-Firestore can neither order by a computed sum nor randomise server-side. See
+2026-08-20). Friends keeps its existing screen and state outside the five-item
+mobile dock. Voice discovery is a bounded popular pool weighted by engagement,
+shuffled under a held seed so paging stays stable, with authors spaced apart.
+The Following filter combines friends with Creators whose audience feature is
+currently eligible and enabled; it does not restore public follower controls
+for Personal accounts. Ranking happens client-side because Firestore can
+neither order by a computed sum nor randomise server-side. See
 [ADR-089](Decisions.md#adr-089-moments-is-a-primary-destination-and-its-discovery-feed-ranks-client-side-because-firestore-can-neither-order-by-a-computed-sum-nor-randomise).
 
 **Recording platform support** (2026-08-17): native and Chromium-based
@@ -222,8 +217,9 @@ it is still available. See
 ## Achievements / Awards
 
 `lib/features/achievements/`: a 100-title catalog (`AchievementCatalog`)
-across 10 metrics — messages, followers, voice minutes, rooms,
-communities, friends, reactions, host minutes, active days, moments — each
+across 10 retained metrics — messages, Creator followers, voice minutes,
+server sessions, servers, friends, reactions, host minutes, active days and
+moments — each
 with 10 thresholds and a rarity tier (common → mythic). The Awards screen
 adds:
 
@@ -240,19 +236,21 @@ adds:
 ## Creator Studio
 
 `lib/features/creator/` — a real dashboard over the signed-in user's owned
-rooms, clubs, and Voice Moments, with quick actions into the existing
-create-room/create-club/record-moment flows and a share-based invite flow.
+Servers and Voice Moments, with quick actions into the existing
+create-server/record-moment flows and a share-based invite flow.
 Creator Studio requires the trusted Creator capability; More shows the locked
 state to free users and the destination independently rechecks entitlement,
 including expiry while it is open.
 
-The Studio now includes two working tools:
+The audience visibility setting lives here. It is available only to an
+eligible verified Creator with active Premium and requires explicit opt-in.
+Ordinary accounts do not receive follower controls or a follower-notification
+preference. Losing eligibility removes the public audience projection.
 
-- **Analytics** is an honest snapshot of already-canonical data: followers,
-  owned/live rooms and current participant counters, owned clubs, and
-  published Voice Moment likes/comments/audio duration. It does not claim
-  historical reach, listens, growth or attendance because no such event
-  model exists yet.
+The Studio exposes two reachable tools:
+
+- **Server tools** opens the Creator's existing Servers, channels and member
+  tools.
 - **Pinned post** lets an eligible Creator select exactly one of their
   canonical published Voice Moments. Eligibility can come from a live paid
   Creator entitlement or the derived moderator preview. The server-owned
@@ -265,14 +263,16 @@ Monetization remains unbuilt and is intentionally absent from the Studio UI.
 
 `entitlements/{uid}` is the only **paid-access** source. A paid capability
 requires an active/trialing/grace entitlement whose period has not ended, the
-common `premiumIdentityEnabled` flag and its feature flag (`creatorEnabled` or
-`canCreateClubs`). `users/{uid}.premiumIdentity` and the visible VIP badge are
-public presentation data only; neither authorizes Creator, Creator Studio or
-Clubs. Client gates fail closed and Firestore Rules enforce protected writes.
+common `premiumIdentityEnabled` flag and its feature flag. The legacy
+`canCreateClubs` field remains the compatibility name for paid Server tooling;
+it does not expose a Clubs product surface. `users/{uid}.premiumIdentity` and
+the visible VIP badge are public presentation data only; neither authorizes
+Creator, Creator Studio, Creator audience visibility or protected Server
+tools. Client gates fail closed and Firestore Rules enforce protected writes.
 
 Active `moderator` and `superModerator` accounts also receive a derived,
 revocable Premium-preview overlay so those roles can test identity, Creator
-and Clubs. It is kept in a separate client/model flag and server access
+and Server tooling. It is kept in a separate client/model flag and server access
 resolver: it does not fabricate `isPremium`, plan, period, renewal or provider
 state. Acting backend operations require the signed role claim and
 client-immutable mirror to match; demotion or an inactive account removes the
@@ -313,7 +313,8 @@ preferences persist through `shared_preferences` and update the root
 `MaterialApp`. A new installation defaults to System; malformed or unreadable
 legacy state falls back to English.
 Pearl uses the semantic `AppPalette` across the shell, Home, Chats, Friends,
-Moments, Profile, Settings, Notifications and Premium; voice rooms, calls,
+Moments, Profile, Settings, Notifications and Premium; immersive server
+stages, calls,
 recording/review and image-led viewers remain deliberately immersive dark
 surfaces instead of accidental theme leaks. Polish has graduated from Beta
 after the full product-copy pass and source guard. The additional locales own
@@ -347,9 +348,10 @@ data or interrupt established accounts on a new device. See ADR-132.
 
 `lib/features/notifications/` — an in-app notification center with
 deep-link tap routing, a preferences screen (per-type push toggles), and
-real push delivery via the `onNotificationCreated` Cloud Function trigger
-(see [Backend.md](Backend.md)). Triggered from real friend/follow/club/
-room/message events, not simulated. Native foreground and background pushes
+real push delivery via Cloud Function triggers (see
+[Backend.md](Backend.md)). Triggered from real friend, eligible Creator
+audience, Server invitation/session and message events, not simulated. Native
+foreground and background pushes
 use an audible high-priority system notification; a focused web tab shows a
 compact floating banner with an Open action. Android, iOS and the focused web
 app use the same original YO Voice notification motif rather than a generic

@@ -376,6 +376,67 @@ now coexist in `reports/` and the Moderation Center does not yet render the
 v2 shape correctly. See [Bugs.md](Bugs.md#moderation--safety) and Roadmap
 item 0o.
 
+## Reel voice comments (`functions/reels/**`, ADR-187; source only, NOT deployed)
+
+A Reel voice comment is the Voice reply pipeline re-aimed at the Reel comment
+contract. Nothing here is deployed; until Functions land the client's probe
+keeps the microphone disabled ("coming soon").
+
+- **Publish, two phases.** `reserveReelVoiceCommentDraft {reelId, requestId,
+  durationSeconds 1–60, text ≤140 (may be empty)}` runs the text-comment
+  authority (`engageableReel` + `assertReelAudienceInTransaction`), derives
+  `commentId = reelCommentIdFor(uid, reelId, requestId)` — the id a text
+  comment with that `requestId` would get, so one request cannot fork into
+  both — and writes `reelVoiceCommentReservations/{commentId}` for 30 minutes.
+  The client uploads to the reserved path, then
+  `finalizeReelVoiceCommentDraft {reelId, commentId, requestId,
+  objectGeneration}` re-runs the authority, validates the object with the
+  Voice reply guard imported by reference (`validateStoredAudio`: 512 B–12 MiB,
+  audio/mp4 · audio/m4a · audio/x-m4a, exact generation and metadata identity),
+  revokes download tokens, creates the comment, increments `commentCount` and
+  deletes the reservation in one transaction. Both phases charge the `comment`
+  budget and replay free from the operation ledger. Finalize does **not**
+  inspect the bytes: duration and content type are the uploader's declaration
+  (adversarial audit F1, P2, open).
+- **Reading.** `getReelViewV2` withholds voice comments unless the caller
+  sends `commentTypes` (`["text","voice"]`); `commentCount` is unchanged and the
+  cursor still advances past a withheld document. Projections carry `type` and
+  `durationSeconds`, never a storage path.
+- **Listening.** `getReelMediaAccessV2 {reelId, asset: "voiceComment",
+  commentId}` requires `type === "voice"`, asserts the viewer against the Reel
+  author AND the comment author (both block directions, restrictions, active
+  profile), mints a V4 URL bound to `mediaGeneration` with TTL
+  min(90 s, Reel expiry), and re-authorizes after signing. V1's exact input is
+  unchanged and refuses both new keys. There is **no staff branch**: a
+  moderator cannot listen (ADR-187 known gap; blocks deploy).
+- **Deleting.** `deleteReelComment` (own), `removeReelComment` (Reel author)
+  and the `reelComment` branch of `moderateReport` (staff) queue a
+  `reelCleanupOutbox` row of kind `reelVoiceComment` in the same transaction
+  that deletes the document; `onReelCleanupOutboxCreated` and
+  `processPendingReelCleanupSchedule` delete the generation-bound object and
+  never touch the rest of the thread. **Their callable results are unchanged
+  and must stay so** — installed clients parse them with an exact-key reader
+  (ADR-187). Reel deletion and expiry purge enumerate voice comments 50 per
+  page, up to 20 pages per pass, queue their objects and only then delete the
+  thread; a pass that cannot finish fails and retries under the outbox's
+  backoff and dead-letter rules. Expiry purge runs after the 30-day evidence
+  retention, so a voice comment's audio under an expired Reel is retained that
+  long.
+- **Abandoned uploads.** `expireAbandonedReelVoiceCommentDraftsSchedule`
+  (every 10 minutes, 100 per run) deletes expired reservations and queues any
+  object they could have authorized.
+- **Reports.** `createReelCommentReport` stamps `targetCommentType`,
+  `targetDurationSeconds`, `targetStoragePath` and `targetMediaGeneration`;
+  `moderateReport` treats an absent type as text, so older reports stay
+  actionable, and re-derives the storage path before acting.
+- **Account deletion** does not purge `reel_voice_comments/{uid}` — nor
+  `voice_replies/{uid}`. Playback stops at once (the grant asserts the
+  commenter's account state); the bytes remain until the comment or its Reel
+  is deleted, moderated or purged. Recorded as a GDPR erasure item for both
+  products together.
+
+Deploy order and verification: [DEPLOYMENT.md](DEPLOYMENT.md#pending-not-yet-deployed-reel-voice-comments-adr-187-adr-191).
+
 ## Admin
 
 **Deployment status (verified against `firebase functions:list`,

@@ -18,6 +18,69 @@ about things that are broken, risky, or need verification.
 > before believing the code.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 
+## FIXED IN SOURCE — the Reels details caption was empty to screen readers (2026-09-13)
+
+At 200% text the immersive Reel stage intentionally moves the full caption to
+the **More** sheet. Flutter Web exposed its raw `SelectableText` there as an
+unnamed, disabled text box with no value, so a screen-reader user could open the
+only visible route to the caption and still hear none of it. The details sheet
+now publishes one explicit static semantic label and excludes the broken inner
+textbox semantics. The focused accessibility matrix passes for dark and light
+themes at 320x568 and 390x844 with 200% text (`42/42`), and a live browser
+retest reads the complete caption at both 100% and 200%.
+
+## OPEN — Flutter Web keyboard skips the unchanged mobile dock (confirmed 2026-09-13)
+
+The five dock cells retain correct accessible names and 78x64 targets, but
+browser `Tab` traversal moves past the page without visiting them. Pointer and
+semantics activation still work. This predates the Servers/Home/Moments visual
+cutover and remains outside that cutover's frozen navigation component. A
+future isolated fix must preserve the dock's current geometry and ordering
+while making Start, Servers, Chats, Moments and More focusable with `Tab`,
+Enter and Space. Modal bottom sheets also emit a lower-priority Flutter Web
+warning because their route semantics have no label; their content, close
+button and Escape behavior remain usable.
+
+## FIXED IN SOURCE — three Reel voice-comment defects the principal gate found (2026-09-13)
+
+This unreleased source-only slice (ADR-187, ADR-191) was never deployed with
+these defects. Evidence:
+`yovoice-evidence/2026-09-12/voice-comments-principal-1.md` (found) and
+`voice-comments-fix-1.md` (fixed).
+
+- **A result-shape break against every installed client.** The backend draft
+  added `audioQueued` to `deleteReelComment` and `removeReelComment`. Installed
+  builds parse those results with an exact-key reader, so a committed deletion
+  would have been reported as a failure. Removed from both results and their
+  ledger replays; the rule is now in ADR-187.
+- **The Reel thread's mic had no semantics tap action.**
+  `excludeSemantics: true` dropped the IconButton's action and nothing replaced
+  it, so Switch Control and semantics-driven activation found a button that did
+  nothing. `onTap` now mirrors `onPressed`.
+- **The Moderation Center could not tell a voice report from an empty text
+  one.** Nothing read `targetCommentType` or `targetDurationSeconds`; an
+  uncaptioned voice comment reached staff as a text report whose snapshot "was
+  not retained". The report model now parses both, and the queue and detail
+  panel name the target "Voice comment · m:ss" with the caption as its own
+  field.
+
+## OPEN — a legal 81–120 character display name can make Reel and Voice comments fail (found 2026-09-13)
+
+`updateMyDisplayName` and `canonicalPublicProfile` accept up to 120 characters,
+but `canonicalPublicProfile` truncates to 80 without re-trimming
+(`functions/integrity/guards.js`), and every comment validator caps
+`authorName` at 80 with trim equality (`validateReelComment`,
+`validateReelVoiceCommentReservation`, `validateVoiceReservation`, the Reel
+reservation and root validators). A name whose 80th character is a space
+therefore yields an `authorName` no reader accepts. **Deployed today on the
+text path:** `createReelComment` writes the comment and increments
+`commentCount`, but the comment is invisible, and neither its author, the
+Reel's author nor a moderator can delete or remove it. In the undeployed voice
+path, finalize refuses after the upload, on every retry. Found independently
+by the principal gate (F5) and the adversarial audit (F2, P2). Suggested repair
+from both: re-trim inside `canonicalPublicProfile` and assert the reader's
+bound at every write that stores the canonical name. Not fixed in this round.
+
 ## OPEN — two localization defects on Home found by a catalog audit (2026-09-12)
 
 Found by the Localization Specialist while verifying the Home "Tu i teraz"

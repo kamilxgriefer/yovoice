@@ -14,6 +14,44 @@ someone decide what to pick up next.
 
 ---
 
+## Server-first cutover source gate — 2026-09-13
+
+**Status: source complete in the current candidate; production activation is
+HELD.** The requested global cutover now has one user-facing shared-space
+product, Servers, and exactly five purpose-built templates: Friends, Community,
+Podcast, Family and Company. The former standalone Rooms, Discover and Clubs
+surfaces are retired from reachable navigation while their Firebase schemas
+remain behind the compatibility facade. The navigation bar keeps its existing
+layout and behavior; only the former Rooms destination now presents the Servers
+label and hub icon.
+
+- Home is server-first, retaining the friends activity strip and replacing the
+  ordinary follower panel with the user's Servers, create-server entry and
+  recent chats.
+- YO Moments presents Voice and Reels through one responsive visual system.
+  Voice replies are implemented for Voice Moment and Reel comment threads,
+  including recording, playback arbitration, deletion and moderation paths.
+- Creator followers/following are limited to an eligible verified Creator with
+  active Premium and explicit audience opt-in. Personal accounts do not expose
+  those controls. Creator Studio links to real Server tools and Pinned post.
+- The five Server templates expose their implemented channels and specialist
+  tools, including Community LIVE video, Podcast recording/archive, Family
+  Memories and shared planning, and Company meetings, whiteboard and controlled
+  files. Web desktop can start Company screen sharing; native macOS, Windows and
+  Linux clients can join/view but cannot yet start a share.
+
+The final source gate is green: full Flutter **4634/4634**, zero failures or
+skips; analyzer, scoped formatter and diff check pass. The inspected live
+desktop/mobile redesign has no P0/P1 visual finding. Backend and emulator suites
+are green in their separate scopes; exact nonsummed counts and the limits of
+the evidence are in [TESTING.md](TESTING.md#server-first-cutover-source-gate--2026-09-13).
+
+No production activation is implied. `YOVOICE_SERVERS_V1` remains absent in
+production and no Servers V1 Functions, Rules or indexes were deployed here.
+Reels voice replies remain unavailable against the older production backend.
+Flag activation, the ordered Firebase deployment, post-deploy smoke checks,
+two-device/provider validation and any tester build remain separate held gates.
+
 ## Done
 
 > **Reading the Build 22 round below (2026-09-06 → 2026-09-07).** Everything

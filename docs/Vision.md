@@ -2,24 +2,28 @@
 
 > **Speak. Connect. Be you.**
 
-YO Voice is a voice-first social platform: live voice rooms, communities,
-friends, and creator tools, built around real-time conversation rather than
-text feeds. It's not trying to be a Discord clone or a Clubhouse clone — the
-combination it's aiming for is closer to **Discord's community structure +
-Clubhouse's live-voice format + TikTok's short-form creator loop
-(Voice Moments)**, wrapped in a design bar closer to Apple, Linear, Discord,
-Notion, or Spotify than a typical chat app.
+YO Voice is a voice-first social platform built around persistent Servers,
+friends, YO Moments and real-time conversation. A Server gives a group one
+compact home for voice/video conversations, text channels and the tools that
+fit that group. The product borrows familiar interaction patterns without
+copying another app's layout, assets or visual identity; its own dark cosmic
+Material 3 language remains the design source of truth.
 
 ## Who it's for
 
-- People who want to talk, not just type — live voice rooms as the primary
-  interaction, not a bolt-on feature.
-- Communities that want structure: Clubs with channels, roles, and
-  member management, not just a flat chat.
+- Friends who want a small shared place for voice, text, plans and events.
+- Communities that need channels, roles, moderation and a video LIVE stage.
+- Podcasters who need a live studio, listener questions, episode recording,
+  an archive and a programme in one place.
+- Families who want a private invite-only space with a calendar, shared list,
+  check-ins and photo/voice memories.
+- Companies that need team channels, restricted HR/management areas,
+  meetings, screen sharing, a shared whiteboard and files.
 - Creators who want a real toolkit around hosting and audience growth, not
-  just a personal profile page.
-- Everyone, casually — friends, DMs, and a social graph (followers/following,
-  friends) that works whether or not you ever host anything.
+  just a personal profile page. Followers/following are exposed only for a
+  verified-age Creator with active Premium who explicitly enables the feature.
+- Everyone else, casually, through friends, direct messages and shared
+  Servers without a public follower identity.
 
 ## What "done" looks like for a feature
 
@@ -41,10 +45,10 @@ A feature is not done when it compiles. It's done when:
 
 ## Product pillars (what's actually built, not aspirational)
 
-Voice Rooms, Clubs, Friends & Social, Messages, Voice Moments,
-Achievements/Awards, Creator Studio, Settings, and Notifications — see
-[Features.md](Features.md) for what each one actually does today, what's
-real vs. "Coming soon," and which files/Cloud Functions back it.
+Servers (Friends, Community, Podcast, Family and Company), Friends, Messages,
+YO Moments (Voice + Reels), Achievements/Awards, Creator Studio, Settings and
+Notifications — see [Features.md](Features.md) for what each one actually does
+today, what's real vs. "Coming soon," and which files/Cloud Functions back it.
 
 ## What YO Voice is explicitly not (yet)
 
