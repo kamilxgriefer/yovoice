@@ -11,20 +11,26 @@ single user-facing shared-space surface is now **Servers**, with exactly five
 templates (Friends, Community, Podcast, Family and Company); Home is
 server-first; YO Moments shares one Voice/Reels language; both Voice Moments
 and Reels have voice-reply source; and ordinary Personal accounts no longer
-receive follower/following UI. Creator audience visibility requires an
-eligible verified Creator, active Premium and explicit opt-in. The established
+receive follower/following UI. Creator audience visibility requires a verified
+Creator, active Premium, verified age and explicit opt-in. The established
 navigation geometry and behavior are preserved, with the former Rooms entry
 changing only to the Servers label and hub icon. Legacy `rooms` and `clubs`
 models and collections remain internal compatibility contracts.
 
-The first complete Flutter snapshot was **4598 PASS / 65 FAIL** and was not
-accepted as green. It exposed current responsive, localization and navigation
+The first broad working-tree Flutter snapshot was **4598 PASS / 65 FAIL** and
+was not accepted as green. It exposed responsive, localization and navigation
 blockers alongside obsolete Rooms/Clubs test contracts. After those corrections,
-the second complete `flutter test --no-pub --concurrency=1` run passed
-**4634/4634**, with **0 failures and 0 skips** (Flutter reporter 14:01; wall
-14:32.83). Prechecks also passed: `git diff --check`, scoped formatting over
-232 Dart files with zero changes, and `flutter analyze --no-pub` with no issues.
-The complete log is `/tmp/yovoice_flutter_full_second.log`.
+a second broad working-tree run passed **4634/4634**, with **0 failures and 0
+skips**. That run included preserved out-of-scope work, so it is development
+evidence rather than certification of the committed release slice.
+
+The exact Flutter candidate `304942677a2bc8df9d11082cc528c7638e149b59` was
+checked in a clean detached worktree. `flutter pub get` left `pubspec.lock`
+unchanged, `flutter analyze --no-pub` reported no issues, and the complete
+`flutter test --no-pub --concurrency=1` run passed **4556/4556**, with **0
+failures and 0 skips** (Flutter reporter 14:42; wall 14:58.80). The final
+principal re-review found no cutover P0, P1 or P2. The exact log is
+`/tmp/yovoice_commit_30494267_full.log`.
 
 Backend and authorization evidence remains separated by suite because several
 focused sets exercise overlapping paths:
@@ -44,9 +50,9 @@ focused sets exercise overlapping paths:
 | Adversarial export map | **34/34** |
 
 These results are not summed into one backend total. The live visual gate also
-passed for the inspected redesign with no P0/P1 finding: the real Flutter Web
-preview was checked on desktop for the five-card Server selector, Home, Voice,
-Reels and Podcast configuration, and at 390x844 for the selector with the
+passed for the inspected redesign with no new cutover P0/P1/P2 finding: the
+real Flutter Web preview was checked on desktop for the five-card Server
+selector, Home, Voice, Reels and Podcast configuration, and at 390x844 for the selector with the
 unchanged mobile dock. Reel caption semantics were retested at normal and 200%
 text. The known Flutter Web keyboard traversal debt in the unchanged dock and
 the lower-priority modal route-label warning remain recorded in

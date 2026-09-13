@@ -32,17 +32,20 @@ label and hub icon.
   Voice replies are implemented for Voice Moment and Reel comment threads,
   including recording, playback arbitration, deletion and moderation paths.
 - Creator followers/following are limited to an eligible verified Creator with
-  active Premium and explicit audience opt-in. Personal accounts do not expose
-  those controls. Creator Studio links to real Server tools and Pinned post.
+  active Premium, verified age and explicit audience opt-in. Personal accounts
+  do not expose those controls. Creator Studio links to real Server tools and
+  Pinned post.
 - The five Server templates expose their implemented channels and specialist
   tools, including Community LIVE video, Podcast recording/archive, Family
   Memories and shared planning, and Company meetings, whiteboard and controlled
   files. Web desktop can start Company screen sharing; native macOS, Windows and
   Linux clients can join/view but cannot yet start a share.
 
-The final source gate is green: full Flutter **4634/4634**, zero failures or
-skips; analyzer, scoped formatter and diff check pass. The inspected live
-desktop/mobile redesign has no P0/P1 visual finding. Backend and emulator suites
+The final exact Flutter source gate is green at app commit
+`304942677a2bc8df9d11082cc528c7638e149b59`: full Flutter **4556/4556**, zero
+failures or skips; analyzer, scoped formatter and diff check pass. The inspected
+live desktop/mobile redesign and final principal re-review have no new cutover
+P0/P1/P2 finding. Backend and emulator suites
 are green in their separate scopes; exact nonsummed counts and the limits of
 the evidence are in [TESTING.md](TESTING.md#server-first-cutover-source-gate--2026-09-13).
 
