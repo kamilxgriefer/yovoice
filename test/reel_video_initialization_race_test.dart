@@ -104,6 +104,102 @@ void main() {
       expect(second.disposeCount, 1);
     },
   );
+
+  testWidgets(
+    'an attach in flight finishes before the stale controller is disposed',
+    (tester) async {
+      final reel = _videoReel();
+      final service = ReelService(
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'reel-attach-race-viewer'),
+        ),
+        callableInvoker: (name, payload) async {
+          expect(name, 'getReelMediaAccessV2');
+          expect(payload['reelId'], reel.id);
+          return <Object?, Object?>{
+            'schemaVersion': 2,
+            'url': 'https://storage.googleapis.com/yovoice/attach-race.mp4',
+            'expiresAtMillis': DateTime.now()
+                .toUtc()
+                .add(const Duration(minutes: 5))
+                .millisecondsSinceEpoch,
+            'generation': '2',
+            'availabilityHours': 'permanent',
+            'contentExpiresAtMillis': null,
+          };
+        },
+      );
+      await service.resolveMediaUri(reel.id);
+
+      final first = _ControlledVideoController(
+        'attaching-first',
+        blockVolumeCall: 2,
+      );
+      final second = _ControlledVideoController('replacement-second');
+      VideoPlayerController firstFactory(Uri _) => first;
+      VideoPlayerController secondFactory(Uri _) => second;
+
+      Widget host(ReelNetworkVideoControllerFactory factory) => MaterialApp(
+        theme: AppTheme.darkTheme,
+        home: Scaffold(
+          body: SizedBox(
+            width: 390,
+            height: 700,
+            child: ReelCard(
+              key: const ValueKey('retained-attach-race-card'),
+              reel: reel,
+              service: service,
+              autoplay: false,
+              videoControllerFactory: factory,
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(host(firstFactory));
+      first.finishInitialization();
+      await _pumpAsyncWork(tester);
+      expect(first.blockedVolumeStarted.isCompleted, isTrue);
+      expect(first.disposed, isFalse);
+
+      // Keep the ReelCard and coordinator, but replace the decoder while the
+      // old coordinator attach is suspended inside setVolume.
+      await tester.pumpWidget(host(secondFactory));
+      expect(second.initializeStarted.isCompleted, isTrue);
+      second.finishInitialization();
+      await _pumpAsyncWork(tester);
+      expect(second.calls, containsAll(<String>['looping', 'volume', 'seek']));
+      expect(
+        first.disposed,
+        isFalse,
+        reason: 'an in-flight platform mutation must finish before dispose',
+      );
+
+      first.releaseBlockedVolume();
+      await _pumpAsyncWork(tester);
+
+      expect(first.disposed, isTrue);
+      expect(first.disposeCount, 1);
+      expect(first.mutationsAfterDispose, isEmpty);
+      expect(find.byType(VideoPlayer), findsOneWidget);
+      expect(
+        tester.widget<VideoPlayer>(find.byType(VideoPlayer)).controller,
+        same(second),
+      );
+      tester
+          .widget<ReelPlaybackSurface>(find.byType(ReelPlaybackSurface))
+          .onToggle();
+      await _pumpAsyncWork(tester);
+      expect(second.calls, contains('play'));
+      expect(first.calls, isNot(contains('play')));
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await _pumpAsyncWork(tester);
+      expect(second.disposeCount, 1);
+    },
+  );
 }
 
 Future<void> _pumpAsyncWork(WidgetTester tester) async {
@@ -133,11 +229,14 @@ Reel _videoReel() => Reel(
 );
 
 class _ControlledVideoController implements VideoPlayerController {
-  _ControlledVideoController(this.name);
+  _ControlledVideoController(this.name, {this.blockVolumeCall});
 
   final String name;
+  final int? blockVolumeCall;
   final Completer<void> initializeStarted = Completer<void>();
   final Completer<void> _initializeGate = Completer<void>();
+  final Completer<void> blockedVolumeStarted = Completer<void>();
+  final Completer<void> _blockedVolumeRelease = Completer<void>();
   final List<VoidCallback> _listeners = <VoidCallback>[];
   final List<String> calls = <String>[];
   final List<String> mutationsAfterDispose = <String>[];
@@ -146,8 +245,11 @@ class _ControlledVideoController implements VideoPlayerController {
   );
   bool disposed = false;
   int disposeCount = 0;
+  int _volumeCalls = 0;
 
   void finishInitialization() => _initializeGate.complete();
+
+  void releaseBlockedVolume() => _blockedVolumeRelease.complete();
 
   void _mutate(String operation, VideoPlayerValue next) {
     calls.add(operation);
@@ -181,6 +283,11 @@ class _ControlledVideoController implements VideoPlayerController {
 
   @override
   Future<void> setVolume(double volume) async {
+    _volumeCalls += 1;
+    if (_volumeCalls == blockVolumeCall) {
+      blockedVolumeStarted.complete();
+      await _blockedVolumeRelease.future;
+    }
     _mutate('volume', _value.copyWith(volume: volume));
   }
 

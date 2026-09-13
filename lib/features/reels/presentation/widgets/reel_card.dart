@@ -2146,6 +2146,8 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
   ReelPlaybackCoordinator? _attachedPlayback;
   final Map<VideoPlayerController, Future<void>> _controllerRetirements =
       Map<VideoPlayerController, Future<void>>.identity();
+  final Map<VideoPlayerController, Future<void>> _controllerAttachments =
+      Map<VideoPlayerController, Future<void>>.identity();
   Object? _error;
   bool _lastPlaying = false;
   int _controllerGeneration = 0;
@@ -2215,7 +2217,15 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
         await _retireController(controller, driver: driver, playback: playback);
         return;
       }
-      await playback.attachVideo(driver);
+      final attachment = playback.attachVideo(driver);
+      _controllerAttachments[controller] = attachment;
+      try {
+        await attachment;
+      } finally {
+        if (identical(_controllerAttachments[controller], attachment)) {
+          _controllerAttachments.remove(controller);
+        }
+      }
       if (!_isCurrentController(generation, controller)) {
         await _retireController(controller, driver: driver, playback: playback);
         return;
@@ -2283,13 +2293,34 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
     _VideoPlayerPlayback? driver,
     ReelPlaybackCoordinator? playback,
   }) {
-    if (driver != null) playback?.detachVideo(driver);
     controller.removeListener(_handlePlayback);
+    final detachment = driver != null && playback != null
+        ? Future<void>.microtask(() => playback.detachVideo(driver))
+        : null;
     final existing = _controllerRetirements[controller];
     if (existing != null) return existing;
-    final retirement = Future<void>.sync(
-      controller.dispose,
-    ).catchError((Object _) {});
+    final attachment = _controllerAttachments[controller];
+    final retirement = (() async {
+      // A controller replacement can happen from didUpdateWidget while an
+      // ancestor is still building. Detach on the next microtask so the
+      // coordinator cannot synchronously notify that ancestor during build.
+      if (detachment != null) await detachment;
+      // `attachVideo` owns queued setVolume/seek work for this controller.
+      // Detach makes every not-yet-started step stale; waiting here also
+      // lets a platform call that had already started finish before disposal.
+      if (attachment != null) {
+        try {
+          await attachment;
+        } catch (_) {
+          // A failed attach still must release the decoder.
+        }
+      }
+      try {
+        await controller.dispose();
+      } catch (_) {
+        // Retirement has no live UI surface and must remain idempotent.
+      }
+    })();
     _controllerRetirements[controller] = retirement;
     return retirement;
   }

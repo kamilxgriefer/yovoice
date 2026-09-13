@@ -249,6 +249,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   /// so it is also where autoplay is armed — [canToggle] needs a player, which
   /// is why arming on [setActive] alone would miss the very first card.
   Future<void> attachVideo(ReelVideoPlayback video) async {
+    if (_disposed) return;
     final previous = _video;
     _video = video;
     try {
@@ -256,20 +257,29 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
       // listeners are told only after the first await: a host may attach from
       // initState, and notifying there would rebuild during a build.
       await _enqueue(() async {
+        if (!_isCurrentVideo(video)) return;
         if (previous != null && !identical(previous, video)) {
           await previous.pause();
+          if (!_isCurrentVideo(video)) return;
         }
+        if (!_isCurrentVideo(video)) return;
         await video.setVolume(_videoVolume);
+        if (!_isCurrentVideo(video)) return;
         final position = video.position;
         if (position < _videoStart || position >= _videoEnd) {
+          if (!_isCurrentVideo(video)) return;
           await video.seek(_videoStart);
         }
       });
     } finally {
       _notify();
     }
+    if (!_isCurrentVideo(video)) return;
     await autoplay();
   }
+
+  bool _isCurrentVideo(ReelVideoPlayback video) =>
+      !_disposed && identical(_video, video);
 
   void detachVideo(ReelVideoPlayback video) {
     if (!identical(_video, video)) return;
@@ -282,8 +292,8 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     // Straight to the player, not through the queue: a page being scrolled
     // away is detached and then disposed in the same frame, and a queued
     // command is dropped by disposal. Nothing else can reach this player any
-    // more — every queued operation reads _video when it runs, and it is
-    // already null.
+    // more — every queued operation revalidates its captured player before
+    // each mutation, and `_video` is already null.
     unawaited(video.pause().catchError((Object _) {}));
     unawaited(
       _enqueue(() async {
