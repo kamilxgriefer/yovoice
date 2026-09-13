@@ -66,7 +66,12 @@ class _PremiumMessagingPrivacyScreenState
       await _service.setPreference(preference, enabled);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _saveError = friendlyErrorMessage(error));
+      setState(
+        () => _saveError = friendlyErrorMessage(
+          error,
+          copy: AppLocalizations.of(context),
+        ),
+      );
     } finally {
       if (mounted) setState(() => _saving = null);
     }
@@ -122,9 +127,13 @@ class _PremiumMessagingPrivacyScreenState
                   if (snapshot.hasError) {
                     return Center(
                       child: YoErrorState(
-                        message: copy.text(
-                          friendlyErrorMessage(snapshot.error!),
-                          'Nie udało się wczytać ustawień prywatności czatu.',
+                        message: friendlyErrorMessage(
+                          snapshot.error!,
+                          copy: copy,
+                          fallback: copy.text(
+                            'Could not load chat privacy settings.',
+                            'Nie udało się wczytać ustawień prywatności czatu.',
+                          ),
                         ),
                         onRetry: _retry,
                       ),
@@ -328,9 +337,10 @@ class _PrivacyContent extends StatelessWidget {
               Semantics(
                 liveRegion: true,
                 child: Text(
-                  copy.text(
-                    'Could not save this setting. $saveError',
-                    'Nie udało się zapisać ustawienia. Spróbuj ponownie.',
+                  copy.template(
+                    'Could not save this setting. {error}',
+                    'Nie udało się zapisać ustawienia. {error}',
+                    values: <String, Object>{'error': saveError!},
                   ),
                   key: const ValueKey('premium-privacy-save-error'),
                   style: TextStyle(

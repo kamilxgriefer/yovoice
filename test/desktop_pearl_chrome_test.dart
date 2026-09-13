@@ -239,7 +239,7 @@ void main() {
       );
       _expectTextContrast(
         tester,
-        'Become a Creator',
+        'Creator account & studio',
         AppPalette.light.surfaceMuted,
         4.5,
       );
