@@ -25,6 +25,7 @@ const {
 const {
   readOwnerAllocations, writeCapacityGuards,
 } = require("../servers/capacity");
+const { assertLegacyRoomAccess } = require("../utils/server_access");
 
 const DEFAULT_ROOM_CREATION_POLICY = Object.freeze({
   maxActiveRooms: 20,
@@ -747,6 +748,18 @@ function createRoomCreationService({
         });
       }
       const room = roomSnapshot.data() ?? {};
+      // `startRoomVoice` is the legacy session writer. A Server V1 room is an
+      // anchor whose liveness belongs to its immutable channelSession and
+      // whose LiveKit namespace is the canonical `srv_...` generation. Admin
+      // SDK writes bypass Rules, so this check must run in the same transaction
+      // before the legacy callable can set `isLive` or `voiceSessionId` on an
+      // anchor.
+      await assertLegacyRoomAccess({
+        db,
+        transaction,
+        roomId: input.roomId,
+        room,
+      });
       if (
         typeof room.hostId !== "string" ||
         !/^[A-Za-z0-9_-]{1,160}$/u.test(room.hostId) ||

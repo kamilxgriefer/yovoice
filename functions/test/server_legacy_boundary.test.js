@@ -7,7 +7,12 @@ if (!/^127\.0\.0\.1:\d+$/u.test(process.env.FIRESTORE_EMULATOR_HOST ?? "")) {
 }
 process.env.GCLOUD_PROJECT = "demo-yovoice-server-consumers";
 const { initializeApp, deleteApp } = require("firebase-admin/app");
-const { getFirestore, Timestamp, FieldPath } = require("firebase-admin/firestore");
+const {
+  FieldPath,
+  FieldValue,
+  getFirestore,
+  Timestamp,
+} = require("firebase-admin/firestore");
 const app = initializeApp({ projectId: process.env.GCLOUD_PROJECT });
 const db = getFirestore(app);
 const { assertLegacyRoomAccess, isVersionedServer } = require("../utils/server_access");
@@ -15,6 +20,7 @@ const { createCommunityMessagingService } = require("../messaging/community_inte
 const { createMomentIntegrityService } = require("../moments/integrity");
 const { createLiveKitTokenHandler } = require("../livekit/token");
 const { createRoomCoverService } = require("../rooms/covers");
+const { createRoomCreationService } = require("../rooms/creation");
 const { executeSetRoomStatus } = require("../rooms/participants");
 const { executeDeleteClubSelf } = require("../clubs/deletion");
 const { transferClubOwnershipSelf } = require("../clubs/ownership");
@@ -153,6 +159,23 @@ test("legacy room lifecycle cannot restore or tear down a V1 session", async () 
   const control = { async endRoom() { throw new Error("Unexpected legacy RTC control"); } };
   await assert.rejects(executeSetRoomStatus(request(OWNER, { roomId: ROOM, status: "closed" }), control), deny);
   assert.equal((await db.doc(`rooms/${ROOM}`).get()).data().status, "active");
+});
+
+test("legacy voice start cannot write liveness onto a V1 anchor", async () => {
+  const rooms = createRoomCreationService({
+    db,
+    FieldValue,
+    Timestamp,
+    clock: () => nowMs,
+  });
+  const before = (await db.doc(`rooms/${ROOM}`).get()).data();
+  await assert.rejects(rooms.startRoomVoice(request(OWNER, {
+    roomId: ROOM,
+    sessionId: "legacy-session-on-server-anchor",
+    requestId: "legacy-start-server-anchor-001",
+  })), deny);
+  const after = (await db.doc(`rooms/${ROOM}`).get()).data();
+  assert.deepEqual(after, before);
 });
 
 test("legacy Club ownership/removal/deletion cannot mutate a V1 authority graph", async () => {
