@@ -1029,6 +1029,13 @@ void main() {
         isNull,
         reason: 'at ${size.width}x${size.height} @200% text',
       );
+
+      // Dispose the current navigation and Firestore stream tree before the
+      // next viewport is installed. Replacing MaterialApp while changing the
+      // test view in the same frame can reparent its Navigator GlobalKey and
+      // attempt to subscribe the outgoing tree a second time.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
     }
   });
 

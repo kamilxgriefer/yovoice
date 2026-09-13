@@ -151,7 +151,9 @@ void main() {
       expect(played.width, 0);
     });
 
-    testWidgets('the stage bar follows the real engine', (tester) async {
+    testWidgets('the photo stage bar follows the real engine without a timer', (
+      tester,
+    ) async {
       // End to end through the production seam: a photo Reel's timeline IS
       // its backing track, so the track's own position is what the bar reads.
       final audio = FakeReelAudioPlayback();
@@ -165,7 +167,17 @@ void main() {
         audioPlaybackFactory: () => audio,
       );
 
-      expect(find.text('0:00 / 0:12'), findsOneWidget);
+      expect(find.byKey(reelProgressTimesKey), findsNothing);
+      expect(find.text('0:00 / 0:12'), findsNothing);
+
+      final track = tester.getSize(find.byKey(reelProgressBarKey));
+      final initial = tester.getSize(
+        find.descendant(
+          of: find.byKey(reelProgressBarKey),
+          matching: find.byType(FractionallySizedBox),
+        ),
+      );
+      expect(initial.width, 0);
 
       // A photo Reel waits to be asked, and its track is what it plays: the
       // deliberate start is also what connects the clock.
@@ -177,8 +189,15 @@ void main() {
       audio.emit(const Duration(seconds: 6));
       await tester.pump();
 
-      expect(find.text('0:06 / 0:12'), findsOneWidget);
-      expect(find.text('0:00 / 0:12'), findsNothing);
+      final advanced = tester.getSize(
+        find.descendant(
+          of: find.byKey(reelProgressBarKey),
+          matching: find.byType(FractionallySizedBox),
+        ),
+      );
+      expect(advanced.width / track.width, closeTo(.5, .01));
+      expect(find.byKey(reelProgressTimesKey), findsNothing);
+      expect(find.text('0:06 / 0:12'), findsNothing);
     });
   });
 }

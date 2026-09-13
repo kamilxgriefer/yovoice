@@ -1417,7 +1417,10 @@ class _StageFrameControls extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 32, 16, 16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            // Photo Yeels intentionally omit numeric elapsed time. Stretch
+            // the remaining bar across the frame so removing that label does
+            // not also collapse its only progress cue to zero width.
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               if (toggle != null || chip != null) ...<Widget>[
                 Wrap(
