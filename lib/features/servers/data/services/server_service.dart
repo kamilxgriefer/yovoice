@@ -66,6 +66,14 @@ abstract interface class ServerRepository {
     required String requestId,
   });
 
+  /// Joins an active public Community or Podcast server. The backend proves
+  /// the public-admission policy and writes the member, authorization and
+  /// private directory projections atomically.
+  Future<void> joinServer({
+    required String serverId,
+    required String requestId,
+  });
+
   Future<ServerChannelCreationResult> createChannel(
     ServerChannelCreationRequest request,
   );
@@ -77,6 +85,15 @@ abstract interface class ServerRepository {
   });
 
   Future<ServerSessionConnection> createChannelToken({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String requestId,
+  });
+
+  /// Ends the current live generation for everybody. Only the generation's
+  /// starter or a server moderator can pass the backend authority check.
+  Future<void> endChannelSession({
     required String serverId,
     required String channelId,
     required String sessionId,
@@ -409,6 +426,18 @@ class ServerService
   }
 
   @override
+  Future<void> joinServer({
+    required String serverId,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    await _mutate('joinServerV1', {
+      'serverId': serverId,
+      'requestId': requestId,
+    });
+  }
+
+  @override
   Future<ServerChannelCreationResult> createChannel(
     ServerChannelCreationRequest request,
   ) async => ServerChannelCreationResult.fromMap(
@@ -450,6 +479,24 @@ class ServerService
         'requestId': requestId,
       }),
     );
+  }
+
+  @override
+  Future<void> endChannelSession({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    _requireId(sessionId);
+    await _mutate('endServerChannelSessionV1', {
+      'serverId': serverId,
+      'channelId': channelId,
+      'sessionId': sessionId,
+      'requestId': requestId,
+    });
   }
 
   @override

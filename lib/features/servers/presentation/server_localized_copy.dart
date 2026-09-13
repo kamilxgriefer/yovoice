@@ -652,6 +652,29 @@ extension ServerLocalizedCopy on AppLocalizations {
   String get serverLeaveConversation =>
       text('Leave the conversation', 'Opuść rozmowę');
   String get serverLeaveShort => text('Leave', 'Opuść');
+  String get serverEndConversation => text(
+    'End the conversation for everyone',
+    'Zakończ rozmowę dla wszystkich',
+  );
+  String get serverEndShort => text('End', 'Zakończ');
+  String get serverEndQuestion => text(
+    'End this live conversation for everyone?',
+    'Zakończyć tę rozmowę dla wszystkich?',
+  );
+  String get serverEndingConversation =>
+      text('Ending the conversation…', 'Kończenie rozmowy…');
+  String get serverEndFailed => text(
+    'Could not end the conversation. Try again.',
+    'Nie udało się zakończyć rozmowy. Spróbuj ponownie.',
+  );
+  String get serverPublicJoinTitle =>
+      text('Join this server', 'Dołącz do tego serwera');
+  String get serverPublicJoinBody => text(
+    'Join to open its channels, conversations and events.',
+    'Dołącz, aby otworzyć kanały, rozmowy i wydarzenia.',
+  );
+  String get serverPublicJoinAction => text('Join server', 'Dołącz do serwera');
+  String get serverPublicJoining => text('Joining…', 'Dołączanie…');
   String get serverOtherVoiceActive => text(
     'Finish your current call or voice conversation first.',
     'Najpierw zakończ trwającą rozmowę.',

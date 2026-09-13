@@ -30,6 +30,7 @@ class ServerConversationDock extends StatelessWidget {
     this.meetingChannel,
     this.onOpenWhiteboard,
     this.screenShare,
+    this.canModerateSession = false,
     super.key,
   });
 
@@ -51,6 +52,10 @@ class ServerConversationDock extends StatelessWidget {
   /// What this platform can do about publishing a screen. Null keeps the
   /// controller's own answer.
   final ServerScreenShareCapability? screenShare;
+
+  /// Server moderators may end a generation even when they joined one that
+  /// somebody else started. The callable remains the authority boundary.
+  final bool canModerateSession;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -161,6 +166,17 @@ class ServerConversationDock extends StatelessWidget {
                 : copy.serverChannelKindTitle(ServerChannelKind.whiteboard),
             semanticLabel: copy.serverMeetingBoard,
             onPressed: onOpenWhiteboard,
+          ),
+        if (live && (controller.isSessionHost || canModerateSession))
+          _DockControl(
+            key: const ValueKey('server-dock-end-session'),
+            icon: Icons.stop_circle_outlined,
+            label: compact ? null : copy.serverEndShort,
+            semanticLabel: copy.serverEndConversation,
+            destructive: true,
+            onPressed: controller.endBusy
+                ? null
+                : () => _confirmEnd(context, copy),
           ),
         _DockControl(
           key: const ValueKey('server-dock-leave'),
@@ -281,7 +297,38 @@ class ServerConversationDock extends StatelessWidget {
     },
   );
 
+  Future<void> _confirmEnd(BuildContext context, AppLocalizations copy) async {
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(copy.serverEndShort),
+        content: Text(copy.serverEndQuestion),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(copy.serverCancel),
+          ),
+          FilledButton(
+            key: const ValueKey('server-end-session-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(copy.serverEndShort),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true) await controller.endSession();
+  }
+
   String _status(AppLocalizations copy) {
+    if (controller.endBusy) return copy.serverEndingConversation;
+    final endFailure = controller.endError;
+    if (endFailure != null) {
+      return serverActionFailureCopy(
+        endFailure,
+        copy,
+        fallback: copy.serverEndFailed,
+      );
+    }
     // A refused mute or headphones press outranks the phase line for as long
     // as it stands: the phase is still "połączono", which is true and beside
     // the point — what the person needs to know is that the control they just

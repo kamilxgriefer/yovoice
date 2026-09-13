@@ -26,6 +26,7 @@ import '../../data/services/server_service.dart';
 import '../../data/services/server_session_controller.dart';
 import '../../data/services/server_shared_list_service.dart';
 import '../../data/services/server_whiteboard_repository.dart';
+import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
 import '../widgets/server_channel_scene.dart';
@@ -156,7 +157,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
   late final ServerRepository _repository;
   late final ServerSessionController _session;
   late Stream<Server?> _server;
-  late Stream<List<ServerChannel>> _channels;
+  Stream<List<ServerChannel>>? _channels;
   late Stream<ServerMemberRole?> _role;
   late Stream<Set<String>> _moderators;
   String? _selectedId;
@@ -165,6 +166,9 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
   ServerSharedListRepository? _defaultSharedList;
   ServerFollowRepository? _defaultFollowRepository;
   ServerCompanyFileRepository? _defaultCompanyFiles;
+  String? _joinRequestId;
+  bool _joining = false;
+  Object? _joinError;
 
   ServerCompanyFileRepository get _companyFiles {
     final supplied = widget.companyFileRepository;
@@ -273,7 +277,11 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
 
   void _listen() {
     _server = _repository.watchServer(widget.serverId);
-    _channels = _repository.watchChannels(widget.serverId);
+    // Channel LIST authority begins at membership. A public non-member can
+    // read the root in order to decide whether to join, but Rules correctly
+    // refuse its channels, so the stream is created only after a role row is
+    // present.
+    _channels = null;
     _role = _repository.watchMyRole(widget.serverId);
     // The roster read that earns a `Moderator` badge in a thread. It fails
     // closed to an empty set, so an unread or denied roster simply badges
@@ -293,6 +301,9 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
       _localTab = 0;
       _home = null;
       _meetingTab = ServerMeetingTab.presentation;
+      _joinRequestId = null;
+      _joining = false;
+      _joinError = null;
       // A conversation belongs to the server it was joined in.
       _session.leave();
       _listen();
@@ -373,35 +384,46 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                 ),
               );
             }
-            return StreamBuilder<List<ServerChannel>>(
-              stream: _channels,
-              builder: (context, channelsSnapshot) {
-                // Do not retain private content behind a failed/revoked read.
-                if (channelsSnapshot.hasError) {
-                  return _state(context, _error(channelsSnapshot.error!));
-                }
-                if (channelsSnapshot.connectionState ==
-                    ConnectionState.waiting) {
+            return StreamBuilder<ServerMemberRole?>(
+              stream: _role,
+              builder: (context, roleSnapshot) {
+                if (roleSnapshot.connectionState == ConnectionState.waiting) {
                   return _state(context, _loading(copy));
                 }
-                final channels = channelsSnapshot.data ?? const [];
-                return StreamBuilder<ServerMemberRole?>(
-                  stream: _role,
-                  builder: (context, roleSnapshot) =>
-                      StreamBuilder<Set<String>>(
-                        stream: _moderators,
-                        initialData: const <String>{},
-                        builder: (context, moderatorSnapshot) => _workspace(
-                          context,
-                          server,
-                          channels,
-                          // An unreadable role row withholds every affordance.
-                          roleSnapshot.hasError ? null : roleSnapshot.data,
-                          moderatorSnapshot.hasError
-                              ? const <String>{}
-                              : moderatorSnapshot.data ?? const <String>{},
-                        ),
+                // An unreadable or absent role withholds every channel and
+                // affordance. Only the two canonical public templates get an
+                // admission action; every other case stays closed.
+                final role = roleSnapshot.hasError ? null : roleSnapshot.data;
+                if (role == null) return _membershipGate(context, server);
+                final channels = _channels ??= _repository.watchChannels(
+                  widget.serverId,
+                );
+                return StreamBuilder<List<ServerChannel>>(
+                  stream: channels,
+                  builder: (context, channelsSnapshot) {
+                    // Do not retain private content behind a failed/revoked
+                    // read.
+                    if (channelsSnapshot.hasError) {
+                      return _state(context, _error(channelsSnapshot.error!));
+                    }
+                    if (channelsSnapshot.connectionState ==
+                        ConnectionState.waiting) {
+                      return _state(context, _loading(copy));
+                    }
+                    return StreamBuilder<Set<String>>(
+                      stream: _moderators,
+                      initialData: const <String>{},
+                      builder: (context, moderatorSnapshot) => _workspace(
+                        context,
+                        server,
+                        channelsSnapshot.data ?? const [],
+                        role,
+                        moderatorSnapshot.hasError
+                            ? const <String>{}
+                            : moderatorSnapshot.data ?? const <String>{},
                       ),
+                    );
+                  },
                 );
               },
             );
@@ -409,6 +431,70 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         ),
       ),
     );
+  }
+
+  Widget _membershipGate(BuildContext context, Server server) {
+    final publicAdmission =
+        !server.isLegacy &&
+        !server.isHeld &&
+        server.status == 'active' &&
+        server.privacy == ServerPrivacy.public &&
+        (server.type == ServerType.community ||
+            server.type == ServerType.podcast);
+    if (!publicAdmission) {
+      final copy = AppLocalizations.of(context);
+      return _state(
+        context,
+        SingleChildScrollView(
+          child: YoEmptyState(
+            icon: Icons.lock_outline,
+            title: copy.text('Server unavailable', 'Serwer jest niedostępny'),
+            subtitle: copy.text(
+              'You are not a member of this server.',
+              'Nie należysz do tego serwera.',
+            ),
+          ),
+        ),
+      );
+    }
+    return _state(
+      context,
+      _PublicServerAdmission(
+        server: server,
+        joining: _joining,
+        error: _joinError,
+        onJoin: () => _joinPublicServer(server),
+      ),
+    );
+  }
+
+  Future<void> _joinPublicServer(Server server) async {
+    if (_joining) return;
+    final requestId = _joinRequestId ??= _repository.newRequestId();
+    setState(() {
+      _joining = true;
+      _joinError = null;
+    });
+    try {
+      await _repository.joinServer(serverId: server.id, requestId: requestId);
+      if (!mounted || widget.serverId != server.id) return;
+      setState(() {
+        _joining = false;
+        // Re-subscribe explicitly for repositories whose role stream is a
+        // point-in-time test/preview stream. Firestore's live stream would
+        // update on its own, and the second subscription sees the same
+        // atomic membership write.
+        _role = _repository.watchMyRole(server.id);
+        _channels = null;
+        _moderators = _repository.watchModerators(server.id);
+      });
+    } catch (error) {
+      if (!mounted || widget.serverId != server.id) return;
+      setState(() {
+        _joining = false;
+        _joinError = error;
+      });
+    }
   }
 
   /// Wraps a state drawn INSTEAD of the workspace so it still has a way out.
@@ -512,6 +598,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
           compact: phone,
           onOpenChannel: _select,
           screenShare: _session.screenShare,
+          canModerateSession: role?.canModerate ?? false,
           // The channel document itself, so the dock can read the server's
           // own start instant for the clock. It is handed over as data
           // because the shell does not rebuild when a session connects —
@@ -1697,6 +1784,139 @@ class _PhoneSurface extends StatelessWidget {
           ),
           Expanded(child: centre),
         ],
+      ),
+    );
+  }
+}
+
+/// The safe public-root state shown before membership exists. It deliberately
+/// contains no channel-derived information: channel names and conversations
+/// become readable only after `joinServerV1` commits the member row.
+class _PublicServerAdmission extends StatelessWidget {
+  const _PublicServerAdmission({
+    required this.server,
+    required this.joining,
+    required this.onJoin,
+    this.error,
+  });
+
+  final Server server;
+  final bool joining;
+  final Object? error;
+  final VoidCallback onJoin;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final colors = ServerIdentity.of(
+      server.type,
+    ).resolve(Theme.of(context).brightness);
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Container(
+            key: const ValueKey('server-public-admission'),
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: palette.surface,
+              borderRadius: AppRadius.xl,
+              border: Border.all(color: colors.iconBorder),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: colors.iconSurface,
+                    borderRadius: AppRadius.lg,
+                  ),
+                  child: Text(
+                    server.initial,
+                    style: AppTypography.headlineSmall.copyWith(
+                      color: colors.foreground,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  server.name,
+                  textAlign: TextAlign.center,
+                  style: AppTypography.titleLarge.copyWith(
+                    color: palette.textPrimary,
+                  ),
+                ),
+                if (server.description.trim().isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    server.description.trim(),
+                    textAlign: TextAlign.center,
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: palette.textSecondary,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                Text(
+                  copy.serverPublicJoinTitle,
+                  textAlign: TextAlign.center,
+                  style: AppTypography.titleMedium.copyWith(
+                    color: palette.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  copy.serverPublicJoinBody,
+                  textAlign: TextAlign.center,
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: palette.textSecondary,
+                  ),
+                ),
+                if (error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    serverActionFailureCopy(
+                      error!,
+                      copy,
+                      fallback: copy.serverJoinFailed,
+                    ),
+                    key: const ValueKey('server-public-join-error'),
+                    textAlign: TextAlign.center,
+                    style: AppTypography.bodySmall.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 18),
+                FilledButton.icon(
+                  key: const ValueKey('server-public-join'),
+                  onPressed: joining ? null : onJoin,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colors.cta,
+                    foregroundColor: colors.onCta,
+                    minimumSize: const Size.fromHeight(48),
+                  ).copyWith(side: serverFocusRing(colors.onCta)),
+                  icon: joining
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.login_rounded),
+                  label: Text(
+                    joining
+                        ? copy.serverPublicJoining
+                        : copy.serverPublicJoinAction,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

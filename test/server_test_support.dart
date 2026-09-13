@@ -101,6 +101,7 @@ class TestServerRepository
   int companyFileUploads = 0;
   Stream<Server?>? serverStream;
   Stream<List<ServerChannel>>? channelStream;
+  int watchChannelsCalls = 0;
   Stream<List<ServerMember>>? memberStream;
 
   /// The viewer's own role row; the owner by default, as the fixtures'
@@ -192,11 +193,13 @@ class TestServerRepository
         servers.where((server) => server.id == serverId).firstOrNull,
       );
   @override
-  Stream<List<ServerChannel>> watchChannels(String serverId) =>
-      channelStream ??
-      Stream.value(
-        channels.where((channel) => channel.serverId == serverId).toList(),
-      );
+  Stream<List<ServerChannel>> watchChannels(String serverId) {
+    watchChannelsCalls++;
+    return channelStream ??
+        Stream.value(
+          channels.where((channel) => channel.serverId == serverId).toList(),
+        );
+  }
 
   @override
   Stream<List<ServerMember>> watchMembers(String serverId) =>
@@ -315,6 +318,15 @@ class TestServerRepository
           alreadyExisted: false,
         ),
   );
+
+  @override
+  Future<void> joinServer({
+    required String serverId,
+    required String requestId,
+  }) => _answer<void>('joinServerV1', {
+    'serverId': serverId,
+    'requestId': requestId,
+  }, () => myRole = ServerMemberRole.member);
 
   @override
   Future<void> updateServer({
@@ -1176,6 +1188,19 @@ class TestServerRepository
       sessionId: sessionId,
     ),
   );
+
+  @override
+  Future<void> endChannelSession({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String requestId,
+  }) => _answer<void>('endServerChannelSessionV1', {
+    'serverId': serverId,
+    'channelId': channelId,
+    'sessionId': sessionId,
+    'requestId': requestId,
+  }, () {});
 }
 
 /// A provider link that never touches native audio. Tests move it through

@@ -46,6 +46,60 @@ void main() {
     },
   );
 
+  test(
+    'public admission calls only joinServerV1 with the supplied retry id',
+    () async {
+      final calls = <(String, Map<String, Object?>)>[];
+      final service = ServerService(
+        call: (name, data) async {
+          calls.add((name, data));
+          return const <Object?, Object?>{};
+        },
+      );
+
+      await service.joinServer(
+        serverId: 'public-server',
+        requestId: 'stable-join',
+      );
+      await service.joinServer(
+        serverId: 'public-server',
+        requestId: 'stable-join',
+      );
+
+      expect(calls.map((call) => call.$1), ['joinServerV1', 'joinServerV1']);
+      expect(calls[0].$2, {
+        'serverId': 'public-server',
+        'requestId': 'stable-join',
+      });
+      expect(calls[1].$2, calls[0].$2);
+    },
+  );
+
+  test('generation end calls only endServerChannelSessionV1', () async {
+    final calls = <(String, Map<String, Object?>)>[];
+    final service = ServerService(
+      call: (name, data) async {
+        calls.add((name, data));
+        return const <Object?, Object?>{};
+      },
+    );
+
+    await service.endChannelSession(
+      serverId: 'server',
+      channelId: 'stage',
+      sessionId: 'generation-7',
+      requestId: 'stable-end',
+    );
+
+    expect(calls.single.$1, 'endServerChannelSessionV1');
+    expect(calls.single.$2, {
+      'serverId': 'server',
+      'channelId': 'stage',
+      'sessionId': 'generation-7',
+      'requestId': 'stable-end',
+    });
+  });
+
   test('directory reads old ids without migrating roots', () async {
     final firestore = FakeFirebaseFirestore();
     final auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'u'));

@@ -91,6 +91,9 @@ class ServerSessionController extends ChangeNotifier {
   Object? _cameraError;
   bool _screenShareBusy = false;
   Object? _screenShareError;
+  Object? _endError;
+  String? _endRequestId;
+  bool _endBusy = false;
 
   /// The last failure a microphone or headphones press produced.
   ///
@@ -175,6 +178,13 @@ class ServerSessionController extends ChangeNotifier {
   /// refused mute is said out loud rather than reverting in silence.
   Object? get privacyError => _privacyError;
 
+  /// The generation starter receives the signed `host` role. Moderators can
+  /// also end a generation, but that extra server-role authority is supplied
+  /// by the shell when it draws the action and is re-proved by the callable.
+  bool get isSessionHost => _connection?.sessionRole == 'host';
+  bool get endBusy => _endBusy;
+  Object? get endError => _endError;
+
   bool isIn(String channelId) => isActive && _channel?.id == channelId;
 
   /// The legacy coordinator is the device's other voice owner. Joining while
@@ -200,6 +210,9 @@ class ServerSessionController extends ChangeNotifier {
     _cameraError = null;
     _screenShareError = null;
     _privacyError = null;
+    _endError = null;
+    _endRequestId = null;
+    _endBusy = false;
     if (_anotherVoiceSessionActive()) {
       _set(ServerSessionPhase.blocked);
       return;
@@ -410,6 +423,45 @@ class ServerSessionController extends ChangeNotifier {
   Future<void> toggleScreenShare() =>
       setScreenShareEnabled(!isScreenShareEnabled);
 
+  /// Ends this generation for everybody through the durable backend
+  /// lifecycle, then releases the local provider link. A failed or ambiguous
+  /// request keeps the same request id for the visible retry and leaves the
+  /// conversation connected until the backend accepts the operation.
+  Future<void> endSession() async {
+    final server = _server;
+    final channel = _channel;
+    final connection = _connection;
+    if (_disposed ||
+        _endBusy ||
+        server == null ||
+        channel == null ||
+        connection == null ||
+        !isLive) {
+      return;
+    }
+    final epoch = _epoch;
+    _endBusy = true;
+    _endError = null;
+    _endRequestId ??= _repository.newRequestId();
+    notifyListeners();
+    try {
+      await _repository.endChannelSession(
+        serverId: server.id,
+        channelId: channel.id,
+        sessionId: connection.sessionId,
+        requestId: _endRequestId!,
+      );
+      if (!_current(epoch)) return;
+      _endBusy = false;
+      await leave();
+    } catch (error) {
+      if (!_current(epoch)) return;
+      _endBusy = false;
+      _endError = error;
+      notifyListeners();
+    }
+  }
+
   /// Leaves the conversation; the server, the channel and any live
   /// generation stay exactly as they are.
   Future<void> leave() async {
@@ -433,6 +485,9 @@ class ServerSessionController extends ChangeNotifier {
     _cameraError = null;
     _screenShareError = null;
     _privacyError = null;
+    _endError = null;
+    _endRequestId = null;
+    _endBusy = false;
     _set(ServerSessionPhase.idle);
   }
 
@@ -444,6 +499,9 @@ class ServerSessionController extends ChangeNotifier {
     _cameraError = null;
     _screenShareError = null;
     _privacyError = null;
+    _endError = null;
+    _endRequestId = null;
+    _endBusy = false;
     _connection = null;
     _set(ServerSessionPhase.idle);
   }

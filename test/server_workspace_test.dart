@@ -284,6 +284,10 @@ void main() {
       ),
       settle: false,
     );
+    // Channel listening now begins only after the viewer's member row has
+    // arrived. Let that authority snapshot mount the channel listener before
+    // the broadcast-only fixture emits its first value.
+    await tester.pump();
     controller.add(fixtureChannels(ServerType.company));
     await tester.pumpAndSettle();
     expect(find.text('private-voice'), findsOneWidget);
