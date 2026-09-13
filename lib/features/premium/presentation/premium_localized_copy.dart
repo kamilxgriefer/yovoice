@@ -22,7 +22,10 @@ String localizedPremiumPlanLabel(AppLocalizations copy, PremiumPlan plan) =>
       'Creator account & studio',
       'Konto twórcy i Studio',
     ),
-    '30 owned Servers' => copy.text('30 owned Servers', '30 własnych serwerów'),
+    'Up to 30 Servers after launch' => copy.text(
+      'Up to 30 Servers after launch',
+      'Do 30 serwerów po uruchomieniu',
+    ),
     'Premium presence & privacy' => copy.text(
       'Premium presence & privacy',
       'Wygląd i prywatność Premium',
@@ -35,10 +38,11 @@ String localizedPremiumPlanLabel(AppLocalizations copy, PremiumPlan plan) =>
         'Unlock Creator Studio; age confirmation and opt-in enable Follow',
         'Odblokuj Studio twórcy; potwierdzenie wieku i zgoda włączają Obserwuj',
       ),
-    'Free includes 5; joining stays unlimited for everyone' => copy.text(
-      'Free includes 5; joining stays unlimited for everyone',
-      'Na koncie bezpłatnym możesz mieć 5 własnych serwerów; każdy dołącza bez limitu',
-    ),
+    'After Servers launch, Free includes 5; joining stays unlimited for everyone' =>
+      copy.text(
+        'After Servers launch, Free includes 5; joining stays unlimited for everyone',
+        'Po uruchomieniu Serwerów konto bezpłatne obejmuje 5; każdy dołącza bez limitu',
+      ),
     'Badge, shimmer, privacy controls and a modest Yeels boost' => copy.text(
       'Badge, shimmer, privacy controls and a modest Yeels boost',
       'Odznaka, połysk, ustawienia prywatności i umiarkowane wsparcie rekomendacji w Yeels',
@@ -58,7 +62,10 @@ String localizedPremiumChecklistItem(
     'Premium profile appearance',
     'Wygląd profilu Premium',
   ),
-  '30 owned Servers' => copy.text('30 owned Servers', '30 własnych serwerów'),
+  'Up to 30 Servers after launch' => copy.text(
+    'Up to 30 Servers after launch',
+    'Do 30 serwerów po uruchomieniu',
+  ),
   'Privacy controls' => copy.text('Privacy controls', 'Ustawienia prywatności'),
   'Yeels discovery boost' => copy.text(
     'Yeels discovery boost',
@@ -80,10 +87,11 @@ String localizedPremiumIncludedItem(
       'Creator account and Studio; age confirmation and opt-in enable Follow',
       'Konto twórcy i Studio; potwierdzenie wieku oraz zgoda włączają przycisk Obserwuj',
     ),
-  '30 owned Servers (Free: 5); unlimited joins for everyone' => copy.text(
-    '30 owned Servers (Free: 5); unlimited joins for everyone',
-    '30 własnych serwerów (bezpłatnie: 5); dołączanie bez limitu dla każdego',
-  ),
+  'After Servers launch: up to 30 owned Servers (Free: 5); unlimited joins for everyone' =>
+    copy.text(
+      'After Servers launch: up to 30 owned Servers (Free: 5); unlimited joins for everyone',
+      'Po uruchomieniu Serwerów: do 30 własnych serwerów (bezpłatnie: 5); dołączanie bez limitu dla każdego',
+    ),
   'In private chats, Incognito hides read receipts; typing visibility is separate' =>
     copy.text(
       'In private chats, Incognito hides read receipts; typing visibility is separate',

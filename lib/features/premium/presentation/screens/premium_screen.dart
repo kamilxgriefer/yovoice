@@ -322,8 +322,8 @@ class _PremiumHero extends StatelessWidget {
                   child: _HeroPill(
                     icon: Icons.groups_rounded,
                     label: copy.text(
-                      'Own up to 30 Servers',
-                      'Do 30 własnych serwerów',
+                      '30 Servers when live',
+                      '30 serwerów po starcie',
                     ),
                   ),
                 ),
