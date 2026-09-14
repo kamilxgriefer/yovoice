@@ -289,20 +289,44 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     _setPlaying(false);
     _publishPosition(Duration.zero);
     _cancelPhotoEndTimer();
-    // Serialize the final pause behind any attach mutation already in flight.
-    // The owner awaits this future before disposing the native controller, so
-    // no platform call can finish against an already released decoder.
-    final detachment = _enqueue(() async {
+    // Start the stop immediately: an account exit can remove the card and
+    // dispose this coordinator in the same frame, which makes a queued-only
+    // pause stale before it ever reaches the decoder. Keep the queued barrier
+    // as well so replacement/disposal still waits for every attach mutation
+    // already in flight and for this urgent pause to finish.
+    Object? urgentPauseError;
+    StackTrace? urgentPauseStackTrace;
+    final urgentPause = Future<void>.sync(video.pause).then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {
+        urgentPauseError = error;
+        urgentPauseStackTrace = stackTrace;
+      },
+    );
+    final detachment = _enqueueFinalizer(() async {
+      await urgentPause;
       try {
+        // An older play command may already have passed its last command
+        // check before detach and resume after the urgent pause. This second
+        // pause is deliberately last in the serialized decoder timeline.
         await video.pause();
       } finally {
         // A decoder can reject pause while it is failing. Backing audio still
         // has to stop independently instead of leaking past the detached card.
-        if (_audioLoaded) await _audio?.pause();
+        // Disposal owns audio retirement once it has cleared `_audio`.
+        if (!_disposed && _audioLoaded) await _audio?.pause();
       }
     });
     _notify();
-    return detachment;
+    return detachment.whenComplete(() {
+      final firstError = urgentPauseError;
+      if (firstError != null) {
+        Error.throwWithStackTrace(
+          firstError,
+          urgentPauseStackTrace ?? StackTrace.current,
+        );
+      }
+    });
   }
 
   /// Becoming the active page starts an autoplaying Reel and nothing else: a
@@ -731,6 +755,18 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
       if (_disposed || epoch != _epoch) return;
       await operation();
     });
+    _operations = next.catchError((Object _) {});
+    return next;
+  }
+
+  /// Orders retirement behind already-started mutations even after [dispose].
+  ///
+  /// The operation may touch only detached resources supplied by its caller;
+  /// coordinator state and notifiers are no longer safe once `_disposed` is
+  /// true. Keeping it in `_operations` also makes a live replacement wait for
+  /// the old decoder's final stop.
+  Future<void> _enqueueFinalizer(Future<void> Function() operation) {
+    final next = _operations.then((_) => operation());
     _operations = next.catchError((Object _) {});
     return next;
   }

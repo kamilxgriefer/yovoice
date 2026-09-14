@@ -111,6 +111,11 @@ void main() {
         await blockedVolume.started.future;
 
         final firstDetachment = coordinator.detachVideo(first);
+        expect(
+          blockedPause.started.isCompleted,
+          isTrue,
+          reason: 'detach must start silencing the old decoder immediately',
+        );
         final replacementAttach = coordinator.attachVideo(replacement);
         blockedVolume.release.complete();
         await firstAttach;
@@ -163,6 +168,101 @@ void main() {
         await expectLater(coordinator.detachVideo(video), throwsStateError);
 
         expect(audio.pauseCount, audioPausesBeforeDetach + 1);
+      },
+    );
+
+    test(
+      'a rejected definitive pause is reported after backing audio stops',
+      () async {
+        final audio = _FakeAudioPlayback();
+        final video = _FakeVideoPlayback();
+        final coordinator = ReelPlaybackCoordinator(
+          reel: _videoReel(),
+          resolveBackingAudioUri: () async =>
+              Uri.parse('https://storage.googleapis.com/yovoice/audio.mp3'),
+          audioPlaybackFactory: () => audio,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.attachVideo(video);
+        await coordinator.toggle();
+        final audioPausesBeforeDetach = audio.pauseCount;
+
+        final detachment = coordinator.detachVideo(video);
+        video.pauseError = StateError('definitive pause failed');
+        await expectLater(
+          detachment,
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              'definitive pause failed',
+            ),
+          ),
+        );
+
+        expect(video.pauseCount, 2);
+        expect(audio.pauseCount, audioPausesBeforeDetach + 1);
+      },
+    );
+
+    test(
+      'a final pause wins after a checked play is delayed through disposal',
+      () async {
+        final audio = _FakeAudioPlayback();
+        final oldVideo = _FakeVideoPlayback();
+        final replacement = _FakeVideoPlayback();
+        final coordinator = ReelPlaybackCoordinator(
+          reel: _videoReel(),
+          resolveBackingAudioUri: () async =>
+              Uri.parse('https://storage.googleapis.com/yovoice/audio.mp3'),
+          audioPlaybackFactory: () => audio,
+        );
+
+        await coordinator.attachVideo(oldVideo);
+        await coordinator.toggle();
+        await coordinator.toggle();
+        oldVideo.position = const Duration(seconds: 7);
+        final delayedPrePlaySeek = audio.blockNextSeek();
+        final restarting = coordinator.toggle();
+        await delayedPrePlaySeek.started.future;
+
+        final detachment = coordinator.detachVideo(oldVideo);
+        expect(oldVideo.playing, isFalse);
+        final finalPause = oldVideo.blockNextPause();
+        final replacementAttach = coordinator.attachVideo(replacement);
+        coordinator.dispose();
+
+        delayedPrePlaySeek.release.complete();
+        await restarting;
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          finalPause.started.isCompleted,
+          isTrue,
+          reason: 'the finalizer must run even after the epoch is disposed',
+        );
+        expect(
+          oldVideo.playing,
+          isTrue,
+          reason: 'the fixture must exercise the already-checked late play',
+        );
+        expect(
+          replacement.volume,
+          1,
+          reason: 'replacement attach must wait for the definitive old pause',
+        );
+
+        finalPause.release.complete();
+        await Future.wait<void>(<Future<void>>[
+          detachment,
+          replacementAttach,
+          coordinator.retirement,
+        ]);
+        expect(oldVideo.playCount, 2);
+        expect(oldVideo.playing, isFalse);
+        expect(finalPause.returned.isCompleted, isTrue);
+        expect(replacement.volume, 1);
+        expect(replacement.playCount, 0);
       },
     );
 
