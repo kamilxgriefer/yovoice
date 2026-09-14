@@ -5,6 +5,24 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 
+/// A glyph-local outline for words that sit directly on unknown footage.
+///
+/// The crisp offsets make the immediately adjacent colour dark on bright
+/// frames, while the shared soft shadows separate the same glyphs from dark
+/// or detailed frames. This preserves a transparent header without relying on
+/// a full-width contrast scrim.
+const List<Shadow> _immersiveChromeTextShadows = <Shadow>[
+  Shadow(color: Color(0xE6000000), offset: Offset(-1.5, 0)),
+  Shadow(color: Color(0xE6000000), offset: Offset(1.5, 0)),
+  Shadow(color: Color(0xE6000000), offset: Offset(0, -1.5)),
+  Shadow(color: Color(0xE6000000), offset: Offset(0, 1.5)),
+  Shadow(color: Color(0xD9000000), offset: Offset(-1, -1)),
+  Shadow(color: Color(0xD9000000), offset: Offset(1, -1)),
+  Shadow(color: Color(0xD9000000), offset: Offset(-1, 1)),
+  Shadow(color: Color(0xD9000000), offset: Offset(1, 1)),
+  ...overlayTextShadows,
+];
+
 /// The row-1 pieces an immersive feed's HOST owns.
 ///
 /// A feed screen knows about its own pool, never about what formats exist
@@ -60,11 +78,10 @@ class ImmersiveChromeOption {
 /// by a separate line, weight AND by the `selected` semantic flag, never by
 /// colour alone.
 ///
-/// The chrome is deliberately theme-invariant: it sits over content of
-/// unknown luminance, not over the page canvas, so Dark and Pearl are
-/// identical here. That is the same principle the overlay plates already
-/// prove. Every foreground clears 4.5:1 against the composited track even
-/// over pure-white media.
+/// The chrome is deliberately theme-invariant: it sits directly over media,
+/// not over a separate header surface, so Dark and Pearl are identical here.
+/// The text shadows and the small action plates carry local contrast without
+/// turning the top of every Yeel into an opaque black block.
 class ImmersiveFeedChrome extends StatelessWidget {
   const ImmersiveFeedChrome({
     required this.gutter,
@@ -107,52 +124,45 @@ class ImmersiveFeedChrome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        // Unchanged: the scrim that makes any media legible beneath the
-        // chrome. A media overlay may stay dark in both appearances.
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: <Color>[Color(0xF0000000), Color(0xB8000000)],
-        ),
+    // Keep the whole header transparent. The populated phone layout places it
+    // over the Yeel itself; painting a full-width scrim here produces the
+    // reported black rectangle and visually detaches the controls from the
+    // media. Each foreground atom already owns its contrast treatment.
+    return Padding(
+      // No safe-area inset is added here: every host that mounts this chrome
+      // already sits inside a SafeArea, so reserving the notch again would
+      // push the first row down by the status bar a second time.
+      padding: EdgeInsetsDirectional.fromSTEB(
+        gutter,
+        AppRhythm.hairline,
+        gutter,
+        10,
       ),
-      child: Padding(
-        // No safe-area inset is added here: every host that mounts this
-        // chrome already sits inside a SafeArea, so reserving the notch again
-        // would push the first row down by the status bar a second time.
-        padding: EdgeInsetsDirectional.fromSTEB(
-          gutter,
-          AppRhythm.hairline,
-          gutter,
-          10,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            _FormatRow(
-              formatSwitch: formatSwitch,
-              leading: leading,
-              trailing: trailing,
-            ),
-            // The one gap that makes two levels read as two levels.
-            const SizedBox(height: AppRhythm.tight),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: ImmersiveFilterRow(
-                    options: filters,
-                    selectedIndex: selectedFilterIndex,
-                    onSelected: onFilterSelected,
-                    groupLabel: filterGroupLabel,
-                  ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _FormatRow(
+            formatSwitch: formatSwitch,
+            leading: leading,
+            trailing: trailing,
+          ),
+          // The one gap that makes two levels read as two levels.
+          const SizedBox(height: AppRhythm.tight),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: ImmersiveFilterRow(
+                  options: filters,
+                  selectedIndex: selectedFilterIndex,
+                  onSelected: onFilterSelected,
+                  groupLabel: filterGroupLabel,
                 ),
-                ?filterTrailing,
-              ],
-            ),
-          ],
-        ),
+              ),
+              ?filterTrailing,
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -471,7 +481,9 @@ class _SwitchSegmentState extends State<_SwitchSegment>
                           fontWeight: selected
                               ? FontWeight.w800
                               : FontWeight.w600,
-                          shadows: onCanvas ? null : overlayTextShadows,
+                          shadows: onCanvas
+                              ? null
+                              : _immersiveChromeTextShadows,
                         ),
                       ),
                       const SizedBox(height: 3),
@@ -495,6 +507,12 @@ class _SwitchSegmentState extends State<_SwitchSegment>
                           ),
                           boxShadow: selected
                               ? <BoxShadow>[
+                                  if (!onCanvas)
+                                    const BoxShadow(
+                                      color: Color(0xE6000000),
+                                      blurRadius: 0,
+                                      spreadRadius: 2,
+                                    ),
                                   BoxShadow(
                                     color: selectedForeground.withValues(
                                       alpha: .62,
@@ -520,6 +538,15 @@ class _SwitchSegmentState extends State<_SwitchSegment>
                         color: _focused ? focusRing : Colors.transparent,
                         width: 2,
                       ),
+                      boxShadow: _focused && !onCanvas
+                          ? const <BoxShadow>[
+                              BoxShadow(
+                                color: Color(0xE6000000),
+                                blurRadius: 0,
+                                spreadRadius: 1,
+                              ),
+                            ]
+                          : null,
                     ),
                   ),
                 ),
@@ -667,6 +694,15 @@ class _FilterInkState extends State<_FilterInk>
                     color: _focused ? Colors.white : Colors.transparent,
                     width: 2,
                   ),
+                  boxShadow: _focused
+                      ? const <BoxShadow>[
+                          BoxShadow(
+                            color: Color(0xE6000000),
+                            blurRadius: 0,
+                            spreadRadius: 1,
+                          ),
+                        ]
+                      : null,
                 ),
                 child: Text(
                   widget.option.label,
@@ -677,7 +713,7 @@ class _FilterInkState extends State<_FilterInk>
                     fontSize: 13,
                     height: 1.2,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    shadows: overlayTextShadows,
+                    shadows: _immersiveChromeTextShadows,
                   ),
                 ),
               ),

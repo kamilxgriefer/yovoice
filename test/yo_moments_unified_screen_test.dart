@@ -313,6 +313,49 @@ void main() {
     }
   });
 
+  testWidgets(
+    'production mobile Yeels route paints no black chrome block over media',
+    (tester) async {
+      const size = Size(390, 844);
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      await _pump(
+        tester,
+        locale: const Locale('pl'),
+        child: MomentsScreen(
+          isRootTab: true,
+          initialFormat: YoMomentsFormat.reels,
+          reelService: _reelServiceWithItem(),
+          onCreateReel: () async {},
+        ),
+      );
+
+      final chrome = find.byKey(const ValueKey<String>('reels-chrome'));
+      expect(chrome, findsOneWidget);
+      expect(find.text('Głos'), findsOneWidget);
+      expect(find.text('Yeels'), findsOneWidget);
+
+      final blackGradients = tester
+          .widgetList<DecoratedBox>(
+            find.descendant(of: chrome, matching: find.byType(DecoratedBox)),
+          )
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .map((decoration) => decoration.gradient)
+          .whereType<LinearGradient>()
+          .where(
+            (gradient) => gradient.colors.any(
+              (color) =>
+                  color.r == 0 && color.g == 0 && color.b == 0 && color.a > .25,
+            ),
+          );
+      expect(blackGradients, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('legacy Yeels destination opens unified route-aware screen', (
     tester,
   ) async {

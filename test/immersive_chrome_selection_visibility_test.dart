@@ -134,6 +134,20 @@ void main() {
       expect(yeels.style?.fontSize, 17);
       expect(yeels.style?.fontWeight, FontWeight.w600);
       expect(yeels.style?.color, Colors.white);
+      final crispOutline = voice.style!.shadows!.where(
+        (shadow) => shadow.blurRadius == 0 && shadow.offset != Offset.zero,
+      );
+      expect(
+        crispOutline.length,
+        greaterThanOrEqualTo(8),
+        reason:
+            'The selected violet word needs a glyph-local dark outline on '
+            'bright media now that the full-width scrim is gone.',
+      );
+      expect(
+        _contrast(voice.style!.color!, Colors.black),
+        greaterThanOrEqualTo(4.5),
+      );
 
       final active = find.byKey(
         const ValueKey<String>('immersive-format-indicator-Voice'),
@@ -143,6 +157,19 @@ void main() {
       );
       expect(tester.getSize(active).width, 30);
       expect(tester.getSize(inactive).width, 0);
+      final indicator =
+          tester.widget<AnimatedContainer>(active).decoration as BoxDecoration;
+      expect(
+        indicator.boxShadow,
+        contains(
+          isA<BoxShadow>()
+              .having((shadow) => shadow.color.a, 'alpha', greaterThan(.8))
+              .having((shadow) => shadow.spreadRadius, 'spread', 2),
+        ),
+        reason:
+            'The violet selection line needs a local dark edge on bright '
+            'media without bringing back the full header block.',
+      );
 
       final switcher = find.byType(ImmersiveSegmentedSwitch);
       final tileFills = tester
@@ -163,6 +190,41 @@ void main() {
       );
     },
   );
+
+  testWidgets('immersive chrome has no full-width black header scrim', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(width: 390, scale: 1, selectedFormat: 1, selectedFilter: 0),
+    );
+    await tester.pumpAndSettle();
+
+    final blackGradients = tester
+        .widgetList<DecoratedBox>(
+          find.descendant(
+            of: find.byKey(_chrome),
+            matching: find.byType(DecoratedBox),
+          ),
+        )
+        .map((widget) => widget.decoration)
+        .whereType<BoxDecoration>()
+        .map((decoration) => decoration.gradient)
+        .whereType<LinearGradient>()
+        .where(
+          (gradient) => gradient.colors.any(
+            (color) =>
+                color.r == 0 && color.g == 0 && color.b == 0 && color.a > .25,
+          ),
+        );
+
+    expect(
+      blackGradients,
+      isEmpty,
+      reason:
+          'Głos and Yeels must sit directly over the media; a chrome-wide '
+          'black gradient is the reported black block.',
+    );
+  });
 
   for (final brightness in Brightness.values) {
     testWidgets('canvas active violet adapts to ${brightness.name}', (
@@ -436,4 +498,16 @@ void main() {
     }
     handle.dispose();
   });
+}
+
+double _contrast(Color first, Color second) {
+  final firstLuminance = first.computeLuminance();
+  final secondLuminance = second.computeLuminance();
+  final lighter = firstLuminance > secondLuminance
+      ? firstLuminance
+      : secondLuminance;
+  final darker = firstLuminance > secondLuminance
+      ? secondLuminance
+      : firstLuminance;
+  return (lighter + .05) / (darker + .05);
 }
