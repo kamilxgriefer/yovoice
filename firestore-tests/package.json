@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@firebase/rules-unit-testing": "^5.0.2",
-    "firebase": "^12.18.0"
+    "firebase": "^12.19.0"
   },
   "devDependencies": {
     "firebase-tools": "15.29.0"
