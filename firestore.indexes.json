@@ -743,6 +743,16 @@
       ]
     },
     {
+      "collectionGroup": "serverFollows",
+      "fieldPath": "serverId",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
       "collectionGroup": "notificationDeliveryEvents",
       "fieldPath": "expiresAt",
       "ttl": true,
