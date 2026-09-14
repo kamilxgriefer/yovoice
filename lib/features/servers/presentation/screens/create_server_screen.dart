@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -38,6 +40,8 @@ class CreateServerScreen extends StatefulWidget {
 }
 
 class _CreateServerScreenState extends State<CreateServerScreen> {
+  static const _pendingStoreWriteTimeout = Duration(seconds: 2);
+
   late final ServerRepository _repository;
   final _form = GlobalKey<FormState>();
 
@@ -63,6 +67,14 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
   String _language = 'English';
   bool _languageChosen = false;
   ServerCreationRequest? _submission;
+
+  /// The exact request whose durable-store arbitration timed out.
+  ///
+  /// It is kept separate from [_submission]: only a request the store has
+  /// accepted (or definitively failed to persist) may reach the backend. A
+  /// retry asks the store again with this same identity, so a late older
+  /// winner can never be bypassed by creating a second server.
+  ServerCreationRequest? _pendingStoreCandidate;
   Object? _error;
   bool _busy = false;
   bool _completed = false;
@@ -138,7 +150,12 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
     if (!mounted || _type != type) return;
     setState(() {
       _restoring = false;
-      if (pending == null || _submission != null || _busy) return;
+      if (pending == null ||
+          _submission != null ||
+          _pendingStoreCandidate != null ||
+          _busy) {
+        return;
+      }
       _applySubmission(pending);
       _resumed = true;
       _error = null;
@@ -157,7 +174,9 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
 
   Future<void> _forget(ServerCreationRequest request) async {
     try {
-      await _repository.forgetPendingCreation(request);
+      await _repository
+          .forgetPendingCreation(request)
+          .timeout(_pendingStoreWriteTimeout);
     } catch (_) {
       // Failing to clear a resolved record only costs a redundant resend
       // later, which the backend answers idempotently.
@@ -168,30 +187,49 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
     if (_busy || _completed || _restoring || _type == null) return;
     var submission = _submission;
     if (submission == null) {
-      if (!_form.currentState!.validate()) return;
-      final type = _type!;
-      final candidate = ServerCreationRequest(
-        requestId: _repository.newRequestId(),
-        serverType: type,
-        name: _name.text.trim(),
-        description: _description.text.trim(),
-        privacy: _privacy(type)!,
-        defaultLanguage: _language,
-      );
+      late final ServerCreationRequest candidate;
+      final pendingCandidate = _pendingStoreCandidate;
+      if (pendingCandidate == null) {
+        if (!_form.currentState!.validate()) return;
+        final type = _type!;
+        candidate = ServerCreationRequest(
+          requestId: _repository.newRequestId(),
+          serverType: type,
+          name: _name.text.trim(),
+          description: _description.text.trim(),
+          privacy: _privacy(type)!,
+          defaultLanguage: _language,
+        );
+      } else {
+        candidate = pendingCandidate;
+      }
       FocusManager.instance.primaryFocus?.unfocus();
       setState(() {
         _busy = true;
         _error = null;
+        _pendingStoreCandidate = candidate;
       });
       // Committed before the network write, so the identity survives the
       // screen, the shell's content slot and the process.
       try {
-        submission = await _repository.rememberPendingCreation(candidate);
+        submission = await _repository
+            .rememberPendingCreation(candidate)
+            .timeout(_pendingStoreWriteTimeout);
+      } on TimeoutException catch (error) {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _error = error;
+          _resumed = false;
+        });
+        _revealOutcome();
+        return;
       } catch (_) {
         // Durable storage is a safety net, not a gate.
         submission = candidate;
       }
       if (!mounted) return;
+      _pendingStoreCandidate = null;
       if (identical(submission, candidate)) {
         _submission = candidate;
       } else {
@@ -208,7 +246,10 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
     }
     try {
       final result = await _repository.createServer(submission);
-      await _forget(submission);
+      // Local idempotency cleanup is best-effort and must never hold a confirmed
+      // backend success on the "Creating…" state. A failed cleanup can only
+      // cause a later safe replay of the same requestId.
+      unawaited(_forget(submission));
       if (!mounted) return;
       setState(() {
         _busy = false;
@@ -236,7 +277,7 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
       final failure = classifyServerCreationFailure(error);
       // A refusal that happened before any write has answered for this id
       // for good; only an uncertain outcome keeps the record resumable.
-      if (failure.resolvesRequest) await _forget(submission);
+      if (failure.resolvesRequest) unawaited(_forget(submission));
       if (!mounted) return;
       setState(() {
         _busy = false;
@@ -278,9 +319,17 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
     final palette = context.appPalette;
     final type = _type;
     return PopScope(
-      canPop: !_busy && (type == null || _submission != null),
+      canPop:
+          !_busy &&
+          (type == null ||
+              _submission != null ||
+              _pendingStoreCandidate != null),
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && !_busy && _submission == null && type != null) {
+        if (!didPop &&
+            !_busy &&
+            _submission == null &&
+            _pendingStoreCandidate == null &&
+            type != null) {
           setState(() => _setType(null));
         }
       },
@@ -299,7 +348,9 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
                   onPressed: _busy
                       ? null
                       : () {
-                          if (type != null && _submission == null) {
+                          if (type != null &&
+                              _submission == null &&
+                              _pendingStoreCandidate == null) {
                             setState(() => _setType(null));
                           } else {
                             Navigator.of(context).maybePop();
@@ -341,7 +392,8 @@ class _CreateServerScreenState extends State<CreateServerScreen> {
     // `_submission` is still null for a frame or a slow disk while the tap has
     // already been accepted. A field that unlocks in that window can change
     // the payload the resumed identity will send (re-review R-7).
-    final locked = _busy || _submission != null;
+    final locked =
+        _busy || _submission != null || _pendingStoreCandidate != null;
     final error = _error;
     final failure = error == null ? null : classifyServerCreationFailure(error);
     // A failure that resending cannot fix must not offer a button that only

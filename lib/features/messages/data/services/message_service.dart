@@ -112,36 +112,54 @@ class _DirectConversationUnreadState {
   }
 }
 
+/// Combines two live sources while remaining safe to listen, cancel and listen
+/// again. Lazy Sliver children do exactly that as they leave and re-enter the
+/// viewport, so every downstream listener owns fresh upstream subscriptions.
 Stream<R> _combineLatest2<A, B, R>(
-  Stream<A> first,
-  Stream<B> second,
+  Stream<A> Function() firstSource,
+  Stream<B> Function() secondSource,
   R Function(A first, B second) combine,
 ) {
-  late final StreamController<R> controller;
-  StreamSubscription<A>? firstSubscription;
-  StreamSubscription<B>? secondSubscription;
-  A? latestFirst;
-  B? latestSecond;
-  var hasFirst = false;
-  var hasSecond = false;
-  var firstDone = false;
-  var secondDone = false;
+  return Stream<R>.multi((controller) {
+    StreamSubscription<A>? firstSubscription;
+    StreamSubscription<B>? secondSubscription;
+    A? latestFirst;
+    B? latestSecond;
+    var hasFirst = false;
+    var hasSecond = false;
+    var firstDone = false;
+    var secondDone = false;
 
-  void emit() {
-    if (!controller.isClosed && hasFirst && hasSecond) {
-      controller.add(combine(latestFirst as A, latestSecond as B));
+    void emit() {
+      if (controller.isClosed || !hasFirst || !hasSecond) return;
+      try {
+        controller.add(combine(latestFirst as A, latestSecond as B));
+      } catch (error, stackTrace) {
+        controller.addError(error, stackTrace);
+      }
     }
-  }
 
-  void closeIfDone() {
-    if (!controller.isClosed && firstDone && secondDone) {
-      unawaited(controller.close());
+    void closeIfDone() {
+      if (!controller.isClosed && firstDone && secondDone) {
+        unawaited(controller.close());
+      }
     }
-  }
 
-  controller = StreamController<R>(
-    onListen: () {
-      firstSubscription = first.listen(
+    controller.onPause = () {
+      firstSubscription?.pause();
+      secondSubscription?.pause();
+    };
+    controller.onResume = () {
+      firstSubscription?.resume();
+      secondSubscription?.resume();
+    };
+    controller.onCancel = () async {
+      await firstSubscription?.cancel();
+      await secondSubscription?.cancel();
+    };
+
+    try {
+      firstSubscription = firstSource().listen(
         (value) {
           latestFirst = value;
           hasFirst = true;
@@ -153,7 +171,7 @@ Stream<R> _combineLatest2<A, B, R>(
           closeIfDone();
         },
       );
-      secondSubscription = second.listen(
+      secondSubscription = secondSource().listen(
         (value) {
           latestSecond = value;
           hasSecond = true;
@@ -165,13 +183,13 @@ Stream<R> _combineLatest2<A, B, R>(
           closeIfDone();
         },
       );
-    },
-    onCancel: () async {
-      await firstSubscription?.cancel();
-      await secondSubscription?.cancel();
-    },
-  );
-  return controller.stream;
+    } catch (error, stackTrace) {
+      unawaited(firstSubscription?.cancel());
+      unawaited(secondSubscription?.cancel());
+      controller.addError(error, stackTrace);
+      unawaited(controller.close());
+    }
+  });
 }
 
 class _DirectAttachmentReservation {
@@ -536,37 +554,40 @@ class MessageService {
     bool includeArchived = false,
   }) {
     final currentUserId = _currentUserId;
-    final conversations = _conversations
-        .where('participantIds', arrayContains: currentUserId)
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs.map(Conversation.fromFirestore).toList(),
-        );
-    final privateUnread = _watchDirectUnreadOverrides(currentUserId);
-
-    return _combineLatest2(conversations, privateUnread, (roots, overrides) {
-      final items = roots
+    return _combineLatest2(
+      () => _conversations
+          .where('participantIds', arrayContains: currentUserId)
+          .snapshots()
           .map(
-            (conversation) => overrides.containsKey(conversation.id)
-                ? conversation.withUnreadCountFor(
-                    currentUserId,
-                    overrides[conversation.id]!,
-                  )
-                : conversation,
-          )
-          // A conversation this account deleted is gone from every list,
-          // archived included — `includeArchived` is about a tab, not about
-          // seeing everything.
-          .where(
-            (conversation) =>
-                !conversation.isDeletedFor(currentUserId) &&
-                (includeArchived || !conversation.isArchivedFor(currentUserId)),
-          )
-          .toList(growable: false);
+            (snapshot) =>
+                snapshot.docs.map(Conversation.fromFirestore).toList(),
+          ),
+      () => _watchDirectUnreadOverrides(currentUserId),
+      (roots, overrides) {
+        final items = roots
+            .map(
+              (conversation) => overrides.containsKey(conversation.id)
+                  ? conversation.withUnreadCountFor(
+                      currentUserId,
+                      overrides[conversation.id]!,
+                    )
+                  : conversation,
+            )
+            // A conversation this account deleted is gone from every list,
+            // archived included — `includeArchived` is about a tab, not about
+            // seeing everything.
+            .where(
+              (conversation) =>
+                  !conversation.isDeletedFor(currentUserId) &&
+                  (includeArchived ||
+                      !conversation.isArchivedFor(currentUserId)),
+            )
+            .toList(growable: false);
 
-      items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-      return items;
-    });
+        items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        return items;
+      },
+    );
   }
 
   Stream<Map<String, int>> _watchDirectUnreadOverrides(String currentUserId) {
@@ -667,37 +688,33 @@ class MessageService {
   /// rechecks both documents on every mutation and remains authoritative.
   Stream<PremiumMessagingPrivacy> watchPremiumMessagingPrivacy() {
     final uid = _currentUserId;
-    final preferences = _firestore
-        .collection('directPrivacyPreferences')
-        .doc(uid)
-        .snapshots();
-    final entitlements = _firestore
-        .collection('entitlements')
-        .doc(uid)
-        .snapshots();
-    return _combineLatest2(preferences, entitlements, (
-      preference,
-      entitlement,
-    ) {
-      var premiumActive = false;
-      try {
-        premiumActive = SubscriptionEntitlements.fromFirestore(
-          entitlement,
-        ).isPremium;
-      } catch (_) {
-        // A malformed server projection cannot keep a local privacy control
-        // active. The callable independently applies the same fail-closed
-        // entitlement boundary.
-      }
-      if (!premiumActive) {
-        return PremiumMessagingPrivacy.disabled;
-      }
-      try {
-        return PremiumMessagingPrivacy.fromFirestore(preference);
-      } on FormatException {
-        return PremiumMessagingPrivacy.privacySafeHidden;
-      }
-    });
+    return _combineLatest2(
+      () => _firestore
+          .collection('directPrivacyPreferences')
+          .doc(uid)
+          .snapshots(),
+      () => _firestore.collection('entitlements').doc(uid).snapshots(),
+      (preference, entitlement) {
+        var premiumActive = false;
+        try {
+          premiumActive = SubscriptionEntitlements.fromFirestore(
+            entitlement,
+          ).isPremium;
+        } catch (_) {
+          // A malformed server projection cannot keep a local privacy control
+          // active. The callable independently applies the same fail-closed
+          // entitlement boundary.
+        }
+        if (!premiumActive) {
+          return PremiumMessagingPrivacy.disabled;
+        }
+        try {
+          return PremiumMessagingPrivacy.fromFirestore(preference);
+        } on FormatException {
+          return PremiumMessagingPrivacy.privacySafeHidden;
+        }
+      },
+    );
   }
 
   /// The conversation's messages, minus anything this account deleted.

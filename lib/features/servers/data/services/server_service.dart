@@ -341,6 +341,7 @@ class ServerService
     ServerCreationRequestStore? pendingStore,
     DateTime Function()? now,
     Stream<List<ServerInviteCandidate>> Function()? inviteCandidates,
+    Duration creationAttemptTimeout = const Duration(seconds: 15),
   }) : _firestoreOverride = firestore,
        _authOverride = auth,
        _functionsOverride = functions,
@@ -348,7 +349,8 @@ class ServerService
        _pendingStore =
            pendingStore ?? SharedPreferencesServerCreationRequestStore(),
        _now = now ?? DateTime.now,
-       _inviteCandidatesOverride = inviteCandidates;
+       _inviteCandidatesOverride = inviteCandidates,
+       _creationAttemptTimeout = creationAttemptTimeout;
 
   /// How long an unresolved creation stays resumable. Long enough to survive
   /// a night offline; short enough that a record nobody ever resends does not
@@ -361,6 +363,7 @@ class ServerService
   final ServerCallable? _callOverride;
   final ServerCreationRequestStore _pendingStore;
   final DateTime Function() _now;
+  final Duration _creationAttemptTimeout;
   final Stream<List<ServerInviteCandidate>> Function()?
   _inviteCandidatesOverride;
 
@@ -425,12 +428,63 @@ class ServerService
     await _invoke(name, data);
   }
 
+  String? _creationPrincipalId() {
+    // Call overrides are a unit-test seam and can run without a Firebase app.
+    // When Auth is supplied alongside the seam, keep the production account
+    // binding enabled so account-switch races remain testable.
+    if (_callOverride != null && _authOverride == null) return null;
+    return _auth.currentUser?.uid;
+  }
+
+  FirebaseFunctionsException _creationSessionChanged() =>
+      FirebaseFunctionsException(
+        code: 'unauthenticated',
+        message: 'The signed-in account changed while creating the server.',
+      );
+
+  void _requireCreationPrincipal(String? expectedUserId) {
+    if (expectedUserId != null && _creationPrincipalId() != expectedUserId) {
+      throw _creationSessionChanged();
+    }
+  }
+
   @override
   Future<ServerCreationResult> createServer(
     ServerCreationRequest request,
-  ) async => ServerCreationResult.fromMap(
-    await _invoke('createServerV1', request.toCallableData()),
-  );
+  ) async {
+    final data = request.toCallableData();
+    final initialUserId = _creationPrincipalId();
+    if ((_callOverride == null || _authOverride != null) &&
+        (initialUserId == null || initialUserId.isEmpty)) {
+      throw _creationSessionChanged();
+    }
+    for (var attempt = 0; ; attempt++) {
+      try {
+        final response = await _invoke(
+          'createServerV1',
+          data,
+        ).timeout(_creationAttemptTimeout);
+        _requireCreationPrincipal(initialUserId);
+        return ServerCreationResult.fromMap(response);
+      } on TimeoutException {
+        _requireCreationPrincipal(initialUserId);
+        // A timeout can mean the transaction committed but its acknowledgement
+        // never reached this device. One automatic replay of the exact same
+        // request is safe: createServerV1 is idempotent on requestId and returns
+        // the original receipt when the graph already exists.
+        if (attempt == 0) {
+          continue;
+        }
+        rethrow;
+      } catch (_) {
+        // A late refusal belongs to the account that started the attempt. Do
+        // not let a replacement session clear that owner's pending request or
+        // render the refusal as the replacement user's result.
+        _requireCreationPrincipal(initialUserId);
+        rethrow;
+      }
+    }
+  }
 
   @override
   Future<ServerInviteResult> createInvite({

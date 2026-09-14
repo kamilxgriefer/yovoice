@@ -20,6 +20,27 @@ Finder get _unavailable =>
     find.byKey(const ValueKey('server-create-unavailable'));
 Finder get _errorPanel => find.byKey(const ValueKey('server-create-error'));
 
+class _HangingForgetRepository extends TestServerRepository {
+  final cleanup = Completer<void>();
+
+  @override
+  Future<void> forgetPendingCreation(ServerCreationRequest request) =>
+      cleanup.future;
+}
+
+class _HangingRememberRepository extends TestServerRepository {
+  final remember = Completer<ServerCreationRequest>();
+  ServerCreationRequest? received;
+
+  @override
+  Future<ServerCreationRequest> rememberPendingCreation(
+    ServerCreationRequest request,
+  ) {
+    received = request;
+    return remember.future;
+  }
+}
+
 Future<void> _fillAndSubmit(
   WidgetTester tester, {
   String name = 'Nasza ekipa',
@@ -49,6 +70,116 @@ bool _paintsLiveness(Widget widget) {
 }
 
 void main() {
+  testWidgets(
+    'stalled local arbitration stops Creating and sends only its resolved winner',
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = _HangingRememberRepository();
+      final created = <ServerCreationResult>[];
+      await pumpServers(
+        tester,
+        CreateServerScreen(
+          repository: repository,
+          initialType: ServerType.friends,
+          onCreated: created.add,
+        ),
+      );
+
+      await tester.enterText(
+        find.byKey(const ValueKey('server-name')),
+        'Nasza ekipa',
+      );
+      await tester.ensureVisible(_submit);
+      await tester.tap(_submit);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+
+      expect(repository.requests, isEmpty);
+      expect(_errorPanel, findsOneWidget);
+      expect(find.text('Tworzenie…'), findsNothing);
+
+      const older = ServerCreationRequest(
+        requestId: 'older-request-that-may-have-committed',
+        serverType: ServerType.friends,
+        name: 'Wcześniejszy serwer',
+        description: '',
+        privacy: ServerPrivacy.inviteOnly,
+        defaultLanguage: 'Polish',
+      );
+      repository.remember.complete(older);
+      await tester.ensureVisible(_submit);
+      await tester.tap(_submit);
+      await tester.pumpAndSettle();
+
+      expect(repository.requests.single.requestId, older.requestId);
+      expect(
+        repository.requests.single.requestId,
+        isNot(repository.received!.requestId),
+      );
+      expect(created.single.serverId, 'saved');
+      expect(find.text('Tworzenie…'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 3));
+    },
+  );
+
+  testWidgets(
+    'confirmed creation leaves Creating even when local cleanup stalls',
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = _HangingForgetRepository();
+      final created = <ServerCreationResult>[];
+      await pumpServers(
+        tester,
+        CreateServerScreen(
+          repository: repository,
+          initialType: ServerType.friends,
+          onCreated: created.add,
+        ),
+      );
+
+      await tester.enterText(
+        find.byKey(const ValueKey('server-name')),
+        'Nasza ekipa',
+      );
+      await tester.ensureVisible(_submit);
+      await tester.tap(_submit);
+      await tester.pumpAndSettle();
+
+      expect(created.single.serverId, 'saved');
+      expect(find.text('Tworzenie…'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 3));
+    },
+  );
+
+  testWidgets(
+    'a definitive refusal leaves Creating even when local cleanup stalls',
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = _HangingForgetRepository()
+        ..alwaysFailWith = FirebaseFunctionsException(
+          code: 'invalid-argument',
+          message: 'refused',
+        );
+      await pumpServers(
+        tester,
+        CreateServerScreen(
+          repository: repository,
+          initialType: ServerType.friends,
+          onCreated: (_) => fail('a refused request cannot report success'),
+        ),
+      );
+
+      await _fillAndSubmit(tester);
+
+      expect(_errorPanel, findsOneWidget);
+      expect(find.text('Tworzenie…'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 3));
+    },
+  );
+
   group('the held backend is reported honestly', () {
     for (final code in ['not-found', 'unimplemented', 'no-app']) {
       testWidgets('$code renders the unavailable state, never a success', (
@@ -162,6 +293,10 @@ void main() {
           classifyServerCreationFailure(
             Exception('SocketException: Failed host lookup'),
           ),
+          ServerCreationFailure.offline,
+        );
+        expect(
+          classifyServerCreationFailure(TimeoutException('stalled response')),
           ServerCreationFailure.offline,
         );
         expect(ServerCreationFailure.unavailable.isBackendMissing, isTrue);

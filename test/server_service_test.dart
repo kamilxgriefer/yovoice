@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +10,217 @@ import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_service.dart';
 
 void main() {
+  test(
+    'creation recovers a committed request whose first acknowledgement stalls',
+    () async {
+      var calls = 0;
+      final payloads = <Map<String, Object?>>[];
+      final firstAcknowledgement = Completer<Map<Object?, Object?>>();
+      final service = ServerService(
+        creationAttemptTimeout: const Duration(milliseconds: 10),
+        call: (name, data) async {
+          expect(name, 'createServerV1');
+          calls++;
+          payloads.add(data);
+          if (calls == 1) return firstAcknowledgement.future;
+          return {
+            'serverId': 'saved',
+            'defaultChannelId': 'general',
+            'channelIds': ['general', 'voice'],
+            'alreadyExisted': true,
+          };
+        },
+      );
+
+      const request = ServerCreationRequest(
+        requestId: 'stable',
+        serverType: ServerType.friends,
+        name: 'Friends',
+        description: '',
+        privacy: ServerPrivacy.inviteOnly,
+        defaultLanguage: 'Polish',
+      );
+      final result = await service.createServer(request);
+
+      expect(calls, 2);
+      expect(identical(payloads[0], payloads[1]), isTrue);
+      expect(payloads[1]['requestId'], 'stable');
+      expect(result.serverId, 'saved');
+      expect(result.alreadyExisted, isTrue);
+    },
+  );
+
+  test('creation stops waiting after two stalled acknowledgements', () async {
+    var calls = 0;
+    final service = ServerService(
+      creationAttemptTimeout: const Duration(milliseconds: 10),
+      call: (_, _) {
+        calls++;
+        return Completer<Map<Object?, Object?>>().future;
+      },
+    );
+
+    await expectLater(
+      service.createServer(
+        const ServerCreationRequest(
+          requestId: 'stable',
+          serverType: ServerType.friends,
+          name: 'Friends',
+          description: '',
+          privacy: ServerPrivacy.inviteOnly,
+          defaultLanguage: 'Polish',
+        ),
+      ),
+      throwsA(isA<TimeoutException>()),
+    );
+    expect(calls, 2);
+  });
+
+  test('creation never replays under a different authenticated user', () async {
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'owner-a'),
+    );
+    var calls = 0;
+    final service = ServerService(
+      auth: auth,
+      creationAttemptTimeout: const Duration(milliseconds: 10),
+      call: (_, _) {
+        calls++;
+        if (calls > 1) fail('the request crossed an account boundary');
+        auth.mockUser = MockUser(uid: 'owner-b');
+        return Completer<Map<Object?, Object?>>().future;
+      },
+    );
+
+    await expectLater(
+      service.createServer(
+        const ServerCreationRequest(
+          requestId: 'owner-a-request',
+          serverType: ServerType.friends,
+          name: 'Friends',
+          description: '',
+          privacy: ServerPrivacy.inviteOnly,
+          defaultLanguage: 'Polish',
+        ),
+      ),
+      throwsA(
+        isA<FirebaseFunctionsException>().having(
+          (error) => error.code,
+          'code',
+          'unauthenticated',
+        ),
+      ),
+    );
+    expect(calls, 1);
+  });
+
+  test('creation never returns a late success to another user', () async {
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'owner-a'),
+    );
+    final response = Completer<Map<Object?, Object?>>();
+    final service = ServerService(auth: auth, call: (_, _) => response.future);
+
+    final result = service.createServer(
+      const ServerCreationRequest(
+        requestId: 'owner-a-success',
+        serverType: ServerType.friends,
+        name: 'Friends',
+        description: '',
+        privacy: ServerPrivacy.inviteOnly,
+        defaultLanguage: 'Polish',
+      ),
+    );
+    auth.mockUser = MockUser(uid: 'owner-b');
+    response.complete({
+      'serverId': 'owner-a-server',
+      'defaultChannelId': 'general',
+      'channelIds': ['general', 'voice'],
+      'alreadyExisted': false,
+    });
+
+    await expectLater(
+      result,
+      throwsA(
+        isA<FirebaseFunctionsException>().having(
+          (error) => error.code,
+          'code',
+          'unauthenticated',
+        ),
+      ),
+    );
+  });
+
+  test('creation never returns a late refusal to another user', () async {
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'owner-a'),
+    );
+    final response = Completer<Map<Object?, Object?>>();
+    final service = ServerService(auth: auth, call: (_, _) => response.future);
+
+    final result = service.createServer(
+      const ServerCreationRequest(
+        requestId: 'owner-a-refusal',
+        serverType: ServerType.friends,
+        name: 'Friends',
+        description: '',
+        privacy: ServerPrivacy.inviteOnly,
+        defaultLanguage: 'Polish',
+      ),
+    );
+    auth.mockUser = MockUser(uid: 'owner-b');
+    response.completeError(
+      FirebaseFunctionsException(code: 'invalid-argument', message: 'refused'),
+    );
+
+    await expectLater(
+      result,
+      throwsA(
+        isA<FirebaseFunctionsException>().having(
+          (error) => error.code,
+          'code',
+          'unauthenticated',
+        ),
+      ),
+    );
+  });
+
+  test('creation does not call the backend after sign-out', () async {
+    final auth = MockFirebaseAuth(signedIn: false);
+    var calls = 0;
+    final service = ServerService(
+      auth: auth,
+      call: (_, _) async {
+        calls++;
+        return const <Object?, Object?>{};
+      },
+    );
+
+    await expectLater(
+      service.createServer(
+        const ServerCreationRequest(
+          requestId: 'signed-out-request',
+          serverType: ServerType.friends,
+          name: 'Friends',
+          description: '',
+          privacy: ServerPrivacy.inviteOnly,
+          defaultLanguage: 'Polish',
+        ),
+      ),
+      throwsA(
+        isA<FirebaseFunctionsException>().having(
+          (error) => error.code,
+          'code',
+          'unauthenticated',
+        ),
+      ),
+    );
+    expect(calls, 0);
+  });
+
   test(
     'creation calls only the exact V1 endpoint with immutable payload',
     () async {

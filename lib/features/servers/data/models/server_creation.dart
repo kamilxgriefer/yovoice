@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_functions/cloud_functions.dart';
 
 import 'server_type.dart';
@@ -121,6 +123,7 @@ enum ServerCreationFailure {
 
 /// Classifies a raw creation error without ever inventing a success.
 ServerCreationFailure classifyServerCreationFailure(Object error) {
+  if (error is TimeoutException) return ServerCreationFailure.offline;
   if (error is FirebaseFunctionsException) {
     final details = error.details;
     final reason = details is Map ? details['reason'] : null;

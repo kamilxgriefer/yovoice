@@ -252,7 +252,7 @@ class _Fixture {
     );
   }
 
-  Widget home({required bool desktop}) => desktop
+  Widget home({required bool desktop, MessageService? messages}) => desktop
       ? DesktopHome(
           key: const ValueKey('redesign-home'),
           currentUserId: _me,
@@ -273,7 +273,7 @@ class _Fixture {
           followService: followService,
           profileService: profileService,
           feedService: feedService,
-          messageService: messageService,
+          messageService: messages ?? messageService,
           capabilityService: _Capabilities(),
           isVisible: visible,
         )
@@ -300,7 +300,7 @@ class _Fixture {
           followService: followService,
           profileService: profileService,
           feedService: feedService,
-          messageService: messageService,
+          messageService: messages ?? messageService,
           capabilityService: _Capabilities(),
           isVisible: visible,
         );
@@ -430,6 +430,69 @@ void main() {
   });
   setUp(ProfileService.resetCurrentProfileCache);
   tearDown(ProfileService.resetCurrentProfileCache);
+
+  test(
+    'one conversation stream can be listened again after cancellation',
+    () async {
+      final f = _Fixture();
+      await f.initialize();
+      addTearDown(f.dispose);
+      final service = MessageService(firestore: f.db, auth: f.auth);
+      addTearDown(service.dispose);
+      final conversations = service.watchConversations();
+
+      expect((await conversations.first).single.id, 'qa-chat');
+      expect((await conversations.first).single.id, 'qa-chat');
+    },
+  );
+
+  testWidgets(
+    'mobile Home remounts recent chats after leaving the lazy viewport',
+    (tester) async {
+      const size = Size(390, 844);
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final f = _Fixture();
+      await f.initialize();
+      addTearDown(f.dispose);
+      final service = MessageService(firestore: f.db, auth: f.auth);
+      addTearDown(service.dispose);
+
+      await tester.pumpWidget(
+        _app(f.home(desktop: false, messages: service), size),
+      );
+      await _settle(tester);
+      final recentChats = find.byKey(const ValueKey('home-recent-chats'));
+      final scrollable = tester.state<ScrollableState>(
+        find.descendant(
+          of: find.byKey(const ValueKey('mobile-home-server-first')),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is Scrollable &&
+                widget.axisDirection == AxisDirection.down,
+          ),
+        ),
+      );
+
+      expect(recentChats, findsNothing);
+      scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+      await _settle(tester);
+      expect(recentChats, findsOneWidget);
+      expect(find.text('Masz chwilę na rozmowę?'), findsOneWidget);
+
+      scrollable.position.jumpTo(0);
+      await _settle(tester);
+      expect(recentChats, findsNothing);
+
+      scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+      await _settle(tester);
+      expect(find.byType(ErrorWidget), findsNothing);
+      expect(recentChats, findsOneWidget);
+      expect(find.text('Masz chwilę na rozmowę?'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   for (final desktop in [false, true]) {
     testWidgets(
