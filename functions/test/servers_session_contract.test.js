@@ -48,6 +48,24 @@ test("source policy separates listener, microphone, camera, screen and screen au
   assert.throws(() => deriveSessionGrant(access("unknown"), participant("host")), (error) => error.code === "permission-denied");
 });
 
+test("source policy v2 gives only the Community broadcast host screen sources and keeps v1 compatible", () => {
+  const participant = (role) => ({ role, hostMuted: false, serverMuted: false, isMuted: true });
+  const access = (sourcePolicyVersion) => ({
+    server: { serverType: "community" },
+    channel: { kind: "stage", experience: "broadcast", mediaMode: "video" },
+    session: { sourcePolicyVersion },
+  });
+  assert.deepEqual(deriveSessionGrant(access(1), participant("host")).permittedTrackSources,
+    ["microphone", "camera"]);
+  assert.deepEqual(deriveSessionGrant(access(2), participant("host")).permittedTrackSources,
+    ["microphone", "camera", "screen_share", "screen_share_audio"]);
+  assert.deepEqual(deriveSessionGrant(access(2), participant("guest")).permittedTrackSources,
+    ["microphone", "camera"]);
+  assert.deepEqual(deriveSessionGrant(access(2), participant("listener")).permittedTrackSources, []);
+  assert.throws(() => deriveSessionGrant(access(7), participant("host")),
+    (error) => error.code === "permission-denied");
+});
+
 test("provider URL fails closed for self-hosted, credentials, paths and unreviewed origins", () => {
   assert.equal(cloudUrl("wss://test-fixture.livekit.cloud"), "wss://test-fixture.livekit.cloud");
   for (const url of ["https://test.livekit.cloud", "wss://localhost", "wss://test.livekit.cloud.attacker.test",

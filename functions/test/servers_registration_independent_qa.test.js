@@ -14,6 +14,7 @@ const { after, test } = require("node:test");
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const {
+  ALL_SERVER_CALLABLE_METHODS,
   COMPANY_FILE_MEDIA_CALLABLES, DISPATCHER_EXPORTS,
   FAMILY_MEMORY_MEDIA_CALLABLES, OUTBOX_COLLECTION,
   PODCAST_EGRESS_CALLABLES, PODCAST_EPISODE_MEDIA_CALLABLES, PODCAST_RECORDING_EXPORTS,
@@ -24,6 +25,7 @@ const {
 const FUNCTIONS_DIR = path.resolve(__dirname, "..");
 const DOCS_SERVERS = path.resolve(FUNCTIONS_DIR, "..", "docs", "Servers.md");
 const CALLABLES = Object.keys(SERVER_CALLABLE_METHODS);
+const ALL_CALLABLES = Object.keys(ALL_SERVER_CALLABLE_METHODS);
 const TRIGGER = "onServerControlOutboxCreated";
 const SCHEDULE = "processPendingServerControlOutboxSchedule";
 const NOW = 1_900_000_000_000;
@@ -190,7 +192,7 @@ function memoryDb(documents, reads) {
 
 function fakeRuntime({ methods = {}, workers = {}, documents = new Map(), reads = [], clock = () => NOW } = {}) {
   const services = {};
-  for (const [name, service] of Object.entries(SERVER_CALLABLE_METHODS)) {
+  for (const [name, service] of Object.entries(ALL_SERVER_CALLABLE_METHODS)) {
     (services[service] ??= {})[name] = methods[name] ?? (async () => ({ ok: name }));
   }
   services.familyMemories.expireServerFamilyMemoryUploadReservations =
@@ -287,11 +289,11 @@ test("QA binding: every malformed or missing Auth context is `unauthenticated` b
   assert.equal(calls, 1);
 });
 
-test("QA binding: App Check enforcement and limited-use consumption flip together on the fifty-four callables only, and only for a boolean true", () => {
+test("QA binding: App Check enforcement and limited-use consumption flip together on all fifty-five callables, and only for a boolean true", () => {
   for (const [value, expected] of [[true, true], [false, false], [undefined, false], ["true", false], [1, false]]) {
     const { list } = build({ enforceAppCheck: value });
     const callables = list.filter((entry) => entry.kind === "callable");
-    assert.equal(callables.length, 54);
+    assert.equal(callables.length, 55);
     for (const entry of callables) {
       assert.equal(entry.options.enforceAppCheck, expected, `enforceAppCheck=${String(value)}`);
       assert.equal(entry.options.consumeAppCheckToken, expected, `enforceAppCheck=${String(value)}`);
@@ -302,28 +304,29 @@ test("QA binding: App Check enforcement and limited-use consumption flip togethe
   }
 });
 
-test("QA binding: the registered map is exactly the sixty names with the documented options and secret bindings", () => {
+test("QA binding: the registered map is exactly the sixty-one names with the documented options and secret bindings", () => {
   const { functions, list } = build();
   assert.deepEqual(Object.keys(functions).sort(), [...SERVERS_V1_EXPORT_NAMES].sort());
   assert.ok(Object.isFrozen(functions));
-  assert.equal(list.length, 60);
+  assert.equal(list.length, 61);
   for (const entry of list) {
     assert.equal(entry.options.region, "europe-west1");
     assert.equal(typeof entry.handler, "function");
   }
   const secretNames = (entry) => (entry.options.secrets ?? []).map((secret) => secret.name).sort();
-  for (const name of CALLABLES) {
+  for (const name of ALL_CALLABLES) {
     const entry = functions[name];
     assert.equal(entry.kind, "callable");
     assert.equal(entry.options.minInstances, 0);
-    assert.equal(entry.options.maxInstances, 50);
+    assert.equal(entry.options.maxInstances,
+      name === "createServerBroadcastIngressV1" ? 5 : 50);
     if (PODCAST_EGRESS_CALLABLES.includes(name)) {
       assert.deepEqual(secretNames(entry), [
         "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "PODCAST_EGRESS_GCP_CREDENTIALS",
       ]);
       assert.equal(entry.options.memory, "512MiB");
       assert.equal(entry.options.timeoutSeconds, 120);
-    } else if (name === "createServerChannelTokenV1" || name === "endServerChannelSessionV1") {
+    } else if (["createServerChannelTokenV1", "endServerChannelSessionV1", "createServerBroadcastIngressV1"].includes(name)) {
       assert.deepEqual(secretNames(entry), ["LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"]);
       assert.equal(entry.options.timeoutSeconds, 120);
     } else if (
@@ -579,6 +582,9 @@ async function realFixture() {
     async revokeParticipant() { throw new Error("QA: provider must not be reached"); },
     async endRoom() { throw new Error("QA: provider must not be reached"); },
     async roomOccupancy() { throw new Error("QA: provider must not be reached"); },
+    async ensureBroadcastIngress() { throw new Error("QA: provider must not be reached"); },
+    async deleteBroadcastIngress() { throw new Error("QA: provider must not be reached"); },
+    async deleteBoundBroadcastIngresses() { throw new Error("QA: provider must not be reached"); },
   };
   const runtime = createServersV1Runtime({ db, Timestamp, clock: () => nowMs, livekit });
   const { functions, log } = build({ runtime, enablePodcastRecording: false });

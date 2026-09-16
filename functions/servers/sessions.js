@@ -8,10 +8,14 @@ const { canonicalLiveKitRoomName, channelLiveness, MEDIA_KINDS } = require("./co
 const { createServerOperations } = require("./operations");
 const {
   SESSION_TOKEN_ATTEMPT_LIMIT, SESSION_TOKEN_ATTEMPT_SCOPE, SESSION_TOKEN_TTL_SECONDS,
-  assertRoomBinding, assertSessionBinding, canonicalSessionId, hasUnresolvedRevocationAttempt, sessionInput,
+  assertRoomBinding, assertSessionBinding, canonicalSessionId, hasUnresolvedRevocationAttempt,
+  isCommunityBroadcastChannel, sessionInput,
 } = require("./session_contract");
 const { readSessionTokenAuthority, requireIssuableRecipient } = require("./session_authority");
 const { createServerSessionControlService } = require("./session_control");
+const {
+  communityBroadcastBinding, storedBroadcastIngressId, validProvisioningLease,
+} = require("./community_broadcast_contract");
 
 const TOKEN_KIND = "server.session.token.v1";
 
@@ -101,7 +105,11 @@ function createServerSessionService(dependencies) {
           serverSchemaVersion: 1, serverId: input.serverId, channelId: input.channelId,
           roomId: roomReference.id, sessionId, livekitRoomName,
           experience: access.channel.experience, mediaMode: access.channel.mediaMode,
-          sourcePolicyVersion: 1, authorizationRevision: 1,
+          // V2 is scoped to the Community broadcast shape it widens. Every
+          // other generation keeps v1, so older or rolled-back Functions
+          // still accept it.
+          sourcePolicyVersion: isCommunityBroadcastChannel(access.server, access.channel) ? 2 : 1,
+          authorizationRevision: 1,
           startedById: auth.uid, startedAt: now, endedAt: null,
           status: "live", updatedAt: now, maxTokenExpiresAtMillis: 0,
         });
@@ -240,7 +248,15 @@ function createServerSessionService(dependencies) {
         if (session.status !== "live" || access.channel.activeSessionId !== input.sessionId ||
             room.isLive !== true || room.voiceSessionId !== input.sessionId ||
             room.livekitRoomName !== livekitRoomName || room.serverSessionCleanupId != null) denied();
+        // An in-flight OBS provisioning lease never refuses an end. The end
+        // is staged with reconcileObsIngress, and the terminal worker defers
+        // only the provider ingress/room delete until that lease settles.
+        const broadcastLease = validProvisioningLease(session.obsIngressProvisioning);
         if (session.authorizationRevision >= Number.MAX_SAFE_INTEGER - 1) fail("data-loss", "The session authorization revision is exhausted.");
+        const broadcastBinding = communityBroadcastBinding(input, {
+          roomId: roomReference.id, hostId: session.startedById,
+        });
+        const obsIngressId = storedBroadcastIngressId(session, broadcastBinding);
         transaction.update(sessionReference, { status: "ending", endedAt: now,
           endOperationId: identity.id, authorizationRevision: session.authorizationRevision + 1, updatedAt: now });
         transaction.update(access.channelReference, { activeSessionId: null,
@@ -251,6 +267,9 @@ function createServerSessionService(dependencies) {
           schemaVersion: 1, kind: "sessionEnd", operationId: identity.id,
           serverId: input.serverId, channelId: input.channelId,
           roomId: roomReference.id, sessionId: input.sessionId, livekitRoomName,
+          hostId: session.startedById,
+          obsIngressId,
+          reconcileObsIngress: broadcastLease !== null,
           status: "pending", cursor: null, leaseId: null, leaseExpiresAtMillis: 0,
           maxTokenExpiresAtMillis: session.maxTokenExpiresAtMillis ?? 0,
           createdAt: now, updatedAt: now,

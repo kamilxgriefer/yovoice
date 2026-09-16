@@ -193,6 +193,23 @@ emulatorTest("explicit token join uses canonical session roles, preserves owner 
   assert.equal((await db.doc(`rooms/${f.roomId}`).get()).data().participantCount, 0);
 });
 
+emulatorTest("source policy v1 stays on every non-Community-broadcast generation and the meeting host keeps screen sharing", async () => {
+  const sessionData = async (f, sessionId) =>
+    (await f.channel.ref.collection("channelSessions").doc(sessionId).get()).data();
+  const voice = await fixture();
+  const voiceSession = await voice.start();
+  assert.equal((await sessionData(voice, voiceSession.sessionId)).sourcePolicyVersion, 1);
+  // Same broadcast/video shape outside a Community server: still v1.
+  const video = await fixture({ kind: "stage", mediaMode: "video" });
+  const videoSession = await video.start();
+  assert.equal((await sessionData(video, videoSession.sessionId)).sourcePolicyVersion, 1);
+  const meeting = await fixture({ kind: "meeting" });
+  const meetingSession = await meeting.start();
+  assert.equal((await sessionData(meeting, meetingSession.sessionId)).sourcePolicyVersion, 1);
+  const host = await meeting.token(meetingSession.sessionId);
+  assert.deepEqual(host.permittedTrackSources, ["microphone", "camera", "screen_share", "screen_share_audio"]);
+});
+
 emulatorTest("parallel same-request tokens share a receipt and every replay consumes target-independent budget", async () => {
   const f = await fixture(); const { sessionId } = await f.start(); const id = randomUUID();
   const results = await Promise.all([f.token(sessionId, f.uid, id), f.token(sessionId, f.uid, id)]);
@@ -374,7 +391,7 @@ emulatorTest("bounded teardown pages retain the barrier until every issued recip
   for (let index = 0; index < 21; index += 1) await f.token(sessionId, await f.member());
   const first = await f.end(sessionId);
   assert.equal(first.cleanupPending, true);
-  assert.equal(f.calls.revoked.length, 20);
+  assert.equal(f.calls.revoked.length, 19);
   assert.equal(f.calls.ended.length, 0);
   assert.equal((await db.doc(`rooms/${f.roomId}`).get()).data().serverSessionCleanupId, sessionId);
   const final = await f.control.processServerSessionEndPage({ operationId: first.operationId });
@@ -653,15 +670,15 @@ for (const count of [0, 19, 20, 21]) emulatorTest(`terminal SDK budget for ${cou
   assert.ok(calls.length - before <= 20);
   if (count >= 20) {
     assert.equal(result.cleanupPending, true);
-    assert.equal(calls.length, 20);
+    assert.equal(calls.length, 19);
     assert.equal(calls.filter((call) => call.kind === "delete").length, 0);
     const job = (await db.doc(`serverControlOutbox/${result.operationId}`).get()).data();
-    assert.equal(Object.hasOwn(job, "terminalDelete"), count === 20);
+    assert.equal(Object.hasOwn(job, "terminalDelete"), false);
     assert.equal((await db.doc(`rooms/${f.roomId}`).get()).data().serverSessionCleanupId, sessionId);
     before = calls.length;
     result = await f.control.processServerSessionEndPage({ operationId: result.operationId });
     assert.ok(calls.length - before <= 20);
-    assert.equal(calls.length - before, count === 20 ? 1 : 2);
+    assert.equal(calls.length - before, count === 20 ? 2 : 3);
   }
   assert.equal(result.cleanupPending, false);
   assert.equal(calls.filter((call) => call.kind === "remove").length, count);
@@ -720,6 +737,41 @@ emulatorTest("a successful DeleteRoom followed by failed final commit retries on
   assert.equal((await f.end(sessionId, f.uid, id)).cleanupPending, false);
   assert.equal(f.calls.revoked.length, 1); assert.equal(f.calls.ended.length, 2);
   assert.deepEqual((await reference.get()).data().terminalDelete, checkpoint);
+});
+
+emulatorTest("a pre-OBS terminal checkpoint keeps its original fingerprint shape and still drains", async () => {
+  const f = await fixture();
+  const { sessionId } = await f.start();
+  f.onEnd(() => { throw new Error("test-only legacy rollout pause"); });
+  const pending = await f.end(sessionId);
+  const jobRef = db.doc(`serverControlOutbox/${pending.operationId}`);
+  const current = (await jobRef.get()).data();
+  const {
+    hostId: _hostId,
+    obsIngressId: _obsIngressId,
+    reconcileObsIngress: _reconcileObsIngress,
+    ...legacy
+  } = current;
+  const legacyBinding = {
+    serverId: legacy.serverId,
+    channelId: legacy.channelId,
+    roomId: legacy.roomId,
+    sessionId: legacy.sessionId,
+    livekitRoomName: legacy.livekitRoomName,
+  };
+  legacy.terminalDelete = {
+    ...legacy.terminalDelete,
+    bindingFingerprint: digest("server.session.terminal.delete.v1", legacyBinding,
+      legacy.operationId, legacy.terminalDelete.authorizationRevision,
+      legacy.terminalDelete.recipientCursor),
+  };
+  await jobRef.set(legacy);
+
+  f.onEnd(null);
+  const drained = await f.control.processServerSessionEndPage({ operationId: pending.operationId });
+  assert.equal(drained.cleanupPending, false);
+  assert.equal((await f.channel.ref.collection("channelSessions").doc(sessionId).get()).data().status,
+    "ended");
 });
 
 emulatorTest("partial terminal failure dispatches every bounded batch and never commits a checkpoint or cursor", async () => {

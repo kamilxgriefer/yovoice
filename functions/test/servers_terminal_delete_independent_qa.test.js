@@ -20,6 +20,10 @@ const { createServerCreationService } = require("../servers/creation");
 const { createServerSessionService } = require("../servers/sessions");
 const { createServerSessionControlService } = require("../servers/session_control");
 const { createServerLiveKitAdapter } = require("../servers/session_livekit");
+const {
+  COMMUNITY_BROADCAST_GLOBAL_CAP, broadcastCapacityReference, broadcastSlotBinding,
+  broadcastUsageReference, communityBroadcastBinding, communityBroadcastMetadata,
+} = require("../servers/community_broadcast_contract");
 const { tokenRecipientId } = require("../servers/session_contract");
 const { canonicalLiveKitRoomName } = require("../servers/contract");
 
@@ -34,7 +38,7 @@ const gate = () => {
   return { promise, resolve };
 };
 
-async function fixture(count = 1) {
+async function fixture(count = 1, { ingressClient = undefined } = {}) {
   const uid = `terminal-owner-${randomUUID()}`;
   let nowMs = Date.now();
   const clock = () => nowMs;
@@ -103,7 +107,8 @@ async function fixture(count = 1) {
   };
   const adapter = createServerLiveKitAdapter({
     apiKey: () => "independent-test-key", apiSecret: () => "independent-test-secret",
-    serverUrl: () => "wss://independent-terminal.livekit.cloud", client: transport, clock,
+    serverUrl: () => "wss://independent-terminal.livekit.cloud", client: transport,
+    ...(ingressClient === undefined ? {} : { ingressClient }), clock,
   });
   const provider = {
     ...adapter,
@@ -198,6 +203,94 @@ for (const count of [0, 19, 20, 21]) qa(`${count} issued identities: every pass 
     assert.ok(receipt.revokedBeforeMillis > 0);
   }
   assert.equal((await f.session(f.sessionId).get()).data().status, "ended");
+});
+
+qa("three ambiguous OBS inputs drain across bounded passes without exceeding twenty RPCs", async () => {
+  const sdk = require("livekit-server-sdk");
+  const ingressCalls = [];
+  let rows = [];
+  const ingressClient = {
+    async listIngress(options) { ingressCalls.push({ type: "listIngress", options }); return rows; },
+    async deleteIngress(ingressId) {
+      ingressCalls.push({ type: "deleteIngress", ingressId });
+      rows = rows.filter((row) => row.ingressId !== ingressId);
+    },
+  };
+  const f = await fixture(15, { ingressClient });
+  const binding = communityBroadcastBinding({
+    ...f.target, sessionId: f.sessionId,
+  }, { roomId: f.roomId, hostId: f.uid });
+  rows = ["ingress_late_a", "ingress_late_b", "ingress_late_c"].map((ingressId) => ({
+    ingressId, inputType: sdk.IngressInput.RTMP_INPUT, roomName: binding.livekitRoomName,
+    participantIdentity: binding.participantIdentity,
+    participantMetadata: communityBroadcastMetadata(binding),
+  }));
+  const nowMs = f.clock();
+  await Promise.all([
+    f.session(f.sessionId).update({
+      obsIngress: {
+        schemaVersion: 1,
+        source: binding.source,
+        ingressId: "ingress_committed",
+        participantIdentity: binding.participantIdentity,
+        livekitRoomName: binding.livekitRoomName,
+        configuredById: f.uid,
+        configuredAt: Timestamp.fromMillis(nowMs - 10),
+      },
+      obsIngressProvisioning: {
+        schemaVersion: 2,
+        operationId: "a".repeat(64),
+        leaseId: "expired-lease",
+        startedAtMillis: nowMs - 2,
+        leaseExpiresAtMillis: nowMs - 1,
+      },
+    }),
+    broadcastUsageReference(db, f.uid).set({
+      schemaVersion: 1,
+      ...broadcastSlotBinding(binding, f.uid),
+      state: "active",
+      operationId: "b".repeat(64),
+      leaseId: null,
+      leaseExpiresAtMillis: 0,
+      ingressId: "ingress_committed",
+      updatedAt: Timestamp.fromMillis(nowMs),
+    }),
+    broadcastCapacityReference(db).set({
+      schemaVersion: 1,
+      enabled: true,
+      activeCount: 1,
+      limit: COMMUNITY_BROADCAST_GLOBAL_CAP,
+      updatedAt: Timestamp.fromMillis(nowMs),
+    }),
+  ]);
+
+  let before = f.calls.length + ingressCalls.length;
+  let outcome = await f.end();
+  let after = f.calls.length + ingressCalls.length;
+  assert.equal(outcome.cleanupPending, true);
+  assert.ok(after - before <= 20);
+  assert.equal(f.calls.filter((call) => call.type === "remove").length, 15);
+  assert.deepEqual(ingressCalls.map((call) => call.type), [
+    "deleteIngress", "listIngress", "deleteIngress", "deleteIngress",
+  ]);
+  assert.equal(f.calls.filter((call) => call.type === "delete").length, 0);
+  assert.equal((await broadcastUsageReference(db, f.uid).get()).exists, true);
+  assert.equal((await broadcastCapacityReference(db).get()).data().activeCount, 1);
+
+  const job = await f.job();
+  before = f.calls.length + ingressCalls.length;
+  outcome = await f.control.processServerSessionEndPage({ operationId: job.id });
+  after = f.calls.length + ingressCalls.length;
+  assert.equal(outcome.cleanupPending, false);
+  assert.ok(after - before <= 20);
+  assert.deepEqual(ingressCalls.filter((call) => call.type === "deleteIngress")
+    .map((call) => call.ingressId), [
+      "ingress_committed", "ingress_late_a", "ingress_late_b",
+      "ingress_committed", "ingress_late_c",
+    ]);
+  assert.equal(f.calls.filter((call) => call.type === "delete").length, 1);
+  assert.equal((await broadcastUsageReference(db, f.uid).get()).exists, false);
+  assert.equal((await broadcastCapacityReference(db).get()).data().activeCount, 0);
 });
 
 qa("remote deletion with a lost ACK retries only delete, never already-settled removals", async () => {

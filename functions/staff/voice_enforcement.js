@@ -1,5 +1,5 @@
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
-const { FieldValue } = require("firebase-admin/firestore");
+const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { logger } = require("firebase-functions/v2");
 
 const { db, normalizeText } = require("../utils/firestore");
@@ -14,6 +14,10 @@ const {
   resolveRtcBindingForLiveKitRoom,
   resolveRtcBindingForRoom,
 } = require("../servers/rtc_binding");
+const { createServerLiveKitAdapter } = require("../servers/session_livekit");
+const {
+  createServerBroadcastCleanupService,
+} = require("../servers/community_broadcast_cleanup");
 
 const REGION = "europe-west1";
 const EVENT_COLLECTION = "moderationVoiceEnforcement";
@@ -49,6 +53,17 @@ const UNBOUND_LIVE_GENERATION = "unbound-live-generation";
 const MAX_UNBOUND_GENERATION_ATTEMPTS = 8;
 const NEEDS_RECONCILIATION = "needsReconciliation";
 const TERMINAL_STATUSES = Object.freeze(["completed", "invalid", "superseded", NEEDS_RECONCILIATION]);
+
+let productionBroadcastMedia = null;
+
+function getProductionBroadcastMedia() {
+  productionBroadcastMedia ??= createServerLiveKitAdapter({
+    apiKey: () => String(process.env.LIVEKIT_API_KEY ?? "").trim(),
+    apiSecret: () => String(process.env.LIVEKIT_API_SECRET ?? "").trim(),
+    serverUrl: () => String(process.env.LIVEKIT_URL ?? "").trim(),
+  });
+  return productionBroadcastMedia;
+}
 
 function priorAttemptCount(event) {
   const value = event?.attemptCount;
@@ -282,6 +297,26 @@ async function executeVoiceEnforcementEvent(
   }
 
   const control = controlOverride ?? getProductionLiveKitControl();
+  // Tests inject one combined control seam. Production resolves the ingress
+  // adapter lazily only if a sanctioned host actually owns an OBS input.
+  const broadcastMedia = {
+    assertSupported() {
+      if (controlOverride) {
+        if (typeof controlOverride.deleteBoundBroadcastIngresses !== "function") {
+          throw Object.assign(new Error("OBS broadcast cleanup is unavailable."), { code: "failed-precondition" });
+        }
+        return true;
+      }
+      return getProductionBroadcastMedia().assertSupported();
+    },
+    deleteBoundBroadcastIngresses(binding) {
+      if (controlOverride) return controlOverride.deleteBoundBroadcastIngresses(binding);
+      return getProductionBroadcastMedia().deleteBoundBroadcastIngresses(binding);
+    },
+  };
+  const broadcastCleanup = createServerBroadcastCleanupService({
+    db, Timestamp, livekit: broadcastMedia,
+  });
   let discoveredRoomIds = new Set();
   let revokedCount = 0;
   // Anchor-derived candidates without a live generation are never sent to
@@ -300,6 +335,36 @@ async function executeVoiceEnforcementEvent(
     // but did not bind: a revocation is owed under that generation's name
     // until the provider (or a later, consistent retry) covers it.
     const owedGenerations = new Map();
+    const broadcastGenerationOutcomes = new Map();
+
+    const cleanupHostBroadcast = async (binding) => {
+      if (!binding || binding.startedById !== targetUid) return true;
+      const key = `${binding.serverId}/${binding.channelId}/${binding.sessionId}`;
+      if (broadcastGenerationOutcomes.has(key)) return broadcastGenerationOutcomes.get(key);
+      try {
+        const result = await broadcastCleanup.reconcileServerHostBroadcast({
+          serverId: binding.serverId,
+          channelId: binding.channelId,
+          roomId: binding.roomId,
+          sessionId: binding.sessionId,
+          hostId: targetUid,
+        });
+        if (result.cleanupPending) {
+          throw Object.assign(new Error("OBS broadcast cleanup is still pending."), {
+            code: "obs-broadcast-cleanup-pending",
+          });
+        }
+        broadcastGenerationOutcomes.set(key, true);
+        return true;
+      } catch (error) {
+        // OBS and the host's ordinary LiveKit identity are independent
+        // revocation obligations. Keep the event retryable, but never let a
+        // stuck ingress cleanup shield the connected human participant.
+        failures.push({ roomId: binding.livekitRoomName, error });
+        broadcastGenerationOutcomes.set(key, false);
+        return false;
+      }
+    };
 
     const revokeTarget = async (target, mirrorBinding) => {
       if (attemptedTargets.has(target)) return;
@@ -326,8 +391,12 @@ async function executeVoiceEnforcementEvent(
     // is only ever revoked through its live generation's `srv_` name.
     const revokeAnchorCandidate = async (value) => {
       const binding = await resolveRtcBindingForRoom({ db, roomId: value });
+      let broadcastSettled = true;
+      if (binding.kind === RTC_BINDING_KINDS.V1) {
+        broadcastSettled = await cleanupHostBroadcast(binding.bound ? binding : binding.retained);
+      }
       if (binding.bound) {
-        await revokeTarget(binding.livekitRoomName, binding);
+        await revokeTarget(binding.livekitRoomName, broadcastSettled ? binding : null);
         return;
       }
       skippedBindings.set(value, binding.reason);
@@ -349,8 +418,11 @@ async function executeVoiceEnforcementEvent(
       } catch (error) {
         failures.push({ roomId: value, error });
       }
+      let broadcastSettled = true;
+      if (binding?.kind === RTC_BINDING_KINDS.V1) broadcastSettled =
+        await cleanupHostBroadcast(binding.bound ? binding : binding.retained);
       if (binding && !binding.bound) unboundProviderRooms.set(value, binding.reason);
-      await revokeTarget(value, binding?.bound ? binding : null);
+      await revokeTarget(value, binding?.bound && broadcastSettled ? binding : null);
     };
 
     const revokeNewRooms = async (values, source) => {

@@ -44,7 +44,7 @@ function assertSessionBinding(session, { serverId, channelId, roomId, sessionId 
   if (!session || session.serverSchemaVersion !== 1 || session.serverId !== serverId ||
       session.channelId !== channelId || session.roomId !== roomId || session.sessionId !== sessionId ||
       session.livekitRoomName !== name || !validRevision(session.authorizationRevision) ||
-      session.sourcePolicyVersion !== 1 || !Number.isSafeInteger(session.maxTokenExpiresAtMillis) ||
+      ![1, 2].includes(session.sourcePolicyVersion) || !Number.isSafeInteger(session.maxTokenExpiresAtMillis) ||
       session.maxTokenExpiresAtMillis < 0) denied();
   requireUid(session.startedById, "session host");
   return name;
@@ -69,18 +69,34 @@ function participantForSession(snapshot, access, uid) {
   return value;
 }
 
+/** The one channel shape that source policy v2 widens: a Community stage
+ * broadcasting video. Only generations started on this shape are written
+ * with `sourcePolicyVersion: 2`; every other generation stays on v1, whose
+ * grants v2 would not change, so a mixed-version rollout or a Functions
+ * rollback can only affect the new broadcast feature. */
+function isCommunityBroadcastChannel(server, channel) {
+  return server?.serverType === "community" && channel?.kind === "stage" &&
+    channel?.experience === "broadcast" && channel?.mediaMode === "video";
+}
+
 function deriveSessionGrant(access, participant) {
   if (!SESSION_ROLES.includes(participant?.role) ||
       !["audio", "video", "meeting"].includes(access?.channel?.mediaMode)) denied();
+  const sourcePolicyVersion = access?.session?.sourcePolicyVersion ?? 1;
+  if (![1, 2].includes(sourcePolicyVersion)) denied();
   const mayPublish = participant.role !== "listener" &&
     participant.hostMuted === false && participant.serverMuted === false;
   // A local mute is a capture state, not a role/permission revocation. Each
   // capture still requires the user's explicit consent in the client.
   const sources = mayPublish ? ["microphone"] : [];
   if (mayPublish && ["video", "meeting"].includes(access.channel.mediaMode)) sources.push("camera");
-  // Policy v1 is deliberately narrow; screen sharing is an explicit host
-  // capability of a meeting, never a blanket `canPublish` side effect.
-  if (mayPublish && access.channel.mediaMode === "meeting" && participant.role === "host") {
+  // Policy v1 stays readable for already-running generations. V2 adds the
+  // same explicit host-only source to a Community video broadcast: a viewer,
+  // promoted guest or ordinary video room never receives it as a side effect.
+  const communityBroadcast = sourcePolicyVersion === 2 &&
+    isCommunityBroadcastChannel(access?.server, access.channel);
+  if (mayPublish && participant.role === "host" &&
+      (access.channel.mediaMode === "meeting" || communityBroadcast)) {
     sources.push("screen_share", "screen_share_audio");
   }
   return {
@@ -146,5 +162,6 @@ module.exports = {
   SESSION_ROLES, SESSION_TOKEN_ATTEMPT_LIMIT, SESSION_TOKEN_ATTEMPT_SCOPE,
   SESSION_TOKEN_TTL_SECONDS, assertRoomBinding, assertSessionBinding,
   authorityFingerprint, canonicalSessionId, deriveSessionGrant, participantForSession,
-  hasUnresolvedRevocationAttempt, recipientBinding, sessionInput, tokenRecipientId, validateRecipient,
+  hasUnresolvedRevocationAttempt, isCommunityBroadcastChannel, recipientBinding, sessionInput,
+  tokenRecipientId, validateRecipient,
 };

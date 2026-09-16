@@ -19,6 +19,7 @@ const { after, test } = require("node:test");
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const {
+  ALL_SERVER_CALLABLE_METHODS,
   DEFAULT_DISPATCH_LIMITS, DISPATCHER_EXPORTS, OUTBOX_COLLECTION, REGION,
   COMPANY_FILE_MEDIA_CALLABLES, FAMILY_MEMORY_MEDIA_CALLABLES,
   PODCAST_EGRESS_CALLABLES, PODCAST_EPISODE_MEDIA_CALLABLES, PODCAST_RECORDING_EXPORTS,
@@ -32,7 +33,7 @@ const { createServerCreationService } = require("../servers/creation");
 const { operationIdentity } = require("../integrity/guards");
 
 const FUNCTIONS_DIR = path.resolve(__dirname, "..");
-const CALLABLE_NAMES = Object.keys(SERVER_CALLABLE_METHODS);
+const CALLABLE_NAMES = Object.keys(ALL_SERVER_CALLABLE_METHODS);
 const LIVEKIT_SECRETS = ["LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"];
 const PODCAST_SECRETS = [
   "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "PODCAST_EGRESS_GCP_CREDENTIALS",
@@ -121,7 +122,7 @@ function coldStart(gate, podcastRecordingEnabled) {
 // check) so that old callables can refuse V1 targets; those are pinned
 // separately below and are not this gate's doing.
 const REGISTRATION_MODULES = Object.freeze([
-  "registration.js", "creation.js", "channels.js", "events.js", "podcast_questions.js", "podcast_episodes.js", "shared_list.js", "family_checkins.js", "family_memories.js", "follows.js", "whiteboard.js", "company_files.js", "invites.js", "memberships.js", "sessions.js", "session_participation.js", "operations.js",
+  "registration.js", "creation.js", "channels.js", "events.js", "podcast_questions.js", "podcast_episodes.js", "shared_list.js", "family_checkins.js", "family_memories.js", "follows.js", "whiteboard.js", "company_files.js", "invites.js", "memberships.js", "sessions.js", "community_broadcast.js", "community_broadcast_contract.js", "session_participation.js", "operations.js",
   "convergence.js", "convergence_runtime.js", "convergence_lifecycle.js", "session_control.js",
   "content_cleanup.js", "session_staleness.js", "session_livekit.js", "session_contract.js", "session_authority.js", "authority.js",
   "documents.js", "templates.js",
@@ -148,8 +149,8 @@ test("Registration: the obsolete environment gate cannot change the static base 
     (name) => !PODCAST_RECORDING_EXPORTS.includes(name),
   );
   assert.deepEqual(on.exportNames, off.exportNames);
-  assert.equal(SERVERS_V1_EXPORT_NAMES.length, 60);
-  assert.equal(baseServerExports.length, 53);
+  assert.equal(SERVERS_V1_EXPORT_NAMES.length, 61);
+  assert.equal(baseServerExports.length, 54);
   assert.equal(Object.keys(SERVER_CALLABLE_METHODS).length, 54);
   assert.ok(on.serversModules.includes("registration.js"));
   for (const factory of [
@@ -256,7 +257,7 @@ function fakeDb(documents) {
 
 function fakeRuntime({ calls = [], documents = new Map(), workers = {}, clock = () => NOW, methods = {} } = {}) {
   const services = {};
-  for (const [name, service] of Object.entries(SERVER_CALLABLE_METHODS)) {
+  for (const [name, service] of Object.entries(ALL_SERVER_CALLABLE_METHODS)) {
     (services[service] ??= {})[name] = methods[name] ?? (async (request) => {
       calls.push({ name, request });
       return { name };
@@ -300,7 +301,7 @@ function convergenceJob(overrides = {}) {
 const request = (uid, data, extra = {}) => ({ auth: { uid, token: { email_verified: true } }, data, ...extra });
 const rejects = (promise, code) => assert.rejects(promise, (error) => error instanceof HttpsError && error.code === code);
 
-test("Registration: the export map is exactly sixty names with the callable and worker options", () => {
+test("Registration: the export map is exactly sixty-one names with the callable and worker options", () => {
   const registrations = [];
   const functions = createServersV1Functions({
     activationGate: ENABLED_ACTIVATION_GATE,
@@ -312,14 +313,15 @@ test("Registration: the export map is exactly sixty names with the callable and 
   assert.deepEqual(SWEEP_EXPORTS, [
     SWEEP, FAMILY_MEMORY_SWEEP, COMPANY_FILE_SWEEP, PODCAST_EGRESS_SWEEP,
   ]);
-  assert.equal(registrations.filter((item) => item.kind === "callable").length, 54);
+  assert.equal(registrations.filter((item) => item.kind === "callable").length, 55);
   assert.equal(registrations.filter((item) => item.kind === "created").length, 1);
   assert.equal(registrations.filter((item) => item.kind === "schedule").length, 5);
   for (const name of CALLABLE_NAMES) {
     const { options } = functions[name];
     assert.equal(options.region, REGION, name);
     assert.equal(options.minInstances, 0, name);
-    assert.equal(options.maxInstances, 50, name);
+    assert.equal(options.maxInstances,
+      name === "createServerBroadcastIngressV1" ? 5 : 50, name);
     assert.equal(options.enforceAppCheck, false, name);
     assert.equal(options.consumeAppCheckToken, false, name);
     if (PODCAST_EGRESS_CALLABLES.includes(name)) {
@@ -882,6 +884,9 @@ async function fixture() {
     },
     async endRoom(roomName) { calls.ended.push(roomName); return {}; },
     async roomOccupancy() { return { present: false, participantCount: 0 }; },
+    async ensureBroadcastIngress() { throw new Error("provider must not be reached"); },
+    async deleteBroadcastIngress() { return {}; },
+    async deleteBoundBroadcastIngresses() { return {}; },
   };
   const real = createServersV1Runtime({ db, Timestamp, clock, livekit });
   const workerCalls = [];

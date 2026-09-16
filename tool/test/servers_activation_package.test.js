@@ -95,7 +95,7 @@ function canonicalInventory() {
   const podcast = new Set(registration.PODCAST_RECORDING_EXPORTS);
   return {
     baseNames: registration.SERVERS_V1_EXPORT_NAMES.filter((name) => !podcast.has(name)),
-    callableNames: Object.keys(registration.SERVER_CALLABLE_METHODS),
+    callableNames: Object.keys(registration.ALL_SERVER_CALLABLE_METHODS),
     dispatcherNames: [...registration.DISPATCHER_EXPORTS],
     podcastNames: [...registration.PODCAST_RECORDING_EXPORTS],
     sweepNames: [...registration.SWEEP_EXPORTS],
@@ -146,11 +146,12 @@ function fixture() {
   };
   write(path.join(source, "functions", "servers", "registration.js"), [
     `const SERVER_CALLABLE_METHODS = Object.freeze(${JSON.stringify(registration.SERVER_CALLABLE_METHODS)});`,
+    `const ALL_SERVER_CALLABLE_METHODS = Object.freeze(${JSON.stringify(registration.ALL_SERVER_CALLABLE_METHODS)});`,
     `const DISPATCHER_EXPORTS = Object.freeze(${JSON.stringify(inventory.dispatcherNames)});`,
     `const SWEEP_EXPORTS = Object.freeze(${JSON.stringify(inventory.sweepNames)});`,
     `const PODCAST_RECORDING_EXPORTS = Object.freeze(${JSON.stringify(inventory.podcastNames)});`,
     `const SERVERS_V1_EXPORT_NAMES = Object.freeze(${JSON.stringify(registration.SERVERS_V1_EXPORT_NAMES)});`,
-    "module.exports = { SERVER_CALLABLE_METHODS, DISPATCHER_EXPORTS, SWEEP_EXPORTS, PODCAST_RECORDING_EXPORTS, SERVERS_V1_EXPORT_NAMES };",
+    "module.exports = { SERVER_CALLABLE_METHODS, ALL_SERVER_CALLABLE_METHODS, DISPATCHER_EXPORTS, SWEEP_EXPORTS, PODCAST_RECORDING_EXPORTS, SERVERS_V1_EXPORT_NAMES };",
     "",
   ].join("\n"));
   write(path.join(source, "functions", "index.js"), [
@@ -227,23 +228,26 @@ function selectorNames(file) {
   });
 }
 
-test("phase plan partitions all 53 source-static Server exports exactly once", () => {
+test("phase plan partitions all 54 source-static Server exports exactly once", () => {
   const inventory = canonicalInventory();
   const phases = phasePlan(inventory);
   const podcast = new Set(inventory.podcastNames);
   const selected = Object.values(phases).flat();
   const selectedBase = selected.filter((name) => inventory.baseNames.includes(name));
 
-  assert.equal(inventory.baseNames.length, 53);
-  assert.equal(selectedBase.length, 53);
-  assert.equal(new Set(selectedBase).size, 53);
+  assert.equal(inventory.baseNames.length, 54);
+  assert.equal(selectedBase.length, 54);
+  assert.equal(new Set(selectedBase).size, 54);
   assert.deepEqual(new Set(selectedBase), new Set(inventory.baseNames));
   assert.deepEqual(phases.phase0CompatibilityGuards, EXPECTED_COMPATIBILITY_EXPORTS);
   assert.deepEqual(phases.phase1Infrastructure, EXPECTED_INFRASTRUCTURE_EXPORTS);
   assert.equal(phases.phase1Infrastructure.filter((name) => inventory.baseNames.includes(name)).length, 5);
   assert.equal(phases.phase0CompatibilityGuards.some((name) => inventory.baseNames.includes(name)), false);
   assert.equal(phases.phase1Infrastructure.slice(0, 2).some((name) => inventory.baseNames.includes(name)), false);
-  assert.equal(phases.phase2NonCreationCallables.length, 47);
+  assert.equal(phases.phase2NonCreationCallables.length, 48);
+  // The OBS ingress callable is a non-creation callable. It is inert until
+  // an operator enables serverRuntimeCapacity/communityBroadcastV1.
+  assert.equal(phases.phase2NonCreationCallables.includes("createServerBroadcastIngressV1"), true);
   assert.deepEqual(phases.phase3CreationBlocked, ["createServerV1"]);
   assert.equal(selected.some((name) => podcast.has(name)), false);
   assert.equal(new Set(selected).size, selected.length);
@@ -305,7 +309,7 @@ test("source inspection proves environment-independent registration and no Podca
   const inspected = inspectServersSource(value.source);
   assert.deepEqual(inspected.baseNames, value.inventory.baseNames);
   assert.deepEqual(inspected.podcastNames, value.inventory.podcastNames);
-  assert.equal(inspected.baseNames.length, 53);
+  assert.equal(inspected.baseNames.length, 54);
 });
 
 test("generation fails closed on a mismatched SHA, malformed SHA, dirty tree, and in-tree output", () => {

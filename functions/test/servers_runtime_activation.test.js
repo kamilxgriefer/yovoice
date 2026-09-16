@@ -6,7 +6,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const {
   ACTIVATION_CONFIG_PATH,
   ACTIVATION_UNAVAILABLE_REASON,
-  SERVER_CALLABLE_METHODS,
+  ALL_SERVER_CALLABLE_METHODS,
   canonicalActivationConfig,
   createServersV1ActivationGate,
   createServersV1Functions,
@@ -44,7 +44,7 @@ function registrars() {
 
 function runtime(db, calls) {
   const services = {};
-  for (const [name, service] of Object.entries(SERVER_CALLABLE_METHODS)) {
+  for (const [name, service] of Object.entries(ALL_SERVER_CALLABLE_METHODS)) {
     (services[service] ??= {})[name] = async () => { calls.push(name); return { name }; };
   }
   services.familyMemories.expireServerFamilyMemoryUploadReservations = async () => ({ processed: 0, hasMore: false, expired: [] });

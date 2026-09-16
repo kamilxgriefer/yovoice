@@ -1242,6 +1242,13 @@ async function main() {
       await assertFails(read(ADMIN, restrictedStroke));
       await assertFails(read(OWNER, heldState));
 
+      // Ephemeral motion moved to the active LiveKit data plane. The retired
+      // Firestore path has no client read or write rule at all.
+      const retiredDraft =
+        `clubs/${companyId}/channels/whiteboard/whiteboardDrafts/${MEMBER}`;
+      await assertFails(setDoc(doc(db(MEMBER), retiredDraft), { draftId: "old" }));
+      await assertFails(read(MEMBER, retiredDraft));
+
       for (const uid of [OWNER, MEMBER, ADMIN, OUTSIDER]) {
         await assertFails(setDoc(doc(db(uid), ordinaryState), state(companyId)));
         await assertFails(updateDoc(doc(db(uid), ordinaryState), { revision: 2 }));
@@ -1815,6 +1822,37 @@ async function main() {
         await assertFails(deleteDoc(doc(db(uid), "serverControlOutbox/parity-job")));
       }
       await assertFails(getDocs(query(collection(db(OWNER), "serverControlOutbox"), limit(1))));
+    });
+
+    await check("OBS broadcast usage slots and the runtime capacity switch are closed to every client", async () => {
+      const usage = `serverBroadcastUsage/${OWNER}`;
+      const capacity = "serverRuntimeCapacity/communityBroadcastV1";
+      const slot = (uid) => ({
+        schemaVersion: 1, source: "yovoice.obs.rtmp", uid, serverId: PARITY, channelId: "stage",
+        roomId: "stage-room", sessionId: "session-one", livekitRoomName: "srv_parity_stage_session-one",
+        participantIdentity: "obs_parity", state: "active", operationId: "a".repeat(64),
+        leaseId: null, leaseExpiresAtMillis: 0, ingressId: "ingress_one", updatedAt: new Date(0),
+      });
+      await seed({
+        [usage]: slot(OWNER),
+        [capacity]: { schemaVersion: 1, enabled: true, activeCount: 1, limit: 25, updatedAt: new Date(0) },
+      });
+      for (const uid of [OWNER, ADMIN, MEMBER, OUTSIDER]) {
+        await assertFails(read(uid, usage));
+        await assertFails(setDoc(doc(db(uid), `serverBroadcastUsage/${uid}`), slot(uid)));
+        await assertFails(updateDoc(doc(db(uid), usage), { state: "provisioning" }));
+        await assertFails(deleteDoc(doc(db(uid), usage)));
+        await assertFails(getDocs(query(collection(db(uid), "serverBroadcastUsage"), limit(1))));
+        await assertFails(read(uid, capacity));
+        await assertFails(setDoc(doc(db(uid), capacity),
+          { schemaVersion: 1, enabled: true, activeCount: 0, limit: 25, updatedAt: new Date(0) }));
+        await assertFails(updateDoc(doc(db(uid), capacity), { enabled: false }));
+        await assertFails(deleteDoc(doc(db(uid), capacity)));
+        await assertFails(getDocs(query(collection(db(uid), "serverRuntimeCapacity"), limit(1))));
+      }
+      const anonymous = env.unauthenticatedContext().firestore();
+      await assertFails(getDoc(doc(anonymous, capacity)));
+      await assertFails(getDocs(query(collection(anonymous, "serverBroadcastUsage"), limit(1))));
     });
 
     await check("no client can remove a member, ban one, lift a ban, suspend a root or mark it deleted", async () => {

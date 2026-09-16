@@ -8,7 +8,7 @@ const { test } = require("node:test");
 // of a cold start is invisible once anything else in this process has loaded
 // an SDK, and the export map is what `firebase deploy` reads — a renamed or
 // dropped export is a NOT_FOUND on every client that calls it. The fourth is
-// the source-static functions/servers graph: its exact cost and its 53 base
+// the source-static functions/servers graph: its exact cost and its 54 base
 // exports must change only in a deliberate, reviewed revision.
 
 const FUNCTIONS_DIR = path.resolve(__dirname, "..");
@@ -90,7 +90,7 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 245 names.
+// Every export of functions/index.js, sorted. 246 names.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
@@ -116,6 +116,7 @@ const EXPORT_NAMES = Object.freeze([
   "createReelCommentReport",
   "createReelReport",
   "createRoom",
+  "createServerBroadcastIngressV1",
   "createServerChannelTokenV1",
   "createServerChannelV1",
   "createServerEventV1",
@@ -369,6 +370,9 @@ const COLD_START_SERVERS_MODULES = Object.freeze([
   "servers/authority.js",
   "servers/capacity.js",
   "servers/channels.js",
+  "servers/community_broadcast.js",
+  "servers/community_broadcast_cleanup.js",
+  "servers/community_broadcast_contract.js",
   "servers/company_files.js",
   "servers/content_cleanup.js",
   "servers/contract.js",
@@ -426,8 +430,8 @@ test("the deployed export map is exactly the pinned name list", () => {
   assert.deepEqual(inspectColdStart().exportNames, [...EXPORT_NAMES]);
 });
 
-test("Servers exposes exactly 53 base exports and no Podcast recording surface", () => {
-  assert.equal(inspectColdStart().serverExports.length, 53);
+test("Servers exposes exactly 54 base exports and no Podcast recording surface", () => {
+  assert.equal(inspectColdStart().serverExports.length, 54);
   assert.deepEqual(inspectColdStart().podcastRecordingExports, []);
 });
 

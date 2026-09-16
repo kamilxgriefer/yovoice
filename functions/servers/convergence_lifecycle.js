@@ -1,6 +1,9 @@
 const { digest, fail, requireId, requireUid, transactionGetAll } = require("../integrity/guards");
 const { MAX_SERVER_CHANNELS, MEDIA_KINDS, canonicalLiveKitRoomName, channelLiveness } = require("./contract");
 const { canonicalChannel } = require("./authority");
+const {
+  communityBroadcastBinding, storedBroadcastIngressId, validProvisioningLease,
+} = require("./community_broadcast_contract");
 const { assertSessionBinding } = require("./session_contract");
 
 function inconsistent() { fail("failed-precondition", "The server media graph needs reconciliation."); }
@@ -104,13 +107,27 @@ function stageConvergenceSessionEnd({ db, transaction, item, identity, now }) {
   const { session, binding } = item;
   let endOperationId = session.endOperationId;
   if (session.status === "live") {
+    // A provider create can succeed after its caller has timed out. Staging
+    // is never refused for that: owner end, archive, delete, transfer,
+    // staleness and staff enforcement must not be delayed by a host. The job
+    // records reconcileObsIngress, and the terminal worker waits for the
+    // lease to settle before it lists and deletes ingress, so an ambiguous
+    // create still cannot orphan RTMP.
+    const broadcastLease = validProvisioningLease(session.obsIngressProvisioning);
     if (session.authorizationRevision >= Number.MAX_SAFE_INTEGER - 1) inconsistent();
+    const broadcastBinding = communityBroadcastBinding(binding, {
+      roomId: binding.roomId, hostId: session.startedById,
+    });
+    const obsIngressId = storedBroadcastIngressId(session, broadcastBinding);
     endOperationId = digest("server.convergence.session.end.v1", identity.id, binding);
     transaction.update(item.sessionReference, { status: "ending", endedAt: now, endOperationId,
       authorizationRevision: session.authorizationRevision + 1, updatedAt: now });
     transaction.create(db.doc(`serverControlOutbox/${endOperationId}`), {
       schemaVersion: 1, kind: "sessionEnd", operationId: endOperationId, parentOperationId: identity.id,
-      ...binding, status: "pending", cursor: null, leaseId: null, leaseExpiresAtMillis: 0,
+      ...binding, hostId: requireUid(session.startedById, "session host"),
+      obsIngressId,
+      reconcileObsIngress: broadcastLease !== null,
+      status: "pending", cursor: null, leaseId: null, leaseExpiresAtMillis: 0,
       maxTokenExpiresAtMillis: session.maxTokenExpiresAtMillis, createdAt: now, updatedAt: now,
     });
   } else if (session.status !== "ending") inconsistent();

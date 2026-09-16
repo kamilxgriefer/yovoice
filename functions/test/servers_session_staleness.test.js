@@ -67,7 +67,7 @@ async function fixture() {
       calls.revoked.push({ roomName, userId });
       return { alreadyAbsent: false, revokedBeforeMillis: (Math.floor(nowMs / 1000) + 1) * 1000 };
     },
-    async endRoom(roomName) { calls.ended.push(roomName); return {}; },
+    async endRoom(roomName, context) { calls.ended.push({ roomName, context }); return {}; },
     async roomOccupancy(binding) { calls.occupancy.push(binding); return occupancyHook(binding); },
   };
   const service = createServerSessionService({ ...dependencies, livekit });
@@ -132,6 +132,7 @@ emulatorTest("a generation whose every token expired a grace ago and whose provi
   assert.equal(job.kind, "sessionEnd");
   assert.equal(job.status, "pending");
   assert.equal(job.sessionId, sessionId);
+  assert.equal(job.hostId, f.uid);
   assert.equal(job.maxTokenExpiresAtMillis, session.maxTokenExpiresAtMillis);
   assert.match(job.parentOperationId, /^[a-f0-9]{64}$/u);
   const channel = (await f.channelRef.get()).data();
@@ -149,7 +150,15 @@ emulatorTest("a generation whose every token expired a grace ago and whose provi
   assert.equal(drained.cleanupPending, false);
   assert.equal((await f.sessionRef(sessionId).get()).data().status, "ended");
   assert.deepEqual(f.calls.revoked.map((call) => call.userId), [member]);
-  assert.deepEqual(f.calls.ended, [f.rtcName(sessionId)]);
+  assert.deepEqual(f.calls.ended, [{
+    roomName: f.rtcName(sessionId),
+    context: {
+      version: 1, endOperationId: staged.endOperationId,
+      serverId: f.serverId, channelId: f.channelId, roomId: f.roomId,
+      sessionId, livekitRoomName: f.rtcName(sessionId), hostId: f.uid,
+      obsIngressId: null, reconcileObsIngress: false,
+    },
+  }]);
   assert.equal((await f.roomRef.get()).data().serverSessionCleanupId, null);
   // Nothing is live any more, so the next sweep scans nothing.
   const again = await f.sweep();
@@ -216,8 +225,49 @@ emulatorTest("a generation that never issued a token is measured from its own st
   assert.equal(drained.cleanupPending, false);
   assert.equal((await f.sessionRef(sessionId).get()).data().status, "ended");
   assert.deepEqual(f.calls.revoked, []);
-  assert.deepEqual(f.calls.ended, [f.rtcName(sessionId)]);
+  assert.deepEqual(f.calls.ended.map(({ roomName }) => roomName), [f.rtcName(sessionId)]);
   assert.deepEqual((await f.channelRef.get()).data().liveness, channelLiveness());
+});
+
+emulatorTest("an OBS provision lease never defers a stale sweep; the end worker waits for it before the provider delete", async () => {
+  const f = await fixture();
+  const { sessionId } = await f.start();
+  f.advance(STALE_GENERATION_GRACE_MS + 1);
+  const leaseExpiresAtMillis = f.clock() + 180_000;
+  await f.sessionRef(sessionId).update({
+    obsIngressProvisioning: {
+      schemaVersion: 2,
+      operationId: "a".repeat(64),
+      leaseId: "lease-stale-race",
+      startedAtMillis: f.clock(),
+      leaseExpiresAtMillis,
+    },
+  });
+
+  const outcome = await f.sweep();
+  assert.equal(outcome.staged.length, 1);
+  const [staged] = outcome.staged;
+  assert.equal((await f.sessionRef(sessionId).get()).data().status, "ending");
+  const jobRef = f.db.doc(`serverControlOutbox/${staged.endOperationId}`);
+  const job = (await jobRef.get()).data();
+  assert.equal(job.hostId, f.uid);
+  assert.equal(job.obsIngressId, null);
+  assert.equal(job.reconcileObsIngress, true);
+
+  const deferred = await f.control.processServerSessionEndPage({ operationId: staged.endOperationId });
+  assert.equal(deferred.cleanupPending, true);
+  assert.deepEqual(f.calls.ended, []);
+  assert.equal((await jobRef.get()).data().leaseId, null);
+  assert.equal((await jobRef.get()).data().status, "pending");
+
+  f.advance(leaseExpiresAtMillis - f.clock() + 1);
+  const drained = await f.drain(staged.endOperationId);
+  assert.equal(drained.cleanupPending, false);
+  assert.equal(f.calls.ended.length, 1);
+  assert.equal(f.calls.ended[0].context.reconcileObsIngress, true);
+  const session = (await f.sessionRef(sessionId).get()).data();
+  assert.equal(session.status, "ended");
+  assert.equal(session.obsIngressProvisioning, null);
 });
 
 emulatorTest("legacy live rooms are never candidates, a held anchor is never live, the scan bound reports truncation, and the option envelope fails closed", async () => {

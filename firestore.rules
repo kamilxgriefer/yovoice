@@ -4840,6 +4840,16 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // OBS ingress leases and the global runtime capacity counter are private
+    // operational state. Only Cloud Functions/Admin SDK may access them.
+    match /serverBroadcastUsage/{userId} {
+      allow read, write: if false;
+    }
+
+    match /serverRuntimeCapacity/{capacityId} {
+      allow read, write: if false;
+    }
+
     // Family Memory upload capabilities, owner leases, byte budgets and
     // deletion jobs are server-owned. Storage Rules may inspect the live
     // reservation to authorize one immutable upload; clients never read or

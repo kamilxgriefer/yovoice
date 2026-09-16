@@ -6,6 +6,12 @@ const {
 const { canonicalLiveKitRoomName, channelLiveness } = require("./contract");
 const { assertSessionBinding, hasUnresolvedRevocationAttempt, tokenRecipientId, validateRecipient } = require("./session_contract");
 const { readSessionTokenAuthority } = require("./session_authority");
+const { createServerBroadcastCleanupService } = require("./community_broadcast_cleanup");
+const {
+  COMMUNITY_BROADCAST_CLEANUP_DELETE_LIMIT,
+  broadcastCapacityReference, broadcastUsageReference, slotMatchesBinding,
+  validProvisioningLease, validateBroadcastCapacity, validateBroadcastSlot,
+} = require("./community_broadcast_contract");
 
 const LEASE_MS = 120_000;
 const RECONNECT_SKEW_MS = 2_000;
@@ -54,13 +60,29 @@ function endJobBinding(job, operationId) {
       !Number.isSafeInteger(job.leaseExpiresAtMillis) || job.leaseExpiresAtMillis < 0 ||
       !Number.isSafeInteger(job.maxTokenExpiresAtMillis) || job.maxTokenExpiresAtMillis < 0) invalidEndJob();
   if (job.leaseId !== null) requireId(job.leaseId, "cleanup lease");
-  const binding = cleanupBinding(job);
+  const hasIngressId = Object.hasOwn(job, "obsIngressId");
+  const hasIngressReconcile = Object.hasOwn(job, "reconcileObsIngress");
+  if (hasIngressId !== hasIngressReconcile ||
+      (hasIngressId && job.obsIngressId !== null && typeof job.obsIngressId !== "string") ||
+      (hasIngressReconcile && typeof job.reconcileObsIngress !== "boolean")) invalidEndJob();
+  // Preserve the exact legacy binding shape when an already-staged pre-OBS
+  // job lacks the two ingress fields. Its durable terminal checkpoint was
+  // fingerprinted over that older shape and must remain drainable after this
+  // deployment. Every newly staged job writes both fields explicitly.
+  const binding = { ...cleanupBinding(job),
+    ...(job.hostId === undefined ? {} : { hostId: requireUid(job.hostId, "hostId") }),
+    ...(hasIngressId ? {
+      obsIngressId: job.obsIngressId === null
+        ? null : requireId(job.obsIngressId, "ingressId"),
+      reconcileObsIngress: job.reconcileObsIngress,
+    } : {}) };
   if (binding.livekitRoomName !== job.livekitRoomName) invalidEndJob();
   return binding;
 }
 
 function sameEndBinding(first, second) {
-  return ["serverId", "channelId", "roomId", "sessionId", "livekitRoomName"]
+  return ["serverId", "channelId", "roomId", "sessionId", "livekitRoomName", "hostId",
+    "obsIngressId", "reconcileObsIngress"]
     .every((key) => first[key] === second[key]);
 }
 
@@ -90,7 +112,8 @@ function checkpointIdentity(checkpoint) {
 function assertEndGeneration(job, session, binding, operationId, authorizationRevision = null) {
   if (!sameEndBinding(endJobBinding(job, operationId), binding)) invalidEndJob();
   assertSessionBinding(session, binding);
-  if (session.endOperationId !== operationId || job.maxTokenExpiresAtMillis !== session.maxTokenExpiresAtMillis ||
+  if ((binding.hostId !== undefined && session.startedById !== binding.hostId) ||
+      session.endOperationId !== operationId || job.maxTokenExpiresAtMillis !== session.maxTokenExpiresAtMillis ||
       (authorizationRevision !== null && session.authorizationRevision !== authorizationRevision) ||
       session.status !== (job.status === "completed" ? "ended" : "ending")) invalidEndJob();
 }
@@ -114,6 +137,7 @@ async function assertEmptyRecipientTail(transaction, sessionRef, cursor) {
 /** Internal worker factories only. They require explicit scheduler/trigger
  * wiring in a later reviewed activation. No client may supply these targets. */
 function createServerSessionControlService({ db, Timestamp, livekit, clock = Date.now }) {
+  const broadcastCleanup = createServerBroadcastCleanupService({ db, Timestamp, livekit, clock });
   async function releaseLease(reference, leaseId, binding, operationId, authorizationRevision) {
     await db.runTransaction(async (transaction) => {
       const current = await transaction.get(reference);
@@ -156,10 +180,21 @@ function createServerSessionControlService({ db, Timestamp, livekit, clock = Dat
         transaction.update(reference, { leaseId, leaseExpiresAtMillis: clock() + LEASE_MS, updatedAt: now });
         return { ...common, recipients: [], done: true };
       }
+      // Reserve only the calls this immutable end binding can make: one room
+      // delete, one direct ingress delete when an id was committed, and at
+      // at most one ListIngress plus a bounded page of metadata-bound deletes after an ambiguous
+      // create. The recipient page then keeps every pass at <=20 provider
+      // RPCs without penalizing ordinary sessions that never owned OBS.
+      const terminalProviderReserve = 1 +
+        (binding.obsIngressId == null ? 0 : 1) +
+        (binding.reconcileObsIngress === true
+          ? 1 + COMMUNITY_BROADCAST_CLEANUP_DELETE_LIMIT
+          : 0);
+      const recipientPageSize = Math.min(pageSize, 20 - terminalProviderReserve);
       let query = sessionRef.collection("tokenRecipients").orderBy(FieldPath.documentId());
       if (job.cursor !== null) query = query.startAfter(job.cursor);
-      const page = await transaction.get(query.limit(pageSize + 1));
-      const recipients = page.docs.slice(0, pageSize).map((doc) => {
+      const page = await transaction.get(query.limit(recipientPageSize + 1));
+      const recipients = page.docs.slice(0, recipientPageSize).map((doc) => {
         const data = doc.data();
         const expected = cleanupBinding(binding, data.userId);
         validateRecipient(data, expected);
@@ -175,7 +210,7 @@ function createServerSessionControlService({ db, Timestamp, livekit, clock = Dat
           updatedAt: now,
         });
       }
-      return { ...common, recipients, done: page.size <= pageSize };
+      return { ...common, recipients, done: page.size <= recipientPageSize };
     });
     if (plan.completed) return { cleanupPending: false, processed: 0 };
     if (plan.busy) return { cleanupPending: true, processed: 0 };
@@ -266,28 +301,63 @@ function createServerSessionControlService({ db, Timestamp, livekit, clock = Dat
       const prepared = await db.runTransaction(async (transaction) => {
         const [currentSnapshot, sessionSnapshot] = await transactionGetAll(transaction, reference, plan.sessionRef);
         const current = currentSnapshot.data(); const session = sessionSnapshot.data();
-        if (current?.leaseId !== leaseId || current.leaseExpiresAtMillis <= clock()) return false;
+        if (current?.leaseId !== leaseId || current.leaseExpiresAtMillis <= clock()) return "lost";
         assertEndGeneration(current, session, plan.binding, operationId, plan.authorizationRevision);
         if (current.status !== "pending" ||
             checkpointIdentity(terminalCheckpoint(current, session, plan.binding)) !== checkpointIdentity(checkpoint)) invalidEndJob();
+        // Ends are never refused for an OBS provisioning lease; this worker
+        // waits instead. A CreateIngress whose caller timed out can still
+        // materialize until that lease expires, so ListIngress/DeleteIngress
+        // and the room delete run only after it settles. Recipient
+        // revocation above is not delayed. Provisioning cannot start a new
+        // lease after staging (it requires a live generation), and its error
+        // path renews only a lease it already owns, once. The only other
+        // writer is the host broadcast cleanup, whose short lease fences its
+        // own in-flight delete of an input this job already names.
+        const broadcastLease = validProvisioningLease(session.obsIngressProvisioning);
+        if (broadcastLease !== null && broadcastLease.leaseExpiresAtMillis > clock()) {
+          transaction.update(reference, { leaseId: null, leaseExpiresAtMillis: 0,
+            updatedAt: Timestamp.fromMillis(clock()) });
+          return "deferred";
+        }
         await readCleanupCursor(transaction, plan.sessionRef, plan.binding, current.cursor);
         await assertEmptyRecipientTail(transaction, plan.sessionRef, current.cursor);
         transaction.update(reference, { leaseExpiresAtMillis: clock() + LEASE_MS, updatedAt: Timestamp.fromMillis(clock()) });
-        return true;
+        return "ready";
       });
-      if (!prepared) return { cleanupPending: true, processed };
+      if (prepared !== "ready") return { cleanupPending: true, processed };
       await livekit.endRoom(plan.binding.livekitRoomName, { version: 1, endOperationId: operationId, ...plan.binding });
       return await db.runTransaction(async (transaction) => {
-        const [currentSnapshot, sessionSnapshot, room, channel] = await transactionGetAll(transaction, reference,
-          plan.sessionRef, db.doc(`rooms/${plan.binding.roomId}`),
-          db.doc(`clubs/${plan.binding.serverId}/channels/${plan.binding.channelId}`));
+        const usageReference = plan.binding.hostId === undefined
+          ? null : broadcastUsageReference(db, plan.binding.hostId);
+        const capacityReference = plan.binding.hostId === undefined
+          ? null : broadcastCapacityReference(db);
+        const references = [reference, plan.sessionRef, db.doc(`rooms/${plan.binding.roomId}`),
+          db.doc(`clubs/${plan.binding.serverId}/channels/${plan.binding.channelId}`),
+          ...(usageReference === null ? [] : [usageReference, capacityReference])];
+        const snapshots = await transactionGetAll(transaction, ...references);
+        const [currentSnapshot, sessionSnapshot, room, channel] = snapshots;
         const current = currentSnapshot.data(); const session = sessionSnapshot.data();
         if (current?.leaseId !== leaseId || current.leaseExpiresAtMillis <= clock()) return { cleanupPending: true, processed };
         assertEndGeneration(current, session, plan.binding, operationId, plan.authorizationRevision);
         if (current.status !== "pending" ||
             checkpointIdentity(terminalCheckpoint(current, session, plan.binding)) !== checkpointIdentity(checkpoint)) invalidEndJob();
         const now = Timestamp.fromMillis(clock());
-        transaction.update(plan.sessionRef, { status: "ended", rtcEndedAt: now, updatedAt: now });
+        transaction.update(plan.sessionRef, { status: "ended", rtcEndedAt: now,
+          obsIngress: null, obsIngressProvisioning: null, updatedAt: now });
+        if (usageReference !== null && snapshots[4].exists) {
+          const slot = validateBroadcastSlot(snapshots[4].data(), plan.binding.hostId);
+          if (slotMatchesBinding(slot, plan.binding, plan.binding.hostId)) {
+            if (!snapshots[5].exists) invalidEndJob();
+            const capacity = validateBroadcastCapacity(snapshots[5].data());
+            if (capacity.activeCount < 1) invalidEndJob();
+            transaction.delete(usageReference);
+            transaction.update(capacityReference, {
+              activeCount: capacity.activeCount - 1,
+              updatedAt: now,
+            });
+          }
+        }
         // Late effects always target the old RTC name; a stale ACK cannot
         // erase a newer or rebound anchor, roster or active-session mirror.
         const anchor = room.exists ? room.data() : null;
@@ -324,6 +394,30 @@ function createServerSessionControlService({ db, Timestamp, livekit, clock = Dat
    * Re-reads current authority, not a stale event's claimed permissions. */
   async function reconcileServerSessionParticipant({ serverId, channelId, roomId, sessionId, userId }) {
     const binding = cleanupBinding({ serverId, channelId, roomId, sessionId }, userId);
+    let broadcastPending = false;
+    let broadcastFailure = null;
+    try {
+      const broadcast = await broadcastCleanup.reconcileServerHostBroadcast({
+        serverId: binding.serverId,
+        channelId: binding.channelId,
+        roomId: binding.roomId,
+        sessionId: binding.sessionId,
+        hostId: binding.userId,
+      });
+      broadcastPending = broadcast.cleanupPending;
+    } catch (error) {
+      // The OBS identity and the connected human identity are independent
+      // provider obligations. A stuck DeleteIngress must keep the convergence
+      // job retryable, but it must never shield the removed/banned user from
+      // an immediate RemoveParticipant attempt.
+      broadcastFailure = error;
+    }
+    const combineBroadcastOutcome = (result) => {
+      if (broadcastFailure !== null) throw broadcastFailure;
+      return broadcastPending
+        ? { ...result, revocationPending: true, recoveryRequired: result.recoveryRequired === true }
+        : result;
+    };
     const sessionRef = sessionReference(db, binding);
     const recipientRef = sessionRef.collection("tokenRecipients").doc(tokenRecipientId(userId));
     const attemptId = randomUUID();
@@ -369,8 +463,10 @@ function createServerSessionControlService({ db, Timestamp, livekit, clock = Dat
         updatedAt: Timestamp.fromMillis(nowMs) });
       return { epoch };
     });
-    if (plan.completed) return { revocationPending: false, revoked: false };
-    if (plan.busy) return { revocationPending: true, revoked: false, recoveryRequired: plan.recoveryRequired };
+    if (plan.completed) return combineBroadcastOutcome({ revocationPending: false, revoked: false });
+    if (plan.busy) return combineBroadcastOutcome({
+      revocationPending: true, revoked: false, recoveryRequired: plan.recoveryRequired,
+    });
     let revokedBeforeMillis;
     try {
       const result = await livekit.revokeParticipant(binding.livekitRoomName, binding.participantIdentity);
@@ -387,7 +483,7 @@ function createServerSessionControlService({ db, Timestamp, livekit, clock = Dat
       });
       throw error;
     }
-    return db.runTransaction(async (transaction) => {
+    const result = await db.runTransaction(async (transaction) => {
       const [recipient, participant, mirror] = await transactionGetAll(transaction, recipientRef,
         db.doc(`rooms/${roomId}/participants/${userId}`), db.doc(`activeVoiceSessions/${userId}/rooms/${roomId}`));
       validateRecipient(recipient.data(), binding);
@@ -414,6 +510,7 @@ function createServerSessionControlService({ db, Timestamp, livekit, clock = Dat
           mirror.data().authorityFingerprint === recipient.data().authorityFingerprint) transaction.delete(mirror.ref);
       return { revocationPending: false, revoked: true };
     });
+    return combineBroadcastOutcome(result);
   }
 
   return { processServerSessionEndPage, reconcileServerSessionParticipant };

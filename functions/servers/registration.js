@@ -54,6 +54,7 @@ const { createServerInviteService } = require("./invites");
 const { createServerMembershipService } = require("./memberships");
 const { createServerManagementService } = require("./management");
 const { createServerSessionService } = require("./sessions");
+const { createServerCommunityBroadcastService } = require("./community_broadcast");
 const { createServerSessionParticipationService } = require("./session_participation");
 const { createServerSessionStalenessService } = require("./session_staleness");
 const { createServerConvergenceService } = require("./convergence");
@@ -131,9 +132,21 @@ const SERVER_CALLABLE_METHODS = Object.freeze({
   setServerSessionMuteV1: "participation",
 });
 
-// Only the two callables that reach the media provider bind the LiveKit
-// secrets: token issuance signs a JWT, and a session end eagerly runs one
-// revocation page (sessions.js). `startServerChannelSessionV1` validates the
+// OBS ingress extends the reviewed Servers surface without rewriting the
+// frozen 54-callable table mirrored by docs/Servers.md. Keeping the extension
+// explicit also makes its LiveKit-secret binding and rollout visible.
+const COMMUNITY_BROADCAST_CALLABLE_METHODS = Object.freeze({
+  createServerBroadcastIngressV1: "broadcast",
+});
+const ALL_SERVER_CALLABLE_METHODS = Object.freeze({
+  ...SERVER_CALLABLE_METHODS,
+  ...COMMUNITY_BROADCAST_CALLABLE_METHODS,
+});
+
+// Only callables that reach the media provider bind the LiveKit secrets:
+// token issuance signs a JWT, session end eagerly runs one revocation page
+// (sessions.js), and OBS provisioning manages an RTMP ingress.
+// `startServerChannelSessionV1` validates the
 // public LIVEKIT_URL only, and the three participation callables
 // (session_participation.js) never touch the provider themselves: a role or
 // mute change revokes through the outbox worker, which binds the secrets
@@ -142,6 +155,7 @@ const SERVER_CALLABLE_METHODS = Object.freeze({
 const SECRET_BOUND_CALLABLES = Object.freeze([
   "createServerChannelTokenV1",
   "endServerChannelSessionV1",
+  "createServerBroadcastIngressV1",
 ]);
 
 const FAMILY_MEMORY_MEDIA_CALLABLES = Object.freeze([
@@ -197,7 +211,7 @@ const SWEEP_EXPORTS = Object.freeze([
 ]);
 
 const SERVERS_V1_EXPORT_NAMES = Object.freeze([
-  ...Object.keys(SERVER_CALLABLE_METHODS),
+  ...Object.keys(ALL_SERVER_CALLABLE_METHODS),
   ...DISPATCHER_EXPORTS,
   ...SWEEP_EXPORTS,
 ]);
@@ -441,6 +455,7 @@ function createServersV1Runtime({
     memberships: createServerMembershipService(dependencies),
     management: createServerManagementService(dependencies),
     sessions: createServerSessionService(dependencies),
+    broadcast: createServerCommunityBroadcastService(dependencies),
     participation: createServerSessionParticipationService(dependencies),
     projection: createServerConvergenceService(dependencies),
     convergence: createServerConvergenceRuntimeService(dependencies),
@@ -796,7 +811,7 @@ function createServersV1Functions({
   const securedOptions = { ...callableOptions, timeoutSeconds: 120, secrets: [...LIVEKIT_SECRET_PARAMS] };
   const mediaOptions = { ...callableOptions, memory: "512MiB", timeoutSeconds: 120 };
   const exportsMap = {};
-  for (const [name, serviceName] of Object.entries(SERVER_CALLABLE_METHODS)) {
+  for (const [name, serviceName] of Object.entries(ALL_SERVER_CALLABLE_METHODS)) {
     if (enablePodcastRecording !== true && PODCAST_RECORDING_EXPORTS.includes(name)) {
       continue;
     }
@@ -805,7 +820,9 @@ function createServersV1Functions({
       throw new TypeError(`Missing Servers V1 method ${serviceName}.${name}.`);
     }
     const handler = callableHandler(name, method, activation, log);
-    const options = PODCAST_EGRESS_CALLABLES.includes(name)
+    const options = name === "createServerBroadcastIngressV1"
+      ? { ...securedOptions, maxInstances: 5 }
+      : PODCAST_EGRESS_CALLABLES.includes(name)
       ? {
           ...mediaOptions,
           secrets: [...podcastSecretParams],
@@ -942,11 +959,13 @@ function createServersV1Functions({
 }
 
 module.exports = {
+  ALL_SERVER_CALLABLE_METHODS,
   ACTIVATION_ACCESS,
   ACTIVATION_CONFIG_PATH,
   ACTIVATION_UNAVAILABLE_REASON,
   CONVERGENCE_KINDS,
   COMPANY_FILE_MEDIA_CALLABLES,
+  COMMUNITY_BROADCAST_CALLABLE_METHODS,
   DEFAULT_DISPATCH_LIMITS,
   DISPATCHER_EXPORTS,
   FAMILY_MEMORY_MEDIA_CALLABLES,
