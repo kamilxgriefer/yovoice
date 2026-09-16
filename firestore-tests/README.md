@@ -88,6 +88,27 @@ npm --prefix firestore-tests run test:family-media
 
 A green run here is the precondition for deploying `storage.rules`.
 
+## Servers V1 ACL suite
+
+`server_rules.test.js` covers the Servers V1 boundary (member directory
+queries, revocation, held roots, Storage paths). CI runs it on the default
+`firebase.json` ports under its own demo project:
+
+```bash
+./firestore-tests/node_modules/.bin/firebase emulators:exec --only firestore,storage \
+  --project demo-yovoice-server-acl 'npm --prefix firestore-tests run test:servers'
+```
+
+For an isolated local run beside other emulators, add
+`--config firebase.qa-gate.json` to the same command. That file loads the
+same rules, indexes and Storage rules on alternate ports (auth 9098, firestore
+8085, storage 9198, hub 4410, logging 4510, no UI), and has no Functions,
+Hosting or project binding. Use it with demo project ids only. This suite
+passed on it (70 passed, 0 failed, 2026-09-16). Do not point `npm test` at it
+without also setting `FIRESTORE_EMULATOR_PORT=8085`: `rules.test.js` reads
+`FIRESTORE_EMULATOR_ADDRESS`/`FIRESTORE_EMULATOR_PORT`, which the Firebase CLI
+does not inject, and otherwise falls back to 8080.
+
 ## Private-profile boundary
 
 The ADR-054 cases prove document-level privacy rather than relying on client
