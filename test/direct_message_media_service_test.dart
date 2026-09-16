@@ -170,11 +170,22 @@ void main() {
         storage: MockFirebaseStorage(),
         attachmentPayloadStore: payloadStore,
       );
+      final videoBytes = _mp4BrandedVideoBytes()
+        ..setRange(256, 264, const <int>[
+          0x73,
+          0x6f,
+          0x75,
+          0x6e,
+          0x64,
+          1,
+          2,
+          3,
+        ]);
 
       await service.sendVideoMessage(
         conversationId: conversationId,
         video: XFile.fromData(
-          Uint8List(4096),
+          videoBytes,
           mimeType: 'video/mp4',
           name: 'clip.mp4',
         ),
@@ -184,6 +195,13 @@ void main() {
       expect(payloadStore.uploadPath, videoStoragePath);
       expect(payloadStore.contentTypeAtUpload, 'video/mp4');
       expect(payloadStore.customMetadataAtUpload?['yovoiceMediaType'], 'video');
+      expect(
+        payloadStore.bytesAtUpload,
+        orderedEquals(videoBytes),
+        reason:
+            'the picker payload must reach Firebase byte-for-byte; the '
+            'client must not transcode or discard an embedded audio track',
+      );
       expect(functions.reservePayloads.single, containsPair('type', 'video'));
       expect(
         functions.reservePayloads.single,
@@ -1681,6 +1699,7 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
   String? uploadPath;
   String? contentTypeAtUpload;
   Map<String, String>? customMetadataAtUpload;
+  Uint8List? bytesAtUpload;
   Completer<void>? uploadStarted;
   Completer<void>? uploadGate;
   Completer<void>? adoptStarted;
@@ -1731,6 +1750,7 @@ class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
     uploadPath = reference.fullPath;
     contentTypeAtUpload = metadata.contentType;
     customMetadataAtUpload = metadata.customMetadata;
+    bytesAtUpload = Uint8List.fromList(bytes);
     final started = uploadStarted;
     if (started != null && !started.isCompleted) started.complete();
     await uploadGate?.future;

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart' hide TimeoutException;
 
+import 'package:yovoice/core/audio/realtime_audio_session_registry.dart';
 import 'package:yovoice/core/audio/ui_sound.dart';
 import 'package:yovoice/core/audio/ui_sound_service.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
@@ -113,6 +114,7 @@ class VoiceCallService extends ChangeNotifier {
       _tokenServiceOverride = null,
       _directCallServiceOverride = null,
       _keepAlive = _platformKeepAlive ?? defaultVoiceSessionKeepAlive(),
+      _realtimeAudioSessions = RealtimeAudioSessionRegistry.instance,
       _permissionReadiness =
           permissionReadiness ?? PermissionReadinessService.instance;
 
@@ -142,6 +144,7 @@ class VoiceCallService extends ChangeNotifier {
     VoiceTokenService? tokenService,
     DirectCallGateway? directCallService,
     VoiceSessionKeepAlive? keepAlive,
+    RealtimeAudioSessionRegistry? realtimeAudioSessions,
   }) : _microphoneTeardownTimeout = microphoneTeardownTimeout,
        _connectionTimeout = connectionTimeout,
        _speakerRouteTimeout = speakerRouteTimeout,
@@ -156,6 +159,8 @@ class VoiceCallService extends ChangeNotifier {
        _tokenServiceOverride = tokenService,
        _directCallServiceOverride = directCallService,
        _keepAlive = keepAlive ?? const NoopVoiceSessionKeepAlive(),
+       _realtimeAudioSessions =
+           realtimeAudioSessions ?? RealtimeAudioSessionRegistry(),
        _permissionReadiness =
            permissionReadiness ?? PermissionReadinessService.instance;
 
@@ -174,6 +179,12 @@ class VoiceCallService extends ChangeNotifier {
   /// Foreground-service seam (Android). Tests inject a recorder; iOS, web and
   /// the default test constructor get a no-op.
   final VoiceSessionKeepAlive _keepAlive;
+  final RealtimeAudioSessionRegistry _realtimeAudioSessions;
+  final Object _realtimeAudioOwner = Object();
+  RealtimeAudioSessionLease? _realtimeAudioLease;
+  int _pendingJoinOperations = 0;
+  int _realtimeJoinRequestEpoch = 0;
+  bool _disposed = false;
   bool _keepAliveActive = false;
   // Inject SDK/network boundaries only through the test constructor so tests
   // exercise the real join, epoch checks and cleanup instead of overriding it.
@@ -343,6 +354,13 @@ class VoiceCallService extends ChangeNotifier {
     return null;
   }
 
+  /// Native WebRTC id for the currently subscribed remote camera.
+  ///
+  /// Picture-in-Picture uses this opaque id to bind a second native renderer;
+  /// it does not need access to the LiveKit room or its connection token.
+  String? get remoteCameraNativeTrackId =>
+      remoteCameraTrack?.mediaStreamTrack.id;
+
   double get roomEnergy {
     final values = participants
         .where((participant) => participant.isSpeaking)
@@ -461,6 +479,43 @@ class VoiceCallService extends ChangeNotifier {
   }
 
   Future<void> _joinWithToken({
+    required String sessionRoomId,
+    required String roomName,
+    required VoiceSessionKind kind,
+    required Future<VoiceConnectionInfo> Function() tokenLoader,
+    String? directCallId,
+    bool enableCamera = false,
+    bool startMuted = false,
+    bool playSound = true,
+  }) async {
+    if (_disposed) return;
+    final realtimeRequestEpoch = ++_realtimeJoinRequestEpoch;
+    _pendingJoinOperations++;
+    try {
+      _realtimeAudioLease ??= await _realtimeAudioSessions.acquire(
+        owner: _realtimeAudioOwner,
+        kind: RealtimeAudioSessionOwnerKind.directOrLegacyCall,
+      );
+      if (_disposed || realtimeRequestEpoch != _realtimeJoinRequestEpoch) {
+        return;
+      }
+      await _joinWithRealtimeAudioOwned(
+        sessionRoomId: sessionRoomId,
+        roomName: roomName,
+        kind: kind,
+        tokenLoader: tokenLoader,
+        directCallId: directCallId,
+        enableCamera: enableCamera,
+        startMuted: startMuted,
+        playSound: playSound,
+      );
+    } finally {
+      _pendingJoinOperations--;
+      _releaseRealtimeAudioIfIdle();
+    }
+  }
+
+  Future<void> _joinWithRealtimeAudioOwned({
     required String sessionRoomId,
     required String roomName,
     required VoiceSessionKind kind,
@@ -1332,6 +1387,7 @@ class VoiceCallService extends ChangeNotifier {
     // state. A late Future must never reconnect or republish after logout,
     // hang-up, account switch or a newer join.
     if (invalidateOperations) {
+      _realtimeJoinRequestEpoch++;
       _sessionEpoch++;
       _microphoneOperationEpoch++;
       _cameraOperationEpoch++;
@@ -1370,11 +1426,15 @@ class VoiceCallService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _disposeRoom();
-    } on VoiceCleanupInProgressException {
-      // End remains local-first and finishes in bounded time. Cleanup keeps
-      // running behind the safety barrier; new joins explicitly wait/reject.
-      if (requireCleanupComplete) rethrow;
+      try {
+        await _disposeRoom();
+      } on VoiceCleanupInProgressException {
+        // End remains local-first and finishes in bounded time. Cleanup keeps
+        // running behind the safety barrier; new joins explicitly wait/reject.
+        if (requireCleanupComplete) rethrow;
+      }
+    } finally {
+      _releaseRealtimeAudioIfIdle();
     }
     if (playSound && wasConnected) {
       unawaited(
@@ -1436,7 +1496,7 @@ class VoiceCallService extends ChangeNotifier {
   }
 
   bool _isJoinCurrent(int epoch, String sessionRoomId) =>
-      _sessionEpoch == epoch && _roomId == sessionRoomId;
+      !_disposed && _sessionEpoch == epoch && _roomId == sessionRoomId;
 
   bool _isCameraOperationCurrent(
     int epoch,
@@ -1785,10 +1845,12 @@ class VoiceCallService extends ChangeNotifier {
       ).then(
         (_) {
           _pendingRoomTeardowns--;
+          _releaseRealtimeAudioIfIdle();
           completion.complete();
         },
         onError: (Object error, StackTrace stackTrace) {
           _pendingRoomTeardowns--;
+          _releaseRealtimeAudioIfIdle();
           completion.completeError(error, stackTrace);
         },
       ),
@@ -1992,6 +2054,23 @@ class VoiceCallService extends ChangeNotifier {
     await _keepAlive.stop();
   }
 
+  void _releaseRealtimeAudioIfIdle() {
+    final lease = _realtimeAudioLease;
+    if (lease == null) return;
+    final realtimeStatus =
+        _status == VoiceCallStatus.connecting ||
+        _status == VoiceCallStatus.connected ||
+        _status == VoiceCallStatus.reconnecting;
+    final mustKeepLease =
+        _pendingJoinOperations > 0 ||
+        _pendingRoomTeardowns > 0 ||
+        _room != null ||
+        (!_disposed && realtimeStatus);
+    if (mustKeepLease) return;
+    _realtimeAudioLease = null;
+    lease.release();
+  }
+
   void _setStatus(VoiceCallStatus value) {
     _status = value;
     notifyListeners();
@@ -2028,7 +2107,19 @@ class VoiceCallService extends ChangeNotifier {
 
   @override
   void dispose() {
-    unawaited(_disposeRoom().catchError((_) {}));
+    if (_disposed) return;
+    _disposed = true;
+    _realtimeJoinRequestEpoch++;
+    _sessionEpoch++;
+    _microphoneOperationEpoch++;
+    _cameraOperationEpoch++;
+    _speakerOperationEpoch++;
+    unawaited(
+      _disposeRoom()
+          .catchError((_) {})
+          .whenComplete(_releaseRealtimeAudioIfIdle),
+    );
+    _releaseRealtimeAudioIfIdle();
     super.dispose();
   }
 }

@@ -29,7 +29,9 @@ import androidx.core.content.ContextCompat
  * allowed to publish needs `microphone`, a listener only needs
  * `mediaPlayback`. Requesting `microphone` without a granted RECORD_AUDIO is a
  * SecurityException, so that case falls back to `mediaPlayback` instead of
- * taking the app down.
+ * taking the app down. `mediaProjection` is added only while a consented
+ * screen share is active, and only in-process on the already-running service
+ * (see [setScreenShareActive]).
  */
 class VoiceSessionService : Service() {
     companion object {
@@ -42,9 +44,35 @@ class VoiceSessionService : Service() {
         private const val CHANNEL_ID = "yovoice_voice_session"
         private const val NOTIFICATION_ID = 4711
         private const val TAG = "VoiceSessionService"
+
+        /**
+         * The live service instance, if any. Screen-share type changes are
+         * applied to it directly on the main thread, so the Flutter reply
+         * follows `startForeground` and no Intent can restart a stopped
+         * service or be refused as a background foreground-service start.
+         */
+        @Volatile
+        var running: VoiceSessionService? = null
+            private set
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private var title: String? = null
+    private var body: String? = null
+    private var canPublish = false
+    private var screenShareActive = false
+    private var foregroundStarted = false
+
+    override fun onCreate() {
+        super.onCreate()
+        running = this
+    }
+
+    override fun onDestroy() {
+        if (running === this) running = null
+        super.onDestroy()
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -52,7 +80,12 @@ class VoiceSessionService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
-            else -> startInForeground(intent)
+            else -> {
+                title = intent?.getStringExtra(EXTRA_TITLE)
+                body = intent?.getStringExtra(EXTRA_BODY)
+                canPublish = intent?.getBooleanExtra(EXTRA_CAN_PUBLISH, false) ?: false
+                startInForeground()
+            }
         }
         // The Dart side owns the lifetime: it starts the service when a
         // session connects and stops it on disconnect. Never restart on our
@@ -61,34 +94,56 @@ class VoiceSessionService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun startInForeground(intent: Intent?) {
-        val title = intent?.getStringExtra(EXTRA_TITLE) ?: getString(R.string.voice_session_title)
-        val body = intent?.getStringExtra(EXTRA_BODY) ?: getString(R.string.voice_session_body)
-        val wantsMicrophone = intent?.getBooleanExtra(EXTRA_CAN_PUBLISH, false) ?: false
+    private fun startInForeground(): Boolean {
+        val notificationTitle = title ?: getString(R.string.voice_session_title)
+        val notificationBody = body ?: getString(R.string.voice_session_body)
         val micGranted = ContextCompat.checkSelfPermission(
             this,
             android.Manifest.permission.RECORD_AUDIO,
         ) == PackageManager.PERMISSION_GRANTED
 
         ensureChannel()
-        val notification = buildNotification(title, body)
-        try {
+        val notification = buildNotification(notificationTitle, notificationBody)
+        return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val type = if (wantsMicrophone && micGranted) {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                } else {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-                }
+                var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                if (canPublish && micGranted) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                if (screenShareActive) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                 startForeground(NOTIFICATION_ID, notification, type)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+            foregroundStarted = true
+            true
         } catch (error: Exception) {
             // A refused foreground start (OEM policy, a start that raced the
-            // app going to the background) must never crash the call.
-            Log.w(TAG, "Could not start the voice session service", error)
-            stopSelf()
+            // app going to the background) must never crash the call. Only a
+            // first start that never became foreground stops the service: a
+            // refused type update on a running call or Server session keeps
+            // the already-applied microphone/mediaPlayback service alive.
+            Log.w(TAG, "Could not apply the voice session service type", error)
+            if (!foregroundStarted) stopSelf()
+            false
         }
+    }
+
+    /**
+     * Adds or removes the `mediaProjection` type on this running service and
+     * reports whether the requested state is in effect.
+     *
+     * Dart calls this only after MediaProjection consent and treats `false`
+     * as "no share": it rolls the screen publication back. Without a
+     * foreground service there is no session to share from, so activation
+     * fails and deactivation is trivially satisfied. A refused update restores
+     * the previous flag so a later START keeps matching the applied type.
+     */
+    fun setScreenShareActive(active: Boolean): Boolean {
+        if (!foregroundStarted) return !active
+        val previous = screenShareActive
+        screenShareActive = active
+        if (startInForeground()) return true
+        screenShareActive = previous
+        return false
     }
 
     private fun ensureChannel() {

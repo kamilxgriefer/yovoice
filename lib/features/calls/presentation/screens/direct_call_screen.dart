@@ -14,6 +14,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
+import 'package:yovoice/features/calls/data/services/direct_call_picture_in_picture.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/calls/presentation/direct_call_route_registry.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
@@ -28,6 +29,7 @@ class DirectCallScreen extends StatefulWidget {
     this.voiceService,
     this.toneService,
     this.soundService,
+    this.pictureInPicture,
     this.currentUserId,
     this.participantName,
     super.key,
@@ -38,6 +40,7 @@ class DirectCallScreen extends StatefulWidget {
   final VoiceCallService? voiceService;
   final CallToneService? toneService;
   final UiSoundService? soundService;
+  final DirectCallPictureInPictureGateway? pictureInPicture;
   final String? currentUserId;
   final String? participantName;
 
@@ -55,6 +58,9 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       widget.toneService ?? defaultCallToneService;
   late final UiSoundService _sounds =
       widget.soundService ?? UiSoundService.instance;
+  late final DirectCallPictureInPictureGateway _pictureInPicture =
+      widget.pictureInPicture ?? DirectCallPictureInPictureController();
+  late final bool _ownsPictureInPicture = widget.pictureInPicture == null;
   late Stream<DirectCall> _call = _calls.watchCall(widget.callId);
   late final AnimationController _pulse;
 
@@ -72,6 +78,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
   bool _terminalDisconnectPending = false;
   bool _cameraPausedInBackground = false;
   bool _terminalCuePlayed = false;
+  bool _pictureInPictureSyncScheduled = false;
   String? _tonePermissionWaitCallId;
   int _elapsedSeconds = 0;
   int _callWatchGeneration = 0;
@@ -120,10 +127,19 @@ class _DirectCallScreenState extends State<DirectCallScreen>
     }
     _lastVoiceStatus = _voice.status;
     _voice.addListener(_refresh);
+    _pictureInPicture.addListener(_refreshPictureInPicture);
   }
 
   @override
   void dispose() {
+    _pictureInPicture.removeListener(_refreshPictureInPicture);
+    if (_ownsPictureInPicture) {
+      // The owned controller's dispose path performs the native disarm once.
+      // Injected gateways stay caller-owned, so this screen only disarms them.
+      _pictureInPicture.dispose();
+    } else {
+      unawaited(_pictureInPicture.disarm());
+    }
     _voice.removeListener(_refresh);
     // A route can also be removed by auth/navigation while a permission or
     // Answer Future is pending. Its continuation must not start local media.
@@ -207,7 +223,60 @@ class _DirectCallScreenState extends State<DirectCallScreen>
       _connectionInterrupted = false;
     }
     _lastVoiceStatus = nextStatus;
+    _syncPictureInPicture();
     if (mounted) setState(() {});
+  }
+
+  void _refreshPictureInPicture() {
+    if (mounted) setState(() {});
+  }
+
+  void _syncPictureInPicture() {
+    final call = _latest;
+    final status = _voice.status;
+    // A network handover (LiveKit RoomReconnectingEvent) must not close the
+    // PiP window or send the task to the background. Only terminal states
+    // (disconnected, failed, an ended call or a finished route) disarm.
+    final mediaAlive =
+        status == VoiceCallStatus.connected ||
+        (status == VoiceCallStatus.reconnecting && _pictureInPicture.isArmed);
+    final eligible =
+        mounted &&
+        !_finishRequested &&
+        call?.status == DirectCallStatus.active &&
+        call?.isVideo == true &&
+        mediaAlive &&
+        _voice.directCallId == widget.callId;
+    if (!eligible) {
+      if (_pictureInPicture.isArmed || _pictureInPicture.isInPictureInPicture) {
+        unawaited(_pictureInPicture.disarm());
+      }
+      return;
+    }
+
+    final trackId = _voice.remoteCameraNativeTrackId?.trim();
+    if (trackId == null || trackId.isEmpty) {
+      // Keep an already-armed call in PiP if the other person temporarily
+      // disables their camera. Android renders the normal camera-off state;
+      // iOS retains the call card until a new remote track is published.
+      return;
+    }
+    final contact = call!.otherIdentity(_currentUserId);
+    unawaited(
+      _pictureInPicture.armRemoteVideo(
+        trackId: trackId,
+        participantName: contact.displayName,
+      ),
+    );
+  }
+
+  void _schedulePictureInPictureSync() {
+    if (_pictureInPictureSyncScheduled) return;
+    _pictureInPictureSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pictureInPictureSyncScheduled = false;
+      if (mounted) _syncPictureInPicture();
+    });
   }
 
   void _markConnectionInterrupted() {
@@ -245,6 +314,10 @@ class _DirectCallScreenState extends State<DirectCallScreen>
 
   void _handleCall(DirectCall call) {
     _latest = call;
+    // StreamBuilder invokes this while building. Native PiP state can notify
+    // listeners synchronously, so defer the bridge mutation until the frame is
+    // complete instead of risking setState during build on a terminal update.
+    _schedulePictureInPictureSync();
     if (_lastHandledStatus == call.status) return;
     _lastHandledStatus = call.status;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -469,6 +542,7 @@ class _DirectCallScreenState extends State<DirectCallScreen>
     // Finish is an interrupt, not another mutually exclusive call action.
     // Revoke the local session synchronously before any network/SDK await.
     _finishRequested = true;
+    unawaited(_pictureInPicture.disarm());
     unawaited(_tones.stop());
     _clock?.cancel();
     _closeTimer?.cancel();
@@ -842,6 +916,18 @@ class _DirectCallScreenState extends State<DirectCallScreen>
     final status = _statusText(call, incoming);
     final connected = _voice.isConnected && _voice.directCallId == call.id;
     final needsExplicitIncomingJoin = _needsExplicitIncomingJoin(call);
+
+    if (_pictureInPicture.isInPictureInPicture && call.isVideo && active) {
+      return _CallVideoSurface(
+        track: _voice.remoteCameraTrack,
+        identity: contact,
+        label: copy.template(
+          '{displayName} camera is off',
+          'Kamera użytkownika {displayName} jest wyłączona',
+          values: {'displayName': contact.displayName},
+        ),
+      );
+    }
 
     if (needsExplicitIncomingJoin) {
       return _buildExplicitIncomingJoin(context, call: call, contact: contact);

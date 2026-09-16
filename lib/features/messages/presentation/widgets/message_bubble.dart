@@ -11,6 +11,7 @@ import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_media_fullscreen_viewer.dart';
+import 'package:yovoice/features/messages/presentation/widgets/direct_video_audio_playback.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_video_playback_source.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_voice_playback_source.dart';
 import 'package:yovoice/features/messages/presentation/widgets/room_link_message_card.dart';
@@ -28,6 +29,7 @@ class MessageBubble extends StatelessWidget {
     this.audioPlayerFactory,
     this.voiceSourcePreparer,
     this.videoSourcePreparer,
+    this.videoAudioPreparer,
     this.roomLinkResolver,
     this.roomLinkOpener,
     super.key,
@@ -41,6 +43,7 @@ class MessageBubble extends StatelessWidget {
   final AudioPlayer Function()? audioPlayerFactory;
   final DirectVoiceSourcePreparer? voiceSourcePreparer;
   final DirectVideoSourcePreparer? videoSourcePreparer;
+  final DirectVideoAudioPreparer? videoAudioPreparer;
 
   /// Test seams for the room card a text message can carry (see
   /// [RoomLinkMessageCard]). Production passes nothing and gets one
@@ -152,6 +155,7 @@ class MessageBubble extends StatelessWidget {
                       audioPlayerFactory: audioPlayerFactory,
                       voiceSourcePreparer: voiceSourcePreparer,
                       videoSourcePreparer: videoSourcePreparer,
+                      videoAudioPreparer: videoAudioPreparer,
                       onBrandSurface: isMine,
                       roomLinkResolver: roomLinkResolver,
                       roomLinkOpener: roomLinkOpener,
@@ -256,6 +260,7 @@ class _MessageContent extends StatelessWidget {
     required this.audioPlayerFactory,
     required this.voiceSourcePreparer,
     required this.videoSourcePreparer,
+    required this.videoAudioPreparer,
     required this.onBrandSurface,
     required this.roomLinkResolver,
     required this.roomLinkOpener,
@@ -271,6 +276,7 @@ class _MessageContent extends StatelessWidget {
   final AudioPlayer Function()? audioPlayerFactory;
   final DirectVoiceSourcePreparer? voiceSourcePreparer;
   final DirectVideoSourcePreparer? videoSourcePreparer;
+  final DirectVideoAudioPreparer? videoAudioPreparer;
   final bool onBrandSurface;
   final RoomLinkResolver? roomLinkResolver;
   final RoomLinkOpener? roomLinkOpener;
@@ -339,6 +345,7 @@ class _MessageContent extends StatelessWidget {
           errorForegroundColor: errorForegroundColor,
           privateMediaLoader: privateMediaLoader,
           videoSourcePreparer: videoSourcePreparer,
+          videoAudioPreparer: videoAudioPreparer,
         );
       case MessageType.text:
         final text = Text(
@@ -1009,6 +1016,7 @@ class _VideoMessageContent extends StatefulWidget {
     required this.errorForegroundColor,
     required this.privateMediaLoader,
     required this.videoSourcePreparer,
+    required this.videoAudioPreparer,
     this.width = 238,
     this.height = 158,
   });
@@ -1021,6 +1029,7 @@ class _VideoMessageContent extends StatefulWidget {
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
   privateMediaLoader;
   final DirectVideoSourcePreparer? videoSourcePreparer;
+  final DirectVideoAudioPreparer? videoAudioPreparer;
   final double width;
   final double height;
 
@@ -1155,6 +1164,10 @@ class _VideoMessageContentState extends State<_VideoMessageContent> {
       if (!_ownsController(controller, generation, snapshot)) {
         throw const _StaleDirectMediaLoad();
       }
+      await _prepareAudiblePlayback(controller, generation, snapshot);
+      if (!_ownsController(controller, generation, snapshot)) {
+        throw const _StaleDirectMediaLoad();
+      }
       try {
         await controller.play();
       } finally {
@@ -1174,6 +1187,27 @@ class _VideoMessageContentState extends State<_VideoMessageContent> {
           _removeActivePlay(controller, operation),
     );
     return operation;
+  }
+
+  Future<void> _prepareAudiblePlayback(
+    VideoPlayerController controller,
+    int generation,
+    _DirectMediaSnapshot snapshot,
+  ) async {
+    try {
+      await (widget.videoAudioPreparer ?? prepareDirectVideoAudioPlayback)();
+    } catch (_) {
+      // Keep video available if a platform audio-session repair is rejected.
+    }
+    if (!_ownsController(controller, generation, snapshot)) return;
+    try {
+      // Reassert on every start. The same controller can be paused while a
+      // call, recorder or another media surface changes process audio state.
+      await controller.setVolume(1);
+    } catch (_) {
+      // VideoPlayer defaults to full volume, so playback remains worthwhile
+      // even if a platform-specific volume command fails.
+    }
   }
 
   void _removeActivePlay(
@@ -1495,6 +1529,7 @@ class DirectMessageMediaPreview extends StatelessWidget {
     this.audioPlayerFactory,
     this.voiceSourcePreparer,
     this.videoSourcePreparer,
+    this.videoAudioPreparer,
     super.key,
   });
 
@@ -1507,6 +1542,7 @@ class DirectMessageMediaPreview extends StatelessWidget {
   final AudioPlayer Function()? audioPlayerFactory;
   final DirectVoiceSourcePreparer? voiceSourcePreparer;
   final DirectVideoSourcePreparer? videoSourcePreparer;
+  final DirectVideoAudioPreparer? videoAudioPreparer;
 
   @override
   Widget build(BuildContext context) {
@@ -1540,6 +1576,7 @@ class DirectMessageMediaPreview extends StatelessWidget {
         errorForegroundColor: colors.error,
         privateMediaLoader: privateMediaLoader,
         videoSourcePreparer: videoSourcePreparer,
+        videoAudioPreparer: videoAudioPreparer,
         width: photoWidth,
         height: photoHeight,
       ),

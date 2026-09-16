@@ -7,9 +7,13 @@ import 'package:yovoice/features/messages/presentation/widgets/direct_video_play
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test(
-    'private DM video stages authenticated bytes and preserves MOV format',
-    () async {
+  for (final scenario in <({String extension, List<int> bytes})>[
+    (extension: 'mp4', bytes: <int>[0, 1, 2, 3]),
+    (extension: 'mov', bytes: <int>[4, 5, 6, 7]),
+    (extension: 'webm', bytes: <int>[8, 9, 10, 11]),
+  ]) {
+    test('private DM video stages authenticated bytes and preserves '
+        '${scenario.extension.toUpperCase()} format', () async {
       final directory = await Directory.systemTemp.createTemp(
         'yovoice_dm_video_test_',
       );
@@ -30,19 +34,22 @@ void main() {
             },
           );
 
-      final bytes = Uint8List.fromList([1, 2, 3, 4]);
+      final bytes = Uint8List.fromList(scenario.bytes);
       final prepared = await prepareDirectVideoSource(
         bytes,
         'message/id',
-        'gs://private/message_attachments/user/conversation/video.mov',
+        'gs://private/message_attachments/user/conversation/video.${scenario.extension}',
       );
       final controller = prepared.createController();
+      // Default options keep Android audio focus and never make a live RTC
+      // AVAudioSession mixable on iOS.
+      expect(controller.videoPlayerOptions, isNull);
       final file = File(Uri.parse(controller.dataSource).toFilePath());
-      expect(file.path, endsWith('.mov'));
+      expect(file.path, endsWith('.${scenario.extension}'));
       expect(await file.readAsBytes(), bytes);
 
       await prepared.dispose();
       expect(await file.exists(), isFalse);
-    },
-  );
+    });
+  }
 }

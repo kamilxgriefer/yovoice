@@ -18,6 +18,7 @@ void main() {
         'android.permission.FOREGROUND_SERVICE',
         'android.permission.FOREGROUND_SERVICE_MICROPHONE',
         'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+        'android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION',
         'android.permission.POST_NOTIFICATIONS',
         'android.permission.RECORD_AUDIO',
       ]) {
@@ -29,11 +30,15 @@ void main() {
       }
     });
 
-    test('registers a non-exported service with both audio types', () {
+    test('registers a non-exported service with audio and screen-capture '
+        'types', () {
       expect(manifest, contains('android:name=".VoiceSessionService"'));
       expect(
         manifest,
-        contains('android:foregroundServiceType="microphone|mediaPlayback"'),
+        contains(
+          'android:foregroundServiceType='
+          '"microphone|mediaPlayback|mediaProjection"',
+        ),
       );
       final service = manifest.substring(
         manifest.indexOf('.VoiceSessionService'),
@@ -42,6 +47,52 @@ void main() {
         service.substring(0, service.indexOf('/>')),
         contains('android:exported="false"'),
       );
+    });
+
+    test('screen capture is typed in-process and never stops a live '
+        'service', () {
+      final service = File(
+        'android/app/src/main/kotlin/app/yovoice/VoiceSessionService.kt',
+      ).readAsStringSync();
+      final activity = File(
+        'android/app/src/main/kotlin/app/yovoice/MainActivity.kt',
+      ).readAsStringSync();
+
+      // The type is only ever the union of what the session is doing now.
+      expect(
+        service,
+        contains(
+          'if (screenShareActive) type = type or '
+          'ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION',
+        ),
+      );
+      // A refused type update on an already-foreground call or Server session
+      // must keep the proven microphone/mediaPlayback service alive.
+      expect(service, contains('if (!foregroundStarted) stopSelf()'));
+      // No Intent path can race the in-process update or restart a stopped
+      // service just to change its type.
+      expect(service, isNot(contains('ACTION_SCREEN_SHARE')));
+      expect(service, contains('fun setScreenShareActive(active: Boolean)'));
+      final startCommand = service.substring(
+        service.indexOf('override fun onStartCommand'),
+        service.indexOf('private fun startInForeground'),
+      );
+      expect(
+        startCommand,
+        isNot(contains('screenShareActive')),
+        reason:
+            'ACTION_START must never add the mediaProjection type before '
+            'MediaProjection consent.',
+      );
+
+      // The reply follows startForeground on the running service; there is
+      // exactly one startForegroundService call and it is the START path.
+      expect(activity, contains('"setScreenShareActive"'));
+      expect(activity, contains('VoiceSessionService.running'));
+      expect('startForegroundService('.allMatches(activity), hasLength(1));
+      // On API <= 30 the audio mode is process-global: a chat video must not
+      // reset a telephony call that belongs to another party.
+      expect(activity, contains('AudioManager.MODE_IN_CALL'));
     });
 
     test('the service and its channel strings exist', () {

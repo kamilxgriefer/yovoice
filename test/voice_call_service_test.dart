@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:livekit_client/livekit_client.dart';
 
+import 'package:yovoice/core/audio/realtime_audio_session_registry.dart';
 import 'package:yovoice/features/calls/data/models/voice_connection_info.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
@@ -100,6 +101,28 @@ void main() {
 
       await service.disconnect(playSound: false);
       expect(keepAlive.events, ['start:Evening talks', 'stop']);
+    },
+  );
+
+  test(
+    'private call owns the shared realtime registry through disconnect',
+    () async {
+      final registry = RealtimeAudioSessionRegistry();
+      final room = _JoinRoom(_JoinParticipant());
+      final service = _joinService(room, realtimeAudioSessions: registry);
+      addTearDown(service.dispose);
+
+      await _joinPrivate(service);
+
+      expect(registry.activeLeaseCount, 1);
+      expect(registry.activeKinds, {
+        RealtimeAudioSessionOwnerKind.directOrLegacyCall,
+      });
+
+      await service.disconnect(playSound: false);
+
+      expect(registry.activeLeaseCount, 0);
+      expect(registry.hasActiveOrJoiningSession, isFalse);
     },
   );
 
@@ -238,6 +261,7 @@ void main() {
   }
 
   test('microphone failure exposes retry only after native teardown', () async {
+    final registry = RealtimeAudioSessionRegistry();
     final disconnectGate = Completer<void>();
     final disposeGate = Completer<void>();
     final failure = StateError('microphone publication failed');
@@ -255,6 +279,7 @@ void main() {
         expect(oldRoom.disposalCompleted, isTrue);
         return newRoom;
       },
+      realtimeAudioSessions: registry,
     );
     addTearDown(service.dispose);
 
@@ -266,15 +291,18 @@ void main() {
     expect(service.status, VoiceCallStatus.connecting);
     expect(service.errorMessage, isNull);
     expect(service.isBusy, isTrue);
+    expect(registry.activeLeaseCount, 1);
     disconnectGate.complete();
     await oldRoom.disposeStarted.future;
     expect(service.status, VoiceCallStatus.connecting);
     expect(service.isBusy, isTrue);
+    expect(registry.activeLeaseCount, 1);
     disposeGate.complete();
     await failedJoin;
 
     expect(service.status, VoiceCallStatus.failed);
     expect(oldRoom.disposalCompleted, isTrue);
+    expect(registry.activeLeaseCount, 0);
     await _joinPrivate(service);
     expect(createdRooms, 2);
     expect(service.status, VoiceCallStatus.connected);
@@ -1340,6 +1368,7 @@ VoiceCallService _joinService(
   bool? canSwitchSpeakerphone,
   Future<void> Function(bool preferred)? speakerPreferenceSetter,
   VoiceSessionKeepAlive? keepAlive,
+  RealtimeAudioSessionRegistry? realtimeAudioSessions,
 }) {
   final token = canPublish
       ? _publisherToken
@@ -1350,6 +1379,7 @@ VoiceCallService _joinService(
         );
   return VoiceCallService.forTesting(
     keepAlive: keepAlive,
+    realtimeAudioSessions: realtimeAudioSessions,
     roomFactory: roomFactory ?? () => room,
     connectionTimeout: connectionTimeout,
     speakerRouteTimeout: speakerRouteTimeout,

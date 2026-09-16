@@ -93,6 +93,7 @@ void main() {
               currentUserId: ownerId,
               onLongPress: () {},
               privateMediaLoader: (_, _) async => _onePixelPng,
+              videoAudioPreparer: _prepareVideoAudio,
             ),
           ),
         ),
@@ -211,6 +212,7 @@ void main() {
               privateMediaLoader: (_, _) async => Uint8List.fromList([1, 2, 3]),
               videoSourcePreparer: (_, _, _) async =>
                   _PreparedVideoSource(onCreate: (_) {}, onDispose: () {}),
+              videoAudioPreparer: _prepareVideoAudio,
             ),
           ),
         ),
@@ -418,6 +420,7 @@ void main() {
                     onDispose: () {},
                   );
                 },
+                videoAudioPreparer: _prepareVideoAudio,
               ),
             ),
           ),
@@ -627,11 +630,14 @@ Future<void> _pumpBubble(
           onLongPress: () {},
           privateMediaLoader: loader,
           videoSourcePreparer: videoSourcePreparer,
+          videoAudioPreparer: _prepareVideoAudio,
         ),
       ),
     ),
   );
 }
+
+Future<void> _prepareVideoAudio() async {}
 
 Message _message({
   required String id,

@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -13,6 +14,7 @@ import 'package:yovoice/core/audio/ui_sound.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/models/voice_connection_info.dart';
+import 'package:yovoice/features/calls/data/services/direct_call_picture_in_picture.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
@@ -1057,6 +1059,211 @@ void main() {
       await tester.pump();
     },
   );
+
+  testWidgets(
+    'connected direct video arms PiP, compacts controls, and disarms on disconnect',
+    (tester) async {
+      final gateway = _FakeDirectCallGateway(
+        _call(
+          status: DirectCallStatus.active,
+          mediaType: DirectCallMediaType.video,
+        ),
+      );
+      final voice = _FakeVoiceCallService(
+        remoteCameraTrackId: 'remote-native-track',
+      );
+      final pictureInPicture = _FakeDirectCallPictureInPicture();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: DirectCallScreen(
+            callId: 'call-1',
+            callService: gateway,
+            voiceService: voice,
+            pictureInPicture: pictureInPicture,
+            currentUserId: 'caller',
+            participantName: 'Caller',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(voice.isConnected, isTrue);
+      expect(pictureInPicture.armCalls, greaterThanOrEqualTo(1));
+      expect(pictureInPicture.lastTrackId, 'remote-native-track');
+      expect(pictureInPicture.lastParticipantName, 'Callee');
+      expect(
+        find.byKey(const ValueKey('active-video-call-stage')),
+        findsOneWidget,
+      );
+
+      pictureInPicture.enter();
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('active-video-call-stage')),
+        findsNothing,
+      );
+      expect(find.byTooltip('End call'), findsNothing);
+      expect(find.text('Callee camera is off'), findsOneWidget);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      expect(voice.pauseCameraCalls, 1);
+
+      voice.simulateTerminalDisconnect();
+      await tester.pump();
+      expect(pictureInPicture.isArmed, isFalse);
+      expect(pictureInPicture.isInPictureInPicture, isFalse);
+      expect(pictureInPicture.disarmCalls, greaterThanOrEqualTo(1));
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'a transient reconnect keeps native PiP open until a terminal disconnect',
+    (tester) async {
+      const channel = MethodChannel('app.yovoice/test_direct_call_screen_pip');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final native = <Object?>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        native.add(call.arguments);
+        return true;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final pictureInPicture = DirectCallPictureInPictureController(
+        channel: channel,
+        platformSupportedOverride: true,
+      );
+      addTearDown(pictureInPicture.dispose);
+      final voice = _FakeVoiceCallService(
+        remoteCameraTrackId: 'remote-native-track',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: DirectCallScreen(
+            callId: 'call-1',
+            callService: _FakeDirectCallGateway(
+              _call(
+                status: DirectCallStatus.active,
+                mediaType: DirectCallMediaType.video,
+              ),
+            ),
+            voiceService: voice,
+            pictureInPicture: pictureInPicture,
+            currentUserId: 'caller',
+            participantName: 'Caller',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(voice.isConnected, isTrue);
+      expect(pictureInPicture.isArmed, isTrue);
+      expect(native, hasLength(1));
+      expect((native.single! as Map<Object?, Object?>)['active'], isTrue);
+
+      await messenger.handlePlatformMessage(
+        channel.name,
+        const StandardMethodCodec().encodeMethodCall(
+          MethodCall('pictureInPictureChanged', true),
+        ),
+        null,
+      );
+      await tester.pump();
+      expect(pictureInPicture.isInPictureInPicture, isTrue);
+      expect(find.byTooltip('End call'), findsNothing);
+
+      // LiveKit RoomReconnectingEvent during a network handover.
+      voice.simulateReconnecting();
+      await tester.pump();
+      await tester.pump();
+      expect(
+        native,
+        hasLength(1),
+        reason: 'a reconnect must not close PiP or background the task',
+      );
+      expect(pictureInPicture.isArmed, isTrue);
+      expect(pictureInPicture.isInPictureInPicture, isTrue);
+      expect(find.byTooltip('End call'), findsNothing);
+
+      // RoomReconnectedEvent: the still-armed window needs no re-arm.
+      voice.simulateReconnected();
+      await tester.pump();
+      await tester.pump();
+      expect(native, hasLength(1));
+      expect(pictureInPicture.isInPictureInPicture, isTrue);
+
+      voice.simulateTerminalDisconnect();
+      await tester.pump();
+      await tester.pump();
+      expect(native, hasLength(2));
+      expect(native.last, const <String, Object>{'active': false});
+      expect(pictureInPicture.isArmed, isFalse);
+      expect(pictureInPicture.isInPictureInPicture, isFalse);
+
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(native, hasLength(2), reason: 'a terminal state disarms once');
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
+
+  testWidgets('ringing video and connected audio never arm PiP', (
+    tester,
+  ) async {
+    final pictureInPicture = _FakeDirectCallPictureInPicture();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DirectCallScreen(
+          callId: 'call-1',
+          callService: _FakeDirectCallGateway(
+            _call(
+              status: DirectCallStatus.ringing,
+              mediaType: DirectCallMediaType.video,
+            ),
+          ),
+          voiceService: _FakeVoiceCallService(
+            remoteCameraTrackId: 'remote-native-track',
+          ),
+          pictureInPicture: pictureInPicture,
+          currentUserId: 'caller',
+          participantName: 'Caller',
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(pictureInPicture.armCalls, 0);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DirectCallScreen(
+          callId: 'call-1',
+          callService: _FakeDirectCallGateway(
+            _call(status: DirectCallStatus.active),
+          ),
+          voiceService: _FakeVoiceCallService(
+            remoteCameraTrackId: 'remote-native-track',
+          ),
+          pictureInPicture: pictureInPicture,
+          currentUserId: 'caller',
+          participantName: 'Caller',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(pictureInPicture.armCalls, 0);
+  });
 
   testWidgets(
     'camera-denied answer explicitly negotiates the incoming video to audio',
@@ -2514,18 +2721,67 @@ class _RecordingUiSoundPlayer implements UiSoundPlayer {
   Future<void> dispose() async {}
 }
 
+class _FakeDirectCallPictureInPicture extends ChangeNotifier
+    implements DirectCallPictureInPictureGateway {
+  int armCalls = 0;
+  int disarmCalls = 0;
+  String? lastTrackId;
+  String? lastParticipantName;
+  bool _armed = false;
+  bool _inPictureInPicture = false;
+
+  @override
+  bool get isArmed => _armed;
+
+  @override
+  bool get isInPictureInPicture => _inPictureInPicture;
+
+  @override
+  Future<bool> armRemoteVideo({
+    required String trackId,
+    required String participantName,
+    int width = 16,
+    int height = 9,
+  }) async {
+    armCalls++;
+    lastTrackId = trackId;
+    lastParticipantName = participantName;
+    final changed = !_armed;
+    _armed = true;
+    if (changed) notifyListeners();
+    return true;
+  }
+
+  void enter() {
+    if (!_armed || _inPictureInPicture) return;
+    _inPictureInPicture = true;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> disarm() async {
+    disarmCalls++;
+    final changed = _armed || _inPictureInPicture;
+    _armed = false;
+    _inPictureInPicture = false;
+    if (changed) notifyListeners();
+  }
+}
+
 class _FakeVoiceCallService extends VoiceCallService {
   _FakeVoiceCallService({
     this.events,
     this.supportsSpeakerSwitch = false,
     this.cameraPermissionGranted = true,
     this.joinError,
+    this.remoteCameraTrackId,
   }) : super.forTesting();
 
   final List<String>? events;
   final bool supportsSpeakerSwitch;
   final bool cameraPermissionGranted;
   final Object? joinError;
+  final String? remoteCameraTrackId;
   VoiceCallStatus _testStatus = VoiceCallStatus.disconnected;
   String? _testDirectCallId;
   bool _testMuted = false;
@@ -2566,6 +2822,9 @@ class _FakeVoiceCallService extends VoiceCallService {
 
   @override
   bool get isConnected => _testStatus == VoiceCallStatus.connected;
+
+  @override
+  String? get remoteCameraNativeTrackId => remoteCameraTrackId;
 
   @override
   bool get isMuted => _testMuted;
@@ -2633,6 +2892,16 @@ class _FakeVoiceCallService extends VoiceCallService {
             ? AppPermissionAccess.granted
             : AppPermissionAccess.denied,
     });
+  }
+
+  void simulateReconnecting() {
+    _testStatus = VoiceCallStatus.reconnecting;
+    notifyListeners();
+  }
+
+  void simulateReconnected() {
+    _testStatus = VoiceCallStatus.connected;
+    notifyListeners();
   }
 
   void simulateTerminalDisconnect() {
