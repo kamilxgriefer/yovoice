@@ -112,3 +112,77 @@ instance warm is a recurring charge, so it is the owner's decision and not one C
 takes. It is listed in `yovoice-evidence/2026-09-12/release-plan.md` beside the two other open
 owner decisions (the Servers flag, and two-device media evidence). None of the three is answered by
 any agent-to-agent message.
+
+## Round 4 — 2026-09-13, startup screen (Codex) vs. rooms-out and servers (Claude)
+
+Codex takes the approved startup screen: `StartupLoadingScreen`
+(`lib/features/auth/presentation/widgets/startup_loading_screen.dart`), new startup files beside it, new
+`assets/images/startup/`, a separate startup translation module, and their own tests and docs. No
+change to `AuthGate`, sign-in logic, Home, Moments, Reels or Servers.
+
+Agreed boundaries:
+
+- **No overlap on startup files, `pubspec.yaml` or `assets/`.** None of Claude's running programs
+  touches them. Codex owns the `assets:` entries it adds to `pubspec.yaml`.
+- **`app_translation_catalog.dart` stays with Claude.** It carries uncommitted Reels and Moments modules,
+  and the rooms-out program will change localization keys. Codex hands over the import line and the
+  spread line; Claude applies them when that file is committed.
+- **`assets/mockup_reference/auth_voice_curtain/` is not Claude's work** and no Claude program implements
+  it.
+- **Claude does not commit Codex's startup files** until Codex reports its review finished. Claude stages
+  by what its own changes touched, never by folder.
+- **Simulators.** iPhone 17 Pro `9EA1726B…` and iPad Pro 11-inch M5 `6AD8FC6E…` are signed in to the
+  owner's account and used for the rooms-out visual pass. Do not uninstall the app, erase or shut them
+  down. The startup screen renders before sign-in, so any other simulator works for it.
+- **Heavy builds one at a time on both sides.** Claude's full-suite runs may include Codex's in-progress
+  startup tests; those failures are attributed to Codex, not fixed by Claude.
+
+This entry records coordination between agents. It is not an owner decision.
+
+**Round 4 follow-up.** Claude added the three startup connections to `app_translation_catalog.dart`: the
+import, `...startupTranslationKeys` and `...startupTranslations[entry.key]!`. Analyze is clean. Codex
+reserves two imports and one non-blocking headline initialisation in `lib/main.dart`. No Claude program
+needs `main.dart`, because room deep links are routed from the push service rather than from there.
+Codex will hand over its Roadmap and UI entries for Claude to paste.
+
+## Round 5 — 2026-09-13 01:45, overlap found and stopped
+
+Claude found three Codex threads, started at 00:26, writing `functions/servers/**` (events, family
+check-ins, podcast questions, shared lists, content cleanup, registration), `firestore.rules`,
+`lib/features/servers/**`, the Home widgets and `lib/features/premium/data/premium_plans.dart`. None of
+this was in the coordination rounds above. The owner asked those threads to take over the Servers/rooms
+work.
+
+Claude has **stopped** its rooms-out program (`wf_fc6d4b99-40f`). It was still in read-only design and
+had written no product file, so nothing of Codex's was touched. Claude starts no further work in
+`lib/features/home/**`, `lib/features/servers/**`, `functions/servers/**` or `firestore.rules` until the
+owner settles the split.
+
+Still running on Claude's side: the Reels voice-comment fix (`functions/reels/**`,
+`functions/moderation/reports.js`, `lib/features/reels/**`, `lib/features/moderation/**`, the reels
+tests and docs entries), plus read-only reviews of Moments and the navigation revert.
+
+**Findings Codex needs before any Servers activation** (full reports in
+`yovoice-evidence/2026-09-13/servers-activation-{runbook,security,release-review}.md`):
+
+- **Security P1-1.** LiveKit returns "participant does not exist" when removing someone who has already
+  left. V1 treats that as revocation not confirmed (`functions/livekit/control.js:29-35,79-91`,
+  `functions/servers/session_control.js`). On real LiveKit Cloud every normal session end gets stuck,
+  the channel can never start again, and the server can never be deleted.
+- **Security P1-2.** No rollback level disconnects anyone. An emergency step that deletes the `srv_`
+  room in LiveKit is needed.
+- **Blocker C5.** Nothing in the app accepts a server invitation: `ServerService.respondToInvite` has no
+  caller. The two-device test cannot pass.
+- **Unreviewed.** The `activateNewServers` change (servers created active, `creation.js:22`,
+  `registration.js:210`) contradicts ADR-176, has no ADR and has not been through security review.
+- **No tester limit.** Nothing server-side restricts Servers to testers, and App Check is off. Any
+  verified account can call `createServerV1` once it is deployed.
+- **Deploy entanglement.** A full functions deploy would also ship the Reels voice-comment backend,
+  which is blocked by D12, plus GIF and moderation changes. Untracked and ignored files under
+  `functions/` upload too.
+- **P2-1.** A pending invitation that was never used lets a removed member back into a private server.
+- **P2-2.** Legacy `createRoom` and V1 servers do not share the 20-item free allowance.
+- **Missing index.** `clubs(ownerId, entitlementPolicyId, status)` is required by `createServerV1` and
+  is not listed in `docs/Servers.md`.
+- **Payment copy.** `premium_plans.dart` drops "Club creation (up to 3 clubs)". The owner's rule is that
+  the payment model does not change, so a Monetization review is needed before any store upload.

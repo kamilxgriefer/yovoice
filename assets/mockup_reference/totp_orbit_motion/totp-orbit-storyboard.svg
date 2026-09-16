@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="2430" height="1030" viewBox="0 0 2430 1030">
+  <defs>
+    <linearGradient id="board" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0D0618"/>
+      <stop offset="1" stop-color="#191329"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="38%" r="58%">
+      <stop offset="0" stop-color="#7B2FF7" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#7B2FF7" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="cyanGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="10" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="greenGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="12" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <!-- Exact canonical mark from assets/images/yo-voice-favicon-512.png,
+         downsampled only for this portable review render. -->
+    <image id="brandMark" width="38" height="38" preserveAspectRatio="xMidYMid meet"
+      xlink:href="data:image/png;base64,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"/>
+    <style>
+      text { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .eyebrow { fill:#5CE1E6; font-size:16px; font-weight:800; letter-spacing:2px; }
+      .title { fill:#FFFFFF; font-size:28px; font-weight:800; }
+      .copy { fill:#B4ADC8; font-size:15px; font-weight:500; }
+      .status { fill:#FFFFFF; font-size:17px; font-weight:750; }
+      .slot { fill:#191329; stroke:#3A3151; stroke-width:2; }
+      .slotActive { fill:#241B39; stroke:#5CE1E6; stroke-width:2.5; }
+      .slotSuccess { fill:#12271F; stroke:#35D07F; stroke-width:2.5; }
+      .slotError { fill:#2A1320; stroke:#FF5F6D; stroke-width:2.5; }
+      .digit { fill:#FFFFFF; font-size:24px; font-weight:800; text-anchor:middle; dominant-baseline:middle; }
+      .caption { fill:#B4ADC8; font-size:17px; font-weight:650; }
+      .index { fill:#7E7895; font-size:14px; font-weight:800; letter-spacing:1.6px; }
+    </style>
+  </defs>
+
+  <rect width="2430" height="1030" fill="url(#board)"/>
+  <circle cx="1215" cy="150" r="740" fill="url(#glow)" opacity=".6"/>
+  <text x="60" y="70" fill="#FFFFFF" font-size="34" font-weight="850">YoVoice Voice Constellation</text>
+  <text x="60" y="106" fill="#B4ADC8" font-size="18">Original six-state TOTP storyboard · native Flutter geometry · Firebase remains authoritative</text>
+  <text x="2370" y="76" fill="#5CE1E6" font-size="16" font-weight="800" text-anchor="end" letter-spacing="2">MOTION HANDOFF / V2</text>
+
+  <!-- 01 Editing -->
+  <g transform="translate(60 160)">
+    <rect width="360" height="780" rx="34" fill="#0A0612" stroke="#3A3151"/>
+    <text class="index" x="28" y="42">01 / EDITING</text>
+    <use href="#brandMark" x="161" y="58"/>
+    <text class="eyebrow" x="180" y="122" text-anchor="middle">TWO-FACTOR VERIFICATION</text>
+    <text class="title" x="180" y="164" text-anchor="middle">Confirm it’s you</text>
+    <text class="copy" x="180" y="194" text-anchor="middle">Enter the code from your authenticator.</text>
+    <g transform="translate(16 270)">
+      <g transform="translate(0)"><rect class="slot" width="48" height="56" rx="13"/><text class="digit" x="24" y="29">4</text></g>
+      <g transform="translate(56)"><rect class="slot" width="48" height="56" rx="13"/><text class="digit" x="24" y="29">7</text></g>
+      <g transform="translate(112)"><rect class="slot" width="48" height="56" rx="13"/><text class="digit" x="24" y="29">1</text></g>
+      <g transform="translate(168)"><rect class="slotActive" width="48" height="56" rx="13"/><rect x="23" y="15" width="2" height="26" rx="1" fill="#FFFFFF"/></g>
+      <g transform="translate(224)"><rect class="slot" width="48" height="56" rx="13"/></g>
+      <g transform="translate(280)"><rect class="slot" width="48" height="56" rx="13"/></g>
+    </g>
+    <text class="copy" x="180" y="365" text-anchor="middle">Paste and system autofill work.</text>
+    <rect x="28" y="620" width="304" height="52" rx="16" fill="#7B2FF7"/>
+    <text x="180" y="653" fill="#FFFFFF" font-size="16" font-weight="800" text-anchor="middle">Verify and continue</text>
+    <text class="caption" x="28" y="732">One real input. Six visual cells.</text>
+  </g>
+
+  <!-- 02 Verifying transition -->
+  <g transform="translate(450 160)">
+    <rect width="360" height="780" rx="34" fill="#0A0612" stroke="#3A3151"/>
+    <text class="index" x="28" y="42">02 / VERIFYING</text>
+    <use href="#brandMark" x="161" y="58"/>
+    <text class="eyebrow" x="180" y="122" text-anchor="middle">CODE COMPLETE</text>
+    <text class="title" x="180" y="164" text-anchor="middle">Checking securely</text>
+    <text class="copy" x="180" y="194" text-anchor="middle">Input locks while Firebase resolves.</text>
+    <ellipse cx="180" cy="355" rx="92" ry="60" fill="none" stroke="#5CE1E6" stroke-width="1.5" stroke-dasharray="2 9" opacity=".7"/>
+    <circle cx="180" cy="355" r="4" fill="#5CE1E6" filter="url(#cyanGlow)"/>
+    <g><circle cx="180" cy="295" r="18" fill="#241B39" stroke="#5CE1E6" stroke-width="2.5"/><text class="digit" x="180" y="296">4</text></g>
+    <g><circle cx="260" cy="325" r="18" fill="#241B39" stroke="#5CE1E6" stroke-width="2.5"/><text class="digit" x="260" y="326">7</text></g>
+    <g><circle cx="260" cy="385" r="18" fill="#241B39" stroke="#5CE1E6" stroke-width="2.5"/><text class="digit" x="260" y="386">1</text></g>
+    <g><circle cx="180" cy="415" r="18" fill="#241B39" stroke="#5CE1E6" stroke-width="2.5"/><text class="digit" x="180" y="416">9</text></g>
+    <g><circle cx="100" cy="385" r="18" fill="#241B39" stroke="#5CE1E6" stroke-width="2.5"/><text class="digit" x="100" y="386">2</text></g>
+    <g><circle cx="100" cy="325" r="18" fill="#241B39" stroke="#5CE1E6" stroke-width="2.5"/><text class="digit" x="100" y="326">6</text></g>
+    <text class="status" x="180" y="530" text-anchor="middle">Verifying code…</text>
+    <text class="copy" x="180" y="558" text-anchor="middle">Progress, never predicted success.</text>
+    <text class="caption" x="28" y="732">320 ms into a six-point ellipse.</text>
+  </g>
+
+  <!-- 03 Ambient pending -->
+  <g transform="translate(840 160)">
+    <rect width="360" height="780" rx="34" fill="#0A0612" stroke="#3A3151"/>
+    <text class="index" x="28" y="42">03 / PENDING</text>
+    <use href="#brandMark" x="161" y="58"/>
+    <text class="eyebrow" x="180" y="122" text-anchor="middle">NETWORK-AWARE</text>
+    <text class="title" x="180" y="164" text-anchor="middle">Calm, not busy</text>
+    <text class="copy" x="180" y="194" text-anchor="middle">The signal stays alive while Firebase resolves.</text>
+    <ellipse cx="180" cy="355" rx="92" ry="60" fill="none" stroke="#7B2FF7" stroke-width="1.5" stroke-dasharray="2 9" opacity=".8"/>
+    <circle cx="180" cy="355" r="52" fill="#7B2FF7" opacity=".05"/>
+    <g><circle cx="196" cy="296" r="18" fill="#241B39" stroke="#5CE1E6" stroke-width="2.5" filter="url(#cyanGlow)"/><text class="digit" x="196" y="297">4</text></g>
+    <g><circle cx="267" cy="337" r="18" fill="#241B39" stroke="#7B2FF7" stroke-width="2.5"/><text class="digit" x="267" y="338">7</text></g>
+    <g><circle cx="251" cy="396" r="18" fill="#241B39" stroke="#7B2FF7" stroke-width="2.5"/><text class="digit" x="251" y="397">1</text></g>
+    <g><circle cx="164" cy="414" r="18" fill="#241B39" stroke="#7B2FF7" stroke-width="2.5"/><text class="digit" x="164" y="415">9</text></g>
+    <g><circle cx="93" cy="373" r="18" fill="#241B39" stroke="#7B2FF7" stroke-width="2.5"/><text class="digit" x="93" y="374">2</text></g>
+    <g><circle cx="109" cy="314" r="18" fill="#241B39" stroke="#7B2FF7" stroke-width="2.5"/><text class="digit" x="109" y="315">6</text></g>
+    <text class="status" x="180" y="530" text-anchor="middle">Verifying code…</text>
+    <text class="copy" x="180" y="558" text-anchor="middle">±14° sway · accent travels node to node.</text>
+    <text class="caption" x="28" y="732">1,800 ms loop · no fake completion.</text>
+  </g>
+
+  <!-- 04 Voice confirmation -->
+  <g transform="translate(1230 160)">
+    <rect width="360" height="780" rx="34" fill="#0A0612" stroke="#3A3151"/>
+    <text class="index" x="28" y="42">04 / VOICE CONFIRMATION</text>
+    <use href="#brandMark" x="161" y="58"/>
+    <text class="eyebrow" x="180" y="122" text-anchor="middle">FIREBASE RESOLVED</text>
+    <text class="title" x="180" y="164" text-anchor="middle">Signal confirmed</text>
+    <text class="copy" x="180" y="194" text-anchor="middle">Digits become one unmistakably YoVoice beat.</text>
+    <circle cx="180" cy="355" r="72" fill="#7B2FF7" opacity=".08"/>
+    <rect x="134.5" y="348" width="7" height="14" rx="3.5" fill="#7B2FF7"/>
+    <rect x="150.5" y="343" width="7" height="24" rx="3.5" fill="#8A49F2"/>
+    <rect x="167.5" y="336" width="7" height="38" rx="3.5" fill="#9B67ED"/>
+    <rect x="185.5" y="336" width="7" height="38" rx="3.5" fill="#AC87E9"/>
+    <rect x="202.5" y="343" width="7" height="24" rx="3.5" fill="#82B7E7"/>
+    <rect x="218.5" y="348" width="7" height="14" rx="3.5" fill="#5CE1E6" filter="url(#cyanGlow)"/>
+    <text class="status" x="180" y="450" text-anchor="middle">Code verified</text>
+    <text class="copy" x="180" y="478" text-anchor="middle">One pulse. One live-region announcement.</text>
+    <text class="caption" x="28" y="732">160–460 ms · constellation → voice wave.</text>
+  </g>
+
+  <!-- 05 Exit -->
+  <g transform="translate(1620 160)">
+    <rect width="360" height="780" rx="34" fill="#0A0612" stroke="#3A3151"/>
+    <text class="index" x="28" y="42">05 / EXIT</text>
+    <use href="#brandMark" x="161" y="58"/>
+    <text class="eyebrow" x="180" y="122" text-anchor="middle">AUTHENTICATED</text>
+    <text class="title" x="180" y="164" text-anchor="middle">You’re in</text>
+    <text class="copy" x="180" y="194" text-anchor="middle">The orbit resolves into one clear result.</text>
+    <circle cx="180" cy="355" r="44" fill="#35D07F" opacity=".12" filter="url(#greenGlow)"/>
+    <circle cx="180" cy="355" r="28" fill="#35D07F"/>
+    <path d="M166 355l9 9 19-21" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="status" x="180" y="450" text-anchor="middle">Verified</text>
+    <text class="copy" x="180" y="478" text-anchor="middle">Then Navigator.pop(true), once.</text>
+    <text class="caption" x="28" y="732">660 ms morph · 180 ms hold · 200 ms exit.</text>
+  </g>
+
+  <!-- 06 Error -->
+  <g transform="translate(2010 160)">
+    <rect width="360" height="780" rx="34" fill="#0A0612" stroke="#3A3151"/>
+    <text class="index" x="28" y="42">06 / ERROR</text>
+    <use href="#brandMark" x="161" y="58"/>
+    <text class="eyebrow" x="180" y="122" text-anchor="middle">RETRYABLE</text>
+    <text class="title" x="180" y="164" text-anchor="middle">Try another code</text>
+    <text class="copy" x="180" y="194" text-anchor="middle">Return focus without losing context.</text>
+    <g transform="translate(16 270)">
+      <g transform="translate(0)"><rect class="slotError" width="48" height="56" rx="13"/><text class="digit" x="24" y="29">4</text></g>
+      <g transform="translate(56)"><rect class="slotError" width="48" height="56" rx="13"/><text class="digit" x="24" y="29">7</text></g>
+      <g transform="translate(112)"><rect class="slotError" width="48" height="56" rx="13"/><text class="digit" x="24" y="29">1</text></g>
+      <g transform="translate(168)"><rect class="slotError" width="48" height="56" rx="13"/><text class="digit" x="24" y="29">9</text></g>
+      <g transform="translate(224)"><rect class="slotError" width="48" height="56" rx="13"/><text class="digit" x="24" y="29">2</text></g>
+      <g transform="translate(280)"><rect class="slotError" width="48" height="56" rx="13"/><text class="digit" x="24" y="29">6</text></g>
+    </g>
+    <rect x="28" y="365" width="304" height="82" rx="18" fill="#2A1320" stroke="#FF5F6D" stroke-opacity=".45"/>
+    <circle cx="54" cy="391" r="10" fill="#FF5F6D"/>
+    <text x="54" y="396" fill="#0D0618" font-size="13" font-weight="900" text-anchor="middle">!</text>
+    <text x="75" y="394" fill="#FFFFFF" font-size="14" font-weight="750">That code is not valid.</text>
+    <text x="54" y="423" fill="#B4ADC8" font-size="13">Wait for a new code and try again.</text>
+    <rect x="28" y="620" width="304" height="52" rx="16" fill="#7B2FF7"/>
+    <text x="180" y="653" fill="#FFFFFF" font-size="16" font-weight="800" text-anchor="middle">Verify and continue</text>
+    <text class="caption" x="28" y="732">Return 240 ms · shake 360 ms.</text>
+  </g>
+
+  <text x="60" y="990" fill="#7E7895" font-size="15">Reference only — render natively in Flutter, use AppPalette/Theme semantic roles, and honour reduced motion.</text>
+</svg>

@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YoVoice Voice Constellation — motion reference</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #080711;
+      color: #f8f5fc;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      overflow-x: hidden;
+      overflow-y: auto;
+      background:
+        radial-gradient(circle at 50% 22%, rgba(123, 47, 247, .20), transparent 34%),
+        radial-gradient(circle at 78% 82%, rgba(92, 225, 230, .08), transparent 28%),
+        #080711;
+    }
+
+    .phone {
+      position: relative;
+      width: min(720px, 100vw);
+      height: min(844px, 100vh);
+      overflow-x: hidden;
+      overflow-y: auto;
+      border: 1px solid #30263f;
+      border-radius: 42px;
+      background:
+        radial-gradient(circle at 50% 36%, rgba(123, 47, 247, .14), transparent 30%),
+        linear-gradient(180deg, #130a22, #080711 66%);
+      box-shadow:
+        0 44px 120px rgba(0, 0, 0, .56),
+        inset 0 1px 0 rgba(255, 255, 255, .05);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      height: 76px;
+      padding: 18px 22px;
+      color: #b8afc2;
+    }
+
+    .back {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #30263f;
+      border-radius: 999px;
+      background: rgba(18, 16, 29, .88);
+      font-size: 24px;
+    }
+
+    .topbar strong { color: #f8f5fc; font-size: 15px; }
+
+    .content { padding: 38px 20px 28px; text-align: center; }
+
+    .brand-mark {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 20px;
+      display: grid;
+      place-items: center;
+      filter: drop-shadow(0 14px 24px rgba(123, 47, 247, .28));
+    }
+
+    .brand-mark img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    h1 { margin: 0; font-size: 29px; line-height: 1.12; letter-spacing: -.7px; }
+
+    .lead {
+      max-width: 310px;
+      margin: 12px auto 0;
+      color: #b8afc2;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .stage {
+      position: relative;
+      width: 100%;
+      height: 180px;
+      max-width: 420px;
+      margin: 18px auto 0;
+      contain: layout paint;
+    }
+
+    .stage-glow {
+      position: absolute;
+      left: 50%;
+      top: 72px;
+      width: 188px;
+      height: 134px;
+      border-radius: 999px;
+      background: radial-gradient(ellipse, rgba(123, 47, 247, .16), transparent 68%);
+      filter: blur(6px);
+      transform: translate(-50%, -50%);
+      opacity: 0;
+      will-change: opacity, transform;
+    }
+
+    .orbit {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    #orbitPath {
+      fill: none;
+      stroke: url(#orbitGradient);
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-dasharray: 2 9;
+      opacity: 0;
+      filter: drop-shadow(0 0 8px rgba(92, 225, 230, .22));
+      will-change: opacity, stroke-dashoffset;
+    }
+
+    .digit {
+      position: absolute;
+      left: 0;
+      top: 0;
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 56px;
+      border: 1.5px solid #40344f;
+      border-radius: 14px;
+      background: linear-gradient(145deg, #21182e, #15101f);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, .055),
+        0 10px 26px rgba(0, 0, 0, .22);
+      color: #fff;
+      font-size: 22px;
+      font-weight: 760;
+      font-variant-numeric: tabular-nums;
+      transform-origin: center;
+      will-change: transform, width, height, border-radius, opacity, box-shadow;
+    }
+
+    .digit::after {
+      content: "";
+      position: absolute;
+      inset: -7px;
+      border-radius: inherit;
+      background: radial-gradient(circle, rgba(92, 225, 230, .30), transparent 66%);
+      opacity: var(--signal, 0);
+      filter: blur(8px);
+      z-index: -1;
+    }
+
+    .status {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 3px;
+      min-height: 42px;
+      color: #b8afc2;
+      font-size: 14px;
+      font-weight: 650;
+      line-height: 1.45;
+      transition: color 160ms ease;
+    }
+
+    .status strong { display: block; color: #f8f5fc; font-size: 16px; }
+
+    .success {
+      position: absolute;
+      left: 50%;
+      top: 72px;
+      width: 56px;
+      height: 56px;
+      border-radius: 999px;
+      background: #35d07f;
+      box-shadow: 0 0 0 0 rgba(53, 208, 127, .32), 0 18px 52px rgba(53, 208, 127, .22);
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(.7);
+      will-change: transform, opacity, box-shadow;
+    }
+
+    .success svg { width: 100%; height: 100%; }
+
+    #check {
+      fill: none;
+      stroke: #fff;
+      stroke-width: 5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-dasharray: 42;
+      stroke-dashoffset: 42;
+    }
+
+    .button {
+      height: 54px;
+      margin-top: 2px;
+      display: grid;
+      place-items: center;
+      border-radius: 17px;
+      background: linear-gradient(100deg, #7b2ff7, #9a34ef 58%, #7033e6);
+      box-shadow: 0 16px 44px rgba(123, 47, 247, .25);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 780;
+    }
+
+    .caption {
+      margin-top: 14px;
+      color: #756c80;
+      font-size: 11px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    @media (max-height: 720px) {
+      .content { padding-top: 12px; }
+      .brand-mark { margin-bottom: 12px; }
+      .stage { margin-top: 12px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .caption::after { content: " · reduced-motion production variant is static"; }
+    }
+  </style>
+</head>
+<body>
+  <main class="phone" id="phone" aria-label="Animated visual reference; click to replay">
+    <div class="topbar"><div class="back">‹</div><strong>Two-factor verification</strong></div>
+    <section class="content">
+      <div class="brand-mark">
+        <img src="../../images/yo-voice-favicon-512.png" alt="YO Voice">
+      </div>
+      <h1>Confirm it’s you</h1>
+      <p class="lead">Enter the current code from the authenticator app connected to your YoVoice account.</p>
+      <div class="stage" id="stage">
+        <div class="stage-glow" id="stageGlow"></div>
+        <svg class="orbit" id="orbitSvg" viewBox="0 0 350 180" aria-hidden="true">
+          <defs>
+            <linearGradient id="orbitGradient" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#7b2ff7"/>
+              <stop offset=".5" stop-color="#5ce1e6"/>
+              <stop offset="1" stop-color="#c026ff"/>
+            </linearGradient>
+          </defs>
+          <ellipse id="orbitPath" cx="175" cy="72" rx="78" ry="50"/>
+        </svg>
+        <div class="digit">4</div>
+        <div class="digit">7</div>
+        <div class="digit">1</div>
+        <div class="digit">9</div>
+        <div class="digit">2</div>
+        <div class="digit">6</div>
+        <div class="success" id="success" aria-hidden="true">
+          <svg viewBox="0 0 56 56"><path id="check" d="M16 28.5l8 8 17-19"/></svg>
+        </div>
+        <div class="status" id="status"><strong>Code ready</strong>Submit starts automatically after the sixth digit.</div>
+      </div>
+      <div class="button" id="button">Verify and continue</div>
+      <div class="caption">Motion reference · click anywhere to replay</div>
+    </section>
+  </main>
+
+  <script>
+    const digits = [...document.querySelectorAll('.digit')];
+    const content = document.querySelector('.content');
+    const stage = document.querySelector('#stage');
+    const orbitSvg = document.querySelector('#orbitSvg');
+    const orbitPath = document.querySelector('#orbitPath');
+    const stageGlow = document.querySelector('#stageGlow');
+    const success = document.querySelector('#success');
+    const check = document.querySelector('#check');
+    const status = document.querySelector('#status');
+    const button = document.querySelector('#button');
+    const phone = document.querySelector('#phone');
+
+    const waveX = [-42, -26, -9, 9, 26, 42];
+    const waveH = [14, 24, 38, 38, 24, 14];
+    const total = 6250;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let layout;
+    let origin = performance.now();
+
+    const clamp = value => Math.max(0, Math.min(1, value));
+    const mix = (a, b, t) => a + (b - a) * t;
+    const smooth = t => 1 - Math.pow(1 - clamp(t), 3);
+    const smoother = value => {
+      const t = clamp(value);
+      return t * t * t * (t * (t * 6 - 15) + 10);
+    };
+    const easeIn = t => Math.pow(clamp(t), 3);
+
+    function interval(t, start, end, easing = smooth) {
+      return easing((t - start) / (end - start));
+    }
+
+    function readLayout() {
+      const contentStyle = getComputedStyle(content);
+      const outerWidth = content.clientWidth
+        - parseFloat(contentStyle.paddingLeft)
+        - parseFloat(contentStyle.paddingRight);
+      const width = Math.min(stage.clientWidth, 420);
+      const spec = outerWidth < 360
+        ? { fieldW: 40, fieldH: 50, gap: 6, node: 32, rx: 78, ry: 50, height: 180, centerY: 72 }
+        : outerWidth < 600
+          ? { fieldW: 48, fieldH: 56, gap: 8, node: 36, rx: 92, ry: 60, height: 196, centerY: 82 }
+          : { fieldW: 52, fieldH: 60, gap: 10, node: 40, rx: 108, ry: 68, height: 212, centerY: 90 };
+      const rowWidth = spec.fieldW * 6 + spec.gap * 5;
+      const rowLeft = (width - rowWidth) / 2;
+      const rowTop = spec.centerY - spec.fieldH / 2;
+      return {
+        ...spec,
+        outerWidth,
+        width,
+        center: { x: width / 2, y: spec.centerY },
+        row: digits.map((_, i) => ({
+          x: rowLeft + i * (spec.fieldW + spec.gap),
+          y: rowTop,
+          w: spec.fieldW,
+          h: spec.fieldH,
+        })),
+      };
+    }
+
+    function applyLayout() {
+      layout = readLayout();
+      stage.style.height = `${layout.height}px`;
+      orbitSvg.setAttribute('viewBox', `0 0 ${layout.width} ${layout.height}`);
+      orbitPath.setAttribute('cx', layout.center.x);
+      orbitPath.setAttribute('cy', layout.center.y);
+      orbitPath.setAttribute('rx', layout.rx);
+      orbitPath.setAttribute('ry', layout.ry);
+      stageGlow.style.left = `${layout.center.x}px`;
+      stageGlow.style.top = `${layout.center.y}px`;
+      stageGlow.style.width = `${layout.rx * 2.04}px`;
+      stageGlow.style.height = `${layout.ry * 2.08}px`;
+      success.style.left = `${layout.center.x}px`;
+      success.style.top = `${layout.center.y}px`;
+    }
+
+    function ellipsePoint(i, angleOffset = 0, radialScale = 1) {
+      const theta = -Math.PI / 2 + i * Math.PI / 3 + angleOffset;
+      return {
+        x: layout.center.x + Math.cos(theta) * layout.rx * radialScale,
+        y: layout.center.y + Math.sin(theta) * layout.ry * radialScale,
+      };
+    }
+
+    function orbitPointAt(time, i) {
+      const phase = ((time - 1740) / 1800) * Math.PI * 2;
+      const blend = smoother((time - 1740) / 200);
+      const sway = Math.sin(phase) * 14 * Math.PI / 180 * blend;
+      const pulse = 1 + Math.sin(phase - i * Math.PI / 3) * .04 * blend;
+      return ellipsePoint(i, sway, pulse);
+    }
+
+    function brakeEndPoint(i) {
+      const from = orbitPointAt(4500, i);
+      return {
+        x: layout.center.x + (from.x - layout.center.x) * .55,
+        y: layout.center.y + (from.y - layout.center.y) * .55,
+      };
+    }
+
+    function orbitVelocityAt(time, i) {
+      const before = orbitPointAt(time - 1, i);
+      const after = orbitPointAt(time + 1, i);
+      return {
+        x: (after.x - before.x) * 500,
+        y: (after.y - before.y) * 500,
+      };
+    }
+
+    function cubicBezierPoint(p0, p1, p2, p3, t) {
+      const u = 1 - t;
+      return {
+        x: u * u * u * p0.x
+          + 3 * u * u * t * p1.x
+          + 3 * u * t * t * p2.x
+          + t * t * t * p3.x,
+        y: u * u * u * p0.y
+          + 3 * u * u * t * p1.y
+          + 3 * u * t * t * p2.y
+          + t * t * t * p3.y,
+      };
+    }
+
+    function brakePoint(i, progress) {
+      const p0 = orbitPointAt(4500, i);
+      const velocity = orbitVelocityAt(4500, i);
+      const durationSeconds = .16;
+      const p1 = {
+        x: p0.x + velocity.x * durationSeconds / 3,
+        y: p0.y + velocity.y * durationSeconds / 3,
+      };
+      const p3 = brakeEndPoint(i);
+      return cubicBezierPoint(p0, p1, p3, p3, clamp(progress));
+    }
+
+    const waveColors = ['#7b2ff7', '#8846f4', '#9868ee', '#aa8ce9', '#7bbce7', '#5ce1e6'];
+
+    function setNode(el, x, y, w, h, radius, opacity, scale, signal, textOpacity, waveColor, waveAmount) {
+      el.style.width = `${w}px`;
+      el.style.height = `${h}px`;
+      el.style.borderRadius = `${radius}px`;
+      el.style.opacity = opacity;
+      el.style.setProperty('--signal', signal);
+      el.style.color = `rgba(255,255,255,${textOpacity})`;
+      el.style.borderColor = waveColor
+        ? `rgba(64,52,79,${1 - waveAmount})`
+        : '#40344f';
+      el.style.background = waveColor
+        ? `color-mix(in srgb, ${waveColor} ${waveAmount * 100}%, #191329)`
+        : 'linear-gradient(145deg, #21182e, #15101f)';
+      el.style.boxShadow = waveColor
+        ? `0 0 18px color-mix(in srgb, ${waveColor} ${waveAmount * 42}%, transparent)`
+        : 'inset 0 1px 0 rgba(255,255,255,.055), 0 10px 26px rgba(0,0,0,.22)';
+      el.style.transform = `translate(${x - w / 2}px, ${y - h / 2}px) scale(${scale})`;
+    }
+
+    function frame(now) {
+      const t = (now - origin) % total;
+      const loop = ((t - 1740) / 1800) * Math.PI * 2;
+      let statusTitle = 'Code ready';
+      let statusCopy = 'Submit starts automatically after the sixth digit.';
+      let orbitOpacity = 0;
+      let glowOpacity = 0;
+      let buttonOpacity = 1;
+      let stageExit = 1;
+
+      digits.forEach((el, i) => {
+        const start = layout.row[i];
+        let x = start.x + start.w / 2;
+        let y = start.y + start.h / 2;
+        let w = start.w;
+        let h = start.h;
+        let radius = 14;
+        let opacity = 1;
+        let scale = 1;
+        let signal = 0;
+        let textOpacity = 1;
+        let waveColor = null;
+        let waveAmount = 0;
+
+        if (t < 1300) {
+          const entry = interval(t, 220 + i * 120, 360 + i * 120);
+          opacity = entry;
+          y += mix(4, 0, entry);
+          scale = mix(.94, 1, entry);
+        } else if (t < 1420) {
+          scale = mix(1, .94, interval(t, 1300, 1420));
+          statusTitle = 'Verifying code…';
+          statusCopy = 'Firebase is checking the real code.';
+          buttonOpacity = .45;
+        } else if (t < 1740) {
+          const p = interval(t, 1420, 1740);
+          const target = ellipsePoint(i);
+          x = mix(x, target.x, p);
+          y = mix(y, target.y, p);
+          w = mix(layout.fieldW, layout.node, p);
+          h = mix(layout.fieldH, layout.node, p);
+          radius = mix(14, 999, p);
+          scale = mix(.94, 1, p);
+          orbitOpacity = p;
+          glowOpacity = p;
+          statusTitle = 'Verifying code…';
+          statusCopy = 'The constellation tracks a live request.';
+          buttonOpacity = .45;
+        } else if (t < 4500) {
+          const target = orbitPointAt(t, i);
+          x = target.x;
+          y = target.y;
+          w = h = layout.node;
+          radius = 999;
+          signal = Math.pow(Math.max(0, Math.cos(loop - i * Math.PI / 3)), 10);
+          orbitOpacity = 1;
+          glowOpacity = .95;
+          statusTitle = 'Verifying code…';
+          statusCopy = 'A calm signal, not a fake completion.';
+          buttonOpacity = .45;
+        } else if (t < 4660) {
+          const raw = clamp((t - 4500) / 160);
+          const point = brakePoint(i, raw);
+          x = point.x;
+          y = point.y;
+          w = h = layout.node;
+          radius = 999;
+          opacity = 1;
+          textOpacity = 1 - smoother(raw);
+          orbitOpacity = 1 - smoother(raw);
+          glowOpacity = 1 - smoother(raw) * .35;
+          statusTitle = 'Code verified';
+          statusCopy = 'The signal is becoming a voice.';
+          buttonOpacity = .45;
+        } else if (t < 4960) {
+          const p = smoother((t - 4660) / 180);
+          const from = brakeEndPoint(i);
+          x = mix(from.x, layout.center.x + waveX[i], p);
+          y = mix(from.y, layout.center.y, p);
+          w = mix(layout.node, 7, p);
+          h = mix(layout.node, waveH[i], p);
+          radius = 999;
+          opacity = 1;
+          textOpacity = 0;
+          waveColor = waveColors[i];
+          waveAmount = p;
+          if (t >= 4840) {
+            const breathPhase = clamp((t - 4840) / 120);
+            const breath = Math.pow(Math.sin(breathPhase * Math.PI), 2);
+            h = waveH[i] * (1 + breath * .25);
+            waveAmount = 1;
+          }
+          glowOpacity = .7;
+          statusTitle = 'Code verified';
+          statusCopy = 'One YoVoice confirmation beat.';
+          buttonOpacity = .45;
+        } else if (t < 5160) {
+          const p = smoother((t - 4960) / 200);
+          x = mix(layout.center.x + waveX[i], layout.center.x, p);
+          y = layout.center.y;
+          w = mix(7, 3, p);
+          h = mix(waveH[i], 3, p);
+          radius = 999;
+          opacity = 1 - p;
+          textOpacity = 0;
+          waveColor = waveColors[i];
+          waveAmount = 1;
+          glowOpacity = mix(.7, .2, p);
+          statusTitle = 'Code verified';
+          statusCopy = 'Welcome back.';
+          buttonOpacity = .45;
+        } else if (t < 5340) {
+          x = layout.center.x;
+          y = layout.center.y;
+          w = h = 3;
+          radius = 999;
+          opacity = 0;
+          textOpacity = 0;
+          statusTitle = 'Code verified';
+          statusCopy = 'Welcome back.';
+          buttonOpacity = .45;
+        } else {
+          stageExit = 1 - interval(t, 5340, 5540, easeIn);
+          opacity = 0;
+          textOpacity = 0;
+          buttonOpacity = mix(.45, 1, interval(t, 5740, 6100));
+        }
+
+        setNode(
+          el,
+          x,
+          y,
+          w,
+          h,
+          radius,
+          opacity * stageExit,
+          scale,
+          signal,
+          textOpacity,
+          waveColor,
+          waveAmount,
+        );
+      });
+
+      const successIn = interval(t, 4960, 5160);
+      const successOut = 1 - interval(t, 5340, 5540, easeIn);
+      success.style.opacity = successIn * successOut;
+      success.style.transform = `translate(-50%, calc(-50% - ${8 * (1 - successOut)}px)) scale(${mix(.7, 1, successIn)})`;
+      success.style.boxShadow = `0 0 0 ${mix(0, 16, successIn)}px rgba(53,208,127,${mix(.32, 0, successIn)}), 0 18px 52px rgba(53,208,127,.22)`;
+      check.style.strokeDashoffset = `${mix(42, 0, successIn)}`;
+      orbitPath.style.opacity = orbitOpacity * stageExit;
+      orbitPath.style.strokeDashoffset = `${-(t / 1800) * 24}`;
+      stageGlow.style.opacity = glowOpacity * stageExit;
+      stageGlow.style.transform = `translate(-50%, -50%) scale(${mix(.86, 1.08, glowOpacity)})`;
+      button.style.opacity = buttonOpacity;
+      status.style.opacity = stageExit;
+      status.innerHTML = `<strong>${statusTitle}</strong>${statusCopy}`;
+
+      requestAnimationFrame(frame);
+    }
+
+    function renderReducedMotion() {
+      digits.forEach((el, i) => {
+        const item = layout.row[i];
+        setNode(
+          el,
+          item.x + item.w / 2,
+          item.y + item.h / 2,
+          item.w,
+          item.h,
+          14,
+          .7,
+          1,
+          0,
+          1,
+          null,
+          0,
+        );
+      });
+      orbitPath.style.opacity = 0;
+      stageGlow.style.opacity = 0;
+      success.style.opacity = 0;
+      check.style.strokeDashoffset = 42;
+      button.style.opacity = .45;
+      status.style.opacity = 1;
+      status.innerHTML = '<strong>Verifying code…</strong>Reduced motion keeps the code in place.';
+    }
+
+    applyLayout();
+    if (reduceMotion) {
+      renderReducedMotion();
+    } else {
+      phone.addEventListener('click', () => { origin = performance.now(); });
+      requestAnimationFrame(frame);
+    }
+
+    window.addEventListener('resize', () => {
+      applyLayout();
+      if (reduceMotion) {
+        renderReducedMotion();
+      } else {
+        origin = performance.now();
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,140 @@
+{
+  "name": "YoVoice Voice Constellation TOTP Challenge",
+  "version": 2,
+  "purpose": "Design handoff reference only; do not load this JSON at runtime.",
+  "digits": 6,
+  "geometry": {
+    "componentMaxWidth": 420,
+    "availableWidthDefinition": "The outer content-slot LayoutBuilder maxWidth after page padding but before applying the inner componentMaxWidth cap; not the viewport width and not the already-capped stage width.",
+    "componentHeightDefinition": "Includes the motion canvas and one 42px status slot.",
+    "statusSlotHeight": 42,
+    "decorativeDigitTextScale": "Fixed at the base AppTypography.headlineMedium size; these six glyphs are ExcludeSemantics duplicates of the one fully scalable semantic input.",
+    "minimumTapTarget": 44,
+    "breakpoints": [
+      {
+        "availableWidth": "<360",
+        "fieldWidth": 40,
+        "fieldHeight": 50,
+        "gap": 6,
+        "orbitNodeDiameter": 32,
+        "orbitRadiusX": 78,
+        "orbitRadiusY": 50,
+        "orbitCenterY": 72,
+        "componentHeight": 180
+      },
+      {
+        "availableWidth": "360-599",
+        "fieldWidth": 48,
+        "fieldHeight": 56,
+        "gap": 8,
+        "orbitNodeDiameter": 36,
+        "orbitRadiusX": 92,
+        "orbitRadiusY": 60,
+        "orbitCenterY": 82,
+        "componentHeight": 196
+      },
+      {
+        "availableWidth": ">=600",
+        "fieldWidth": 52,
+        "fieldHeight": 60,
+        "gap": 10,
+        "orbitNodeDiameter": 40,
+        "orbitRadiusX": 108,
+        "orbitRadiusY": 68,
+        "orbitCenterY": 90,
+        "componentHeight": 212
+      }
+    ],
+    "orbitStrokeWidth": 1.5,
+    "orbitDashPhaseDegreesPerCycle": 24,
+    "orbitSwayDegrees": 14,
+    "orbitRadialScaleMin": 0.96,
+    "orbitRadialScaleMax": 1.04,
+    "wave": {
+      "barX": [-42, -26, -9, 9, 26, 42],
+      "barWidth": 7,
+      "barHeights": [14, 24, 38, 38, 24, 14],
+      "breathScaleMax": 1.25
+    },
+    "successBadgeDiameter": 56,
+    "successHaloDiameterEnd": 88,
+    "successHaloOpacityStart": 0.32,
+    "exitTranslateY": -8,
+    "errorShakeOffsetsX": [0, -7, 6, -4, 3, -1, 0]
+  },
+  "colors": {
+    "note": "Use AppPalette/Theme semantic roles at runtime. These hex values are the current dark brand reference only.",
+    "background": "#0D0618",
+    "surface": "#191329",
+    "surfaceLight": "#241B39",
+    "primary": "#7B2FF7",
+    "secondary": "#C026FF",
+    "accent": "#5CE1E6",
+    "border": "#3A3151",
+    "textPrimary": "#FFFFFF",
+    "textSecondary": "#B4ADC8",
+    "success": "#35D07F",
+    "warning": "#FFB547",
+    "error": "#FF5F6D"
+  },
+  "timingsMs": {
+    "digitEntry": 140,
+    "submitCompress": 120,
+    "orbitEntry": 320,
+    "orbitLoopPeriod": 1800,
+    "successOrbitBrake": 160,
+    "successWaveBuildEnd": 340,
+    "successWaveBreathEnd": 460,
+    "successBadgeEnd": 660,
+    "successHold": 180,
+    "exit": 200,
+    "errorReturn": 240,
+    "errorHaloFade": 160,
+    "errorColor": 100,
+    "errorShake": 360,
+    "errorMessage": 180,
+    "autoSubmitDebounce": 120
+  },
+  "curves": {
+    "digitEntry": "cubic-bezier(0.16, 1.00, 0.30, 1.00)",
+    "submitCompress": "easeOutCubic",
+    "orbitEntry": "cubic-bezier(0.16, 1.00, 0.30, 1.00)",
+    "orbitLoop": "sinusoidal phase over linear time",
+    "success": "C1 handoff: orbit-to-brake cubic Bezier seeded from screen-space velocity; zero-velocity smootherstep for brake-to-wave and wave-to-collapse",
+    "exit": "easeInCubic",
+    "errorReturn": "cubic-bezier(0.16, 1.00, 0.30, 1.00)"
+  },
+  "stateMachine": [
+    "editing",
+    "submitting",
+    "orbitEntry",
+    "orbitLoop",
+    "success",
+    "successHold",
+    "exit",
+    "error"
+  ],
+  "interaction": {
+    "autoSubmit": "Edge-triggered on a transition from fewer than 6 to exactly 6 digits, after 120ms; all paths use one single-flight guard.",
+    "routeBackAllowed": "Only in stable editing/retry-ready state; locked from accepted submit through controlled success pop or completed error return.",
+    "fastResponse": "Capture each rendered element's position, size, radius, opacity, phase and velocity; interpolate success/error from that snapshot without an angle or canonical-layout reset.",
+    "rateLimitRetry": "Preserve the code and require a deliberate manual retry; do not invent a local cooldown timer."
+  },
+  "errorPolicy": {
+    "invalidCode": "Return to row, shake, show error, clear code after feedback, and restore focus. Never auto-retry.",
+    "network": "Return to row without shake, preserve code, use warning treatment, and allow manual retry.",
+    "tooManyRequests": "Return to row without auto-retry, preserve code, and show the existing mapped message."
+  },
+  "reducedMotion": {
+    "trigger": "MediaQuery.disableAnimationsOf(context) or accessibleNavigation",
+    "orbit": false,
+    "travel": false,
+    "shake": false,
+    "scale": false,
+    "translation": false,
+    "verifying": "Keep the row static at 0.7 opacity and show Verifying code.",
+    "success": "Crossfade the row to the success badge in 120 ms.",
+    "error": "Change semantic error colour in 100 ms with no shake.",
+    "artificialDelayMs": 0
+  }
+}
