@@ -53,6 +53,20 @@ detect and recover from abuse.
   reservation-bound. The MVP accepts only media/audio the user owns or is
   licensed to publish, with attestation. It does not ingest or extract Spotify,
   Apple Music or other provider streams. Link-out is not media authorization.
+  **Feed ranking (ADR-167, source only, not deployed) decides order, never
+  eligibility.** It runs inside `listReelsV2` after `visibleFeedItem`, whose
+  account-state, restriction, both block directions and availability checks
+  are unchanged; ranking snapshots are held in a map separate from the
+  authorization snapshots, a scorer that throws contributes zero, and a
+  malformed ranking document contributes zero — no ranking failure can
+  remove or add an entitled item. The one filter ranking may apply is
+  suppressing a Reel the viewer themselves watched in the last six hours,
+  and only from a valid record. The feed cursor is validated, not
+  authenticated, and deliberately unsigned: it carries no authority, a
+  forged position is already possible today, and authorization is recomputed
+  per request from fresh documents. `users/{uid}/reelViews` is new personal
+  data — owner-only in both directions, `viewedAt` pinned to `request.time`,
+  retention bounded to ~90 days by a TTL that must be enabled by hand.
 - **Moderation**: removal state, report resolution and append-only audit commit
   in one transaction with deterministic replay. Access is checked before
   existence and audit data contains no grants/tokens. The focused atomic
@@ -249,7 +263,7 @@ Full schema and the exact current rules structure: [Firebase.md](Firebase.md).
 ### Servers V1 runtime activation authority
 
 Servers export discovery is source-static; `YOVOICE_SERVERS_V1` is not an
-authorization control. The 53 base exports may exist while every product
+authorization control. The 54 base exports may exist while every product
 operation remains disabled. Callable admission comes only from the
 server-written `appConfig/serversV1` document after Firebase Auth identity has
 been bound. Firestore Rules deny every client read and write under
@@ -276,6 +290,51 @@ not declared, and the provider services are not constructed. A future source
 change that enables those names requires its own secret review, provider canary
 and deployment approval. See [ADR-176](Decisions.md#adr-176-servers-v1-exports-are-static-and-activation-is-a-server-owned-runtime-decision)
 and the [phased runbook](DEPLOYMENT.md#servers-v1-static-registration-and-runtime-activation).
+
+### Community OBS ingress, screen sources and the meeting data plane (ADR-192/193, source only, NOT deployed)
+
+- **The Stream Key is a bearer credential.** Anyone holding it can publish
+  into the room. `createServerBroadcastIngressV1` returns it with the server
+  URL only in the callable response, to the admitted host of a live Community
+  broadcast generation. It is never written to Firestore and never logged; the
+  handler logs only the error code and class. An emulator test asserts that no
+  secret is persisted. The client keeps it in widget state, masks it by
+  default, and offers reveal and copy. Copying puts it on a clipboard that
+  other apps can read on some platforms (P3).
+- **Authority is live host admission, re-checked after provider I/O.** The
+  same predicate that keeps the human host admitted is read in the plan
+  transaction and again before the key is returned, so a ban, demotion, ACL
+  change or enforcement cleanup during CreateIngress fences the disclosure.
+  Token expiry is deliberately not part of it (a connected host can mint a
+  new token at any time). Losing authority deletes the input, except Auth
+  account deletion (OPEN, see [Bugs.md](Bugs.md)).
+- **Default off and bounded.** A missing
+  `serverRuntimeCapacity/communityBroadcastV1` means disabled. There is one
+  live broadcast per account and at most 25 globally, and the rate limit of
+  2 calls per 60 s per UID is consumed before any target existence is
+  disclosed. Both control collections deny every client read and write. The
+  switch stops new setups only: existing inputs have no duration bound, and
+  deleting the capacity document or editing its counters while an input exists
+  strands session ends (both OPEN P3, see [Bugs.md](Bugs.md)).
+- **Ends cannot be delayed by a host.** A provisioning lease never refuses an
+  owner, staleness or staff end; recipients are revoked immediately.
+- **Screen sources stay host-only.** `screen_share` and `screen_share_audio`
+  are granted only to a publishing `host` in a meeting or a policy-2
+  Community broadcast generation, enforced by LiveKit `canPublishSources`.
+  The Community stage renders any screen publisher, which is safe only
+  because the provider refuses that source to everyone else except the
+  server-created ingress participant.
+- **Whiteboard previews are not authority.** Live ink packets are dropped
+  unless the sender matches the generation, is not a listener, and its
+  `authorId` equals the provider identity. Durable strokes remain
+  callable-only. Open P3 items: `canPublishData` is granted to every role,
+  muted participants can still send previews, and `boardChannelId` is not
+  bound to the meeting.
+- **Native bridges.** Call Picture in Picture sends the native WebRTC track
+  id, the contact display name and the video aspect over its method channel;
+  never the LiveKit room, URL or token. iOS uses the name only for the
+  fallback initials in the PiP window. iOS screen share captures only the YO
+  Voice app surface; there is no Broadcast Upload Extension.
 
 ## Storage rules
 

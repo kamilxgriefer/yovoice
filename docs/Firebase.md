@@ -94,9 +94,22 @@ Notable fields:
   list or a read failure fails closed. Functions read it uncached: callables
   use the authenticated UID and workers use the independent boolean. Clients
   cannot read the cohort or mutate the gate because `match
-  /appConfig/{configId}` denies every client operation. The 53 base export
+  /appConfig/{configId}` denies every client operation. The 54 base export
   names are source-static and ignore `YOVOICE_SERVERS_V1`; the seven Podcast
   recording/Egress exports remain source-disabled.
+
+- **Community OBS usage and capacity (`serverBroadcastUsage/{uid}`,
+  `serverRuntimeCapacity/communityBroadcastV1`, ADR-192, source only)** — both
+  are `allow read, write: if false` for every client and are written only by
+  `createServerBroadcastIngressV1` and its cleanup paths through the Admin SDK.
+  A usage slot holds the exact host, server, channel, room, session, LiveKit
+  room and OBS identity, `state` (`provisioning` or `active`), the operation and
+  lease ids and the committed `ingressId`. The capacity document is exactly
+  `{schemaVersion: 1, enabled, activeCount, limit (1-25), updatedAt}`; an
+  operator creates it, and a missing document means OBS is disabled. The
+  Stream Key is never stored in either. `firestore-tests/server_rules.test.js`
+  proves get, set, update, delete and list are denied for owner, admin, member
+  and outsider.
 
 - **Voice Moment lifecycle (ADR-115, deployed 2026-08-27)** — root create, publication,
   expiry and delete are Cloud Functions authority. Draft, expired and deleting
@@ -229,10 +242,53 @@ principles behind rules like this — check a claim against a real
 document, never trust the request — are collected in
 [SECURITY.md](SECURITY.md#firestore-security-rules--design-principles).
 
+### GIF collections (ADR-172) — server-owned, client-invisible
+
+Five dedicated collections plus `appConfig` and existing private report quotas,
+every one of them
+`allow read, write: if false` for **every** client including staff. All are
+written by the Admin SDK inside `functions/media/gif/**`.
+
+| Collection | Document | Holds | Lifetime |
+|---|---|---|---|
+| `gifAssets/{provider}_{id}` | one asset | `provider, gifId, title, rating, url, previewUrl, width, height, firstSeenAt, lastSeenAt, reportCount, blocked, suppressed` | **never expired** |
+| `gifQueryCache/{sha256}` | one result page | `items[], nextCursor, cachedAt, expiresAt` | native TTL on `expiresAt` |
+| `gifRateLimits/{uid}` | one token bucket | `tokens, lastRefillAt, windowStartedAt, windowCount, dayStartedAt, dayCount` | rolling |
+| `gifProviderBudget/{yyyymmddhh}` | one UTC hour | `calls, budget` | append-only, per hour |
+| `gifBlocklist/current` | suppression index | `assetIds[]` (capped at 500) | rolling |
+| `appConfig/gif` | feature config | `enabled` | operator-written |
+| `privateRateLimits/{digest}` | GIF report attempt/day quota | bounded window/count from shared rate-limit contract | rolling |
+
+GIF safety reports use `reports/gif_{digest(reporter,provider,id)}`, not raw
+UID concatenation; opaque/dotted/Unicode account IDs cannot violate the
+moderator's bounded report-ID contract. Report resolution, durable asset block
+and protected `adminAuditLogs` record commit atomically. The optional discovery
+suppression cache may be repaired on replay. These additions do not grant
+clients access to private quotas or catalog authority.
+
+**`gifAssets` must never be given a TTL policy.** It is three things at once —
+the send-time authority `resolveGifAsset()` consults, the moderation record
+carrying `blocked`/`reportCount`, and the per-asset blocklist — so expiring it
+would break sending. It grows at roughly one document per unique asset ever
+surfaced, on cache misses only. Add its document count to what you watch.
+
+**`gifQueryCache` ids are digests, not readable text**, so the collection is not
+a public list of what people search for. The cache is shared across all
+accounts on purpose: that sharing is what makes a beta API key viable.
+
+**No new composite index is required.** Every lookup here is by document id.
+The moderation queue's existing `reports` indexes cover `targetType:
+'gifAsset'`.
+
+A `gifAsset` report is server-written only: the `reports` create rule has no
+branch for that target type, and its field allowlist has no room for
+`gifProvider`, `gifId`, `targetTextSnapshot` or `targetMediaUrl`.
+
 ## Composite indexes
 
-`firestore.indexes.json` currently holds **36** composite indexes and **10**
-`fieldOverrides`. The 2026-08-19 live reading of 19 and 4 is historical, not
+`firestore.indexes.json` currently holds **45** composite indexes and **12**
+`fieldOverrides` (counted 2026-09-16, including the `gifQueryCache.expiresAt`
+TTL override). The 2026-08-19 live reading of 19 and 4 is historical, not
 proof of today's production state; re-read production before every release
 rather than subtracting one stale count from another. ADR-115's
 `voiceMoments(authorId ASC, isPublished ASC)` composite is deployed and reached
@@ -343,7 +399,7 @@ named activation precondition in [Servers.md](Servers.md) alongside the
 `channelSessions.livekitRoomName` collection-group override, which has the same
 committed-but-unverified status.
 
-Deploying the static 53-name Server surface does not discharge either index
+Deploying the static 54-name Server surface does not discharge either index
 gate. Keep `appConfig/serversV1.callableAccess` disabled until both indexes
 report READY and the exact production queries succeed. Keep workers disabled
 during the inert infrastructure phase, then enable them in a revision-checked

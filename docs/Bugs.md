@@ -5,6 +5,405 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED IN SOURCE — Community OBS broadcasting defects found before commit (2026-09-16)
+
+These defects existed only in the uncommitted media-collaboration work
+(ADR-192) and were never committed or deployed. Fixed in `99b5916b`.
+Every fix has a test that fails when its key line is reverted. Evidence is in
+`yovoice-evidence/2026-09-16/` (`wip-inspect-servers.md` found them;
+`wip-slice-A.md` and the `fix-A-mutation-*.log` files prove the fixes).
+
+- **P1 — OBS authority expired with the 300 s join token.**
+  `readAuthorizedCommunityBroadcastAccess` required the host's last JWT to be
+  unexpired. As a result, a connected host could not set up OBS after five
+  minutes, and any later host reconcile deleted a healthy live ingress. Token
+  expiry is no longer part of the predicate; losing real host authority still
+  deletes the ingress. Four emulator tests; reverting the line gives 2 failures
+  in 31.
+- **P2 — a provisioning lease refused every session end for up to 180 s.**
+  Owner end, archive, delete, transfer, the staleness sweep, staff suspension
+  and staff delete all failed with `failed-precondition` while a host's OBS
+  setup was in flight. A host could re-arm that window after a deterministic
+  provider failure. Ends are now always staged, and only the terminal worker's
+  provider delete waits for the lease. Emulator tests cover host end, staff
+  suspension and staff delete. Reverting the stager gives 3 failures in 37;
+  reverting the host end gives 1 in 31; disabling the worker deferral gives 2
+  in 37.
+- **P3 — a missing capacity document meant "enabled".** The first OBS call
+  created `serverRuntimeCapacity/communityBroadcastV1` as enabled with a limit
+  of 25, so deploying the callable was not inert. A missing document now fails
+  `failed-precondition` before any provider call.
+- **P3 — every new Server session was written with source policy v2.** A
+  not-yet-redeployed or rolled-back function would have denied every new
+  generation. Policy v2 is now written only for Community broadcast
+  generations.
+- **P1 release blocker — the Servers activation package tool rejected the new
+  manifest.** `tool/servers_activation_package.js` pinned 60/54/7/53 and 47
+  non-creation callables, and it read the frozen callable table, so it could not
+  include the new callable. Its test was 2 pass / 10 fail. CI does not run
+  `tool/test`, so CI would have stayed green. It now pins 61 total / 55
+  callables / 7 Podcast / 54 base with phases 42 / 7 / 48 / 1 (12/12).
+- **P1 commit hazard — tracked modules required untracked files.** Six tracked
+  Functions modules and one test `require` the three new
+  `community_broadcast*.js` files. A commit without them makes
+  `functions/index.js` throw `MODULE_NOT_FOUND` for every function. The
+  Functions commit carries the complete set.
+- **Test gap — the two new deny-all collections had no rules test.** The Server
+  rules suite now proves every client role is denied get, set, update, delete
+  and list on both (70/70; a scratch rule that allowed reads made exactly this
+  check fail).
+
+## OPEN — deleting a streaming host's account leaves the OBS ingress live (found 2026-09-16)
+
+**P2, source only; OBS is not released.** `onAuthUserDeleted` retires the
+profile but triggers no Servers voice cleanup. When the deleted account is a
+Community host streaming through OBS, nothing deletes the RTMP ingress or ends
+the generation. The OBS participant keeps the room occupied, so the staleness
+sweep never stages the end. It ends only when a moderator ends the session, the
+channel or server is archived, deleted or suspended, or a later reconcile of
+that host runs. An account **ban** is handled: global voice enforcement deletes
+the ingress (emulator test). Workaround: a moderator ends the session. Fix
+direction: enqueue the existing voice-enforcement cleanup, or a host reconcile,
+from the account-deletion lifecycle. Traced by Slice A, `wip-slice-A.md`
+section 3. Emulator-confirmed by the adversarial review (SEC-1 in
+`wip-security.md`, probe SEC-C): the session stayed `live`, the slot stayed
+`active`, and no provider delete, outbox job or enforcement event was created.
+
+## OPEN — Community OBS and call PiP hardening gaps from the adversarial review (P3, found 2026-09-16)
+
+Source only; OBS is not released and PiP has no tester build. Found by the
+read-only adversarial review of the uncommitted media work
+(`yovoice-evidence/2026-09-16/wip-security.md`, emulator probe
+`wip-security-probe.test.js`, 6/6). None is a P0 or P1, and none discloses a
+Stream Key to a non-host. Not fixed in this round.
+
+- **SEC-2 (CONFIRMED on the emulator) — the capacity document is a single
+  point of failure for session ends.** If
+  `serverRuntimeCapacity/communityBroadcastV1` is deleted while an input is
+  live, or `limit` is set below `activeCount`, the terminal worker fails with
+  "The media cleanup state needs reconciliation." (or `data-loss`) after the
+  provider room is already gone. The session stays `ending`, the channel cannot
+  go LIVE again, and a hand-edited counter also refuses every other host's
+  setup. Repro: provision an input, delete the document, end the session, run
+  the worker twice. Workaround: recreate the document with the true
+  `activeCount`; the next worker pass finishes. Operators must change only
+  `enabled` ([DEPLOYMENT.md](DEPLOYMENT.md)). Fix direction: always release the
+  matching slot and decrement only a valid document.
+- **SEC-3 (HYPOTHESIS; code path confirmed, no device capture) — a screen
+  share can broadcast a revealed Stream Key, and the key cannot be rotated.**
+  The host row shows Share screen and OBS together. Android and iOS screen
+  share now capture the YO Voice UI, "Show key" renders the key as selectable
+  text, and nothing sets `FLAG_SECURE` or pauses capture. A same-generation
+  replay returns the same key, so a leaked key stays valid until the session
+  ends or host authority changes; any viewer who saw it could publish into the
+  LIVE. Workaround: end the session. Fix direction: hide reveal and copy while
+  sharing, add a rate-limited key reset, mark the Android clip sensitive.
+- **SEC-4 (CONFIRMED on the emulator) — OBS has no presence or duration
+  bound, and the kill switch does not stop existing inputs.** A host admitted
+  once can provision 6 h later without rejoining. After `enabled: false`, a
+  host reconcile with unchanged authority deleted nothing. The OBS participant
+  counts as occupancy (`session_staleness.js`), so an unattended, billed stream
+  can run indefinitely. Workaround: end the live session. Fix direction: a
+  maximum broadcast duration or periodic host presence, exclude `obs_`
+  identities from occupancy, and an operator sweep for `enabled: false`.
+  Hypothesis, not probed: 25 moderator accounts on 25 stage channels could hold
+  the global cap; bounded today by the 100-UID `appConfig/serversV1` gate.
+- **SEC-5 (CONFIRMED in a unit probe; not reachable in production) —
+  fail-open ingress adapter seam.** When a RoomService `client` is injected,
+  `getIngressClient` returns null, so ingress cleanup reports
+  `{cleanupPending: false, deleted: 0}` and the room is still deleted while the
+  key stays valid. Production construction never passes `client`. Fix
+  direction: fail closed unless an explicit test-only flag is set.
+- **SEC-6 (CONFIRMED in a unit probe; provider behaviour UNVERIFIED) —
+  plaintext `rtmp://` is accepted.** `session_livekit.js` and
+  `server_broadcast_ingress_service.dart` accept `rtmp:` as well as `rtmps:`.
+  If the provider ever returned `rtmp://`, OBS would send the bearer key in
+  cleartext. Fix direction: require `rtmps:` on both sides once the canary
+  confirms what LiveKit Cloud returns.
+- **SEC-7** is the `canPublishData` item in the residual-gaps entry below.
+- **SEC-8 (HYPOTHESIS; no device) — Android PiP auto-enter is not gated on the
+  call route being on top.** `_syncPictureInPicture` in
+  `direct_call_screen.dart` arms `setAutoEnterEnabled` whenever the call screen
+  is mounted and eligible. If another route, such as a chat opened from a
+  notification, is pushed over the call, pressing Home may turn that route into
+  a floating PiP window. iOS is not affected. No lock-screen exposure was found.
+  Fix direction: also require `ModalRoute.of(context)?.isCurrent == true`.
+
+## FIXED IN SOURCE — direct-call Picture in Picture closed on a network handover (2026-09-16)
+
+Found in the uncommitted PiP work (ADR-194), reproduced with a scratch widget
+test, and fixed in `1eed1626` before it was ever committed.
+
+- **CM-02 (P2).** `_syncPictureInPicture` required `_voice.isConnected`, so a
+  transient `reconnecting` state disarmed PiP. On Android that also moved the
+  task to the background. PiP now stays armed through `reconnecting` and is
+  disarmed only on terminal states. Reverting the line fails the new widget
+  test with `[{active:true}, {active:false}]` (71 pass / 2 fail).
+- **CM-09 (P2).** Every PiP controller installed its own handler on the shared
+  `app.yovoice/direct_call_pip` channel and cleared it on dispose. It also
+  disarmed natively even if it had never armed. Disposing an old call screen
+  could therefore close a newer call's PiP or deafen it to
+  `pictureInPictureChanged`. One native owner per channel now arms, disarms and
+  receives events. Reverting the ownership check gives 5 pass / 2 fail;
+  clearing the handler on every dispose gives 6 pass / 1 fail.
+
+Device behaviour is **UNVERIFIED**: no physical Android or iOS device, no
+two-device call and no real network handover were used.
+
+## FIXED IN SOURCE — a direct message video after a call could play silently (2026-09-16)
+
+LiveKit and the voice recorder leave a process-wide communication audio
+session behind. On iOS that can route a chat video through the receiver or keep
+it in a category the silent switch mutes; on Android it can leave
+`AudioManager` in communication mode. A video controller cannot repair either
+by changing its own volume. Before a user-started DM video, a native bridge now
+restores the normal media route, but only while no call or Server session holds
+the `RealtimeAudioSessionRegistry` (ADR-194). Fixed in `1eed1626`.
+
+Two defects in the first version of this fix were corrected before commit:
+
+- **MF-4 (P2).** The three DM video sites passed
+  `VideoPlayerOptions(mixWithOthers: true)`. On Android that disabled audio
+  focus, so a DM video no longer paused other apps' music and a phone call no
+  longer paused the video. On iOS it could make a live call's audio session
+  mixable. The option is removed at all three sites; Reels keep theirs.
+  Restoring it in `direct_video_playback_source_io.dart` or in
+  `message_bubble.dart` fails that site's test; the web site was not
+  mutation-tested.
+- **R-5 (P3).** On Android 8-11 the audio mode is process-global. The route
+  reset now skips `MODE_IN_CALL`, so a chat video cannot reset another party's
+  phone call (source-contract test).
+
+**UNVERIFIED on device:** audibility after a real call with the silent switch
+on, behaviour with Spotify playing, and a GSM call during playback.
+
+## FIXED IN SOURCE — a refused screen-share type update could stop the Android voice keep-alive (2026-09-16)
+
+**MF-5 / S-9 (P2), found in the uncommitted screen-share work.** Starting a
+Server screen share sent a second `startForegroundService` intent and replied
+to Dart before the service had applied the `mediaProjection` type, so LiveKit
+capture could race it on targetSdk 34+. If `startForeground` refused the
+update, the service called `stopSelf()` and ended the microphone and media
+keep-alive for the whole call. Type changes are now applied in-process on the
+running `VoiceSessionService`. The reply comes only after `startForeground`
+returns, a failed update never stops an already-foreground service, and a share
+without a running service is refused so Dart rolls the publication back. Fixed
+in `1eed1626`. Source-contract tests fail when either key line is reverted;
+the Kotlin compile passes.
+
+The audit's suspicion that the service type was added **before**
+MediaProjection consent is refuted by code: the type is added only after
+`requestCapturePermission()` succeeds. Android 14, 15 and 16 behaviour remains
+**UNVERIFIED** on a device.
+
+## FIXED IN SOURCE — Activity kept the bell lit and Mark all read stopped at 400 rows (2026-09-16)
+
+Opening Activity acknowledged nothing. The bell count stayed until each
+notification was opened through its route or **Mark all read** was pressed,
+and a foreground banner for Activity stayed on screen. **Mark all read**
+updated at most 400 unread rows per press. The
+screen now acknowledges unread rows while it is visible (including when a
+retained tab becomes visible again) and clears the covering banner.
+`markAllAsRead` drains bounded 400-row batches and throws if the signed-in
+account changes between batches. Fixed in `63507816`. `test/notifications_inbox_test.dart`
+passes 17/17. No revert run was recorded for this fix.
+
+## FIXED IN SOURCE — Servers client gate failures in the media work (2026-09-16)
+
+Found by the 2026-09-15 audit in the uncommitted work and fixed before commit:
+
+- `flutter analyze` reported 2 `invalid_use_of_visible_for_testing_member`
+  warnings. `isValidOpaqueServerParticipantIdentity` is a production
+  validator used by the live whiteboard transport, so the annotation was
+  removed (`50522b2d`).
+- The localization source guard failed on `const Text('OBS')` in the Community
+  stage. The label now goes through `AppLocalizations` (`50522b2d`).
+- `test/voice_session_keep_alive_test.dart` still pinned the old
+  `microphone|mediaPlayback` manifest. It now pins
+  `microphone|mediaPlayback|mediaProjection` and the in-process type contract
+  (`1eed1626`).
+- The OBS setup sheet's refusal states (`not-found`, `unimplemented`,
+  `failed-precondition`) had no tests. Seven widget tests now cover English and
+  Polish copy, no raw backend message and retry (`50522b2d`).
+
+## FIXED IN SOURCE — the phone whiteboard toolbar hid tools behind its edge (F1, F6; found 2026-09-16)
+
+Found by the iOS Simulator smoke of the uncommitted whiteboard work
+(`yovoice-evidence/2026-09-16/wip-verify-device.md`, frames 08-11 and
+`crops/08-tools-row.png`, `crops/10-tools-row-drag.png`). HEAD had one
+wrapping toolbar; the compact strips were new. Fixed in `50522b2d`.
+
+- **F1 (P2).** On a phone the tools strip was a horizontal scroll view in an
+  `Expanded` next to pinned Undo and Clear buttons. At 402 pt the six 48 pt
+  tools (318 pt with gaps) had about 244 pt, so the Arrow tool was cut in half
+  and the Grid toggle was hidden, with no fade, chevron or other scroll
+  affordance. The Ink color strip cut its seventh swatch in half the same way.
+  Repro on the old code: open a Company server on a phone-width device, then
+  Channels, then the whiteboard channel. Every toolbar strip now wraps onto
+  another run at every width, as the wide layout already did, and all targets
+  stay 48 pt.
+- **F6 (P3).** The zoom pill over the canvas was 94% opaque, so strokes
+  under the top-right corner showed through its buttons and the percentage
+  label. It is now fully opaque.
+
+Tests: `test/server_whiteboard_test.dart` checks at 320x760 with 200% text,
+390x844 and 402x874 that every tool, swatch and width button lies fully
+inside the toolbar and overlaps no other control, and that the zoom controls
+are opaque in both themes. Restoring the scroll strip fails all 3 layout
+cases (at 402x874 Arrow overlaps Undo); restoring the 94% fill fails both
+opacity cases. Capture-harness frames of the fix at 402x874 (light and dark),
+390x844 and 320x760 at 200% text are in `wip-fix-1-frames/`. **On-device
+rendering of the fix is UNVERIFIED**: the simulator smoke was not repeated,
+because that app build runs signed in to production data.
+
+## PENDING DEVICE VALIDATION — call PiP, Android screen-share service and mobile screen share (2026-09-16)
+
+Known risks in the ADR-194 work. None has been observed on a device, because
+no device run has happened yet. The 2026-09-16 iOS Simulator smoke could not
+reach a call, PiP or a screen share without ringing a real user or starting a
+production session:
+
+- **R-1.** iOS PiP may render black or frozen. `RTCMTLVideoView` is Metal, and a
+  backgrounded app may not submit GPU work. An `AVSampleBufferDisplayLayer`
+  renderer may be needed. Check on a physical iPhone with a Release/TestFlight
+  build.
+- **R-3.** flutter_webrtc ignores `MediaProjection.Callback.onStop`. Stopping a
+  share from the Android 14+ status-bar chip, or the Android 15 lock-screen
+  auto-stop, may leave a frozen LiveKit publication and a stale
+  `mediaProjection` type. This needs a plugin or native change.
+- **R-4.** The Server media reconcile removes the `mediaProjection` type when
+  the publication is briefly absent (for example during a full reconnect) and
+  never re-adds it.
+- **R-6.** The realtime audio registry barrier has no timeout, so a hung native
+  route call would block every call and Server join.
+- **R-7.** If the Activity is recreated outside `configChanges`, native PiP state
+  resets while Dart still believes it is armed, and PiP silently stops arming.
+- **R-8 (pre-existing).** A Server listener promoted to speaker keeps a voice
+  service without the `microphone` type.
+- iOS screen share captures only the YO Voice app surface, because there is no
+  Broadcast Upload Extension.
+
+## OPEN — Servers media collaboration residual gaps (P3, 2026-09-16)
+
+- `canPublishData` is `true` for every Server role, including Community
+  listeners. Only Company meetings consume data, and no per-participant data
+  rate limit is configured. Tightening it needs source policy v3 (ADR-192;
+  SEC-7).
+- A server-muted or host-muted participant can still send whiteboard previews,
+  and `boardChannelId` is not bound to the meeting (ADR-193; SEC-9).
+- A worst-case whiteboard packet is about 1.7 KB, which can exceed one lossy
+  MTU-sized packet.
+- The OBS sheet copies the Stream Key to the clipboard on request, and some
+  platforms let other apps read the clipboard.
+- Every `failed-precondition` from the OBS callable (kill switch off, missing
+  capacity document, not the host, no live generation) shows the same
+  "temporarily unavailable, try again" copy, even when a retry cannot succeed.
+- Host broadcast cleanup can write a 120 s lease on an ending session while its
+  own ingress delete is retried, so repeated server-side cleanup failures can
+  re-arm that window. A host cannot trigger it.
+- Community stage live chat on a phone (`server_text_channel_scene.dart`,
+  unchanged committed code): the capture harness at 390x844 showed the chat
+  empty-state subtitle clipped at its baseline. The iOS Simulator smoke on
+  2026-09-16 (iPhone 17 Pro, 402 pt; `wip-verify-device.md` F2, frames 15-16)
+  confirmed it and found it worse: the pane is about 95 pt tall, so at rest
+  only the empty-state icon shows, and "No messages yet" and its subtitle
+  appear only after scrolling the pane. The host's Share screen and OBS row
+  shortens the pane further in a live session (harness frame only; the
+  simulator smoke did not go live). At 1440x900 the Community stage's secondary
+  action row starts under the fixed session dock at the initial scroll offset;
+  the simulator smoke covered phone width only, so that one stays UNVERIFIED.
+
+## OPEN — pre-existing visual defects seen in the 2026-09-16 simulator smoke (P3)
+
+Found by the iOS Simulator smoke (iPhone 17 Pro, 402 pt, light theme, English;
+`yovoice-evidence/2026-09-16/wip-verify-device.md`). All are in code the
+uncommitted media work does not change. Not fixed in this round.
+
+- **F3.** A clipped rounded container edge with a gradient shows above the
+  Live chat / Channels segmented control on the phone Community stage (frame
+  15; also in harness frames).
+- **F4 (accessibility).** In a Server text channel, the enabled send button
+  draws a #211629 icon on #6f1fd1, a 2.31:1 contrast (below the 3:1 non-text
+  minimum). Its right edge sits about 8-10 pt from the screen edge instead of
+  the 16 pt narrow gutter (`crops/05-composer-crop.png`).
+- **F5.** The direct message composer draws a nested double outline, the
+  header's name and "Active" rows are misaligned, and the call icons take a
+  third header row (`crops/18-dm-composer.png`, `crops/18-dm-header.png`).
+- **F7.** Activity shows a prominent filled "0" count chip, and system
+  achievement notifications carry a "USER" role chip. Rendering them logged
+  three `profile media grant failed: [firebase_functions/not-found] The
+  selected profile does not exist.` messages; the avatars fall back to an
+  initial (frame 20).
+
+## OPEN — a direct call can stay "connected" for hours after the other side disappears (confirmed 2026-09-16)
+
+**P1, pre-existing in committed code.** For a direct call,
+`ParticipantDisconnectedEvent` does nothing, and the call screen has no "the
+other person left" logic. If one side kills the app, crashes or loses the
+network, the other side stays on a "connected" timer with no audio, video or
+message until they press End or Back. The side that dropped gets "you already
+have a call in progress" on every retry and has no UI to end it. Anyone calling
+either person hears that they are in another call. If both sides leave without
+End, the call document and both `directCallLocks` stay active for up to 8 hours
+(`ACTIVE_CALL_TTL_MS`), until `expireDirectCallsSchedule` removes them. There is
+no heartbeat or TTL refresh. The LiveKit webhook handles `participant_left` only
+for achievements. Fix direction: end the call server-side when a `call_*` room
+has fewer than two participants for N seconds, or use a short TTL renewed by a
+heartbeat. On the client, end on a remote disconnect after a grace period, and
+offer "End previous call" on `already-exists`. Not fixed in this round.
+
+## OPEN — ordinary Server members cannot leave a Server in the app (confirmed 2026-09-16)
+
+**P1, pre-existing in committed code.** The only **Leave server** control is in
+the management sheet. The workspace opens that sheet only for roles that can
+moderate, on both desktop and phone. A `member` or `guest` therefore has no way
+to leave, although `leaveServerV1` accepts every non-owner. The only ways out
+are account deletion or removal by a moderator, and the member stays visible in
+the roster. `test/server_management_test.dart` ("ordinary member has no server
+management entry") pins the missing entry and no test covers a member leaving.
+Fix direction: a separate Leave action for non-owner roles, or the sheet with
+management sections hidden below moderator. Not fixed in this round.
+
+## OPEN — the full friend profile shows actions that do not match the relationship (confirmed 2026-09-16)
+
+**P2, UX only, pre-existing.** `FriendProfileScreen` always renders **Remove
+friend** and **Block user**, and **View full profile** in the preview sheet is
+shown even for yourself. For a stranger with a public profile, Remove friend
+changes nothing but closes the screen as if it had. On your own profile, both
+actions end in a generic error. A friend opened from the preview always shows
+"Offline" because the preview passes `isOnline: false`. Firestore Rules still
+keep a profile unreadable when its owner has blocked the viewer. Fix direction:
+read the relationship status and show only the matching actions, hide View full
+profile for yourself, and hide unknown presence instead of showing Offline. Not
+fixed in this round.
+
+## OPEN — `firestore-tests/rules.test.js` ignores the emulator address the Firebase CLI injects (found 2026-09-16)
+
+**P3, test harness only.** `rules.test.js` reads `FIRESTORE_EMULATOR_ADDRESS`
+and `FIRESTORE_EMULATOR_PORT`. `firebase emulators:exec` (firebase-tools
+15.29.0) sets `FIRESTORE_EMULATOR_HOST` and
+`FIREBASE_FIRESTORE_EMULATOR_ADDRESS` instead. The suite therefore always
+targets port 8080 unless `FIRESTORE_EMULATOR_PORT` is set. CI is unaffected
+because it uses the default ports. An alternate-port run, such as
+`--config firebase.qa-gate.json`, would miss its emulator or reach a different
+one. The workaround is documented in `firestore-tests/README.md`. The Storage,
+Family Memory and Servers suites already read the injected variables.
+
+## FIXED IN SOURCE — committed docs linked to four uncommitted records (2026-09-16)
+
+`Bugs.md` (twice) and ADR-173 linked to `Sessions/2026-09-10-claude-integration.md`,
+and the 2026-09-11 Servers session linked to
+`agent_handoffs/claude-continuation-at-codex-limit.md`. Neither file had ever
+been committed. Both are now committed with dated outcome banners
+(`244f2dbe`), and the relative-link check over `docs/` went from 4 broken
+links (HEAD `e8f0e0ce`) to 0. In the same round, this checkout's canonical
+docs turned out to be stale copies from before `d02cef5a`. Committing them would
+have deleted the Build 27 runbook and reintroduced a false claim that the
+Functions package `deploy` script deploys a single function (it runs
+`firebase deploy --only functions`). They were restored from HEAD before the
+media-collaboration documentation was added, in the same docs commit as this
+entry.
+
 ## PENDING VALIDATION — Yeels double-tap/autoplay and custom-audio synchronization (Build 27)
 
 Build 27 contains the current double-tap-like and feed-autoplay corrections,

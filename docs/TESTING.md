@@ -4,6 +4,87 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
+## Servers media collaboration and call PiP gate — 2026-09-16
+
+This gate covers the media-collaboration source that landed in `99b5916b`,
+`1eed1626`, `63507816` and `50522b2d`: Community OBS ingress
+(ADR-192), live whiteboard ink (ADR-193), and call Picture in Picture with one
+realtime audio owner and the typed Android voice service (ADR-194). Logs are
+in `/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-16/`. Emulators used
+only the demo projects `demo-yovoice` and `demo-yovoice-server-acl`.
+
+**Per-area checks on the fixed tree.** Each row ran after that area's fixes.
+Rows overlap and are not summed.
+
+| Check | Result | Log |
+| --- | --- | --- |
+| Cloud Functions, `npm --prefix functions test` (Auth + Firestore emulators) | **2244/2244**, 0 skipped | `fix-A-full-functions-test.log` |
+| Functions smoke, `test:smoke` (Functions emulator) | 3/3 scripts OK; the emulator loaded `createServerBroadcastIngressV1` | `fix-A-functions-smoke.log` |
+| Global Firestore Rules | **564/564**, plus Premium messaging privacy **4/4** | `fix-A-rules-firestore.log` |
+| Storage Rules | **75/75** | `fix-A-rules-storage.log` |
+| Family Memory media (Firestore + Storage) | **11/11** | `fix-A-rules-family-media.log` |
+| Server Rules (`demo-yovoice-server-acl`) | **70/70** (69 before the new OBS deny-all check); also 70/70 through `--config firebase.qa-gate.json` | `fix-A-rules-servers.log`, `fix-D-5-qa-gate-servers-rules.log` |
+| Servers activation package tool (not run by CI) | **12/12** (2 pass / 10 fail before the pin update) | `fix-A-tool-test-final.log` |
+| `docs/Servers.md` callable-table contract tests, no emulator | 25 pass, 0 fail, 8 emulator-only skips | `fix-D-7-servers-docs-contract.log` |
+| `flutter analyze --no-pub` | No issues found (after the Servers client fixes and again after the calls fixes) | `fix-B-final-analyze.log`, `fix-C-final-analyze.log` |
+| All Servers Flutter suites (48 files: 45 `test/server*_test.dart`, the shell Servers slot, the audio registry and the localization guard) | **+455**, 0 failures | `fix-B-servers-suites.log` |
+| Whiteboard toolbar and zoom pill fix (F1, F6) plus both PiP suites after the PiP comment correction | **+37**, 0 failures; `flutter analyze` No issues found | `wip-fix-1-focused-tests.log`, `wip-fix-1-analyze.log` |
+| iOS Simulator smoke, iPhone 17 Pro (402 pt), Debug build of the working tree | Servers, Company whiteboard, Community stage before joining, a DM with call buttons and Notifications render with no overflow or Flutter exception; found F1 and F6 (fixed afterwards) and pre-existing F2-F5, F7 | `wip-verify-device.md`, `wip-frames/` |
+| Calls, media and notifications focused set (10 files) | **199/199** | `fix-C-focused-tests-summary.txt` |
+| Every test importing calls, messages, notifications, DM video, keep-alive or the audio registry (82 files) | **1359/1359** | `fix-C-broad-suites-summary.txt` |
+| `./gradlew :app:compileDebugKotlin` | BUILD SUCCESSFUL | `fix-C-kotlin-compile.log` |
+| `flutter build ios --simulator --debug --no-codesign` | exit 0, `Runner.app` built | `fix-C-ios-sim-build.log` |
+| Community and Company capture harnesses | 15/15 and 14/14; 16 and 15 PNG frames | `fix-B-3-*-capture.log` |
+| `flutter analyze --no-pub tool/perfprobe` | No issues found | `fix-D-4-perfprobe-analyze.log` |
+
+**Red before green.** Each fix was proven by reverting its key line on a scratch
+copy or restored file and running the proving tests:
+
+- OBS token-expiry authority: 2 failures of 31.
+- End refusal restored in the stager, the host end, or with the worker deferral
+  disabled: 3 of 37, 1 of 31, and 2 of 37.
+- Missing capacity document auto-enabled: 1 of 31.
+- A scratch rule allowing reads on the capacity collection: 1 of 70.
+- Policy v2 on every generation: 2 of 78.
+- Activation tool reading the frozen table: 8 of 12.
+- `@visibleForTesting` restored: 2 analyzer warnings.
+- `const Text('OBS')` restored: the localization guard fails.
+- OBS sheet refusal copy removed or raw: 2 and 6 failures.
+- PiP reconnect disarm restored: 2 failures. Native-owner check removed: 2
+  failures. Handler cleared on every dispose: 1 failure.
+- Keep-alive `stopSelf()` unconditional, the Intent path restored, or the
+  `MODE_IN_CALL` guard deleted: 1 failure each.
+- `mixWithOthers: true` restored at the io source or in `message_bubble.dart`:
+  3 and 1 failures.
+- Documenting the OBS callable inside the frozen `docs/Servers.md` table: 2
+  docs-contract failures above a control run on the same mirror.
+- Whiteboard tools strip restored as a horizontal scroll view: all 3 layout
+  cases fail (at 402x874 Arrow overlaps Undo). Zoom pill restored to 94%
+  opacity: both opacity cases fail.
+
+The logs are the matching `fix-*-mutation*` and `wip-fix-1-mutation-*` files.
+
+**Complete working-tree gate** (run by the release owner after all fixes,
+before the commits):
+
+| Check | Result |
+| --- | --- |
+| `flutter analyze --no-pub` | No issues found (`wip-fix-1-analyze-final.log`) |
+| `flutter test --no-pub --concurrency=2` (baseline before fixes: 4914 pass / 2 fail) | **+4932**, 0 failures, 0 skipped, 389 suites (`wip-fix-1-flutter-test.log`). The earlier +4928 run (`wip-verify-full-flutter-test.log`) preceded the 4 whiteboard toolbar tests. The only later change, `dart format` removing two trailing commas in `test/server_whiteboard_test.dart`, was rerun: +27 |
+| `flutter test --no-pub --concurrency=1 tool/performance` | **+11** (`wip-fix-1-tool-performance.log`) |
+| Functions test, smoke, four rules suites and activation tool on the final tree | Functions **2244/2244** (`gate-1-functions-test.log`); smoke 3/3 (`wip-verify-full-functions-smoke.log`); rules **564** + 4 / **75** / **11** / **70** (`wip-verify-full-rules-*.log`, `gate-1-rules-servers.log`); activation tool **12/12** (`gate-1-tool-activation-package.log`). Every backend file is byte-identical to that run (`wip-fix-1-tree-vs-verify-full.txt`) |
+
+**What this does not prove.** No physical Android or iOS device, two-device
+call, real network handover, real screen share, real OBS/RTMP stream or LiveKit
+Cloud Ingress call was used. Every provider call is a test double. The Kotlin
+compile and the iOS Simulator Debug build prove compilation only, not Release,
+TestFlight or device behaviour. The iOS Simulator smoke reached only screens
+that need no live session: the OBS sheet, screen share, the direct call
+screen, PiP and live ink from other members were never rendered on a device
+or simulator and stay UNVERIFIED (harness frames only), and so does the
+on-device look of the whiteboard toolbar fix. Android was compiled, never run.
+Nothing was deployed.
+
 ## Server-first cutover source gate — 2026-09-13
 
 This gate covers the coordinated product cutover in the current source: the
@@ -295,6 +376,34 @@ media/crop/Reels gate passed **39/39**; the production Web artifact built and
 its Hosting workflow/live route checks passed. The Functions and Rules-harness
 production-dependency audits reported **0 known vulnerabilities**. Historical
 count movement remains below.
+
+> **Movement, 2026-09-09 (Reel feed ranking, ADR-167; backend source only,
+> nothing deployed).** Cloud Functions **1422/1422** across 119 suites and
+> Firestore Rules **554/554**, both measured today on fresh emulators via
+> `firebase emulators:exec`. Of those, 37 Functions tests and 12 rules checks
+> are new for feed ranking:
+> `functions/test/reels_ranking.test.js` (the pure scorer: saturation,
+> decay, the jitter bound, permutation, a throwing scorer),
+> `functions/test/reels_feed_cursor.test.js` (the cursor codec and its
+> grammar boundary against the legacy bare `sortKey`),
+> `functions/test/reels_feed_ranking.test.js` (the callable end to end) and
+> `functions/test/reels_feed_ranking_disabled.test.js` (the environment-flag
+> rollback path, in its own process because the config resolves at module
+> load). No flake was observed in this run — the three known load flakes
+> (`concurrent duplicate requests produce one root and one roster row`,
+> `simultaneous reciprocal requests converge on one friendship`, `multiple
+> root reports converge after the first removal`) all passed.
+>
+> **Both new suites were demonstrated red before green**, which is the
+> standard this file asks for. Stripping the `reelViews` match block from
+> `firestore.rules` turned the rules run into **550 passed, 4 failed** — and
+> the four that failed are the *allow* cases. The eight `SECURITY` deny cases
+> stayed green against default-deny, which is precisely why deny cases alone
+> could never have proven this rule. Running the callable suite with
+> `REEL_FEED_RANKING_ENABLED=false` turned it into **8 passed, 6 failed**:
+> the six that depend on ranking behaviour went red, while the invariants
+> that must hold either way — no unauthorized Reel surfaces, no duplicate or
+> skip across pages, v1 byte-frozen, Your Reels unranked — stayed green.
 
 > **Movement, 2026-09-05 (Build 20 source-complete candidate; operationally
 > HELD).** The complete current gate is Flutter VM **2255/2255**, Chrome

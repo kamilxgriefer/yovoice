@@ -363,6 +363,43 @@ painting that seed directly. These are feature-derived visuals, not new global
 `AppPalette` tokens: ordinary card chrome still uses the semantic palette and
 the stable seed remains available only for low-opacity decorative branding.
 
+## Server media sheets and call Picture in Picture (source only, 2026-09-16)
+
+- **OBS setup (ADR-192).** The Community stage action row places **OBS**
+  beside **Share screen**; the row wraps on narrow widths. OBS opens a
+  scroll-controlled modal bottom sheet with the setup guide, then the server URL
+  and a Stream Key that stays masked until the host reveals it, each with a copy
+  button and copy feedback. Refusals show localized copy, never the backend
+  message or code, and re-enable the setup button.
+- **Live whiteboard ink (ADR-193)** reuses the existing board canvas; other
+  members' in-progress strokes render beside the local stroke. A preview
+  disappears when its sender clears it, sends nothing for 2 seconds, or the
+  meeting connection ends.
+- **Call Picture in Picture (ADR-194).** While the system PiP window is shown,
+  the direct call screen renders only the remote video surface (or the
+  "camera is off" label), without call controls.
+- **Screen share availability.** The Company meeting shows an explicit note
+  when the platform cannot start a share, and a host-only note to a connected
+  participant without the screen grant.
+
+- **Whiteboard toolbar.** Tools, ink colors and line widths wrap onto further
+  runs at every width instead of scrolling, so no control is cut off at a
+  phone edge; the zoom pill over the canvas is opaque.
+
+Evidence is widget tests plus capture-harness frames at 390x844, 1440x900 and
+320x760 at 200% text (`yovoice-evidence/2026-09-16/community-frames` and
+`company-frames`), and whiteboard toolbar frames at 402x874 in both themes
+(`wip-fix-1-frames`). An iOS Simulator smoke on 2026-09-16 (iPhone 17 Pro,
+402 pt, light theme, English; `wip-verify-device.md`) rendered Servers, the
+Company whiteboard, the Community stage before joining, a direct message with
+its call buttons and Notifications with no overflow or Flutter exception. It
+found the toolbar clipping that the wrapping layout above fixes (the fix itself
+has harness frames only) and pre-existing phone defects, all recorded in
+[Bugs.md](Bugs.md). It could not reach the OBS button and sheet, screen share,
+the direct call screen, PiP or live ink from other members without ringing a
+real user or starting a production session, so those statements stay
+**UNVERIFIED**. The Accessibility review of these surfaces is still pending.
+
 ## The "Coming soon" pattern
 
 When a screen needs a feature with no real backend support yet:

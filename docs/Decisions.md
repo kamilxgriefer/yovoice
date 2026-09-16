@@ -1110,21 +1110,6 @@ removed from the primary bottom navigation and easy to under-test.
 
 ## ADR-020: Service streams shared by more than one widget must be broadcast + replay
 
-**Amendment — 2026-09-13.** The provider and rollout status below describe the
-original third-party design and are superseded for the current release by
-**YO Voice Originals**. Sixteen original G-rated animations ship in the app at
-`assets/gifs/yovoice/`; the production adapter returns canonical
-`asset://yovoice/gifs/<id>.gif` references, and the client maps only that pinned
-scheme to bundle assets. Search supports the shipped English and Polish tags,
-including diacritic folding, and the direct, room, legacy club and Server text
-surfaces all use the same authoritative send pipeline. The current source pins
-the `yovoice` provider in `functions/index.js`, so all three callables are
-discoverable without an API secret. The GIPHY adapter remains available only
-as a dormant future option and none of its hotlink/privacy consequences apply
-while YO Voice Originals is selected. Changing to an external provider requires
-a reviewed source change, credential, smoke test, attribution and privacy
-rollout. Asset blocking remains non-retroactive for messages already sent.
-
 **Context.** `FriendService.watchFriends()` returned
 `StreamController<List<FriendUser>>().stream` — a single-subscription
 stream. `MessagesScreen` creates it once in `initState` and passes the same
@@ -10110,7 +10095,7 @@ means something else (a rejected cursor) and is reported immediately, so a
 request that always fails cannot cost two round trips forever.
 
 **Consequences.** Measured against a fake transport
-(`tmp/perfprobe/reels_grant_roundtrip_probe.dart`, one tab open plus four
+(`tool/perfprobe/reels_grant_roundtrip_probe.dart`, one tab open plus four
 swipes): with the backend half in place, callables drop from 6 to 4 and the
 first card's URL needs one round trip instead of two. Until the backend half
 ships, the client pays exactly one extra `listReelsV2` per process — and
@@ -10407,6 +10392,21 @@ by the Reel feed ranking entry, and 171 was then taken by the Home vertical
 rhythm entry, so it is 172. Anything citing "ADR-167, GIFs" or "ADR-171, GIFs"
 means this.)*
 
+**Amendment — 2026-09-13.** The provider and rollout status below describe the
+original third-party design and are superseded for the current release by
+**YO Voice Originals**. Sixteen original G-rated animations ship in the app at
+`assets/gifs/yovoice/`; the production adapter returns canonical
+`asset://yovoice/gifs/<id>.gif` references, and the client maps only that pinned
+scheme to bundle assets. Search supports the shipped English and Polish tags,
+including diacritic folding, and the direct, room, legacy club and Server text
+surfaces all use the same authoritative send pipeline. The current source pins
+the `yovoice` provider in `functions/index.js`, so all three callables are
+discoverable without an API secret. The GIPHY adapter remains available only
+as a dormant future option and none of its hotlink/privacy consequences apply
+while YO Voice Originals is selected. Changing to an external provider requires
+a reviewed source change, credential, smoke test, attribution and privacy
+rollout. Asset blocking remains non-retroactive for messages already sent.
+
 **Context.** The composer had an emoji picker and nothing else. Adding GIFs
 means adding a third party to a consumer social product with a real moderation
 queue and plausible minor users, and means a search box whose results we do not
@@ -10521,7 +10521,9 @@ the convention Settings, Awards and Creator Studio already use.
   asset passes all four layers on first appearance; the denylist and the
   report-driven blocklist are reactive. There is no fully preventive version.
 - Rollback is `appConfig/gif.enabled = false` — instant, no deploy. Deeper:
-  `GIF_PROVIDER=none` and redeploy functions.
+  a reviewed source change of the source-pinned provider to `none` and a
+  selective redeploy of the exact affected catalog/send Functions
+  ([DEPLOYMENT.md](DEPLOYMENT.md#gif-rollout--yo-voice-originals-adr-172173)).
 
 ## ADR-173: Complete the feature boundaries before treating standalone workflows as a release
 
@@ -11121,7 +11123,8 @@ organised around refusal rather than around copying.
 - The root post-image is run through the SAME `classifyServerAllocation` the
   capacity accounting uses, and a Club whose policy lands in
   `FREE_ALLOCATION_POLICIES` fails the write. A paid Club keeps
-  `legacyCommunityPremiumV1` and cannot consume one of the 20 free servers; an
+  `legacyCommunityPremiumV1` and cannot consume the shared owned-Server
+  allowance; an
   adopted room must carry `migration.sourceKind: "room"` because
   `readOwnerAllocations()` de-duplicates on exactly that provenance.
 - The root is written `serverActivationState: "held"` + `status: "preparing"`.
@@ -11741,3 +11744,216 @@ with an optional comment id (a contradictory call the server must refuse).
   the Realtime Voice, QA, Visual Quality, Accessibility and Privacy review
   cells, have not run. Widget tests at 320/768/1440 and 200% text prove the
   composer does not overflow; they do not prove it renders correctly.
+
+## ADR-192: Community OBS ingress extends live host admission
+
+**Status:** Accepted (2026-09-16). Landed in source in `99b5916b`. **Not
+deployed; no real OBS/RTMP stream or LiveKit Cloud Ingress call has been
+made.** Every provider call in the evidence is a test double. ADR-190 is not
+used by this entry; the next free number was 192.
+
+**Context.** A Community `stage` channel with `experience: broadcast` and
+`mediaMode: video` needs an RTMP input, so a host can stream from OBS instead
+of a phone camera. LiveKit Ingress is billed, and its Stream Key is a bearer
+credential: anyone holding it can publish into the room. Server join tokens
+live 300 s, and LiveKit refreshes them for connected participants. Owner end,
+channel archive and delete, ownership transfer, the staleness sweep, staff
+suspension and staff delete must always be able to end a generation. The
+first working-tree implementation tied OBS authority to the host's last JWT
+`exp`, so provisioning was refused and a healthy ingress was deleted on any
+reconcile after five minutes (F1). It also refused every end while a 180 s
+provisioning lease was held, so a host could delay staff enforcement (S-3).
+Finally, a missing capacity document meant "enabled" (S-4).
+
+**Decision.**
+
+- One callable, `createServerBroadcastIngressV1` (`europe-west1`), registered
+  beside the frozen 54-name callable table and behind the same
+  `appConfig/serversV1` activation gate. It binds the LiveKit secrets, has
+  `maxInstances: 5`, and consumes a rate limit of 2 calls per 60 s per UID
+  before any server or session existence is disclosed. This raises the
+  ADR-176 static base from 53 to 54 exports.
+- `serverBroadcastUsage/{uid}` holds one slot per account.
+  `serverRuntimeCapacity/communityBroadcastV1`
+  (`{schemaVersion: 1, enabled, activeCount, limit <= 25, updatedAt}`) holds
+  the global cap and the kill switch. Both are Admin-SDK-only; Firestore Rules
+  deny every client read and write.
+- **A missing capacity document means disabled.** The callable returns
+  `failed-precondition` and never creates the document. This deliberately
+  differs from `appConfig/gif`, where a missing document means enabled.
+- **Authority is live host admission, not token expiry.** It requires all of:
+  a Community broadcast channel, a `live` generation with
+  `sourcePolicyVersion: 2` started by the caller, the `moderate` capability,
+  participant role `host`, both screen sources in the grant, and a token
+  recipient that is `active`. The recipient must also have no unresolved
+  revocation attempt, be past its reconnect barrier, and carry a fingerprint
+  equal to the freshly derived authority. Finally the server-owned
+  `activeVoiceSessions` mirror must be consistent with that recipient.
+  `recipient.expiresAtMillis` is only the last JWT `exp` and is not a
+  revocation signal.
+- The Stream Key and server URL are returned only in the callable response.
+  They are never written to Firestore and never logged; the handler logs only
+  the error code and class.
+- **Ends are never refused.** Stagers still mark the end with
+  `reconcileObsIngress`. The terminal worker revokes recipients immediately,
+  but while an unexpired provisioning lease exists it releases its job lease
+  and returns `cleanupPending` without calling the provider room/ingress
+  delete. It retries once the lease has expired.
+- `sourcePolicyVersion: 2` is written only for Community
+  `stage`/`broadcast`/`video` generations (`isCommunityBroadcastChannel`).
+  Every other new generation stays at 1. `assertSessionBinding` accepts both.
+
+**Reasoning.** Expiry-bound authority deleted healthy streams after five
+minutes and added no security, because a connected host can mint a new token
+at any time. The predicate that keeps the human host admitted is the right
+authority for the host's second publisher. Refusal-based fencing let a host
+hold owner and staff lifecycle writers hostage in 180 s windows, and a host
+could re-arm those windows after a deterministic provider failure. Moving the
+wait into the retryable terminal worker keeps the "list ingress only after an
+ambiguous create has settled" guarantee without that power. Default-off keeps
+a Functions deploy inert for a billed resource with no production behaviour to
+preserve. Scoping policy v2 limits a mixed-version rollout or a Functions
+rollback to the new feature: an old instance fails closed only for Community
+broadcast generations, not for every new Server session.
+
+**Consequences.**
+
+- An operator must create and enable the capacity document on production data
+  before any OBS canary, and must confirm Ingress is enabled on the LiveKit
+  Cloud project (transcoding is billed).
+- Any change to the host's authority fingerprint (channel ACL edit, role,
+  mute, participant or membership revision) deletes the ingress. A new
+  provision returns a new Stream Key that must be pasted into OBS again.
+- The OBS participant counts as occupancy, so a generation whose human host
+  vanished stays live while OBS keeps streaming.
+- An end can wait up to the remaining 180 s lease (plus at most one renewal by
+  the failing provisioner) before provider cleanup.
+- A Functions rollback fails closed for live policy-v2 generations; end them
+  first.
+- `canPublishData` stays `true` for every role. Tightening it now would change
+  the authority fingerprint and revoke live tokens, so it ships as policy v3.
+- Deleting a streaming host's Firebase Auth account does not yet delete the
+  ingress (open in [Bugs.md](Bugs.md)).
+
+## ADR-193: Whiteboard motion travels on the RTC data plane; the durable record stays in Firestore
+
+**Status:** Accepted (2026-09-16). Landed in source in `50522b2d`. Widget
+and unit tests only; no two-device meeting was run.
+
+**Context.** A Company meeting whiteboard should show a colleague's stroke
+while the pointer is still moving. Completed strokes already have a reviewed
+callable path (`createServerWhiteboardStrokeV1`) with server authority,
+normalization and a 180-stroke generation cap. In-progress motion is
+high-frequency and disposable. The meeting grant already carries
+`canPublishData`.
+
+**Decision.**
+
+- In-progress ink travels as LiveKit data packets on topic
+  `yo.whiteboard.live.v1`. Updates are lossy (`reliable: false`) and clears are
+  reliable. A packet is at most 2048 bytes and 64 points, with exact key sets.
+- Receivers drop: their own identity, `listener` senders, invalid opaque
+  identities, other generations, an `authorId` that differs from the provider
+  identity, stale sequences per connection, and authors over budget (60 events
+  per 5 s per author, 64 remote authors, 4 retired connections per author).
+- Previews render only on a board whose channel access is `members`.
+- Completed strokes stay callable-written. There is no Firestore draft path,
+  and the retired `whiteboardDrafts` path is asserted closed in the Server
+  rules suite.
+
+**Reasoning.** Writing motion to Firestore would multiply writes per stroke
+and add a TTL collection whose only value is a few seconds of preview. The
+data plane is already authenticated and generation-bound, and durable
+authority does not change.
+
+**Consequences.**
+
+- Previews are lost on disconnect; only completed strokes persist.
+- A server-muted or host-muted participant can still send previews (P3).
+- `boardChannelId` is not bound to the meeting, so a preview can name any
+  members-access whiteboard of the same server (P3).
+- A worst-case packet is about 1.7 KB, which can exceed one lossy MTU-sized
+  packet; typical packets are well below.
+
+## ADR-194: One realtime audio owner, native call PiP ownership and a typed Android voice service
+
+**Status:** Accepted (2026-09-16). Landed in source in `1eed1626` (Server
+session wiring in `50522b2d`). Unit, widget and source-contract tests, a
+Kotlin compile and an iOS Simulator Debug build only. **No physical device,
+two-device call, real screen share or network handover was tested.**
+
+**Context.** Private calls, Server sessions, the voice recorder and direct
+message videos share process-global audio state: `AVAudioSession` on iOS and
+`AudioManager` mode, route and focus on Android. A direct message video opened
+after a call could play silently, because LiveKit leaves a communication
+session behind that a video controller cannot repair. Video calls need system
+Picture in Picture. Android 14+ requires a foreground service typed
+`mediaProjection` to be running before screen capture starts. Three review
+defects shaped the final form: PiP closed on a transient reconnect and, on
+Android, sent the task to the background (CM-02); every PiP controller took
+the shared method channel and disarmed natively even if it never armed
+(CM-09); and a refused service-type update stopped the whole voice keep-alive
+(MF-5/S-9).
+
+**Decision.**
+
+- **`RealtimeAudioSessionRegistry`.** `VoiceCallService` and
+  `ServerSessionController` hold identity-keyed leases from join intent through
+  native teardown. Ordinary media reconfiguration runs only when no lease
+  exists or is being acquired, behind a barrier that a realtime join waits for.
+- **Direct message video** uses default `video_player` options (no
+  `mixWithOthers`) at all three sites. Before playback, a native bridge
+  (`app.yovoice/direct_video_audio`) resets the stale communication route only
+  while realtime is idle. iOS sets `.playback`/`.moviePlayback`/`.mixWithOthers`.
+  Android sets `MODE_NORMAL` and clears the communication device (API 31+) or
+  stops Bluetooth SCO and the speakerphone (API 26-30). Android skips the reset
+  during `MODE_IN_CALL` below API 31, where the mode is process-global.
+  Reels keep their existing `mixWithOthers: true`.
+- **PiP** runs over `app.yovoice/direct_call_pip`. The channel carries the
+  native WebRTC track id, the contact display name and the video aspect; never
+  the LiveKit room, URL or token. Android auto-enters on API 31+ and enters from
+  `onUserLeaveHint` on API 26-30. iOS uses
+  `AVPictureInPictureVideoCallViewController` (iOS 15+). The Dart side keeps one
+  native owner per channel name: only the controller that armed natively may
+  disarm natively or receive `pictureInPictureChanged`. PiP stays armed through
+  `VoiceCallStatus.reconnecting` and is disarmed only on terminal states.
+- **`VoiceSessionService` types.** `mediaPlayback` is always present.
+  `microphone` is added when the role can publish and RECORD_AUDIO is granted.
+  `mediaProjection` is added only while a consented share is active. That type
+  is applied in-process on the running service: the method call replies only
+  after `startForeground` returns, a failed update never stops an
+  already-foreground service, and no share is allowed without a running
+  service.
+- **Mobile Server screen share.** Android uses MediaProjection consent, then
+  the typed service, then publication. iOS publishes an in-app ReplayKit
+  capture (`useiOSBroadcastExtension: false`); YO Voice has no Broadcast Upload
+  Extension, so other apps cannot be captured. A publication is verified after
+  it starts and rolled back if it does not appear. Desktop targets stay
+  disabled.
+
+**Reasoning.** One registry removes the check-then-act races between separate
+controllers that each believed they owned the process audio. Default video
+options restore the Android audio-focus behaviour of HEAD and stop
+`video_player` from making a live RTC `AVAudioSession` mixable on iOS. The
+silent-video fix comes from the native route bridge, not from the option.
+Single native ownership and reconnect survival fix both reproduced PiP defects
+in Dart without native changes. In-process type updates remove the
+reply-before-typed-service race and the background `startForegroundService`
+refusals.
+
+**Consequences.**
+
+- The Play Console foreground-service declaration must cover `mediaProjection`
+  (with a demo video) before an Android build with this manifest is rolled out.
+- The iOS PiP render path is unproven: `RTCMTLVideoView` is Metal, and a
+  background app may not submit GPU work, so an `AVSampleBufferDisplayLayer`
+  renderer may be needed.
+- The local camera pauses on PiP entry; keeping it running is an open product
+  decision.
+- The registry barrier has no timeout, so a hung native route call would block
+  every realtime join.
+- Platform difference: a direct message video mixes with other audio on iOS
+  (native category) and takes audio focus on Android.
+- Remaining device risks are tracked in [Bugs.md](Bugs.md): the Android system
+  chip stop, the type drop during a reconnect, Activity recreation and the
+  promoted-listener microphone type.

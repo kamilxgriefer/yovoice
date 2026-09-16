@@ -14,6 +14,27 @@ someone decide what to pick up next.
 
 ---
 
+## Servers media collaboration and call Picture in Picture — source only — 2026-09-16
+
+**Status: committed in source; not deployed, no tester build, device
+validation pending.** Community hosts can set up an OBS/RTMP input
+(ADR-192), Company whiteboards show in-progress ink over the RTC data plane
+(ADR-193), and direct video calls get system Picture in Picture under one
+realtime audio owner (ADR-194). Android and iOS can now start a Server screen
+share. The work landed in `99b5916b` (Functions, rules tests, activation
+package), `1eed1626` (calls, audio and native), `63507816` (Activity
+inbox) and `50522b2d` (Servers client). `pubspec.yaml` is still
+`2.0.0+27`; no version bump, artifact or store upload belongs to this entry.
+
+Nothing here is in production. OBS stays off until an operator creates and
+enables `serverRuntimeCapacity/communityBroadcastV1`, and the callable ships
+only through the exact-SHA Servers activation package. No physical device,
+two-device call, real OBS stream or LiveKit Cloud Ingress was tested. Gate
+results are in [TESTING.md](TESTING.md#servers-media-collaboration-and-call-pip-gate--2026-09-16);
+rollout and rollback are in
+[DEPLOYMENT.md](DEPLOYMENT.md#servers-media-collaboration-and-call-pip--source-only-not-deployed--2026-09-16);
+open risks are in [Bugs.md](Bugs.md).
+
 ## Server-first cutover source gate — 2026-09-13
 
 **Status: source complete in the current candidate; production activation is
@@ -101,6 +122,37 @@ their separate production-deployment gates.
 > physical device and no production-traffic observation** except where a
 > simulator run is named explicitly. Session record:
 > [2026-09-07-build-22-engagement-and-tester-rounds](Sessions/2026-09-07-build-22-engagement-and-tester-rounds.md).
+
+- **Community OBS ingress — source 2026-09-16 (ADR-192)** (**NOT DEPLOYED;
+  OFF BY DEFAULT; NO REAL OBS STREAM TESTED**), landed in `99b5916b` and
+  `50522b2d`. `createServerBroadcastIngressV1` gives the live host of a
+  Community broadcast stage an RTMP server URL and Stream Key. There is one
+  slot per account and a global cap of at most 25. The kill switch is
+  `serverRuntimeCapacity/communityBroadcastV1`, and a missing document means
+  disabled. Authority follows live host admission, never token expiry. The key
+  is returned once and never stored or logged. Ends are never refused; the
+  terminal worker defers only the provider delete while setup is in flight.
+  Losing host authority, a ban or voice enforcement deletes the input, except
+  Auth account deletion (OPEN, see [Bugs.md](Bugs.md)). The
+  client adds an OBS button beside Share screen and a setup sheet with a masked
+  key, copy and reveal. The activation package now pins 54 base exports.
+- **Live whiteboard ink — source 2026-09-16 (ADR-193)** (**NOT DEPLOYED; NO
+  TWO-DEVICE MEETING TESTED**), landed in `50522b2d`. In a Company meeting,
+  other members' in-progress strokes appear over bounded LiveKit data packets
+  on members-access boards. Completed strokes still go through
+  `createServerWhiteboardStrokeV1`.
+- **Call Picture in Picture, one realtime audio owner, mobile screen share —
+  source 2026-09-16 (ADR-194)** (**NO TESTER BUILD; DEVICE VALIDATION
+  PENDING**), landed in `1eed1626` and `50522b2d`. Direct video calls
+  enter system PiP on Android 8+ and iOS 15+ and survive a reconnect. Calls and
+  Server sessions share `RealtimeAudioSessionRegistry`. A DM video repairs the
+  stale communication route while realtime is idle, which fixes silent playback
+  after a call. Android Server screen share runs under a `mediaProjection`-typed
+  voice service applied in-process; iOS shares the YO Voice app surface only.
+  The Play Console `mediaProjection` declaration is a release prerequisite.
+- **Activity inbox acknowledgement — source 2026-09-16**, landed in
+  `63507816`. Visiting Activity clears its unread rows and banner, and
+  **Mark all read** drains inboxes larger than 400 rows.
 
 - **GIFs in the composer — production-original catalog complete in source
   2026-09-13 (ADR-172/173)** (**BUILD 27 CANDIDATE; BACKEND DEPLOYMENT STILL
@@ -2294,6 +2346,21 @@ Ordered by rough priority — re-prioritize freely, this isn't a queue.
   either, so the option currently over-promises in the shipped UI.
 - **Future considerations**: Do not conflate this with item 0p, which is the
   opposite failure — a member-started room staying live with nobody in it.
+
+### 0x. Decide whether the local camera keeps running in call Picture in Picture
+
+- **Status**: Open product decision (recorded 2026-09-16, ADR-194).
+- **Description**: Entering PiP puts the app in `AppLifecycleState.inactive`,
+  and the call screen pauses the local camera for the background. The remote
+  person sees the camera switch off when the caller goes Home, and every PiP
+  return shows "Camera stayed off after returning to the app."
+- **Dependencies**: A product call first. On Android the Activity stays
+  visible in PiP, so the camera may be able to keep running (device check). On
+  iOS a background camera needs multitasking camera access.
+- **Priority**: Medium. It affects every video call that uses PiP once PiP
+  reaches testers.
+- **Future considerations**: Decide together with the iOS PiP render check
+  (R-1 in [Bugs.md](Bugs.md)), because both need the same physical-device run.
 
 ### 0a. ~~Run the public-profile backfill~~ VERIFIED CONSISTENT (2026-08-18)
 

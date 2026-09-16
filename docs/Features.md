@@ -18,8 +18,8 @@ full-screen five-card selector, in this fixed order:
 - **Family** — private family conversation, lounge, calendar, shared shopping
   list, check-ins and a private photo-and-voice Memories album.
 - **Company** — team and project channels, restricted HR and Management
-  channels, meetings, web-desktop screen sharing, a collaborative whiteboard
-  and controlled company files.
+  channels, meetings with screen sharing, a collaborative whiteboard with live
+  ink, and controlled company files.
 
 The selector preserves the approved typography, color identity and responsive
 breakpoints. Choosing a card opens actual configuration; changing the template
@@ -42,14 +42,24 @@ accepted or declined idempotently and notify only the intended recipient. See
 
 Voice and video participation still use LiveKit. Roles and publish sources are
 derived from current server membership and channel policy on the backend.
-Community stages can grant camera publishing; Company meetings can grant
-screen sharing when the participant uses the web desktop client. The native
-macOS, Windows and Linux clients can join and view a Company meeting but cannot
-yet start a screen share. Podcast stages can record into their persistent
+Community stages can grant camera publishing. Screen sharing is granted only to
+the session host, in a Company meeting or a Community broadcast stage. The host
+can start a share from the web client, from Android (after the system screen
+capture consent) and from iOS, where only the YO Voice app itself is captured.
+The native macOS, Windows and Linux clients can join and view but cannot yet
+start a share. Android and iOS sharing are **UNVERIFIED on a device**. Podcast stages can record into their persistent
 episode archive. Removing membership or ending a session revokes the
 corresponding provider-room access. The retained legacy `RoomExperience`
 mapping remains a compatibility layer, including old persisted `podcast`
 values.
+
+The host of a live Community broadcast stage can also stream from OBS
+(ADR-192, source only): **OBS** beside **Share screen** opens a setup guide
+and returns an RTMP server URL and a Stream Key, masked until revealed, with
+copy buttons. One broadcast per account is allowed, and the feature stays off
+until an operator enables it. No real OBS stream has been tested. In a Company
+meeting, other members' strokes appear on the whiteboard while they are still
+drawing (ADR-193); only completed strokes are saved.
 
 This section describes the coordinated local source change. Production
 activation, migration and Firebase deployment remain separate release actions.
@@ -109,6 +119,13 @@ end after connection, and a 60-second timeout becomes a missed-call entry that
 opens the conversation. Calls use a separate server-authoritative lifecycle and
 dedicated LiveKit room rather than pretending a two-person call is a Community
 Room. Only one ringing/active call per account is allowed.
+
+In source from 2026-09-16 (ADR-194), an active video call continues in system
+Picture in Picture when the app goes to the background (Android 8+ and
+iOS 15+), and the window stays open through a brief reconnect. A video sent in
+a direct chat now plays with sound after a call or a voice recording. Both are
+**UNVERIFIED on a device**, and the local camera currently pauses while in
+Picture in Picture.
 
 Home surfaces the three most recently updated non-archived direct
 conversations as `Your recent chats`. Global Chat is retired from the app

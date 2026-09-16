@@ -212,8 +212,9 @@ Runtime authority still requires the exact `status: active` / activation
 `active` pair; unknown or mismatched pairs do not receive legacy fallback.
 
 Registration and use are separate boundaries. The reviewed source statically
-registers the 53 base Server exports so Firebase can discover them without an
-environment variable. A deployed callable still cannot reach this creation
+registers the 54 base Server exports so Firebase can discover them without an
+environment variable (49 callables including `createServerBroadcastIngressV1`,
+two dispatcher exports and three maintenance sweeps, from `99b5916b`). A deployed callable still cannot reach this creation
 mode until the server-owned runtime gate below admits its authenticated UID.
 No production deploy or activation is implied by source registration.
 
@@ -456,7 +457,9 @@ Never fall back to direct writes after a callable denies an action.
 The table contains all 54 callable contracts. The static base registers 48 of
 them. The six Podcast recording/Egress callables — start, stop, finalize,
 retry, publish and episode access — remain documented for the later provider
-slice but are absent from the current export map.
+slice but are absent from the current export map. The Community OBS callable
+is registered beside this table, not inside it; its contract is in the next
+section.
 
 | Callable | Request-specific input and result |
 | --- | --- |
@@ -527,6 +530,61 @@ Retain adapters for `createCommunityClub`, `finalizeClubMedia`,
 room and moderation operations. They must enforce V1 authority when their
 target is versioned. A new callable facade must not leave a permissive old
 callable that can bypass it.
+
+### Community OBS ingress callable (ADR-192)
+
+`createServerBroadcastIngressV1` is registered beside the frozen 54-name table
+above (`COMMUNITY_BROADCAST_CALLABLE_METHODS` in
+`functions/servers/registration.js`), not inside it. It shares the activation
+gate, App Check options and region of the base callables. It binds the LiveKit
+secrets and is capped at `maxInstances: 5`. Source only from `99b5916b`;
+not deployed.
+
+- **Input** `{serverId, channelId, sessionId, requestId}`, exact keys.
+  **Result** `{schemaVersion: 1, serverId, channelId, sessionId, ingressId,
+  serverUrl, streamKey}`.
+- **Order.** Active profile, restriction and a rate limit of 2 calls per 60 s
+  per UID are checked first, before any target is read. Then host authority,
+  lease and slot, capacity, provider create, and a second authority and lease
+  check before the key is returned.
+- **Authority.** The channel is a Community `stage` with `experience:
+  broadcast` and `mediaMode: video`. The session is `live`, uses
+  `sourcePolicyVersion: 2` and was started by the caller. The caller holds
+  `moderate`, is the `host` participant with both screen sources, and is an
+  `active` token recipient with no unresolved revocation attempt, past its
+  reconnect barrier, with a fingerprint equal to the freshly derived authority
+  and a consistent `activeVoiceSessions` mirror. The last JWT `exp` is not part
+  of the predicate.
+- **Capacity.** `serverBroadcastUsage/{uid}` allows one live broadcast per
+  account. `serverRuntimeCapacity/communityBroadcastV1`
+  `{schemaVersion: 1, enabled, activeCount, limit, updatedAt}` holds the kill
+  switch and a `limit` of 1-25. **A missing document means disabled.** Clients
+  cannot read or write either collection.
+- **Refusals.** `permission-denied` (not the admitted host);
+  `failed-precondition` "OBS broadcasting is temporarily disabled." (missing or
+  disabled capacity); `resource-exhausted` (another live broadcast on this
+  account, or capacity full); `aborted` (setup already in flight);
+  `unavailable` (provider result could not be verified); `data-loss` (slot or
+  capacity state needs reconciliation).
+- **Credentials.** The Stream Key and URL exist only in this response. The
+  session stores `obsIngress` (ids, identity `obs_<digest>`, room name,
+  `configuredById`, `configuredAt`) and never the key. A replay by the same
+  admitted host for the same generation reuses the slot and returns the
+  provider's current key.
+- **Provisioning lease.** A 180 s `obsIngressProvisioning` lease fences
+  concurrent setups. Session ends are never refused because of it: stagers mark
+  `reconcileObsIngress`, recipients are revoked immediately, and the terminal
+  worker defers only the provider room/ingress delete until the lease expires.
+- **Cleanup.** Host end, archive, delete, transfer, staleness, staff suspension
+  and staff delete, member convergence (demotion, removal, ban, mute), global
+  voice enforcement and a missing session all delete the bound input and
+  release the slot and capacity. Account deletion does not yet (open in
+  [Bugs.md](Bugs.md)).
+- **By design.** Any change to the host's authority fingerprint (ACL edit,
+  role, mute, participant or membership revision) deletes the input, and a new
+  provision returns a new Stream Key for OBS. The OBS participant counts as
+  room occupancy, so the staleness sweep keeps a generation live while OBS
+  streams.
 
 ### The admin and staff surface on a versioned root (ADR-188)
 
@@ -701,8 +759,21 @@ do not expose family data through public Voice Moments or duplicate bytes.
 Module callables use the same exact-input, retry, limits, authority and cleanup
 patterns. Their specific schemas and numeric processing/storage limits must
 be recorded with the implemented module before acceptance; a metadata-only
-placeholder is not a completed module. Whiteboard viewing and collaboration
-do not depend on opening another media session.
+placeholder is not a completed module. Durable whiteboard viewing and stroke
+collaboration do not depend on opening another media session.
+
+**Live whiteboard ink (ADR-193, source only from `50522b2d`).** While a
+member is connected to a Company meeting generation, in-progress strokes
+travel as LiveKit data packets on topic `yo.whiteboard.live.v1`: lossy
+updates, reliable clears, at most 2048 bytes and 64 points, exact key sets.
+Receivers drop their own identity, listeners, invalid identities, other
+generations, an `authorId` that is not the provider identity, stale sequences
+and authors over budget (60 events per 5 s per author, 64 authors). Previews
+render only on `members`-access boards and vanish on disconnect. Completed
+strokes still go through `createServerWhiteboardStrokeV1`; there is no
+Firestore draft collection. Known P3 gaps: muted participants can still send
+previews, `boardChannelId` is not bound to the meeting, and a worst-case
+packet (~1.7 KB) can exceed one lossy MTU-sized packet.
 
 Company Files stores descriptors under
 `clubs/{serverId}/channels/{channelId}/files/{fileId}` and immutable bytes under
@@ -771,7 +842,12 @@ mirrors in bounded pages before the server root disappears.
 
 The existing room JWT grants only declared microphone tracks. Camera and
 screen require explicit server policy and `canPublishSources` in both token
-issuance and later permission updates. LiveKit source labels constrain the
+issuance and later permission updates. `screen_share` and `screen_share_audio`
+go only to a `host` who may publish, in a `meeting` channel or in a Community
+`stage`/`broadcast`/`video` generation with `sourcePolicyVersion: 2`. From
+`99b5916b` policy 2 is written only for those Community broadcast
+generations; every other new generation stays at 1, and both remain readable.
+`canPublishData` is `true` for every role; tightening it needs a policy 3. LiveKit source labels constrain the
 normal SDK but do not prove where a hostile client captured bytes. No new
 client receives provider secrets or an E2EE claim.
 
@@ -826,6 +902,14 @@ Test network loss/reconnect, expired token, rejected permission, absent device,
 audio-device switch, background/foreground and host ending the stream. Record
 specific unsupported operations honestly. Source compilation or a screenshot
 does not prove inter-client media, screen sharing or collaboration.
+
+From `50522b2d`, `serverScreenShareCapability` reports that Android
+(MediaProjection consent, then the `mediaProjection`-typed voice service) and
+iOS (in-app ReplayKit capture of the YO Voice surface only; there is no
+Broadcast Upload Extension) can start a share, alongside web. Desktop apps stay
+disabled. Neither mobile path has been verified on a device yet, so the phone
+and tablet "start screen share" obligation above is **not yet met**; see
+[Bugs.md](Bugs.md) for the pending device checks.
 
 ## Deterministic migration and compatibility
 

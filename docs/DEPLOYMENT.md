@@ -4,6 +4,86 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## Servers media collaboration and call PiP — source only, not deployed — 2026-09-16
+
+**Nothing in this entry was deployed, built for testers or uploaded.** It
+records the source that landed in `99b5916b` (Functions, rules tests,
+activation package), `1eed1626` (calls, audio and native), `63507816`
+(Activity inbox) and `50522b2d` (Servers client), and the manual steps a
+later, explicitly authorized release needs. `pubspec.yaml` is still
+`2.0.0+27`. Scope and decisions: ADR-192 (Community OBS ingress), ADR-193 (live
+whiteboard ink) and ADR-194 (call PiP, realtime audio owner, typed Android
+voice service). No physical device, two-device call, real OBS/RTMP stream or
+LiveKit Cloud Ingress call has been tested; local gate results are in
+[TESTING.md](TESTING.md#servers-media-collaboration-and-call-pip-gate--2026-09-16).
+
+**Order when the owner authorizes a deploy** (not performed):
+
+1. Firestore Rules: the release adds two deny-all blocks,
+   `serverBroadcastUsage/{userId}` and `serverRuntimeCapacity/{capacityId}`.
+   Deploy only after the four rules suites are green on the exact SHA.
+2. Functions only through the exact-SHA Servers activation package
+   ([runbook](#servers-v1-static-registration-and-runtime-activation)). From
+   `99b5916b` the phases are 42 compatibility guards, 7 infrastructure
+   exports (2 compatibility plus 5 base), **48** non-creation callables (now
+   including `createServerBroadcastIngressV1`) and `createServerV1`. Never use an
+   unscoped `firebase deploy --only functions`. The OBS callable is also behind
+   `appConfig/serversV1`, so it answers only admitted accounts.
+3. Before any OBS test, confirm Ingress is enabled on the LiveKit Cloud project.
+   Inputs are created with transcoding enabled, which is billed.
+4. OBS canary (a manual owner action on production data): create
+   `serverRuntimeCapacity/communityBroadcastV1` exactly as
+   `{schemaVersion: 1, enabled: true, activeCount: 0, limit: <1-25>, updatedAt}`,
+   run a real OBS stream with a tester host, and end it. Check that the input
+   disappears in the LiveKit console and `activeCount` returns to 0. Then keep
+   the switch on or set `enabled: false`. Until the document exists, the
+   callable answers `failed-precondition` and creates nothing.
+5. Android: before rolling out any build with this manifest, update the Play
+   Console foreground-service declarations for `microphone`, `mediaPlayback`
+   and **`mediaProjection`** (with a demo video). Picture in Picture needs no
+   foreground-service declaration.
+6. Device acceptance before describing PiP, screen share or DM video audio as
+   working: the checklists are the PENDING DEVICE VALIDATION and FIXED IN
+   SOURCE entries dated 2026-09-16 in [Bugs.md](Bugs.md). iOS PiP rendering
+   must be checked on a Release/TestFlight build on a physical iPhone.
+
+**Compatibility.** Installed builds never call the new callable. A new client
+against older Functions gets `not-found` or `unimplemented`, and the OBS sheet
+shows its localized unavailable state (widget-tested). Non-broadcast Server
+generations keep `sourcePolicyVersion: 1`, so older and newer Functions
+interoperate for them.
+
+**Rollback.**
+
+- Instant: set `enabled: false` on the capacity document. This only refuses
+  new setups. An input that already exists keeps streaming, with no duration
+  limit, until its session is ended (host or moderator end, channel or server
+  archive or delete, suspension, a staff action) or its host loses authority
+  (demotion, removal, mute, ban, voice enforcement). A host reconcile with
+  unchanged authority deletes nothing, and the OBS participant keeps the
+  session from going stale. **To stop a stream now, end that live session.**
+  Deleting the host's Auth account does not stop it (OPEN, see
+  [Bugs.md](Bugs.md)).
+- Never delete the capacity document, and never edit `activeCount` or set
+  `limit` below `activeCount`, while any input exists. Session ends then fail
+  and stay `ending`, and every new setup is refused (OPEN, see
+  [Bugs.md](Bugs.md)). Change only `enabled`.
+- Functions: end every live Community broadcast generation first, then wait
+  until no `serverControlOutbox` job with `kind: "sessionEnd"` is still
+  `pending`, then redeploy the previous package. Older code denies policy-2
+  generations. It also cannot finish an end job, of any Server type, whose
+  terminal checkpoint the new code already wrote: the checkpoint fingerprint
+  now covers `hostId`, `obsIngressId` and `reconcileObsIngress`, so the older
+  worker fails it with "The media cleanup state needs reconciliation."
+- Client: no schema change to undo.
+
+**Observability.** The callable logs only error code and class, never a key.
+Terminal session-end jobs report `cleanupPending` while an OBS setup lease
+defers provider cleanup. During the canary, compare `activeCount` with the
+LiveKit console's ingress list. On Android,
+`adb shell dumpsys activity services app.yovoice` shows the voice service
+types.
+
 ## 2.0.0 (27) internal tester candidate — 2026-09-13
 
 Build 27 is scoped to the existing internal tester channels. This entry records
@@ -4220,8 +4300,10 @@ reviews. A production Firebase deploy still requires the maintainer's explicit
 authorization.
 
 The base manifest is source-static because Firebase discovers exports before
-loading `functions/.env`: 48 callables, two dispatcher exports and three
-maintenance sweeps, **53 exports total**. `YOVOICE_SERVERS_V1` is obsolete and
+loading `functions/.env`: 49 callables, two dispatcher exports and three
+maintenance sweeps, **54 exports total** from `99b5916b`, which added
+`createServerBroadcastIngressV1` (packages generated from earlier commits pin
+48 callables and 53 exports). `YOVOICE_SERVERS_V1` is obsolete and
 cannot add, remove or enable them. The seven Podcast recording/Egress exports
 remain source-disabled, their credential is not declared, and their provider
 services are not constructed. Podcast recording is a separate release.
@@ -4292,8 +4374,9 @@ SHA, an in-worktree output and an existing output. It copies deployable files fr
 exact commit objects, emits the absolute package-local Firebase configuration,
 the four phase selectors and `SOURCE_COMMIT.txt`, then covers every package
 file with `SHA256SUMS`. The reviewed phase counts are 42 compatibility exports
-in phase 0, seven infrastructure exports in phase 1, 47 non-creation Server
-callables in phase 2 and only `createServerV1` in phase 3. Any count or export
+in phase 0, seven infrastructure exports in phase 1, 48 non-creation Server
+callables in phase 2 (47 before `99b5916b`) and only `createServerV1` in
+phase 3. Any count or export
 map drift stops generation. Dependency preparation runs the locked production
 install with lifecycle scripts disabled under exactly
 `source/functions/node_modules`; that operational subtree is excluded from the
@@ -4306,7 +4389,7 @@ Do not substitute `firebase deploy`, `firebase deploy --only functions`,
 `npm run deploy` or `npm --prefix functions run deploy` for any phase. Phase 0
 must consume `phase0CompatibilityGuards.firebase-only.txt`; phases 1–3 must
 consume their corresponding generated selector files from the same verified
-package. This keeps all 53 base Server exports covered exactly once and keeps
+package. This keeps all 54 base Server exports covered exactly once and keeps
 all seven Podcast recording/Egress exports absent.
 
 Read `appConfig/serversV1` through an authenticated Admin environment. If it is
