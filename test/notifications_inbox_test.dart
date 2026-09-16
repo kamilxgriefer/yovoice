@@ -15,6 +15,7 @@ import 'package:yovoice/features/notifications/data/models/app_notification.dart
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
+import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
 
 /// The activity inbox's own guarantees.
 ///
@@ -174,6 +175,132 @@ void main() {
       );
     });
 
+    test('mark-all drains inboxes larger than one Firestore batch', () async {
+      final writes = <Future<void>>[];
+      for (var index = 0; index < 405; index++) {
+        writes.add(
+          seedNotification(
+            id: 'bulk-$index',
+            age: Duration(seconds: index),
+          ),
+        );
+      }
+      await Future.wait(writes);
+      expect(await service.watchUnreadCount().first, 405);
+
+      await service.markAllAsRead();
+
+      expect(await service.watchUnreadCount().first, 0);
+    });
+
+    testWidgets(
+      'opening Activity immediately retires unread rows and its top banner',
+      (tester) async {
+        await seedNotification(id: 'follow_$other', type: 'follow');
+        final controller = YoTopNotificationController();
+        var showActivity = false;
+        late StateSetter updateRoot;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.darkTheme,
+            builder: (context, child) =>
+                YoTopNotificationHost(controller: controller, child: child!),
+            home: StatefulBuilder(
+              builder: (context, setState) {
+                updateRoot = setState;
+                if (!showActivity) {
+                  return const Scaffold(body: SizedBox.expand());
+                }
+                return NotificationsScreen(
+                  isRootTab: true,
+                  friendService: FriendService(
+                    firestore: db,
+                    auth: authFor(me),
+                  ),
+                  messageService: MessageService(
+                    firestore: db,
+                    auth: authFor(me),
+                    notificationService: service,
+                  ),
+                  notificationService: service,
+                  currentUserId: me,
+                );
+              },
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(
+          controller.show(
+            YoTopNotification(
+              title: 'New activity',
+              type: NotificationType.follow,
+              onOpen: () {},
+            ),
+          ),
+          isTrue,
+        );
+        await tester.pump();
+        expect(controller.isShowing, isTrue);
+
+        updateRoot(() => showActivity = true);
+        for (var pump = 0; pump < 12; pump++) {
+          await tester.pump(const Duration(milliseconds: 80));
+        }
+
+        expect(controller.isShowing, isFalse);
+        expect(await service.watchUnreadCount().first, 0);
+        controller.dispose();
+      },
+    );
+
+    testWidgets(
+      'returning to a retained Activity tab acknowledges new notifications',
+      (tester) async {
+        await seedNotification(id: 'follow_$other', type: 'follow');
+        var activityVisible = false;
+        late StateSetter updateRoot;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.darkTheme,
+            home: StatefulBuilder(
+              builder: (context, setState) {
+                updateRoot = setState;
+                return TickerMode(
+                  enabled: activityVisible,
+                  child: NotificationsScreen(
+                    isRootTab: true,
+                    friendService: FriendService(
+                      firestore: db,
+                      auth: authFor(me),
+                    ),
+                    messageService: MessageService(
+                      firestore: db,
+                      auth: authFor(me),
+                      notificationService: service,
+                    ),
+                    notificationService: service,
+                    currentUserId: me,
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(await service.watchUnreadCount().first, 1);
+
+        updateRoot(() => activityVisible = true);
+        for (var pump = 0; pump < 12; pump++) {
+          await tester.pump(const Duration(milliseconds: 80));
+        }
+
+        expect(await service.watchUnreadCount().first, 0);
+      },
+    );
+
     test(
       'a legacy document with no bellSuppressed field stays visible',
       () async {
@@ -259,6 +386,7 @@ void main() {
           theme: AppTheme.lightTheme,
           home: NotificationsScreen(
             isRootTab: true,
+            acknowledgeOnVisible: false,
             friendService: FriendService(firestore: db, auth: authFor(me)),
             messageService: messages,
             notificationService: service,
@@ -360,6 +488,7 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             home: NotificationsScreen(
+              acknowledgeOnVisible: false,
               isRootTab: true,
               friendService: FriendService(firestore: db, auth: auth),
               messageService: MessageService(
@@ -430,6 +559,7 @@ void main() {
             home: MediaQuery(
               data: const MediaQueryData(textScaler: TextScaler.linear(2)),
               child: NotificationsScreen(
+                acknowledgeOnVisible: false,
                 key: ValueKey(size.height),
                 isRootTab: true,
                 friendService: FriendService(firestore: db, auth: auth),

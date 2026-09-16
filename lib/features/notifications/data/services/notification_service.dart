@@ -209,19 +209,34 @@ class NotificationService {
   }
 
   Future<void> markAllAsRead() async {
-    final unread = await _notificationsFor(
-      _currentUser.uid,
-    ).where('isRead', isEqualTo: false).limit(400).get();
-    if (unread.docs.isEmpty) return;
+    final userId = _currentUser.uid;
+    final own = _notificationsFor(userId);
 
-    final batch = _firestore.batch();
-    for (final doc in unread.docs) {
-      batch.update(doc.reference, {
-        'isRead': true,
-        'readAt': FieldValue.serverTimestamp(),
-      });
+    // A busy inbox can contain more records than one Firestore batch should
+    // update. Keep draining bounded pages so opening Activity always clears
+    // the complete bell count instead of leaving an arbitrary remainder.
+    while (true) {
+      if (_currentUser.uid != userId) {
+        throw StateError(
+          'The notification owner changed before the inbox was acknowledged.',
+        );
+      }
+      final unread = await own
+          .where('isRead', isEqualTo: false)
+          .limit(400)
+          .get();
+      if (unread.docs.isEmpty) return;
+
+      final batch = _firestore.batch();
+      for (final doc in unread.docs) {
+        batch.update(doc.reference, {
+          'isRead': true,
+          'readAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+      if (unread.docs.length < 400) return;
     }
-    await batch.commit();
   }
 
   Future<void> deleteNotification(String notificationId) async {

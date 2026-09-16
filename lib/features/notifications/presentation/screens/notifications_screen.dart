@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
@@ -13,6 +15,7 @@ import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart'
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
+import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -27,6 +30,7 @@ class NotificationsScreen extends StatefulWidget {
     this.messageService,
     this.notificationService,
     this.currentUserId,
+    this.acknowledgeOnVisible = true,
     super.key,
   });
 
@@ -47,6 +51,12 @@ class NotificationsScreen extends StatefulWidget {
   /// from FirebaseAuth needs an initialised Firebase app.
   final String? currentUserId;
 
+  /// Keeps the bell honest: visiting Activity acknowledges its unread rows and
+  /// dismisses any foreground notification already covering that destination.
+  /// Tests that intentionally inspect unread styling can disable the lifecycle
+  /// side effect while still exercising the production widgets.
+  final bool acknowledgeOnVisible;
+
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
@@ -64,6 +74,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   final Set<String> _processingRequestIds = <String>{};
   int _notificationsLimit = 50;
+  StreamSubscription<int>? _unreadCountSubscription;
+  bool _isVisible = false;
+  bool _acknowledgingVisibleNotifications = false;
+  bool _visibleAcknowledgementRequested = false;
 
   String get _currentUserId =>
       widget.currentUserId ?? FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -73,6 +87,61 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     super.initState();
     _friendRequestsStream = _friendService.watchFriendRequests();
     _conversationsStream = _messageService.watchConversations();
+    if (widget.acknowledgeOnVisible) {
+      _unreadCountSubscription = _notificationService.watchUnreadCount().listen(
+        (count) {
+          if (_isVisible && count > 0) {
+            _visibleAcknowledgementRequested = true;
+            unawaited(_acknowledgeVisibleNotifications());
+          }
+        },
+        onError: (_) {
+          // The feed owns its visible error state. A badge acknowledgement
+          // failure must never take the whole Activity screen down.
+        },
+      );
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TickerMode.valuesOf(context).enabled;
+    final becameVisible = visible && !_isVisible;
+    _isVisible = visible;
+    if (!widget.acknowledgeOnVisible || !becameVisible) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_isVisible) return;
+      YoTopNotificationHost.maybeOf(context)?.clear();
+      unawaited(_acknowledgeVisibleNotifications());
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_unreadCountSubscription?.cancel());
+    super.dispose();
+  }
+
+  Future<void> _acknowledgeVisibleNotifications() async {
+    if (!_isVisible) return;
+    _visibleAcknowledgementRequested = true;
+    if (_acknowledgingVisibleNotifications) return;
+    _acknowledgingVisibleNotifications = true;
+    try {
+      do {
+        _visibleAcknowledgementRequested = false;
+        await _notificationService.markAllAsRead();
+      } while (mounted && _isVisible && _visibleAcknowledgementRequested);
+    } catch (error) {
+      debugPrint(
+        'NotificationsScreen: automatic inbox acknowledgement failed '
+        '(${error.runtimeType}).',
+      );
+    } finally {
+      _acknowledgingVisibleNotifications = false;
+    }
   }
 
   Future<void> _acceptRequest(FriendRequest request) async {
