@@ -70,3 +70,10 @@ test/.screenshots/
 # Playwright browser-smoke reports and failure diagnostics
 /browser-tests/playwright-report/
 /browser-tests/test-results/
+
+# Firebase CLI local state (Hosting upload-hash caches). Deployment records
+# belong in docs/DEPLOYMENT.md and the Hosting release history, not here.
+/.firebase/
+
+# Local scratch space. Measurement probes that docs cite live in tool/perfprobe/.
+/tmp/
