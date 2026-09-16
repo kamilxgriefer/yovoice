@@ -14,7 +14,67 @@ someone decide what to pick up next.
 
 ---
 
+## Backend release, outage repair and the 2.0.0 (30) client round — 2026-09-16
+
+**Status: backend deployed and independently verified; the tester outage is
+repaired in production but not yet confirmed by a real client; build 30 is built
+and unproven in the stores.** One evening covered four distinct things, and they
+have four different levels of proof.
+
+- **Deployed.** The Servers media-collaboration backend from `e1a9f3cd` — the
+  Firestore Rules delta (two deny-all blocks) and 98 package-selected Functions
+  targets, including the new `createServerBroadcastIngressV1`. Production went
+  from 241 to 242 ACTIVE functions with nothing touched outside the selectors,
+  and an independent read-only reviewer re-read every number from the live APIs
+  and returned PASS. Landed from `e1a9f3cd`; rollback artefacts captured and
+  re-validated. Details in
+  [DEPLOYMENT.md](DEPLOYMENT.md#servers-phase-backend-release-from-e1a9f3cd--2026-09-16).
+- **Repaired.** The two-day production outage in which publishing a Yeel or a
+  Voice Moment, loading the Voice Moments feed and starting a new chat were
+  100 % dead for every account. Sixteen functions were redeployed from
+  `22cc2313` in four named-target waves; the missing
+  `serverInviteRefs.expiresAt` collection-group index was declared, deployed and
+  reached READY, ending 250 consecutive sweep failures. The index and its test
+  landed in `58853fb0`. **The tester-facing success metric is still
+  UNOBSERVED** — no signed-in client has touched the repaired paths since the
+  deploy. Cause and rules: [ADR-195](Decisions.md#adr-195-a-shared-integrity-guard-is-a-deployment-unit--a-projection-writer-never-ships-ahead-of-its-readers),
+  [ADR-198](Decisions.md#adr-198-a-collection-group-query-is-an-index-declaration-plus-a-test-that-runs-it-adr-007-reaffirmed);
+  what it did not fix is the RC-5…RC-17 list in [Bugs.md](Bugs.md).
+- **Released.** Google Play build **29** was published to the internal track
+  at 22:41 CEST by the release owner, closing the one-build gap behind iOS
+  (Play internal 28 vs TestFlight 29); a console read-back on 2026-09-17 showed
+  it as published 16 wrz 22:41.
+- **Built and delivered to both tester tracks.** `pubspec.yaml` moved to
+  `2.0.0+30` in `121973fc`, and build 30 artifacts were produced from that
+  commit: a verified Android AAB (versionCode 30, upload-key signature checked)
+  and a signed iOS archive/IPA (`CFBundleVersion 30`). The AAB was uploaded and
+  the Play internal release **30** published at ~01:26 CEST on 2026-09-17; the
+  iOS upload succeeded (Delivery UUID `89a4f953-…`), App Store Connect reports
+  build 30 `processingState VALID`, it reached `YO Voice Internal Testers`
+  automatically and was added to `YO Voice Beta Testers` through the API
+  (`externalBuildState IN_BETA_TESTING`). Details and evidence file names:
+  [DEPLOYMENT.md](DEPLOYMENT.md). The web client of the same revision
+  **is** live: Hosting serves `build_number 30`, and that release also restored
+  web push, which had been silently disabled since 2026-09-14 by a manual local
+  deploy built without the VAPID define.
+
+Still held, and not changed by any of this: the Reel voice-comment slice
+(D12 — nine reader functions pinned on their 2026-09-08 revision), the warm
+`acceptDirectCall` instance, Podcast recording/Egress, Stripe, the Community OBS
+canary, and the Play `mediaProjection` foreground-service declaration. Servers
+remain open to every signed-in account by owner decision
+([ADR-197](Decisions.md#adr-197-the-2026-09-16-owner-decisions-on-servers-exposure-warm-instances-and-the-obs-canary)),
+and the two-device call test was waived rather than performed. Gate numbers:
+[TESTING.md](TESTING.md#release-repair-and-build-30-gate--2026-09-16).
+
 ## Servers media collaboration and call Picture in Picture — source only — 2026-09-16
+
+> **Superseded the same evening for the backend half:** the Rules delta and the
+> 98 Functions targets described here were deployed from `e1a9f3cd`, and
+> `pubspec.yaml` is now `2.0.0+30` — see the entry above. What is still true:
+> the OBS surface is inert (no capacity document), device validation has not
+> happened, and no tester build carrying this client work is confirmed in a
+> store.
 
 **Status: committed in source; not deployed, no tester build, device
 validation pending.** Community hosts can set up an OBS/RTMP input

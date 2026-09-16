@@ -11957,3 +11957,240 @@ refusals.
 - Remaining device risks are tracked in [Bugs.md](Bugs.md): the Android system
   chip stop, the type drop during a reconnect, Activity recreation and the
   promoted-listener microphone type.
+
+## ADR-195: A shared integrity guard is a deployment unit — a projection writer never ships ahead of its readers
+
+**Status:** Accepted (2026-09-16), written after the outage it describes was
+repaired in production. No source change landed with this ADR; the rules it
+states are process rules and the one code rule it states
+(`LEGACY_PUBLIC_PROFILE_KEYS`) is already implemented at `22cc2313` and at HEAD.
+
+**Context.** On 2026-09-14 a round deployed 115 of 241 Cloud Functions from
+`22cc2313` and left 126 on the 2026-09-08 tree `585740dc`. One of the 115 was
+the `users/{uid}` trigger `onUserPrivacySourceChanged`, which rewrites every
+`publicProfiles/{uid}` document with a 22nd field, `creatorAudienceVisible`.
+The shared guard `canonicalPublicProfile()` in `functions/integrity/guards.js`
+validates that document against an **exact key set**: `22cc2313` accepts the
+21- and the 22-key shape, `585740dc` accepts only the 21-key one and answers
+`data-loss` — HTTP 500 — for everything else. Within about three hours the new
+field had reached 32 of 32 live profiles, and every function left behind began
+refusing. Yeel publishing, Voice Moment publishing, the Voice Moments feed and
+new-conversation creation were 100 % dead for every account for two days, with
+no alert. The feed was the worst of it: `voiceMomentProjection` calls the guard
+inside a loop that swallows per-item failures, so callers received **HTTP 200
+with an empty page** — a silent outage with no error signal at all. None of
+this is a bug in any commit. The publish handlers are byte-identical across the
+two revisions. It is an artefact of production running two `functions/` trees at
+once, and an internal audit had predicted this exact failure in writing
+(FCE-12) and filed it P2.
+
+**Decision.**
+
+1. `functions/integrity/guards.js`, and every other module that validates a
+   cross-surface schema, is a **deployment unit**. A release that changes it
+   deploys it to every function that requires it, in one round, or does not
+   change it at all.
+2. A **projection writer** — `onUserPrivacySourceChanged` today, any future
+   `derive*`/`applyProjection*` trigger — is deployed **after** every reader of
+   that projection accepts the new shape. Readers first, writer last. This is
+   the ordering rule the Build 27 runbook already stated for the privacy
+   writers; it was applied to `directPrivacyPreferences` and not to
+   `publicProfiles`.
+3. An exact-key-set validator over a **server-owned projection** permanently
+   accepts the current shape *and* the immediately preceding one, the way
+   `LEGACY_PUBLIC_PROFILE_KEYS` now does. One revision of tolerance is the
+   minimum, and it is what makes a partial deploy survivable instead of fatal.
+4. The activation-package tool refuses a phase plan whose target set changes a
+   shared guard module without covering every function that requires it. A
+   manifest that splits a shared module is invalid, exactly as a manifest
+   containing the Podcast recording exports is invalid.
+5. A repair for this class of skew is pinned to the **revision already running
+   on the other half of the fleet**, not to HEAD. The 2026-09-16 waves deployed
+   `22cc2313` for precisely this reason: it carries the whole fix, it introduces
+   no source that is not already live, and it avoids shipping HEAD's
+   unauthorized warm `acceptDirectCall` as a side effect.
+
+**Reasoning.** Firebase selective deployment is not an atomic revision swap —
+this repository's own runbooks say so. The existing rule was correct and its
+scope was too narrow: it protected one collection in one wave, while the real
+risk is that *any* shared guard plus *any* projection writer, split across two
+revisions, invalidates every document in a collection at once. The `data-loss`
+code made it worse: it is a corruption envelope, so the client maps it to
+nothing specific, logs nothing and invites an infinite retry. The failure had no
+error budget, no alert and no client-side signature.
+
+**Consequences.**
+
+- Releases get larger and less granular wherever a shared module moves. That is
+  the price of a coherent tree, and it is cheaper than a two-day outage.
+- Guards keep a second accepted key set indefinitely, a small deliberate
+  loosening of the exact-schema boundary. It stays bounded: value types are
+  still checked, only one known additive field is tolerated.
+- The exact-SHA activation package remains the only permitted *package* deploy
+  path; this ADR adds a manifest validity rule rather than a new mechanism. A
+  hand-typed named-target deploy stays legitimate for a surgical repair the
+  package cannot express, under the selector-diff discipline the repair round
+  used.
+- An observability gap is left open and is not closed by this ADR: a callable at
+  a 100 % `data-loss` rate, and a feed whose response size collapses to a
+  constant, must both page someone. Neither did. Tracked in
+  [Bugs.md](Bugs.md).
+
+## ADR-196: A composer draft is locked by a server reservation, never by an attempt
+
+**Status:** Accepted (2026-09-16). **Not yet implemented** — the defect is still
+present at HEAD; the fix belongs to the next client build.
+
+**Context.** `reel_composer_screen.dart` computes
+`_draftContractLocked => _session != null || _publishing` and assigns `_session`
+*before* the network call, while the `finally` clears only `_publishing`.
+`_session` is never cleared on failure, so from the first refusal the lock is
+permanent and gates 27 call sites: the media picker, the backing-audio picker,
+every composition tool, the caption field and the availability selector. The
+only exit is Back → "Discard this draft?", which loses every edit. Under the
+ADR-195 outage every tester hit this on their first attempt, and no server
+reservation existed at all (`reelUploadReservations` was 0), so the lock was
+guarding nothing.
+
+**Decision.** The draft contract is locked by the existence of a **server
+reservation** (`session.reelId != null`), not by the fact that a publish was
+attempted. A terminal refusal that created no reservation releases the lock. The
+client's error mapping gains an explicit `data-loss` branch that says the server
+refused and the draft is kept, rather than "try again".
+
+**Reasoning.** Locking on the attempt conflates "the server owns a frozen plan"
+with "we asked". Only the first is a real constraint. A user facing a
+deterministic server refusal must be able to change what they are sending. The
+Voice Moment recorder already behaves this way — the recording is retained and
+can be re-attempted or discarded — so this aligns two surfaces rather than
+inventing a pattern.
+
+**Consequences.** One extra state transition in the composer and no wire change.
+The composer also needs the progress reporting it already has and does not use:
+`ReelService.publish` exposes `onStage`/`ReelPublishStage`, and no caller passes
+it, which is why the bar sits at "Publishing 95 %" for the whole finalize call.
+Until this lands, a single server refusal still costs the user their draft; that
+is recorded in [Bugs.md](Bugs.md).
+
+## ADR-197: The 2026-09-16 owner decisions on Servers exposure, warm instances and the OBS canary
+
+**Status:** Accepted (2026-09-16), owner decisions recorded by the release
+round. Each one is a decision about production configuration, not a code change.
+
+**Context.** The undocumented 2026-09-14 round left production in a state no
+document described: `appConfig/serversV1` at revision 4 with
+`callableAccess: "all"` and an empty `testerUids` list, which admits every
+signed-in account, while the 2026-09-13 intent recorded in this repository was
+"Servers for testers only, after a real two-device test, on the owner's deploy
+go". Three further questions were open at the same moment: whether the
+`acceptDirectCall` warm instance that source declares may ship, whether the OBS
+capacity document may be created, and whether the two-device call test still
+gated the round.
+
+**Decision.**
+
+- **Servers stay open to every signed-in account.** `appConfig/serversV1` keeps
+  revision 4, `callableAccess: "all"`, `testerUids: []`, `workersEnabled: true`.
+  It was not narrowed back to `testers`, and the 2026-09-16 release deliberately
+  did not write it (proved by an unchanged `updateTime`).
+- **The two-device call test is waived by the owner for this round.** It is not
+  performed, and nothing in the release claims it was.
+- **`acceptDirectCall` stays cold.** Source declares `minInstances: 1`;
+  production keeps `minInstances: 0` and the 2026-09-08 revision. It is excluded
+  from every selector until a verified cost quote exists, and both 2026-09-16
+  rounds verified structurally that it never moved.
+- **The OBS capacity document is not created.** `createServerBroadcastIngressV1`
+  is deployed and inert: with `serverRuntimeCapacity/communityBroadcastV1`
+  absent it answers `failed-precondition` and creates nothing. Creating that
+  document is deferred to the canary, with the owner present, after LiveKit
+  Cloud Ingress is confirmed enabled and its transcoding billing accepted.
+
+**Reasoning.** Narrowing the gate mid-incident would have changed the exposure
+of a surface while a separate, unrelated outage repair was in flight, and the
+owner judged an open Servers cohort acceptable for the current tester phase.
+The warm instance and the capacity document are both *cost* decisions on billed
+resources, so they wait for an explicit authorization rather than riding along
+with a deploy. Deploying the OBS callable while its capacity document is absent
+is the safe half of the sequence: the code is in place and provably answers
+`failed-precondition`, so the canary becomes a one-document operator action
+rather than another release.
+
+**Consequences.**
+
+- Every authenticated account can reach every Servers callable, and those
+  callables are registered `enforceAppCheck: false`. That is the live security
+  posture; it is a decision, not a regression, and it must not be described as
+  "testers only" anywhere.
+- Documents that still assert the tester-only intent are wrong about production
+  and are corrected in [DEPLOYMENT.md](DEPLOYMENT.md) and
+  [Firebase.md](Firebase.md).
+- Runbook probes written as "confirm a Server callable still returns
+  `failed-precondition`" assume `callableAccess: "disabled"` and cannot pass as
+  written. They are recorded as not applicable rather than marked green.
+- Any direct-call latency claim that depends on a warm `acceptDirectCall`
+  remains unproven in production.
+- The OBS surface is deployed but unexercised: no live generation has ever run,
+  so its retry and reconciliation guards read clean *vacuously*, not healthily.
+
+## ADR-198: A collection-group query is an index declaration plus a test that runs it (ADR-007 reaffirmed)
+
+**Status:** Accepted (2026-09-16). Implemented in `58853fb0`
+(`firestore.indexes.json`, `functions/test/server_invite_sweep_index.test.js`);
+the index was deployed and reached READY the same evening.
+
+**Context.** `sweepExpiredServerInvitesSchedule` runs
+`collectionGroup("serverInviteRefs").where("expiresAt", "<=", now)`.
+Firestore's automatic single-field indexes are `COLLECTION` scope only, so that
+query needs a hand-declared `COLLECTION_GROUP` exemption, and
+`firestore.indexes.json` had never contained one at any revision in the
+repository's history. The function therefore failed **every** run from
+2026-09-14T06:13Z — 250 consecutive `FAILED_PRECONDITION` failures, roughly four
+an hour, 93 % of all error-level log volume — and expired invite pointers were
+never cleaned up. The harder half: a suite already existed that drove the real
+sweep through the emulator and stayed green throughout, because **the emulator
+does not enforce index requirements**. This is [ADR-007](#adr-007-firestore-rules-changes-are-always-emulator-tested-against-a-real-collectiongroup-query)
+verbatim, reached by a new route, and the same route that had already made
+`entitlements(isPremium, currentPeriodEnd)` a silent production defect.
+
+**Decision.**
+
+1. A new or moved `collectionGroup()` query is an **index change until proven
+   otherwise**, and the proof lives in production, not in a test run.
+2. Its declaration in `firestore.indexes.json` uses the **preserve-then-extend**
+   shape — re-declare the automatic `COLLECTION` orders *and* add the
+   `COLLECTION_GROUP` order — because a `fieldOverrides` entry replaces
+   automatic single-field indexing rather than adding to it. `ttl` is added only
+   when a TTL deleter is actually wanted.
+3. Each such query carries **two** tests, and neither is sufficient alone: a
+   declaration test that reads `firestore.indexes.json` and asserts the exact
+   override (the half the emulator physically cannot check), and an emulator
+   test that executes the **real** query across **at least two different
+   parents** (the half that proves collection-group scope rather than a
+   subcollection read). Both build the query from one shared helper so they
+   cannot drift.
+4. The declaration test must be demonstrated red against the pre-fix file.
+5. Source and production are reconciled after the deploy: an index that lives
+   only in production is one forced `--only firestore:indexes` away from being
+   deleted again.
+
+**Reasoning.** The existing rule said "test rules against a real
+`collectionGroup()` query". This round proved that a real query against the
+emulator is still not enough, because the emulator answers a query the
+production index set would refuse. The only mechanical defence is to assert the
+declaration as data and to keep the deployed state and the tree in step; the
+only behavioural defence is to check the first real run in Cloud Logging.
+
+**Consequences.**
+
+- One extra declaration test per collection-group field, and a fixture that must
+  seed two parents.
+- Index configuration becomes an assertable artefact: a future edit that drops
+  the `COLLECTION` orders, or silently adds a TTL, fails a test instead of
+  quietly de-indexing a field or starting a second deleter.
+- `rooms.expiresAt` is the same defect class and is still undeclared. It is
+  harmless only because `fetchFreshVoiceSessions` is deliberately not called;
+  the same override and the same test shape are required before anyone
+  reconnects it. Tracked in [Bugs.md](Bugs.md) and
+  [Firebase.md](Firebase.md#a-fieldoverrides-entry-replaces-automatic-single-field-indexing).
+- CI picks the new test up automatically — it matches
+  `test/*.test.js`, which `npm --prefix functions test` runs.

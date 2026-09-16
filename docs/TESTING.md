@@ -4,6 +4,104 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
+## Release, repair and build 30 gate — 2026-09-16
+
+This gate covers the evening that deployed `e1a9f3cd`, repaired the production
+outage from `22cc2313` and built 2.0.0 (30). Logs are in
+`/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-16/` with the
+`release-gates-*`, `deploy-*`, `repair-*` and `build30-*` prefixes. Emulators
+used only demo project ids (`demo-yovoice`, `demo-yovoice-server-acl`,
+`demo-yovoice-server-invite-sweep-index`, `demo-yovoice-review-rc13`).
+
+**Local gates on the exact pushed revision `e1a9f3cd`**, run on the
+maintainer's machine with Flutter 3.44.6 / Dart 3.12.2, Node v26.5.0 and
+firebase-tools 15.29.0. `git status --porcelain=v1 -uall` was empty before every
+gate, after every gate and at the end; no commit, push, tag or stash was made.
+Rows overlap and are **not** summed.
+
+| Gate | Result |
+| --- | --- |
+| `flutter analyze --no-pub` | **No issues found** |
+| `flutter test --no-pub --concurrency=2` | **4932 / 4932**, 0 failed, 0 skipped, **389 suites** (confirmed from the JSON reporter, not only the console line) |
+| `flutter test --no-pub --concurrency=1 tool/performance` | **11 / 11** |
+| `npm --prefix functions test` (Auth + Firestore emulators) | **2244 / 2244**, 133 suites, 0 fail, 0 cancelled, 0 skipped |
+| `npm --prefix functions run test:smoke` | exit 0; the emulator loaded the full export list including `createServerBroadcastIngressV1` |
+| Global Firestore Rules | **564 / 564**, plus Premium messaging privacy **4 / 4** |
+| Storage Rules | **75 / 75** |
+| Cross-service Family media | **11 / 11** |
+| Server Rules (`demo-yovoice-server-acl`) | **70 / 70**, and **70 / 70** again on the CI default ports — the `firebase.qa-gate.json` config is proven equivalent, not assumed |
+| `node --test tool/test/servers_activation_package.test.js` (not run by CI) | **12 / 12** |
+| `python3 tool/generate_ui_sounds.py --check` | sound assets match the generator |
+| `npm audit --omit=dev --audit-level=high` (functions, firestore-tests) | **0 vulnerabilities** in both |
+| `flutter build ios --release --no-codesign` | exit 0 |
+| `flutter build appbundle --release` | exit 0 |
+
+**GitHub Actions on the same SHA** — Hosting verification (`verify_and_build`
+only), Flutter web browser smoke and CodeQL all **success**; the `deploy_hosting`
+job is gated on `workflow_dispatch` and did not run. CI reported the identical
+counts (4932, 11, 2244, 564 + 4, 75, 11, 70) under Node 22, so this revision is
+green on two machines and two Node major versions. The local Node deviation
+(v26.5.0 against `engines.node: 22`) is recorded rather than hidden: a
+local-only green on Node 26 would not have proven the production runtime.
+
+**RC-13 index test, added after the gate above** (`58853fb0`,
+`functions/test/server_invite_sweep_index.test.js`, 229 lines):
+
+| Run | Result |
+| --- | --- |
+| `firebase emulators:exec --only firestore … node --test test/server_invite_sweep_index.test.js` | **3 / 3** pass |
+| Same file with four neighbouring suites | **35 / 35** pass |
+| Re-run independently by a second reviewer, fresh emulator, separate project id | **3 / 3** pass |
+| Without an emulator | 1 pass, 2 skipped (they require an explicit localhost Firestore emulator) |
+| **Negative control** — `firestore.indexes.json` reverted to its pre-fix state | the declaration test **fails**: *exactly one `serverInviteRefs.expiresAt` field override must be declared, 0 !== 1* |
+
+The file is deliberately two halves: a declaration test that reads
+`firestore.indexes.json` (the half an emulator physically cannot check, because
+the emulator does not enforce index requirements) and two emulator tests that
+run the **real** cross-parent `collectionGroup()` query from one shared helper.
+Its fixture seeds expired pointers under two different parent users and asserts
+the parents really differ; a single-parent fixture would pass against a plain
+subcollection read and prove nothing. Ancient fixture timestamps keep it from
+colliding with the future-dated pointers other suites seed into the shared
+emulator database. It matches `test/*.test.js`, so CI runs it with no extra
+registration. Four repeat runs showed no flake and no ordering dependence.
+
+**Production verification, which is a different kind of evidence.** Two
+independent read-only passes re-read the live APIs rather than trusting the
+deploy logs: the release verification returned **PASS** (242 ACTIVE functions in
+the exact expected `updateTime` buckets, the live ruleset byte-equal to
+`git show e1a9f3cd:firestore.rules`, Storage rules and indexes untouched, both
+`appConfig` documents provably unwritten, all four excluded surfaces absent),
+and the repair verification returned **PASS** (exactly the 16 wave targets
+moved, 0 outside the selectors, warm instances 10 → 10, the 13 forbidden names
+untouched, the new index READY, the sweep succeeding twice consecutively, and
+all **32** live `publicProfiles` documents satisfying the redeployed guard).
+
+**What none of this proves.**
+
+- **No signed-in client call was made in either round.** The metrics that would
+  close the tester outage — a `200` on `reserveReelDraftV2` and
+  `reserveMomentDraft`, and a `getVoiceMomentsFeedV2` response over 500 bytes —
+  are **UNOBSERVED**. They have neither passed nor failed. The only requests on
+  the repaired targets after the deploy were four unauthenticated `401` boot
+  probes made by the deploying session itself.
+- **ACTIVE is not "works".** The 98 released functions are ACTIVE and silent; no
+  Server happy path has executed against them, no live generation has ever run,
+  so the retry and reconciliation guards read clean *vacuously*.
+- **No device, simulator, visual or store evidence** belongs to the deploy or
+  repair rounds. The only 2026-09-16 device artefact remains the earlier iOS
+  Simulator smoke on 2.0.0 (27), which deliberately never attempted a publish or
+  a new chat.
+- **No authenticated authorization probe** was produced for the Servers
+  callables: `permission-denied` for a non-host on
+  `createServerBroadcastIngressV1`, and the cross-account, cross-server and
+  malformed-grant negatives, remain unobserved in production.
+- **Rollback was validated as an artefact, never exercised.**
+- **Build 30 was not re-gated.** The gates above ran on `e1a9f3cd`; the built
+  tree is `121973fc`, whose only delta is the one-line `pubspec.yaml` bump
+  (verified). The artefacts were verified by identity — versionCode/`CFBundleVersion`
+  30, signature, manifest, SHA-256 — not by running them.
+
 ## Servers media collaboration and call PiP gate — 2026-09-16
 
 This gate covers the media-collaboration source that landed in `99b5916b`,
@@ -376,6 +474,19 @@ media/crop/Reels gate passed **39/39**; the production Web artifact built and
 its Hosting workflow/live route checks passed. The Functions and Rules-harness
 production-dependency audits reported **0 known vulnerabilities**. Historical
 count movement remains below.
+
+> **Movement, 2026-09-16 (release, outage repair and build 30).** Measured on
+> `e1a9f3cd` locally and reproduced by CI under Node 22: Flutter VM
+> **4932/4932** across 389 suites, `tool/performance` **11/11**, Cloud Functions
+> **2244/2244** across 133 suites, Firestore Rules **564/564** plus Premium
+> messaging privacy **4/4**, Storage Rules **75/75**, Family media **11/11**,
+> Server Rules **70/70** (on both port configurations) and the activation-package
+> tool **12/12**. `flutter analyze --no-pub` clean; both release builds compile;
+> production npm audits report 0 vulnerabilities. Afterwards `58853fb0` added
+> `functions/test/server_invite_sweep_index.test.js` (**3/3**, red without the
+> index declaration), which raises the Functions suite by three. Full context,
+> including everything these numbers do **not** prove, is in
+> [the 2026-09-16 gate above](#release-repair-and-build-30-gate--2026-09-16).
 
 > **Movement, 2026-09-09 (Reel feed ranking, ADR-167; backend source only,
 > nothing deployed).** Cloud Functions **1422/1422** across 119 suites and

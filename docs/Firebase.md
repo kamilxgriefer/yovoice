@@ -98,6 +98,22 @@ Notable fields:
   names are source-static and ignore `YOVOICE_SERVERS_V1`; the seven Podcast
   recording/Egress exports remain source-disabled.
 
+  **Live production values (read 2026-09-16, unchanged by either deploy that
+  day).** `appConfig` holds exactly two documents. `appConfig/serversV1` is
+  `{schemaVersion: 1, callableAccess: "all", testerUids: [] (0 entries),
+  workersEnabled: true, revision: 4}`, `updateTime 2026-09-14T06:43:29Z`;
+  `appConfig/gif` is `{enabled: true}`, `updateTime 2026-09-14T06:40:15Z`. So
+  every signed-in account can reach every Servers callable today, and those
+  callables are registered `enforceAppCheck: false` — that is the owner's
+  decision of 2026-09-16
+  ([ADR-197](Decisions.md#adr-197-the-2026-09-16-owner-decisions-on-servers-exposure-warm-instances-and-the-obs-canary)),
+  not a regression, but it is the live security posture and the earlier
+  "Servers for testers only" intent is not enforced by configuration.
+  `serverRuntimeCapacity/communityBroadcastV1` does **not** exist and
+  `serverBroadcastUsage` is empty, so the OBS surface is inert. Absence means
+  *enabled* for `appConfig/gif` and *disabled* for the capacity document —
+  never delete either.
+
 - **Community OBS usage and capacity (`serverBroadcastUsage/{uid}`,
   `serverRuntimeCapacity/communityBroadcastV1`, ADR-192, source only)** — both
   are `allow read, write: if false` for every client and are written only by
@@ -286,11 +302,20 @@ branch for that target type, and its field allowlist has no room for
 
 ## Composite indexes
 
-`firestore.indexes.json` currently holds **45** composite indexes and **12**
-`fieldOverrides` (counted 2026-09-16, including the `gifQueryCache.expiresAt`
-TTL override). The 2026-08-19 live reading of 19 and 4 is historical, not
+`firestore.indexes.json` currently holds **45** composite indexes and **13**
+`fieldOverrides` (counted 2026-09-17 at `58853fb0`, including the
+`gifQueryCache.expiresAt` TTL override and the `serverInviteRefs.expiresAt`
+collection-group exemption added that night). Production agrees: the Firestore
+admin API reported 45/45 composite indexes `READY` and the
+`serverInviteRefs.expiresAt` exemption `READY` at `2026-09-16T22:18:55Z`. The
+2026-08-19 live reading of 19 and 4 is historical, not
 proof of today's production state; re-read production before every release
-rather than subtracting one stale count from another. ADR-115's
+rather than subtracting one stale count from another. Note that a live
+`firebase firestore:indexes` listing of "12 overrides" and a source count of 12
+were never the same twelve — the live list mixes source overrides with the
+database's built-in `__default__` entry, and `gifQueryCache.expiresAt` shows up
+only in the TTL query because it carries `usesAncestorConfig: true`. Compare
+sets, not totals. ADR-115's
 `voiceMoments(authorId ASC, isPublished ASC)` composite is deployed and reached
 READY on 2026-08-27; the exact production query succeeded before the new
 Functions received traffic. The emulator does not enforce this requirement,
@@ -304,6 +329,23 @@ The first three `fieldOverrides` enable `COLLECTION_GROUP` scope on
 `rooms.roomId`, `participants.userId` and `roomMembers.userId`; the
 `invites.inviteeId` and `clubs.clubId` entries also re-declare their collection
 orders while adding collection-group scope.
+
+The thirteenth entry, **`serverInviteRefs.expiresAt`**, was added on 2026-09-16
+(`58853fb0`) and follows the preserve-then-extend shape: `COLLECTION` ASC +
+`COLLECTION` DESC + `COLLECTION CONTAINS` + `COLLECTION_GROUP` ASC, and
+deliberately **no `ttl`**. It exists for exactly one query,
+`collectionGroup("serverInviteRefs").where("expiresAt", "<=", now)` in
+`sweepExpiredServerInvitesSchedule` (`functions/notifications/invites.js:465`).
+Without it that sweep had failed on every one of its 250 runs since
+2026-09-14T06:13Z with `FAILED_PRECONDITION: The query requires a
+COLLECTION_GROUP_ASC index`, so expired invite pointers and their notifications
+were never cleaned up — the emulator does not enforce index requirements, so an
+existing suite that drove the real sweep stayed green throughout. The three
+`COLLECTION`-scope entries are re-declared on purpose: an override *replaces*
+automatic single-field indexing (the trap below), and omitting them would have
+withdrawn collection-scope indexing of that field as a side effect of fixing the
+sweep. Adding `ttl: true` would have started a second, uncoordinated deleter on
+invite pointers, which is why the test asserts `ttl` stays absent.
 
 ### A `fieldOverrides` entry *replaces* automatic single-field indexing
 
@@ -366,12 +408,29 @@ an override touches only the collection you had in mind. The same aliasing
 is what [ADR-005](Decisions.md#adr-005-roomsroomidmembers-renamed-to-roommembers)
 renamed `members` to `roomMembers` to avoid.
 
-Related and already known: `publishPublicStatsSchedule` runs
+Related and already known: `fetchFreshVoiceSessions` runs
 `collectionGroup("rooms").where("expiresAt", ">", …)`
-(`functions/stats/public_stats.js:224`), which needs a `COLLECTION_GROUP`
+(`functions/stats/public_stats.js`), which needs a `COLLECTION_GROUP`
 index on `rooms.expiresAt` that no override declares — one of the
 preconditions on that function's deploy, see
 [DEPLOYMENT.md](DEPLOYMENT.md).
+
+**`rooms.expiresAt` is the same latent defect class as
+`serverInviteRefs.expiresAt`, and it is the one still open.** The difference is
+purely that nobody calls it: `fetchFreshVoiceSessions` is exported and tested
+but deliberately **not** called by `publishPublicStatsSchedule` (the comment at
+the top of `public_stats.js` says so in capitals), and that schedule was
+returning 150 × 200 with 0 errors when it was last read on 2026-09-16. The
+moment anyone reconnects that function, it fails in production exactly the way
+the invite sweep did and passes in every emulator run. Give it the same
+treatment before that happens: the preserve-then-extend override plus a test
+that executes the real cross-parent `collectionGroup()` query
+(`functions/test/server_invite_sweep_index.test.js` is the shape to copy). Every
+other production `collectionGroup()` query was cross-checked against the live
+index set on 2026-09-16 and is covered: `rooms.roomId`, `clubs.clubId`,
+`participants.userId`, `serverFollows.serverId`,
+`channelSessions.livekitRoomName`, `invites.inviteeId` and the composite
+`episodes(serverId, studioChannelId)`.
 
 **One of these indexes fixed a live, silent production defect.** The
 scheduled `expirePremiumIdentity` sweep queries
@@ -399,8 +458,13 @@ named activation precondition in [Servers.md](Servers.md) alongside the
 `channelSessions.livekitRoomName` collection-group override, which has the same
 committed-but-unverified status.
 
+Both of those indexes are now deployed and READY in production (checked
+2026-09-16: 45/45 composite `READY`, and the `channelSessions.livekitRoomName`
+override live), so the READY half of this gate is discharged for them (the "exact production queries succeed" half is still unobserved) — the *rule* below still
+governs every future query.
+
 Deploying the static 54-name Server surface does not discharge either index
-gate. Keep `appConfig/serversV1.callableAccess` disabled until both indexes
+gate. **Superseded 2026-09-16 — ADR-197 records `callableAccess` as `all` in production by owner decision; the original gate read:** keep `appConfig/serversV1.callableAccess` disabled until both indexes
 report READY and the exact production queries succeed. Keep workers disabled
 during the inert infrastructure phase, then enable them in a revision-checked
 document replacement before the tester cohort. The complete order and rollback

@@ -4,7 +4,463 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## 2.0.0 (30) client round and the 2.0.0 (29) Play release — 2026-09-16
+
+`pubspec.yaml` moved `2.0.0+27` → `2.0.0+30` in `121973fc`; that one-line bump
+is the only difference between the backend revision `e1a9f3cd` (deployed in the
+entry below) and the tree the clients were built from. 30 was the next free
+number on both stores: Apple had consumed 29 and Google Play had consumed 29 as
+an uploaded-but-never-released bundle.
+
+**Google Play — build 29 released to internal testers.** The version-code-29
+bundle uploaded on 2026-09-14 09:22 had been sitting inactive in the bundle
+library while the internal track still served **28**. The release owner created
+and published the internal release at **22:41 CEST on 2026-09-16**. A Play Console
+read-back taken during the build-30 upload on 2026-09-17 showed that release as
+*Opublikowano 16 wrz 22:41*, so the Play state is console-proven, not only
+owner-reported. Everything else in this paragraph is a read: the
+21:55–22:15 CEST read-only store audit
+(`yovoice-evidence/2026-09-16/release-store-state.md`) found Play internal on
+**28 (2.0.0)** published 14 wrz 09:09, code 29 **Nieaktywne**, the internal
+draft release (id 24) holding no bundle at all, and one tester list of 15
+accounts. There is no Play Developer API credential on this machine, so every
+Play upload and the final publish click is a manual owner action.
+
+**TestFlight before this round:** 2.0.0 (29) *Testing*, assigned to both
+`YO Voice Internal Testers` (1 tester) and `YO Voice Beta Testers` (9 external
+testers), with installs dated 14–16 September on iOS 26.6.1–26.6.2. iOS testers
+were therefore a build ahead of Android testers for two days.
+
+**Build 30 artifacts, built from `121973fc`** (evidence:
+`yovoice-evidence/2026-09-16/build30-2026-09-16.md` and the `build30-*` logs):
+
+| Artifact | Identity |
+| --- | --- |
+| `build/app/outputs/bundle/release/app-release.aab` | `app.yovoice`, versionName `2.0.0`, versionCode **30**, 127,493,322 B, SHA-256 `90504ca55e4983e1a763e3231f58dbee1500044d68ec69db0f1e881deae87fc6`, `jarsigner -verify` → *jar verified*, signer `CN=YO Voice Upload Key, O=YO Voice, C=PL`, fingerprint `75:3A:AC:CB:B2:8E:65:0B:54:A5:EB:F0:F2:A6:CB:AA:23:3C:5E:B0:EF:00:FB:37:90:83:8E:6E:44:51:AE:1E`, minSdk 24 / target 36, ABIs `arm64-v8a`, `armeabi-v7a`, `x86_64` |
+| `build/ios/ipa/yo_voice.ipa` | `app.yovoice` `2.0.0 (30)`, SHA-256 `d5e039e20b20d27458bc2aff0ddb4868803e3818c49790398317f7c503a44fb0`; archive `CFBundleVersion 30`, created `2026-09-16T22:52:17Z`, signed `Apple Distribution: Kamil Jaguszewski (C3R59P53KB)` |
+| Hosting | `build/web` `version.json` `{"version":"2.0.0","build_number":"30"}`, `main.dart.js` SHA-256 `18b488cfbf109e8ec387c319eeaf028b5ee0590cafe8cc33641137df4eb786c6` |
+
+The Android manifest of that bundle declares `FOREGROUND_SERVICE`,
+`…_MICROPHONE`, `…_MEDIA_PLAYBACK` and **`…_MEDIA_PROJECTION`**, with
+`android:foregroundServiceType="microphone|mediaPlayback|mediaProjection"`. The
+Play **Uprawnienia usług działających na pierwszym planie** declaration is one
+of eleven outstanding "Zawartość aplikacji" items and has not been started; the
+`mediaProjection` half additionally needs a demonstration video. That
+declaration gates rolling this manifest out, and it is a console form only the
+owner can complete.
+
+**Store delivery status of build 30 — read this before claiming it shipped.**
+
+- **Android — uploaded and published.** The AAB staged at
+  `yovoice-evidence/2026-09-16/build30/app-release-30.aab` was uploaded through
+  the Play Console (browser automation; there is still no Play Developer API
+  credential on this machine) and the internal-track release **30** was
+  published at about **01:26 CEST on 2026-09-17**. The console read-back after
+  the publish click showed 30 as the current internal release; that read-back
+  was observed in-session and **not captured to a file**.
+- **iOS — uploaded, processed, in both groups.** `xcrun altool` started at
+  **00:55:24 CEST** with the App Store Connect API key `BGK5YPN6V4` and
+  **succeeded** (`build30-ios-upload.log`: `UPLOAD SUCCEEDED with no errors`,
+  Delivery UUID `89a4f953-6581-4322-9ea5-1e166e5c4026`, 79,059,475 bytes,
+  exit 0). App Store Connect read-backs (`build30-asc-build30.json`,
+  `build30-asc-build30-detail.json`) show build 30 `processingState: VALID`,
+  uploaded 01:02:46 CEST on 2026-09-17, and already in `YO Voice Internal
+  Testers` through that group's automatic distribution
+  (`build30-asc-group-a6c2c254-…-builds.json`).
+- **External testers — added through the API.** `YO Voice Beta Testers` has no
+  automatic distribution, so build 30 was attached to the group with
+  `POST /v1/builds/{id}/relationships/betaGroups` (HTTP 204) and a
+  `betaAppReviewSubmissions` record was created (HTTP 201); the read-backs at
+  ~01:33 CEST (`build30-asc-build30-betadetail-after.json`,
+  `build30-asc-group-910d0a45-…-builds-after.json`) show build 30 `VALID` in
+  the external group with `internalBuildState` and `externalBuildState` both
+  `IN_BETA_TESTING`. Beta App Review was not a
+  blocker — builds 28 and 29 are `betaReviewState: APPROVED` for the same
+  `2.0.0` version string, and only a version-string change would need a new
+  review.
+- **EU trader status is still not provided** in App Store Connect. It does not
+  affect TestFlight; it blocks any App Store submission or update for the EU.
+  Owner-only (Admin / Account Holder).
+
+**Hosting was deployed, and it changed behaviour.** `firebase deploy --only
+hosting -m "2.0.0+30 / main 121973fc"` released version `64101cb53cb8087e` at
+`2026-09-16T22:33:58Z` on ADC, with no interactive login. Served read-backs:
+`version.json` `build_number 30` on `app.yovoice.app` **and**
+`yovoice-ec54a.web.app`, `/` 200, `main.dart.js` SHA-256 changed from
+`8a069962…` to `18b488cf…` and equal to the locally built file,
+`Cache-Control: no-cache` on `/` and `*.js`, `Last-Modified` 2026-09-16 22:33:56
+GMT. The build used the exact dart-defines of the CI workflow's *Build Flutter
+Web* step; `YOVOICE_WEB_RECAPTCHA_SITE_KEY` was passed **empty** because
+`gh api repos/kamilxgriefer/yovoice/actions/variables` returns zero variables,
+which is what CI itself expands to, so web App Check stays disabled.
+
+The finding that matters: the previous Hosting release (2026-09-14T06:29:19Z)
+was a **manual local deploy** by the owner's account rather than the CI service
+account, and its bundle contained **zero** occurrences of the production VAPID
+public key — it was built without
+`--dart-define=YOVOICE_WEB_PUSH_VAPID_KEY`, so **web push was silently disabled
+on `app.yovoice.app` from 2026-09-14 until this release**. The new bundle
+carries the key (verified in the *served* file, 1 occurrence). Rolling Hosting
+back re-introduces that defect: **Hosting rollback** is re-releasing version
+`148b73b04e947c74` (build 28, 113 files), which also restores the missing VAPID
+key, so roll back only for a real defect.
+
+**Stale-artifact traps cleared before building** — four, not the two the plan
+listed: `build/ios/archive/Runner.xcarchive` was the **build 24** archive,
+`build/ios/ipa/` was empty (the build-23 `PathNotFoundException` trap),
+`build/app/outputs/bundle/release/app-release.aab` was a **versionCode 27**
+bundle, and `build/web` was the **build 28** artifact whose `main.dart.js` was
+byte-identical to what Hosting was serving. Because `firebase.json` sets
+`"public": "build/web"`, that last one would have let a failed web build
+silently re-deploy build 28.
+
+**Build discipline learned here:** the first iOS archive attempt failed with
+`Command CompileC failed` (`'absl/container/flat_hash_set.h' file not found`,
+`'openssl_grpc/ssl.h' file not found`) because a second Flutter/Xcode build
+started in the **same workspace with the same `BUILD_DIR`** and ran `clean`,
+removing the shared pod framework products mid-archive. Never run two builds
+against `ios/Runner.xcworkspace` and `build/ios` concurrently; the retry from a
+quiet machine succeeded (archive 993 s, IPA 127 s).
+
+No store billing exists on either platform: Play has no Google payments merchant
+account (so zero Play products or subscriptions) and App Store Connect reports
+zero In-App Purchase keys. The same read-only audit page also listed **zero**
+API team/individual keys, which contradicts the fact that key `BGK5YPN6V4`
+works for uploads and API calls; the contradiction is unresolved (a key visible
+only to its creator, or a page read before it finished loading, are both
+possible), so do not rely on the audit's key count. Nothing about Premium
+entitlements can be validated through a real store purchase today.
+
+## Tester outage repair — named-target waves A–D and the `serverInviteRefs` index — 2026-09-16
+
+**Executed. This is the round that ended the two-day publish/chat outage in
+production**; the outage itself, its root cause and everything it did not fix
+are in [Bugs.md](Bugs.md). Evidence:
+`yovoice-evidence/2026-09-16/repair-00-gate.md`, `repair-2026-09-16.md`,
+`repair-verify-2026-09-16.md`.
+
+The defect was deploy skew, not a bad commit: 126 functions were still serving
+the 2026-09-08 tree `585740dc` whose `functions/integrity/guards.js` validates
+`publicProfiles/{uid}` against an exact 21-key set, while the 2026-09-14 round
+had deployed the projection writer `onUserPrivacySourceChanged` that adds a
+22nd key. So the repair deployed **from `22cc2313`, not from HEAD** — that
+revision already carries the widened guard (`git diff 22cc2313 HEAD --
+functions/integrity/guards.js` is empty), it was already the revision running
+on 18 production functions at wave time (the rest of the fleet was on
+`585740dc` or the 2026-09-14 revisions), and it introduces no source that is
+not already live.
+Deploying HEAD instead would additionally have shipped `acceptDirectCall` with
+`minInstances: 1` (an unauthorized 11th warm instance).
+
+**The path was a named-target deploy from a clean detached worktree pinned to
+`22cc2313`, not the activation package.** The package tool cannot express these
+waves: it takes no target list and emits only the four fixed Servers phase
+selectors. Every selector below was hand-typed, split, sorted and `diff`ed
+against the wave table, then intersected with the forbidden list; every diff and
+every intersection was empty.
+
+```sh
+export FUNCTIONS_DISCOVERY_TIMEOUT=120          # see the prerequisites entry below
+cd /private/tmp/yovoice-repair-waves-22cc2313   # detached worktree, HEAD 22cc2313, status clean
+firebase deploy --only functions:<wave targets> --project yovoice-ec54a --non-interactive
+```
+
+| Wave | Targets | Window (UTC) | Unblocks |
+| --- | --- | --- | --- |
+| A | `reserveReelDraftV2`, `finalizeReelDraftV2`, `reserveMomentDraft`, `finalizeMomentDraft` | 21:56:28 → 21:58:22 | Yeel and Voice Moment publishing |
+| B | `getVoiceMomentsFeedV2`, `getVoiceMomentViewV2`, `getVoiceMomentMediaAccess`, `openDirectConversation` | 21:59:08 → 22:00:38 | the silently empty Voice Moments feed, new conversations |
+| C | `createReelComment`, `createMomentComment`, `reserveVoiceCommentDraft`, `finalizeVoiceCommentDraft` | 22:01:01 → 22:02:33 | comments and Voice replies |
+| D | `reserveDirectMessageAttachment`, `editDirectMessage`, `deleteDirectMessage`, `setDirectMessageReaction` | 22:03:19 → 22:04:55 | disarms the GIF cross-revision trap |
+
+Ordering constraints that must be kept if this is ever repeated: `reserve` and
+`finalize` for Reels go in the **same** wave (fixing only reserve moves the
+failure to finalize, which calls the same guard), and `openDirectConversation`
+goes **before or with** wave D, never after a GIF has been sent into a thread.
+
+**The forbidden set — 13 names — was untouched, and re-checked after every
+wave:** `getReelViewV2`, `getReelMediaAccessV2`, `deleteReelComment`,
+`removeReelComment`, `createReelCommentReport`,
+`processPendingReelCleanupSchedule`, `onReelCleanupOutboxCreated`,
+`expirePublishedReelsSchedule`, `moderateReport`, `acceptDirectCall`, plus the
+three Reel voice-comment exports that are absent from production. Two reasons,
+both verified: `getReelViewV2` at `22cc2313` accepts `commentTypes`, which is
+the capability latch the client uses to enable the microphone for a feature
+whose publish callable is D12-blocked and absent; and `22cc2313` writes a
+`reelCleanupOutbox` row of `kind: "reelVoiceComment"` that the 2026-09-08
+worker dead-letters, which would leave recorded voice bytes in Storage forever.
+Either those nine move as a unit with their worker, or none of them moves.
+
+**Read-backs (`gcloud functions list --v2`, ADC token exported, after every
+wave and end to end):** 4 updating / 4 successful / 0 create / 0 delete per
+wave; 16 moved end to end and **0 functions outside the selectors**; total
+242 → 242; warm instances 10 → 10 with identical membership; `updateTime`
+buckets after the round 114 × 2026-09-16, 110 × 2026-09-08, 18 × 2026-09-14.
+Cloud Run reported 16/16 `Ready=True`, each on a single new revision at 100 %
+traffic. Four unauthenticated boot probes returned `401 UNAUTHENTICATED`
+(not `500`), proving the new containers load their module and reach the auth
+guard without writing anything.
+
+**RC-13 — the `serverInviteRefs.expiresAt` collection-group index.**
+`sweepExpiredServerInvitesSchedule` runs
+`collectionGroup("serverInviteRefs").where("expiresAt", "<=", now)`
+(`functions/notifications/invites.js:465`). Automatic single-field indexes are
+`COLLECTION` scope only, so that query needs a hand-declared exemption, and
+`firestore.indexes.json` never had one at any revision — the function had
+therefore failed **every** run since `2026-09-14T06:13Z`, 250 consecutive
+failures, ~4 per hour, 93 % of all error-level log volume. The override was
+added (`fieldOverrides` 12 → 13) re-declaring the three automatic
+`COLLECTION`-scope entries **and** `COLLECTION_GROUP: ASCENDING`, so it is a
+strict superset of prior behaviour and no existing query lost an index; `ttl`
+was deliberately omitted, because adding it would have started a second,
+uncoordinated deleter on invite pointers.
+
+```sh
+firebase deploy --only firestore:indexes --project yovoice-ec54a --non-interactive
+# 22:14:27Z start -> 22:14:38Z deployed; all four entries READY at 22:18:55Z (4m17s)
+```
+
+Composite indexes stayed 45 READY (none created, none deleted). The next
+scheduled run, `2026-09-16T22:28:01Z`, returned **HTTP 200** with
+`{"message":"Expired Server invite references swept","scanned":0,"failed":0}`,
+and `22:43:07Z` succeeded too — two consecutive successes, Cloud Scheduler
+status back from `{"code":13}` to empty. The two files landed in `58853fb0`, so
+the tree is now level with production; until that commit, production was ahead
+of the tree and a forced `--only firestore:indexes` from a clean checkout would
+have deleted the override and silently re-broken the sweep.
+
+**Independently verified** (`repair-verify-2026-09-16.md`, PASS): all 16 targets
+carry `firebase-functions-hash 8ae31e0015bbea4a7091ad8b83d6a6bc44e42ea9`, the
+same build signature as the 2026-09-14 `22cc2313` round, so nothing was
+accidentally deployed from HEAD; the 10 forbidden present names still carry the
+2026-09-08 hash; 0 5xx on the 16 targets since the waves; and all **32** live
+`publicProfiles` documents satisfy the 22-key branch the redeployed guard
+accepts (max observed display-name length 26 characters).
+
+**What this round did not prove.** There was **no signed-in client traffic on
+any of the 16 targets after the deploy**, so the tester-facing success metric is
+**UNOBSERVED, not passed**. The check to run the moment a tester is next on a
+device:
+
+```sh
+export CLOUDSDK_AUTH_ACCESS_TOKEN="$(gcloud auth application-default print-access-token)"
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND resource.labels.service_name="getvoicemomentsfeedv2"
+  AND timestamp>="2026-09-16T22:00:24Z"' --project yovoice-ec54a --format=json --limit 50
+# PASS: at least one 200 with httpRequest.responseSize > 500
+# (245 bytes is the empty-page failure signature; a healthy page logged 1459-1509)
+```
+
+and the same for `reservereeldraftv2` / `reservemomentdraft`, where PASS is a
+`200` at all.
+
+**Rollback is not symmetric for this round.** The previous revision of every
+wave-A–C target *is* the broken `585740dc` tree, so there is nothing better to
+roll back to. Wave D's real kill switch is `appConfig/gif.enabled = false`, a
+runtime document change with no deploy.
+
+## Servers-phase backend release from `e1a9f3cd` — 2026-09-16
+
+**Executed, 20:53–21:32 UTC**, through the exact-SHA activation package, with an
+independent read-only verification afterwards. Evidence:
+`yovoice-evidence/2026-09-16/deploy-backend-2026-09-16.md` and
+`deploy-verify-2026-09-16.md`; the package and its anchor JSON are in
+`activation-package-e1a9f3cd/`.
+
+| Change | Before | After |
+| --- | --- | --- |
+| Firestore ruleset | `f2a303e2-6109-4f09-b2ad-7fec6453834e`, sha256 `5f1b9e9d…`, 4,894 lines | **`a208a1ba-c846-4b57-980d-821d849f5209`**, sha256 `1a908bdf4452fa28f014abb4c5009efcec86b473b8470053ee939a22919efcb8`, 4,904 lines, released `2026-09-16T21:00:00Z` |
+| Cloud Functions | 241 ACTIVE | **242 ACTIVE** — 97 updated, 1 created (`createServerBroadcastIngressV1`) |
+| Storage ruleset | `6765c5fd-…` | unchanged (already byte-identical to source) |
+| Indexes / TTL | 45 composite (45 READY), 12 overrides, 5 TTL ACTIVE | unchanged, byte-identical |
+| `appConfig/gif`, `appConfig/serversV1` | `{enabled:true}` / rev 4, `callableAccess "all"` | untouched — `updateTime` still `2026-09-14T06:40:15Z` / `06:43:29Z` |
+| `serverRuntimeCapacity/*`, `serverBroadcastUsage/*` | absent / empty | still absent / still empty |
+
+Package: `manifestSha256
+33705b8d5b0e63e63e5c26d04aec3ffa5b5903bcdb53124c5f3903cc94e591c2`,
+`fileCount 391`, `SHA256SUMS` 391/391 OK, tool tests 12/12, phase counts
+**42 / 7 / 48 / 1 = 98 targets**. The anchored `--verify` was re-run immediately
+before each of the four phases. Rules went first (`+10` lines, the two
+`serverBroadcastUsage` and `serverRuntimeCapacity` deny-all blocks, 0 removed),
+then the four Functions phases in order, each with a `--dry-run` first.
+
+Read-back per phase and end to end: moved 97, added
+`['createServerBroadcastIngressV1']`, **removed `[]`**, touched-outside-selector
+`[]`, in-selector-not-touched `[]`, non-ACTIVE / non-`europe-west1` /
+non-`nodejs22` all `[]`, warm instances 10 → 10 with no additions. Final
+`updateTime` buckets `{'2026-09-08': 126, '2026-09-14': 18, '2026-09-16': 98}`,
+matching the reviewed expectation exactly. The live ruleset was re-fetched and
+is byte-identical to `git show e1a9f3cd:firestore.rules`.
+
+**Everything the release had to exclude, proved by difference rather than by
+assertion:** the packaged source exports 245 functions and production holds 242;
+the three missing are exactly the D12-blocked Reel voice-comment exports
+(`reserveReelVoiceCommentDraft`, `finalizeReelVoiceCommentDraft`,
+`expireAbandonedReelVoiceCommentDraftsSchedule`), and no deployed function lies
+outside the packaged map. `acceptDirectCall` kept its `2026-09-08T20:19:45Z`
+`updateTime` and `minInstances 0`. Podcast recording/Egress and Stripe exports
+are absent.
+
+`createServerBroadcastIngressV1` is ACTIVE, `europe-west1`, `nodejs22`,
+`minInstances 0`, `maxInstances 5`, 120 s timeout, with both LiveKit secret
+bindings and `roles/secretmanager.secretAccessor` confirmed for the runtime
+service account (binding metadata only; no secret value was read). One
+unauthenticated probe returned `401 UNAUTHENTICATED` — its own structured guard,
+not `internal` and not `not-found` — and created nothing. **The capacity
+document `serverRuntimeCapacity/communityBroadcastV1` is still absent by
+decision, so the callable answers `failed-precondition` and the OBS surface is
+inert.**
+
+**Two corrections this round produced.**
+
+- The plan's forbidden-target grep **fires on a false positive**: it matches the
+  Server podcast *Q&A* callables `createServerPodcastQuestionV1`,
+  `setServerPodcastQuestionVoteV1` and `setServerPodcastQuestionOnAirV1`, which
+  are not the excluded Podcast recording/Egress set. Narrow it to
+  `[Pp]odcast(Recording|Episode|Egress)`. The authoritative check is resolving
+  `PODCAST_RECORDING_EXPORTS` from the packaged source and intersecting it with
+  each selector; that intersection was empty for all 98 entries.
+- The deploy record's line dismissing two in-window `reserveReelDraftV2` errors
+  as "empty-payload request errors … not a regression" is **wrong on the
+  facts**, and both the independent verification and the repair gate reproduced
+  it: the two requests carried `requestSize 3278` with `auth: VALID` and
+  returned HTTP 500, which for a callable is `internal`, not a payload
+  rejection. They were the outage, not noise. The "not caused by this deploy"
+  half is correct — those functions were in no selector.
+
+**Discovered during the monitoring window, pre-existing and not caused by this
+release:** `sweepExpiredServerInvitesSchedule` failing every 15 minutes on a
+missing collection-group index (fixed in the repair round above), and the
+100 %-failure publish paths that the repair round then addressed.
+
+**Rollback levers, in increasing cost:** `appConfig/serversV1.callableAccess`
+→ `disabled` (runtime, no deploy); redeploy `rollback-firestore.rules` (sha256
+`5f1b9e9d…`, captured and independently re-validated against the live API) with
+`--only firestore:rules`; or the full package procedure from `22cc2313`
+(45–90 minutes, and `npm ci` applies in that worktree too). Rollback stays clean
+while the capacity document has never existed.
+
+## The 2026-09-14 production round — reconstructed from production reads
+
+**This entry was written on 2026-09-16 from read-only production state. No
+record was written at the time of the round itself**, and no session record,
+`docs/DEPLOYMENT.md` entry or evidence file describes it. Every fact below comes
+from the Cloud Functions v2 API, the Firebase Rules API, the Firestore admin
+API, Hosting releases and Google Cloud Storage reads of our own function-source
+archives, recorded in
+`yovoice-evidence/2026-09-16/release-backend-delta.md`; the store facts come
+from the read-only console audit in `release-store-state.md`. Whether the round
+was authorized, and whether its runtime-gate values were intended, is a
+**question for the owner, not a fact this file can supply**.
+
+**The deployed revision is not an inference.** The ruleset serving production
+until 2026-09-16 carried the generating path
+`/private/tmp/yovoice-servers-activation-package-22cc23137e85a96581c5cae73f9cb00987ec99e4/source/firestore.rules`,
+and the deployed `function-source.zip` archives hashed file-by-file as a git
+blob match the `22cc2313` tree exactly (210 non-test files, zero mismatches).
+The 2026-09-08 wave likewise matches `585740dc` exactly (151 non-test files).
+
+| UTC (2026-09-14) | What happened |
+| --- | --- |
+| 05:34:01 | `appConfig/gif` and `appConfig/serversV1` created |
+| 05:38:15–05:38:32 | 7 functions — the Build 27 step 4 privacy-writer wave |
+| 05:40:30–05:40:53 | 10 functions — the Build 27 step 5 support wave (12 targets; two were re-stamped later by Servers phase 0) |
+| 05:42 / 05:46 | TTL enabled on `gifQueryCache.expiresAt` and `reelViews.expiresAt` |
+| 05:52:32 | `setPremiumMessagingPrivacyV1` alone — Build 27 step 7 |
+| 05:55:26–05:56:09 | **42** functions — Servers phase 0 |
+| 05:58:31–05:58:50 | **7** functions — Servers phase 1 |
+| 06:01–06:07 | Servers phase 2 indexes: 12 composites and 2 field overrides, all SUCCESSFUL |
+| 06:08:20 / 06:08:27 | Storage ruleset `6765c5fd-…` and Firestore ruleset `f2a303e2-…` released |
+| 06:11:15–06:12:37 | **47** functions — Servers phase 2 non-creation callables |
+| 06:20:08 | `createServerV1` — Servers phase 3 |
+| 06:29:19 | Hosting release, 113 files |
+| 06:31–06:44 | one Server created, one channel session, its `sessionEnd` job, then a delete — a canary that was cleaned up |
+| 06:40:15 | **`appConfig/gif.enabled` set to `true`** |
+| 06:43:29 | **`appConfig/serversV1` → revision 4, `callableAccess: "all"`, `testerUids: []`** |
+| 06:54–07:00 | a later index round: the `serverPodcastEgressJobs` composite and the `serverFollows.serverId` override |
+
+115 functions were created or updated; **126 were left on the 2026-09-08 tree**.
+That split is the direct cause of the two-day publish and chat outage recorded
+in [Bugs.md](Bugs.md), and of `sweepExpiredServerInvitesSchedule` failing from
+`06:13Z` onwards. The Hosting release of that round was a **manual local
+deploy** built without the web-push VAPID define (see the build 30 entry).
+
+**Store side of the same day:** builds 27, 28 and 29 were built and uploaded on
+2026-09-14; Play released code **27** at 07:26 and **28** at 09:09 (28 stayed
+the current internal release until 2026-09-16), and code 29 was uploaded at
+09:22 but left inactive. TestFlight took 27 (03:22), 28 (09:04) and 29 (11:18),
+with 28 and 29 distributed to both groups. This also corrects
+[the Build 25 session record](Sessions/2026-09-13-build-25-tester-release.md):
+Play **did** release code 25, on 13 wrz 12:39.
+
+**What this round means for the documents below.** Statements in this file that
+described the production boundary as "Servers V1 and the GIF callables are
+prepared in source but not deployed or activated" were true on 2026-09-13 and
+were false from 2026-09-14 onwards. They are marked historical in place rather
+than deleted, because their runbook steps are still the procedure.
+
+## Deploy prerequisites learned on 2026-09-16
+
+Every item here cost a failed attempt or a wrong claim tonight. They apply to
+the next operator on this machine.
+
+- **`npm ci` in the detached worktree's `functions/` before the activation
+  package generator.** A fresh worktree has no `functions/node_modules`, and the
+  generator's `realpathSync` throws `ENOENT` before it does anything. Run
+  `npm ci --omit=dev --ignore-scripts --no-audit --no-fund` there first.
+  `**/node_modules/` is gitignored, so the tool's tracked-tree identity
+  assertion still passes afterwards — verified, `git status --porcelain` stayed
+  empty.
+- **`export FUNCTIONS_DISCOVERY_TIMEOUT=120` before any `firebase deploy` that
+  touches Functions.** The default discovery budget is 10 s; this entry point
+  takes about 4.1 s to load and export 244 functions, close enough to race it.
+  The first wave-A attempt died with *"User code failed to load. Cannot
+  determine backend specification. Timeout after 10000."* and deployed nothing.
+  It is a local CLI setting only: it never reaches the uploaded package and
+  never becomes a runtime environment variable.
+- **`gcloud` works on Application Default Credentials.** `gcloud auth list`
+  reports no credentialed account, but
+  `export CLOUDSDK_AUTH_ACCESS_TOKEN="$(gcloud auth application-default print-access-token)"`
+  makes every `gcloud` read work with no interactive login and no 2FA prompt.
+  Earlier notes calling gcloud "unusable in this environment" were overstated;
+  export the token instead of substituting a transport.
+- **firebase-tools 15.23.0 `--dry-run` prints no per-function target delta.** It
+  validates and builds, and that is all. Any instruction to "review the printed
+  target delta" is not satisfiable with this CLI version — the selector files
+  and the post-deploy read-backs are the real control.
+- **`firebase functions:list --json` carries no `updateTime`.** Use the Cloud
+  Functions v2 REST list (or `gcloud functions list --v2` with the token above)
+  for any moved-set check; the CLI output is adequate only as a total/state
+  cross-check.
+- **`npm run deploy` is not a separate tool.** There is no root `package.json`
+  in this repository; the only script of that name is
+  `functions/package.json`'s `"deploy": "firebase deploy --only functions"`.
+  When this file forbids `npm run deploy` or `npm --prefix functions run
+  deploy`, it is forbidding a blanket, unscoped Functions deploy — which today
+  would create the three D12-blocked Reel voice-comment exports and warm
+  `acceptDirectCall` in one command.
+- **Node version deviation, accepted and recorded:** this machine runs Node
+  v26.5.0 while `functions/package.json` pins `engines.node: 22`. `npm ci`
+  prints `EBADENGINE`; the deploys and tests were unaffected, and CI still runs
+  the production runtime.
+- **bundletool from the Gradle cache cannot dump a manifest.** Those jars are
+  plain library jars with no `Main-Class`. Read
+  `base/manifest/AndroidManifest.xml` out of the AAB instead, and validate the
+  decoder against a bundle whose `versionCode` you already know.
+- **Never run two Flutter/Xcode builds against the same workspace and
+  `BUILD_DIR` concurrently** — see the build 30 entry for the archive failure
+  this produced.
+
 ## Servers media collaboration and call PiP — source only, not deployed — 2026-09-16
+
+> **Superseded in part on the same day.** The Rules delta and the 98 Functions
+> targets described here **were** deployed that evening from `e1a9f3cd`
+> (see [the Servers-phase release entry](#servers-phase-backend-release-from-e1a9f3cd--2026-09-16)),
+> and `pubspec.yaml` is now `2.0.0+30`. What is still true and still governing:
+> the OBS surface is inert because `serverRuntimeCapacity/communityBroadcastV1`
+> does not exist, no physical device, two-device call, real OBS/RTMP stream or
+> LiveKit Cloud Ingress call has been tested, and the Play `mediaProjection`
+> declaration is outstanding. Read the order and rollback notes below as the
+> procedure; read the release entry above for what production actually holds.
 
 **Nothing in this entry was deployed, built for testers or uploaded.** It
 records the source that landed in `99b5916b` (Functions, rules tests,
@@ -85,6 +541,19 @@ LiveKit console's ingress list. On Android,
 types.
 
 ## 2.0.0 (27) internal tester candidate — 2026-09-13
+
+> **Historical status, corrected 2026-09-16.** Build 27 did not stay a
+> candidate: an AAB with version code 27 was built, uploaded and **released on
+> Google Play** on 2026-09-14 at 07:26 (superseded by 28 at 09:09), and iOS
+> 2.0.0 (27) was uploaded to App Store Connect at 03:22 the same day. The
+> superseded-AAB note below refers to an earlier 27 artifact and remains true of
+> that one only. The paragraph beginning "Production boundary remains held" was
+> true on 2026-09-13 and is **false from 2026-09-14**: Servers V1 and the GIF
+> callables were deployed, `appConfig/gif.enabled` is `true` and
+> `appConfig/serversV1` is at revision 4 with `callableAccess: "all"` — see
+> [the reconstructed 2026-09-14 round](#the-2026-09-14-production-round--reconstructed-from-production-reads).
+> The runbook text is kept unchanged because its ordering is still the
+> procedure.
 
 Build 27 is scoped to the existing internal tester channels. This entry records
 the integrated candidate boundary; it is not signed-artifact, upload or store
@@ -332,9 +801,15 @@ deploy; no production data migration; no Servers activation; no public release.
 | Flutter web verification/build | GitHub Actions | Automatic, on push to `main` |
 | Verified Flutter web artifact → Firebase Hosting | GitHub Actions | Manual `workflow_dispatch` after backend readiness |
 | Firestore rules + indexes | `firebase deploy --only firestore:rules,firestore:indexes` | Manual |
-| Cloud Functions | `firebase deploy --only functions` | Manual |
+| Cloud Functions | named targets or a package selector — **never bare `--only functions`** | Manual |
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
+
+The Functions row is deliberately not a command. An unscoped `firebase deploy
+--only functions` (which is also what `npm --prefix functions run deploy` runs)
+would today create the three D12-blocked Reel voice-comment exports and warm
+`acceptDirectCall`. Deploy either the exact named targets, as the repair round
+did, or a generated activation-package selector.
 
 ### Build 22 tester release — 2026-09-07
 
@@ -2260,10 +2735,34 @@ the frozen defaults rather than failing the feed).
 
 ### Pending, not yet deployed: Reel voice comments (ADR-187, ADR-191)
 
-Source and emulator-tested only. Nothing below has been run against
-`yovoice-ec54a`. **Deploy is additionally blocked** until an owner decision on
+Source and emulator-tested only. The three callables have never been deployed.
+**Deploy is additionally blocked** until an owner decision on
 staff listening (ADR-187, "Known gap") and the outstanding review cells in
 `yovoice-evidence/2026-09-12/voice-comments-principal-1.md` are closed.
+
+**Correction, 2026-09-16: half of this order has already been executed, and the
+block is wider than three exports.** The 2026-09-14 round released a ruleset
+that already contains `match /reelVoiceCommentReservations/{commentId}`, and the
+live Storage ruleset already contains
+`match /reel_voice_comments/{userId}/{reelId}/{fileName}` — steps 1 and 2 below
+are done; only step 3 (Functions) is outstanding, and
+`reelVoiceCommentReservations` holds 0 documents. The trap is that the blocker
+is **not only** `reserveReelVoiceCommentDraft`,
+`finalizeReelVoiceCommentDraft` and
+`expireAbandonedReelVoiceCommentDraftsSchedule`. Deploying the *changed*
+`getReelViewV2` alone flips the client capability latch and turns the
+microphone on against absent publish callables, and `22cc2313` writes a
+`reelCleanupOutbox` row of `kind: "reelVoiceComment"` that the deployed
+2026-09-08 cleanup worker dead-letters, leaving recorded voice bytes in Storage
+forever. Nine functions are therefore pinned on their 2026-09-08 revision until
+this slice ships as a unit: `getReelViewV2`, `getReelMediaAccessV2`,
+`deleteReelComment`, `removeReelComment`, `createReelCommentReport`,
+`processPendingReelCleanupSchedule`, `onReelCleanupOutboxCreated`,
+`expirePublishedReelsSchedule` and `moderateReport`. Verified absent/unmoved in
+both 2026-09-16 rounds. Do not confuse these with the **Voice Moment** comment
+exports `createMomentComment`, `reserveVoiceCommentDraft` and
+`finalizeVoiceCommentDraft`, which are a different, long-deployed surface and
+are not blocked by ADR-187.
 
 **The order is mandatory, and the reason is the client, not the rules.** The
 app decides whether to offer the microphone from one signal: `getReelViewV2`
@@ -4145,6 +4644,18 @@ compatible-client adoption gates in [SECURITY.md](SECURITY.md) are complete.
 
 ## GIF rollout — YO Voice Originals (ADR-172/173)
 
+> **This rollout completed on 2026-09-14; the steps below are the historical
+> procedure, not the current state.** `getGifCatalog`, `searchGifs` and
+> `reportGifAsset` are deployed, `appConfig/gif` reads `{enabled: true}` (set at
+> `2026-09-14T06:40:15Z`), `gifAssets` holds the 16 bundled originals and the
+> `gifQueryCache.expiresAt` TTL is ACTIVE. Two consequences for any future
+> round: step 2's "close the GIF gate to `false` before deploying any Function"
+> is now an **owner decision per release**, not an automatic precondition — the
+> 2026-09-16 release recorded the decision to leave it `true` and proved by
+> read-back that no GIF callable was in its selectors (`updateTime` unchanged) —
+> and absence of the document still means *enabled*, so it must never be
+> deleted. The kill switch below remains exactly as written.
+
 **Prepared source is not live availability.** The current source pins the
 credential-free `yovoice` provider during Firebase export discovery and ships
 16 exact animations in `assets/gifs/yovoice/`. Production still showed none of
@@ -4292,6 +4803,27 @@ denied terms and per-account `resource-exhausted` responses, plus growth of
 while YO Voice Originals is selected.
 
 ## Servers V1 static registration and runtime activation
+
+> **Production is already activated — read this before following the phases.**
+> Servers V1 was deployed on 2026-09-14 from `22cc2313` and re-deployed on
+> 2026-09-16 from `e1a9f3cd`. `appConfig/serversV1` exists and reads
+> `{schemaVersion: 1, callableAccess: "all", testerUids: [], workersEnabled:
+> true, revision: 4}`, so the instruction below to create a disabled revision-1
+> document resolves to its own second branch: *stop and reconcile the exact
+> shape and revision; do not reset it blindly.* Every phase-2 and phase-3 probe
+> written as "confirm a Server callable still returns `failed-precondition`"
+> assumes `callableAccess: "disabled"` and **cannot pass as written today** —
+> record that rather than loosening the check. Live production data as of
+> 2026-09-16: 5 V1 servers (`serverActivationState: "active"`), 5 ended
+> `channelSessions`, 0 pending `serverControlOutbox` rows, and
+> `serverMigrationGates`/`serverMigrationRuns` empty (no Club→Servers migration
+> has ever run). The owner's decision of 2026-09-16 is that Servers stay open to
+> all signed-in accounts; see
+> [ADR-197](Decisions.md#adr-197-the-2026-09-16-owner-decisions-on-servers-exposure-warm-instances-and-the-obs-canary).
+> A prerequisite this section omits: run `npm ci` in the detached worktree's
+> `functions/` before the generator, and export
+> `FUNCTIONS_DISCOVERY_TIMEOUT=120` before every deploy — see
+> [Deploy prerequisites learned on 2026-09-16](#deploy-prerequisites-learned-on-2026-09-16).
 
 **Prepared source and a passing dry-run are not production activation.** Use
 this runbook only from a new clean commit and an exact-SHA activation package

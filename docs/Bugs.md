@@ -5,6 +5,218 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED — publishing, the Voice Moments feed and new chats were 100 % dead for two days (2026-09-14 → 2026-09-16)
+
+**P0, production; repaired by the four waves that ran 2026-09-16
+21:56–22:05 UTC** (publishing at 21:58, the feed and new chats at 22:00). Every
+account, on every platform, for 2.6 days. The three tester reports ("nie mogę opublikować Yeela",
+Voice Moments, "czaty nie działają") were one defect with three faces.
+
+**Root cause — deploy skew, not a bad commit.** The 2026-09-14 round deployed
+115 of 241 functions from `22cc2313` and left 126 on the 2026-09-08 tree
+`585740dc`. One of the 115, the `users/{uid}` trigger
+`onUserPrivacySourceChanged`, rewrites every `publicProfiles/{uid}` document
+with a 22nd field, `creatorAudienceVisible`. The shared guard
+`canonicalPublicProfile()` in `functions/integrity/guards.js` validates that
+document against an exact key set, and the 2026-09-08 copy accepts only the
+21-key shape, answering `data-loss` — HTTP 500 — for everything else. All 32
+production profiles carried the new field by ~08:54 UTC on 2026-09-14 (the
+08:22:01Z read cited below was still healthy), so every
+stale function refused every profile, 100 % of the time. The publish handlers
+themselves are byte-identical across the two revisions.
+
+Measured in production before the repair: `reserveReelDraftV2` 0 × 200 / 5 × 500;
+`reserveMomentDraft` 0 × 200 / 6 × 500; `finalizeReelDraftV2` and
+`finalizeMomentDraft` 0 requests (nobody got that far); `openDirectConversation`
+9 × 200 (existing threads, which short-circuit before the guard) versus
+25 × 500 (the create branch) plus 2 × 429; `reelUploadReservations`,
+`voiceMomentUploadReservations` and `directMessageUploadReservations` all 0, so
+no server state was ever created and there was nothing to repair in data.
+
+**The feed was the silent one, and it is why nobody noticed.**
+`voiceMomentProjection` calls the guard inside a loop that swallows per-item
+failures, so every item was dropped and the caller received **HTTP 200 with an
+empty page**: last populated page `2026-09-14T08:22:01Z` (1,459–1,509 bytes),
+first empty page `08:53:56Z`, then 343 responses of a constant **245 bytes**
+through `2026-09-16T21:27:57Z`, with **zero** errors, while production held 24
+Voice Moments. Client-side there was nothing either: these are caught
+`HttpsError`s, Crashlytics is wired for uncaught errors only, and neither
+`_friendly()` in the composer nor `friendlyErrorMessage` has a `data-loss`
+branch, so users saw "Try again" and no signal reached anyone.
+
+**Fix:** the 16 named-target wave deploy from `22cc2313` on 2026-09-16
+(21:56–22:05 UTC), recorded in
+[DEPLOYMENT.md](DEPLOYMENT.md#tester-outage-repair--named-target-waves-ad-and-the-serverinviterefs-index--2026-09-16).
+All 16 targets are ACTIVE on the fixed guard, and all 32 live profiles satisfy
+the key set the redeployed guard accepts. Process rules so it cannot recur:
+[ADR-195](Decisions.md#adr-195-a-shared-integrity-guard-is-a-deployment-unit--a-projection-writer-never-ships-ahead-of-its-readers).
+
+**Not yet observed end to end.** No signed-in client has touched any of the 16
+targets since the deploy, so the tester-facing metrics — a `200` on
+`reserveReelDraftV2` / `reserveMomentDraft`, and a `getVoiceMomentsFeedV2`
+response over 500 bytes — are **UNOBSERVED, not passed**. The hand-off check is
+in the DEPLOYMENT entry. Run it the moment a tester is on a device.
+
+## OPEN — what the outage repair did **not** fix (RC-5 … RC-17, 2026-09-16)
+
+Ranked in `yovoice-evidence/2026-09-16/testers-root-cause.md`. Every "still
+present" below was re-checked in this repository at `58853fb0`; none of them is
+fixed by any deploy, and none has landed in source yet.
+
+- **RC-5 — P1, client, still present.** The first failed publish locks the Yeel
+  draft forever. `reel_composer_screen.dart:187`
+  `bool get _draftContractLocked => _session != null || _publishing;` assigns
+  `_session` before the network call and the `finally` clears only
+  `_publishing`, so from the first refusal the lock is permanent and gates 27
+  call sites — media picker, backing-audio picker, every composition tool, the
+  caption field, the availability selector. The only exit is Back → "Discard
+  this draft?". The lock is correct once a server reservation exists; during the
+  outage no reservation ever existed. Fix:
+  [ADR-196](Decisions.md#adr-196-a-composer-draft-is-locked-by-a-server-reservation-never-by-an-attempt).
+- **RC-6 — P1, needs data repair, not a deploy.** Three of 20 conversation roots
+  in production are non-canonical: `conversations` 20, those with
+  `schemaVersion == 2` 17, `directConversationPairs` 17. They are the legacy
+  client-written 12-key shape, and both the old and the new tree reject them
+  (`validateConversation` → `permission-denied`, `validatePairGuard` →
+  `data-loss`), so the wave deploy changed nothing for them. A real user hit
+  this: `sendDirectMessage` 2 × 403 and `setDirectTyping` 2 × 403 from an
+  Android client within 15 seconds on 2026-09-05, with generic copy and no
+  diagnosis. `migrateDirectIntegrityConversation` exists but is itself drifted —
+  it treats `gif` and `video` as invalid types — so **do not run its apply
+  path**; reconcile `conversations` against `directConversationPairs` first.
+  Which three roots they are is unknown: identifying them needs participant ids
+  nobody read.
+- **RC-7 — P1, disarmed on 2026-09-16, keep the switch in mind.** One GIF
+  message would have disabled open/attach/edit/delete/react for that thread,
+  because `sendDirectMessage` (on the new tree) could write
+  `lastMessageType: "gif"` that the old readers rejected, and the message would
+  have been undeletable by anyone. Production never had one
+  (`lastMessageType == "gif"` was 0) only because RC-4 kept testers out of new
+  chats. Wave D removed the cause. The free runtime mitigation if it ever
+  reappears is `appConfig/gif.enabled = false` — a document change, no deploy.
+- **RC-8 — P1, backend source, still present, and it is the next publish failure
+  in line.** `canonicalPublicProfile` returns
+  `publicProfile.displayName.slice(0, 80)` **without re-trimming**
+  (`functions/integrity/guards.js:258`), identical at `585740dc`, `22cc2313` and
+  HEAD, while `validateReservation` asserts `authorName === authorName.trim()`.
+  For an account whose 80th character is a space, reserve succeeds and finalize
+  fails permanently on every retry — and RC-5 then locks the composer. Not
+  quantified against production, because counting it means reading display-name
+  values; the one bound that is known is that the longest live display name was
+  26 characters on 2026-09-16, so it cannot fire on today's data. Same defect as
+  the 2026-09-13 entry further down.
+- **RC-9 — P2, still present.** Every failed "open chat" burns quota and leaks a
+  ledger row. `openDirectConversation` runs `beginAttemptPreflight` in its own
+  transaction *before* the main one: it consumes `direct.attempt.open`
+  (12 events per 60 s) and commits an `integrityPreflightLedgers` document,
+  then the main transaction rolls back. So a deterministic refusal still charges
+  the budget, and after ~12 taps the copy silently changes to "We're a little
+  overloaded right now" — production shows exactly that, 2 × 429 after an
+  11-failure burst. The client mints a new `requestId` per attempt, so nothing
+  replays and each attempt leaks a row (`integrityPreflightLedgers` is at 1,075
+  documents with no TTL). The Yeel and Voice Moment reserve paths consume their
+  limiter *inside* the failing transaction and cost nothing, which is the shape
+  to copy.
+- **RC-10 — P2, still present, and it is why two days passed with no report.**
+  The callable framework logs nothing for an explicitly thrown `HttpsError`, so
+  all 34 production 500s carry zero application log lines. Crashlytics records
+  uncaught errors only (`lib/main.dart`), and every one of these failures is
+  caught and turned into a snackbar, so no non-fatal was ever recorded. Neither
+  the composer's `_friendly()` nor `friendlyErrorMessage`
+  (`lib/core/helpers/error_messages.dart`) has a `data-loss` branch — confirmed
+  absent at HEAD. Fix: a Crashlytics non-fatal carrying `{callable, code}` on any
+  terminal refusal, and copy that says the server refused and the draft is kept.
+- **RC-11 — P2, still present, needs its own source change.** "Find friends"
+  from Chats is rate-limited at **2 calls per minute**
+  (`FRIEND_DISCOVERY_MINUTE_LIMIT = 2`, hour limit 20,
+  `functions/friends/social_graph.js`) — identical at every revision.
+  Production: `getMutualFriends` 6 of 12 calls 429, `getFriendSuggestions`
+  5 × 429. The "make finding friends easier" surface calls it more than twice a
+  minute in ordinary browsing, so this is a separate, genuine "chats are broken"
+  complaint waiting to be filed.
+- **RC-12 — FIXED by wave C.** `createReelComment`, `createMomentComment`,
+  `reserveVoiceCommentDraft` and `finalizeVoiceCommentDraft` failed on the same
+  guard. Worth recording because an upstream report had called them D12-blocked:
+  they are **Voice Moment** exports, deployed since 2026-09-08 and not covered
+  by the Reel voice-comment block, which applies to
+  `reserveReelVoiceCommentDraft`, `finalizeReelVoiceCommentDraft` and
+  `expireAbandonedReelVoiceCommentDraftsSchedule` (absent from production).
+- **RC-13 — FIXED 2026-09-16.** `sweepExpiredServerInvitesSchedule` had failed
+  every run for 62 hours; see the entry below.
+- **RC-14 — P2, client, still present.** The Yeel progress bar stops at 95 % with
+  no stage label. `ReelService.publish` exposes `onStage`/`ReelPublishStage`
+  (`uploadShare = .95`) and **no caller in `lib/` passes `onStage`** — verified
+  at HEAD; the composer passes only `onProgress`. During `finalizeReelDraftV2`,
+  up to a 60 s timeout, the label sits at "Publishing 95 %".
+- **RC-15 — P2, client, five chat defects, all still present at HEAD.**
+  `chat_screen.dart` never reads `Conversation.mutedBy`, so an already-muted
+  thread still offers "Mute" (MSG-01); Edit is offered on photo/video/voice
+  messages the server refuses — production shows `editDirectMessage` 2 × 400
+  (MSG-02); `message_outbox.dart` `maxAttempts = 6` and
+  `direct_attachment_outbox.dart` `maxAttempts = 8` burn the retry budget while
+  offline and the connectivity listener only calls `due()`, so a message parks
+  at "Not sent" and never revives (MSG-03); `markDirectConversationRead` retries
+  every 30 s forever on a permanent refusal (MSG-05); message history is
+  `.limit(250)` with no older-page loader (MSG-04). One Flutter change with
+  widget tests, before the next tester round.
+- **RC-16 — P2, backend source, still present at HEAD.** A DM bell row and its
+  push can be lost permanently: `onDirectMessageCreated` is registered **without
+  `retry: true`** (`functions/notifications/activity.js`), while
+  `onNotificationCreated` and `onRoomLiveChanged` in the same file set it.
+  `createNotificationForEvent` is idempotent through
+  `notificationDeliveryEvents`, so retry would be safe. One contention, timeout
+  or cold start silently and permanently drops that message's notification.
+- **RC-17 — P3, backend source, unreachable today.** The media probe still
+  refuses fragmented MP4: `readIsoBmffDecodeTimeline` requires a populated
+  `stts`, which a browser `MediaRecorder` does not produce, so a web Yeel is
+  rejected as `failed-precondition` and the client mistranslates it into "Check
+  your media and audio rights". Android `MediaRecorder` and the iOS camera write
+  non-fragmented MP4, so phones do not hit this — if a device publish fails now,
+  suspect RC-8 first. It becomes the next *web* Yeel failure.
+
+## FIXED — `sweepExpiredServerInvitesSchedule` failed every run for 62 hours (2026-09-14 → 2026-09-16)
+
+**P2, production, fixed 2026-09-16; source landed in `58853fb0`.**
+`collectionGroup("serverInviteRefs").where("expiresAt", "<=", now)`
+(`functions/notifications/invites.js:465`) needs a hand-declared
+`COLLECTION_GROUP` single-field exemption, and `firestore.indexes.json` had
+never contained one at any revision. Every run since `2026-09-14T06:13Z` — 250
+consecutive, roughly four an hour, 87 × HTTP 500 on 2026-09-16 alone — failed
+with `9 FAILED_PRECONDITION: The query requires a COLLECTION_GROUP_ASC index for
+collection serverInviteRefs and field expiresAt`. It was about 93 % of all
+error-level log volume in the project, which would have masked the next real
+scheduler alert. Impact: expired Server invite pointers and their notifications
+were never cleaned up — growing and user-visible over time, not data-destructive.
+Redeploying the function on 2026-09-16 did not help (it failed again identically
+3½ minutes later), which is the empirical proof that the defect was the missing
+index.
+
+Fixed by the preserve-then-extend override (`COLLECTION` ASC/DESC/CONTAINS plus
+`COLLECTION_GROUP` ASC, no `ttl`), deployed 22:14 UTC and READY at 22:18:55Z;
+the next two scheduled runs returned 200. The emulator does not enforce index
+requirements, so an existing suite that drove the real sweep stayed green
+through all 250 failures — the new
+`functions/test/server_invite_sweep_index.test.js` therefore asserts the
+declaration *as data* and runs the real cross-parent query, with the declaration
+test demonstrated red against the pre-fix file. Rule:
+[ADR-198](Decisions.md#adr-198-a-collection-group-query-is-an-index-declaration-plus-a-test-that-runs-it-adr-007-reaffirmed).
+
+## OPEN — `rooms.expiresAt` is the same missing collection-group index, one caller away from an outage (2026-09-16)
+
+**P2, latent, not currently failing.** `fetchFreshVoiceSessions`
+(`functions/stats/public_stats.js`) runs
+`collectionGroup("rooms").where("expiresAt", ">", …)` and no `fieldOverrides`
+entry declares `rooms.expiresAt` at `COLLECTION_GROUP` scope. It is harmless
+**today** only because the function is exported and tested but deliberately not
+called by `publishPublicStatsSchedule` (the file says so in capitals), and that
+schedule was returning 150 × 200 with 0 errors when it was last read. The moment
+anyone reconnects it, it fails in production exactly as the invite sweep did and
+passes in every emulator run. Fix before that happens: the same preserve-then-
+extend override and the same two-test shape as
+`functions/test/server_invite_sweep_index.test.js`. Every other production
+`collectionGroup()` query was cross-checked against the live index set on
+2026-09-16 and is covered.
+
 ## FIXED IN SOURCE — Community OBS broadcasting defects found before commit (2026-09-16)
 
 These defects existed only in the uncommitted media-collaboration work
@@ -256,7 +468,20 @@ opacity cases. Capture-harness frames of the fix at 402x874 (light and dark),
 rendering of the fix is UNVERIFIED**: the simulator smoke was not repeated,
 because that app build runs signed in to production data.
 
-## PENDING DEVICE VALIDATION — call PiP, Android screen-share service and mobile screen share (2026-09-16)
+## PENDING DEVICE VALIDATION — call PiP, Android screen-share service, mobile screen share and the OBS canary (2026-09-16)
+
+**Still pending after the 2026-09-16 release.** The backend of this work is now
+deployed (`createServerBroadcastIngressV1` is ACTIVE) and a 2.0.0 (30) client
+was built, but nothing below moved: the OBS surface is inert because
+`serverRuntimeCapacity/communityBroadcastV1` does not exist (owner decision,
+[ADR-197](Decisions.md#adr-197-the-2026-09-16-owner-decisions-on-servers-exposure-warm-instances-and-the-obs-canary)),
+no OBS/RTMP stream or LiveKit Cloud Ingress call has ever run, the two-device
+call test was **waived by the owner** rather than performed, and build 30's
+TestFlight delivery is itself unconfirmed. The authenticated non-host
+`permission-denied` probe on the ingress callable, and the cross-account,
+cross-server and malformed-grant negative probes, were **not produced** in
+either 2026-09-16 round — they need real signed-in accounts. Nothing here may be
+described as working.
 
 Known risks in the ADR-194 work. None has been observed on a device, because
 no device run has happened yet. The 2026-09-16 iOS Simulator smoke could not
@@ -593,6 +818,14 @@ path, finalize refuses after the upload, on every retry. Found independently
 by the principal gate (F5) and the adversarial audit (F2, P2). Suggested repair
 from both: re-trim inside `canonicalPublicProfile` and assert the reader's
 bound at every write that stores the canonical name. Not fixed in this round.
+
+**Re-confirmed 2026-09-16 (RC-8), still present at `58853fb0`.**
+`guards.js:258` is byte-identical at `585740dc`, `22cc2313` and HEAD, so the
+tester repair deploy did not touch it: it is the next publish failure in line
+behind the outage above, and RC-5 then locks the composer on top of it. It
+cannot fire on today's data — the longest live display name was 26 characters
+when all 32 production profiles were checked on 2026-09-16 — but it is the
+first thing to check if a publish still fails on a device.
 
 ## OPEN — two localization defects on Home found by a catalog audit (2026-09-12)
 
