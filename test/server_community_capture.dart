@@ -10,7 +10,11 @@
 //
 //   flutter test test/server_community_capture.dart
 //
-// PNGs land in yovoice-evidence/2026-09-12/community-frames/.
+// PNGs land in yovoice-evidence/2026-09-12/community-frames/ unless
+// YOVOICE_CAPTURE_DIR names another directory:
+//
+//   YOVOICE_CAPTURE_DIR=/path/to/community-frames \
+//     flutter test test/server_community_capture.dart
 
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -23,12 +27,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/servers/data/models/server_channel.dart';
+import 'package:yovoice/features/servers/data/services/server_broadcast_ingress_service.dart';
 import 'package:yovoice/features/servers/data/services/server_media_connector.dart';
+import 'package:yovoice/features/servers/data/services/server_screen_share_capability.dart';
+import 'package:yovoice/features/servers/presentation/widgets/server_obs_broadcast_sheet.dart';
 
 import 'server_community_test.dart' as board;
 import 'server_test_support.dart';
 
-const _outputDirectory =
+/// Set `YOVOICE_CAPTURE_DIR` to write a fresh evidence run elsewhere; the
+/// default keeps the reviewed 2026-09-12 frames as the reference location.
+final _outputDirectory =
+    Platform.environment['YOVOICE_CAPTURE_DIR'] ??
     '/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-12/community-frames';
 
 String get _fontRoot {
@@ -131,18 +141,61 @@ final _live = ServerChannelLiveness(
   startedAt: DateTime(2026, 9, 12, 19, 40),
 );
 
+class _CaptureBroadcastRepository implements ServerBroadcastIngressRepository {
+  @override
+  Future<ServerBroadcastIngressReceipt> provision({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+  }) async => ServerBroadcastIngressReceipt.fromMap(
+    const <Object?, Object?>{
+      'schemaVersion': 1,
+      'serverId': 's',
+      'channelId': 'stage',
+      'sessionId': 'gen-7',
+      'ingressId': 'ingress_visual_review',
+      'serverUrl': 'rtmps://ingress.example.test/live',
+      'streamKey': 'private-visual-review-key',
+    },
+    serverId: serverId,
+    channelId: channelId,
+    sessionId: sessionId,
+  );
+}
+
+Widget _obsLauncher() => Builder(
+  builder: (context) => Scaffold(
+    body: Center(
+      child: FilledButton(
+        key: const ValueKey('open-obs-review'),
+        onPressed: () => showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          useSafeArea: true,
+          builder: (context) => ServerObsBroadcastSheet(
+            repository: _CaptureBroadcastRepository(),
+            serverId: 's',
+            channelId: 'stage',
+            sessionId: 'gen-7',
+          ),
+        ),
+        child: const Text('Open OBS'),
+      ),
+    ),
+  ),
+);
+
 void main() {
   setUpAll(_loadRealFonts);
 
-  for (final (label, size, scale, light)
-      in <(String, Size, double, bool)>[
-        ('390x844', Size(390, 844), 1, false),
-        ('768x1024', Size(768, 1024), 1, false),
-        ('1440x900', Size(1440, 900), 1, false),
-        ('1920x1080', Size(1920, 1080), 1, false),
-        ('320x760-scale2', Size(320, 760), 2, false),
-        ('1440x900-pearl', Size(1440, 900), 1, true),
-      ]) {
+  for (final (label, size, scale, light) in <(String, Size, double, bool)>[
+    ('390x844', Size(390, 844), 1, false),
+    ('768x1024', Size(768, 1024), 1, false),
+    ('1440x900', Size(1440, 900), 1, false),
+    ('1920x1080', Size(1920, 1080), 1, false),
+    ('320x760-scale2', Size(320, 760), 2, false),
+    ('1440x900-pearl', Size(1440, 900), 1, true),
+  ]) {
     testWidgets('community stage live $label', (tester) async {
       final captureKey = GlobalKey();
       await _render(
@@ -237,11 +290,7 @@ void main() {
           isSpeaking: true,
           isMicrophoneEnabled: true,
         ),
-        ServerMediaParticipant(
-          identity: 'owner',
-          name: 'Kasia',
-          isLocal: true,
-        ),
+        ServerMediaParticipant(identity: 'owner', name: 'Kasia', isLocal: true),
       ]);
       await tester.pumpAndSettle();
       await _shoot(
@@ -251,4 +300,100 @@ void main() {
       );
     });
   }
+
+  testWidgets('community host broadcast controls 390x844', (tester) async {
+    final captureKey = GlobalKey();
+    final connector = FakeServerMediaConnector();
+    await _render(
+      tester,
+      captureKey: captureKey,
+      size: const Size(390, 844),
+      child: board.communityWorkspace(
+        TestServerRepository()
+          ..servers = [board.communityServer()]
+          ..channels = board.communityChannels()
+          ..permittedTrackSources = const [
+            'microphone',
+            'camera',
+            'screen_share',
+            'screen_share_audio',
+          ],
+        connector: connector,
+        screenShare: ServerScreenShareCapability.ios,
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('server-join')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('server-community-screen-share')),
+    );
+    await tester.pump();
+    await _shoot(
+      tester,
+      captureKey: captureKey,
+      name: 'community-host-broadcast-controls-390x844',
+    );
+  });
+
+  for (final (label, size, scale) in <(String, Size, double)>[
+    ('390x844', Size(390, 844), 1),
+    ('320x760-scale2', Size(320, 760), 2),
+    ('1440x900', Size(1440, 900), 1),
+  ]) {
+    testWidgets('community OBS guide $label', (tester) async {
+      final captureKey = GlobalKey();
+      await _render(
+        tester,
+        captureKey: captureKey,
+        size: size,
+        textScale: scale,
+        child: _obsLauncher(),
+      );
+      await tester.tap(find.byKey(const ValueKey('open-obs-review')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await _shoot(
+        tester,
+        captureKey: captureKey,
+        name: 'community-obs-guide-$label',
+      );
+    });
+  }
+
+  testWidgets('community OBS credentials 390x844', (tester) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (_) async => null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    final captureKey = GlobalKey();
+    await _render(
+      tester,
+      captureKey: captureKey,
+      size: const Size(390, 844),
+      child: _obsLauncher(),
+    );
+    await tester.tap(find.byKey(const ValueKey('open-obs-review')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('server-obs-provision')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await _shoot(
+      tester,
+      captureKey: captureKey,
+      name: 'community-obs-credentials-390x844',
+    );
+    await tester.tap(find.byKey(const ValueKey('server-obs-copy-stream-key')));
+    await tester.pump(const Duration(milliseconds: 100));
+    await _shoot(
+      tester,
+      captureKey: captureKey,
+      name: 'community-obs-copy-feedback-390x844',
+    );
+  });
 }

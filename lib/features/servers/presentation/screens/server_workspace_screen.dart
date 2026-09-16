@@ -1048,6 +1048,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         server: server,
         channel: channel,
         repository: repository,
+        liveTransport: _session,
         role: role,
         compact: compact,
       );
@@ -1637,6 +1638,7 @@ class _PhoneSurface extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
+    final largeText = MediaQuery.textScalerOf(context).scale(16) > 24;
     final colors = ServerIdentity.of(
       server.type,
     ).resolve(Theme.of(context).brightness);
@@ -1767,18 +1769,29 @@ class _PhoneSurface extends StatelessWidget {
                         ),
                         if (showChannelsButton) ...[
                           const SizedBox(width: 8),
-                          OutlinedButton.icon(
-                            key: const ValueKey('server-open-channels'),
-                            onPressed: onChannels,
-                            style: OutlinedButton.styleFrom(
-                              minimumSize: const Size(48, 48),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
+                          if (largeText)
+                            IconButton.outlined(
+                              key: const ValueKey('server-open-channels'),
+                              onPressed: onChannels,
+                              tooltip: copy.serverChannels,
+                              style: IconButton.styleFrom(
+                                minimumSize: const Size(48, 48),
                               ),
+                              icon: const Icon(Icons.tag_rounded),
+                            )
+                          else
+                            OutlinedButton.icon(
+                              key: const ValueKey('server-open-channels'),
+                              onPressed: onChannels,
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size(48, 48),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                ),
+                              ),
+                              icon: const Icon(Icons.tag_rounded, size: 18),
+                              label: Text(copy.serverChannels),
                             ),
-                            icon: const Icon(Icons.tag_rounded, size: 18),
-                            label: Text(copy.serverChannels),
-                          ),
                         ],
                       ],
                     ),

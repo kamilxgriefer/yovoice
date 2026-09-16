@@ -80,10 +80,14 @@ class ServerConversationDock extends StatelessWidget {
       final micLabel = controller.isMicrophoneEnabled
           ? copy.serverMicrophoneOn
           : copy.serverMicrophoneOff;
-      // Board 04's row. A meeting is the one channel configuration whose
-      // grant carries a camera and a screen share at all, so these three are
-      // drawn there and nowhere else.
+      // A meeting and Community video stage both carry explicit camera and
+      // host-only screen sources in source policy v2.
       final meeting = connected && channel?.kind == ServerChannelKind.meeting;
+      final videoStage =
+          connected &&
+          channel?.kind == ServerChannelKind.stage &&
+          channel?.mediaMode == ServerMediaMode.video;
+      final visualSession = meeting || videoStage;
       // The meeting on screen is the one the session is in: a clock and a
       // view that belong to another channel are simply not drawn.
       final here = meeting && channel?.id == meetingChannel?.id;
@@ -126,7 +130,7 @@ class ServerConversationDock extends StatelessWidget {
                 ? null
                 : controller.toggleDeafened,
           ),
-        if (meeting)
+        if (visualSession)
           _DockControl(
             key: const ValueKey('server-dock-camera'),
             icon: cameraEnabled
@@ -141,7 +145,7 @@ class ServerConversationDock extends StatelessWidget {
                 ? controller.toggleCamera
                 : null,
           ),
-        if (meeting)
+        if (visualSession)
           _DockControl(
             key: const ValueKey('server-dock-share'),
             icon: sharing
@@ -340,6 +344,14 @@ class ServerConversationDock extends StatelessWidget {
         cameraFailure,
         copy,
         fallback: copy.serverCameraControlFailed,
+      );
+    }
+    final screenFailure = controller.screenShareError;
+    if (screenFailure != null) {
+      return serverActionFailureCopy(
+        screenFailure,
+        copy,
+        fallback: copy.serverShareScreenUnavailable,
       );
     }
     final refused = controller.privacyError;

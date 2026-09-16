@@ -13,6 +13,7 @@ import 'package:yovoice/features/servers/data/models/server_member_role.dart';
 import 'package:yovoice/features/servers/data/models/server_template.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_media_connector.dart';
+import 'package:yovoice/features/servers/data/services/server_screen_share_capability.dart';
 import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
 import 'package:yovoice/features/servers/presentation/widgets/server_community_stage.dart';
 
@@ -98,6 +99,7 @@ Widget communityWorkspace(
   String channelId = 'stage',
   FakeServerMediaConnector? connector,
   ClubChatService? chat,
+  ServerScreenShareCapability? screenShare,
   Future<void> Function(Uri link)? shareServer,
 }) => ServerWorkspaceScreen(
   key: UniqueKey(),
@@ -107,6 +109,7 @@ Widget communityWorkspace(
   initialChannelId: channelId,
   chatService: chat ?? communityChat(),
   connector: connector ?? FakeServerMediaConnector(),
+  screenShare: screenShare,
   shareServer: shareServer,
 );
 
@@ -293,6 +296,60 @@ void main() {
     expect(find.text('Kamera włączona'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'a Community host can share a supported screen and open real OBS setup',
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = TestServerRepository()
+        ..servers = [communityServer()]
+        ..channels = communityChannels()
+        ..permittedTrackSources = const [
+          'microphone',
+          'camera',
+          'screen_share',
+          'screen_share_audio',
+        ];
+      final connector = FakeServerMediaConnector();
+      await pumpServers(
+        tester,
+        communityWorkspace(
+          repository,
+          connector: connector,
+          screenShare: ServerScreenShareCapability.ios,
+        ),
+        size: const Size(1440, 900),
+      );
+      await tester.tap(join);
+      await tester.pumpAndSettle();
+
+      final share = find.byKey(const ValueKey('server-community-screen-share'));
+      final obs = find.byKey(const ValueKey('server-community-obs'));
+      expect(share, findsOneWidget);
+      expect(tester.widget<OutlinedButton>(share).onPressed, isNotNull);
+      expect(obs, findsOneWidget);
+      expect(tester.widget<OutlinedButton>(obs).onPressed, isNotNull);
+      // "OBS" is a product name: it crosses the localization boundary but
+      // renders identically in Polish.
+      expect(
+        find.descendant(of: obs, matching: find.text('OBS')),
+        findsOneWidget,
+      );
+
+      await tester.tap(share);
+      await tester.pumpAndSettle();
+      expect(connector.links.single.screenShareCalls, [true]);
+      expect(connector.links.single.isScreenShareEnabled, isTrue);
+
+      await tester.tap(obs);
+      await tester.pumpAndSettle();
+      expect(find.text('Transmisja OBS'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('server-obs-provision')),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('the events card opens its real board only when channel exists', (
     tester,

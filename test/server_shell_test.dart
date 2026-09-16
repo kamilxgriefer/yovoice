@@ -543,9 +543,9 @@ void main() {
       'createServerChannelTokenV1',
     ]);
     expect(dockText(tester), 'połączono');
-    // This fixture grants microphone only and runs on a platform that cannot
-    // start screen capture, so both controls stay disabled and explain the
-    // current reason. Other Company tests cover working camera/share grants.
+    // This fixture grants microphone only, so both controls stay disabled and
+    // explain the missing grant. Other Company tests cover working camera and
+    // screen-share grants on supported platforms.
     for (final control in const ['server-dock-camera', 'server-dock-share']) {
       expect(
         tester
@@ -572,9 +572,17 @@ void main() {
       cameraSemantics.properties.label,
       contains('Twoja rola nie może udostępniać obrazu z kamery'),
     );
+    final shareSemantics = tester.widget<Semantics>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('server-dock-share')),
+            matching: find.byType(Semantics),
+          )
+          .first,
+    );
     expect(
-      find.textContaining('działa na razie w przeglądarce'),
-      findsOneWidget,
+      shareSemantics.properties.label,
+      contains('Ekran udostępnia osoba, która rozpoczęła spotkanie'),
     );
   });
 

@@ -9,7 +9,11 @@
 //
 //   flutter test test/server_company_capture.dart
 //
-// PNGs land in yovoice-evidence/2026-09-12/company-frames/.
+// PNGs land in yovoice-evidence/2026-09-12/company-frames/ unless
+// YOVOICE_CAPTURE_DIR names another directory:
+//
+//   YOVOICE_CAPTURE_DIR=/path/to/company-frames \
+//     flutter test test/server_company_capture.dart
 
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -27,7 +31,10 @@ import 'package:yovoice/features/servers/data/services/server_screen_share_capab
 import 'server_company_test.dart' as board;
 import 'server_test_support.dart';
 
-const _outputDirectory =
+/// Set `YOVOICE_CAPTURE_DIR` to write a fresh evidence run elsewhere; the
+/// default keeps the reviewed 2026-09-12 frames as the reference location.
+final _outputDirectory =
+    Platform.environment['YOVOICE_CAPTURE_DIR'] ??
     '/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-12/company-frames';
 
 String get _fontRoot {
@@ -133,15 +140,14 @@ ServerChannelLiveness get _live => ServerChannelLiveness(
 void main() {
   setUpAll(_loadRealFonts);
 
-  for (final (label, size, scale, light)
-      in <(String, Size, double, bool)>[
-        ('390x844', Size(390, 844), 1, false),
-        ('768x1024', Size(768, 1024), 1, false),
-        ('1440x900', Size(1440, 900), 1, false),
-        ('1920x1080', Size(1920, 1080), 1, false),
-        ('320x760-scale2', Size(320, 760), 2, false),
-        ('1440x900-pearl', Size(1440, 900), 1, true),
-      ]) {
+  for (final (label, size, scale, light) in <(String, Size, double, bool)>[
+    ('390x844', Size(390, 844), 1, false),
+    ('768x1024', Size(768, 1024), 1, false),
+    ('1440x900', Size(1440, 900), 1, false),
+    ('1920x1080', Size(1920, 1080), 1, false),
+    ('320x760-scale2', Size(320, 760), 2, false),
+    ('1440x900-pearl', Size(1440, 900), 1, true),
+  ]) {
     testWidgets('company meeting before a join $label', (tester) async {
       final captureKey = GlobalKey();
       await _render(
@@ -164,12 +170,11 @@ void main() {
     });
   }
 
-  for (final (label, size, web)
-      in <(String, Size, bool)>[
-        ('390x844-mobile', Size(390, 844), false),
-        ('1440x900-web', Size(1440, 900), true),
-        ('1920x1080-web', Size(1920, 1080), true),
-      ]) {
+  for (final (label, size, web) in <(String, Size, bool)>[
+    ('390x844-mobile', Size(390, 844), false),
+    ('1440x900-web', Size(1440, 900), true),
+    ('1920x1080-web', Size(1920, 1080), true),
+  ]) {
     testWidgets('company meeting in session $label', (tester) async {
       final captureKey = GlobalKey();
       final connector = FakeServerMediaConnector();
@@ -221,11 +226,99 @@ void main() {
     );
     await board.joinLiveMeeting(tester, connector);
     await tester.tap(find.byKey(const ValueKey('server-dock-whiteboard')));
-    await tester.pump(const Duration(milliseconds: 30));
+    // The board swaps tabs first, then its Firestore-style stream emits on a
+    // later microtask. Render both frames so this developer capture contains
+    // the actual canvas instead of the transient loading spinner.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
     await _shoot(
       tester,
       captureKey: captureKey,
       name: 'company-whiteboard-1440x900',
+    );
+  });
+
+  testWidgets('company whiteboard view 390x844', (tester) async {
+    final captureKey = GlobalKey();
+    final connector = FakeServerMediaConnector();
+    await _render(
+      tester,
+      captureKey: captureKey,
+      size: const Size(390, 844),
+      child: board.companyWorkspace(
+        TestServerRepository()
+          ..servers = [board.companyServer()]
+          ..channels = board.companyChannels(
+            meeting: _live,
+            activeSessionId: 'gen-4',
+          )
+          ..permittedTrackSources = board.meetingHostSources,
+        connector: connector,
+        screenShare: ServerScreenShareCapability.mobile,
+      ),
+    );
+    await board.joinLiveMeeting(tester, connector);
+    final phoneMeetingScroll = find
+        .byKey(const ValueKey('server-channel-content-scroll'))
+        .last;
+    for (
+      var attempt = 0;
+      attempt < 4 &&
+          find
+              .byKey(const ValueKey('server-meeting-board'))
+              .hitTestable()
+              .evaluate()
+              .isEmpty;
+      attempt++
+    ) {
+      await tester.drag(phoneMeetingScroll, const Offset(0, -360));
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('server-meeting-board')),
+        matching: find.byType(TextButton),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+    await _shoot(
+      tester,
+      captureKey: captureKey,
+      name: 'company-whiteboard-390x844',
+    );
+  });
+
+  testWidgets('company whiteboard view 320x760 scale2', (tester) async {
+    final captureKey = GlobalKey();
+    await _render(
+      tester,
+      captureKey: captureKey,
+      size: const Size(320, 760),
+      textScale: 2,
+      child: board.companyWorkspace(
+        TestServerRepository()
+          ..servers = [board.companyServer()]
+          ..channels = board.companyChannels(),
+        channelId: 'board',
+      ),
+    );
+    // Render the Firestore-style board stream after the initial loading frame.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+    await _shoot(
+      tester,
+      captureKey: captureKey,
+      name: 'company-whiteboard-320x760-scale2',
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('server-whiteboard-canvas')),
+    );
+    await tester.pump();
+    await _shoot(
+      tester,
+      captureKey: captureKey,
+      name: 'company-whiteboard-320x760-scale2-canvas',
     );
   });
 

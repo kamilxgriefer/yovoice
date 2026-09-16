@@ -6,25 +6,27 @@ import 'package:flutter/foundation.dart';
 /// track and works everywhere (contract §3). This enum is only about the
 /// publishing half.
 enum ServerScreenShareReason {
-  /// The browser's own `getDisplayMedia` picker. The only surface where the
-  /// company template's share works today with no native work.
+  /// The browser's own `getDisplayMedia` picker.
   browser,
 
-  /// Android has no `FOREGROUND_SERVICE_MEDIA_PROJECTION` permission and no
-  /// `mediaProjection` foreground service; iOS has no Broadcast Upload
-  /// Extension target. Both are signing-affecting platform changes outside
-  /// the Flutter layer.
-  mobileNotBuilt,
+  /// iOS can publish the YO Voice app surface through ReplayKit. Capturing
+  /// other applications still needs a separately signed Broadcast Upload
+  /// Extension, which this target intentionally does not claim to have.
+  iosInApp,
+
+  /// Android uses the platform MediaProjection consent dialog and YO Voice's
+  /// foreground media service before LiveKit starts capture.
+  androidMediaProjection,
 
   /// The desktop app has no verified capture path and no CI build behind it.
   /// It is refused rather than offered on a guess.
   desktopUnverified,
 }
 
-/// Contract decision D: one capability query answers "can this platform start
-/// a share". Web returns true; everything else returns false with the reason,
-/// so the company template can label the control truthfully instead of hiding
-/// it or drawing one that fails inside the provider.
+/// One capability query answers "can this platform start a share". Browser,
+/// iOS in-app capture and Android MediaProjection are supported. Unverified
+/// desktop targets stay disabled so the UI never offers a capture that has no
+/// tested platform path.
 @immutable
 class ServerScreenShareCapability {
   const ServerScreenShareCapability._(this.canStartShare, this.reason);
@@ -37,9 +39,18 @@ class ServerScreenShareCapability {
     true,
     ServerScreenShareReason.browser,
   );
+  @Deprecated('Use ios or android so the capture contract stays explicit.')
   static const mobile = ServerScreenShareCapability._(
-    false,
-    ServerScreenShareReason.mobileNotBuilt,
+    true,
+    ServerScreenShareReason.iosInApp,
+  );
+  static const android = ServerScreenShareCapability._(
+    true,
+    ServerScreenShareReason.androidMediaProjection,
+  );
+  static const ios = ServerScreenShareCapability._(
+    true,
+    ServerScreenShareReason.iosInApp,
   );
   static const desktop = ServerScreenShareCapability._(
     false,
@@ -55,8 +66,8 @@ ServerScreenShareCapability serverScreenShareCapability({
 }) {
   if (isWeb) return ServerScreenShareCapability.web;
   return switch (platform ?? defaultTargetPlatform) {
-    TargetPlatform.android ||
-    TargetPlatform.iOS => ServerScreenShareCapability.mobile,
+    TargetPlatform.android => ServerScreenShareCapability.android,
+    TargetPlatform.iOS => ServerScreenShareCapability.ios,
     _ => ServerScreenShareCapability.desktop,
   };
 }

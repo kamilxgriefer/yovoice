@@ -301,6 +301,7 @@ class ServerCompanyMeeting extends StatelessWidget {
       server: server,
       channel: boardChannel,
       repository: repository,
+      liveTransport: session,
       role: role,
       compact: compact,
     );

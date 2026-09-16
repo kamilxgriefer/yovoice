@@ -1009,8 +1009,8 @@ extension ServerLocalizedCopy on AppLocalizations {
   /// receiving half is never in doubt, so the sentence says which half is
   /// missing rather than "unavailable".
   String get serverShareScreenUnavailable => text(
-    'Sharing your screen works in the browser for now — this device cannot start one yet.',
-    'Udostępnianie ekranu działa na razie w przeglądarce — z tego urządzenia nie można go jeszcze rozpocząć.',
+    'This device cannot start a screen share yet.',
+    'Z tego urządzenia nie można jeszcze rozpocząć udostępniania ekranu.',
   );
 
   /// `deriveSessionGrant` gives `screen_share` to the meeting's host only.

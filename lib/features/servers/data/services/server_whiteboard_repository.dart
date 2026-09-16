@@ -10,6 +10,9 @@ abstract interface class ServerWhiteboardRepository {
     String channelId,
   );
 
+  /// Persists one completed local gesture. [requestId] is stable for retries;
+  /// callers can render the gesture optimistically and reconcile it against
+  /// [watchWhiteboard] without blocking the next gesture.
   Future<void> createWhiteboardStroke({
     required String serverId,
     required String channelId,

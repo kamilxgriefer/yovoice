@@ -11,6 +11,271 @@ class ServerWhiteboardPoint {
   Map<String, double> toMap() => {'x': x, 'y': y};
 }
 
+/// Reduces a pointer-rate path to the callable's bounded polyline contract
+/// without ever mutating the path that is still under the user's finger.
+///
+/// The selector repeatedly keeps the point with the largest geometric error
+/// inside every remaining segment. Corners therefore survive before points on
+/// an already-straight run, unlike replacing the last slot of a fixed buffer.
+List<ServerWhiteboardPoint> simplifyServerWhiteboardPoints(
+  List<ServerWhiteboardPoint> points, {
+  int maximumPoints = 64,
+}) {
+  if (maximumPoints < 2) {
+    throw ArgumentError.value(maximumPoints, 'maximumPoints');
+  }
+  if (points.length <= maximumPoints) {
+    return List<ServerWhiteboardPoint>.unmodifiable(points);
+  }
+  final selected = <int>{0, points.length - 1};
+  final segments = <_WhiteboardSimplificationSegment>[
+    _WhiteboardSimplificationSegment.between(points, 0, points.length - 1),
+  ];
+  while (selected.length < maximumPoints && segments.isNotEmpty) {
+    var bestPosition = 0;
+    for (var index = 1; index < segments.length; index++) {
+      final candidate = segments[index];
+      final best = segments[bestPosition];
+      if (candidate.errorSquared > best.errorSquared ||
+          (candidate.errorSquared == best.errorSquared &&
+              candidate.span > best.span)) {
+        bestPosition = index;
+      }
+    }
+    final segment = segments.removeAt(bestPosition);
+    final pivot = segment.pivot;
+    if (pivot <= segment.start ||
+        pivot >= segment.end ||
+        !selected.add(pivot)) {
+      continue;
+    }
+    if (pivot - segment.start > 1) {
+      segments.add(
+        _WhiteboardSimplificationSegment.between(points, segment.start, pivot),
+      );
+    }
+    if (segment.end - pivot > 1) {
+      segments.add(
+        _WhiteboardSimplificationSegment.between(points, pivot, segment.end),
+      );
+    }
+  }
+  final indices = selected.toList()..sort();
+  return List<ServerWhiteboardPoint>.unmodifiable([
+    for (final index in indices) points[index],
+  ]);
+}
+
+class _WhiteboardSimplificationSegment {
+  const _WhiteboardSimplificationSegment({
+    required this.start,
+    required this.end,
+    required this.pivot,
+    required this.errorSquared,
+  });
+
+  final int start;
+  final int end;
+  final int pivot;
+  final double errorSquared;
+
+  int get span => end - start;
+
+  factory _WhiteboardSimplificationSegment.between(
+    List<ServerWhiteboardPoint> points,
+    int start,
+    int end,
+  ) {
+    final first = points[start];
+    final last = points[end];
+    var pivot = start + (end - start) ~/ 2;
+    var largestError = -1.0;
+    for (var index = start + 1; index < end; index++) {
+      final error = _distanceToSegmentSquared(points[index], first, last);
+      if (error > largestError) {
+        largestError = error;
+        pivot = index;
+      }
+    }
+    return _WhiteboardSimplificationSegment(
+      start: start,
+      end: end,
+      pivot: pivot,
+      errorSquared: largestError,
+    );
+  }
+}
+
+double _distanceToSegmentSquared(
+  ServerWhiteboardPoint point,
+  ServerWhiteboardPoint first,
+  ServerWhiteboardPoint last,
+) {
+  final dx = last.x - first.x;
+  final dy = last.y - first.y;
+  final lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared == 0) {
+    final px = point.x - first.x;
+    final py = point.y - first.y;
+    return px * px + py * py;
+  }
+  final projection =
+      (((point.x - first.x) * dx + (point.y - first.y) * dy) / lengthSquared)
+          .clamp(0.0, 1.0);
+  final closestX = first.x + projection * dx;
+  final closestY = first.y + projection * dy;
+  final px = point.x - closestX;
+  final py = point.y - closestY;
+  return px * px + py * py;
+}
+
+/// One short-lived preview received through the active meeting's encrypted
+/// LiveKit data channel. Completed history still lives exclusively in
+/// [ServerWhiteboardStroke].
+class ServerWhiteboardLiveDraft {
+  ServerWhiteboardLiveDraft({
+    required this.draftId,
+    required this.serverId,
+    required this.channelId,
+    required this.mediaChannelId,
+    required this.roomId,
+    required this.sessionId,
+    required this.authorId,
+    required this.generation,
+    required this.sequence,
+    required List<ServerWhiteboardPoint> points,
+    required this.color,
+    required this.lineWidth,
+    required this.receivedAt,
+    required this.expiresAt,
+  }) : points = List.unmodifiable(points);
+
+  final String draftId;
+  final String serverId;
+
+  /// The persistent whiteboard channel this preview belongs to.
+  final String channelId;
+
+  /// The active Company meeting channel carrying this preview.
+  final String mediaChannelId;
+  final String roomId;
+  final String sessionId;
+  final String authorId;
+  final int generation;
+  final int sequence;
+  final List<ServerWhiteboardPoint> points;
+  final ServerWhiteboardColor color;
+  final int lineWidth;
+  final DateTime receivedAt;
+  final DateTime expiresAt;
+
+  bool isVisibleAt(
+    DateTime now, {
+    required String expectedServerId,
+    required String expectedChannelId,
+    required int boardGeneration,
+  }) =>
+      serverId == expectedServerId &&
+      channelId == expectedChannelId &&
+      generation == boardGeneration &&
+      expiresAt.isAfter(now.toUtc());
+}
+
+String encodeServerWhiteboardPoints(List<ServerWhiteboardPoint> points) {
+  if (points.length < 2 || points.length > 64) {
+    throw ArgumentError.value(points.length, 'points');
+  }
+  return points
+      .map((point) {
+        if (!point.x.isFinite ||
+            !point.y.isFinite ||
+            point.x < 0 ||
+            point.x > 1 ||
+            point.y < 0 ||
+            point.y > 1) {
+          throw ArgumentError.value(point.toMap(), 'points');
+        }
+        return '${(point.x * 10000).round()},${(point.y * 10000).round()}';
+      })
+      .join(';');
+}
+
+List<ServerWhiteboardPoint>? decodeServerWhiteboardPoints(String encoded) {
+  if (encoded.length < 7 || encoded.length > 767) return null;
+  final entries = encoded.split(';');
+  if (entries.length < 2 || entries.length > 64) return null;
+  final points = <ServerWhiteboardPoint>[];
+  for (final entry in entries) {
+    final coordinates = entry.split(',');
+    if (coordinates.length != 2 ||
+        !_encodedCoordinate.hasMatch(coordinates[0]) ||
+        !_encodedCoordinate.hasMatch(coordinates[1])) {
+      return null;
+    }
+    final x = int.parse(coordinates[0]);
+    final y = int.parse(coordinates[1]);
+    if (x > 10000 || y > 10000) return null;
+    points.add(ServerWhiteboardPoint(x / 10000, y / 10000));
+  }
+  return List<ServerWhiteboardPoint>.unmodifiable(points);
+}
+
+final _encodedCoordinate = RegExp(r'^(?:0|[1-9][0-9]{0,3}|10000)$');
+
+/// A stroke rendered locally while its callable mutation and Firestore echo
+/// converge. It is deliberately separate from [ServerWhiteboardStroke]: local
+/// ink has no server-owned sequence, revision or author metadata yet.
+class ServerWhiteboardLocalStroke {
+  ServerWhiteboardLocalStroke({
+    required this.requestId,
+    required this.observedGeneration,
+    required this.minimumSequence,
+    required List<ServerWhiteboardPoint> points,
+    required this.color,
+    required this.lineWidth,
+  }) : points = List.unmodifiable(points);
+
+  final String requestId;
+  final int observedGeneration;
+  final int minimumSequence;
+  final List<ServerWhiteboardPoint> points;
+  final ServerWhiteboardColor color;
+  final int lineWidth;
+
+  bool matches(ServerWhiteboardStroke stroke, {required String authorId}) {
+    if (stroke.authorId != authorId ||
+        stroke.generation < observedGeneration ||
+        (stroke.generation == observedGeneration &&
+            stroke.sequence < minimumSequence) ||
+        stroke.color != color ||
+        stroke.lineWidth != lineWidth ||
+        stroke.points.length != points.length) {
+      return false;
+    }
+    for (var index = 0; index < points.length; index++) {
+      final local = points[index];
+      final persisted = stroke.points[index];
+      if ((local.x - persisted.x).abs() > 0.000000001 ||
+          (local.y - persisted.y).abs() > 0.000000001) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+class ServerWhiteboardReconciliation {
+  const ServerWhiteboardReconciliation({
+    required this.unmatchedLocal,
+    required this.confirmedRequestIds,
+    required this.confirmedStrokes,
+  });
+
+  final List<ServerWhiteboardLocalStroke> unmatchedLocal;
+  final Set<String> confirmedRequestIds;
+  final Map<String, ServerWhiteboardStroke> confirmedStrokes;
+}
+
 /// Revision metadata used to clear the board atomically with its strokes.
 /// An absent document is the canonical untouched board at revision zero.
 class ServerWhiteboardState {
@@ -192,6 +457,48 @@ class ServerWhiteboardSnapshot {
       if (stroke.authorId == userId) return stroke;
     }
     return null;
+  }
+
+  /// Reconciles optimistic ink with distinct authoritative strokes. Matching
+  /// is a multiset operation so two identical gestures require two separate
+  /// Firestore strokes before both local copies disappear.
+  ServerWhiteboardReconciliation reconcileLocal({
+    required String userId,
+    required List<ServerWhiteboardLocalStroke> localStrokes,
+  }) {
+    if (localStrokes.isEmpty) {
+      return const ServerWhiteboardReconciliation(
+        unmatchedLocal: [],
+        confirmedRequestIds: {},
+        confirmedStrokes: {},
+      );
+    }
+    final available = List<bool>.filled(strokes.length, true);
+    final unmatched = <ServerWhiteboardLocalStroke>[];
+    final confirmed = <String>{};
+    final confirmedStrokes = <String, ServerWhiteboardStroke>{};
+    for (final local in localStrokes) {
+      var matchIndex = -1;
+      for (var index = 0; index < strokes.length; index++) {
+        if (available[index] &&
+            local.matches(strokes[index], authorId: userId)) {
+          matchIndex = index;
+          break;
+        }
+      }
+      if (matchIndex < 0) {
+        unmatched.add(local);
+      } else {
+        available[matchIndex] = false;
+        confirmed.add(local.requestId);
+        confirmedStrokes[local.requestId] = strokes[matchIndex];
+      }
+    }
+    return ServerWhiteboardReconciliation(
+      unmatchedLocal: List.unmodifiable(unmatched),
+      confirmedRequestIds: Set.unmodifiable(confirmed),
+      confirmedStrokes: Map.unmodifiable(confirmedStrokes),
+    );
   }
 }
 

@@ -1,15 +1,19 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:yovoice/core/audio/realtime_audio_session_registry.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 
 import '../models/server.dart';
 import '../models/server_channel.dart';
 import '../models/server_session.dart';
+import '../models/server_type.dart';
+import '../models/server_whiteboard.dart';
 import 'server_media_connector.dart';
 import 'server_screen_share_capability.dart';
 import 'server_service.dart';
 import 'server_voice_device.dart';
+import 'server_whiteboard_live_transport.dart';
 
 /// Where one explicit join stands. Only [connected] and [reconnecting] mean
 /// a provider link exists; everything before them is the reviewed token
@@ -43,7 +47,8 @@ class ServerSessionDisconnected implements Exception {
 /// `createServerChannelTokenV1` for the generation, then the provider link.
 /// Nothing here opens the microphone: [setMicrophoneEnabled] is the only
 /// capture call, and it is bound to a control the person presses.
-class ServerSessionController extends ChangeNotifier {
+class ServerSessionController extends ChangeNotifier
+    implements ServerWhiteboardLiveTransport {
   ServerSessionController({
     required ServerRepository repository,
     ServerMediaConnector? connector,
@@ -51,12 +56,15 @@ class ServerSessionController extends ChangeNotifier {
     ServerScreenShareCapability? screenShare,
     ServerVoiceDevice? device,
     Listenable? otherVoiceOwner,
+    RealtimeAudioSessionRegistry? realtimeAudioSessions,
   }) : _otherVoiceOwnerOverride = otherVoiceOwner,
        _repository = repository,
        _connector = connector ?? const LiveKitServerMediaConnector(),
        _anotherVoiceSessionActive =
            anotherVoiceSessionActive ?? _legacyVoiceSessionActive,
        _device = device ?? serverVoiceDevice(),
+       _realtimeAudioSessions =
+           realtimeAudioSessions ?? RealtimeAudioSessionRegistry.instance,
        screenShare = screenShare ?? serverScreenShareCapability();
 
   final ServerRepository _repository;
@@ -67,6 +75,11 @@ class ServerSessionController extends ChangeNotifier {
   /// this slice; both have to be asked for, per session, or a conversation
   /// plays out of the earpiece and dies when the app is backgrounded.
   final ServerVoiceDevice _device;
+  final RealtimeAudioSessionRegistry _realtimeAudioSessions;
+  final Object _realtimeAudioOwner = Object();
+  RealtimeAudioSessionLease? _realtimeAudioLease;
+  int _pendingJoinOperations = 0;
+  int _pendingLinkCleanups = 0;
 
   /// The device's other voice owner as a *notifier*, resolved lazily so that
   /// merely constructing this controller never builds the legacy singleton.
@@ -84,6 +97,13 @@ class ServerSessionController extends ChangeNotifier {
   ServerChannel? _channel;
   ServerSessionConnection? _connection;
   ServerMediaLink? _link;
+  ServerWhiteboardLiveDataPlane? _whiteboardDataPlane;
+  StreamSubscription<List<ServerWhiteboardLiveDraft>>?
+  _whiteboardDataSubscription;
+  final StreamController<List<ServerWhiteboardLiveDraft>>
+  _whiteboardLiveDraftController =
+      StreamController<List<ServerWhiteboardLiveDraft>>.broadcast(sync: true);
+  int _whiteboardDataEpoch = 0;
   Object? _error;
   bool _microphoneBusy = false;
   bool _headphonesBusy = false;
@@ -187,6 +207,56 @@ class ServerSessionController extends ChangeNotifier {
 
   bool isIn(String channelId) => isActive && _channel?.id == channelId;
 
+  @override
+  bool isAvailableFor(String serverId) =>
+      isConnected &&
+      _server?.id == serverId &&
+      _whiteboardDataPlane?.isActive == true;
+
+  @override
+  Stream<List<ServerWhiteboardLiveDraft>> get whiteboardLiveDrafts =>
+      _whiteboardLiveDraftController.stream;
+
+  @override
+  Future<bool> publishWhiteboardLiveDraft({
+    required String serverId,
+    required String channelId,
+    required String draftId,
+    required int generation,
+    required List<ServerWhiteboardPoint> points,
+    required ServerWhiteboardColor color,
+    required int lineWidth,
+  }) async {
+    final plane = _whiteboardDataPlane;
+    if (!isAvailableFor(serverId) || plane == null) return false;
+    return plane.publishDraft(
+      serverId: serverId,
+      channelId: channelId,
+      draftId: draftId,
+      generation: generation,
+      points: points,
+      color: color,
+      lineWidth: lineWidth,
+    );
+  }
+
+  @override
+  Future<bool> clearWhiteboardLiveDraft({
+    required String serverId,
+    required String channelId,
+    required String draftId,
+    required int generation,
+  }) async {
+    final plane = _whiteboardDataPlane;
+    if (!isAvailableFor(serverId) || plane == null) return false;
+    return plane.clearDraft(
+      serverId: serverId,
+      channelId: channelId,
+      draftId: draftId,
+      generation: generation,
+    );
+  }
+
   /// The legacy coordinator is the device's other voice owner. Joining while
   /// it is busy would run two native sessions; it is asked, never bypassed.
   static bool _legacyVoiceSessionActive() {
@@ -218,42 +288,58 @@ class ServerSessionController extends ChangeNotifier {
       return;
     }
     _set(ServerSessionPhase.starting);
+    _pendingJoinOperations++;
     try {
-      var sessionId = target.activeSessionId;
-      if (sessionId == null) {
-        final start = await _repository.startChannelSession(
+      _realtimeAudioLease ??= await _realtimeAudioSessions.acquire(
+        owner: _realtimeAudioOwner,
+        kind: RealtimeAudioSessionOwnerKind.serverConversation,
+      );
+      if (!_current(epoch)) return;
+      try {
+        var sessionId = target.activeSessionId;
+        if (sessionId == null) {
+          final start = await _repository.startChannelSession(
+            serverId: server.id,
+            channelId: target.id,
+            requestId: _repository.newRequestId(),
+          );
+          sessionId = start.sessionId;
+        }
+        if (!_current(epoch)) return;
+        _set(ServerSessionPhase.authorizing);
+        final connection = await _repository.createChannelToken(
           serverId: server.id,
           channelId: target.id,
+          sessionId: sessionId,
           requestId: _repository.newRequestId(),
         );
-        sessionId = start.sessionId;
+        if (!_current(epoch)) return;
+        _connection = connection;
+        _set(ServerSessionPhase.connecting);
+        final link = await _connector.connect(
+          serverUrl: connection.serverUrl,
+          token: connection.participantToken,
+        );
+        if (!_current(epoch)) {
+          await _cleanupLink(link);
+          return;
+        }
+        _link = link..addListener(_onLinkChanged);
+        _attachWhiteboardDataPlane(
+          link: link,
+          server: server,
+          channel: target,
+          connection: connection,
+        );
+        _onLinkChanged();
+      } catch (error) {
+        if (!_current(epoch)) return;
+        _error = error;
+        _set(ServerSessionPhase.failed);
       }
-      if (!_current(epoch)) return;
-      _set(ServerSessionPhase.authorizing);
-      final connection = await _repository.createChannelToken(
-        serverId: server.id,
-        channelId: target.id,
-        sessionId: sessionId,
-        requestId: _repository.newRequestId(),
-      );
-      if (!_current(epoch)) return;
-      _connection = connection;
-      _set(ServerSessionPhase.connecting);
-      final link = await _connector.connect(
-        serverUrl: connection.serverUrl,
-        token: connection.participantToken,
-      );
-      if (!_current(epoch)) {
-        await link.disconnect();
-        link.dispose();
-        return;
-      }
-      _link = link..addListener(_onLinkChanged);
-      _onLinkChanged();
-    } catch (error) {
-      if (!_current(epoch)) return;
-      _error = error;
-      _set(ServerSessionPhase.failed);
+    } finally {
+      _pendingJoinOperations--;
+      _releaseRealtimeAudioIfIdle();
     }
   }
 
@@ -268,11 +354,14 @@ class ServerSessionController extends ChangeNotifier {
     if (link == null) return;
     switch (link.state) {
       case ServerMediaLinkState.connected:
-        _onConnected();
+        _whiteboardDataPlane?.resume();
+        if (!_onConnected()) return;
         _set(ServerSessionPhase.connected);
       case ServerMediaLinkState.reconnecting:
+        _whiteboardDataPlane?.suspend();
         _set(ServerSessionPhase.reconnecting);
       case ServerMediaLinkState.connecting:
+        _whiteboardDataPlane?.suspend();
         _set(ServerSessionPhase.connecting);
       case ServerMediaLinkState.disconnected:
         if (_phase == ServerSessionPhase.leaving) return;
@@ -281,8 +370,9 @@ class ServerSessionController extends ChangeNotifier {
         _epoch++;
         _releaseDevice();
         link.removeListener(_onLinkChanged);
-        unawaited(link.disconnect().catchError((_) {}));
         _link = null;
+        _detachWhiteboardDataPlane();
+        unawaited(_cleanupLink(link));
         _error = const ServerSessionDisconnected();
         _set(ServerSessionPhase.failed);
     }
@@ -294,17 +384,21 @@ class ServerSessionController extends ChangeNotifier {
   /// refuse to start from the background.
   bool _deviceClaimed = false;
 
-  void _onConnected() {
-    if (_deviceClaimed) return;
+  bool _onConnected() {
+    if (_deviceClaimed) return true;
     _deviceClaimed = true;
-    // The guard before the join is one-way: the legacy coordinator does not
-    // ask this side anything, and a call started on top of a live server
-    // conversation would run two capture owners and one shared native audio
-    // session, whose teardown is process-global either way. While this
-    // session is up it watches the other owner and yields to it — the whole
-    // guard, from both directions, still belongs in a process-level voice
-    // lease that neither side owns today.
+    // Private calls still have priority over a Server conversation, so this
+    // side watches the legacy coordinator and yields when one begins. Both
+    // sides also retain a process-wide registry lease; ordinary media cannot
+    // change the shared route during the handoff or either native teardown.
     _otherVoiceOwner.addListener(_onOtherVoiceOwnerChanged);
+    // The direct call may have started while the Server token or provider
+    // connection was in flight, before this listener existed. Re-read the
+    // owner after subscribing so that transition cannot be missed.
+    if (_anotherVoiceSessionActive()) {
+      unawaited(leave());
+      return false;
+    }
     unawaited(_device.preferSpeakerOutput());
     final channel = _channel;
     unawaited(
@@ -316,6 +410,7 @@ class ServerSessionController extends ChangeNotifier {
         canPublish: canPublish,
       ),
     );
+    return true;
   }
 
   void _releaseDevice() {
@@ -470,15 +565,11 @@ class ServerSessionController extends ChangeNotifier {
     _epoch++;
     final link = _link;
     _link = null;
+    _detachWhiteboardDataPlane();
     if (link != null) {
       _set(ServerSessionPhase.leaving);
       link.removeListener(_onLinkChanged);
-      try {
-        await link.disconnect();
-      } catch (_) {
-        // The link is released either way; nothing else can be done.
-      }
-      link.dispose();
+      await _cleanupLink(link);
     }
     _connection = null;
     _error = null;
@@ -489,6 +580,7 @@ class ServerSessionController extends ChangeNotifier {
     _endRequestId = null;
     _endBusy = false;
     _set(ServerSessionPhase.idle);
+    _releaseRealtimeAudioIfIdle();
   }
 
   /// Clears a failed or blocked outcome once it has been read.
@@ -504,6 +596,95 @@ class ServerSessionController extends ChangeNotifier {
     _endBusy = false;
     _connection = null;
     _set(ServerSessionPhase.idle);
+    _releaseRealtimeAudioIfIdle();
+  }
+
+  Future<void> _cleanupLink(ServerMediaLink link) async {
+    _pendingLinkCleanups++;
+    try {
+      try {
+        await link.disconnect();
+      } catch (_) {
+        // Native capture ownership still ends through dispose below.
+      }
+      try {
+        link.dispose();
+      } catch (_) {
+        // The registry still has to release after the native disconnect.
+      }
+    } finally {
+      _pendingLinkCleanups--;
+      _releaseRealtimeAudioIfIdle();
+    }
+  }
+
+  void _attachWhiteboardDataPlane({
+    required ServerMediaLink link,
+    required Server server,
+    required ServerChannel channel,
+    required ServerSessionConnection connection,
+  }) {
+    _detachWhiteboardDataPlane();
+    if (server.type != ServerType.company ||
+        channel.kind != ServerChannelKind.meeting ||
+        link is! ServerMediaDataLink) {
+      return;
+    }
+    final dataLink = link as ServerMediaDataLink;
+    final binding = ServerMediaSessionBinding(
+      serverId: server.id,
+      channelId: channel.id,
+      roomId: connection.roomId,
+      sessionId: connection.sessionId,
+      participantIdentity: connection.participantIdentity,
+      sessionRole: connection.sessionRole,
+    );
+    ServerWhiteboardLiveDataPlane plane;
+    try {
+      plane = ServerWhiteboardLiveDataPlane(
+        link: dataLink,
+        expectedMediaBinding: binding,
+      );
+    } catch (_) {
+      // A provider without the exact signed local binding remains an ordinary
+      // media link. The durable board still works; live previews stay honest.
+      return;
+    }
+    final epoch = ++_whiteboardDataEpoch;
+    _whiteboardDataPlane = plane;
+    _whiteboardDataSubscription = plane.drafts.listen((drafts) {
+      if (_disposed || epoch != _whiteboardDataEpoch) return;
+      if (!_whiteboardLiveDraftController.isClosed) {
+        _whiteboardLiveDraftController.add(drafts);
+      }
+    });
+  }
+
+  void _detachWhiteboardDataPlane() {
+    _whiteboardDataEpoch++;
+    final subscription = _whiteboardDataSubscription;
+    _whiteboardDataSubscription = null;
+    if (subscription != null) unawaited(subscription.cancel());
+    final plane = _whiteboardDataPlane;
+    _whiteboardDataPlane = null;
+    if (plane != null) unawaited(plane.dispose());
+    if (!_whiteboardLiveDraftController.isClosed) {
+      _whiteboardLiveDraftController.add(const []);
+    }
+  }
+
+  void _releaseRealtimeAudioIfIdle() {
+    final lease = _realtimeAudioLease;
+    if (lease == null) return;
+    final holdsLivePhase =
+        !_disposed && _phase != ServerSessionPhase.idle && !_isTerminal;
+    if (_pendingJoinOperations > 0 ||
+        _pendingLinkCleanups > 0 ||
+        holdsLivePhase) {
+      return;
+    }
+    _realtimeAudioLease = null;
+    lease.release();
   }
 
   void _set(ServerSessionPhase phase) {
@@ -514,17 +695,19 @@ class ServerSessionController extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_disposed) return;
     _disposed = true;
     _releaseDevice();
     _epoch++;
     final link = _link;
     _link = null;
+    _detachWhiteboardDataPlane();
     if (link != null) {
       link.removeListener(_onLinkChanged);
-      unawaited(
-        link.disconnect().catchError((_) {}).whenComplete(link.dispose),
-      );
+      unawaited(_cleanupLink(link));
     }
+    _releaseRealtimeAudioIfIdle();
+    unawaited(_whiteboardLiveDraftController.close());
     super.dispose();
   }
 }

@@ -16,6 +16,7 @@ import '../../data/models/server_channel.dart';
 import '../../data/models/server_member_role.dart';
 import '../../data/server_links.dart';
 import '../../data/services/server_follow_service.dart';
+import '../../data/services/server_broadcast_ingress_service.dart';
 import '../../data/services/server_media_connector.dart';
 import '../../data/services/server_session_controller.dart';
 import '../server_action_failure.dart';
@@ -24,6 +25,7 @@ import '../theme/server_identity.dart';
 import 'server_channel_scene.dart';
 import 'server_local_tabs.dart';
 import 'server_module_card.dart';
+import 'server_obs_broadcast_sheet.dart';
 import 'server_panel.dart';
 import 'server_scrolling_details.dart';
 import 'server_stage_participant_menu.dart';
@@ -32,8 +34,9 @@ import 'server_stage_participant_menu.dart';
 ///
 /// The channel is `stage / broadcast / video`, so video *receive* is real:
 /// once the person has joined through the reviewed token path the 16:9 scene
-/// renders whatever camera the provider actually reports. Everything the
-/// board shows that has no contract is absent rather than invented:
+/// renders whatever screen-share or camera track the provider actually
+/// reports. Everything the board shows that has no contract is absent rather
+/// than invented:
 ///
 /// * **no viewer, listener or participant count** anywhere — the liveness
 ///   projection is `{schemaVersion, isLive, startedAt}` and there is no
@@ -73,6 +76,7 @@ class ServerCommunityStage extends StatefulWidget {
     this.channels = const [],
     this.onOpenChannel,
     this.followRepository,
+    this.broadcastRepository,
     this.shareServer,
     this.chat,
     this.onOpenChannels,
@@ -90,6 +94,7 @@ class ServerCommunityStage extends StatefulWidget {
   final List<ServerChannel> channels;
   final ValueChanged<ServerChannel>? onOpenChannel;
   final ServerFollowRepository? followRepository;
+  final ServerBroadcastIngressRepository? broadcastRepository;
   final Future<void> Function(Uri link)? shareServer;
 
   /// Phone only: the live chat that sits under the local tabs, and the way
@@ -124,6 +129,7 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
   bool _shareBusy = false;
   bool? _followOverride;
   Object? _actionError;
+  ServerBroadcastIngressRepository? _defaultBroadcastRepository;
 
   /// The phone's local tab when the surface is too small to stack the
   /// conversation under the broadcast: 0 = what this stage is, 1 = the
@@ -152,11 +158,17 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
 
   bool get _handIsUp => _raised && _raisedSessionId == _sessionId;
 
-  /// The camera the scene shows: a remote publisher first, because a stage is
-  /// watched rather than self-viewed, and the local camera only when this
-  /// device is the one sending.
+  /// The active picture: a remote shared screen first, then a remote camera,
+  /// because a stage is watched rather than self-viewed. Local sources are
+  /// used only when this device is the publisher.
   ServerMediaParticipant? get _publisher {
     final people = widget.session.participants;
+    for (final person in people) {
+      if (!person.isLocal && person.isSharingScreen) return person;
+    }
+    for (final person in people) {
+      if (person.isSharingScreen) return person;
+    }
     for (final person in people) {
       if (!person.isLocal && person.hasCamera) return person;
     }
@@ -271,6 +283,25 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
     } finally {
       if (mounted) setState(() => _shareBusy = false);
     }
+  }
+
+  Future<void> _openObs() async {
+    final sessionId = _sessionId;
+    if (sessionId == null || !widget.session.isSessionHost) return;
+    final repository =
+        widget.broadcastRepository ??
+        (_defaultBroadcastRepository ??= ServerBroadcastIngressService());
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => ServerObsBroadcastSheet(
+        repository: repository,
+        serverId: widget.server.id,
+        channelId: widget.channel.id,
+        sessionId: sessionId,
+      ),
+    );
   }
 
   @override
@@ -650,8 +681,8 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
     ServerIdentityVisuals colors,
   ) {
     final publisher = _inRoom ? _publisher : null;
-    if (publisher != null) {
-      final track = publisher.cameraTrack!;
+    final track = publisher?.screenShareTrack ?? publisher?.cameraTrack;
+    if (publisher != null && track != null) {
       return Stack(
         fit: StackFit.expand,
         children: [
@@ -840,7 +871,8 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
           : null,
     );
     final cameraError = widget.session.cameraError;
-    final actionError = _actionError ?? cameraError;
+    final screenError = widget.session.screenShareError;
+    final actionError = _actionError ?? cameraError ?? screenError;
     return Column(
       key: const ValueKey('server-community-secondary-actions'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -868,6 +900,35 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
                       ? copy.serverCameraOn
                       : copy.serverCameraOff,
                 ),
+              ),
+            if (_inRoom && widget.session.isSessionHost)
+              OutlinedButton.icon(
+                key: const ValueKey('server-community-screen-share'),
+                onPressed:
+                    widget.session.canShareScreen &&
+                        !widget.session.screenShareBusy
+                    ? widget.session.toggleScreenShare
+                    : null,
+                style: style,
+                icon: Icon(
+                  widget.session.isScreenShareEnabled
+                      ? Icons.stop_screen_share_outlined
+                      : Icons.screen_share_outlined,
+                  size: 18,
+                ),
+                label: Text(
+                  widget.session.isScreenShareEnabled
+                      ? copy.serverStopSharing
+                      : copy.serverShareScreen,
+                ),
+              ),
+            if (_inRoom && widget.session.isSessionHost)
+              OutlinedButton.icon(
+                key: const ValueKey('server-community-obs'),
+                onPressed: _openObs,
+                style: style,
+                icon: const Icon(Icons.live_tv_rounded, size: 18),
+                label: Text(copy.text('OBS', 'OBS')),
               ),
             // The phone draws this one beside the title instead — except at
             // 200 % text, where it does not fit there and belongs back here.
@@ -898,6 +959,8 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
                 copy,
                 fallback: cameraError != null
                     ? copy.serverCameraControlFailed
+                    : screenError != null
+                    ? copy.serverShareScreenUnavailable
                     : copy.text(
                         'That action could not be completed.',
                         'Nie udało się wykonać tej czynności.',

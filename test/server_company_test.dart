@@ -890,33 +890,36 @@ void main() {
       expect(link.isScreenShareEnabled, isFalse);
     });
 
-    testWidgets('on a phone the control is visibly unavailable and the '
-        'reason is on screen', (tester) async {
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final connector = FakeServerMediaConnector();
-      await pumpServers(
-        tester,
-        companyWorkspace(
-          TestServerRepository()
-            ..servers = [companyServer()]
-            ..channels = companyChannels()
-            ..permittedTrackSources = meetingHostSources,
-          connector: connector,
-          screenShare: ServerScreenShareCapability.mobile,
-        ),
-        size: const Size(390, 844),
-      );
-      final link = await joinMeeting(tester, connector);
-      expect(shareControl, findsOneWidget);
-      expect(enabled(tester, shareControl), isFalse);
-      await tester.tap(shareControl, warnIfMissed: false);
-      await tester.pumpAndSettle();
-      expect(link.screenShareCalls, isEmpty);
-      expect(
-        find.textContaining('działa na razie w przeglądarce'),
-        findsOneWidget,
-      );
-    });
+    testWidgets(
+      'on an unsupported platform the control is visibly unavailable and the '
+      'reason is on screen',
+      (tester) async {
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final connector = FakeServerMediaConnector();
+        await pumpServers(
+          tester,
+          companyWorkspace(
+            TestServerRepository()
+              ..servers = [companyServer()]
+              ..channels = companyChannels()
+              ..permittedTrackSources = meetingHostSources,
+            connector: connector,
+            screenShare: ServerScreenShareCapability.desktop,
+          ),
+          size: const Size(390, 844),
+        );
+        final link = await joinMeeting(tester, connector);
+        expect(shareControl, findsOneWidget);
+        expect(enabled(tester, shareControl), isFalse);
+        await tester.tap(shareControl, warnIfMissed: false);
+        await tester.pumpAndSettle();
+        expect(link.screenShareCalls, isEmpty);
+        expect(
+          find.textContaining('nie można jeszcze rozpocząć'),
+          findsOneWidget,
+        );
+      },
+    );
 
     testWidgets('a guest is told who shares, even in a browser', (
       tester,
@@ -949,18 +952,18 @@ void main() {
       'the capability query answers per platform, never per feature flag',
       () {
         expect(serverScreenShareCapability(isWeb: true).canStartShare, isTrue);
-        for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
-          final capability = serverScreenShareCapability(
-            isWeb: false,
-            platform: platform,
-          );
-          expect(capability.canStartShare, isFalse, reason: '$platform');
-          expect(
-            capability.reason,
-            ServerScreenShareReason.mobileNotBuilt,
-            reason: '$platform',
-          );
-        }
+        final android = serverScreenShareCapability(
+          isWeb: false,
+          platform: TargetPlatform.android,
+        );
+        expect(android.canStartShare, isTrue);
+        expect(android.reason, ServerScreenShareReason.androidMediaProjection);
+        final ios = serverScreenShareCapability(
+          isWeb: false,
+          platform: TargetPlatform.iOS,
+        );
+        expect(ios.canStartShare, isTrue);
+        expect(ios.reason, ServerScreenShareReason.iosInApp);
         expect(
           serverScreenShareCapability(
             isWeb: false,
