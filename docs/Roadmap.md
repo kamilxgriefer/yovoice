@@ -57,6 +57,21 @@ have four different levels of proof.
   **is** live: Hosting serves `build_number 30`, and that release also restored
   web push, which had been silently disabled since 2026-09-14 by a manual local
   deploy built without the VAPID define.
+- **Update 2026-09-17 (observed, passed).** A signed-in owner client on the
+  iPhone 17 Pro simulator exercised the repaired paths. Chats:
+  `sendDirectMessage`, `setDirectMessageReaction`, `editDirectMessage`,
+  `deleteDirectMessage`, and a GIF sent then deleted — 19 authenticated
+  callables, all HTTP 200 (23:15–23:28 UTC, 2026-09-16). Publishing:
+  `reserveMomentDraft`/`finalizeMomentDraft` 200 at 01:17 UTC and
+  `reserveReelDraftV2`/`finalizeReelDraftV2` 200 at 01:20 UTC on 2026-09-17;
+  both test items appeared in their feeds and were deleted in-app
+  (`deleteMoment`/`deleteReel` 200). Zero non-2xx responses in the window.
+  Evidence: `yovoice-evidence/2026-09-17/repair-device/` (`publish-report.md`,
+  `publish-logs.json`, `session-full.json`). Still unobserved:
+  `openDirectConversation` for a brand-new pair (existing threads resolve
+  client-side), the comment callables, and any Android client (the Redmi is
+  signed out). The empty Voice Moments feed before publishing was correct — all
+  24 stored moments are `status: expired`, none published.
 
 Still held, and not changed by any of this: the Reel voice-comment slice
 (D12 — nine reader functions pinned on their 2026-09-08 revision), the warm

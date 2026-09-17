@@ -22,6 +22,21 @@ levels of proof. Read the level before repeating the claim.**
   App Store Connect shows build 30 `VALID` in both TestFlight groups
   (`externalBuildState IN_BETA_TESTING`). The web client of the same revision
   **is** live on Hosting.
+- **Update 2026-09-17 (observed, passed).** A signed-in owner client on the
+  iPhone 17 Pro simulator exercised the repaired paths. Chats:
+  `sendDirectMessage`, `setDirectMessageReaction`, `editDirectMessage`,
+  `deleteDirectMessage`, and a GIF sent then deleted — 19 authenticated
+  callables, all HTTP 200 (23:15–23:28 UTC, 2026-09-16). Publishing:
+  `reserveMomentDraft`/`finalizeMomentDraft` 200 at 01:17 UTC and
+  `reserveReelDraftV2`/`finalizeReelDraftV2` 200 at 01:20 UTC on 2026-09-17;
+  both test items appeared in their feeds and were deleted in-app
+  (`deleteMoment`/`deleteReel` 200). Zero non-2xx responses in the window.
+  Evidence: `yovoice-evidence/2026-09-17/repair-device/` (`publish-report.md`,
+  `publish-logs.json`, `session-full.json`). Still unobserved:
+  `openDirectConversation` for a brand-new pair (existing threads resolve
+  client-side), the comment callables, and any Android client (the Redmi is
+  signed out). The empty Voice Moments feed before publishing was correct — all
+  24 stored moments are `status: expired`, none published.
 
 Nothing in this record claims a device, a store availability, a two-device call,
 an OBS stream or a tester-visible recovery that was not observed.
