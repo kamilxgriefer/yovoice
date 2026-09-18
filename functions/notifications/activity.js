@@ -278,11 +278,40 @@ async function processRoomLiveFanoutOutbox(reference, {
   return { ...page, state: commit };
 }
 
+// The retry window for a direct-message notification. Bounded in the handler
+// because the platform's own bound is seven days.
+const DIRECT_MESSAGE_RETRY_WINDOW_MS = 30 * 60_000;
+
+// `event.time` is the CloudEvent emission time, stable across redeliveries of
+// the same event. An absent or unparseable value is treated as fresh: dropping
+// a notification because the envelope lacked a timestamp would be worse than
+// delivering one late.
+function eventIsTooOldToNotify(event, nowMs = Date.now()) {
+  const raw = event?.time;
+  if (typeof raw !== "string" || raw.length === 0) return false;
+  const emittedMs = Date.parse(raw);
+  if (!Number.isFinite(emittedMs)) return false;
+  return nowMs - emittedMs > DIRECT_MESSAGE_RETRY_WINDOW_MS;
+}
+
 // A message notification is derived from the committed message, not from a
 // second best-effort client write. This guarantees that a delivered message
 // and its push cannot drift apart when the sender closes the app or loses
 // connectivity immediately after sending.
 async function handleDirectMessageCreated(event) {
+  // Retries are on (see the registration below), and Firebase v2 event retries
+  // run for up to seven days. A chat bell row that lands later than half an
+  // hour is noise, not delivery, so a permanently-failing event is abandoned
+  // here instead of looping for a week. Returning ends the retry chain; only
+  // throwing schedules another attempt.
+  if (eventIsTooOldToNotify(event)) {
+    logger.warn("Abandoning a stale direct message notification", {
+      conversationId: event.params?.conversationId,
+      messageId: event.params?.messageId,
+      eventTime: event.time,
+    });
+    return;
+  }
   const message = event.data?.data();
   if (!message || message.isDeleted === true) return;
   const { conversationId, messageId } = event.params;
@@ -347,10 +376,22 @@ async function handleDirectMessageCreated(event) {
   });
 }
 
+// `retry: true` is safe here only because delivery is idempotent:
+// writeActivityNotification keys on
+// `direct-message:{conversationId}:{messageId}:{recipientId}` — derived from the
+// immutable source identity, not from the CloudEvent envelope — and is guarded
+// through notificationDeliveryEvents, so a redelivery is a no-op. Without the
+// retry, one contention, timeout or cold-start failure silently and permanently
+// dropped that message's bell row and its push. The handler bounds the retry
+// chain itself; see DIRECT_MESSAGE_RETRY_WINDOW_MS.
 const onDirectMessageCreated = onDocumentCreated(
   {
     document: "conversations/{conversationId}/messages/{messageId}",
     region: REGION,
+    memory: "512MiB",
+    timeoutSeconds: 120,
+    maxInstances: 50,
+    retry: true,
   },
   handleDirectMessageCreated,
 );
@@ -424,8 +465,10 @@ const onRoomLiveFanoutOutboxWritten = onDocumentWritten(
 );
 
 module.exports = {
+  DIRECT_MESSAGE_RETRY_WINDOW_MS,
   ROOM_LIVE_FANOUT_CONCURRENCY,
   ROOM_LIVE_FOLLOWER_PAGE_SIZE,
+  eventIsTooOldToNotify,
   fanOutRoomLiveFollowers,
   handleDirectMessageCreated,
   handleRoomLiveFanoutOutboxWritten,

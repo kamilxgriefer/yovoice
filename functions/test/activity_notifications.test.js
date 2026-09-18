@@ -666,3 +666,139 @@ test("server-derived activity notifications", async (t) => {
     assert.equal(typeof deployed.onRoomLiveChanged, "function");
   });
 });
+
+// RC-16. onDirectMessageCreated was registered with {document, region} and no
+// `retry`, while the two room triggers in the same file set `retry: true`. One
+// contention, timeout or cold-start failure silently and permanently dropped
+// that message's bell row and its push — a chat message that simply never
+// notified anybody.
+test("the DM notification trigger retries, bounded, on the canonical path",
+  async (t) => {
+    const {
+      DIRECT_MESSAGE_RETRY_WINDOW_MS,
+      eventIsTooOldToNotify,
+      onDirectMessageCreated,
+    } = require("../notifications/activity");
+
+    await t.test("the registered endpoint asks the platform to retry", () => {
+      const endpoint = onDirectMessageCreated.__endpoint;
+      assert.equal(endpoint.eventTrigger.retry, true);
+      // The deploy replaces the Eventarc trigger, so the path and region are
+      // part of what this assertion is protecting.
+      assert.equal(
+        endpoint.eventTrigger.eventFilterPathPatterns.document,
+        "conversations/{conversationId}/messages/{messageId}",
+      );
+      assert.deepEqual(endpoint.region, ["europe-west1"]);
+      assert.equal(endpoint.availableMemoryMb, 512);
+      assert.equal(endpoint.timeoutSeconds, 120);
+      assert.equal(endpoint.maxInstances, 50);
+    });
+
+    await t.test("the retry chain is bounded well inside the platform's week",
+      () => {
+        assert.equal(DIRECT_MESSAGE_RETRY_WINDOW_MS, 30 * 60_000);
+        const now = 1_800_000_000_000;
+        const at = (offsetMs) =>
+          new Date(now - offsetMs).toISOString();
+        assert.equal(eventIsTooOldToNotify({ time: at(0) }, now), false);
+        assert.equal(
+          eventIsTooOldToNotify({ time: at(DIRECT_MESSAGE_RETRY_WINDOW_MS) }, now),
+          false,
+          "the boundary itself still delivers",
+        );
+        assert.equal(
+          eventIsTooOldToNotify(
+            { time: at(DIRECT_MESSAGE_RETRY_WINDOW_MS + 1) },
+            now,
+          ),
+          true,
+        );
+        // An envelope with no usable time is treated as fresh: delivering late
+        // beats dropping a message because the transport omitted a field.
+        for (const event of [{}, { time: null }, { time: "" }, { time: "x" }]) {
+          assert.equal(eventIsTooOldToNotify(event, now), false);
+        }
+      });
+
+    await t.test("a stale redelivery returns instead of writing or throwing",
+      async () => {
+        const conversation = db.doc("conversations/retry-conversation");
+        const message = conversation.collection("messages")
+          .doc("retry-message");
+        // writeActivityNotification skips an inactive account, so both sides
+        // have to be real for the delivery half of this case to mean anything.
+        const seeded = [];
+        for (const uid of [ACTOR, RECIPIENT]) {
+          const reference = db.doc(`users/${uid}`);
+          if (!(await reference.get()).exists) {
+            await reference.set({ uid, displayName: uid });
+            seeded.push(reference);
+          }
+        }
+        await conversation.set({
+          participantIds: [ACTOR, RECIPIENT],
+          mutedBy: [],
+        });
+        await message.set({ senderId: ACTOR, isDeleted: false });
+        const snapshot = await message.get();
+        const event = {
+          params: {
+            conversationId: "retry-conversation",
+            messageId: "retry-message",
+          },
+          data: snapshot,
+          time: new Date(Date.now() - 31 * 60_000).toISOString(),
+        };
+
+        // Returning ends the retry chain; only throwing schedules another.
+        await handleDirectMessageCreated(event);
+        assert.equal(
+          (await db.doc(
+            `users/${RECIPIENT}/notifications/message_retry-message`,
+          ).get()).exists,
+          false,
+        );
+        assert.equal(
+          (await eventLedgerReference(
+            "direct-message:retry-conversation:retry-message:" + RECIPIENT,
+          ).get()).exists,
+          false,
+        );
+
+        // The same event inside the window still delivers, which is what makes
+        // turning retries on worth anything.
+        await handleDirectMessageCreated({
+          ...event,
+          time: new Date().toISOString(),
+        });
+        assert.equal(
+          (await db.doc(
+            `users/${RECIPIENT}/notifications/message_retry-message`,
+          ).get()).exists,
+          true,
+        );
+
+        // Redelivery is a no-op: the ledger key is derived from the immutable
+        // source identity, not from the CloudEvent envelope. That idempotency
+        // is the precondition for retry:true.
+        await handleDirectMessageCreated({
+          ...event,
+          id: "a-different-cloudevent-envelope",
+          time: new Date().toISOString(),
+        });
+        const notifications = await db
+          .collection(`users/${RECIPIENT}/notifications`)
+          .where("targetId", "==", "retry-conversation")
+          .get();
+        assert.equal(notifications.size, 1);
+
+        await db.recursiveDelete(conversation);
+        await db.doc(
+          `users/${RECIPIENT}/notifications/message_retry-message`,
+        ).delete().catch(() => {});
+        for (const reference of seeded) {
+          await reference.delete().catch(() => {});
+        }
+      });
+  });
