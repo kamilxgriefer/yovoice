@@ -115,6 +115,7 @@ class DirectAttachmentOutboxEntry {
     required this.status,
     required this.attempts,
     required this.createdAt,
+    this.deferrals = 0,
     this.nextAttemptAt,
     this.lastError,
     this.reservation,
@@ -132,7 +133,15 @@ class DirectAttachmentOutboxEntry {
   final String reserveRequestId;
   final String finalizeRequestId;
   final DirectAttachmentOutboxStatus status;
+
+  /// How much of the retry budget this entry has spent. Only a failure the
+  /// SERVER answered spends it.
   final int attempts;
+
+  /// How many times delivery was postponed because there was no network.
+  /// Never charged against [DirectAttachmentOutbox.maxAttempts] — see
+  /// [DirectAttachmentOutbox.markDeferred].
+  final int deferrals;
   final DateTime createdAt;
   final DateTime? nextAttemptAt;
   final String? lastError;
@@ -149,6 +158,7 @@ class DirectAttachmentOutboxEntry {
     String? finalizeRequestId,
     DirectAttachmentOutboxStatus? status,
     int? attempts,
+    int? deferrals,
     DateTime? nextAttemptAt,
     bool clearNextAttemptAt = false,
     String? lastError,
@@ -170,6 +180,7 @@ class DirectAttachmentOutboxEntry {
     finalizeRequestId: finalizeRequestId ?? this.finalizeRequestId,
     status: status ?? this.status,
     attempts: attempts ?? this.attempts,
+    deferrals: deferrals ?? this.deferrals,
     createdAt: createdAt,
     nextAttemptAt: clearNextAttemptAt
         ? null
@@ -193,6 +204,7 @@ class DirectAttachmentOutboxEntry {
     'finalizeRequestId': finalizeRequestId,
     'status': status.name,
     'attempts': attempts,
+    'deferrals': deferrals,
     'createdAt': createdAt.millisecondsSinceEpoch,
     'nextAttemptAt': nextAttemptAt?.millisecondsSinceEpoch,
     'lastError': lastError,
@@ -274,6 +286,11 @@ class DirectAttachmentOutboxEntry {
       finalizeRequestId: finalizeRequestId,
       status: statuses.first,
       attempts: attempts,
+      // Additive and tolerant: manifests written before the offline
+      // deferral existed simply start at zero.
+      deferrals: json['deferrals'] is int && (json['deferrals']! as int) >= 0
+          ? json['deferrals']! as int
+          : 0,
       createdAt: DateTime.fromMillisecondsSinceEpoch(createdAt),
       nextAttemptAt: nextAttemptAt == null
           ? null
@@ -688,6 +705,8 @@ class DirectAttachmentOutbox {
               ? DirectAttachmentOutboxStatus.failed
               : DirectAttachmentOutboxStatus.retrying,
           attempts: attempts,
+          // The server answered, so the offline poll counter is stale.
+          deferrals: 0,
           nextAttemptAt: failed
               ? null
               : _clock().add(Duration(seconds: 1 << exponent)),
@@ -696,12 +715,76 @@ class DirectAttachmentOutbox {
         );
       });
 
+  /// Postpones an entry that could not even be attempted, without spending
+  /// its retry budget.
+  ///
+  /// The media mirror of [MessageOutbox.markDeferred]: an offline device
+  /// never reached the server, so it learned nothing and must not burn the
+  /// eight attempts that exist to stop a genuinely broken upload retrying
+  /// forever.
+  Future<DirectAttachmentOutboxEntry?> markDeferred(String id, String reason) =>
+      _replace(id, (entry) {
+        final deferrals = entry.deferrals + 1;
+        final exponent = min(deferrals - 1, 5);
+        return entry.copyWith(
+          status: DirectAttachmentOutboxStatus.retrying,
+          deferrals: deferrals,
+          nextAttemptAt: _clock().add(Duration(seconds: 1 << exponent)),
+          lastError: reason,
+        );
+      });
+
+  /// Returns entries that only ever failed transiently to the live queue.
+  ///
+  /// `attempts >= maxAttempts` is the structural proof that every failure
+  /// this entry saw was one the client considered worth repeating:
+  /// [markFailed] records a server refusal and never reaches the cap by
+  /// itself. Request ids are deliberately preserved so a resumed upload
+  /// replays against the server ledger instead of duplicating.
+  Future<List<DirectAttachmentOutboxEntry>> reviveDeferredFailures() =>
+      _serialize(() async {
+        await _ensureLoaded();
+        final revived = <DirectAttachmentOutboxEntry>[];
+        for (var index = 0; index < _entries.length; index++) {
+          final entry = _entries[index];
+          if (entry.status != DirectAttachmentOutboxStatus.failed ||
+              entry.attempts < maxAttempts) {
+            continue;
+          }
+          final updated = entry.copyWith(
+            status: DirectAttachmentOutboxStatus.queued,
+            attempts: 0,
+            deferrals: 0,
+            clearNextAttemptAt: true,
+            clearLastError: true,
+          );
+          _entries[index] = updated;
+          revived.add(updated);
+        }
+        if (revived.isEmpty) return revived;
+        try {
+          await _persist();
+        } catch (_) {
+          // The in-memory revival is still useful for this process; the
+          // manifest is rewritten on the next successful mutation.
+        }
+        _notify();
+        return revived;
+      });
+
+  /// Records a refusal the server will give again for the same input.
+  ///
+  /// The attempt counter is clamped below [maxAttempts] on purpose.
+  /// `attempts >= maxAttempts` is reserved as the structural proof that an
+  /// entry became terminal by exhausting its TRANSPORT budget, which is
+  /// what [reviveDeferredFailures] keys on; letting a refusal reach the cap
+  /// would make a blocked or oversized upload resume itself.
   Future<DirectAttachmentOutboxEntry?> markFailed(String id, Object error) =>
       _replace(
         id,
         (entry) => entry.copyWith(
           status: DirectAttachmentOutboxStatus.failed,
-          attempts: entry.attempts + 1,
+          attempts: min(entry.attempts + 1, max(maxAttempts - 1, 0)),
           clearNextAttemptAt: true,
           lastError: error.runtimeType.toString(),
         ),
@@ -715,6 +798,7 @@ class DirectAttachmentOutbox {
         return entry.copyWith(
           status: DirectAttachmentOutboxStatus.queued,
           attempts: 0,
+          deferrals: 0,
           clearNextAttemptAt: true,
           clearLastError: true,
         );

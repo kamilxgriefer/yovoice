@@ -242,6 +242,77 @@ void main() {
       },
     );
 
+    group('offline is not an answer', () {
+      test('a deferral never spends the retry budget, however long the '
+          'outage lasts', () async {
+        final outbox = await outboxWith(maxAttempts: 6);
+        final entry = await enqueueOne(outbox, 'written in a lift');
+
+        OutboxEntry? current;
+        for (var attempt = 0; attempt < 20; attempt++) {
+          current = await outbox.markDeferred(entry.id, 'unavailable:offline');
+        }
+
+        expect(
+          current!.attempts,
+          0,
+          reason: 'no server saw this, so nothing was learned from it',
+        );
+        expect(current.deferrals, 20);
+        expect(current.state, OutboxState.retrying);
+        expect(
+          current.isTerminal,
+          isFalse,
+          reason: 'a minute without network used to park a message for good',
+        );
+        expect(outbox.unsent, hasLength(1));
+      });
+
+      test('reviving returns budget-exhausted entries and leaves refusals '
+          'alone, keeping every requestId', () async {
+        final outbox = await outboxWith(maxAttempts: 2);
+        final exhausted = await enqueueOne(outbox, 'transport gave up');
+        final refused = await enqueueOne(outbox, 'blocked by the server');
+
+        await outbox.markRetry(exhausted.id, 'unavailable:later');
+        await outbox.markRetry(exhausted.id, 'unavailable:later');
+        await outbox.markFailed(refused.id, 'You are blocked.');
+        expect(outbox.failed.map((entry) => entry.id), <String>[
+          exhausted.id,
+          refused.id,
+        ]);
+
+        final revived = await outbox.reviveDeferredFailures();
+
+        expect(revived.map((entry) => entry.id), <String>[exhausted.id]);
+        expect(revived.single.requestId, exhausted.requestId);
+        expect(revived.single.attempts, 0);
+        expect(revived.single.state, OutboxState.pending);
+        expect(
+          outbox.failed.map((entry) => entry.id),
+          <String>[refused.id],
+          reason: 'a refusal is a decision, and reviving it would ignore it',
+        );
+      });
+
+      test('a persisted deferral count survives a reload', () async {
+        final first = await outboxWith();
+        final entry = await enqueueOne(first, 'restored');
+        await first.markDeferred(entry.id, 'unavailable:offline');
+        await first.markDeferred(entry.id, 'unavailable:offline');
+
+        final reopened = MessageOutbox(
+          preferences: await SharedPreferences.getInstance(),
+          baseBackoff: Duration.zero,
+          maxBackoff: Duration.zero,
+        );
+        await reopened.load();
+
+        expect(reopened.entries.single.deferrals, 2);
+        expect(reopened.entries.single.attempts, 0);
+      });
+    });
+
     test(
       'a manual retry resets the attempts but KEEPS the requestId',
       () async {

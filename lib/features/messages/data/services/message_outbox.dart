@@ -47,6 +47,7 @@ class OutboxEntry {
     this.replyToMessageId,
     this.state = OutboxState.pending,
     this.attempts = 0,
+    this.deferrals = 0,
     this.nextAttemptAt,
     this.lastError,
   });
@@ -58,7 +59,22 @@ class OutboxEntry {
   final String text;
   final String? replyToMessageId;
   final OutboxState state;
+
+  /// How much of the retry budget this entry has spent.
+  ///
+  /// Only a failure the SERVER answered spends it. Reaching [MessageOutbox.maxAttempts]
+  /// is therefore a statement about the server, which is what makes
+  /// [OutboxState.failed] mean "a person has to decide about this".
   final int attempts;
+
+  /// How many times delivery was postponed because there was no network.
+  ///
+  /// Separate from [attempts] on purpose: an offline device never reached
+  /// the server, so it learned nothing and must not spend a budget that
+  /// exists to stop a broken send retrying forever. This counter only
+  /// shapes the wait between polls, and it is cleared the moment the
+  /// network returns.
+  final int deferrals;
   final DateTime queuedAt;
   final DateTime? nextAttemptAt;
   final String? lastError;
@@ -77,6 +93,7 @@ class OutboxEntry {
   OutboxEntry copyWith({
     OutboxState? state,
     int? attempts,
+    int? deferrals,
     DateTime? nextAttemptAt,
     String? lastError,
     bool clearNextAttempt = false,
@@ -91,6 +108,7 @@ class OutboxEntry {
       queuedAt: queuedAt,
       state: state ?? this.state,
       attempts: attempts ?? this.attempts,
+      deferrals: deferrals ?? this.deferrals,
       nextAttemptAt: clearNextAttempt
           ? null
           : (nextAttemptAt ?? this.nextAttemptAt),
@@ -107,6 +125,7 @@ class OutboxEntry {
     'replyToMessageId': replyToMessageId,
     'state': state.name,
     'attempts': attempts,
+    'deferrals': deferrals,
     'queuedAt': queuedAt.toIso8601String(),
     'nextAttemptAt': nextAttemptAt?.toIso8601String(),
     'lastError': lastError,
@@ -142,6 +161,9 @@ class OutboxEntry {
     final replyTo = value['replyToMessageId'];
     final lastError = value['lastError'];
     final attempts = value['attempts'];
+    // Additive and tolerant: queues written by builds before the offline
+    // deferral existed simply start at zero.
+    final deferrals = value['deferrals'];
     return OutboxEntry(
       id: id,
       requestId: requestId,
@@ -151,6 +173,7 @@ class OutboxEntry {
       replyToMessageId: replyTo is String ? replyTo : null,
       state: state ?? OutboxState.pending,
       attempts: attempts is int && attempts >= 0 ? attempts : 0,
+      deferrals: deferrals is int && deferrals >= 0 ? deferrals : 0,
       queuedAt: queuedAt,
       nextAttemptAt: DateTime.tryParse('${value['nextAttemptAt']}'),
       lastError: lastError is String ? lastError : null,
@@ -478,6 +501,9 @@ class MessageOutbox {
           updated = current.copyWith(
             state: OutboxState.failed,
             attempts: attempts,
+            // The server answered, so whatever the offline poll counter
+            // held is stale history.
+            deferrals: 0,
             lastError: error,
             clearNextAttempt: true,
           );
@@ -485,6 +511,7 @@ class MessageOutbox {
           updated = current.copyWith(
             state: OutboxState.retrying,
             attempts: attempts,
+            deferrals: 0,
             lastError: error,
             nextAttemptAt: _clock().add(_backoffFor(attempts)),
           );
@@ -494,6 +521,80 @@ class MessageOutbox {
         _notify();
         return updated;
       });
+
+  /// Postpones an entry that could not even be attempted, without spending
+  /// its retry budget.
+  ///
+  /// The budget exists to stop a send the SERVER keeps refusing from
+  /// retrying forever. "There is no network" is not such an answer — no
+  /// server saw the request — so charging it against [maxAttempts] is how
+  /// one or two minutes in a lift used to park a message at "Not sent"
+  /// permanently, with the return of the network doing nothing to revive
+  /// it.
+  ///
+  /// The entry still becomes [OutboxState.retrying] with a
+  /// [OutboxEntry.nextAttemptAt], so `due()`'s ordering guarantee — a later
+  /// message never overtakes an older one in the same conversation — is
+  /// untouched. Only [OutboxEntry.deferrals] grows, and it only widens the
+  /// gap between polls so an offline device does not spin.
+  Future<OutboxEntry?> markDeferred(String id, String reason) =>
+      _serialize(() async {
+        await load();
+        final index = _indexOf(id);
+        if (index < 0) {
+          return null;
+        }
+        final current = _entries[index];
+        final deferrals = current.deferrals + 1;
+        final updated = current.copyWith(
+          state: OutboxState.retrying,
+          deferrals: deferrals,
+          lastError: reason,
+          nextAttemptAt: _clock().add(_backoffFor(deferrals)),
+        );
+        _entries[index] = updated;
+        await _persist();
+        _notify();
+        return updated;
+      });
+
+  /// Returns entries that only ever failed transiently to the live queue.
+  ///
+  /// An entry reaches [OutboxState.failed] by two different roads, and they
+  /// mean opposite things. [markFailed] records a refusal the server gave
+  /// and will give again; it leaves [OutboxEntry.attempts] alone.
+  /// [markRetry] flips to failed only when the budget runs out, so
+  /// `attempts >= maxAttempts` is a structural proof that EVERY failure
+  /// this entry ever saw was one the client considered worth repeating.
+  /// Those, and only those, are safe to resume when the network is back.
+  ///
+  /// The [OutboxEntry.requestId] is deliberately NOT regenerated: it is the
+  /// server's idempotency key, so an attempt that secretly landed replays
+  /// instead of writing a second message. Returns the revived entries.
+  Future<List<OutboxEntry>> reviveDeferredFailures() => _serialize(() async {
+    await load();
+    final revived = <OutboxEntry>[];
+    for (var index = 0; index < _entries.length; index++) {
+      final entry = _entries[index];
+      if (entry.state != OutboxState.failed || entry.attempts < maxAttempts) {
+        continue;
+      }
+      final updated = entry.copyWith(
+        state: OutboxState.pending,
+        attempts: 0,
+        deferrals: 0,
+        clearNextAttempt: true,
+      );
+      _entries[index] = updated;
+      revived.add(updated);
+    }
+    if (revived.isEmpty) {
+      return revived;
+    }
+    await _persist();
+    _notify();
+    return revived;
+  });
 
   /// Records a refusal the server will give again for the same input.
   Future<OutboxEntry?> markFailed(String id, String error) =>
@@ -505,6 +606,7 @@ class MessageOutbox {
         }
         final updated = _entries[index].copyWith(
           state: OutboxState.failed,
+          deferrals: 0,
           lastError: error,
           clearNextAttempt: true,
         );
@@ -528,6 +630,7 @@ class MessageOutbox {
     final updated = _entries[index].copyWith(
       state: OutboxState.pending,
       attempts: 0,
+      deferrals: 0,
       clearNextAttempt: true,
     );
     _entries[index] = updated;

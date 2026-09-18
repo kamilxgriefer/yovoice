@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -523,6 +524,101 @@ void main() {
       expect(queued.single.conversationId, conversationId);
       expect(queued.single.state, OutboxState.retrying);
       expect(queued.single.attempts, 1);
+    });
+
+    test('an outage cannot exhaust the retry budget, and reconnecting '
+        'delivers the same requestId exactly once', () async {
+      // ~1-2 minutes offline used to be enough to park a message at "Not
+      // sent" permanently: every failure incremented `attempts`, six of
+      // them made the entry terminal, and `due()` never picks a terminal
+      // entry up again — so the network coming back did nothing.
+      final outbox = MessageOutbox(
+        preferences: null,
+        capacity: 8,
+        maxAttempts: 6,
+        baseBackoff: Duration.zero,
+        maxBackoff: Duration.zero,
+      );
+      final connectivity = _ScriptedConnectivity();
+      addTearDown(connectivity.dispose);
+      final transport = _TogglingSendFunctions(db, senderId: senderId);
+      final service = MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: transport,
+        outbox: outbox,
+        connectivity: connectivity,
+        attachmentPayloadStore: _EmptyAttachmentPayloadStore(),
+      );
+
+      connectivity.emit(const <ConnectivityResult>[ConnectivityResult.none]);
+      await service.queueTextMessage(
+        conversationId: conversationId,
+        recipientId: recipientId,
+        text: 'written with no bars',
+      );
+      final queuedRequestId = outbox.entries.single.requestId;
+
+      for (var attempt = 0; attempt < 10; attempt++) {
+        await service.flushOutbox();
+      }
+
+      expect(transport.payloads, isEmpty, reason: 'nothing reached a server');
+      final waiting = outbox.entries.single;
+      expect(waiting.attempts, 0);
+      expect(
+        waiting.state,
+        isNot(OutboxState.failed),
+        reason: 'ten failures with no network are still zero answers',
+      );
+
+      transport.online = true;
+      connectivity.emit(const <ConnectivityResult>[ConnectivityResult.wifi]);
+      // The listener revives and drains on the offline->online edge.
+      for (var tick = 0; tick < 8; tick++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(transport.payloads, hasLength(1));
+      expect(
+        transport.payloads.single['requestId'],
+        queuedRequestId,
+        reason: 'the ledger keys on it; a new id would duplicate the message',
+      );
+      expect(outbox.entries, isEmpty);
+    });
+
+    test('a message already parked by an earlier build is revived on '
+        'resume, not left dead', () async {
+      final outbox = MessageOutbox(
+        preferences: null,
+        capacity: 8,
+        maxAttempts: 2,
+        baseBackoff: Duration.zero,
+        maxBackoff: Duration.zero,
+      );
+      final parked = await outbox.enqueue(
+        conversationId: conversationId,
+        recipientId: recipientId,
+        text: 'stranded by Build 30',
+      );
+      await outbox.markRetry(parked.id, 'unavailable:later');
+      await outbox.markRetry(parked.id, 'unavailable:later');
+      expect(outbox.failed, hasLength(1));
+
+      final server = _ServerSendFunctions(db, senderId: senderId);
+      final service = MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: server,
+        outbox: outbox,
+        attachmentPayloadStore: _EmptyAttachmentPayloadStore(),
+      );
+      await service.resumeOutbox();
+
+      expect(server.payloads, hasLength(1));
+      expect(server.payloads.single['requestId'], parked.requestId);
+      expect(outbox.entries, isEmpty);
     });
 
     test('the queued message is delivered when the callable comes back, '
@@ -1256,6 +1352,64 @@ class _ServerSendFunctions implements FirebaseFunctions {
 
     return {'conversationId': conversationId, 'messageId': messageId};
   }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A connectivity source the test drives by hand.
+class _ScriptedConnectivity implements Connectivity {
+  final StreamController<List<ConnectivityResult>> _controller =
+      StreamController<List<ConnectivityResult>>.broadcast();
+  List<ConnectivityResult> _current = const <ConnectivityResult>[
+    ConnectivityResult.none,
+  ];
+
+  void emit(List<ConnectivityResult> value) {
+    _current = value;
+    _controller.add(value);
+  }
+
+  void dispose() => unawaited(_controller.close());
+
+  @override
+  Stream<List<ConnectivityResult>> get onConnectivityChanged =>
+      _controller.stream;
+
+  @override
+  Future<List<ConnectivityResult>> checkConnectivity() async => _current;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Fails the way a device with no network fails until [online] is set, then
+/// behaves exactly like the real server double.
+class _TogglingSendFunctions implements FirebaseFunctions {
+  _TogglingSendFunctions(this.db, {required this.senderId})
+    : _server = _ServerSendFunctions(db, senderId: senderId);
+
+  final FakeFirebaseFirestore db;
+  final String senderId;
+  final _ServerSendFunctions _server;
+  bool online = false;
+
+  List<Map<String, dynamic>> get payloads => _server.payloads;
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) async {
+        if (!online) {
+          throw FirebaseFunctionsException(
+            code: 'unavailable',
+            message: 'SocketException: Failed host lookup: the internet',
+          );
+        }
+        return _server
+            .httpsCallable(name)
+            .call<Object?>(parameters)
+            .then((result) => result.data);
+      });
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
