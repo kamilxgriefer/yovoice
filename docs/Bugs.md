@@ -101,6 +101,64 @@ as `retention.js` already claimed. Still open: nothing verifies the salt at
 deploy time, and no TTL removes a digest — the retention is indefinite for a
 permanent ban, which the website now states plainly instead of promising
 expiry. Owner: ops.
+## FIXED — people you never wrote to hoisted to the top of Chats (2026-09-18)
+
+Tester report via the owner, verbatim: "pokazuje się historia na samej górze
+w czatach ludzi z którymi nie pisał nawet jeszcze, dziwnie ich 'winduje' do
+góry bez sensu". Opened and fixed in source on 2026-09-18 (Build 33
+candidate, commit `78beb43d6312`), with tests that were RED before
+the fix and GREEN after it; not yet verified on a device.
+
+- **Root cause — a conversation root exists for BOTH people from the moment
+  either one looks at the other, and the list sorted every root by
+  `updatedAt`.** `openDirectConversation`
+  (`functions/messaging/direct_integrity.js:1024-1046`) creates the root the
+  first time A opens B from B's profile, the Friends rail or the new-message
+  sheet, with `lastMessage: ""`, `lastMessageSenderId: ""`,
+  `lastMessageSequence: 0`, `createdAt: now`, `updatedAt: now` and no field
+  naming the opener. `MessageService.watchConversations`
+  (`lib/features/messages/data/services/message_service.dart`) streamed every
+  root with the account in `participantIds` and sorted by `updatedAt`, so B
+  got a "Start a conversation" row for A above every real thread — on the
+  Chats list and on Home's recent-chats rail, which takes the first three of
+  the same stream. Each further person who looked (or each friend the tester
+  tapped and backed out of) landed at the top the same way. The server bumps
+  `updatedAt` only on message events — sending text or media
+  (`direct_integrity.js:1245-1251`, `:1786-1792`), editing or deleting the
+  newest message (`:1936-1939`, `:1958-1961`) and an admin deletion
+  (`functions/admin/messages.js:181-186`); typing (`:2824`), read cursors
+  (`:2594`), archive/mute (`:2091`), delete-for-me (`:2329`), reactions and
+  calls never touch it — so the promotion came from creation, not from later
+  heartbeats.
+- **Fix (client only, no schema change).** `Conversation.hasMessages`
+  (any of `lastMessage`, `lastMessageSenderId`, `lastMessageSequence`) and
+  `Conversation.lastActivityAt` (`updatedAt` with messages, `createdAt`
+  without) in `lib/features/messages/data/models/conversation.dart`;
+  `watchConversations` hides message-less roots and sorts with
+  `Conversation.compareByRecentActivity`. The one exception is the empty
+  thread THIS account opened from THIS device: the root records no opener,
+  so `DirectConversationOpenIntents.markOpenedHere` keeps an in-memory,
+  account-scoped set of ids that `openOrCreateConversation` fills on success
+  (callable and legacy paths), and the stream combines with it so the thread
+  appears the moment the open completes. The set is deliberately in-memory:
+  after a restart an own empty thread drops out of the list until someone
+  writes; it is reachable again from the person's profile. Chats tiles and
+  the new-message sheet's Recent section order by the same key; unread
+  badges, mute, archive, search and empty states are untouched, and Home's
+  rail inherits the behaviour through the shared stream. Tests:
+  `test/conversation_visibility_ordering_test.dart` (service order and
+  exclusion, both open paths, deleted/archived filters unchanged, the
+  locally-opened stream, sort-key unit cases, Firestore parsing) and
+  `test/messages_screen_empty_thread_visibility_test.dart` (Chats at phone,
+  tablet and desktop widths, Home rail, empty state). Mutation proof: with
+  the visibility filter removed 9 of the 14 tests fail; with the old
+  `updatedAt` sort restored the 5 ordering assertions fail; both restored
+  and the suites are 14/14 on the fixed tree.
+- **Backend follow-up (recommendation, not done here):**
+  `openDirectConversation` should not have to create a root the non-opener
+  can see — either write `lastMessageAt` only when a message lands and let
+  the list query on it, or record `openedBy` on the root so clients need no
+  local memory of who opened what. Until then the client rule above holds.
 
 ## FIXED — reactions on photo, video and GIF bubbles in direct chats (2026-09-18)
 
