@@ -1,6 +1,5 @@
 const {
   assertLedgerReplay,
-  assertNotBlocked,
   consumeRateLimit,
   fail,
   isValidOpaqueUid,
@@ -441,7 +440,6 @@ function createProfileMediaService({
       ] = await transactionGetAll(transaction, ...references);
       activeProfileData(caller, "Your");
       const targetData = activeProfileData(target, "The selected");
-      assertNotBlocked(callerBlock, targetBlock);
       const visibility = profileVisibilityOf(targetData);
       const admitted = visibility === "public" ||
         (visibility === "friends" &&
@@ -451,10 +449,21 @@ function createProfileMediaService({
         fail("permission-denied", "This profile image is not available.");
       }
       const canonical = canonicalProfileMediaDocument(media, userId);
+      // A block in either direction answers exactly like "no media". The
+      // `assertNotBlocked` refusal that used to sit above the visibility gate
+      // reached the blocked party as a distinct failed-precondition ("because
+      // of a block"), which disclosed a list that users/{uid}/blocked keeps
+      // owner-only, and it recurred on every mount of a blocked avatar because
+      // the client caches `available: false` but never a thrown error. The
+      // check sits after the visibility gate on purpose: a blocked non-friend
+      // of a friends-only profile must receive the same permission-denied an
+      // unblocked non-friend gets, or the 200-versus-403 difference would
+      // disclose the block by itself.
+      const blocked = callerBlock.exists || targetBlock.exists;
       return {
         checkedAtMs: timing.nowMs,
         kind,
-        media: canonical[kind],
+        media: blocked ? null : canonical[kind],
         revision: canonical.revision,
         userId,
         visibility,

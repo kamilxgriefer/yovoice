@@ -555,17 +555,167 @@ test("profile visibility, exact bilateral friendship and both blocks gate grants
   );
   assert.equal(result.available, true);
 
+  // A block in either direction is answered as "no media" (200,
+  // available: false) rather than a refusal, so the blocked party cannot
+  // tell a block from a missing photo. The dedicated block tests below
+  // pin the exact shape.
   await db.doc(`users/${B}/blocked/${A}`).set({ blocked: true });
-  await assert.rejects(
-    service().getProfileMediaAccess(request(B, { userId: A, kind: "avatar" })),
-    (error) => error.code === "failed-precondition",
+  assert.deepEqual(
+    await service().getProfileMediaAccess(
+      request(B, { userId: A, kind: "avatar" }),
+    ),
+    negativeGrant(),
   );
   await db.doc(`users/${B}/blocked/${A}`).delete();
   await db.doc(`users/${A}/blocked/${B}`).set({ blocked: true });
-  await assert.rejects(
-    service().getProfileMediaAccess(request(B, { userId: A, kind: "avatar" })),
-    (error) => error.code === "failed-precondition",
+  assert.deepEqual(
+    await service().getProfileMediaAccess(
+      request(B, { userId: A, kind: "avatar" }),
+    ),
+    negativeGrant(),
   );
+});
+
+function negativeGrant() {
+  return {
+    schemaVersion: 1,
+    available: false,
+    expiresAtMillis: nowMs + 30_000,
+  };
+}
+
+async function publishMedia({
+  kind = "avatar",
+  uploadId = "a".repeat(32),
+  generation = "1001",
+} = {}) {
+  await reserveAndPut({ kind, uploadId, generation });
+  await service().finalizeProfileMediaUpload(
+    request(A, { uploadId, objectGeneration: generation }),
+  );
+}
+
+async function refusalOf(promise) {
+  try {
+    await promise;
+  } catch (error) {
+    return { code: error.code, message: error.message };
+  }
+  return null;
+}
+
+test("a caller blocked by the target gets the no-media grant, not an error", async () => {
+  await publishMedia();
+  const open = await service().getProfileMediaAccess(
+    request(B, { userId: A, kind: "avatar" }),
+  );
+  assert.equal(open.available, true);
+
+  await db.doc(`users/${A}/blocked/${B}`).set({ blocked: true });
+  const signedBefore = storage.signed.length;
+  const readsBefore = storage.metadataReads.length;
+  const result = await service().getProfileMediaAccess(
+    request(B, { userId: A, kind: "avatar" }),
+  );
+  assert.deepEqual(result, negativeGrant());
+  assert.equal(storage.signed.length, signedBefore);
+  assert.equal(storage.metadataReads.length, readsBefore);
+});
+
+test("a caller who blocked the target gets the same no-media grant", async () => {
+  await publishMedia();
+  const open = await service().getProfileMediaAccess(
+    request(B, { userId: A, kind: "avatar" }),
+  );
+  assert.equal(open.available, true);
+
+  await db.doc(`users/${B}/blocked/${A}`).set({ blocked: true });
+  const signedBefore = storage.signed.length;
+  const readsBefore = storage.metadataReads.length;
+  const result = await service().getProfileMediaAccess(
+    request(B, { userId: A, kind: "avatar" }),
+  );
+  assert.deepEqual(result, negativeGrant());
+  assert.equal(storage.signed.length, signedBefore);
+  assert.equal(storage.metadataReads.length, readsBefore);
+});
+
+test("a block answers byte-for-byte like a target without media", async () => {
+  await publishMedia({ kind: "avatar", uploadId: "a".repeat(32) });
+  await publishMedia({
+    kind: "banner",
+    uploadId: "b".repeat(32),
+    generation: "1002",
+  });
+  for (const kind of ["avatar", "banner"]) {
+    // C is public and active but has no profileMedia record at all.
+    const noMedia = await service().getProfileMediaAccess(
+      request(B, { userId: C, kind }),
+    );
+    assert.equal(noMedia.available, false);
+
+    await db.doc(`users/${A}/blocked/${B}`).set({ blocked: true });
+    const blockedByTarget = await service().getProfileMediaAccess(
+      request(B, { userId: A, kind }),
+    );
+    await db.doc(`users/${A}/blocked/${B}`).delete();
+    await db.doc(`users/${B}/blocked/${A}`).set({ blocked: true });
+    const blockedByCaller = await service().getProfileMediaAccess(
+      request(B, { userId: A, kind }),
+    );
+    await db.doc(`users/${B}/blocked/${A}`).delete();
+
+    assert.equal(JSON.stringify(blockedByTarget), JSON.stringify(noMedia));
+    assert.equal(JSON.stringify(blockedByCaller), JSON.stringify(noMedia));
+    assert.deepEqual(Object.keys(blockedByTarget), Object.keys(noMedia));
+    assert.deepEqual(Object.keys(blockedByCaller), Object.keys(noMedia));
+    assert.equal(noMedia.expiresAtMillis, nowMs + 30_000);
+  }
+});
+
+test("a block does not weaken the visibility or account gates", async () => {
+  await publishMedia();
+  const call = () =>
+    service().getProfileMediaAccess(request(B, { userId: A, kind: "avatar" }));
+  const compareRefusal = async (expectedCode) => {
+    await db.doc(`users/${A}/blocked/${B}`).delete();
+    const unblocked = await refusalOf(call());
+    await db.doc(`users/${A}/blocked/${B}`).set({ blocked: true });
+    const blocked = await refusalOf(call());
+    assert.equal(unblocked?.code, expectedCode);
+    assert.deepEqual(blocked, unblocked);
+  };
+
+  await db
+    .doc(`users/${A}`)
+    .set({ profileVisibility: "friends" }, { merge: true });
+  await compareRefusal("permission-denied");
+  await db
+    .doc(`users/${A}`)
+    .set({ profileVisibility: "private" }, { merge: true });
+  await compareRefusal("permission-denied");
+  await db
+    .doc(`users/${A}`)
+    .set({ profileVisibility: "public", disabled: true }, { merge: true });
+  await compareRefusal("permission-denied");
+  await db.doc(`users/${A}`).set(
+    { disabled: false, authDeletedAt: Timestamp.fromMillis(nowMs) },
+    { merge: true },
+  );
+  await compareRefusal("permission-denied");
+  await db.doc(`users/${A}`).delete();
+  await compareRefusal("not-found");
+
+  // The caller's own inactive account is refused before any block is read.
+  await db.doc(`users/${A}`).set({
+    uid: A,
+    displayName: A,
+    profileVisibility: "public",
+    banned: false,
+    disabled: false,
+  });
+  await db.doc(`users/${B}`).set({ disabled: true }, { merge: true });
+  await compareRefusal("permission-denied");
 });
 
 test("private media is self-only and inactive callers or targets fail closed", async () => {
