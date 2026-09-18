@@ -12194,3 +12194,56 @@ only behavioural defence is to check the first real run in Cloud Logging.
   [Firebase.md](Firebase.md#a-fieldoverrides-entry-replaces-automatic-single-field-indexing).
 - CI picks the new test up automatically — it matches
   `test/*.test.js`, which `npm --prefix functions test` runs.
+
+## ADR-199: A long-press context action makes every tooltip inside it hover-only
+
+**Status:** Accepted (2026-09-18). Implemented in
+`lib/shared/widgets/interactions/accessible_context_action.dart`; proven by
+`test/chat_media_reactions_test.dart` and the tooltip case in
+`test/accessibility_context_action_test.dart`.
+
+**Context.** Direct-chat bubbles open their actions (reactions, reply, edit,
+delete, report) from `AccessibleContextAction`, a long-press / right-click /
+keyboard wrapper around the whole bubble. Photo, video and GIF bubbles carry
+Material tooltips on their inner controls ("View photo", "Open video full
+screen", "Retry"). Flutter's `Tooltip` is not passive on touch: on every
+touch, stylus or trackpad pointer-down it registers its own
+`LongPressGestureRecognizer` (`widgets/raw_tooltip.dart`), and because it sits
+deeper in the hit-test path its deadline fires before the outer one and wins
+the arena. The bubble's long-press was rejected, so the owner could not react
+to a photo or a video on a phone — while a mouse, which a tooltip serves by
+hover, never hit the problem. Nothing in the actions sheet, the client
+service or `setDirectMessageReaction` gates by message type.
+
+**Decision.** `AccessibleContextAction` wraps its child in
+`TooltipTheme(triggerMode: TooltipTriggerMode.manual)`. Inside a long-press
+context action a tooltip shows on mouse hover and stays in the semantics tree,
+but never claims a touch long-press. Widgets nested in a context action need
+no per-site `triggerMode`, and tooltips outside a context action keep
+Material's default long-press reveal. Rejected: removing the tooltips (loses a
+working desktop hint); a per-call-site `triggerMode` on `AccessibleTapRegion`
+plus a hand-rolled `Tooltip` around the video's `IconButton` (fixes three sites
+today and misses the next control someone adds to a bubble); a shorter outer
+long-press deadline (a race, not a rule).
+
+**Reasoning.** The widget that owns the long-press is the one place that knows
+a tooltip below it cannot also own it. A theme override is the mechanism
+Flutter provides for exactly this scoping — `Tooltip` resolves
+`widget.triggerMode ?? TooltipTheme.triggerMode ?? longPress` — it is one
+declaration, and it turns a class of defect into a non-event.
+
+**Consequences.**
+
+- A long-press anywhere on any bubble — photo, video (including its
+  full-screen control), voice, GIF, text — opens the same actions sheet. Tap
+  still opens the media; hover still shows the hint; right-click and the
+  keyboard still open the sheet.
+- On touch, a control inside a bubble no longer reveals its tooltip on
+  long-press. That reveal was never reachable without losing the bubble's
+  action, so nothing a person could do is lost. Screen readers keep the text:
+  `Tooltip` still contributes `SemanticsProperties.tooltip`.
+- `club_chat_screen.dart` and `room_chat_sheet.dart` use the same wrapper and
+  inherit the rule; their bubbles carry no tooltips today, so nothing changes
+  there.
+- A tooltip-bearing control that must keep a touch long-press reveal must not
+  live inside a context action; it belongs in the actions sheet or an overflow.

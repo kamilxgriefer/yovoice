@@ -75,7 +75,21 @@ class _AccessibleContextActionState extends State<AccessibleContextAction> {
             onSecondaryTap: _open,
             child: Stack(
               children: [
-                widget.child,
+                // This widget owns the long-press. A Tooltip anywhere below
+                // it would otherwise claim every touch long-press for itself:
+                // RawTooltip registers its own LongPressGestureRecognizer on
+                // pointer down, deeper in the hit-test path, so its deadline
+                // fires first and wins the arena — which is how a photo
+                // bubble's "View photo" tooltip hid message reactions on
+                // phones. Hover-only tooltips keep the desktop affordance and
+                // the semantics tooltip, and give the touch long-press back
+                // to the action that owns it.
+                TooltipTheme(
+                  data: TooltipTheme.of(
+                    context,
+                  ).copyWith(triggerMode: TooltipTriggerMode.manual),
+                  child: widget.child,
+                ),
                 Positioned.fill(
                   child: IgnorePointer(
                     child: AnimatedContainer(

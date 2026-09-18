@@ -5,6 +5,48 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED — reactions on photo, video and GIF bubbles in direct chats (2026-09-18)
+
+Owner report, verbatim: "w czatach znajomych, na wiadomość możesz dodać
+reakcję a na zdjęcie i filmy nie można". Fixed in source on 2026-09-18, with
+tests that were RED before the fix and are GREEN after it.
+
+- **Root cause — a Tooltip inside the bubble won the long-press arena; not a
+  type gate and not the server.** `setDirectMessageReaction`
+  (`functions/messaging/direct_integrity.js`) accepts every canonical,
+  non-deleted message type, and `_MessageActionsSheet` gates only *Edit* by
+  type. The gesture was the defect: `MessageBubble` opens its actions from
+  `AccessibleContextAction`, a `GestureDetector.onLongPress` around the whole
+  bubble. A text bubble is plain content, so the long-press reached it. A
+  photo bubble wraps its tap target in `AccessibleTapRegion(tooltip: 'View
+  photo')`, the video bubble's full-screen `IconButton` carries a tooltip,
+  and a GIF that failed to load carries a "Retry" tooltip — and Flutter's
+  `Tooltip` (`widgets/raw_tooltip.dart`, `_handlePointerDown`) registers its
+  own `LongPressGestureRecognizer` on every touch, stylus and trackpad
+  pointer-down. It sits deeper in the hit-test path, so its deadline timer
+  starts first, fires first and wins the arena; the bubble's recognizer was
+  rejected and the person saw a "View photo" hint instead of the reaction
+  row. A mouse never triggers that path (the tooltip hovers instead), which is
+  why desktop right-click kept working while the phone did not. Fix
+  ([ADR-199](Decisions.md#adr-199-a-long-press-context-action-makes-every-tooltip-inside-it-hover-only)):
+  `AccessibleContextAction` wraps its child in a `TooltipTheme` with
+  `triggerMode: TooltipTriggerMode.manual`, so every tooltip nested inside a
+  long-press context action is hover-only — the hint still shows on hover,
+  the semantics tooltip stays, and the touch long-press goes back to the
+  action that owns it. Nothing outside a context action changes. Tests:
+  `test/chat_media_reactions_test.dart` (photo; video full-screen and play
+  controls; voice; a failed GIF; the tap still opens the photo full screen;
+  mouse hover still shows the hint and right-click still opens the sheet) and
+  the tooltip case in `test/accessibility_context_action_test.dart`. With the
+  wrapper removed, four of the eight fail by finding the tooltip text where
+  the sheet should be. UNVERIFIED on a device: the build machine was busy
+  with the Build 31 release, so the proof is the gesture arena in widget
+  tests, not a phone.
+- **Not reachable, by design and unchanged:** the full-screen viewer
+  (`direct_media_fullscreen_viewer.dart`) offers no reaction control — a
+  person closes it and long-presses the bubble. The queued card of a photo or
+  video still uploading has no actions either; it is not a message yet.
+
 ## FIXED — publishing, the Voice Moments feed and new chats were 100 % dead for two days (2026-09-14 → 2026-09-16)
 
 **P0, production; repaired by the four waves that ran 2026-09-16
