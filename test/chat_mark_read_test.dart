@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -265,6 +266,71 @@ void main() {
       reason: 'a failed mark is retried on the next relevant snapshot',
     );
     expect(find.byType(SnackBar), findsNothing);
+  });
+
+  testWidgets('a permanent refusal is not retried on a timer', (tester) async {
+    // Against one of the non-canonical conversation roots the callable
+    // answers `permission-denied` every time. The old ladder saturated at
+    // 30 s with no cap, so an open chat called
+    // `markDirectConversationRead` forever and spent the integrity limiter
+    // for as long as it stayed open.
+    final service = _StubMessageService(
+      markReadFailure: FirebaseFunctionsException(
+        code: 'permission-denied',
+        message: 'The canonical conversation is missing.',
+      ),
+    );
+    await tester.pumpWidget(host(service));
+    await tester.pump();
+
+    service.emit([messageWith(id: 'm1', content: 'unseen')]);
+    await tester.pumpAndSettle();
+    expect(service.markReadCalls, 1);
+
+    // Five minutes covers the whole old ladder (1+2+4+8+16+30 s) plus eight
+    // more 30 s rounds.
+    for (var minute = 0; minute < 10; minute++) {
+      await tester.pump(const Duration(seconds: 30));
+    }
+
+    expect(
+      service.markReadCalls,
+      1,
+      reason: 'a refusal repeated on a timer is still a refusal',
+    );
+    expect(find.byType(SnackBar), findsNothing);
+  });
+
+  testWidgets('an inconclusive answer is still retried, and the ladder is '
+      'bounded', (tester) async {
+    final service = _StubMessageService(
+      markReadFailure: FirebaseFunctionsException(
+        code: 'unavailable',
+        message: 'try later',
+      ),
+    );
+    await tester.pumpWidget(host(service));
+    await tester.pump();
+
+    service.emit([messageWith(id: 'm1', content: 'unseen')]);
+    await tester.pumpAndSettle();
+    expect(service.markReadCalls, 1);
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(
+      service.markReadCalls,
+      2,
+      reason: 'unavailable says nothing about the request; replay it',
+    );
+
+    // Six rungs is the whole ladder. Seven attempts in total, and then it
+    // stops rather than looping on 30 s forever.
+    for (var round = 0; round < 12; round++) {
+      await tester.pump(const Duration(seconds: 31));
+      await tester.pumpAndSettle();
+    }
+    expect(service.markReadCalls, 7);
   });
 
   testWidgets('snapshot bursts coalesce behind one in-flight mark-read', (

@@ -23,6 +23,8 @@ import 'package:yovoice/features/media/data/services/gif_message_controller.dart
 import 'package:yovoice/features/media/data/services/gif_transport.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_gif_send_status.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/models/premium_messaging_privacy.dart';
 import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
@@ -86,6 +88,7 @@ class ChatScreen extends StatefulWidget {
     this.profilePreviewAction,
     this.gifService,
     this.gifMessageInvoker,
+    this.relationshipStatusResolver,
     super.key,
   });
 
@@ -118,6 +121,13 @@ class ChatScreen extends StatefulWidget {
   /// Deterministic seam for navigation regression tests. Production leaves
   /// this null and opens the canonical profile preview.
   final Future<void> Function()? profilePreviewAction;
+
+  /// How an empty thread finds out whether the two people are actually
+  /// friends. Production leaves this null and uses
+  /// [FriendService.getRelationshipStatus] — four plain Firestore `get`s,
+  /// no callable and no friend-discovery quota, so the empty state can
+  /// never re-trigger the RC-11 rate limit.
+  final RelationshipStatusInvoker? relationshipStatusResolver;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -182,6 +192,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _profilePreviewOpen = false;
   bool _sharedMediaOpen = false;
   bool _isMuted = false;
+
+  /// Whether the two people are friends: true, false, or null while unknown.
+  bool? _areFriends;
+  bool _relationshipRequested = false;
+  StreamSubscription<Conversation?>? _conversationSubscription;
   bool _typingAnnounced = false;
   bool _hideTyping = false;
   bool _typingUpdateInFlight = false;
@@ -273,6 +288,15 @@ class _ChatScreenState extends State<ChatScreen> {
       otherUserId: widget.otherUserId,
     );
     _presence = _service.watchUserPresence(widget.otherUserId);
+    try {
+      _conversationSubscription = _service
+          .watchConversation(widget.conversationId)
+          .listen(_handleConversation, onError: (Object _) {});
+    } catch (_) {
+      // Preview/test routes without a Firebase app keep the local default;
+      // the toggle still works, it simply has nothing to confirm against.
+      _conversationSubscription = null;
+    }
     _messagesSubscription = _messages.listen(
       _handleMessagesDelivered,
       // The StreamBuilder already renders the failure state; this
@@ -320,6 +344,7 @@ class _ChatScreenState extends State<ChatScreen> {
     unawaited(_messagesSubscription?.cancel());
     unawaited(_premiumPrivacySubscription?.cancel());
     unawaited(_profileSubscription?.cancel());
+    unawaited(_conversationSubscription?.cancel());
     unawaited(_outboxSubscription?.cancel());
     unawaited(_deliveredSubscription?.cancel());
     unawaited(_mediaOutboxSubscription?.cancel());
@@ -605,7 +630,17 @@ class _ChatScreenState extends State<ChatScreen> {
           // retry instead of pinning the failed message as already marked.
           if (_newestMarkedMessageId == attemptedNewestMessageId) {
             _newestMarkedMessageId = null;
-            _scheduleMarkReadRetry();
+            // Only an inconclusive answer is worth another timer. Against a
+            // permanent refusal — `permission-denied` on one of the
+            // non-canonical conversation roots, say — the old unbounded
+            // ladder saturated at 30 s and called
+            // `markDirectConversationRead` forever, spending the integrity
+            // limiter for as long as the chat stayed open. A snapshot with
+            // genuinely newer mail still retries, which is the only signal
+            // that anything changed.
+            if (MessageService.isAmbiguousTransportFailure(error)) {
+              _scheduleMarkReadRetry();
+            }
           }
 
           // This is background bookkeeping, not an action the person can
@@ -631,6 +666,12 @@ class _ChatScreenState extends State<ChatScreen> {
       Duration(seconds: 16),
       Duration(seconds: 30),
     ];
+    // The ladder is the budget, not just the spacing. Six inconclusive
+    // answers in a row is no longer "the network hiccuped"; a seventh
+    // attempt on a 30 s loop buys nothing and keeps costing quota. Receipts
+    // stay silent in the UI either way — they are background bookkeeping,
+    // not something the reader can repair from inside the conversation.
+    if (_markReadRetryAttempt >= delays.length) return;
     final delay = delays[_markReadRetryAttempt.clamp(0, delays.length - 1)];
     _markReadRetryAttempt++;
     _markReadRetryTimer = Timer(delay, () {
@@ -962,7 +1003,13 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (sheetContext) {
         return _MessageActionsSheet(
           isMine: message.isMine(_currentUserId),
-          canEdit: message.type != MessageType.gif,
+          // Text only. `mutateMessage`
+          // (`functions/messaging/direct_integrity.js`) refuses anything
+          // else with `failed-precondition` "Only text messages can be
+          // edited." — production shows editdirectmessage answering 400 —
+          // so offering Edit on a photo, video or voice message is offering
+          // a control that cannot work.
+          canEdit: message.type == MessageType.text,
           onReaction: (emoji) {
             Navigator.pop(sheetContext);
             unawaited(_toggleReaction(message, emoji));
@@ -1177,18 +1224,34 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Applies the conversation root's own view of this account's state.
+  ///
+  /// `Conversation.mutedBy` is the truth and always has been; the screen
+  /// simply never read it, so every open started at "not muted" and the
+  /// first tap of Mute on an already-muted thread un-muted it.
+  void _handleConversation(Conversation? conversation) {
+    if (!mounted || conversation == null) return;
+    final muted = conversation.isMutedFor(_currentUserId);
+    if (muted == _isMuted) return;
+    setState(() => _isMuted = muted);
+  }
+
   Future<void> _toggleMute() async {
+    final previous = _isMuted;
+    final next = !previous;
+    // Optimistic: the control answers the tap immediately and the document
+    // stream confirms (or, on failure below, the previous value is restored).
+    if (mounted) setState(() => _isMuted = next);
     try {
       await _service.setConversationMuted(
         conversationId: widget.conversationId,
-        muted: !_isMuted,
+        muted: next,
       );
 
       if (mounted) {
-        setState(() => _isMuted = !_isMuted);
         final copy = AppLocalizations.of(context);
         _showMessage(
-          _isMuted
+          next
               ? copy.text(
                   'Conversation muted.',
                   'Powiadomienia dla rozmowy zostały wyciszone.',
@@ -1201,6 +1264,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (_) {
       if (mounted) {
+        setState(() => _isMuted = previous);
         _showMessage(
           AppLocalizations.of(context).text(
             'Could not update notifications.',
@@ -1209,6 +1273,44 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     }
+  }
+
+  /// Reads the relationship once, the first time this thread renders empty.
+  ///
+  /// Deliberately lazy: a populated thread never asks, so the ordinary case
+  /// costs nothing. `getRelationshipStatus` is four plain Firestore `get`s,
+  /// so this cannot spend the friend-discovery limiter behind RC-11.
+  void _ensureRelationshipResolved() {
+    if (_relationshipRequested) return;
+    _relationshipRequested = true;
+    final RelationshipStatusInvoker resolve;
+    try {
+      resolve =
+          widget.relationshipStatusResolver ??
+          FriendService(
+            firestore: _firestore,
+            auth: _auth,
+          ).getRelationshipStatus;
+    } catch (error) {
+      // Preview/test routes may have no Firebase app at all. Unknown stays
+      // unknown, exactly as it does for a lookup that fails.
+      debugPrint('ChatScreen relationship lookup unavailable: $error');
+      return;
+    }
+    unawaited(
+      resolve(widget.otherUserId)
+          .then((status) {
+            if (!mounted) return;
+            setState(
+              () => _areFriends = status == FriendRelationshipStatus.friends,
+            );
+          })
+          .catchError((Object error) {
+            // Unknown stays unknown: the empty state says nothing about the
+            // relationship rather than guessing one.
+            debugPrint('ChatScreen relationship lookup failed: $error');
+          }),
+    );
   }
 
   Future<void> _archiveConversation() async {
@@ -1651,12 +1753,14 @@ class _ChatScreenState extends State<ChatScreen> {
                       if (messages.isEmpty &&
                           queuedMessages.isEmpty &&
                           queuedMedia.isEmpty) {
+                        _ensureRelationshipResolved();
                         return _EmptyConversation(
                           userId: widget.otherUserId,
                           name: _otherDisplayName,
                           photoUrl: _otherPhotoUrl,
                           mediaRevision: _otherProfileUpdatedAt,
                           profileMediaService: _profileMediaService,
+                          areFriends: _areFriends,
                         );
                       }
 
@@ -2027,12 +2131,18 @@ class _ChatHeader extends StatelessWidget {
                               color: palette.textPrimary,
                             ),
                             const SizedBox(width: 12),
-                            Text(
-                              copy.text(
-                                'Shared media',
-                                'Udostępnione multimedia',
+                            // Flexible on every label, as the destructive
+                            // item below already was: the Polish strings are
+                            // half again as long as the English ones and
+                            // overflowed this 256px menu.
+                            Flexible(
+                              child: Text(
+                                copy.text(
+                                  'Shared media',
+                                  'Udostępnione multimedia',
+                                ),
+                                style: TextStyle(color: palette.textPrimary),
                               ),
-                              style: TextStyle(color: palette.textPrimary),
                             ),
                           ],
                         ),
@@ -2048,11 +2158,13 @@ class _ChatHeader extends StatelessWidget {
                               color: palette.textPrimary,
                             ),
                             const SizedBox(width: 12),
-                            Text(
-                              muted
-                                  ? copy.text('Unmute', 'Włącz powiadomienia')
-                                  : copy.text('Mute', 'Wycisz'),
-                              style: TextStyle(color: palette.textPrimary),
+                            Flexible(
+                              child: Text(
+                                muted
+                                    ? copy.text('Unmute', 'Włącz powiadomienia')
+                                    : copy.text('Mute', 'Wycisz'),
+                                style: TextStyle(color: palette.textPrimary),
+                              ),
                             ),
                           ],
                         ),
@@ -2067,9 +2179,11 @@ class _ChatHeader extends StatelessWidget {
                               color: palette.textPrimary,
                             ),
                             const SizedBox(width: 12),
-                            Text(
-                              copy.text('Archive', 'Archiwizuj'),
-                              style: TextStyle(color: palette.textPrimary),
+                            Flexible(
+                              child: Text(
+                                copy.text('Archive', 'Archiwizuj'),
+                                style: TextStyle(color: palette.textPrimary),
+                              ),
                             ),
                           ],
                         ),
@@ -2213,6 +2327,7 @@ class _EmptyConversation extends StatelessWidget {
     required this.photoUrl,
     required this.mediaRevision,
     this.profileMediaService,
+    this.areFriends,
   });
 
   final String userId;
@@ -2220,6 +2335,10 @@ class _EmptyConversation extends StatelessWidget {
   final String photoUrl;
   final Object? mediaRevision;
   final ProfileMediaService? profileMediaService;
+
+  /// True, false, or null while the relationship is unknown or its lookup
+  /// failed. Only `true` earns a line; a negative claim is never drawn.
+  final bool? areFriends;
 
   @override
   Widget build(BuildContext context) {
@@ -2259,18 +2378,26 @@ class _EmptyConversation extends StatelessWidget {
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    copy.text(
-                      'You are friends on YO Voice',
-                      'Jesteście znajomymi w YO Voice',
+                  // DM privacy defaults to `everyone` and
+                  // `profile_preview_sheet.dart` opens a thread with a
+                  // non-friend, so this line was routinely false. State it
+                  // only when the relationship was actually read and came
+                  // back `friends`; say nothing while it is unknown, and
+                  // never assert the negative.
+                  if (areFriends == true) ...<Widget>[
+                    const SizedBox(height: 6),
+                    Text(
+                      copy.text(
+                        'You are friends on YO Voice',
+                        'Jesteście znajomymi w YO Voice',
+                      ),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 13,
+                      ),
                     ),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontSize: 13,
-                    ),
-                  ),
+                  ],
                   const SizedBox(height: 18),
                   Text(
                     copy.text('Say hello 👋', 'Przywitaj się 👋'),

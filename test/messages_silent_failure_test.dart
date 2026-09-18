@@ -114,6 +114,7 @@ void main() {
     Locale locale = const Locale('en'),
     ProfileService? profileService,
     DateTime? otherProfileUpdatedAt,
+    RelationshipStatusInvoker? relationshipStatusResolver,
   }) async {
     useSurface(tester, size);
     await tester.pumpWidget(
@@ -134,6 +135,7 @@ void main() {
                 mockUser: MockUser(uid: currentUserId),
               ),
               profileService: profileService,
+              relationshipStatusResolver: relationshipStatusResolver,
             ),
           ),
         ),
@@ -307,8 +309,13 @@ void main() {
         _StubMessageService(messages: const <Message>[]),
         size: narrow,
         theme: AppTheme.lightTheme,
+        // The friendship line is no longer hard-coded: it is drawn only for
+        // a relationship this screen actually read back as `friends`.
+        relationshipStatusResolver: (_) async =>
+            FriendRelationshipStatus.friends,
       );
       expect(find.text('You are friends on YO Voice'), findsOneWidget);
+      expect(find.text('Say hello 👋'), findsOneWidget);
       expect(tester.takeException(), isNull);
 
       await tester.pumpWidget(host(const SizedBox.shrink()));

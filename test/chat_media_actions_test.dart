@@ -19,10 +19,12 @@ import 'package:yovoice/features/messages/data/services/direct_attachment_payloa
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/shared_media_screen.dart';
+import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_picked_video_inspector.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 
 void main() {
   const currentUserId = 'me';
@@ -507,6 +509,74 @@ void main() {
       },
     );
   }
+
+  testWidgets('Edit is offered on your own text message and on nothing else', (
+    tester,
+  ) async {
+    // `mutateMessage` refuses anything but text with `failed-precondition`
+    // "Only text messages can be edited." — production shows
+    // editdirectmessage answering 400 — so Edit on a photo or a voice
+    // message was a control that could only fail.
+    Message own(String id, MessageType type) => Message(
+      id: id,
+      conversationId: 'conversation',
+      senderId: currentUserId,
+      type: type,
+      content: type == MessageType.text ? 'hello' : '',
+      mediaUrl: type == MessageType.text ? null : 'fixture://$id',
+      sentAt: DateTime.utc(2026, 9, 16, 12),
+      readBy: const <String>[],
+      reactions: const <String, String>{},
+      durationSeconds: type == MessageType.voice ? 4 : null,
+    );
+
+    for (final testCase in <({MessageType type, bool editable})>[
+      (type: MessageType.text, editable: true),
+      (type: MessageType.voice, editable: false),
+      (type: MessageType.image, editable: false),
+      (type: MessageType.video, editable: false),
+    ]) {
+      final service = _ActionMessageService(
+        firestore,
+        auth,
+        messageStream: Stream<List<Message>>.value(<Message>[
+          own('m-${testCase.type.name}', testCase.type),
+        ]),
+      );
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      await tester.pumpWidget(host(service));
+      await tester.pumpAndSettle();
+
+      // Invoke the bubble's own context action rather than aiming a gesture
+      // at it: an outgoing bubble is right-aligned inside a full-width
+      // Align, so the finder's centre lands in its padding.
+      tester
+          .widget<AccessibleContextAction>(
+            find
+                .descendant(
+                  of: find.byType(MessageBubble),
+                  matching: find.byType(AccessibleContextAction),
+                )
+                .first,
+          )
+          .onOpen!();
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Delete'),
+        findsOneWidget,
+        reason: 'the sheet for ${testCase.type.name} did open',
+      );
+      expect(
+        find.text('Edit'),
+        testCase.editable ? findsOneWidget : findsNothing,
+        reason: 'Edit must match what mutateMessage accepts',
+      );
+
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+    }
+  });
 
   testWidgets('top overflow opens Shared media beside mute and archive', (
     tester,
