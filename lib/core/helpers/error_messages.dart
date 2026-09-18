@@ -37,6 +37,20 @@ String friendlyErrorMessage(
   }
   final String raw = error.toString().toLowerCase();
 
+  // `data-loss` is a deterministic server refusal, not weather: the backend
+  // throws it from `fail("data-loss", …)` when an integrity guard rejects
+  // what it was asked to write. Repeating the request cannot change the
+  // answer, so the copy must neither invite a retry nor imply the user's
+  // work is gone. Wording follows the idiom the Servers surface already
+  // established for this exact code (`serverCreationLostBody`).
+  if (raw.contains('data-loss') || raw.contains('data_loss')) {
+    return localized(
+      'The server refused this. Your draft is kept — this needs fixing on '
+          'our side, not another attempt from here.',
+      'Serwer to odrzucił. Twój szkic został zachowany — to wymaga naprawy '
+          'po naszej stronie, nie kolejnej próby stąd.',
+    );
+  }
   if (raw.contains('permission-denied') || raw.contains('permission_denied')) {
     return localized(
       "You don't have permission to do that.",

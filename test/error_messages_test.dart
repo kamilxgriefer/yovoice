@@ -1,8 +1,10 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/widgets.dart' show Locale;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 
 /// Regression suite for the P0 "raw Dart exception rendered to users"
 /// class of bug: whatever a flow throws, the string that reaches the UI
@@ -66,6 +68,33 @@ void main() {
     );
     expect(message, 'Something went wrong. Please try again.');
     expect(message.toLowerCase(), isNot(contains('error')));
+  });
+
+  test('a data-loss refusal says the draft is kept and does not invite a '
+      'retry, in EN and PL', () {
+    final refusal = FirebaseFunctionsException(
+      code: 'data-loss',
+      message: 'The canonical public profile is unavailable.',
+    );
+
+    final english = friendlyErrorMessage(refusal);
+    expect(
+      english,
+      'The server refused this. Your draft is kept — this needs fixing on '
+      'our side, not another attempt from here.',
+    );
+    expect(
+      english.toLowerCase(),
+      isNot(contains('try again')),
+      reason: 'inviting a retry on a deterministic refusal is what made RC-9',
+    );
+    expect(english, isNot(contains('canonical public profile')));
+
+    expect(
+      friendlyErrorMessage(refusal, copy: const AppLocalizations(Locale('pl'))),
+      'Serwer to odrzucił. Twój szkic został zachowany — to wymaga naprawy '
+      'po naszej stronie, nie kolejnej próby stąd.',
+    );
   });
 
   test('privileged authentication failures explain the safe next step', () {

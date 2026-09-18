@@ -9,6 +9,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:record/record.dart' show Amplitude;
 
+import 'package:yovoice/core/helpers/callable_failure_reporter.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
@@ -1252,8 +1253,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           availability: availability,
         );
       }
-    } catch (error) {
-      if (!mounted) return;
+    } catch (error, stackTrace) {
       // The active-Moment cap is the SERVER'S refusal
       // (`reserveMomentDraft` answers `resource-exhausted` when the
       // caller already has the maximum of live Moments). The client
@@ -1264,6 +1264,19 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       final capRefusal =
           error is FirebaseFunctionsException &&
           error.code == 'resource-exhausted';
+      // Reported before the mounted guard, because a refusal is a defect
+      // signal whether or not this screen is still up to render copy for
+      // it. The cap is excluded: it is a designed product limit working
+      // exactly as intended, and burying the real refusals under it would
+      // defeat the point of having the channel.
+      if (!capRefusal) {
+        recordCallableRefusalIfTerminal(
+          callable: 'reserveMomentDraft/finalizeMomentDraft',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+      if (!mounted) return;
       // The recording is kept: the capture succeeded, only publishing
       // failed, and making the user re-record would lose good audio.
       _showNotice(
