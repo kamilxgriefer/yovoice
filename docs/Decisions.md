@@ -12247,7 +12247,7 @@ declaration, and it turns a class of defect into a non-event.
   there.
 - A tooltip-bearing control that must keep a touch long-press reveal must not
   live inside a context action; it belongs in the actions sheet or an overflow.
-## ADR-199: A mobile composer never toggles `readOnly` around a send, and its cluster is one `TextFieldTapRegion`
+## ADR-200: A mobile composer never toggles `readOnly` around a send, and its cluster is one `TextFieldTapRegion`
 
 **Status:** Accepted (2026-09-18). Implemented in the keyboard-dismissal
 commit on `worktree-agent-af04156167cc07461` (`chat_screen.dart`,
