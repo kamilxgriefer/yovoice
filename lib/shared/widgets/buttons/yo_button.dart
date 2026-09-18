@@ -99,43 +99,51 @@ class _YoButtonState extends State<YoButton> {
           ),
           child: AnimatedSwitcher(
             duration: standardDuration,
-            child: widget.isLoading
-                ? SizedBox(
-                    key: const ValueKey<String>('loading'),
+            // A busy control still has to say what it is busy with. Replacing
+            // the whole child with a bare spinner made every caller's label —
+            // including a publish footer's live "Publishing 42%" / "Finishing…"
+            // stage — invisible to a sighted user, who then read the motionless
+            // spinner as a hang. The spinner stays; the label rides beside it,
+            // `Flexible` so 320 px at 200% text wraps instead of overflowing.
+            child: Row(
+              key: ValueKey<String>(
+                widget.isLoading ? 'loading' : 'content',
+              ),
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                if (widget.isLoading) ...<Widget>[
+                  SizedBox(
                     width: 24,
                     height: 24,
                     child: CircularProgressIndicator(
                       strokeWidth: 2.5,
                       color: foreground,
                     ),
-                  )
-                : Row(
-                    key: const ValueKey<String>('content'),
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: <Widget>[
-                      if (widget.icon != null) ...<Widget>[
-                        IconTheme(
-                          data: IconThemeData(color: foreground, size: 22),
-                          child: widget.icon!,
-                        ),
-                        const SizedBox(width: 10),
-                      ],
-                      Flexible(
-                        child: Text(
-                          widget.label,
-                          maxLines: textScale >= 1.6 ? 2 : 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: AppTypography.titleMedium.copyWith(
-                            color: foreground,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.8,
-                          ),
-                        ),
-                      ),
-                    ],
                   ),
+                  const SizedBox(width: 10),
+                ] else if (widget.icon != null) ...<Widget>[
+                  IconTheme(
+                    data: IconThemeData(color: foreground, size: 22),
+                    child: widget.icon!,
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                Flexible(
+                  child: Text(
+                    widget.label,
+                    maxLines: textScale >= 1.6 ? 2 : 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: AppTypography.titleMedium.copyWith(
+                      color: foreground,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
+import 'package:yovoice/core/helpers/callable_failure_reporter.dart';
+import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
@@ -74,6 +76,15 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   bool _selecting = false;
   bool _publishing = false;
   double _progress = 0;
+
+  /// Which part of the publish is running, or null before the first report.
+  ///
+  /// The bar alone cannot name the wait: the upload's bytes are measurable
+  /// and the server's probe is not, so `uploadShare = .95` leaves the
+  /// percentage frozen at 95 % for the whole of `finalizeReelDraftV2` — up
+  /// to its 60 s timeout on a long video. The stage is what turns that
+  /// stretch from "stuck" into "finishing up".
+  ReelPublishStage? _stage;
   String? _error;
   _ComposerStep _step = _ComposerStep.media;
   _EditorTool _tool = _EditorTool.crop;
@@ -127,6 +138,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       _selecting = false;
       _pickingAudio = false;
       _publishing = false;
+      _stage = null;
       _sourcePickerOpen = false;
       _previewPlaying = false;
       _allowExit = false;
@@ -184,7 +196,18 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     });
   }
 
-  bool get _draftContractLocked => _session != null || _publishing;
+  /// The draft is frozen only while the SERVER is holding state for it.
+  ///
+  /// [ReelPublishSession.reelId] is assigned in exactly one place — from the
+  /// `reserveReelDraftV2` response — so `reelId != null` is the precise
+  /// meaning of "a reservation exists, the plan is frozen into it, and the
+  /// same requestId must replay". Keying the lock on `_session != null`
+  /// instead froze the composer on the mere fact that an attempt was MADE:
+  /// one refusal before any reservation left 27 controls — caption, media,
+  /// backing audio, every composition tool, availability — permanently
+  /// read-only, with "discard the draft" as the only way out. See ADR-C in
+  /// the Build 31 design.
+  bool get _draftContractLocked => _session?.reelId != null || _publishing;
 
   @override
   void dispose() {
@@ -842,6 +865,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       _publishing = true;
       _error = null;
       _progress = 0;
+      _stage = null;
     });
     try {
       final reelId = await _service.publish(
@@ -849,14 +873,37 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
         onProgress: (progress) {
           if (_ownsDraft(generation)) setState(() => _progress = progress);
         },
+        onStage: (stage) {
+          if (_ownsDraft(generation)) setState(() => _stage = stage);
+        },
       );
       if (!mounted || !_ownsDraft(generation)) return;
       widget.onPublished?.call(reelId);
       if (Navigator.of(context).canPop()) Navigator.of(context).pop(reelId);
-    } catch (error) {
+    } catch (error, stackTrace) {
+      // A reservation exists iff the reserve call answered, so it also names
+      // which callable refused — no extra plumbing through ReelService.
+      final reserved = session.reelId != null;
+      // An attempt that never obtained a reservation left NO server state to
+      // stay consistent with, so holding its session is worse than useless:
+      // `_publish` reuses `existingSession?.plan`, and a retry would then
+      // republish the plan the user has since edited. Dropping it rebuilds
+      // the plan from the current edits and mints a fresh requestId — which
+      // is correct precisely because there is no ledger entry to replay.
+      if (!reserved && identical(_session, session)) _session = null;
+      recordCallableRefusalIfTerminal(
+        callable: reserved ? 'finalizeReelDraftV2' : 'reserveReelDraftV2',
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (_ownsDraft(generation)) _showError(error);
     } finally {
-      if (_ownsDraft(generation)) setState(() => _publishing = false);
+      if (_ownsDraft(generation)) {
+        setState(() {
+          _publishing = false;
+          _stage = null;
+        });
+      }
     }
   }
 
@@ -1391,16 +1438,38 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
           );
   }
 
+  /// Names the stage the publish is actually in.
+  ///
+  /// Only the upload has a measurable size, so only the upload shows a
+  /// percentage — and that percentage keeps today's exact copy and
+  /// `copy.template` form, so the existing placeholder validation still
+  /// applies. Reserve and finalize get a phrase instead of a number that
+  /// would sit still and read as a hang.
+  String _publishStageLabel(AppLocalizations copy) {
+    switch (_stage) {
+      case ReelPublishStage.reserving:
+        return copy.text('Preparing…', 'Przygotowywanie…');
+      case ReelPublishStage.finalizing:
+        // Deliberately the SAME catalog key the queued-attachment card
+        // already uses for the same server-side step: one reviewed phrase
+        // in every locale, and two surfaces that cannot drift apart.
+        return copy.text('Finishing…', 'Kończenie…');
+      case ReelPublishStage.uploading:
+      case null:
+        return copy.template(
+          'Publishing {percent}%',
+          'Publikowanie {percent}%',
+          values: {'percent': (_progress * 100).round()},
+        );
+    }
+  }
+
   Widget _footer(AppLocalizations copy, bool busy) {
     final next = _step == _ComposerStep.review
         ? YoButton(
             key: const ValueKey('reel-publish'),
             label: _publishing
-                ? copy.template(
-                    'Publishing {percent}%',
-                    'Publikowanie {percent}%',
-                    values: {'percent': (_progress * 100).round()},
-                  )
+                ? _publishStageLabel(copy)
                 : copy.text('Publish Yeel', 'Opublikuj Yeel'),
             onPressed: _media == null || busy ? null : _publish,
             isLoading: _publishing,
@@ -2351,6 +2420,17 @@ String _friendly(BuildContext context, Object error) {
           'Check your connection and retry. Your draft is kept.',
           'Sprawdź połączenie i ponów próbę. Twój szkic został zachowany.',
         );
+      case 'data-loss':
+        // A backend integrity guard refused what it was asked to write.
+        // Repeating the request cannot change the answer, so this must not
+        // read as "Try again" — inviting a retry on a deterministic refusal
+        // is exactly what produced the RC-9 request storm.
+        //
+        // Delegated rather than restated: `friendlyErrorMessage` owns this
+        // sentence for the whole app, so the Yeel composer and every other
+        // surface cannot end up saying two different things about the same
+        // refusal.
+        return friendlyErrorMessage(error, copy: copy);
     }
   }
   if (error is TimeoutException) {

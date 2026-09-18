@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
@@ -704,6 +707,196 @@ void main() {
     );
   });
 
+  testWidgets('a refused reserve leaves the composer editable and rebuilds '
+      'the plan', (tester) async {
+    // RC-5. A refusal that never produced a reservation left the composer
+    // locked across all 27 draft controls, with "discard the draft" as the
+    // only exit. No server state exists after such a refusal, so there is
+    // nothing for the lock to keep the plan consistent with.
+    var reserveCount = 0;
+    final finalizePayloads = <Map<String, Object?>>[];
+    final service = ReelService(
+      auth: MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'creator-1', isEmailVerified: true),
+      ),
+      callableInvoker: (name, payload) async {
+        if (name == 'reserveReelDraftV2') {
+          reserveCount += 1;
+          if (reserveCount == 1) {
+            throw FirebaseFunctionsException(
+              code: 'data-loss',
+              message: 'The canonical public profile is unavailable.',
+            );
+          }
+          return <Object?, Object?>{
+            'schemaVersion': 2,
+            'reelId': 'reel_after_refusal',
+            'mediaStoragePath': 'reels/creator-1/reel_after_refusal/media.png',
+            'backingAudioStoragePath': null,
+            'expiresAtMillis': DateTime.now()
+                .toUtc()
+                .add(const Duration(minutes: 10))
+                .millisecondsSinceEpoch,
+            'availabilityHours': 'permanent',
+            'contentExpiresAtMillis': null,
+          };
+        }
+        expectSync(name, 'finalizeReelDraftV2');
+        finalizePayloads.add(Map<String, Object?>.of(payload));
+        return <Object?, Object?>{
+          'schemaVersion': 2,
+          'reelId': 'reel_after_refusal',
+          'published': true,
+          'availabilityHours': 'permanent',
+          'expiresAtMillis': null,
+        };
+      },
+      uploadInvoker:
+          ({
+            required storagePath,
+            required payload,
+            required metadata,
+            onProgress,
+          }) async => '123',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReelComposerScreen(
+          service: service,
+          imagePicker: _ImagePickerStub(),
+        ),
+      ),
+    );
+
+    await _choosePhoto(tester);
+    await _review(tester);
+    final caption = find.byType(TextField).first;
+    await tester.enterText(caption, 'First attempt caption');
+    final permanent = find.byKey(
+      const ValueKey<String>('reel-availability-permanent'),
+    );
+    await tester.ensureVisible(permanent);
+    await tester.tap(permanent);
+    await tester.ensureVisible(find.text('Publish Yeel'));
+    await tester.tap(find.text('Publish Yeel'));
+    await tester.pumpAndSettle();
+
+    expect(reserveCount, 1);
+    expect(
+      find.textContaining('The server refused this.'),
+      findsOneWidget,
+      reason: 'a data-loss refusal must not read as "try again"',
+    );
+    expect(
+      tester.widget<TextField>(caption).readOnly,
+      isFalse,
+      reason: 'no reservation exists, so nothing needs freezing',
+    );
+    expect(
+      tester.widget<ChoiceChip>(permanent).onSelected,
+      isNotNull,
+      reason: 'availability is only locked once a reservation holds it',
+    );
+    expect(find.text('Availability is locked for this retry.'), findsNothing);
+
+    // Editing at all is only possible because the field is live again; the
+    // payload below is what proves the retry rebuilt its plan from it.
+    await tester.enterText(caption, 'Edited after the refusal');
+    await tester.ensureVisible(find.text('Publish Yeel'));
+    await tester.tap(find.text('Publish Yeel'));
+    await tester.pumpAndSettle();
+
+    expect(reserveCount, 2);
+    expect(finalizePayloads, hasLength(1));
+    expect(
+      (finalizePayloads.single['composition']!
+          as Map<Object?, Object?>)['caption'],
+      'Edited after the refusal',
+      reason:
+          'a retry must publish what the user can now see, not a stale plan',
+    );
+  });
+
+  testWidgets('the publish button names the finalizing stage in EN and PL', (
+    tester,
+  ) async {
+    // RC-14. `uploadShare = .95` leaves the percentage frozen for the whole
+    // of finalizeReelDraftV2 — up to 60 s on a long video — so the number
+    // alone reads as a hang.
+    const cases =
+        <
+          ({
+            Locale locale,
+            String chooseMedia,
+            String choosePhoto,
+            String expected,
+          })
+        >[
+          (
+            locale: Locale('en'),
+            chooseMedia: 'Choose media',
+            choosePhoto: 'Choose photo',
+            expected: 'Finishing…',
+          ),
+          (
+            locale: Locale('pl'),
+            chooseMedia: 'Wybierz multimedia',
+            choosePhoto: 'Wybierz zdjęcie',
+            expected: 'Kończenie…',
+          ),
+        ];
+    for (final testCase in cases) {
+      await tester.pumpWidget(
+        _localizedHost(
+          testCase.locale,
+          ReelComposerScreen(
+            // Without a distinct key the second pump would reuse the first
+            // composer's State — media already chosen, step already review.
+            key: ValueKey<String>('composer-${testCase.locale.languageCode}'),
+            service: _StageOnlyService(),
+            imagePicker: _ImagePickerStub(),
+          ),
+        ),
+      );
+      await tester.ensureVisible(find.text(testCase.chooseMedia));
+      await tester.tap(find.text(testCase.chooseMedia));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(testCase.choosePhoto));
+      await tester.pumpAndSettle();
+      await _review(tester);
+      await tester.ensureVisible(find.byKey(const ValueKey('reel-publish')));
+      tester
+          .widget<YoButton>(find.byKey(const ValueKey('reel-publish')))
+          .onPressed!();
+      // `_publish` awaits the preview pause before it reports a stage, and
+      // the spinner animates forever, so settle by hand rather than with
+      // pumpAndSettle.
+      for (var frame = 0; frame < 4; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      expect(
+        tester
+            .widget<YoButton>(find.byKey(const ValueKey('reel-publish')))
+            .label,
+        testCase.expected,
+        reason: 'the finalize wait has no measurable size; name it instead',
+      );
+      // The property above was already correct while the screen showed a
+      // wordless spinner (gate blocker G-3), so assert the drawn text as well:
+      // this is the half a sighted user actually sees.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('reel-publish')),
+          matching: find.text(testCase.expected),
+        ),
+        findsOneWidget,
+        reason: 'the stage has to be legible, not only announced',
+      );
+    }
+  });
+
   testWidgets('availability picker survives 320px at 200% text', (
     tester,
   ) async {
@@ -765,6 +958,42 @@ Future<void> _review(WidgetTester tester) async {
   await tester.ensureVisible(next);
   await tester.tap(next);
   await tester.pumpAndSettle();
+}
+
+/// A MaterialApp carrying the app's own localization delegate, so a Polish
+/// assertion reads the Polish catalog rather than the English fallback.
+Widget _localizedHost(Locale locale, Widget child) => MaterialApp(
+  locale: locale,
+  supportedLocales: AppLocalizations.supportedLocales,
+  localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+    AppLocalizationsDelegate(),
+    GlobalMaterialLocalizations.delegate,
+    GlobalWidgetsLocalizations.delegate,
+    GlobalCupertinoLocalizations.delegate,
+  ],
+  home: child,
+);
+
+/// Reports the finalize stage and then never answers — the exact shape of
+/// the wait RC-14 is about, held open for as long as the test needs it.
+class _StageOnlyService extends ReelService {
+  _StageOnlyService()
+    : super(
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'stage-fixture', isEmailVerified: true),
+        ),
+      );
+
+  @override
+  Future<String> publish(
+    ReelPublishSession session, {
+    void Function(double progress)? onProgress,
+    void Function(ReelPublishStage stage)? onStage,
+  }) {
+    onStage?.call(ReelPublishStage.finalizing);
+    return Completer<String>().future;
+  }
 }
 
 ReelService _composerService() => ReelService(
