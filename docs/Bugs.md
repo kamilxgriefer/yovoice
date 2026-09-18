@@ -183,14 +183,180 @@ side), the comment callables, and any Android client (the Redmi is signed out).
 The empty Voice Moments feed before publishing was correct — all 24 stored
 moments are `status: expired`, none published.
 
-## OPEN — what the outage repair did **not** fix (RC-5 … RC-17, 2026-09-16)
+## FIXED IN BUILD 31 — what the outage repair did **not** fix (RC-5 … RC-17; found 2026-09-16, fixed 2026-09-17/18)
 
-Ranked in `yovoice-evidence/2026-09-16/testers-root-cause.md`. Every "still
-present" below was re-checked in this repository at `58853fb0`; none of them is
-fixed by any deploy, and none has landed in source yet.
+Ranked in `yovoice-evidence/2026-09-16/testers-root-cause.md`, designed in
+`b31-design.md`, implemented in `b31-backend.md` / `b31-client.md`, repaired in
+`b31-fix-1.md` and cleared by an independent read-only review in
+`b31-gate-2.md` (analyze clean, 4965/4965 Flutter, 2282/2282 Functions, rules
+and indexes unmodified). Ten of the thirteen are closed. **RC-6 and RC-7 are
+not**, and one sub-item of RC-15 was deliberately left out of scope — they keep
+their full entries in the OPEN section below.
 
-- **RC-5 — P1, client, still present.** The first failed publish locks the Yeel
-  draft forever. `reel_composer_screen.dart:187`
+**Read the proof level before repeating a claim.** Every "fixed" here is proven
+by a test that was observed to fail with the fix reverted and pass with it in
+place (the mutation convention in [TESTING.md](TESTING.md)). Nothing in this
+group was verified on a physical device.
+
+| Id | What it was | Fixed in | Reaches users through |
+| --- | --- | --- | --- |
+| RC-3(d) | `getVoiceMomentsFeedV2` swallowed every per-item drop, so a feed that lost its whole page logged nothing | `e714c251` (backend), `2b4e31b7` (client) | deployed 2026-09-18; client in build 31 |
+| RC-5 | the first failed publish locked the Yeel draft forever — `_draftContractLocked` was set before the network call and the `finally` cleared only `_publishing`, gating 27 call sites with Back → "Discard this draft?" as the only exit | `3fddac7e` | build 31 binaries |
+| RC-8 | `canonicalPublicProfile` returned `displayName.slice(0, 80)` **without re-trimming** while `validateReservation` asserts `authorName === authorName.trim()`, so an account whose 80th character is a space could reserve and then fail `finalize` permanently | `41bbe057` | deployed 2026-09-18 for the 7 targets |
+| RC-9 | every failed "open chat" minted a fresh `requestId`, leaking an `integrityPreflightLedgers` row per failure and spending `direct.attempt.open` (12/60 s) in a preflight transaction that commits even when the main one rolls back — 12 taps manufactured a 429 | `d70cf055` | build 31 binaries; `openDirectConversation` deployed 2026-09-18 |
+| RC-10 | a thrown `HttpsError` logged nothing server-side and every client failure was caught into a snackbar, so 34 production 500s produced zero signal for 2.2 days | `41bbe057` (backend `fail()`), `7137b015` (client non-fatal + `data-loss` copy) | deployed 2026-09-18 **for the 7 targets only**; client in build 31 |
+| RC-11 | friend discovery was capped at 2 calls/minute, so ordinary browsing of the "make finding friends easier" surface produced 429s | `b710fd34` (10/min, 120/hour, plus a 5-per-10 s burst window) | deployed 2026-09-18 |
+| RC-14 | the Yeel progress bar stopped at 95 % with no stage label — `ReelService.publish` exposed `onStage` and no caller in `lib/` passed it | `3fddac7e` | build 31 binaries |
+| RC-15 a–d | MSG-01 an already-muted thread still offered "Mute"; MSG-02 Edit was offered on photo/video/voice the server refuses (2 × 400 in production); MSG-03 the outbox burned its 6/8 attempt budget while offline and parked at "Not sent" forever; MSG-05 `markDirectConversationRead` retried a permanent refusal every 30 s | `316cee33` (MSG-01, MSG-02, MSG-05), `6b3cd783` (MSG-03) | build 31 binaries |
+| RC-16 | `onDirectMessageCreated` was registered **without** `retry: true`, so one contention, timeout or cold start silently and permanently dropped a message's bell row and push | `f383dd64` | deployed 2026-09-18 — `RETRY_POLICY_RETRY`, 512 Mi, 120 s, maxInstances 50, all read back |
+| RC-17 | the probe refused fragmented MP4 (`readIsoBmffDecodeTimeline` required a populated `stts`, which a browser `MediaRecorder` never writes), so a web Yeel was rejected and mistranslated into "Check your media and audio rights" | `bdea661f` | deployed 2026-09-18 — **partially; see F-1 below** |
+| RC-12 | four comment/voice-reply callables failed on the same guard | wave C, 2026-09-16 | already deployed |
+| RC-13 | `sweepExpiredServerInvitesSchedule` failed every run for 62 hours | `58853fb0`, 2026-09-16 | already deployed |
+
+Two corrections worth keeping, because both were nearly shipped wrong:
+
+- **RC-8's first fix created the defect it was meant to remove.** Making the
+  reader *refuse* an untrimmed stored name would have turned every legacy row
+  into a permanent `data-loss`. The shipped rule repairs at the reader and
+  projects at the writer — [ADR-202](Decisions.md#adr-202-a-canonical-display-name-is-repaired-at-the-reader-and-projected-at-the-writer-never-refused-at-either).
+- **RC-17's first fix took the uploader's word for the duration.** The
+  fragmented branch initially trusted a `tfdt` the uploader controls; six attack
+  fixtures proved it. The shipped rule measures from bytes that a `trun` claims
+  *and* an `mdat` actually contains — [ADR-203](Decisions.md#adr-203-a-fragmented-mp4-is-measured-from-bytes-a-trun-claims-and-an-mdat-actually-contains).
+
+## OPEN — what Build 31 did not close (RC-6, RC-7, MSG-04 and the fragmented-MP4 over-count)
+
+- **F-1 — P2, backend source, found by the principal gate on 2026-09-18, still
+  present at HEAD and in production.** `functions/reels/probe.js:1572`
+  `fragmentDuration += run.duration + run.maxCompositionOffset` adds one
+  composition-offset maximum **per run, per fragment**, and `measuredTrackTotals`
+  then sums those across every fragment. A composition offset is a presentation
+  shift, not extra duration; the correct bound adds it once. Measured on
+  synthetic fMP4 with one `cts` of 1001 ticks at a 30 000 timescale: 10 fragments
+  → 10 334 ms (true ≤ 10 033); **60 fragments → 62 002 ms** (true ≤ 60 033); at
+  two frames of offset, 64 004 ms. `reels/service.js` sets
+  `MEDIA_DURATION_TOLERANCE_MS = 2000`, so a 60 s B-frame web recording at a 1 s
+  timeslice lands exactly on the tolerance and a slightly heavier one is refused
+  with "The uploaded Reel tracks are invalid" — **the RC-17 symptom, back for
+  B-frame content.** It fails closed (over-reports, never under-reports) and the
+  pre-fix code refused every fragmented file, so it is not a regression against
+  production — but it caps how much of RC-17 actually shipped, and the fix is
+  deployed. Do not tell anyone the web recorder is fixed without this caveat.
+  Smallest fix: track the maximum composition offset per track across fragments
+  and add it once to the final candidate. Prove it with a `trun` carrying flag
+  `0x000800` over ≥ 10 fragments. Both Chromium fixtures are avc1 baseline, carry
+  no `cts`, and therefore cannot see this.
+- **F-2 — P3, backend source, accepted knowingly.** The ISO-BMFF read ceiling
+  went 160 → 900 and is shared with the **progressive** path, where
+  `listIsoBmffAtoms` spends 16 bytes per read — so `MAX_ISO_BMFF_DURATION_RANGE_BYTES
+  = 2 MB` does not bound the read count for tiny atoms. A crafted progressive
+  file can force ~900 GCS range requests per probe instead of ~160, a 5.6×
+  amplification bounded downstream only by the `reels` reserve limiter
+  (12/hour/user). Fix: a separate, smaller ceiling for the non-fragmented branch,
+  or a minimum-bytes-per-read charge.
+- **F-3 — P3, latent only.** `functions/messaging/direct_integrity.js:1748-1752`
+  passes a `content` argument the preview helper never reads, and for a
+  `reservation.type` outside image/video/voice the preview would silently become
+  `""` where the old ternary produced `"Voice message"`. Identical behaviour for
+  the three types the reservation validator allows, so nothing is broken today.
+- **RC-6 — P1, needs data repair, not a deploy. Unchanged by Build 31 except
+  that the tooling is now trustworthy.** Three of 20 conversation roots in
+  production are non-canonical (`conversations` 20, `schemaVersion == 2` 17,
+  `directConversationPairs` 17): the legacy client-written 12-key shape, which
+  both trees reject (`validateConversation` → `permission-denied`,
+  `validatePairGuard` → `data-loss`). A real user hit this — `sendDirectMessage`
+  2 × 403 and `setDirectTyping` 2 × 403 from an Android client within 15 seconds
+  on 2026-09-05, with generic copy and no diagnosis. `71078013` repaired the
+  drifted migration tool (it treated `gif` and `video` as invalid types) and
+  added `functions/scripts/identify_noncanonical_direct_conversations.js`, a
+  read-only identification script with no apply path. **Neither has been run
+  against production, and the migration callables were not deployed.** Read the
+  script's output before anything else runs, and note N-2/N-3 below first.
+  - **N-2 / N-3 — P2, in the repaired tool.** The canonicality probe is
+    one-sided (`participants[0]` only) and `rootIsCanonical` short-circuits the
+    apply to `alreadyMigrated` before the message pass, so a root canonical for
+    one participant and broken for the other is reported healthy and refused
+    repair. The three known roots are non-canonical *roots*, so the tool still
+    serves them — but `alreadyMigrated` must not be trusted as an all-clear.
+  - **N-10 — P3.** The script header claims "no participant uid ever reaches
+    stdout". That is false for its own output: legacy roots use the `uidA_uidB`
+    id shape (`firestore.rules:2876-2885`) while canonical ones use
+    `dm_<digest>`, so the divergent ids it prints embed both uids.
+- **RC-7 — P1 switch, disarmed 2026-09-16, keep it in mind.** One GIF message
+  would have disabled open/attach/edit/delete/react for that thread, because
+  `sendDirectMessage` on the new tree could write `lastMessageType: "gif"` that
+  the old readers rejected, and the message would have been undeletable by
+  anyone. Production never had one only because RC-4 kept testers out of new
+  chats. Wave D removed the cause. The free runtime mitigation if it reappears is
+  `appConfig/gif.enabled = false` — a document change, no deploy.
+- **RC-15 e (MSG-04) — P3, client, deliberately out of scope.** Message history
+  is `.limit(250)` with no older-page loader. `b31-design.md` excluded it
+  explicitly ("not one of the owner's five"); it was never implemented and is not
+  in build 31.
+- **N-1 — P2, brand-new copy, wrong plural in both languages.**
+  `lib/features/moments/presentation/widgets/moments_feed_view.dart:2056-2062`
+  renders EN "The server returned **1 Moments**" and PL "Serwer zwrócił **4
+  Momentów**". `AppLocalizations._pluralized` and the hand-written Polish rules
+  already exist and are not used here. Shipped in build 31.
+- **N-9 — P2, and the gate confirmed it is reachable.** The same new state can
+  accuse the server falsely. `scannedCount = pageDocuments.length` is counted
+  **before** the per-item privacy swallow (`functions/moments/integrity.js`), so
+  a page whose candidates are all legitimately withheld for privacy yields
+  `fetchedCount > 0, moments empty, drops empty` — which now draws "These Moments
+  could not be loaded … This is a problem on our side" **and** fires a
+  `getVoiceMomentsFeedV2 / server-dropped-all` Crashlytics non-fatal. A false
+  fault claim to the user and a false signal in the very channel RC-10 built.
+  Still better than the pre-round copy, which asserted expiry — so not a
+  regression, but it must be fixed before the signal is alerted on.
+- **N-5 — P2, observability noise from day one.** The central `fail()` now emits
+  one WARNING per `data-loss`/`internal` at ~300 sites. A feed skew emits up to
+  10 identical `integrity refusal` lines per call per viewer, and the RC-6 script
+  plus `migrateDirectIntegrityConversation` emit `data-loss` WARNINGs as ordinary
+  control flow. Any alert built on `integrity refusal` will be noisy until those
+  paths are separated. See [ADR-201](Decisions.md#adr-201-the-single-refusal-primitive-is-the-single-refusal-signal--and-it-may-log-only-author-written-constants).
+- **N-4 — P3, narrower than first reported.** No `.timeout()` wraps the send
+  callable, so a slow server surfaces as `deadline-exceeded` (→ `markRetry`,
+  budget charged), not a bare `TimeoutException`, and indefinite `retrying`
+  requires `_offlineObserved == true`, which is intended. Residual: if the
+  connectivity stream never reports the return to online, `_offlineObserved`
+  stays stuck true.
+
+### UNVERIFIED in this round — say so rather than implying otherwise
+
+- **No device or simulator verification exists for any Build 31 fix.** RC-14's
+  on-screen stage label and RC-15's "Edit is not offered on media" are proven by
+  **rendered-widget tests** (`find.text(...)` in EN and PL, 320 px at 200 % text
+  with `takeException()` null) and by nothing else. The device frames in
+  `b31-device.md` (`h20`/`h22`) predate the fix and are byte-identical to each
+  other, which is why the widget-test proof was demanded in the first place.
+- **No browser measurement of RC-17 outside Chromium.** The only browser bytes in
+  evidence are two Playwright-Chromium captures (1.47 s single-`moof`, 15 s
+  five-`moof`). The exact-`mdat`-coverage rule and F-1 are both unproven against
+  WebKit, which is the recorder most likely to differ — and RC-17 is a *web*
+  recorder defect.
+- **Deploy coverage is partial by design.** `functions/integrity/guards.js` is in
+  every export's require graph, but only 7 functions were deployed. The remaining
+  ~238 exports still run the pre-`41bbe057` `fail()` and the pre-fix reader, so
+  RC-10's backend signal and RC-8's reader repair exist in production **only for
+  those 7**. The cross-revision posture was checked and is safe: the reader change
+  is a relaxation and the writer now emits values the old guard also accepts.
+- **RC-8 is still unquantified in production.** Counting affected accounts means
+  reading display-name values. The one known bound is that the longest live
+  display name was 26 characters on 2026-09-16, so it could not fire on that data.
+- **`98f9413c` (the Premium injected-clock fix) is not deployed.** Every Stripe
+  export is outside the selector and in the must-not-deploy list. The change is
+  test-clock correctness with `Date.now()` defaults preserved, so production
+  Premium behaviour is unchanged — but the source and production do differ here.
+
+## The 2026-09-16 RC diagnosis, frozen at `58853fb0` — reference only, not current state
+
+**Every status word below describes the tree at `58853fb0`, before the Build 31
+round.** It is kept because the file:line references, the production counts and
+the reasoning are what a future investigation needs; read the two sections above
+for the current state. Only RC-6, RC-7 and MSG-04 are still live.
+
+- **RC-5 — was P1, client. FIXED in `3fddac7e`.** The first failed publish locks
+  the Yeel draft forever. `reel_composer_screen.dart:187`
   `bool get _draftContractLocked => _session != null || _publishing;` assigns
   `_session` before the network call and the `finally` clears only
   `_publishing`, so from the first refusal the lock is permanent and gates 27
@@ -199,7 +365,7 @@ fixed by any deploy, and none has landed in source yet.
   this draft?". The lock is correct once a server reservation exists; during the
   outage no reservation ever existed. Fix:
   [ADR-196](Decisions.md#adr-196-a-composer-draft-is-locked-by-a-server-reservation-never-by-an-attempt).
-- **RC-6 — P1, needs data repair, not a deploy.** Three of 20 conversation roots
+- **RC-6 — P1, needs data repair, not a deploy. STILL OPEN; the tool was repaired in `71078013` but never run.** Three of 20 conversation roots
   in production are non-canonical: `conversations` 20, those with
   `schemaVersion == 2` 17, `directConversationPairs` 17. They are the legacy
   client-written 12-key shape, and both the old and the new tree reject them
@@ -212,7 +378,7 @@ fixed by any deploy, and none has landed in source yet.
   path**; reconcile `conversations` against `directConversationPairs` first.
   Which three roots they are is unknown: identifying them needs participant ids
   nobody read.
-- **RC-7 — P1, disarmed on 2026-09-16, keep the switch in mind.** One GIF
+- **RC-7 — P1, disarmed on 2026-09-16, STILL a switch to keep in mind.** One GIF
   message would have disabled open/attach/edit/delete/react for that thread,
   because `sendDirectMessage` (on the new tree) could write
   `lastMessageType: "gif"` that the old readers rejected, and the message would
@@ -220,8 +386,9 @@ fixed by any deploy, and none has landed in source yet.
   (`lastMessageType == "gif"` was 0) only because RC-4 kept testers out of new
   chats. Wave D removed the cause. The free runtime mitigation if it ever
   reappears is `appConfig/gif.enabled = false` — a document change, no deploy.
-- **RC-8 — P1, backend source, still present, and it is the next publish failure
-  in line.** `canonicalPublicProfile` returns
+- **RC-8 — was P1, backend source, the next publish failure in line. FIXED in
+  `41bbe057`; deployed 2026-09-18 for the 7 named targets only.**
+  `canonicalPublicProfile` returned
   `publicProfile.displayName.slice(0, 80)` **without re-trimming**
   (`functions/integrity/guards.js:258`), identical at `585740dc`, `22cc2313` and
   HEAD, while `validateReservation` asserts `authorName === authorName.trim()`.
@@ -231,7 +398,7 @@ fixed by any deploy, and none has landed in source yet.
   values; the one bound that is known is that the longest live display name was
   26 characters on 2026-09-16, so it cannot fire on today's data. Same defect as
   the 2026-09-13 entry further down.
-- **RC-9 — P2, still present.** Every failed "open chat" burns quota and leaks a
+- **RC-9 — was P2. FIXED in `d70cf055`.** Every failed "open chat" burns quota and leaks a
   ledger row. `openDirectConversation` runs `beginAttemptPreflight` in its own
   transaction *before* the main one: it consumes `direct.attempt.open`
   (12 events per 60 s) and commits an `integrityPreflightLedgers` document,
@@ -243,7 +410,8 @@ fixed by any deploy, and none has landed in source yet.
   documents with no TTL). The Yeel and Voice Moment reserve paths consume their
   limiter *inside* the failing transaction and cost nothing, which is the shape
   to copy.
-- **RC-10 — P2, still present, and it is why two days passed with no report.**
+- **RC-10 — was P2, and it is why two days passed with no report. FIXED in
+  `41bbe057` (backend) and `7137b015` (client).**
   The callable framework logs nothing for an explicitly thrown `HttpsError`, so
   all 34 production 500s carry zero application log lines. Crashlytics records
   uncaught errors only (`lib/main.dart`), and every one of these failures is
@@ -252,7 +420,7 @@ fixed by any deploy, and none has landed in source yet.
   (`lib/core/helpers/error_messages.dart`) has a `data-loss` branch — confirmed
   absent at HEAD. Fix: a Crashlytics non-fatal carrying `{callable, code}` on any
   terminal refusal, and copy that says the server refused and the draft is kept.
-- **RC-11 — P2, still present, needs its own source change.** "Find friends"
+- **RC-11 — was P2. FIXED in `b710fd34`; deployed 2026-09-18.** "Find friends"
   from Chats is rate-limited at **2 calls per minute**
   (`FRIEND_DISCOVERY_MINUTE_LIMIT = 2`, hour limit 20,
   `functions/friends/social_graph.js`) — identical at every revision.
@@ -269,12 +437,13 @@ fixed by any deploy, and none has landed in source yet.
   `expireAbandonedReelVoiceCommentDraftsSchedule` (absent from production).
 - **RC-13 — FIXED 2026-09-16.** `sweepExpiredServerInvitesSchedule` had failed
   every run for 62 hours; see the entry below.
-- **RC-14 — P2, client, still present.** The Yeel progress bar stops at 95 % with
+- **RC-14 — was P2, client. FIXED in `3fddac7e`; UNVERIFIED on a device.** The Yeel progress bar stops at 95 % with
   no stage label. `ReelService.publish` exposes `onStage`/`ReelPublishStage`
   (`uploadShare = .95`) and **no caller in `lib/` passes `onStage`** — verified
   at HEAD; the composer passes only `onProgress`. During `finalizeReelDraftV2`,
   up to a 60 s timeout, the label sits at "Publishing 95 %".
-- **RC-15 — P2, client, five chat defects, all still present at HEAD.**
+- **RC-15 — was P2, client, five chat defects. FOUR FIXED (`316cee33`,
+  `6b3cd783`); MSG-04 remains open by decision.**
   `chat_screen.dart` never reads `Conversation.mutedBy`, so an already-muted
   thread still offers "Mute" (MSG-01); Edit is offered on photo/video/voice
   messages the server refuses — production shows `editDirectMessage` 2 × 400
@@ -285,14 +454,16 @@ fixed by any deploy, and none has landed in source yet.
   every 30 s forever on a permanent refusal (MSG-05); message history is
   `.limit(250)` with no older-page loader (MSG-04). One Flutter change with
   widget tests, before the next tester round.
-- **RC-16 — P2, backend source, still present at HEAD.** A DM bell row and its
+- **RC-16 — was P2, backend source. FIXED in `f383dd64`; deployed and read back
+  2026-09-18.** A DM bell row and its
   push can be lost permanently: `onDirectMessageCreated` is registered **without
   `retry: true`** (`functions/notifications/activity.js`), while
   `onNotificationCreated` and `onRoomLiveChanged` in the same file set it.
   `createNotificationForEvent` is idempotent through
   `notificationDeliveryEvents`, so retry would be safe. One contention, timeout
   or cold start silently and permanently drops that message's notification.
-- **RC-17 — P3, backend source, unreachable today.** The media probe still
+- **RC-17 — was P3, backend source. FIXED in `bdea661f`; deployed 2026-09-18 —
+  but see F-1, which caps how much of it actually works.** The media probe still
   refuses fragmented MP4: `readIsoBmffDecodeTimeline` requires a populated
   `stts`, which a browser `MediaRecorder` does not produce, so a web Yeel is
   rejected as `failed-precondition` and the client mistranslates it into "Check
@@ -928,7 +1099,7 @@ these defects. Evidence:
   panel name the target "Voice comment · m:ss" with the caption as its own
   field.
 
-## OPEN — a legal 81–120 character display name can make Reel and Voice comments fail (found 2026-09-13)
+## FIXED — a legal 81–120 character display name could make Reel and Voice comments fail (found 2026-09-13, fixed 2026-09-18)
 
 `updateMyDisplayName` and `canonicalPublicProfile` accept up to 120 characters,
 but `canonicalPublicProfile` truncates to 80 without re-trimming
@@ -946,12 +1117,29 @@ from both: re-trim inside `canonicalPublicProfile` and assert the reader's
 bound at every write that stores the canonical name. Not fixed in this round.
 
 **Re-confirmed 2026-09-16 (RC-8), still present at `58853fb0`.**
-`guards.js:258` is byte-identical at `585740dc`, `22cc2313` and HEAD, so the
-tester repair deploy did not touch it: it is the next publish failure in line
-behind the outage above, and RC-5 then locks the composer on top of it. It
-cannot fire on today's data — the longest live display name was 26 characters
-when all 32 production profiles were checked on 2026-09-16 — but it is the
-first thing to check if a publish still fails on a device.
+`guards.js:258` was byte-identical at `585740dc`, `22cc2313` and that HEAD, so
+the tester repair deploy did not touch it: it was the next publish failure in
+line behind the outage above, and RC-5 then locked the composer on top of it. It
+could not fire on that data — the longest live display name was 26 characters
+when all 32 production profiles were checked on 2026-09-16.
+
+**FIXED 2026-09-18 in `41bbe057`, and the fix is the opposite of the repair both
+reviews suggested.** Asserting the reader's bound at the *writer alone* would
+have turned every legacy row into a permanent `data-loss` refusal — the
+principal gate caught exactly that in the first attempt (`b31-gate-2.md`, G-1).
+The shipped rule is reader-repairs / writer-projects:
+`canonicalStoredDisplayName` trims before **and** after a cut that
+`truncateToWholeCodePoints` takes back to the last whole code point (a naive
+80-unit slice can split a surrogate pair, and the lone high surrogate that
+leaves is not encodable as UTF-8), and `public_profiles.js` applies the same
+projection at the writer through `safeDisplayString`. Only a projection with no
+visible character is refused. See
+[ADR-202](Decisions.md#adr-202-a-canonical-display-name-is-repaired-at-the-reader-and-projected-at-the-writer-never-refused-at-either).
+**Deployed 2026-09-18 for the seven named targets only** — the ~238 other
+exports still carry the pre-fix reader, which is safe because the change is a
+relaxation and the writer now emits values the old guard also accepts. The
+comment callables (`createReelComment` and friends) are **not** among the seven,
+so the text-comment symptom above is still live in production until they move.
 
 ## OPEN — two localization defects on Home found by a catalog audit (2026-09-12)
 

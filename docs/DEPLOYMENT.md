@@ -4,6 +4,245 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## Build 31 named-target backend deploy — 2026-09-18
+
+Seven Cloud Functions, from `main` at
+`98f9413c2d0adb0078c5ee0cb34cbec18d73a67d` (`2.0.0+31`), project
+`yovoice-ec54a`, region `europe-west1`. **No rules, indexes, Storage or Hosting
+deploy is part of this section** — the Hosting release of the same revision is
+below under §Web. Preparation, screens and every read-back:
+`/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-18/b31-deploy-backend.md`
+and the `b31-deploy-*` files beside it.
+
+### The command that was actually run
+
+From a clean detached worktree at `98f9413c` with `npm ci --omit=dev
+--ignore-scripts` (301 packages; `firebase.json` declares no `functions`
+predeploy hook, which is what makes `--omit=dev` safe):
+
+```bash
+cd /private/tmp/yovoice-b31-deploy
+FUNCTIONS_DISCOVERY_TIMEOUT=120 firebase deploy \
+  --only "functions:reserveReelDraftV2,functions:finalizeReelDraftV2,functions:getVoiceMomentsFeedV2,functions:openDirectConversation,functions:onDirectMessageCreated,functions:getMutualFriends,functions:getFriendSuggestions" \
+  --project yovoice-ec54a --non-interactive --force
+```
+
+Credential: Application Default Credentials (`firebase login:list` reports **no
+authorized accounts**; no interactive login, no password and no 2FA at any
+point). Start `2026-09-18T15:58:17Z`, end `16:00:10Z`, rc 0, `Deploy complete!`.
+Log: `b31-deploy-run.log`.
+
+**`--force` is required here, and the same command without it fails before
+deploying anything.** `onDirectMessageCreated` declares `retry: true` in source
+while the live function was still `RETRY_POLICY_DO_NOT_RETRY`, so this deploy
+*introduces* a failure policy and the CLI refuses non-interactively:
+
+```
+Error: Pass the --force option to deploy functions with a failure policy
+```
+
+Proven both ways by dry run before anything was deployed —
+`b31-deploy-dryrun.log` (fails) and `b31-deploy-dryrun-force.log`
+(`✔ Dry run complete!`). **`--force` cannot widen the blast radius when `--only`
+is name-scoped**: the CLI considers only the seven named functions, and the
+passing plan mentions no deletion and no forbidden name. Accepting the retry
+policy is safe because the handler is idempotent by construction — delivery keys
+on `direct-message:{conversationId}:{messageId}:{recipientId}`, derived from the
+immutable source identity rather than the CloudEvent envelope, and guarded
+through `notificationDeliveryEvents`.
+
+**Screen the selector by exact match, never by substring.**
+`reserveReelDraft` and `finalizeReelDraft` are forbidden and are *proper
+substrings* of the targets `reserveReelDraftV2` / `finalizeReelDraftV2`; a naive
+`grep -F` raises two false positives and blocks a correct deploy. Ground truth is
+module evaluation of `functions/index.js` (245 exports, aggregated by
+`Object.assign`, so enumeration beats grepping `exports.`): all seven targets and
+all twenty forbidden names are present as distinct exports.
+Log: `b31-deploy-selector-check.log`.
+
+### Read-backs
+
+| Check | Result |
+| --- | --- |
+| `gcloud functions describe` × 7, PRE at 15:49:44Z | all ACTIVE; the last three (`onDirectMessageCreated`, `getMutualFriends`, `getFriendSuggestions`) were still on 2026-09-08 |
+| `gcloud functions describe` × 7, POST | all **ACTIVE**, `updateTime` 15:59:53–16:00:00Z — after the 15:58:17Z start (`b31-deploy-readback-<name>.json`) |
+| `onDirectMessageCreated` trigger | `google.cloud.firestore.document.v1.created` on `conversations/{conversationId}/messages/{messageId}`, **`RETRY_POLICY_RETRY`**, **512 Mi**, **120 s**, **maxInstances 50** — every one of the four intended changes landed |
+| unauthenticated probes, the six callables | **401** each, none 500 (`b31-deploy-probes-POST.log`) |
+| forbidden set | `b31-deploy-functions-list-POST.json` — **no forbidden name has an `updateTime` after the deploy start** (checked by script) |
+| error window 15:58Z–16:10Z, `severity>=ERROR`, the 7 services | **`[]`** — empty, against an equally empty PRE baseline |
+
+**`triggerRegion: europe-west4` on `onDirectMessageCreated` is not a defect.**
+The Eventarc *trigger* lives there because the Firestore `(default)` database
+does (`gcloud firestore databases describe` → `europe-west4
+FIRESTORE_NATIVE`); the *function* is in `europe-west1`. The split is correct
+and persists.
+
+### MUST NOT DEPLOY — the list this selector exists to respect
+
+`functions/integrity/guards.js` is in `functions/index.js`'s require graph, so
+**every one of the 245 exports carries changed source** after this round. A
+blanket `--only functions` is therefore forbidden, and so is each name below.
+
+| Target | Why it must stay out |
+| --- | --- |
+| `finalizeDirectMessageAttachment`, `finalizeMomentDraft`, `finalizeVoiceCommentDraft`, `finalizeRoomCoverUpload`, `finalizeServerFamilyMemoryV1` | all carry `reels/probe.js`; deploying any of them extends fragmented-MP4 acceptance — **and the open F-1 duration over-count** — to DM voice notes (60 s ceiling), Moments and Server media. Nothing in this round needs them. |
+| `reserveReelDraft`, `finalizeReelDraft` (legacy v1) | no current client caller; pure blast-radius widening |
+| `reserveReelVoiceCommentDraft`, `finalizeReelVoiceCommentDraft`, `expireAbandonedReelVoiceCommentDraftsSchedule` | D12-blocked and absent from production; the guard fix rides in the bundle harmlessly, the exports stay out of every selector |
+| `getReelViewV2`, `getReelMediaAccessV2`, `deleteReelComment`, `removeReelComment`, `createReelCommentReport`, `processPendingReelCleanupSchedule`, `onReelCleanupOutboxCreated`, `expirePublishedReelsSchedule`, `moderateReport`, `acceptDirectCall` | the remaining ten of the thirteen-name forbidden set below; untouched and must stay untouched |
+| any Podcast, Egress or Stripe export | out of scope. The registered Podcast exports are `createServerPodcastQuestionV1`, `setServerPodcastQuestionOnAirV1`, `setServerPodcastQuestionVoteV1`; Egress stays unregistered (`enablePodcastRecording: false`) |
+| `firestore:rules`, `firestore:indexes`, `storage:rules` | all three files are unmodified at `98f9413c` and production stays level with `58853fb0` |
+
+Two ordering constraints that must survive any repeat: **`reserveReelDraftV2`
+and `finalizeReelDraftV2` travel in the same `--only` command** (`reels/service.js`
+asserts `authorName === authorName.trim()` in both, so a stale reserve feeding a
+new finalize strands the draft), and `onUserPrivacySourceChanged` is **optional**
+— the display-name fix repairs legacy rows at the reader, so no backfill is
+required ([ADR-202](Decisions.md#adr-202-a-canonical-display-name-is-repaired-at-the-reader-and-projected-at-the-writer-never-refused-at-either)).
+
+### What is still un-deployed after this round
+
+- **~238 of the 245 exports** still run the pre-`41bbe057` `guards.js`. RC-10's
+  central refusal logging and RC-8's reader-side repair exist in production
+  **only for the seven above**. Safe by construction — the reader change is a
+  relaxation and the writer emits values the old guard also accepts — but it is
+  not "the backend is fixed".
+- **`98f9413c` itself.** The only code delta after `6332004f` is
+  `functions/premium/entitlements.js` and `functions/premium/stripe_billing.js`,
+  and every Stripe export is in the must-not-deploy list. The change threads an
+  injectable clock through `buildEntitlements` with `Date.now()` defaults
+  preserved, so production Premium behaviour is unchanged — but source and
+  production do differ here.
+- **The RC-6 repair.** `migrateDirectIntegrityConversation` and
+  `scanDirectIntegrityMigration` were not deployed, the new read-only
+  identification script has never been run against production, and no repair was
+  executed.
+- **Worktree cleanup.** The deploy worktree was left in place deliberately;
+  remove it with
+  `git -C /Users/kamil/Documents/GitHub/yovoice worktree remove /private/tmp/yovoice-b31-deploy`.
+
+## Build 31 store and web release state — 2026-09-18
+
+Evidence: `/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-18/build31-2026-09-18.md`
+and the `build31-*` logs beside it. Everything below is a read-back, not an
+expectation.
+
+### Web — LIVE on both hosts
+
+`flutter build web --release` with the three CI `--dart-define`s reproduced
+verbatim, then `firebase deploy --only hosting --project yovoice-ec54a
+--non-interactive -m "2.0.0+31 / main 98f9413c"` under ADC. Exit 0, 111 files.
+
+| Check | Result |
+| --- | --- |
+| `app.yovoice.app/version.json` | `build_number 31`, http 200 (was 30) |
+| `yovoice-ec54a.web.app/version.json` | `build_number 31`, http 200 |
+| served `main.dart.js` sha256, both hosts | `2bf0914f6dd0c33cf761f6781f0e3962fef398f6a4cc1883544922ed8b0f7db2` — **byte-identical to the locally built file** |
+| VAPID key in the served bundle | 1 occurrence — web push live |
+| Hosting `live` release | `2026-09-18T15:43:13.151Z`, version `d8c5da0668b90a18` |
+| rollback target | version **`64101cb53cb8087e`** (`2.0.0+30 / main 121973fc`). **Not** `148b73b04e947c74` (build 28) — that one was built without the VAPID define and disables web push. |
+
+**A stale-artifact trap fired here and was not the harmless one.** `firebase.json`
+sets `"public": "build/web"`, and the pre-existing tree said `build_number "30"`
+but its `main.dart.js` (`7bcc86f8…`, 10 191 665 B) did **not** match what build 30
+shipped (`18b488cf…`, 11 301 711 B). It was a plain `flutter build web` with no
+`--dart-define`, made after the build-30 release — i.e. **a bundle with web push
+disabled, labelled "build 30"**. It was moved aside before the build and is
+retained at `build/web.stale-1789745972`; it is not a rollback target and must
+not be deployed.
+
+App Check on web stays disabled: the repository has zero Actions variables
+(`gh api repos/kamilxgriefer/yovoice/actions/variables` →
+`{"variables":[],"total_count":0}`), so CI expands
+`YOVOICE_WEB_RECAPTCHA_SITE_KEY` to the empty string and passing it empty is an
+exact reproduction, not an omission.
+
+### iOS — build 31 in both TestFlight groups
+
+`nice -n 10 flutter build ipa --release --build-name=2.0.0 --build-number=31
+--export-options-plist=ios/ExportOptions.plist`, first attempt, 7 m 06 s.
+IPA sha256 `6ffcab573a99217b343e97c9e3d09ee7df3f1cec81b7aa972f29636023c2cba4`,
+79 086 397 B, `CFBundleVersion 31`, signed `Apple Distribution: Kamil
+Jaguszewski (C3R59P53KB)`, embedded profile `YO Voice App Store`
+`6a817efe-d05c-443b-a10b-3f91ca381322` (the documented one), entitlements
+`aps-environment=production`, `get-task-allow=false`, `beta-reports-active=true`.
+Uploaded with `xcrun altool --upload-app` under API key `BGK5YPN6V4`; Delivery
+UUID `276881d3-8660-4e3d-9508-3948f60b5507`, and Apple acknowledged exactly
+79 086 397 bytes — the verified size of the file.
+
+Read back on App Store Connect: `processingState VALID`,
+`betaReviewState APPROVED`, `internalBuildState IN_BETA_TESTING`,
+`externalBuildState IN_BETA_TESTING`, `autoNotifyEnabled true`, present in both
+the internal group `a6c2c254-…` (automatic) and the external group
+`910d0a45-…` (attached with `POST /v1/builds/{id}/relationships/betaGroups`,
+HTTP 204, then a `betaAppReviewSubmissions` POST, HTTP 201). "What to Test" was
+PATCHed first, before the review submission, so the submission could not be
+created without the tester notes Apple requires — HTTP 200, read back verbatim.
+
+`GET /v1/builds/{id}/betaGroups` is **not available** (`403 FORBIDDEN_ERROR: The
+relationship 'betaGroups' does not allow 'GET_RELATED'`); membership must be
+proved from the group side.
+
+**Rollback.** External: `DELETE /v1/builds/276881d3-…/relationships/betaGroups`
+with the group id — build 30 is still `VALID` in that group and testers fall back
+to it. Internal: the group has `hasAccessToAllBuilds = true`, so un-adding does
+nothing; **expire** build 31 instead. An uploaded build cannot be deleted and
+**build number 31 can never be re-used** — any re-cut is **32**, and
+`pubspec.yaml` on `main` still says `2.0.0+31`.
+
+### Android — build 31 published to the Play internal track
+
+`nice -n 10 flutter build appbundle --release --build-name=2.0.0
+--build-number=31`, exit 0, Gradle `bundleRelease` 376.4 s. AAB
+127 563 381 B, sha256
+`ed7aff7924c3e78f185165b7e419f75716a683feac7097543488c30c0a082eb2`,
+`package app.yovoice`, **versionCode 31**, versionName 2.0.0, minSdk 24 /
+targetSdk 36, ABIs `arm64-v8a`/`armeabi-v7a`/`x86_64`,
+`jarsigner -verify` → `jar verified.` (rc 0), signer
+`CN=YO Voice Upload Key, O=YO Voice, C=PL`, SHA-256
+`75:3A:AC:CB:B2:8E:65:0B:54:A5:EB:F0:F2:A6:CB:AA:23:3C:5E:B0:EF:00:FB:37:90:83:8E:6E:44:51:AE:1E`
+— identical to build 30. All four foreground-service permissions present and
+`android:foregroundServiceType="microphone|mediaPlayback|mediaProjection"` on
+`app.yovoice.VoiceSessionService`. Because **zero** `android/` files changed
+since the build-30 tree, the decoded manifest differs from build 30's in
+`versionCode` alone, and `diff` confirms exactly one line — the strongest control
+available here.
+
+**Tooling deviation, retested this round rather than inherited.** `aapt2`,
+`apkanalyzer` and all five Gradle-cached `bundletool` jars fail on an `.aab`
+(the first two accept only an APK; the jars are library jars with no
+`Main-Class`). `scratchpad/aab_manifest.py` decoded `base/manifest/AndroidManifest.xml`
+(aapt.pb protobuf) directly, and was validated in the same session on the
+retained build-30 bundle — it reported `versionCode 30` there and `31` here.
+`versionCode 31` is **confirmed**, not assumed.
+
+Published to the **internal testing** track (`Test wewnętrzny`, track id
+`4700922314668761556`) at **18:30 CEST**. Read-back after a fresh reload at
+18:32: `Aktywne · Najnowsza wersja: 31 (2.0.0)`; release row `31 (2.0.0) —
+Dostępna dla testerów wewnętrznych · Opublikowano: 18 wrz 18:30`; history shows
+`30 (2.0.0)` with `Data zastąpienia: 18 wrz 2026 18:30`. The review page carried
+no warning and nothing about app-content or foreground-service declarations.
+Production, open testing, closed testing, the testers list and pricing were not
+opened. Details: `build31-play/play-readback.md`. **UNVERIFIED:** screenshot
+evidence could not be persisted, so the Play state above is a textual read-back
+only. Rollback on Play is by release selection, not re-upload — Play will not
+accept versionCode 30 again.
+
+### Manual actions still outstanding after Build 31
+
+1. **Decide whether build 31 is still the build to test.** `main` moved to
+   `d406f842` minutes after the binaries were cut, and `a629fd99`, `23b35885`
+   and `87fc8632` touch `lib/` and are **not** in build 31 — while the
+   What-to-Test copy asks testers to re-test chats. Cut **32** if the composer
+   keyboard fix matters this round.
+2. **Bump `pubspec.yaml` to `2.0.0+32`** before any further build.
+3. **Remove the duplicate `YO Voice App Store` provisioning profile**
+   (`1a59a340-37ab-43a5-bdb2-bdc29d60600d`). Xcode selects by *name* and two are
+   installed; this build embedding the documented UUID was luck, not
+   configuration. Carried over from build 30, still not done.
+4. **Remove the deploy worktree** at `/private/tmp/yovoice-b31-deploy`.
+5. **Serialize release builds against the other automations** — `main` took two
+   merges inside the task window, as it did during build 30.
+
 ## 2.0.0 (30) client round and the 2.0.0 (29) Play release — 2026-09-16
 
 `pubspec.yaml` moved `2.0.0+27` → `2.0.0+30` in `121973fc`; that one-line bump

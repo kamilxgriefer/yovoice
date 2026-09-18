@@ -14,6 +14,79 @@ someone decide what to pick up next.
 
 ---
 
+## Build 31 fix round, named-target backend deploy and the 2.0.0 (31) release — 2026-09-18
+
+**Status: source landed and CI-green; seven Cloud Functions deployed and read
+back; build 31 live on web, in both TestFlight groups and on the Play internal
+track. Three client fixes landed on `main` *after* build 31 was cut and are
+therefore not in the binaries testers received.**
+
+Fourteen commits over `b14397f3` (the Build 30 tree) closed most of the
+RC-5…RC-17 list that the 2026-09-16 outage repair explicitly did *not* fix.
+Ranges: `git log b14397f3..98f9413c`.
+
+- **Backend source.** `41bbe057` trims the canonical display name at the writer
+  and repairs it at the reader (RC-8) and gives the shared `fail()` primitive a
+  single `integrity refusal` warning for `data-loss`/`internal` (RC-10, backend
+  half); `e714c251` counts and warns when the Voice Moments feed drops every
+  candidate (RC-3(d)); `f383dd64` puts `onDirectMessageCreated` on a bounded
+  retry (RC-16); `b710fd34` raises the friend-discovery ceiling and adds a burst
+  window (RC-11); `bdea661f` measures fragmented MP4 from the bytes it actually
+  parsed (RC-17); `71078013` repairs the direct-conversation migration tool and
+  adds a read-only identification script (RC-6 tooling only — **no repair was
+  run**).
+- **Client source.** `7137b015` reports terminal callable refusals to
+  Crashlytics and stops claiming a `data-loss` refusal is worth retrying (RC-10,
+  client half); `3fddac7e` keeps a refused Yeel draft editable and draws the
+  publish stage on screen (RC-5, RC-14); `d70cf055` keeps one chat-open request
+  id per intent with backoff (RC-9); `6b3cd783` stops an outage exhausting the
+  send retry budget (RC-15 MSG-03); `316cee33` reads mute from the conversation,
+  limits Edit to text and stops inventing a friendship line (RC-15 MSG-01,
+  MSG-02, MSG-05); `2b4e31b7` tells a feed the server emptied from one that is
+  genuinely empty (RC-3, client half).
+- **Release plumbing.** `6332004f` moved `pubspec.yaml` to `2.0.0+31`;
+  `98f9413c` evaluates Premium "still active" against the injected clock, which
+  is what turned CI green again (round 1 on `6332004f` failed on five
+  `stripe_billing.test.js` cases that a fixture date cliff had made
+  time-dependent). Defaults stay `Date.now()`, so production behaviour is
+  unchanged — and that commit is **not deployed**, since every Stripe export is
+  outside the deploy selector.
+- **Gated.** The independent principal review
+  (`yovoice-evidence/2026-09-16/b31-gate-2.md`) returned READY: `flutter
+  analyze` clean, **4965/4965** Flutter tests, **2282/2282** Functions tests,
+  `firestore.rules` / `firestore.indexes.json` / `storage.rules` unmodified. All
+  three GitHub Actions workflows on `98f9413c` succeeded
+  (`yovoice-evidence/2026-09-18/b31-ci-2.md`).
+- **Deployed.** Seven named Cloud Functions targets —
+  `reserveReelDraftV2`, `finalizeReelDraftV2`, `getVoiceMomentsFeedV2`,
+  `openDirectConversation`, `onDirectMessageCreated`, `getMutualFriends`,
+  `getFriendSuggestions` — at 15:58–16:00 UTC, all seven read back ACTIVE with a
+  later `updateTime`, the six callables answering 401, and an empty
+  `severity>=ERROR` window. No rules, indexes or Storage were deployed. Details
+  and the must-not-deploy list:
+  [DEPLOYMENT.md](DEPLOYMENT.md#build-31-named-target-backend-deploy--2026-09-18).
+- **Released.** Hosting serves `build_number 31` on both `app.yovoice.app` and
+  `yovoice-ec54a.web.app`, with the served `main.dart.js` byte-identical to the
+  locally built artifact. iOS build 31 is `VALID` on App Store Connect,
+  `betaReviewState APPROVED`, in both the internal and external groups with
+  `autoNotifyEnabled true`. The Android AAB (versionCode 31, upload-key
+  signature verified) was published to the Play **internal** track at 18:30 CEST.
+- **Known gap testers will feel.** `main` moved to `d406f842` minutes after the
+  binaries were cut. `a629fd99` (media long-press reactions), `23b35885`
+  (LiveKit participant name / privacy) and `87fc8632` (composer keyboard
+  dismissal) touch `lib/` and are **not** in build 31, yet the What-to-Test copy
+  asks testers to re-test chats. Triage beta feedback with that in mind, and cut
+  **32** if the chat keyboard fix matters for this round — build number 31 is
+  consumed on Apple and can never be re-used.
+- **Still open from this round.** F-1 — the fragmented-MP4 walk adds a
+  composition-offset maximum per run per fragment, so a long B-frame web
+  recording over-reports its duration and can still be refused; see
+  [Bugs.md](Bugs.md). RC-6's three non-canonical conversation roots are
+  identified-in-principle only: the script exists, has never been run against
+  production, and no repair was executed.
+
+---
+
 ## Backend release, outage repair and the 2.0.0 (30) client round — 2026-09-16
 
 **Status: backend deployed and independently verified; the tester outage is

@@ -4,6 +4,134 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
+## Build 31 fix-round gate — 2026-09-18
+
+Covers the RC-5…RC-17 fix round, `pubspec.yaml` `2.0.0+31` and the release of
+build 31. Logs are in `/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-18/`
+(`b31-ci-2*`, `b31-deploy-*`, `build31-*`) and
+`/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-16/` (`b31-*` design,
+implementation, fix and gate records). Emulators used demo project ids only.
+
+**Two independent readings of the same tree, and they agree.**
+
+| Gate | Local, on the release tree | CI on `98f9413c` (Node 22) |
+| --- | --- | --- |
+| `flutter analyze --no-pub` | **No issues found!** (exit 0, 11.2 s) | **No issues found!** (35.5 s) |
+| Full Flutter suite | **4965 / 4965**, exit 0 (9 m 01 s, `--concurrency=2`) | **4965 tests passed** (12 m 37 s) |
+| `tool/performance` | — | **11 / 11** |
+| Cloud Functions | the 10 changed/new suites, **257 / 257**, 0 skipped | **2282 / 2282**, 133 suites, 0 fail, 0 skipped (9 m 41 s) |
+| The 13 changed/new client suites | **176 / 176**, exit 0 | (covered by the full run) |
+| Firestore / Storage / Family-media / Servers rules | not re-run — **correctly**, no rule changed | all four steps exit 0 |
+| `npm audit --omit=dev --audit-level=high` | clean | clean (`functions`, `firestore-tests`) |
+| `git diff --stat -- firestore.rules storage.rules firestore.indexes.json` | **empty** | — |
+
+All three GitHub Actions workflows on `98f9413c` succeeded: CodeQL
+(`35360438719`), Flutter web browser smoke (`35360438692`, annotation `2 passed
+(6.5s)`) and Deploy YO Voice to Firebase Hosting (`35360438840`,
+`verify_and_build` only — `deploy_hosting` is gated on `workflow_dispatch` and
+was skipped). Round 1, on `6332004f`, was **red**: five `stripe_billing.test.js`
+cases failed because `buildEntitlements` compared a pinned fixture period end
+against the wall clock, so the suite turned red at a date rather than at a code
+change. `98f9413c` threads the injected clock through `applyEntitlements` and the
+five `buildEntitlements` call sites, defaults unchanged; that is the only
+difference between the two rounds.
+
+**UNVERIFIED:** the four rules suites use the project's own `OK <assertion>`
+reporter rather than a TAP summary, so no aggregate assertion count is printed
+for steps 15–18. What is proven for those four is the step exit status.
+
+### New suites this round
+
+Backend (`functions/test/`): `fail_observability.test.js` (the central `fail()`
+logging contract), `direct_migration_drift.test.js` (the repaired migration tool
+against a healthy-GIF fixture), `identify_noncanonical_direct_conversations.test.js`
+(the read-only RC-6 script), plus `fixtures/fragmented_mp4.js` and two real
+Playwright-Chromium `MediaRecorder` captures —
+`fixtures/chromium_mediarecorder_fragmented.mp4` (6 707 B, 1.47 s, one `moof`)
+and `fixtures/chromium_mediarecorder_multifragment.mp4` (15 s, five `moof`s).
+Extended: `display_name.test.js`, `moment_integrity.test.js`,
+`activity_notifications.test.js`, `friend_discovery_cost.test.js`,
+`reels_probe.test.js`, `reels_availability.test.js`, `direct_integrity.test.js`.
+
+Client (`test/`): `callable_failure_reporter_test.dart`,
+`chat_mute_state_test.dart`, `chat_empty_state_test.dart`,
+`moments_feed_empty_vs_failed_test.dart`, `yo_button_test.dart`. Extended:
+`reels_composer_test.dart`, `chat_media_actions_test.dart`,
+`chat_mark_read_test.dart`, `message_outbox_test.dart`,
+`direct_message_send_test.dart`, `direct_conversation_open_test.dart`,
+`error_messages_test.dart`, `messages_silent_failure_test.dart`.
+
+**The two fixtures are recorded bytes, not reconstructions.** They were captured
+on this machine with the repository's own Playwright Chromium
+(`canvas.captureStream()` recorded as `video/mp4`), which is the whole point:
+RC-17 is a defect about what a real browser writes, and a hand-built fixture
+would have proven only that the parser agrees with its author. The synthetic
+fixtures cover what a recorder cannot be asked to emit — a `trun` that
+over-claims its own media data, an `mdat` one byte short, a half-populated sample
+table, an `mvex` with no `trex`.
+
+### The mutation-proof convention this round used
+
+**A test only counts as proof if it was observed to fail without the fix.** For
+each fix, the one load-bearing line was reverted to its pre-fix behaviour on a
+scratch copy, the named test was run and observed to fail, and the file was
+restored. All eleven client mutations failed as required, and the three touched
+by a later localization change were re-proved afterwards. Driver and definitions:
+`scratchpad/b31/mutate.py`, `muts.json`, `muts2.json`; logs
+`b31-verify-mutation-*.log`.
+
+| Id | Line reverted | Test that then fails |
+| --- | --- | --- |
+| M-C1 | `_draftContractLocked => _session != null`, keep the unreserved session | `reels_composer_test` "a refused reserve leaves the composer editable" |
+| M-C2 | drop the `finalizing` label | `reels_composer_test` "names the finalizing stage" |
+| M-C3 | `_handleConversation` returns early | `chat_mute_state_test` "an already-muted thread offers Unmute" |
+| M-C4 | `canEdit: type != gif` | `chat_media_actions_test` "Edit is offered on your own text message" |
+| M-C5 | render the friendship line unconditionally | `chat_empty_state_test` "a thread with a stranger claims no friendship" |
+| M-C6a | `markRetry` instead of `markDeferred` | `direct_message_send_test` "an outage cannot exhaust the retry budget" |
+| M-C6b | revive nothing | `direct_message_send_test` "already parked by an earlier build is revived on resume" |
+| M-C7 | retry every error, unbounded ladder | `chat_mark_read_test` "a permanent refusal is not retried on a timer" |
+| M-C8 | fresh `_newRequestId()` per attempt | `direct_conversation_open_test` "two failing opens … send the SAME requestId" |
+| M-C9 | disable the `data-loss` branch | `error_messages_test` / `reels_composer_test` |
+| M-C10 | disable the `serverDroppedEverything` branch | `moments_feed_empty_vs_failed_test` "a page the server emptied says so" |
+
+Backend fixes were proven the same way, by running the new case against the
+**pre-fix** source rather than by inspection: `reels_availability.test.js`'s
+long-display-name publish fails with the old `guards.js` swapped in (reserve
+succeeds, finalize throws `data-loss` on every retry, forever); both fMP4
+acceptance fixtures return `null` against the old `probe.js`;
+`friend_discovery_cost.test.js`'s third call in a minute is already
+`resource-exhausted` at `FRIEND_DISCOVERY_MINUTE_LIMIT = 2`;
+`direct_migration_drift.test.js`'s healthy-GIF fixture reports status `conflict`
+with `["invalidMessageType:dmd-message-1"]` against the old
+`direct_migration.js`.
+
+**A property assertion is not a render assertion, and this round had to be told
+so twice.** Gate 1 rejected the first RC-14 test because it asserted a widget
+*property* rather than what the screen draws — the label was never built in the
+loading branch at all. The accepted form asserts rendered text: `find.text(…)` in
+EN and PL, the idle icon+label case kept, and 320 px at 200 % text with
+`tester.takeException()` null; `reels_composer_test` adds
+`find.descendant(of: reel-publish, matching: find.text('Finishing…'))`.
+
+### What this gate does not prove
+
+- **No device or simulator verification of any Build 31 fix.** None was run in
+  the implementation round, the fix round or either gate. RC-14's on-screen stage
+  label and RC-15's "Edit is not offered on media" are proven by rendered-widget
+  tests and by nothing else. The `b31-device.md` frames `h20`/`h22` predate the
+  fix and are byte-identical to each other.
+- **No WebKit/Safari measurement.** RC-17 is a web-recorder defect and the only
+  browser bytes in evidence are Chromium. The exact-`mdat`-coverage rule and the
+  open F-1 over-count are both unproven against WebKit. `browser-smoke.yml` runs
+  Chromium only.
+- **No two-device chat, real push delivery, network handover, Android device,
+  light theme or RTL run.**
+- **The `fail()` privacy claim was sampled, not exhaustively audited.** The 18
+  call sites that interpolate a value were checked and all interpolate
+  author-written constants; the remaining ~280 were not individually read.
+- **The RC-6 identification script has never been run against production**, and
+  no repair was executed.
+
 ## Release, repair and build 30 gate — 2026-09-16
 
 This gate covers the evening that deployed `e1a9f3cd`, repaired the production
@@ -489,6 +617,16 @@ media/crop/Reels gate passed **39/39**; the production Web artifact built and
 its Hosting workflow/live route checks passed. The Functions and Rules-harness
 production-dependency audits reported **0 known vulnerabilities**. Historical
 count movement remains below.
+
+> **Movement, 2026-09-18 (the Build 31 fix round).** Measured on `98f9413c`
+> locally and reproduced by CI under Node 22: Flutter VM **4965/4965** (+33 over
+> build 30), Cloud Functions **2282/2282** across 133 suites (+38),
+> `tool/performance` **11/11**. `flutter analyze --no-pub` clean on both
+> machines. The rules suites are unchanged and were **not** re-run, correctly —
+> `firestore.rules`, `firestore.indexes.json` and `storage.rules` are byte-
+> identical to build 30. Seven new test files carry most of the movement; the
+> convention that produced them, and everything these numbers do not prove, is in
+> [the 2026-09-18 gate above](#build-31-fix-round-gate--2026-09-18).
 
 > **Movement, 2026-09-16 (release, outage repair and build 30).** Measured on
 > `e1a9f3cd` locally and reproduced by CI under Node 22: Flutter VM

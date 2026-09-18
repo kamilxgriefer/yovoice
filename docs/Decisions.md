@@ -12320,3 +12320,325 @@ to `../.dart_tool/package_config.json`), which makes fresh symbols look
 undefined and identical types fail to unify; `flutter pub get --offline` in
 the worktree fixes it. Device runs remain the owner's: this is framework-level
 proof, not MIUI proof.
+
+## ADR-201: The single refusal primitive is the single refusal signal — and it may log only author-written constants
+
+**Status:** Accepted (2026-09-18). Implemented in
+`functions/integrity/guards.js` (`fail()`, `SILENT_FAILURE_CODES`) in
+`41bbe057`; proven by `functions/test/fail_observability.test.js`. Bugs.md:
+RC-10, and N-5 for the noise this creates.
+
+**Context.** The Cloud Functions callable framework logs **nothing** for an
+`HttpsError` a handler throws deliberately. Every refusal in this backend goes
+through one primitive, `fail(code, message)`, at roughly 300 call sites in about
+40 modules — so all 34 production 500s during the 2026-09-14 outage carried zero
+application log lines. On the client, every one of those failures was caught and
+turned into a snackbar, and Crashlytics is wired for *uncaught* errors only, so
+no non-fatal was recorded either. The result was a total, two-day, both-ends
+blackout on a 100 %-dead publish path. Adding a log line at each call site was
+rejected immediately: 300 edits that drift the moment someone writes call site
+301.
+
+**Decision.**
+
+1. **`fail()` logs, the call sites do not.** For `data-loss` and `internal`
+   only, `fail()` emits exactly one `logger.warn("integrity refusal", {code,
+   reason, fn})` before throwing. `fn` is read from the Cloud Run environment
+   (`FUNCTION_TARGET` / `K_SERVICE`), so nothing has to be threaded through the
+   callers. Zero call-site edits; no new parameter.
+2. **Only the two silent codes.** `unauthenticated`, `permission-denied`,
+   `invalid-argument`, `failed-precondition` and `resource-exhausted` are
+   ordinary, expected, client-caused outcomes; logging them would drown the
+   signal. `data-loss` and `internal` mean *we* are broken.
+3. **The privacy rule that makes central logging safe: `message` is a static,
+   author-written English string at every call site.** It is never built from
+   user input. That is what lets one central `logger.warn` interpolate `reason`
+   without an audit at every caller — and it is a rule future code must keep, not
+   an observation about today's code. If a refusal ever needs a user-supplied
+   detail, it goes in structured fields that are explicitly reviewed, never into
+   `message`.
+4. **The client half is symmetric.** `recordCallableRefusal({callable, code})`
+   (`lib/core/helpers/callable_failure_reporter.dart`) records a Crashlytics
+   non-fatal on a *terminal* refusal only, carrying `{callable, code}` and
+   nothing else — no uid, no caption, no message text, no display name. Web and
+   debug are no-ops, and the whole body is wrapped in try/catch: observability
+   must never be the thing that takes the app down.
+
+**Reasoning.** A single choke point is the only place a logging rule cannot
+drift. The privacy argument is what normally blocks central logging of a refusal
+reason, and here it is discharged by construction rather than by review — the
+messages are literals in the source. Restricting the client non-fatal to
+terminal refusals keeps a flaky network from manufacturing a fake defect rate;
+restricting the payload to two fields means the report can never become a
+personal-data leak.
+
+**Consequences.** A `data-loss` refusal is now visible from both ends within
+seconds instead of never. The cost is real and was accepted with eyes open: a
+single feed skew emits up to ten identical `integrity refusal` lines per call
+per viewer, and the RC-6 identification script and
+`migrateDirectIntegrityConversation` emit `data-loss` warnings as ordinary
+control flow. **Any alert built on `integrity refusal` will be noisy from day
+one** (Bugs.md, N-5) — the next step is to separate operator-tool refusals from
+runtime ones before this becomes a paging signal, not to raise the threshold.
+Deployment is partial: `guards.js` is in every export's require graph, but only
+seven functions were deployed on 2026-09-18, so ~238 exports still refuse
+silently in production.
+
+## ADR-202: A canonical display name is repaired at the reader and projected at the writer, never refused at either
+
+**Status:** Accepted (2026-09-18). Implemented in
+`functions/integrity/guards.js` (`canonicalStoredDisplayName`,
+`truncateToWholeCodePoints`) and `functions/profile/public_profiles.js`
+(`safeDisplayString`) in `41bbe057`; proven by
+`functions/test/display_name.test.js` and the end-to-end case in
+`functions/test/reels_availability.test.js`. Bugs.md: RC-8.
+
+**Context.** `updateMyDisplayName` accepts up to 120 code *points*.
+`canonicalPublicProfile` cut the stored name to 80 code *units* with a bare
+`slice(0, 80)` and no re-trim, while every consuming validator asserts
+`authorName === authorName.trim()`. An account whose 80th character is a space
+could therefore reserve a Yeel draft and then fail `finalizeReelDraftV2` with
+`data-loss` permanently, on every retry — and RC-5's composer lock then made the
+draft unrecoverable. Two independent reviews had already recommended the obvious
+repair: assert the readers' bound at the writer.
+
+**That repair is the trap.** The first implementation of this round did exactly
+that and the principal gate blocked it (`b31-gate-2.md`, G-1): a reader that
+*refuses* a legacy untrimmed row converts an inconvenience into a permanent,
+unrecoverable `data-loss` for every profile written before the fix. The defect
+class was recreated one level up.
+
+**Decision.**
+
+1. **The reader repairs.** `canonicalStoredDisplayName` trims **before** the cut
+   (so leading whitespace cannot spend part of the budget), takes the cut back to
+   the last whole code point, and trims **again** after it. It refuses only a
+   projection with no visible character at all.
+2. **The cut respects code points, not units.** Slicing at 80 UTF-16 units can
+   land between a surrogate pair; the lone high surrogate that remains is not
+   encodable as UTF-8, `@protobufjs/utf8` writes replacement bytes for it, and
+   the value Firestore stores would no longer be the value the guard checked — so
+   a later read of the same row would refuse. `truncateToWholeCodePoints` drops a
+   trailing lone high surrogate rather than keeping it.
+3. **The writer projects the same rule.** `safeDisplayString` in
+   `public_profiles.js` applies trim-cut-trim-whole-code-point at projection
+   time, so a freshly written row is already canonical and does not depend on the
+   reader to repair it. It is scoped to `displayName` and `username` only —
+   `safeString`, and therefore `bio`, `country`, `statusMessage` and search text,
+   is untouched.
+4. **A shared-guard change deploys as a relaxation first.** Because the reader
+   only ever widens what it accepts and the writer only ever emits values the old
+   reader also accepts, the two halves can travel in any order and a stale
+   revision reading a new row is safe. No backfill and no
+   `onUserPrivacySourceChanged` deploy is required.
+
+**Reasoning.** Data that already exists cannot be made to comply by a validator;
+it can only be repaired or rejected, and rejecting it is a data-loss decision
+dressed up as strictness. Writing the invariant twice — once defensively at the
+reader, once eagerly at the writer — is the pattern that makes a shared-guard
+change safe to roll out gradually, which ADR-195 made a hard requirement after a
+projection writer shipped ahead of its readers.
+
+**Consequences.** An 81–120 character name publishes again, including one whose
+80th character is a space and one cut mid-emoji. Legacy rows are repaired on
+read with no migration. The `CANONICAL_DISPLAY_NAME_MAX = 80` bound is now
+asserted in one place instead of implied in several. Cost: the same string is
+normalized twice on a hot path, which is measurable in microseconds and was not
+optimized. **Deployed 2026-09-18 for seven targets only** — the comment
+callables are not among them, so the invisible-comment symptom of this defect is
+still live in production.
+
+## ADR-203: A fragmented MP4 is measured from bytes a `trun` claims and an `mdat` actually contains
+
+**Status:** Accepted (2026-09-18). Implemented in `functions/reels/probe.js` in
+`bdea661f`; proven by `functions/test/reels_probe.test.js` against
+`functions/test/fixtures/fragmented_mp4.js` and two real Playwright-Chromium
+`MediaRecorder` captures. Bugs.md: RC-17 (fixed) and F-1 (open).
+
+**Context.** `readIsoBmffDecodeTimeline` required a populated `stts` sample
+table. A browser `MediaRecorder` does not write one — it emits an `mvex`/`trex`
+init segment with empty `stbl` tables followed by one `moof`+`mdat` per
+timeslice — so every web Yeel was refused as `failed-precondition` and the
+client mistranslated that into "Check your media and audio rights". Android
+`MediaRecorder` and the iOS camera write non-fragmented MP4, so phones never hit
+it and the defect stayed a web-only, low-priority item until the web recorder
+mattered.
+
+**The first fix was worse than the bug.** It derived the duration from the last
+`moof`'s `tfdt`, which is a value the uploader fully controls. The principal
+gate demonstrated it with six fixtures: zeroing the final `tfdt`, zeroing every
+`tfdt`, hiding 21 s in fragment 1 behind a token last fragment, and a 20 MB
+`mdat` that no `trun` describes all passed. A media probe that believes the
+uploader is not a probe.
+
+**Decision.**
+
+1. **Every `moof` is opened and parsed.** No sampling, no "read the last one".
+   One range read per `moof`, parsed in memory, bounded by
+   `MAX_ISO_BMFF_MOOF_BYTES = 256 KiB` (a timing box is a few hundred bytes in
+   practice) and `MAX_ISO_BMFF_FRAGMENTS = 256`.
+2. **Two independent lower bounds per track**, and the larger wins: the highest
+   `baseMediaDecodeTime + fragmentDuration` seen, and the sum of the fragment
+   durations. A single lying `tfdt` cannot pull the answer down below the work
+   actually described.
+3. **Byte coverage is the hard gate.** Every run's `[start, end)` must fall
+   inside a real top-level `mdat` (`findContainingMdat`), **and** every top-level
+   `mdat` byte must be claimed by some `trun` this parser read
+   (`isoBmffMdatFullyClaimed`). An unclaimed `mdat` is a refusal, not a
+   fallback to the container's own claim. This is the rule that closes the whole
+   class: container metadata (`mehd`, `mvhd`, `tkhd`, `elst`) may only
+   *corroborate* a measurement, never substitute for one.
+4. **The ceiling follows the format, and the reason is written down.** One honest
+   fragment costs three range reads, so a 160-read ceiling refused an ordinary
+   recording at about 57 fragments — the exact RC-17 symptom, from the other
+   direction. The ceiling is 900, sized to `MAX_ISO_BMFF_FRAGMENTS` plus the
+   fixed init-segment cost, with `MAX_ISO_BMFF_DURATION_RANGE_BYTES` (2 MB)
+   remaining the real work ceiling.
+5. **Rejected: refusing `moofs.length > 1`.** The gate suggested it as a
+   conservative option. Real 15 s and 60 s Chromium captures carry 5 and 18
+   top-level `moof`s, so that rule would have shipped RC-17 dead while claiming
+   it fixed.
+
+**Reasoning.** The only trustworthy statement about a media file is one derived
+from bytes the uploader had to actually transfer. Duration bounds the Reel
+ceiling, the storage cost and the moderation surface, so over-trusting it is a
+resource-exhaustion and policy hole, not a cosmetic error. Failing closed — a
+file that cannot be measured is refused — is the correct posture for an upload
+path that already has a client-side retry story.
+
+**Consequences.** Web recordings publish; eight synthetic attack shapes and both
+real Chromium captures behave as specified. Two costs are carried knowingly.
+**F-1 (open, P2):** the walk adds `run.maxCompositionOffset` per run *per
+fragment* and then sums those across fragments, so a 60-fragment B-frame
+recording over-reports by ~2 s and lands exactly on
+`MEDIA_DURATION_TOLERANCE_MS = 2000` — the RC-17 symptom returning for B-frame
+content. It fails closed and is not a regression against production, but it caps
+how much of RC-17 actually shipped; the correct bound adds the maximum
+composition offset once per track. **F-2 (open, P3):** the 900-read ceiling is
+shared with the progressive path, where `listIsoBmffAtoms` spends 16 bytes per
+read, so a crafted progressive file can force ~900 GCS range requests instead of
+~160. Neither fixture in the suite carries a `cts`, so F-1 is invisible to the
+current tests, and nothing here is verified against WebKit — the one recorder
+most likely to differ from Chromium.
+
+## ADR-204: An outage defers a queued message; only a failure the server answered spends the retry budget
+
+**Status:** Accepted (2026-09-18). Implemented in
+`lib/features/messages/data/services/message_outbox.dart` and
+`direct_attachment_outbox.dart` in `6b3cd783`; proven by
+`test/message_outbox_test.dart` and `test/direct_message_send_test.dart`.
+Bugs.md: RC-15 MSG-03.
+
+**Context.** `MessageOutbox.maxAttempts = 6` and
+`DirectAttachmentOutbox.maxAttempts = 8` exist to stop a permanently broken
+message retrying forever. During the two-day outage they did the opposite of
+their purpose: every attempt failed, the counter climbed, and after six tries the
+message was marked `failed` — permanently, in local storage, with a "Not sent"
+label. The connectivity listener only called `due()`, which reconsiders entries
+that are still `pending`; nothing ever revisited a `failed` one. The messages
+that testers lost were not lost by the server, they were retired by the client
+while it was offline.
+
+**Decision.**
+
+1. **Two counters, two meanings.** `attempts` counts failures the **server
+   answered** — an error code came back, so the request reached something that
+   made a decision. `deferrals` counts failures where **nothing answered** — no
+   connectivity, an ambiguous transport failure, a dropped socket.
+2. **`maxAttempts` bounds `attempts` only.** Reaching it means "the transport
+   gave up on a request the server kept refusing", which is a real terminal
+   state. `markDeferred` increments `deferrals`, leaves `attempts` untouched,
+   sets `state = pending` and schedules `nextAttemptAt` from the same
+   `_backoffFor` ladder the retry path uses — one backoff shape, not two.
+   Deferrals therefore widen the gap between attempts without ever consuming the
+   budget.
+3. **`markFailed` clamps `attempts` below `maxAttempts`** in the attachment
+   outbox, so the cap keeps meaning what it says and cannot be reached by a path
+   that did not spend it.
+4. **A build that already parked messages must un-park them.**
+   `reviveDeferredFailures()` walks entries that are `failed` **with
+   `attempts >= maxAttempts`** — a structural proof that every failure was
+   counted, i.e. the pre-fix shape — resets them to `pending` with
+   `deferrals: 0`, and is called on reconnect and on resume. Installed clients
+   carrying parked messages recover without the person doing anything.
+5. **The persisted record is additive and tolerantly read.** `deferrals` is a new
+   optional key; a reader that finds it missing, negative or non-integer reads
+   `0`. An older build ignores it. No migration, no version bump.
+
+**Reasoning.** "Give up after N tries" is only correct when a try is evidence
+about the message. When the try is evidence about the network, the same counter
+punishes the person for their own connectivity. Separating the two is a smaller
+change than making the retry loop network-aware, and it keeps the honest reason
+a message can be permanently failed — a server that keeps refusing it.
+
+**Consequences.** An outage or a tunnel no longer costs a queued message; the
+budget still stops a genuinely broken one. Existing "Not sent" rows from build 30
+and earlier revive on the first reconnect after build 31. The cost is one more
+persisted integer per entry and one more state transition to reason about, and
+the revival heuristic is deliberately conservative: it will not revive a message
+that failed fewer than `maxAttempts` times, because that shape cannot be
+distinguished from a legitimate manual abandonment. One residual (Bugs.md, N-4):
+if the connectivity stream never reports the return to online, `_offlineObserved`
+stays true and the entry keeps deferring instead of retrying.
+
+## ADR-205: One chat-open intent keeps one `requestId` until it succeeds, and backs off locally
+
+**Status:** Accepted (2026-09-18). Implemented in
+`lib/features/messages/data/services/direct_conversation_open_intents.dart`
+(new) and `message_service.dart` in `d70cf055`; proven by
+`test/direct_conversation_open_test.dart`. Bugs.md: RC-9.
+
+**Context.** `openDirectConversation` runs `beginAttemptPreflight`
+(`functions/messaging/direct_integrity.js`) in **its own transaction, before**
+the main one. That preflight consumes the `direct.attempt.open` limiter (12
+events per 60 s) and `transaction.create`s a row in `integrityPreflightLedgers`
+— and **commits** — even when the main transaction then rolls back. The client
+minted a fresh `requestId` on every attempt, so a deterministic refusal leaked a
+new ledger row each time (`integrityPreflightLedgers` stood at ~1 075 documents
+with no TTL) and a lost acknowledgement could never be recognised as a replay.
+Production showed the end state: 2 × 429 immediately after an 11-failure burst,
+at which point the copy silently changes to "We're a little overloaded right
+now" — a rate-limit message for a defect the person cannot influence.
+
+**Verified while designing this, and it shapes the decision:** reusing the
+`requestId` alone does **not** save the quota. `consumeRateLimit` runs
+unconditionally once `assertLedgerReplay` finds no committed result. The stable
+id fixes the ledger leak and the replay; only client-side backoff fixes the 429.
+Both halves are required, and shipping either alone would have looked like a fix.
+
+**Decision.**
+
+1. **The identity is the intent, not the attempt.** A process-wide,
+   account-scoped store keyed `(ownerUid, targetUserId)` holds
+   `{requestId, attempts, nextAttemptAt, lastError}`. The id survives every
+   failure and is dropped only on success or on account change. It follows the
+   `MessageOutbox.sharedForUser` static-registry pattern, so the five screens
+   that can start a chat share one store even though each builds its own
+   `MessageService` facade.
+2. **A call inside the backoff window never reaches the network.** It replays the
+   previous error verbatim. Twelve taps can no longer manufacture a 429.
+3. **The backoff is the outbox's.** `min(2^attempts, 30s)` with full jitter,
+   mirroring `MessageOutbox._backoffFor` rather than inventing a second backoff
+   shape in the same feature.
+4. **Clock and `Random` are injected**, so the window is testable without
+   waiting.
+5. **The server tolerates the reuse, and that was checked rather than assumed.**
+   `beginAttemptPreflight` accepts an existing preflight row for the same
+   identity instead of re-`create`ing it, so a stable id cannot turn into an
+   `already-exists` refusal.
+
+**Reasoning.** An idempotency key that changes on retry is not an idempotency
+key. The server's preflight-commits-then-rolls-back shape is the underlying
+defect — the Yeel and Voice Moment reserve paths consume their limiter *inside*
+the failing transaction and cost nothing, which is the shape to copy — but
+changing it is a backend transaction restructure, while the client change is
+small, safe and removes the user-visible symptom today. Local backoff is also the
+honest behaviour: repeating a deterministic refusal faster helps nobody.
+
+**Consequences.** A failing open costs one ledger row instead of one per tap, a
+lost acknowledgement is recognisable as a replay, and the false "overloaded"
+copy is gone. A person who taps repeatedly now waits instead of seeing a new
+error each time, which is the intended trade. The server-side preflight ordering
+is **not** fixed and remains the right long-term change. The store is in-memory
+and process-wide: a cold start forgets the intent and mints a new id, which
+re-leaks one row — acceptable, and far from the per-tap leak it replaces.
