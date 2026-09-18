@@ -52,12 +52,14 @@ async function applyEntitlements(
     currentPeriodEnd,
     source,
     cancelAtPeriodEnd = false,
+    nowMs = Date.now(),
   },
 ) {
   const entitlementData = buildEntitlements({
     plan,
     status,
     currentPeriodEnd,
+    nowMs,
     source,
     cancelAtPeriodEnd,
   });
@@ -82,11 +84,14 @@ function buildEntitlements({
   currentPeriodEnd,
   source,
   cancelAtPeriodEnd = false,
+  // Injectable clock so callers that pin time (tests, replayed webhooks)
+  // evaluate "still active" against their own now, not the wall clock.
+  nowMs = Date.now(),
 }) {
   const premiumActive =
     ACTIVE_STATUSES.includes(status) &&
     currentPeriodEnd instanceof Timestamp &&
-    currentPeriodEnd.toMillis() > Date.now();
+    currentPeriodEnd.toMillis() > nowMs;
 
   return {
     plan,

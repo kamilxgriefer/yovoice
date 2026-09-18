@@ -403,6 +403,7 @@ async function cancelStripeBillingForDeletedUser(
         status: "expired",
         currentPeriodEnd: deletionTime,
         source: prior.source ?? "unknown",
+        nowMs: deletionTime.toMillis(),
       });
       applyEntitlementsInTransaction(transaction, uid, expiredEntitlement, {
         firestore,
@@ -1521,6 +1522,7 @@ function makeStripeBillingHandlers({
         status: "active",
         currentPeriodEnd,
         source: "stripe_prepaid",
+        nowMs: now().toMillis(),
       });
       transaction.set(
         billingRef,
@@ -1876,6 +1878,7 @@ function makeStripeBillingHandlers({
           status: "expired",
           currentPeriodEnd: now(),
           source: "stripe_prepaid",
+          nowMs: now().toMillis(),
         });
         transaction.set(
           billingRef,
@@ -2096,6 +2099,7 @@ function makeStripeBillingHandlers({
         status: "expired",
         currentPeriodEnd: now(),
         source: "stripe",
+        nowMs: now().toMillis(),
       });
       transaction.set(
         billingRef,
@@ -2363,6 +2367,7 @@ function makeStripeBillingHandlers({
         currentPeriodEnd: mapped.currentPeriodEnd,
         source: "stripe",
         cancelAtPeriodEnd: mapped.cancelAtPeriodEnd,
+        nowMs: now().toMillis(),
       });
       transaction.set(
         billingRef,
