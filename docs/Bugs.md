@@ -46,6 +46,75 @@ tests that were RED before the fix and are GREEN after it.
   (`direct_media_fullscreen_viewer.dart`) offers no reaction control — a
   person closes it and long-presses the bubble. The queued card of a photo or
   video still uploading has no actions either; it is not a message yet.
+## FIXED IN SOURCE — the chat keyboard could not be put away, or came back on its own (2026-09-18)
+
+Owner report (Redmi Note 8 Pro, Android 11/MIUI, Build 30, and iOS): "nie
+można 'zniżać' klawiatury podczas pisania czasami". Reproduced in widget tests
+against the direct-chat composer; the channel composers (the server text
+channel scene and the club chat facade) shared three of the five defects.
+`TestTextInput.isVisible` is the oracle in every test below: it follows the
+`TextInput.show` / `TextInput.hide` / `TextInput.clearClient` traffic the
+framework sends, which is exactly what a phone acts on.
+
+- **KB-01 (P1) — every send cycled the keyboard.** `_Composer` in
+  `chat_screen.dart` set `readOnly: sending`. On Android and iOS a read-only
+  `EditableText` cannot hold an input connection
+  (`_shouldCreateInputConnection = kIsWeb || macOS || !readOnly`), so
+  `_sending = true` closed it (`TextInput.clearClient`, then a scheduled
+  `TextInput.hide`) and `_sending = false` re-opened it a frame later with
+  `TextInput.show`. Every send dipped the keyboard; a keyboard put away during
+  a slow local enqueue climbed back when it ended; and a Back pressed while it
+  was down left the chat. The pause is now a `TextInputFormatter` that
+  rejects edits while sending — same contract ("no keystroke lands between
+  send and the durable enqueue", still pinned in
+  `messages_silent_failure_test.dart`), no connection churn.
+  `chat_composer_keyboard_test.dart: a send never puts the keyboard away` is
+  red with the flag restored (2026-09-18: 10 pass / 1 fail) and green without.
+- **KB-02 (P1) — no way to dismiss on touch.** Flutter's tap-outside default
+  is a no-op for touch on Android and iOS, the thread had no
+  `keyboardDismissBehavior`, and nothing on the screen unfocused the composer.
+  On iOS, which has no Back button, the keyboard could not be dismissed inside
+  a chat at all. The field now passes `onTapOutside`, scoped by a
+  `TextFieldTapRegion` around the whole composer cluster (reply preview, GIF
+  status, field, buttons, panel — so send, camera, mic, emoji and GIF taps are
+  "inside"), and the thread lists use
+  `ScrollViewKeyboardDismissBehavior.onDrag`. Direct chat, server text
+  channels and club chat.
+- **KB-03 (P2) — sheets handed the keyboard back.** `_pickAttachment` and
+  `_recordVoiceMessage` opened their sheets with the composer still the
+  route's remembered focus, so Flutter refocused it on pop and the keyboard
+  reopened over the returning native picker, or right after a voice note.
+  Both `unfocus()` first now.
+- **KB-04 (P2) — the panel and the keyboard.** (a) Opening the emoji/GIF
+  panel from an idle composer sent `TextInput.hide` *before* the
+  `TextInput.show` that `requestFocus()` triggers a microtask later, so the
+  keyboard rose under the panel; `yoFocusComposerBehindPanel` flushes the
+  focus change first. (b) Closing the panel from its own button called
+  `requestFocus()` on a node that already had focus — a no-op — so the
+  keyboard never came back; `yoShowSystemKeyboard` asks the platform
+  directly. (c) Android Back with the panel open left the screen instead of
+  closing the panel; a `PopScope` on the composer cluster — Android only,
+  since `canPop: false` on iOS would merely disable swipe-back — closes the
+  panel first. Direct chat and club chat take the `PopScope`; the server
+  scene is embedded inside the shell's own `PopScope` and cannot take one
+  without both firing on the same Back (see "remaining").
+- **KB-05 (P2) — a completed send re-requested focus.** Server and club
+  `_send` called `requestFocus()` after the *network* send, which would
+  resurrect a keyboard the person had put away during a slow send. Removed;
+  focus stays where the person left it (the send button is inside the tap
+  region, so tapping it never dropped focus in the first place).
+
+Tests: `test/chat_composer_keyboard_test.dart` (11) and
+`test/composer_keyboard_dismissal_surfaces_test.dart` (12; club and server),
+plus `test/messages_silent_failure_test.dart`, which now pins the pause
+contract behaviourally rather than through `readOnly`.
+
+Device behaviour is **UNVERIFIED**: no Redmi Note 8 Pro / MIUI run and no iOS
+run. Remaining: Back with the panel open inside the server scene still pops
+the server screen (the scene lives inside the shell's `PopScope`); the room
+chat sheet (a retired surface) was left untouched; the reel comment composer
+toggles `enabled` while posting, which drops focus during the post but never
+brings the keyboard back on its own — not the reported symptom, left as is.
 
 ## FIXED — publishing, the Voice Moments feed and new chats were 100 % dead for two days (2026-09-14 → 2026-09-16)
 

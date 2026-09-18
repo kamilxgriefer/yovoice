@@ -27,6 +27,7 @@ class YoTextField extends StatefulWidget {
     this.onChanged,
     this.onSubmitted,
     this.onTap,
+    this.onTapOutside,
     this.onEditingComplete,
     this.obscureText = false,
     this.showPasswordToggle = false,
@@ -67,6 +68,7 @@ class YoTextField extends StatefulWidget {
     this.onChanged,
     this.onSubmitted,
     this.onTap,
+    this.onTapOutside,
     this.onEditingComplete,
     this.enabled = true,
     this.readOnly = false,
@@ -105,6 +107,7 @@ class YoTextField extends StatefulWidget {
     this.onChanged,
     this.onSubmitted,
     this.onTap,
+    this.onTapOutside,
     this.onEditingComplete,
     this.enabled = true,
     this.readOnly = false,
@@ -143,6 +146,11 @@ class YoTextField extends StatefulWidget {
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
   final VoidCallback? onTap;
+
+  /// Forwarded to the underlying field. Left null, Flutter's default applies
+  /// (no unfocus for touch on Android and iOS); a composer that wants a tap
+  /// elsewhere to put the keyboard away passes its own handler.
+  final TapRegionCallback? onTapOutside;
   final VoidCallback? onEditingComplete;
   final bool obscureText;
   final bool showPasswordToggle;
@@ -309,6 +317,7 @@ class _YoTextFieldState extends State<YoTextField> {
                       : palette.textTertiary,
                 ),
                 onTap: widget.onTap,
+                onTapOutside: widget.onTapOutside,
                 onEditingComplete: widget.onEditingComplete,
                 onChanged: (String value) {
                   field.didChange(value);

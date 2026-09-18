@@ -154,17 +154,27 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
     setState(() {
       _composerPanel = opening ? YoComposerPanelTabStore.instance.value : null;
     });
+    // The helpers own the wire order: show before hide when opening from an
+    // idle composer, an explicit show when closing (a focused node cannot be
+    // re-requested).
     if (opening) {
-      if (!_focus.hasFocus) _focus.requestFocus();
-      unawaited(yoHideSystemKeyboard());
+      unawaited(yoFocusComposerBehindPanel(_focus));
     } else {
-      _focus.requestFocus();
+      unawaited(yoShowSystemKeyboard(_focus));
     }
   }
 
   void _selectComposerTab(YoComposerPanelTab tab) {
     setState(() => _composerPanel = tab);
     unawaited(YoComposerPanelTabStore.instance.remember(tab));
+  }
+
+  /// A tap on the thread — anywhere that is not the composer — puts the
+  /// keyboard, or the panel standing in for it, away. Flutter's tap-outside
+  /// default does nothing for touch on Android and iOS.
+  void _dismissComposer() {
+    if (_composerPanel != null) setState(() => _composerPanel = null);
+    _focus.unfocus();
   }
 
   void _insertEmoji(String emoji) {
@@ -184,7 +194,10 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
         text: text,
       );
       _controller.clear();
-      _focus.requestFocus();
+      // Focus is left exactly where the user put it. The send button sits in
+      // the composer's tap region, so tapping it never dropped focus in the
+      // first place — and a keyboard put away during a slow send must not
+      // climb back when the send completes.
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -222,69 +235,76 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
         final canWrite = authority.canSendToChannel(
           announcement: _announcement,
         );
-        final foot = Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (canWrite)
-              _Composer(
-                controller: _controller,
-                focusNode: _focus,
-                sending: _sending,
-                panelOpen: _composerPanel != null,
-                hint: copy.serverMessageHint(widget.channel.name),
-                sendLabel: copy.serverSend,
-                onSend: _send,
-                onTogglePanel: _toggleComposerPanel,
-                compact: widget.compact,
-              )
-            else
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                child: Text(
-                  _announcement
-                      ? copy.serverAnnouncementsOnlyBody
-                      : copy.serverReadOnlyBody,
-                  textAlign: TextAlign.center,
-                  style: AppTypography.bodySmall.copyWith(
-                    color: palette.textSecondary,
+        // The whole footer is ONE tap region with the text field: the send
+        // button, the panel toggle, an emoji or a GIF is not "tapping
+        // outside" the composer and must not put the keyboard away. Joining
+        // the field's own group keeps the selection handles inside as well.
+        final foot = TextFieldTapRegion(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (canWrite)
+                _Composer(
+                  controller: _controller,
+                  focusNode: _focus,
+                  sending: _sending,
+                  panelOpen: _composerPanel != null,
+                  hint: copy.serverMessageHint(widget.channel.name),
+                  sendLabel: copy.serverSend,
+                  onSend: _send,
+                  onTogglePanel: _toggleComposerPanel,
+                  onDismiss: _dismissComposer,
+                  compact: widget.compact,
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: Text(
+                    _announcement
+                        ? copy.serverAnnouncementsOnlyBody
+                        : copy.serverReadOnlyBody,
+                    textAlign: TextAlign.center,
+                    style: AppTypography.bodySmall.copyWith(
+                      color: palette.textSecondary,
+                    ),
                   ),
                 ),
-              ),
-            YoGifSendStatus(controller: _gifDelivery),
-            if (canWrite && _composerPanel != null)
-              Flexible(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final available = constraints.maxHeight.isFinite
-                        ? constraints.maxHeight
-                        : 260.0;
-                    final panelHeight = available
-                        .clamp(128.0, widget.compact ? 260.0 : 340.0)
-                        .toDouble();
-                    return SingleChildScrollView(
-                      child: YoComposerPanel(
-                        tab: _composerPanel!,
-                        onTabChanged: _selectComposerTab,
-                        onEmojiSelected: _insertEmoji,
-                        onBackspace: () => yoDeleteBackAtCaret(_controller),
-                        gifService: _gifService
-                          ..locale = copy.locale.languageCode,
-                        gifDelivery: _gifDelivery,
-                        onGifSelected: (asset) =>
-                            unawaited(_gifDelivery.send(asset)),
-                        gifAutoLoad:
-                            AppPreferencesScope.maybeOf(
-                              context,
-                            )?.value.gifAutoLoadEnabled ??
-                            true,
-                        compact: widget.compact || available < 300,
-                        height: panelHeight,
-                      ),
-                    );
-                  },
+              YoGifSendStatus(controller: _gifDelivery),
+              if (canWrite && _composerPanel != null)
+                Flexible(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final available = constraints.maxHeight.isFinite
+                          ? constraints.maxHeight
+                          : 260.0;
+                      final panelHeight = available
+                          .clamp(128.0, widget.compact ? 260.0 : 340.0)
+                          .toDouble();
+                      return SingleChildScrollView(
+                        child: YoComposerPanel(
+                          tab: _composerPanel!,
+                          onTabChanged: _selectComposerTab,
+                          onEmojiSelected: _insertEmoji,
+                          onBackspace: () => yoDeleteBackAtCaret(_controller),
+                          gifService: _gifService
+                            ..locale = copy.locale.languageCode,
+                          gifDelivery: _gifDelivery,
+                          onGifSelected: (asset) =>
+                              unawaited(_gifDelivery.send(asset)),
+                          gifAutoLoad:
+                              AppPreferencesScope.maybeOf(
+                                context,
+                              )?.value.gifAutoLoadEnabled ??
+                              true,
+                          compact: widget.compact || available < 300,
+                          height: panelHeight,
+                        ),
+                      );
+                    },
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         );
         // The composer — or the read-only sentence standing in for it — is the
         // one part of this scene that cannot shrink, and it is mounted in
@@ -358,6 +378,8 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
           return ListView.builder(
             key: const ValueKey('server-message-list'),
             reverse: true,
+            // A drag on the thread puts the keyboard away.
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             padding: EdgeInsets.fromLTRB(
               widget.compact ? 12 : 16,
               12,
@@ -510,6 +532,7 @@ class _Composer extends StatelessWidget {
     required this.sendLabel,
     required this.onSend,
     required this.onTogglePanel,
+    required this.onDismiss,
     required this.compact,
   });
   final TextEditingController controller;
@@ -520,6 +543,9 @@ class _Composer extends StatelessWidget {
   final String sendLabel;
   final VoidCallback onSend;
   final VoidCallback onTogglePanel;
+
+  /// A tap anywhere that is not part of the composer's tap region.
+  final VoidCallback onDismiss;
   final bool compact;
 
   @override
@@ -543,6 +569,7 @@ class _Composer extends StatelessWidget {
             key: const ValueKey('server-composer'),
             controller: controller,
             focusNode: focusNode,
+            onTapOutside: (_) => onDismiss(),
             hint: hint,
             minLines: 1,
             maxLines: 4,

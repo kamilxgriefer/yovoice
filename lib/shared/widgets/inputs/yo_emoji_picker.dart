@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -711,3 +712,44 @@ class YoEmojiComposerButton extends StatelessWidget {
 Future<void> yoHideSystemKeyboard() {
   return SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
 }
+
+/// Focuses the composer — when it is not focused already — and puts the
+/// system keyboard away, so the panel can take the keyboard's place.
+///
+/// The order on the wire is the whole point. `requestFocus()` is applied in
+/// a microtask, and it is that focus change which opens the input connection
+/// and sends `TextInput.show`. A `TextInput.hide` sent straight after
+/// `requestFocus()` therefore reaches the platform BEFORE the show, and the
+/// keyboard rises under the panel that was meant to replace it. Flushing the
+/// focus change first puts show before hide, and the keyboard stays down.
+Future<void> yoFocusComposerBehindPanel(FocusNode node) {
+  if (!node.hasFocus) {
+    node.requestFocus();
+    FocusManager.instance.applyFocusChangesIfNeeded();
+  }
+  return yoHideSystemKeyboard();
+}
+
+/// Brings the system keyboard back to a composer the panel stood in for.
+///
+/// `requestFocus()` on the node that already has focus is a no-op — no focus
+/// change, no `TextInput.show` — so while the composer kept its focus behind
+/// the panel the platform has to be asked directly. An unfocused composer is
+/// simply focused; that focus change opens the connection and shows.
+Future<void> yoShowSystemKeyboard(FocusNode node) {
+  if (!node.hasFocus) {
+    node.requestFocus();
+    return Future<void>.value();
+  }
+  return SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+}
+
+/// Whether the system Back affordance should close the composer panel before
+/// it leaves the screen.
+///
+/// Android's Back closes the keyboard first and the screen second; the panel
+/// stands in for the keyboard, so it must go first too. iOS has no Back
+/// button, and holding a route with `canPop: false` there would only disable
+/// the swipe-back gesture. Desktop and web keep their navigation untouched.
+bool get yoBackDismissesComposerPanel =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.android;

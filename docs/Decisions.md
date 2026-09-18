@@ -12247,3 +12247,76 @@ declaration, and it turns a class of defect into a non-event.
   there.
 - A tooltip-bearing control that must keep a touch long-press reveal must not
   live inside a context action; it belongs in the actions sheet or an overflow.
+## ADR-199: A mobile composer never toggles `readOnly` around a send, and its cluster is one `TextFieldTapRegion`
+
+**Status:** Accepted (2026-09-18). Implemented in the keyboard-dismissal
+commit on `worktree-agent-af04156167cc07461` (`chat_screen.dart`,
+`club_chat_screen.dart`, `server_text_channel_scene.dart`,
+`yo_emoji_picker.dart`, `yo_text_field.dart`; tests
+`chat_composer_keyboard_test.dart`,
+`composer_keyboard_dismissal_surfaces_test.dart`). Bug entry: Bugs.md
+"the chat keyboard could not be put away" (KB-01 … KB-05).
+
+**Context.** The owner could sometimes not put the keyboard away while
+typing in a chat (Android 11/MIUI and iOS). Five independent mechanisms were
+found, and every one of them was a reasonable-looking line: `readOnly:
+sending` on the composer (which, on Android and iOS, closes the input
+connection and re-opens it — hide, then show — because a read-only
+`EditableText` cannot own a connection there); no dismissal affordance at all
+for touch (Flutter's tap-outside default is desktop-only, and the lists had no
+`keyboardDismissBehavior`); sheets pushed with the composer still the route's
+remembered focus (Flutter refocuses it on pop); `requestFocus()` followed by
+`TextInput.hide` when opening the emoji/GIF panel (the hide reaches the
+platform before the show that the microtask-applied focus change sends);
+`requestFocus()` after a completed send (a no-op on a focused node, but a
+keyboard-raiser on a node the user just unfocused). None of these is visible
+in `flutter analyze`, in a desktop run, or in a test that does not watch the
+`TextInput` channel.
+
+**Decision.**
+
+1. **Pausing edits during an in-flight send is an input formatter**
+   (`_FrozenDraftFormatter`: `formatEditUpdate` returns the old value),
+   **never `readOnly`.** `readOnly` is for fields that are read-only; it is
+   not a lock. Tests assert the contract ("a keystroke lands nowhere while the
+   enqueue is in flight"), not the flag.
+2. **A composer cluster is one `TextFieldTapRegion`.** The field, its
+   buttons, the reply preview, the send status and the emoji/GIF panel are
+   wrapped together, and the field passes `onTapOutside` to a dismiss
+   handler that closes the panel and unfocuses. Use `TextFieldTapRegion`
+   (group `EditableText`), never a private `groupId`: the selection handles
+   and the context menu are in the `EditableText` group and must stay
+   "inside". Thread lists use `ScrollViewKeyboardDismissBehavior.onDrag`.
+3. **Panel/keyboard swaps go through the helpers** in
+   `yo_emoji_picker.dart`: `yoFocusComposerBehindPanel` (focus, flush the
+   focus change, *then* hide) and `yoShowSystemKeyboard` (an explicit
+   `TextInput.show` for an already-focused node). Nobody hand-writes
+   `requestFocus()` + `yoHideSystemKeyboard()` again.
+4. **Back closes the panel before it leaves the screen — on Android, on a
+   screen that owns its route.** `PopScope(canPop: panel == null ||
+   !yoBackDismissesComposerPanel)` on the cluster. Not on iOS (`canPop:
+   false` there only disables swipe-back) and not in a scene embedded under
+   the shell's own `PopScope` (nested scopes both receive the same Back).
+5. **Unfocus before pushing a sheet from a composer** unless the keyboard is
+   wanted back on return (Reply is the one case that wants it, and it asks
+   explicitly).
+6. **A completed send leaves focus where the user put it.** No
+   `requestFocus()` after the await.
+7. **Keyboard tests watch the channel.** `tester.testTextInput.isVisible`
+   and `tester.testTextInput.log` are the oracle; a `hasFocus` assertion
+   alone proves nothing about the keyboard.
+
+**Consequences.** The pause survives, the keyboard does not flicker on send,
+a dismissed keyboard stays dismissed through sends, sheets, typing and
+presence rebuilds, and iOS finally has a way to dismiss at all (tap or drag
+the thread). `YoTextField` gained an optional `onTapOutside` pass-through
+(null keeps Flutter's default). The desktop behaviour is unchanged in the
+common paths — a mouse click outside already unfocused — with one deliberate
+improvement: clicking send or emoji no longer drops focus, because those
+buttons are now inside the field's tap region. Worktree gotcha recorded in
+passing: a worktree nested under the main checkout with no `.dart_tool` of
+its own resolves `package:yovoice` to the *main* checkout (the tools walk up
+to `../.dart_tool/package_config.json`), which makes fresh symbols look
+undefined and identical types fail to unify; `flutter pub get --offline` in
+the worktree fixes it. Device runs remain the owner's: this is framework-level
+proof, not MIUI proof.

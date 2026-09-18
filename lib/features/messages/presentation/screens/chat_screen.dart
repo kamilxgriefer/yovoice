@@ -4,6 +4,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -835,7 +836,9 @@ class _ChatScreenState extends State<ChatScreen> {
   ///
   /// Focus stays on the composer in both directions: the caret has to survive
   /// the swap for insertion to land where the user is typing, and the send
-  /// button has to keep working while the panel is open.
+  /// button has to keep working while the panel is open. The helpers own the
+  /// wire order (show before hide when opening from an idle composer; an
+  /// explicit show when closing, since a focused node cannot be re-requested).
   void _toggleComposerPanel() {
     final opening = _composerPanel == null;
     setState(() {
@@ -844,16 +847,34 @@ class _ChatScreenState extends State<ChatScreen> {
       _composerPanel = opening ? YoComposerPanelTabStore.instance.value : null;
     });
     if (opening) {
-      if (!_focusNode.hasFocus) _focusNode.requestFocus();
-      unawaited(yoHideSystemKeyboard());
+      unawaited(yoFocusComposerBehindPanel(_focusNode));
     } else {
-      _focusNode.requestFocus();
+      unawaited(yoShowSystemKeyboard(_focusNode));
     }
   }
 
   void _selectComposerTab(YoComposerPanelTab tab) {
     setState(() => _composerPanel = tab);
     unawaited(YoComposerPanelTabStore.instance.remember(tab));
+  }
+
+  /// Back on Android closes the panel the way it closes the keyboard the
+  /// panel replaced: the composer keeps its focus, nothing rises, and the
+  /// chat stays. Leaving the chat is the *next* Back.
+  void _closeComposerPanel() {
+    if (_composerPanel == null) return;
+    setState(() => _composerPanel = null);
+  }
+
+  /// Puts the keyboard — or the panel standing in for it — away.
+  ///
+  /// This is what a tap on the thread, on the header, or anywhere that is not
+  /// the composer means on a phone. Flutter's own tap-outside default does
+  /// nothing for touch on Android and iOS, and iOS has no Back button, so
+  /// without this the keyboard in a chat could not be dismissed at all.
+  void _dismissComposer() {
+    _closeComposerPanel();
+    _focusNode.unfocus();
   }
 
   void _insertEmoji(String emoji) {
@@ -1458,6 +1479,11 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_sendingMedia || _mediaPickerOpen) return;
     final ownerId = _captureMediaOwner();
     if (ownerId == null) return;
+    // Drop focus BEFORE the sheet. A focused composer stays the route's
+    // remembered focus while the sheet is up, and Flutter hands it back when
+    // the sheet pops — which reopens the keyboard on top of the returning
+    // native picker. Unfocusing clears that memory; nothing comes back.
+    _focusNode.unfocus();
     _mediaPickerOpen = true;
     DirectMessageMediaPickAction? action;
     try {
@@ -1563,6 +1589,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_sendingMedia) return;
     final ownerId = _captureMediaOwner();
     if (ownerId == null) return;
+    // Same reason as `_pickAttachment`: a voice note is not followed by the
+    // keyboard climbing back over the thread.
+    _focusNode.unfocus();
 
     Future<void> enqueue(RecordedAudio audio, int durationSeconds) async {
       if (!_ownsMediaInteraction(ownerId)) {
@@ -1766,6 +1795,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
                       return ListView.builder(
                         reverse: true,
+                        // A drag on the thread puts the keyboard away — the
+                        // one dismissal iOS users reach for first.
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
                         padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
                         itemCount:
                             queuedMedia.length +
@@ -1850,48 +1883,77 @@ class _ChatScreenState extends State<ChatScreen> {
                     return const _TypingIndicator();
                   },
                 ),
-                if (_replyTo != null)
-                  _ReplyPreview(
-                    message: _replyTo!,
-                    onClose: () {
-                      setState(() => _replyTo = null);
-                    },
+                // Everything from the reply preview down is ONE tap region
+                // with the text field: closing a reply, tapping send, the
+                // camera, the mic, an emoji or a GIF is not "tapping outside"
+                // the composer and must not put the keyboard away. Joining
+                // the field's own group (rather than a private id) keeps the
+                // selection handles and the context menu inside as well.
+                //
+                // The cluster also owns Back while its panel is open:
+                // Android's Back closes the keyboard before it leaves a
+                // screen, and the panel stands in for the keyboard, so Back
+                // closes it — and only it. Anywhere else (no panel, iOS,
+                // desktop, web) the route pops exactly as before.
+                PopScope<Object?>(
+                  canPop:
+                      _composerPanel == null || !yoBackDismissesComposerPanel,
+                  onPopInvokedWithResult: (didPop, _) {
+                    if (!didPop) _closeComposerPanel();
+                  },
+                  child: TextFieldTapRegion(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_replyTo != null)
+                          _ReplyPreview(
+                            message: _replyTo!,
+                            onClose: () {
+                              setState(() => _replyTo = null);
+                            },
+                          ),
+                        YoGifSendStatus(controller: _gifDelivery),
+                        _Composer(
+                          controller: _controller,
+                          focusNode: _focusNode,
+                          sending: _sending,
+                          sendingMedia: _sendingMedia,
+                          emojiPickerOpen: _composerPanel != null,
+                          onSend: _send,
+                          onPhoto: _pickAttachment,
+                          onVoice: _recordVoiceMessage,
+                          onToggleEmoji: _toggleComposerPanel,
+                          onDismiss: _dismissComposer,
+                        ),
+                        // Below the composer, never over it: the send button is
+                        // laid out first, so no panel height can cover it.
+                        if (_composerPanel != null)
+                          YoComposerPanel(
+                            tab: _composerPanel!,
+                            onTabChanged: _selectComposerTab,
+                            onEmojiSelected: _insertEmoji,
+                            onBackspace: () {
+                              yoDeleteBackAtCaret(_controller);
+                              if (!_focusNode.hasFocus) {
+                                _focusNode.requestFocus();
+                              }
+                            },
+                            gifService: _gifService
+                              ..locale = AppLocalizations.of(
+                                context,
+                              ).locale.languageCode,
+                            gifDelivery: _gifDelivery,
+                            onGifSelected: _sendGif,
+                            gifAutoLoad:
+                                AppPreferencesScope.maybeOf(
+                                  context,
+                                )?.value.gifAutoLoadEnabled ??
+                                true,
+                          ),
+                      ],
+                    ),
                   ),
-                YoGifSendStatus(controller: _gifDelivery),
-                _Composer(
-                  controller: _controller,
-                  focusNode: _focusNode,
-                  sending: _sending,
-                  sendingMedia: _sendingMedia,
-                  emojiPickerOpen: _composerPanel != null,
-                  onSend: _send,
-                  onPhoto: _pickAttachment,
-                  onVoice: _recordVoiceMessage,
-                  onToggleEmoji: _toggleComposerPanel,
                 ),
-                // Below the composer, never over it: the send button is laid
-                // out first, so no panel height can cover it.
-                if (_composerPanel != null)
-                  YoComposerPanel(
-                    tab: _composerPanel!,
-                    onTabChanged: _selectComposerTab,
-                    onEmojiSelected: _insertEmoji,
-                    onBackspace: () {
-                      yoDeleteBackAtCaret(_controller);
-                      if (!_focusNode.hasFocus) _focusNode.requestFocus();
-                    },
-                    gifService: _gifService
-                      ..locale = AppLocalizations.of(
-                        context,
-                      ).locale.languageCode,
-                    gifDelivery: _gifDelivery,
-                    onGifSelected: _sendGif,
-                    gifAutoLoad:
-                        AppPreferencesScope.maybeOf(
-                          context,
-                        )?.value.gifAutoLoadEnabled ??
-                        true,
-                  ),
               ],
             ),
           ),
@@ -3125,6 +3187,27 @@ class _QueuedMediaMessageCard extends StatelessWidget {
   }
 }
 
+/// Pauses edits while the local enqueue is in flight — WITHOUT `readOnly`.
+///
+/// On Android and iOS a read-only field cannot hold an input connection
+/// (`EditableText` closes it, which sends `TextInput.hide`) and reopens it
+/// with a `TextInput.show` the moment it is editable again. Toggling
+/// `readOnly` around a send therefore dipped the keyboard on every message
+/// and, worse, brought it back after somebody had put it away during the
+/// window — the "keyboard cannot be dismissed" that testers reported.
+/// Rejecting the edit keeps the connection, the focus and the keyboard
+/// exactly as the user left them, and the contract this protects (no
+/// keystroke lands between "send" and the durable enqueue) is unchanged.
+class _FrozenDraftFormatter extends TextInputFormatter {
+  const _FrozenDraftFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) => oldValue;
+}
+
 class _Composer extends StatelessWidget {
   const _Composer({
     required this.controller,
@@ -3136,6 +3219,7 @@ class _Composer extends StatelessWidget {
     required this.onPhoto,
     required this.onVoice,
     required this.onToggleEmoji,
+    required this.onDismiss,
   });
 
   final TextEditingController controller;
@@ -3147,6 +3231,9 @@ class _Composer extends StatelessWidget {
   final VoidCallback onPhoto;
   final VoidCallback onVoice;
   final VoidCallback onToggleEmoji;
+
+  /// A tap anywhere that is not part of the composer's tap region.
+  final VoidCallback onDismiss;
 
   @override
   Widget build(BuildContext context) {
@@ -3204,7 +3291,15 @@ class _Composer extends StatelessWidget {
                     child: TextField(
                       controller: controller,
                       focusNode: focusNode,
-                      readOnly: sending,
+                      // Never `readOnly: sending` — see _FrozenDraftFormatter.
+                      inputFormatters: sending
+                          ? const <TextInputFormatter>[_FrozenDraftFormatter()]
+                          : null,
+                      // Flutter's default does nothing for touch on Android
+                      // and iOS; a phone needs "tap elsewhere" to mean "put
+                      // the keyboard away". Desktop already unfocused on a
+                      // click outside, so nothing changes there.
+                      onTapOutside: (_) => onDismiss(),
                       minLines: 1,
                       maxLines: 5,
                       textCapitalization: TextCapitalization.sentences,

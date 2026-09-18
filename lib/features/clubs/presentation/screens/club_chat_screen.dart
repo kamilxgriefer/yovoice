@@ -113,7 +113,9 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
   }
 
   /// Swaps the system keyboard for the composer panel and back, keeping focus
-  /// on the composer so the caret survives the swap.
+  /// on the composer so the caret survives the swap. The helpers own the wire
+  /// order: show before hide when opening from an idle composer, an explicit
+  /// show when closing (a focused node cannot be re-requested).
   void _toggleComposerPanel() {
     final opening = _composerPanel == null;
     setState(() {
@@ -122,16 +124,30 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
       _composerPanel = opening ? YoComposerPanelTabStore.instance.value : null;
     });
     if (opening) {
-      if (!_focusNode.hasFocus) _focusNode.requestFocus();
-      yoHideSystemKeyboard();
+      unawaited(yoFocusComposerBehindPanel(_focusNode));
     } else {
-      _focusNode.requestFocus();
+      unawaited(yoShowSystemKeyboard(_focusNode));
     }
   }
 
   void _selectComposerTab(YoComposerPanelTab tab) {
     setState(() => _composerPanel = tab);
     unawaited(YoComposerPanelTabStore.instance.remember(tab));
+  }
+
+  /// Back on Android closes the panel the way it closes the keyboard the
+  /// panel replaced; leaving the channel is the *next* Back.
+  void _closeComposerPanel() {
+    if (_composerPanel == null) return;
+    setState(() => _composerPanel = null);
+  }
+
+  /// A tap on the thread — anywhere that is not the composer — puts the
+  /// keyboard, or the panel standing in for it, away. Flutter's tap-outside
+  /// default does nothing for touch on Android and iOS.
+  void _dismissComposer() {
+    _closeComposerPanel();
+    _focusNode.unfocus();
   }
 
   void _insertEmoji(String emoji) {
@@ -151,7 +167,10 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
         text: text,
       );
       _controller.clear();
-      _focusNode.requestFocus();
+      // Focus is left exactly where the user put it. The send button sits in
+      // the composer's tap region, so tapping it never dropped focus in the
+      // first place — and a keyboard put away during a slow send must not
+      // climb back when the send completes.
     } catch (error) {
       _showNotice(
         copy.isPolish
@@ -390,73 +409,106 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
               return Column(
                 children: [
                   Expanded(child: _buildMessages(authority)),
-                  if (!authority.canSendToChannel(
-                    announcement: _isAnnouncements,
-                  ))
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
-                      child: Text(
-                        _isAnnouncements
-                            ? copy.text(
-                                'Announcements can be posted by club moderators.',
-                                'Ogłoszenia mogą publikować moderatorzy klubu.',
-                              )
-                            : copy.text(
-                                'This channel is read-only for your current role.',
-                                'Dla Twojej roli ten kanał jest tylko do odczytu.',
+                  // Everything below the thread is ONE tap region with the
+                  // text field: the send button, the panel toggle, an emoji
+                  // or a GIF is not "tapping outside" the composer and must
+                  // not put the keyboard away. Joining the field's own group
+                  // keeps the selection handles inside as well.
+                  //
+                  // The cluster also owns Back while its panel is open:
+                  // Android's Back closes the keyboard before it leaves a
+                  // screen, and the panel stands in for the keyboard.
+                  PopScope<Object?>(
+                    canPop:
+                        _composerPanel == null || !yoBackDismissesComposerPanel,
+                    onPopInvokedWithResult: (didPop, _) {
+                      if (!didPop) _closeComposerPanel();
+                    },
+                    child: TextFieldTapRegion(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (!authority.canSendToChannel(
+                            announcement: _isAnnouncements,
+                          ))
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                20,
+                                12,
+                                20,
+                                18,
                               ),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    )
-                  else
-                    _Composer(
-                      controller: _controller,
-                      focusNode: _focusNode,
-                      sending: _sending,
-                      emojiPickerOpen: _composerPanel != null,
-                      hint: _isAnnouncements
-                          ? copy.text(
-                              'Write an announcement…',
-                              'Napisz ogłoszenie…',
+                              child: Text(
+                                _isAnnouncements
+                                    ? copy.text(
+                                        'Announcements can be posted by club moderators.',
+                                        'Ogłoszenia mogą publikować moderatorzy klubu.',
+                                      )
+                                    : copy.text(
+                                        'This channel is read-only for your current role.',
+                                        'Dla Twojej roli ten kanał jest tylko do odczytu.',
+                                      ),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             )
-                          : copy.text(
-                              'Message #${widget.channel.name}',
-                              'Wiadomość na #${widget.channel.name}',
+                          else
+                            _Composer(
+                              controller: _controller,
+                              focusNode: _focusNode,
+                              sending: _sending,
+                              emojiPickerOpen: _composerPanel != null,
+                              hint: _isAnnouncements
+                                  ? copy.text(
+                                      'Write an announcement…',
+                                      'Napisz ogłoszenie…',
+                                    )
+                                  : copy.text(
+                                      'Message #${widget.channel.name}',
+                                      'Wiadomość na #${widget.channel.name}',
+                                    ),
+                              onSend: _send,
+                              onToggleEmoji: _toggleComposerPanel,
+                              onDismiss: _dismissComposer,
                             ),
-                      onSend: _send,
-                      onToggleEmoji: _toggleComposerPanel,
+                          YoGifSendStatus(controller: _gifDelivery),
+                          // Below the composer, never over it: the send button is laid
+                          // out first, so no picker height can cover it.
+                          if (_composerPanel != null &&
+                              authority.canSendToChannel(
+                                announcement: _isAnnouncements,
+                              ))
+                            YoComposerPanel(
+                              tab: _composerPanel!,
+                              onTabChanged: _selectComposerTab,
+                              onEmojiSelected: _insertEmoji,
+                              onBackspace: () {
+                                yoDeleteBackAtCaret(_controller);
+                                if (!_focusNode.hasFocus) {
+                                  _focusNode.requestFocus();
+                                }
+                              },
+                              gifService: _gifService
+                                ..locale = copy.locale.languageCode,
+                              gifDelivery: _gifDelivery,
+                              onGifSelected: (asset) =>
+                                  unawaited(_gifDelivery.send(asset)),
+                              gifAutoLoad:
+                                  AppPreferencesScope.maybeOf(
+                                    context,
+                                  )?.value.gifAutoLoadEnabled ??
+                                  true,
+                            ),
+                        ],
+                      ),
                     ),
-                  YoGifSendStatus(controller: _gifDelivery),
-                  // Below the composer, never over it: the send button is laid
-                  // out first, so no picker height can cover it.
-                  if (_composerPanel != null &&
-                      authority.canSendToChannel(
-                        announcement: _isAnnouncements,
-                      ))
-                    YoComposerPanel(
-                      tab: _composerPanel!,
-                      onTabChanged: _selectComposerTab,
-                      onEmojiSelected: _insertEmoji,
-                      onBackspace: () {
-                        yoDeleteBackAtCaret(_controller);
-                        if (!_focusNode.hasFocus) _focusNode.requestFocus();
-                      },
-                      gifService: _gifService
-                        ..locale = copy.locale.languageCode,
-                      gifDelivery: _gifDelivery,
-                      onGifSelected: (asset) =>
-                          unawaited(_gifDelivery.send(asset)),
-                      gifAutoLoad:
-                          AppPreferencesScope.maybeOf(
-                            context,
-                          )?.value.gifAutoLoadEnabled ??
-                          true,
-                    ),
+                  ),
                 ],
               );
             },
@@ -523,6 +575,8 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
         }
         return ListView.builder(
           reverse: true,
+          // A drag on the thread puts the keyboard away.
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
           itemCount: messages.length,
           itemBuilder: (context, index) {
@@ -787,6 +841,7 @@ class _Composer extends StatelessWidget {
     required this.hint,
     required this.onSend,
     required this.onToggleEmoji,
+    required this.onDismiss,
   });
 
   final TextEditingController controller;
@@ -796,6 +851,9 @@ class _Composer extends StatelessWidget {
   final String hint;
   final VoidCallback onSend;
   final VoidCallback onToggleEmoji;
+
+  /// A tap anywhere that is not part of the composer's tap region.
+  final VoidCallback onDismiss;
 
   @override
   Widget build(BuildContext context) {
@@ -818,6 +876,9 @@ class _Composer extends StatelessWidget {
             child: TextField(
               controller: controller,
               focusNode: focusNode,
+              // Flutter's default does nothing for touch on Android and iOS;
+              // a phone needs "tap elsewhere" to mean "put the keyboard away".
+              onTapOutside: (_) => onDismiss(),
               minLines: 1,
               maxLines: 5,
               maxLength: 2000,

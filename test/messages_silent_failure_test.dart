@@ -801,12 +801,24 @@ void main() {
       final field = tester.widget<TextField>(find.byType(TextField));
       expect(
         field.readOnly,
-        isTrue,
+        isFalse,
+        reason:
+            'a read-only field closes its keyboard connection on Android and '
+            'iOS (hide, then show again once editable); the pause must never '
+            'touch the connection',
+      );
+      // The pause itself: a keystroke from the platform lands nowhere while
+      // the enqueue is in flight.
+      await tester.enterText(find.byType(TextField), 'typed while saving');
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
         reason: 'editing is paused only until the local durable enqueue ends',
       );
 
-      // Defend against a late platform edit already in flight even though
-      // the field is read-only for the normal interaction path.
+      // Defend against a late programmatic edit already in flight even though
+      // the interaction path is paused.
       field.controller!.text = 'second draft';
       service.result.completeError(const OutboxFullException(50));
       await tester.pumpAndSettle();
