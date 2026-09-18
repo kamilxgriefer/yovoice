@@ -39,6 +39,38 @@ const {
   exactFriendshipGuard,
   profileVisibilityOf,
 } = require("../profile/media_contract");
+const defaultLogger = require("firebase-functions/logger");
+
+// HttpsError's canonical code set. The feed's drop counter reports codes and
+// nothing else, so anything that is not one of these — a raw Node error, a
+// driver error carrying an errno, anything that could conceivably embed a
+// value — collapses to "unknown" rather than reaching a log line.
+const HTTPS_ERROR_CODES = Object.freeze(new Set([
+  "ok",
+  "cancelled",
+  "unknown",
+  "invalid-argument",
+  "deadline-exceeded",
+  "not-found",
+  "already-exists",
+  "permission-denied",
+  "resource-exhausted",
+  "failed-precondition",
+  "aborted",
+  "out-of-range",
+  "unimplemented",
+  "internal",
+  "unavailable",
+  "data-loss",
+  "unauthenticated",
+]));
+
+function refusalCodeOf(error) {
+  const code = error?.code;
+  return typeof code === "string" && HTTPS_ERROR_CODES.has(code)
+    ? code
+    : "unknown";
+}
 
 const DEFAULT_LIMITS = Object.freeze({
   uploadReserve: { maxEvents: 5, windowMs: 10 * 60_000 },
@@ -871,6 +903,7 @@ function createMomentIntegrityService({
   clock = () => Date.now(),
   cleanupPageSize = 100,
   limits = DEFAULT_LIMITS,
+  logger = defaultLogger,
 }) {
   if (
     !db ||
@@ -1276,8 +1309,24 @@ function createMomentIntegrityService({
     const timing = time();
     await beginVoiceMomentReadAttempt(auth.uid, timing);
     const scanLimit = limit;
+    // Per-item failures are swallowed below so that a privacy refusal stays
+    // indistinguishable from absence — that is deliberate and must stay. The
+    // cost was that a TOTAL drop looked exactly like an empty corpus: HTTP 200,
+    // zero error lines, for 2.2 days during the 2026-09-14 skew. These counters
+    // make the drop visible in logs without putting anything new on the wire:
+    // the response of this callable is parsed by an EXACT five-key check in
+    // every installed client, so a `droppedCount` field would break Build 29
+    // and 30 on contact. Collected per transaction attempt and reported once,
+    // after the transaction settles, so a Firestore retry cannot double-log.
+    let dropReport = null;
 
-    return db.runTransaction(async (transaction) => {
+    const result = await db.runTransaction(async (transaction) => {
+      const drops = { dropped: 0, codes: {} };
+      const countDrop = (error) => {
+        drops.dropped += 1;
+        const code = refusalCodeOf(error);
+        drops.codes[code] = (drops.codes[code] ?? 0) + 1;
+      };
       const [viewerProfile, viewerRestriction] = await transactionGetAll(
         transaction,
         db.doc(`users/${auth.uid}`),
@@ -1311,10 +1360,11 @@ function createMomentIntegrityService({
             document,
             data: publishedMomentForRead(document, document.id, timing.nowMs),
           });
-        } catch (_) {
+        } catch (error) {
           // A corrupt, expired, deleting or otherwise non-canonical root is
           // omitted. The projection must fail closed per item rather than
           // widening access because a scheduled sweep is late.
+          countDrop(error);
         }
       }
       const contexts = await loadVoiceAudienceContexts(
@@ -1398,9 +1448,11 @@ function createMomentIntegrityService({
               reportReceipt,
             ),
           );
-        } catch (_) {
+        } catch (error) {
           // Per-author privacy and integrity failures stay indistinguishable
-          // from absence in a multi-item feed.
+          // from absence in a multi-item feed. Counted, never logged per item:
+          // a ten-item page must not emit ten lines.
+          countDrop(error);
         }
         if (moments.length === limit) break;
       }
@@ -1418,6 +1470,12 @@ function createMomentIntegrityService({
               : timestampMillis(lastDocument.get("createdAt")),
           })
         : null;
+      dropReport = {
+        scanned: pageDocuments.length,
+        kept: moments.length,
+        dropped: drops.dropped,
+        codes: drops.codes,
+      };
       return {
         schemaVersion: 2,
         moments,
@@ -1426,6 +1484,26 @@ function createMomentIntegrityService({
         nextCursor,
       };
     });
+
+    if (dropReport !== null && dropReport.dropped > 0) {
+      // Codes and counts only — never a uid, an author id, a moment id or an
+      // error message. The operational alert is a log-based counter on
+      // jsonPayload.dropped for this function.
+      const payload = {
+        fn: "getVoiceMomentsFeedV2",
+        scanned: dropReport.scanned,
+        dropped: dropReport.dropped,
+        codes: dropReport.codes,
+        feedMode,
+        sortMode,
+      };
+      if (dropReport.kept === 0) {
+        logger.warn("voice moment feed dropped every candidate", payload);
+      } else {
+        logger.debug("voice moment feed dropped some candidates", payload);
+      }
+    }
+    return result;
   }
 
   async function getVoiceMomentViewV2(request) {

@@ -4094,3 +4094,114 @@ test("permanent Moments hold active-cap slots forever and free them only on dele
   );
   assert.equal(eleventh.created, true);
 });
+
+// RC-3(d). When the 2026-09-14 publicProfiles skew made every projection throw,
+// the feed's per-item catch turned a total outage into an HTTP 200 with an
+// empty list: ~245 bytes, zero error lines, for 2.2 days. The swallowing must
+// stay — a privacy refusal has to look like absence — but a TOTAL drop must
+// become visible in logs, and it cannot become visible on the wire: every
+// installed client parses this response with an EXACT five-key check, so a new
+// field would break Build 29 and 30 on contact.
+test("a feed that drops every candidate warns once and keeps its exact shape",
+  async () => {
+    const warnings = [];
+    const debugs = [];
+    const recordingLogger = {
+      warn: (...args) => warnings.push(args),
+      debug: (...args) => debugs.push(args),
+      info: () => {},
+      error: () => {},
+    };
+    const publisher = momentService();
+    for (const index of [1, 2, 3]) {
+      await publish(publisher, {
+        reserveRequestId: `drop-reserve-${index}`,
+        finalizeRequestId: `drop-finalize-${index}`,
+        caption: `Dropped ${index}`,
+      });
+    }
+    // Exactly the 2026-09-14 shape: a publicProfiles document that no longer
+    // matches the canonical key set, so canonicalPublicProfile refuses inside
+    // voiceMomentProjection, inside the per-item catch.
+    await db.doc(`publicProfiles/${B}`).update({ legacyMirrorField: 1 });
+
+    const service = momentService({}, { logger: recordingLogger });
+    const feed = await service.getVoiceMomentsFeedV2(request(A, {}));
+
+    assert.deepEqual(Object.keys(feed).sort(), [
+      "hasMore",
+      "moments",
+      "nextCursor",
+      "scannedCount",
+      "schemaVersion",
+    ]);
+    assert.deepEqual(feed.moments, []);
+    assert.equal(feed.scannedCount, 3);
+
+    assert.equal(warnings.length, 1, "one line per page, never one per item");
+    assert.deepEqual(debugs, []);
+    const [message, payload] = warnings[0];
+    assert.equal(message, "voice moment feed dropped every candidate");
+    assert.deepEqual(Object.keys(payload).sort(), [
+      "codes",
+      "dropped",
+      "feedMode",
+      "fn",
+      "scanned",
+      "sortMode",
+    ]);
+    assert.equal(payload.fn, "getVoiceMomentsFeedV2");
+    assert.equal(payload.scanned, 3);
+    assert.equal(payload.dropped, 3);
+    assert.deepEqual(payload.codes, { "data-loss": 3 });
+    assert.equal(payload.feedMode, "discover");
+    assert.equal(payload.sortMode, "recent");
+
+    // Codes and counts only. No uid, no moment id, no error message.
+    const serialized = JSON.stringify(warnings);
+    for (const secret of [A, B, C, "Dropped 1", "Canonical Moment"]) {
+      assert.equal(
+        serialized.includes(secret),
+        false,
+        `${secret} must never reach a log line`,
+      );
+    }
+  });
+
+test("a partial drop stays at debug and a clean page logs nothing", async () => {
+  const warnings = [];
+  const debugs = [];
+  const recordingLogger = {
+    warn: (...args) => warnings.push(args),
+    debug: (...args) => debugs.push(args),
+    info: () => {},
+    error: () => {},
+  };
+  const publisher = momentService();
+  await publish(publisher, {
+    uid: B,
+    reserveRequestId: "partial-reserve-b",
+    finalizeRequestId: "partial-finalize-b",
+  });
+  await publish(publisher, {
+    uid: C,
+    reserveRequestId: "partial-reserve-c",
+    finalizeRequestId: "partial-finalize-c",
+  });
+
+  const service = momentService({}, { logger: recordingLogger });
+  const clean = await service.getVoiceMomentsFeedV2(request(A, {}));
+  assert.equal(clean.moments.length, 2);
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(debugs, [], "a healthy page logs approximately nothing");
+
+  await db.doc(`publicProfiles/${C}`).update({ legacyMirrorField: 1 });
+  const partial = await service.getVoiceMomentsFeedV2(request(A, {}));
+  assert.equal(partial.moments.length, 1);
+  assert.equal(partial.scannedCount, 2);
+  assert.deepEqual(warnings, [], "a partial drop is not an outage");
+  assert.equal(debugs.length, 1);
+  assert.equal(debugs[0][1].dropped, 1);
+  assert.equal(debugs[0][1].scanned, 2);
+  assert.deepEqual(debugs[0][1].codes, { "data-loss": 1 });
+});
