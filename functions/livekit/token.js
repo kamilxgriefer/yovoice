@@ -150,23 +150,47 @@ async function consumeVoiceTokenAttempt({
   return outcome;
 }
 
+// LiveKit shows a participant's `name` and `metadata` to EVERY other
+// participant of the session, so nothing that reaches them may be an e-mail
+// address. Until Build 32 an account without a profile display name fell back
+// to the Firebase Auth e-mail, which broadcast it to the whole room. The
+// e-mail is never a candidate any more, and any candidate that merely looks
+// like an address (a display name someone typed their e-mail into) is skipped
+// the same way, because the leak is identical whichever field carried it.
+const PARTICIPANT_NAME_MAX_LENGTH = 120;
+const PARTICIPANT_METADATA_NAME_MAX_LENGTH = 80;
+const ANONYMOUS_PARTICIPANT_STEM_LENGTH = 6;
+const EMAIL_ADDRESS_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+
+function participantNameCandidate(value, maxLength) {
+  const candidate = normalizeText(value, maxLength);
+  if (!candidate || EMAIL_ADDRESS_SHAPE.test(candidate)) return "";
+  return candidate;
+}
+
+// A neutral label derived from the uid. The uid is already the LiveKit
+// `identity` every participant can see, so this reveals nothing new.
+function anonymousParticipantName(uid) {
+  const stem = normalizeText(uid, 128)
+    .replace(/[^A-Za-z0-9]/gu, "")
+    .slice(0, ANONYMOUS_PARTICIPANT_STEM_LENGTH);
+  return stem ? `member-${stem}` : "YoVoice user";
+}
+
 function buildParticipantName(participant, profile, authenticatedUser) {
-  const profileName = normalizeText(profile.displayName, 120);
-  if (profileName) return profileName;
-
-  const tokenName = normalizeText(authenticatedUser.token.name, 120);
-  if (tokenName) return tokenName;
-
-  const participantName = normalizeText(participant.displayName, 120);
-  if (participantName) return participantName;
-
-  const tokenEmail = normalizeText(authenticatedUser.token.email, 160);
-
-  if (tokenEmail) {
-    return tokenEmail;
-  }
-
-  return "YoVoice user";
+  return (
+    participantNameCandidate(profile.displayName, PARTICIPANT_NAME_MAX_LENGTH) ||
+    participantNameCandidate(
+      authenticatedUser.token?.name,
+      PARTICIPANT_NAME_MAX_LENGTH,
+    ) ||
+    participantNameCandidate(
+      participant.displayName,
+      PARTICIPANT_NAME_MAX_LENGTH,
+    ) ||
+    participantNameCandidate(profile.username, PARTICIPANT_NAME_MAX_LENGTH) ||
+    anonymousParticipantName(authenticatedUser.uid)
+  );
 }
 
 function restrictionIsActive(restriction, now = Date.now()) {
@@ -183,7 +207,14 @@ function buildParticipantMetadata(participant, profile, authenticatedUser) {
   return JSON.stringify({
     uid: authenticatedUser.uid,
     role: participant.role ?? "listener",
-    username: normalizeText(profile.displayName, 80) || null,
+    // Same e-mail guard as the participant name: metadata is visible to the
+    // whole session too. Stays `null` rather than inventing a label, so the
+    // client keeps its existing "no username" handling.
+    username:
+      participantNameCandidate(
+        profile.displayName,
+        PARTICIPANT_METADATA_NAME_MAX_LENGTH,
+      ) || null,
     photoUrl: null,
   });
 }

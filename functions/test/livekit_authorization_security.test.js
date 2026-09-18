@@ -492,6 +492,100 @@ describe("authorizeRoomVoiceAccess", () => {
     );
   });
 
+  test("participant name never falls back to the Auth e-mail", () => {
+    // LiveKit shows `name` and `metadata` to every participant in the room.
+    const email = "person@example.com";
+    const authenticated = {
+      uid: UID,
+      token: { email, email_verified: true },
+    };
+    const anonymous = `member-${UID.replace(/[^A-Za-z0-9]/gu, "").slice(0, 6)}`;
+
+    // Username is the last personal-but-public candidate; the uid stem is the
+    // neutral fallback when the profile carries no name at all.
+    assert.equal(
+      buildParticipantName({}, { username: "voicefan" }, authenticated),
+      "voicefan",
+    );
+    assert.equal(buildParticipantName({}, {}, authenticated), anonymous);
+    assert.equal(
+      buildParticipantName({}, { displayName: "", username: "" }, authenticated),
+      anonymous,
+    );
+
+    // An e-mail typed into any name field is refused the same way — the leak
+    // is identical whichever field carried it.
+    assert.equal(
+      buildParticipantName(
+        { displayName: email },
+        { displayName: email, username: email },
+        { uid: UID, token: { name: email, email } },
+      ),
+      anonymous,
+    );
+    // ...but a name that merely contains "@" is still a name.
+    assert.equal(
+      buildParticipantName({}, { displayName: "DJ @ Night" }, authenticated),
+      "DJ @ Night",
+    );
+
+    const metadata = JSON.parse(
+      buildParticipantMetadata({}, { displayName: email }, authenticated),
+    );
+    assert.deepEqual(metadata, {
+      uid: UID,
+      role: "listener",
+      username: null,
+      photoUrl: null,
+    });
+  });
+
+  test("a profile without a display name mints a token that carries no e-mail", async () => {
+    const roomId = `${P}no-display-name`;
+    await seedRoom(roomId);
+    await seedParticipant(roomId);
+    // Overwrite the beforeEach profile: an account that never set a name.
+    await db.collection("users").doc(UID).set({ banned: false });
+    const email = "person@example.com";
+    const request = {
+      auth: { uid: UID, token: { email, email_verified: true } },
+      data: { roomId },
+    };
+    const minted = [];
+    class CapturingAccessToken {
+      constructor(_apiKey, _apiSecret, options) {
+        minted.push(options);
+      }
+
+      addGrant() {}
+
+      async toJwt() {
+        return "room-test-jwt-no-display-name";
+      }
+    }
+    const options = {
+      ...tokenOptions(tokenHarness()),
+      AccessTokenClass: CapturingAccessToken,
+    };
+
+    const result = await createLiveKitTokenHandler(request, options);
+
+    assert.equal(minted.length, 1);
+    const [tokenOptionsSeen] = minted;
+    assert.equal(tokenOptionsSeen.identity, UID);
+    assert.equal(tokenOptionsSeen.name, "member-lkause");
+    assert.equal(result.participantName, "member-lkause");
+    assert.deepEqual(JSON.parse(tokenOptionsSeen.metadata), {
+      uid: UID,
+      role: "listener",
+      username: null,
+      photoUrl: null,
+    });
+    const everythingSentToLiveKit = JSON.stringify(tokenOptionsSeen);
+    assert.doesNotMatch(everythingSentToLiveKit, /@/u);
+    assert.equal(everythingSentToLiveKit.includes(email), false);
+  });
+
   test("final authority transaction writes a canonical session mirror", async () => {
     const roomId = `${P}session-mirror`;
     await seedRoom(roomId);
