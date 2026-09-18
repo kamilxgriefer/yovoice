@@ -1,9 +1,14 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const { Readable } = require("node:stream");
 const { test } = require("node:test");
 
+const { fragmentedMp4 } = require("./fixtures/fragmented_mp4");
+
 const {
   MAX_ISO_BMFF_DURATION_RANGE_READS,
+  MAX_ISO_BMFF_FRAGMENTS,
   TRUSTED_MEDIA_PROBE_CONTENT_TYPES,
   createReelMediaProbe,
   createTrustedGcsMediaProbe,
@@ -947,6 +952,284 @@ test("negative QuickTime composition start cannot hide the presentation span", a
   // two-second header duration.
   assert.equal(durationMs, 121_000);
 });
+
+// RC-17. A browser MediaRecorder writes fragmented MP4. Before this round the
+// probe returned null for every such upload, finalizeReelDraftV2 raised
+// "The uploaded Reel tracks are invalid", and the client mistranslated that
+// into "Check your media and audio rights".
+test("a real Chromium MediaRecorder fMP4 probes to its recorded length",
+  async () => {
+    const bytes = fs.readFileSync(path.join(
+      __dirname,
+      "fixtures",
+      "chromium_mediarecorder_fragmented.mp4",
+    ));
+    // Captured on this machine with Playwright's Chromium: canvas.captureStream
+    // recorded as video/mp4. ftyp + moov(mvex/trex, empty stbl) + moof + mdat
+    // + mfra, 45 samples at a 30000 timescale summing to 44228 ticks, with the
+    // fragment's bytes exactly filling the mdat payload.
+    assert.equal(
+      await readTrustedIsoBmffDurationMs(rangedFile(bytes), bytes.length),
+      1_475,
+    );
+  });
+
+// The acceptance fixture the suite was missing: a REAL capture that is more
+// than one fragment. A MediaRecorder driven with a timeslice emits one
+// moof/mdat pair per slice, so every recording longer than a few seconds is a
+// chain — 5 fragments for these 15 seconds, 18 for a 60-second capture. That is
+// why "refuse anything with more than one moof" was not an option: it would
+// have refused every real web recording RC-17 exists to accept.
+test("a real multi-fragment Chromium capture probes to its recorded length",
+  async () => {
+    const bytes = fs.readFileSync(path.join(
+      __dirname,
+      "fixtures",
+      "chromium_mediarecorder_multifragment.mp4",
+    ));
+    // Captured on this machine with Playwright's Chromium: canvas.captureStream
+    // at 30 fps recorded as video/mp4;codecs=avc1.42E01E with a 1000 ms
+    // timeslice, stopped after 15018 ms of wall clock.
+    assert.equal(atomTypeOffsets(bytes, "moof").length, 5);
+    assert.equal(
+      await readTrustedIsoBmffDurationMs(rangedFile(bytes), bytes.length),
+      15_002,
+    );
+  });
+
+test("a synthetic fMP4 is measured from its moof timing, not its claim",
+  async () => {
+    const samples = Array.from(
+      { length: 30 },
+      () => ({ duration: 1_000, size: 64 }),
+    );
+    // 30 samples x 1000 ticks at a 30000 timescale is exactly one second, and
+    // every container field is zero, so only the moof walk can produce it.
+    const bytes = fragmentedMp4({ samples });
+    assert.equal(
+      await readTrustedIsoBmffDurationMs(rangedFile(bytes), bytes.length),
+      1_000,
+    );
+
+    // A later decode time is part of the fragment's end, not ignored.
+    const offsetFragment = fragmentedMp4({
+      baseMediaDecodeTime: 15_000,
+      samples,
+    });
+    assert.equal(
+      await readTrustedIsoBmffDurationMs(
+        rangedFile(offsetFragment),
+        offsetFragment.length,
+      ),
+      1_500,
+    );
+
+    // A fragmented file with an `mdat` and no `trun` at all used to fall back
+    // to the container duration. It no longer can: an `mdat` nothing describes
+    // is media this parser did not measure, and `mehd` is a number the uploader
+    // wrote — the same shape as G-2, one fragment wide. A file with neither was
+    // already a refusal and stays one.
+    const containerOnly = fragmentedMp4({
+      fragmentDuration: 1_500,
+      samples,
+      withTrun: false,
+    });
+    assert.equal(
+      await readTrustedIsoBmffDurationMs(
+        rangedFile(containerOnly),
+        containerOnly.length,
+      ),
+      null,
+    );
+    const nothing = fragmentedMp4({ samples, withTrun: false });
+    assert.equal(
+      await readTrustedIsoBmffDurationMs(rangedFile(nothing), nothing.length),
+      null,
+    );
+  });
+
+// Gate blocker G-2 (SEC-2). The fragmented branch opened only the LAST `moof`
+// and returned `Math.max` over that one fragment and the container headers —
+// every one of which the uploader wrote. Ten fragments of honest media probed
+// as 10 s, and as 1 s once the final `tfdt` was zeroed in an otherwise
+// byte-identical file; a 20 MB file declaring its media in fragment 1 probed as
+// 1 ms. reels/service.js accepts any probe within tolerance of the client's own
+// claim (reels/contract.js caps duration at 5 minutes) and
+// messaging/direct_integrity.js accepts 1..60000 ms within +/-2 s, so minutes
+// of media could publish as a 1-3 s Yeel or a "1-second voice note".
+test("a multi-fragment fMP4 is measured across every fragment", async () => {
+  const samples = Array.from(
+    { length: 30 },
+    () => ({ duration: 1_000, size: 64 }),
+  );
+  // Ten one-second fragments at a 30000 timescale: ten seconds of real media.
+  const honest = fragmentedMp4({
+    fragments: Array.from({ length: 10 }, (_, index) => ({
+      samples,
+      baseMediaDecodeTime: index * 30_000,
+    })),
+  });
+  assert.equal(
+    await readTrustedIsoBmffDurationMs(rangedFile(honest), honest.length),
+    10_000,
+  );
+
+  // The same bytes with only the LAST fragment's decode time zeroed. Opening
+  // just that fragment reported 1000; the maximum across fragments, and the
+  // sum of every fragment's sample durations, both still say ten seconds.
+  const lastFragmentLies = fragmentedMp4({
+    fragments: Array.from({ length: 10 }, (_, index) => ({
+      samples,
+      baseMediaDecodeTime: index === 9 ? 0 : index * 30_000,
+    })),
+  });
+  assert.equal(
+    await readTrustedIsoBmffDurationMs(
+      rangedFile(lastFragmentLies),
+      lastFragmentLies.length,
+    ),
+    10_000,
+  );
+
+  // And with EVERY decode time zeroed, so the per-fragment maximum collapses to
+  // one fragment: the summed sample durations are what hold the bound.
+  const everyFragmentLies = fragmentedMp4({
+    fragments: Array.from({ length: 10 }, () => ({
+      samples,
+      baseMediaDecodeTime: 0,
+    })),
+  });
+  assert.equal(
+    await readTrustedIsoBmffDurationMs(
+      rangedFile(everyFragmentLies),
+      everyFragmentLies.length,
+    ),
+    10_000,
+  );
+
+  // Twenty seconds of media declared in fragment 1, with a token final
+  // fragment: the long fragment is opened and counted like any other.
+  const hiddenInFirstFragment = fragmentedMp4({
+    fragments: [
+      {
+        samples: Array.from(
+          { length: 600 },
+          () => ({ duration: 1_000, size: 16 }),
+        ),
+        baseMediaDecodeTime: 0,
+      },
+      { samples: [{ duration: 1, size: 4 }], baseMediaDecodeTime: 0 },
+    ],
+  });
+  assert.equal(
+    await readTrustedIsoBmffDurationMs(
+      rangedFile(hiddenInFirstFragment),
+      hiddenInFirstFragment.length,
+    ),
+    20_000,
+  );
+});
+
+test("an mdat no trun accounts for is refused, however it is reached",
+  async () => {
+    const samples = Array.from(
+      { length: 30 },
+      () => ({ duration: 1_000, size: 64 }),
+    );
+    for (const bytes of [
+      // Two fragments, the second one carrying an mdat of its own that no
+      // `trun` describes. Before this round the walk never opened fragment 1
+      // and never noticed fragment 2's unclaimed bytes.
+      fragmentedMp4({
+        fragments: [
+          { samples, baseMediaDecodeTime: 0 },
+          { samples, baseMediaDecodeTime: 30_000, withTrun: false },
+        ],
+      }),
+      // A single fragment whose mdat holds far more than its run claims.
+      fragmentedMp4({ mdatBytes: samples.length * 64 + 4_096, samples }),
+    ]) {
+      assert.equal(
+        await readTrustedIsoBmffDurationMs(rangedFile(bytes), bytes.length),
+        null,
+      );
+    }
+  });
+
+test("the fragment walk stays inside its read and fragment budgets", async () => {
+  const samples = Array.from(
+    { length: 30 },
+    () => ({ duration: 1_000, size: 64 }),
+  );
+  const chain = (count) => fragmentedMp4({
+    fragments: Array.from({ length: count }, (_, index) => ({
+      samples,
+      baseMediaDecodeTime: index * 30_000,
+    })),
+  });
+
+  // An honest recording of MAX_ISO_BMFF_FRAGMENTS fragments is accepted and
+  // measured — three range reads per fragment (its own header and its mdat's
+  // while the root is listed, plus one read of the whole moof box) plus the
+  // fixed init-segment cost, inside MAX_ISO_BMFF_DURATION_RANGE_READS. At the
+  // 160-read ceiling this branch shipped with, an honest capture failed closed
+  // at about 57 fragments with "The uploaded Reel tracks are invalid" — the
+  // symptom RC-17 exists to remove.
+  const accepted = chain(MAX_ISO_BMFF_FRAGMENTS);
+  const acceptedCalls = [];
+  assert.equal(
+    await readTrustedIsoBmffDurationMs(
+      rangedFile(accepted, acceptedCalls),
+      accepted.length,
+    ),
+    MAX_ISO_BMFF_FRAGMENTS * 1_000,
+  );
+  assert.ok(
+    acceptedCalls.length <= MAX_ISO_BMFF_DURATION_RANGE_READS,
+    `${acceptedCalls.length} reads exceeds the budget`,
+  );
+
+  // One fragment more fails closed rather than spending an unbounded number of
+  // reads on a crafted chain.
+  const refused = chain(MAX_ISO_BMFF_FRAGMENTS + 1);
+  const refusedCalls = [];
+  assert.equal(
+    await readTrustedIsoBmffDurationMs(
+      rangedFile(refused, refusedCalls),
+      refused.length,
+    ),
+    null,
+  );
+  assert.ok(refusedCalls.length <= MAX_ISO_BMFF_DURATION_RANGE_READS);
+});
+
+test("an fMP4 whose trun over-claims its own media data fails closed",
+  async () => {
+    const samples = Array.from(
+      { length: 30 },
+      () => ({ duration: 1_000, size: 64 }),
+    );
+    for (const bytes of [
+      // The run says every sample is 4 KiB; the mdat holds 64 bytes each, so
+      // the fragment's declared bytes run off the end of the uploaded media.
+      fragmentedMp4({ declaredSampleSize: 4_096, samples }),
+      // The mdat is short of what the run needs by a single byte.
+      fragmentedMp4({
+        mdatBytes: samples.length * 64 - 1,
+        samples,
+      }),
+      // Neither cleanly progressive nor cleanly fragmented: mvex plus a
+      // populated sample table stays refused, as it was before this round.
+      fragmentedMp4({ populatedSampleTable: true, samples }),
+      // An mvex that declares no track extends at all.
+      fragmentedMp4({ samples, withTrex: false }),
+    ]) {
+      assert.equal(
+        await readTrustedIsoBmffDurationMs(rangedFile(bytes), bytes.length),
+        null,
+      );
+    }
+  });
 
 test("fragmented or hybrid ISO-BMFF timelines fail closed", async () => {
   const classic = quickTimeMovie({

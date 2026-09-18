@@ -8,13 +8,30 @@ const MAX_SNIFF_BYTES = 4096;
 // The read ceiling is high enough for a normal video+audio iOS MOV, but
 // low enough that an attacker cannot turn atom traversal into unbounded GCS
 // requests.
-const MAX_ISO_BMFF_DURATION_RANGE_READS = 160;
+// One honest fragment costs three range reads: its own header and its `mdat`'s
+// header while the root is listed, plus one read of the whole `moof` box. A
+// browser MediaRecorder driven with a `timeslice` writes one fragment per slice,
+// so a ceiling of 160 reads refused an ordinary recording at about 57 fragments
+// with "The uploaded Reel tracks are invalid" — the exact symptom RC-17 exists
+// to remove. The ceiling below covers MAX_ISO_BMFF_FRAGMENTS fragments plus the
+// fixed init-segment cost; MAX_ISO_BMFF_DURATION_RANGE_BYTES stays the real
+// work ceiling, since every one of those reads is also charged in bytes.
+const MAX_ISO_BMFF_DURATION_RANGE_READS = 900;
+// Every fragment is opened, so this bounds the walk itself. 256 fragments is
+// past the five-minute Reel ceiling at any timeslice a recorder actually uses.
+const MAX_ISO_BMFF_FRAGMENTS = 256;
+// A `moof` is a timing box, not media: the real fixtures are a few hundred
+// bytes. The cap keeps one crafted fragment from spending the byte budget.
+const MAX_ISO_BMFF_MOOF_BYTES = 256 * 1024;
 const MAX_ISO_BMFF_TRACKS = 8;
 const MAX_ISO_BMFF_STTS_ENTRIES = 8192;
 const MAX_ISO_BMFF_CTTS_ENTRIES = 100000;
 const MAX_ISO_BMFF_SAMPLE_DESCRIPTIONS = 32;
 const MAX_ISO_BMFF_DATA_REFERENCES = 32;
 const MAX_ISO_BMFF_STSC_ENTRIES = 65536;
+// Fragmented MP4: one `trun` table, read in the same style and with the same
+// posture as the progressive tables above.
+const MAX_ISO_BMFF_TRUN_ENTRIES = 8192;
 const MAX_ISO_BMFF_CHUNKS = 100000;
 const MAX_ISO_BMFF_SAMPLES = 500000;
 const MAX_ISO_BMFF_DURATION_RANGE_BYTES = 2 * 1024 * 1024;
@@ -200,6 +217,36 @@ async function listIsoBmffAtoms(file, start, size, budget) {
   return offset === end ? atoms : null;
 }
 
+// Lists the child boxes of a container this parser has ALREADY read into
+// memory. `baseOffset` is the absolute file position of `bytes[0]`, so each
+// atom still carries a real file offset for the byte-range arithmetic while its
+// payload comes straight out of the buffer — one range read per container
+// instead of one per child, which is what makes opening every `moof` affordable.
+function listIsoBmffAtomsInBuffer(bytes, baseOffset) {
+  if (!Buffer.isBuffer(bytes) || bytes.length < 8 ||
+      !Number.isSafeInteger(baseOffset) || baseOffset < 0) return null;
+  const end = baseOffset + bytes.length;
+  if (!Number.isSafeInteger(end)) return null;
+  let cursor = 0;
+  const atoms = [];
+  while (cursor + 8 <= bytes.length) {
+    const offset = baseOffset + cursor;
+    const atom = parseIsoBmffAtomHeader(
+      bytes.subarray(cursor, Math.min(cursor + 16, bytes.length)),
+      offset,
+      end,
+    );
+    if (atom === null) return null;
+    atoms.push({
+      ...atom,
+      offset,
+      payload: bytes.subarray(cursor + atom.headerSize, cursor + atom.size),
+    });
+    cursor += atom.size;
+  }
+  return cursor === bytes.length ? atoms : null;
+}
+
 function exactlyOneAtom(atoms, type) {
   if (!Array.isArray(atoms)) return null;
   const matches = atoms.filter((atom) => atom.type === type);
@@ -345,11 +392,18 @@ async function readIsoBmffSampleDescriptions(
   return offset === bytes.length ? dataReferenceIndexes : null;
 }
 
+// `allowEmptyLocationString` exists for the fragmented branch only. ISO
+// 14496-12 says a `url ` entry with the self-contained flag carries no
+// location, and a progressive file that writes one anyway stays refused
+// byte-for-byte as before. A Chromium `MediaRecorder` writes the flag AND a
+// zero-length NUL-terminated location, which still declares self-containment
+// and still names no external resource — the security property is unchanged.
 async function readIsoBmffDataReferences(
   file,
   minfAtoms,
   allowQuickTimeAlias,
   budget,
+  { allowEmptyLocationString = false } = {},
 ) {
   const dinf = exactlyOneAtom(minfAtoms, "dinf");
   if (dinf === null) return null;
@@ -386,10 +440,17 @@ async function readIsoBmffDataReferences(
       selfContained.push(false);
       continue;
     }
-    const fullBox = await readIsoBmffFullBoxPrefix(file, entry, 4, budget);
+    const emptyLocation = allowEmptyLocationString && entryPayloadSize === 5;
+    const fullBox = await readIsoBmffFullBoxPrefix(
+      file,
+      entry,
+      emptyLocation ? 5 : 4,
+      budget,
+    );
     if (fullBox === null || fullBox[0] !== 0) return null;
     selfContained.push(
-      entryPayloadSize === 4 && fullBox.readUIntBE(1, 3) === 1,
+      (entryPayloadSize === 4 || (emptyLocation && fullBox[4] === 0)) &&
+        fullBox.readUIntBE(1, 3) === 1,
     );
   }
   return selfContained;
@@ -525,6 +586,29 @@ async function readIsoBmffChunkOffsets(file, atoms, fileSize, budget) {
     offsets.push(value);
   }
   return offsets;
+}
+
+// True when every byte of every top-level `mdat` belongs to a sample run this
+// parser actually read. A fragmented file's media lives entirely in `mdat`
+// boxes described by `trun`s, so anything left over is media the timeline does
+// not account for — the shape a crafted upload uses to carry minutes of audio
+// or video behind a one-second claim.
+function isoBmffMdatFullyClaimed(mdatRanges, claimedRanges) {
+  if (claimedRanges.length < 1) return false;
+  const sorted = [...claimedRanges].sort((left, right) =>
+    left.start < right.start ? -1 : left.start > right.start ? 1 : 0);
+  const merged = [];
+  for (const range of sorted) {
+    const last = merged.at(-1);
+    if (last !== undefined && range.start <= last.end) {
+      if (range.end > last.end) last.end = range.end;
+      continue;
+    }
+    merged.push({ start: range.start, end: range.end });
+  }
+  return mdatRanges.every((mdat) => merged.some(
+    (range) => range.start <= mdat.start && range.end >= mdat.end,
+  ));
 }
 
 function findContainingMdat(rangeStart, rangeEnd, mdatRanges) {
@@ -964,6 +1048,580 @@ async function readIsoBmffMediaTrack(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Fragmented MP4 (RC-17).
+//
+// A browser `MediaRecorder` writes fMP4: the `moov` carries an `mvex`/`trex`
+// declaring that samples live in fragments, its `stbl` tables are PRESENT BUT
+// EMPTY, and the real timing lives in `moof/traf/tfhd/tfdt/trun`. The
+// progressive path above needs a populated `stts` and a coherent
+// `stsc`+`stco`+`stsz` sample map, so it returned null for every web recording,
+// the caller raised "The uploaded Reel tracks are invalid", and the client
+// mistranslated that into "Check your media and audio rights". Android
+// MediaRecorder and the iOS camera write non-fragmented MP4, so this was only
+// ever a web-recorder defect.
+//
+// The branch is taken only for a CLEANLY fragmented file — exactly one `mvex`
+// with at least one `trex`, and every track's `stts`/`stsc`/`stsz` and
+// `stco`/`co64` present with zero entries. Anything that is neither cleanly
+// progressive nor cleanly fragmented keeps failing closed.
+//
+// The trust boundary does not move: the duration is derived from the uploaded
+// bytes, never from the client's claim, and a `trun` whose samples do not land
+// inside an `mdat` is refused. Only the LAST top-level `moof` is read — walking
+// every `moof` of a 100 MB upload would blow the range budget and would be a
+// new denial-of-service surface.
+
+async function readIsoBmffZeroEntryTable(file, atoms, type, budget) {
+  const atom = exactlyOneAtom(atoms, type);
+  if (atom === null) return false;
+  const payloadSize = atom.size - atom.headerSize;
+  // `stsz` carries a fixed sample size before its count; every other table
+  // here is a bare full box followed by the entry count.
+  const expected = type === "stsz" ? 12 : 8;
+  if (payloadSize !== expected) return false;
+  const bytes = await readGenerationBoundRange(
+    file,
+    atom.offset + atom.headerSize,
+    expected,
+    budget,
+  );
+  if (bytes === null || !isZeroFullBoxHeader(bytes)) return false;
+  return type === "stsz"
+    ? bytes.readUInt32BE(4) === 0 && bytes.readUInt32BE(8) === 0
+    : bytes.readUInt32BE(4) === 0;
+}
+
+async function readIsoBmffTrackExtends(file, atom, budget) {
+  if (atom.size - atom.headerSize < 24) return null;
+  const bytes = await readGenerationBoundRange(
+    file,
+    atom.offset + atom.headerSize,
+    24,
+    budget,
+  );
+  if (bytes === null || !isZeroFullBoxHeader(bytes)) return null;
+  const trackId = bytes.readUInt32BE(4);
+  if (trackId < 1) return null;
+  return {
+    trackId,
+    defaultSampleDuration: BigInt(bytes.readUInt32BE(12)),
+    defaultSampleSize: BigInt(bytes.readUInt32BE(16)),
+  };
+}
+
+async function readIsoBmffFragmentDuration(file, atom, budget) {
+  const payloadSize = atom.size - atom.headerSize;
+  if (payloadSize < 8) return null;
+  const prefixLength = Math.min(12, payloadSize);
+  const bytes = await readGenerationBoundRange(
+    file,
+    atom.offset + atom.headerSize,
+    prefixLength,
+    budget,
+  );
+  if (bytes === null || bytes.readUIntBE(1, 3) !== 0) return null;
+  if (bytes[0] === 0 && bytes.length >= 8) {
+    const duration = BigInt(bytes.readUInt32BE(4));
+    return duration === 0xffffffffn ? 0n : duration;
+  }
+  if (bytes[0] === 1 && bytes.length >= 12) {
+    const duration = bytes.readBigUInt64BE(4);
+    return duration === 0xffffffffffffffffn ? 0n : duration;
+  }
+  return null;
+}
+
+// The fragmented branch needs the track id as well as the duration, and —
+// unlike the progressive path — must tolerate the "unknown duration" sentinel,
+// which a live fMP4 header legitimately carries.
+async function readIsoBmffTrackHeaderIdentity(file, atom, budget) {
+  const prefixLength = Math.min(36, atom.size - atom.headerSize);
+  if (prefixLength < 24) return null;
+  const bytes = await readIsoBmffFullBoxPrefix(
+    file,
+    atom,
+    prefixLength,
+    budget,
+  );
+  if (bytes === null) return null;
+  if (bytes[0] === 0 && bytes.length >= 24) {
+    const duration = BigInt(bytes.readUInt32BE(20));
+    return {
+      trackId: bytes.readUInt32BE(12),
+      duration: duration === 0xffffffffn ? 0n : duration,
+    };
+  }
+  if (bytes[0] === 1 && bytes.length >= 36) {
+    const duration = bytes.readBigUInt64BE(28);
+    return {
+      trackId: bytes.readUInt32BE(20),
+      duration: duration === 0xffffffffffffffffn ? 0n : duration,
+    };
+  }
+  return null;
+}
+
+function parseIsoBmffTrackFragmentHeader(bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.length < 8 || bytes.length > 32) {
+    return null;
+  }
+  if (bytes[0] !== 0) return null;
+  const flags = bytes.readUIntBE(1, 3);
+  const trackId = bytes.readUInt32BE(4);
+  if (trackId < 1) return null;
+  let offset = 8;
+  let baseDataOffset = null;
+  if ((flags & 0x000001) !== 0) {
+    if (offset + 8 > bytes.length) return null;
+    const value = bytes.readBigUInt64BE(offset);
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    baseDataOffset = value;
+    offset += 8;
+  }
+  if ((flags & 0x000002) !== 0) {
+    if (offset + 4 > bytes.length) return null;
+    offset += 4;
+  }
+  let defaultSampleDuration = null;
+  if ((flags & 0x000008) !== 0) {
+    if (offset + 4 > bytes.length) return null;
+    defaultSampleDuration = BigInt(bytes.readUInt32BE(offset));
+    offset += 4;
+  }
+  let defaultSampleSize = null;
+  if ((flags & 0x000010) !== 0) {
+    if (offset + 4 > bytes.length) return null;
+    defaultSampleSize = BigInt(bytes.readUInt32BE(offset));
+    offset += 4;
+  }
+  if ((flags & 0x000020) !== 0) {
+    if (offset + 4 > bytes.length) return null;
+    offset += 4;
+  }
+  if (offset !== bytes.length) return null;
+  return {
+    baseDataOffset,
+    defaultBaseIsMoof: (flags & 0x020000) !== 0,
+    defaultSampleDuration,
+    defaultSampleSize,
+    trackId,
+  };
+}
+
+function parseIsoBmffBaseMediaDecodeTime(payload) {
+  if (!Buffer.isBuffer(payload) || payload.length < 8) return null;
+  const bytes = payload.subarray(0, Math.min(12, payload.length));
+  if (bytes.readUIntBE(1, 3) !== 0) return null;
+  if (bytes[0] === 0 && bytes.length >= 8) {
+    return BigInt(bytes.readUInt32BE(4));
+  }
+  if (bytes[0] === 1 && bytes.length >= 12) {
+    return bytes.readBigUInt64BE(4);
+  }
+  return null;
+}
+
+function parseIsoBmffTrackRun(bytes, defaults, budget) {
+  const maxPayloadSize = 16 + MAX_ISO_BMFF_TRUN_ENTRIES * 16;
+  if (!Buffer.isBuffer(bytes) || bytes.length < 8 ||
+      bytes.length > maxPayloadSize) return null;
+  if (bytes[0] !== 0 && bytes[0] !== 1) return null;
+  const version = bytes[0];
+  const flags = bytes.readUIntBE(1, 3);
+  const sampleCount = bytes.readUInt32BE(4);
+  if (sampleCount < 1 || sampleCount > MAX_ISO_BMFF_TRUN_ENTRIES ||
+      sampleCount > budget.samplesRemaining) return null;
+  budget.samplesRemaining -= sampleCount;
+
+  let offset = 8;
+  let dataOffset = 0n;
+  if ((flags & 0x000001) !== 0) {
+    if (offset + 4 > bytes.length) return null;
+    dataOffset = BigInt(bytes.readInt32BE(offset));
+    offset += 4;
+  }
+  if ((flags & 0x000004) !== 0) {
+    if (offset + 4 > bytes.length) return null;
+    offset += 4;
+  }
+  const hasDuration = (flags & 0x000100) !== 0;
+  const hasSize = (flags & 0x000200) !== 0;
+  const hasFlags = (flags & 0x000400) !== 0;
+  const hasCompositionOffset = (flags & 0x000800) !== 0;
+  // A run that declares neither a per-sample value nor a usable default is a
+  // claim the file cannot support. Refuse rather than guess.
+  if (!hasDuration &&
+      (defaults.defaultSampleDuration === null ||
+        defaults.defaultSampleDuration < 1n)) return null;
+  if (!hasSize &&
+      (defaults.defaultSampleSize === null ||
+        defaults.defaultSampleSize < 1n)) return null;
+  const entrySize = (hasDuration ? 4 : 0) + (hasSize ? 4 : 0) +
+    (hasFlags ? 4 : 0) + (hasCompositionOffset ? 4 : 0);
+  if (offset + sampleCount * entrySize !== bytes.length) return null;
+
+  let duration = 0n;
+  let totalSize = 0n;
+  let maxCompositionOffset = 0n;
+  for (let index = 0; index < sampleCount; index += 1) {
+    let cursor = offset + index * entrySize;
+    let sampleDuration = defaults.defaultSampleDuration;
+    if (hasDuration) {
+      sampleDuration = BigInt(bytes.readUInt32BE(cursor));
+      cursor += 4;
+    }
+    let sampleSize = defaults.defaultSampleSize;
+    if (hasSize) {
+      sampleSize = BigInt(bytes.readUInt32BE(cursor));
+      cursor += 4;
+    }
+    if (hasFlags) cursor += 4;
+    if (hasCompositionOffset) {
+      const value = version === 0
+        ? BigInt(bytes.readUInt32BE(cursor))
+        : BigInt(bytes.readInt32BE(cursor));
+      if (value > maxCompositionOffset) maxCompositionOffset = value;
+    }
+    if (sampleDuration < 1n || sampleSize < 1n) return null;
+    duration += sampleDuration;
+    totalSize += sampleSize;
+  }
+  return {
+    dataOffset,
+    duration,
+    explicitDataOffset: (flags & 0x000001) !== 0,
+    maxCompositionOffset,
+    sampleCount: BigInt(sampleCount),
+    totalSize,
+  };
+}
+
+async function readFragmentedIsoBmffTrack(
+  file,
+  trak,
+  signedVersionZeroOffsets,
+  budget,
+) {
+  const trakAtoms = await listIsoBmffAtoms(
+    file,
+    trak.offset + trak.headerSize,
+    trak.size - trak.headerSize,
+    budget,
+  );
+  const tkhd = exactlyOneAtom(trakAtoms, "tkhd");
+  const mdia = exactlyOneAtom(trakAtoms, "mdia");
+  if (tkhd === null || mdia === null) return null;
+  const identity = await readIsoBmffTrackHeaderIdentity(file, tkhd, budget);
+  const editDuration = await readIsoBmffEditDuration(file, trakAtoms, budget);
+  if (identity === null || editDuration === null) return null;
+
+  const mdiaAtoms = await listIsoBmffAtoms(
+    file,
+    mdia.offset + mdia.headerSize,
+    mdia.size - mdia.headerSize,
+    budget,
+  );
+  const mdhd = exactlyOneAtom(mdiaAtoms, "mdhd");
+  const hdlr = exactlyOneAtom(mdiaAtoms, "hdlr");
+  const minf = exactlyOneAtom(mdiaAtoms, "minf");
+  if (mdhd === null || hdlr === null || minf === null) return null;
+  const handlerType = await readIsoBmffHandlerType(file, hdlr, budget);
+  const mediaHeader = await readIsoBmffTimescaleDuration(file, mdhd, budget);
+  if (mediaHeader === null) return null;
+  if (!isIsoBmffMediaHandler(handlerType)) {
+    return { handlerType, isMediaTrack: false, trackId: identity.trackId };
+  }
+
+  const minfAtoms = await listIsoBmffAtoms(
+    file,
+    minf.offset + minf.headerSize,
+    minf.size - minf.headerSize,
+    budget,
+  );
+  const dataReferences = await readIsoBmffDataReferences(
+    file,
+    minfAtoms,
+    signedVersionZeroOffsets,
+    budget,
+    { allowEmptyLocationString: true },
+  );
+  if (dataReferences === null) return null;
+  const stbl = exactlyOneAtom(minfAtoms, "stbl");
+  if (stbl === null) return null;
+  const stblAtoms = await listIsoBmffAtoms(
+    file,
+    stbl.offset + stbl.headerSize,
+    stbl.size - stbl.headerSize,
+    budget,
+  );
+  if (!Array.isArray(stblAtoms)) return null;
+
+  // Detect, do not guess: every sample table must be present and empty. A file
+  // with a half-populated table is neither shape and stays refused.
+  for (const type of ["stts", "stsc", "stsz"]) {
+    if (!await readIsoBmffZeroEntryTable(file, stblAtoms, type, budget)) {
+      return null;
+    }
+  }
+  const hasStco = exactlyOneAtom(stblAtoms, "stco") !== null;
+  const hasCo64 = exactlyOneAtom(stblAtoms, "co64") !== null;
+  if (hasStco === hasCo64) return null;
+  if (!await readIsoBmffZeroEntryTable(
+    file,
+    stblAtoms,
+    hasStco ? "stco" : "co64",
+    budget,
+  )) return null;
+  if (exactlyOneAtom(stblAtoms, "stz2") !== null) return null;
+
+  // The init segment still has to describe real, self-contained media.
+  const sampleDescriptions = await readIsoBmffSampleDescriptions(
+    file,
+    stblAtoms,
+    handlerType,
+    budget,
+  );
+  if (sampleDescriptions === null ||
+      sampleDescriptions.some((index) =>
+        dataReferences[index - 1] !== true)) return null;
+
+  return {
+    editDuration,
+    handlerType,
+    isMediaTrack: true,
+    mediaDuration: mediaHeader.duration,
+    timescale: mediaHeader.timescale,
+    trackHeaderDuration: identity.duration,
+    trackId: identity.trackId,
+  };
+}
+
+async function readFragmentedIsoBmffTimeline(file, size, context) {
+  const { budget, majorBrand, mdatRanges, moovAtoms, rootAtoms } = context;
+  const signedVersionZeroOffsets = majorBrand === "qt  ";
+  const mvex = exactlyOneAtom(moovAtoms, "mvex");
+  const mvhd = exactlyOneAtom(moovAtoms, "mvhd");
+  const tracks = moovAtoms.filter((atom) => atom.type === "trak");
+  if (mvex === null || mvhd === null || tracks.length < 1 ||
+      tracks.length > MAX_ISO_BMFF_TRACKS) return null;
+
+  const mvexAtoms = await listIsoBmffAtoms(
+    file,
+    mvex.offset + mvex.headerSize,
+    mvex.size - mvex.headerSize,
+    budget,
+  );
+  if (!Array.isArray(mvexAtoms)) return null;
+  const trexAtoms = mvexAtoms.filter((atom) => atom.type === "trex");
+  if (trexAtoms.length < 1 || trexAtoms.length > MAX_ISO_BMFF_TRACKS) {
+    return null;
+  }
+  const trackExtends = new Map();
+  for (const atom of trexAtoms) {
+    const parsed = await readIsoBmffTrackExtends(file, atom, budget);
+    if (parsed === null || trackExtends.has(parsed.trackId)) return null;
+    trackExtends.set(parsed.trackId, parsed);
+  }
+
+  const movieHeader = await readIsoBmffTimescaleDuration(file, mvhd, budget);
+  if (movieHeader === null) return null;
+  const mehd = exactlyOneAtom(mvexAtoms, "mehd");
+  const fragmentDuration = mehd === null
+    ? 0n
+    : await readIsoBmffFragmentDuration(file, mehd, budget);
+  if (fragmentDuration === null) return null;
+
+  const parsedTracks = [];
+  for (const trak of tracks) {
+    const parsed = await readFragmentedIsoBmffTrack(
+      file,
+      trak,
+      signedVersionZeroOffsets,
+      budget,
+    );
+    if (parsed === null) return null;
+    parsedTracks.push(parsed);
+  }
+  const mediaTracks = parsedTracks.filter((track) => track.isMediaTrack);
+  if (mediaTracks.length < 1) return null;
+  const trackById = new Map(
+    mediaTracks.map((track) => [track.trackId, track]),
+  );
+
+  // Container candidates first. A live init segment legitimately carries zero
+  // here, which is why a zero container duration is not by itself a refusal —
+  // but a file with no positive candidate at all still is.
+  const rawCandidates = [
+    { duration: movieHeader.duration, timescale: movieHeader.timescale },
+    { duration: fragmentDuration, timescale: movieHeader.timescale },
+  ];
+  for (const track of mediaTracks) {
+    rawCandidates.push(
+      { duration: track.trackHeaderDuration, timescale: movieHeader.timescale },
+      { duration: track.editDuration, timescale: movieHeader.timescale },
+      { duration: track.mediaDuration, timescale: track.timescale },
+    );
+  }
+
+  // EVERY fragment is opened, not only the last one.
+  //
+  // Opening just the last `moof` made the reported duration the uploader's
+  // claim again: ten fragments of honest media measured 10 s, and 1 s once the
+  // final `tfdt` was zeroed — byte-identical otherwise — because every other
+  // candidate (`mvhd`, `mehd`, `tkhd`, `elst`, `mdhd`) is a header the uploader
+  // wrote. reels/service.js accepts any probe within tolerance of the client's
+  // own claim, so minutes of media could publish as a 1-3 s Yeel, and
+  // messaging/direct_integrity.js would take the same file as a "1-second voice
+  // note". Walking every fragment makes the timeline a measurement of bytes
+  // that are actually present.
+  //
+  // The cost stays bounded: one range read for the whole `moof` box, parsed in
+  // memory, instead of one read per `traf`, `tfhd`, `tfdt` and `trun`.
+  const moofs = rootAtoms.filter((atom) => atom.type === "moof");
+  if (moofs.length < 1 || moofs.length > MAX_ISO_BMFF_FRAGMENTS) return null;
+
+  // Two independent lower bounds per track, both derived only from samples this
+  // parser read:
+  //
+  //  * `measuredTrackEnds` — the furthest point any one fragment proved
+  //    (`tfdt` + its own sample durations). Taking the MAXIMUM rather than the
+  //    last fragment's value means a reordered or back-dated final fragment
+  //    cannot shorten the timeline. This is the bound that survives a real gap
+  //    in the media.
+  //  * `measuredTrackTotals` — the sum of every fragment's sample durations.
+  //    `tfdt` is still a number the uploader wrote, so zeroing ALL of them
+  //    would collapse the bound above to one fragment; the total cannot be
+  //    reduced without removing samples, and every sample is pinned to real
+  //    uploaded bytes by the containment and coverage checks.
+  //
+  // The candidate is the larger of the two.
+  const measuredTrackEnds = new Map();
+  const measuredTrackTotals = new Map();
+  // Every byte range a `trun` this parser actually read lays claim to.
+  const claimedRanges = [];
+
+  for (const moof of moofs) {
+    const moofPayloadSize = moof.size - moof.headerSize;
+    if (moofPayloadSize < 8 || moofPayloadSize > MAX_ISO_BMFF_MOOF_BYTES) {
+      return null;
+    }
+    const moofBytes = await readGenerationBoundRange(
+      file,
+      moof.offset + moof.headerSize,
+      moofPayloadSize,
+      budget,
+    );
+    if (moofBytes === null) return null;
+    const moofAtoms = listIsoBmffAtomsInBuffer(
+      moofBytes,
+      moof.offset + moof.headerSize,
+    );
+    if (!Array.isArray(moofAtoms)) return null;
+    const trafs = moofAtoms.filter((atom) => atom.type === "traf");
+    if (trafs.length < 1 || trafs.length > MAX_ISO_BMFF_TRACKS) return null;
+
+    // Per ISO 14496-12, an implicit base data offset is the first byte of the
+    // enclosing `moof` for the first track fragment, and the end of the
+    // previous fragment's data for the ones that follow. It restarts at each
+    // `moof`.
+    let impliedBase = BigInt(moof.offset);
+    for (const traf of trafs) {
+      const trafAtoms = listIsoBmffAtomsInBuffer(
+        traf.payload,
+        traf.offset + traf.headerSize,
+      );
+      const tfhdAtom = exactlyOneAtom(trafAtoms, "tfhd");
+      if (tfhdAtom === null) return null;
+      const tfhd = parseIsoBmffTrackFragmentHeader(tfhdAtom.payload);
+      if (tfhd === null) return null;
+      const track = trackById.get(tfhd.trackId);
+      const extend = trackExtends.get(tfhd.trackId);
+      if (track === undefined || extend === undefined) return null;
+
+      const tfdtAtom = exactlyOneAtom(trafAtoms, "tfdt");
+      const baseMediaDecodeTime = tfdtAtom === null
+        ? 0n
+        : parseIsoBmffBaseMediaDecodeTime(tfdtAtom.payload);
+      if (baseMediaDecodeTime === null) return null;
+
+      const runAtoms = trafAtoms.filter((atom) => atom.type === "trun");
+      if (runAtoms.length > MAX_ISO_BMFF_TRACKS) return null;
+      const defaults = {
+        defaultSampleDuration: tfhd.defaultSampleDuration ??
+          extend.defaultSampleDuration,
+        defaultSampleSize: tfhd.defaultSampleSize ?? extend.defaultSampleSize,
+      };
+      const trackFragmentBase = tfhd.baseDataOffset ??
+        (tfhd.defaultBaseIsMoof ? BigInt(moof.offset) : impliedBase);
+      // A run without its own data offset starts where the previous run's data
+      // ended; a run with one is always relative to the track fragment's base.
+      let runCursor = trackFragmentBase;
+      let fragmentDuration = 0n;
+      for (const runAtom of runAtoms) {
+        const run = parseIsoBmffTrackRun(runAtom.payload, defaults, budget);
+        if (run === null) return null;
+        const start = run.explicitDataOffset
+          ? trackFragmentBase + run.dataOffset
+          : runCursor;
+        const end = start + run.totalSize;
+        // The claim has to be backed by bytes that were actually uploaded.
+        if (start < 0n || end > BigInt(size) ||
+            !findContainingMdat(start, end, mdatRanges)) return null;
+        claimedRanges.push({ start, end });
+        fragmentDuration += run.duration + run.maxCompositionOffset;
+        runCursor = end;
+        impliedBase = end;
+      }
+      if (runAtoms.length > 0) {
+        const fragmentEnd = baseMediaDecodeTime + fragmentDuration;
+        const measured = measuredTrackEnds.get(tfhd.trackId);
+        if (measured === undefined || fragmentEnd > measured) {
+          measuredTrackEnds.set(tfhd.trackId, fragmentEnd);
+        }
+        measuredTrackTotals.set(
+          tfhd.trackId,
+          (measuredTrackTotals.get(tfhd.trackId) ?? 0n) + fragmentDuration,
+        );
+      }
+    }
+  }
+
+  // Nothing may hide in media this walk did not account for. Without this, a
+  // 20 MB `mdat` that no `trun` describes would still publish at whatever the
+  // container headers claimed.
+  if (!isoBmffMdatFullyClaimed(mdatRanges, claimedRanges)) return null;
+
+  for (const [trackId, measured] of measuredTrackEnds) {
+    const total = measuredTrackTotals.get(trackId) ?? 0n;
+    rawCandidates.push({
+      duration: measured > total ? measured : total,
+      timescale: trackById.get(trackId).timescale,
+    });
+  }
+
+  const durationCandidates = [];
+  for (const candidate of rawCandidates) {
+    if (candidate.duration <= 0n) continue;
+    const durationMs = scaledDurationMs(
+      candidate.duration,
+      candidate.timescale,
+    );
+    // Same overflow posture as the progressive path: a duration beyond the
+    // safe integer range fails closed rather than letting a shorter sibling
+    // header become authoritative.
+    if (durationMs === null) return null;
+    durationCandidates.push(durationMs);
+  }
+  if (durationCandidates.length < 1) return null;
+  return {
+    durationMs: Math.max(...durationCandidates),
+    hasAudio: mediaTracks.some((track) =>
+      isIsoBmffAudioHandler(track.handlerType)),
+    hasVideo: mediaTracks.some((track) => track.handlerType === "vide"),
+  };
+}
+
 /**
  * Corroborates the movie duration against every playable track. In particular,
  * an uploaded `mvhd` value is not authority by itself: each audio/video track
@@ -988,9 +1646,7 @@ async function readTrustedIsoBmffTimeline(file, size) {
     samplesRemaining: MAX_ISO_BMFF_SAMPLES,
   };
   const rootAtoms = await listIsoBmffAtoms(file, 0, size, budget);
-  if (!Array.isArray(rootAtoms) || rootAtoms.some(
-    (atom) => atom.type === "moof" || atom.type === "mfra",
-  )) return null;
+  if (!Array.isArray(rootAtoms)) return null;
   const moov = exactlyOneAtom(rootAtoms, "moov");
   const ftyp = exactlyOneAtom(rootAtoms, "ftyp");
   if (moov === null || ftyp === null) return null;
@@ -1010,13 +1666,25 @@ async function readTrustedIsoBmffTimeline(file, size) {
     moov.size - moov.headerSize,
     budget,
   );
-  const mvhd = exactlyOneAtom(moovAtoms, "mvhd");
-  if (!Array.isArray(moovAtoms) || moovAtoms.some(
-    (atom) => atom.type === "mvex",
+  if (!Array.isArray(moovAtoms)) return null;
+  // An `mvex` is the file declaring that its samples live in fragments. That is
+  // a different shape, not a malformed one, and it gets its own bounded parse.
+  if (moovAtoms.some((atom) => atom.type === "mvex")) {
+    return readFragmentedIsoBmffTimeline(file, size, {
+      budget,
+      majorBrand,
+      mdatRanges,
+      moovAtoms,
+      rootAtoms,
+    });
+  }
+  // Nothing below this line understands fragments, so a progressive file that
+  // carries one is still refused.
+  if (rootAtoms.some(
+    (atom) => atom.type === "moof" || atom.type === "mfra",
   )) return null;
-  const tracks = Array.isArray(moovAtoms)
-    ? moovAtoms.filter((atom) => atom.type === "trak")
-    : [];
+  const mvhd = exactlyOneAtom(moovAtoms, "mvhd");
+  const tracks = moovAtoms.filter((atom) => atom.type === "trak");
   if (mvhd === null || tracks.length < 1 || tracks.length > MAX_ISO_BMFF_TRACKS) {
     return null;
   }
@@ -1246,6 +1914,7 @@ const createReelMediaProbe = createTrustedGcsMediaProbe;
 
 module.exports = {
   MAX_ISO_BMFF_DURATION_RANGE_READS,
+  MAX_ISO_BMFF_FRAGMENTS,
   TRUSTED_MEDIA_PROBE_CONTENT_TYPES,
   createReelMediaProbe,
   createTrustedGcsMediaProbe,
