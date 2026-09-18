@@ -615,21 +615,34 @@ class MessageService {
         );
   }
 
+  /// Every conversation this account can see, newest activity first.
+  ///
+  /// A root exists for BOTH participants from the moment either of them opens
+  /// the other's profile (`openDirectConversation`,
+  /// `functions/messaging/direct_integrity.js`), with blank preview fields
+  /// and `updatedAt = createdAt = now`. Streaming every root sorted by
+  /// `updatedAt` therefore hoisted people who had never written a word to
+  /// the top of Chats and Home. The list now shows a thread only once it
+  /// carries a message ([Conversation.hasMessages]) — except the empty thread
+  /// THIS account opened from this device, which stays visible so the
+  /// new-message flow still lands somewhere — and orders by
+  /// [Conversation.lastActivityAt], never by a bare root touch.
   Stream<List<Conversation>> watchConversations({
     bool includeArchived = false,
   }) {
     final currentUserId = _currentUserId;
+    final intents = openIntents;
     return _combineLatest2(
-      () => _conversations
-          .where('participantIds', arrayContains: currentUserId)
-          .snapshots()
-          .map(
-            (snapshot) =>
-                snapshot.docs.map(Conversation.fromFirestore).toList(),
-          ),
-      () => _watchDirectUnreadOverrides(currentUserId),
-      (roots, overrides) {
-        final items = roots
+      () => _combineLatest2(
+        () => _conversations
+            .where('participantIds', arrayContains: currentUserId)
+            .snapshots()
+            .map(
+              (snapshot) =>
+                  snapshot.docs.map(Conversation.fromFirestore).toList(),
+            ),
+        () => _watchDirectUnreadOverrides(currentUserId),
+        (roots, overrides) => roots
             .map(
               (conversation) => overrides.containsKey(conversation.id)
                   ? conversation.withUnreadCountFor(
@@ -638,6 +651,11 @@ class MessageService {
                     )
                   : conversation,
             )
+            .toList(growable: false),
+      ),
+      intents.watchOpenedHere,
+      (roots, openedHere) {
+        final items = roots
             // A conversation this account deleted is gone from every list,
             // archived included — `includeArchived` is about a tab, not about
             // seeing everything.
@@ -645,11 +663,13 @@ class MessageService {
               (conversation) =>
                   !conversation.isDeletedFor(currentUserId) &&
                   (includeArchived ||
-                      !conversation.isArchivedFor(currentUserId)),
+                      !conversation.isArchivedFor(currentUserId)) &&
+                  (conversation.hasMessages ||
+                      openedHere.contains(conversation.id)),
             )
             .toList(growable: false);
 
-        items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        items.sort(Conversation.compareByRecentActivity);
         return items;
       },
     );
@@ -1126,6 +1146,9 @@ class MessageService {
 
       if (conversationId is String && conversationId.isNotEmpty) {
         intents.recordSuccess(otherUserId);
+        // Whether the server created the root or found it, THIS account
+        // asked for it: keep it visible in Chats while it is still empty.
+        intents.markOpenedHere(conversationId);
         return conversationId;
       }
 
@@ -1193,6 +1216,7 @@ class MessageService {
       });
     });
 
+    openIntents.markOpenedHere(conversationId);
     return conversationId;
   }
 

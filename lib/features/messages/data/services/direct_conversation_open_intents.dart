@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 /// One person's attempt to open a chat with one other person.
@@ -87,6 +88,49 @@ class DirectConversationOpenIntents {
   final Duration _maxBackoff;
   final Map<String, DirectConversationOpenIntent> _intents =
       <String, DirectConversationOpenIntent>{};
+
+  /// Conversation ids this account opened from THIS device's new-message
+  /// flow — a friend bubble on Chats, a profile's "Message" button, the
+  /// new-message sheet, a server invite.
+  ///
+  /// The conversation root records no opener: `openDirectConversation`
+  /// (`functions/messaging/direct_integrity.js`) creates it for BOTH
+  /// participants with `pairKey`, `participantIds` and blank preview fields,
+  /// so from the document alone the person who was merely looked at is
+  /// indistinguishable from the person who did the looking. Lists hide
+  /// message-less threads, and this set is the one exception: the empty
+  /// thread the account itself just opened must still be there when it
+  /// comes back from the chat. It is in-memory on purpose — an empty thread
+  /// has nothing to lose, and it reappears the moment either side writes.
+  final Set<String> _openedConversationIds = <String>{};
+  final StreamController<Set<String>> _openedChanges =
+      StreamController<Set<String>>.broadcast();
+
+  /// Records that this account opened [conversationId] from this device.
+  void markOpenedHere(String conversationId) {
+    if (conversationId.isEmpty) return;
+    if (!_openedConversationIds.add(conversationId)) return;
+    if (!_openedChanges.isClosed) {
+      _openedChanges.add(Set<String>.unmodifiable(_openedConversationIds));
+    }
+  }
+
+  /// Whether [conversationId] was opened from this device by this account.
+  bool wasOpenedHere(String conversationId) =>
+      _openedConversationIds.contains(conversationId);
+
+  /// The current locally-opened set, then every change to it. Emits on
+  /// listen so a combiner waiting on both sources never stalls on this one.
+  Stream<Set<String>> watchOpenedHere() {
+    return Stream<Set<String>>.multi((controller) {
+      controller.add(Set<String>.unmodifiable(_openedConversationIds));
+      final subscription = _openedChanges.stream.listen(
+        controller.add,
+        onError: controller.addError,
+      );
+      controller.onCancel = subscription.cancel;
+    });
+  }
 
   /// The live intent for [targetUserId], or null when none is pending.
   DirectConversationOpenIntent? intentFor(String targetUserId) =>

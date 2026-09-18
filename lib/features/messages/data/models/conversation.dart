@@ -19,6 +19,7 @@ class Conversation {
     required this.mutedBy,
     this.deletedBy = const <String>[],
     this.deletedSequences = const <String, int>{},
+    this.lastMessageSequence = 0,
   });
 
   final String id;
@@ -46,6 +47,46 @@ class Conversation {
   /// Firestore Rules enforce it on reads; see `conversationDeletedThrough` in
   /// `firestore.rules`.
   final Map<String, int> deletedSequences;
+
+  /// The server-assigned sequence of the newest committed message, 0 while
+  /// the thread has none. Written by `sendDirectMessage`
+  /// (`functions/messaging/direct_integrity.js`) and read here only as one
+  /// more witness for [hasMessages] on roots whose preview fields are blank.
+  final int lastMessageSequence;
+
+  /// Whether at least one message was ever committed to this thread.
+  ///
+  /// `openDirectConversation` creates the root for BOTH participants the
+  /// moment one of them opens the other's profile, with `lastMessage: ""`,
+  /// `lastMessageSenderId: ""`, `lastMessageSequence: 0` and
+  /// `updatedAt = createdAt = now`. Without this distinction the person who
+  /// was merely looked at sees an empty "Start a conversation" row hoisted to
+  /// the top of Chats and Home. Any of the three witnesses is enough — a
+  /// legacy root can carry a message while one preview field is blank.
+  bool get hasMessages =>
+      lastMessage.isNotEmpty ||
+      lastMessageSenderId.isNotEmpty ||
+      lastMessageSequence > 0;
+
+  /// The instant lists order by.
+  ///
+  /// For a thread with messages this is [updatedAt]: the server bumps it only
+  /// on message events — send (`direct_integrity.js` text and media paths),
+  /// editing or deleting the newest message, and an admin deletion — and
+  /// never for typing heartbeats, read cursors, archive/mute preferences,
+  /// delete-for-me or reactions. For a thread that has no message yet it is
+  /// [createdAt], so a root touch after creation can never promote it.
+  DateTime get lastActivityAt => hasMessages ? updatedAt : createdAt;
+
+  /// Newest activity first; ties fall back to creation time, then to the id
+  /// so the order is stable across snapshots.
+  static int compareByRecentActivity(Conversation a, Conversation b) {
+    final byActivity = b.lastActivityAt.compareTo(a.lastActivityAt);
+    if (byActivity != 0) return byActivity;
+    final byCreation = b.createdAt.compareTo(a.createdAt);
+    if (byCreation != 0) return byCreation;
+    return a.id.compareTo(b.id);
+  }
 
   String otherUserId(String currentUserId) {
     return participantIds.firstWhere(
@@ -115,6 +156,7 @@ class Conversation {
       mutedBy: mutedBy,
       deletedBy: deletedBy,
       deletedSequences: deletedSequences,
+      lastMessageSequence: lastMessageSequence,
     );
   }
 
@@ -138,6 +180,7 @@ class Conversation {
       mutedBy: mutedBy,
       deletedBy: deletedBy,
       deletedSequences: deletedSequences,
+      lastMessageSequence: lastMessageSequence,
     );
   }
 
@@ -192,7 +235,14 @@ class Conversation {
         data['deletedBy'] as List<dynamic>? ?? const <dynamic>[],
       ),
       deletedSequences: _intMap(data['deletedSequences']),
+      lastMessageSequence: _nonNegativeInt(data['lastMessageSequence']),
     );
+  }
+
+  static int _nonNegativeInt(Object? value) {
+    if (value is! num) return 0;
+    final parsed = value.toInt();
+    return parsed < 0 ? 0 : parsed;
   }
 
   static Map<String, String> _stringMap(Object? value) {

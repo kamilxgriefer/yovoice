@@ -1076,7 +1076,7 @@ class _ConversationTile extends StatelessWidget {
                                 Text(
                                   _relativeTime(
                                     context,
-                                    conversation.updatedAt,
+                                    conversation.lastActivityAt,
                                     copy,
                                   ),
                                   style: TextStyle(
@@ -1174,7 +1174,7 @@ class _ConversationTile extends StatelessWidget {
                                 Text(
                                   _relativeTime(
                                     context,
-                                    conversation.updatedAt,
+                                    conversation.lastActivityAt,
                                     copy,
                                   ),
                                   style: TextStyle(
@@ -1762,9 +1762,7 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                                   );
                                 })
                                 .toList(growable: false)
-                              ..sort(
-                                (a, b) => b.updatedAt.compareTo(a.updatedAt),
-                              );
+                              ..sort(Conversation.compareByRecentActivity);
                         final recentIds = recent
                             .map((c) => c.otherUserId(widget.currentUserId))
                             .toSet();
