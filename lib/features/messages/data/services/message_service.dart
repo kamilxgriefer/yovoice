@@ -9,9 +9,11 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show ServicesBinding;
 import 'package:image_picker/image_picker.dart';
 
+import 'package:yovoice/core/helpers/callable_failure_reporter.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/models/premium_messaging_privacy.dart';
@@ -19,6 +21,7 @@ import 'package:yovoice/features/messages/data/services/direct_attachment_delive
 import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_payload_source.dart';
 import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
+import 'package:yovoice/features/messages/data/services/direct_conversation_open_intents.dart';
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
@@ -257,6 +260,7 @@ class MessageService {
     MessageOutbox? outbox,
     DirectAttachmentOutbox? attachmentOutbox,
     DirectAttachmentPayloadStore? attachmentPayloadStore,
+    DirectConversationOpenIntents? openIntents,
     Connectivity? connectivity,
     Stream<Map<String, int>>? directUnreadOverridesForTesting,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
@@ -267,6 +271,7 @@ class MessageService {
        _outboxOverride = outbox,
        _attachmentOutboxOverride = attachmentOutbox,
        _attachmentPayloadStoreOverride = attachmentPayloadStore,
+       _openIntentsOverride = openIntents,
        _connectivityOverride = connectivity,
        _directUnreadOverridesForTesting = directUnreadOverridesForTesting,
        _useSharedLiveOutbox =
@@ -278,6 +283,7 @@ class MessageService {
            outbox == null &&
            attachmentOutbox == null &&
            attachmentPayloadStore == null &&
+           openIntents == null &&
            connectivity == null &&
            directUnreadOverridesForTesting == null;
 
@@ -289,12 +295,20 @@ class MessageService {
   final MessageOutbox? _outboxOverride;
   final DirectAttachmentOutbox? _attachmentOutboxOverride;
   final DirectAttachmentPayloadStore? _attachmentPayloadStoreOverride;
+  final DirectConversationOpenIntents? _openIntentsOverride;
   final Connectivity? _connectivityOverride;
   final Stream<Map<String, int>>? _directUnreadOverridesForTesting;
   final bool _useSharedLiveOutbox;
   MessageOutbox? _outbox;
   String? _outboxOwnerId;
+  DirectConversationOpenIntents? _openIntents;
+  String? _openIntentsOwnerId;
   StreamSubscription<Object?>? _connectivitySubscription;
+
+  /// The last connectivity verdict this service observed, or null when it
+  /// never got to subscribe (unit tests, previews). Null is "unknown", which
+  /// is deliberately NOT "offline".
+  bool? _offlineObserved;
   final Map<MessageOutbox, Timer> _drainTimers = <MessageOutbox, Timer>{};
   final Map<DirectAttachmentOutbox, Timer> _attachmentDrainTimers =
       <DirectAttachmentOutbox, Timer>{};
@@ -335,6 +349,26 @@ class MessageService {
       );
     }
     return _outbox!;
+  }
+
+  /// In-flight `openDirectConversation` intents for the signed-in account.
+  ///
+  /// Scoped and shared exactly like [outbox]: five screens build their own
+  /// facades, and they must agree on which request id is already in play
+  /// for a given person.
+  DirectConversationOpenIntents get openIntents {
+    final override = _openIntentsOverride;
+    if (override != null) return override;
+
+    final ownerId = _auth.currentUser?.uid;
+    if (_useSharedLiveOutbox && ownerId != null && ownerId.isNotEmpty) {
+      return DirectConversationOpenIntents.sharedForUser(ownerId);
+    }
+    if (_openIntents == null || _openIntentsOwnerId != ownerId) {
+      _openIntentsOwnerId = ownerId;
+      _openIntents = DirectConversationOpenIntents();
+    }
+    return _openIntents!;
   }
 
   /// Account-scoped durable queue for photo, video and voice payloads.
@@ -410,6 +444,11 @@ class MessageService {
     final mediaQueue = attachmentOutbox;
     _drainTimers.remove(textQueue)?.cancel();
     _attachmentDrainTimers.remove(mediaQueue)?.cancel();
+    // An open intent names a person this account tried to message. That is
+    // local personal data and leaves with the session.
+    DirectConversationOpenIntents.forgetUser(userId);
+    _openIntents = null;
+    _openIntentsOwnerId = null;
     await Future.wait<void>([textQueue.clear(), mediaQueue.clear()]);
   }
 
@@ -470,16 +509,20 @@ class MessageService {
     return error is FirebaseFunctionsException && error.code == 'unimplemented';
   }
 
-  bool _isAmbiguousTransportFailure(Object error) =>
+  /// Whether a callable failure leaves the outcome genuinely unknown, so
+  /// replaying the SAME request id is the right move.
+  ///
+  /// Public because it is the one definition of "not an answer" this
+  /// codebase has, and background bookkeeping outside this class — read
+  /// receipts in `ChatScreen`, for instance — must not invent a second one.
+  /// A `permission-denied` repeated on a 30 s timer is still
+  /// `permission-denied`; it just also spends the integrity limiter.
+  static bool isAmbiguousTransportFailure(Object error) =>
       error is FirebaseFunctionsException &&
-      const <String>{
-        'aborted',
-        'cancelled',
-        'deadline-exceeded',
-        'internal',
-        'unknown',
-        'unavailable',
-      }.contains(error.code);
+      transientCallableCodes.contains(error.code);
+
+  bool _isAmbiguousTransportFailure(Object error) =>
+      isAmbiguousTransportFailure(error);
 
   bool get _preferLegacyBehaviour => _legacyNotificationService != null;
 
@@ -548,6 +591,28 @@ class MessageService {
     }
 
     return user.uid;
+  }
+
+  /// Watches ONE conversation root.
+  ///
+  /// The screen is handed only a `conversationId`, so without this it had
+  /// no document to read its own state from and kept mute as a local
+  /// boolean that started at false on every open — showing "Mute" for a
+  /// thread the account had already muted, and un-muting it on the next
+  /// tap. `Conversation.mutedBy` has always carried the truth.
+  ///
+  /// No rules change: `firestore.rules` already allows `get` on
+  /// `conversations/{id}` for a participant, which is the same read
+  /// [watchConversations] performs today. Emits null when the root is
+  /// missing.
+  Stream<Conversation?> watchConversation(String conversationId) {
+    return _conversations
+        .doc(conversationId)
+        .snapshots()
+        .map(
+          (snapshot) =>
+              snapshot.exists ? Conversation.fromFirestore(snapshot) : null,
+        );
   }
 
   Stream<List<Conversation>> watchConversations({
@@ -1029,17 +1094,49 @@ class MessageService {
         'openDirectConversation',
         options: HttpsCallableOptions(timeout: openConversationTimeout),
       );
-      final response = await callable.call<Map<Object?, Object?>>({
-        'targetUserId': otherUserId,
-        'requestId': _newRequestId(),
-      });
-      final conversationId = response.data['conversationId'];
+      // ONE intent per (account, target) until it succeeds. A fresh request
+      // id per attempt leaked an `integrityPreflightLedgers` row on every
+      // failure — the preflight transaction commits even when the main one
+      // rolls back — and made a lost acknowledgement impossible to replay.
+      // The same store also refuses to touch the network inside the backoff
+      // window, which is the only thing that stops a dozen taps becoming a
+      // dozen `direct.attempt.open` quota events and then a 429.
+      final intents = openIntents;
+      final intent = intents.beginAttempt(
+        otherUserId,
+        newRequestId: _newRequestId,
+      );
+      final Map<Object?, Object?> data;
+      try {
+        final response = await callable.call<Map<Object?, Object?>>({
+          'targetUserId': otherUserId,
+          'requestId': intent.requestId,
+        });
+        data = response.data;
+      } catch (error, stackTrace) {
+        intents.recordFailure(otherUserId, error, stackTrace);
+        recordCallableRefusalIfTerminal(
+          callable: 'openDirectConversation',
+          error: error,
+          stackTrace: stackTrace,
+        );
+        rethrow;
+      }
+      final conversationId = data['conversationId'];
 
       if (conversationId is String && conversationId.isNotEmpty) {
+        intents.recordSuccess(otherUserId);
         return conversationId;
       }
 
-      throw StateError('Malformed server response for opening conversation.');
+      // The server answered, but not with a usable root. Treat it as a
+      // failed attempt so the retry keeps the same id rather than minting a
+      // second ledger row for the same intent.
+      final malformed = StateError(
+        'Malformed server response for opening conversation.',
+      );
+      intents.recordFailure(otherUserId, malformed, StackTrace.current);
+      throw malformed;
     }
 
     // Reached only when there is no Firebase app at all (unit tests,
@@ -1224,18 +1321,50 @@ class MessageService {
       });
       await queue.markSent(entry.id);
       return true;
-    } catch (error) {
+    } catch (error, stackTrace) {
       if (_isRetryable(error)) {
-        await queue.markRetry(entry.id, _describeError(error));
+        if (_isOfflineFailure(error)) {
+          // No server saw this, so nothing was learned and nothing may be
+          // charged against the retry budget. One to two minutes in a lift
+          // used to be enough to park a message at "Not sent" for good.
+          await queue.markDeferred(entry.id, _describeError(error));
+        } else {
+          await queue.markRetry(entry.id, _describeError(error));
+        }
         _scheduleDrain(queue);
         return false;
       }
       await queue.markFailed(entry.id, _describeError(error));
+      recordCallableRefusalIfTerminal(
+        callable: 'sendDirectMessage',
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (rethrowRefusal) {
         rethrow;
       }
       return false;
     }
+  }
+
+  /// Whether a retryable failure happened because there was no network at
+  /// all, as opposed to because the server was having a bad moment.
+  ///
+  /// Two independent signals, because neither is available everywhere: the
+  /// connectivity stream's last verdict (absent in unit tests and previews,
+  /// where it stays null — "unknown", never "offline"), and the shape of
+  /// the failure itself. A transport-loss error is conclusive on its own.
+  bool _isOfflineFailure(Object error) {
+    if (_offlineObserved ?? false) return true;
+    if (error is TimeoutException) return true;
+    final raw = error is FirebaseFunctionsException
+        ? '${error.code} ${error.message ?? ''}'.toLowerCase()
+        : error.toString().toLowerCase();
+    return raw.contains('socketexception') ||
+        raw.contains('failed host lookup') ||
+        raw.contains('network is unreachable') ||
+        raw.contains('network-request-failed') ||
+        raw.contains('no internet');
   }
 
   /// Whether a failure is worth trying again with identical input.
@@ -1298,10 +1427,25 @@ class MessageService {
         result,
       ) {
         final offline = result.isEmpty || result.every(_isNoNetwork);
-        if (!offline) {
-          unawaited(flushOutbox());
-          unawaited(flushAttachmentOutbox());
+        final wasOffline = _offlineObserved ?? false;
+        _offlineObserved = offline;
+        if (offline) return;
+        if (wasOffline) {
+          // Crossing back online is the moment to undo what an outage did
+          // to the budget, before anything is attempted again.
+          unawaited(_reviveAndFlush());
+          return;
         }
+        unawaited(
+          flushOutbox().catchError((Object error) {
+            debugPrint('Outbox drain on connectivity change failed: $error');
+          }),
+        );
+        unawaited(
+          flushAttachmentOutbox().catchError((Object error) {
+            debugPrint('Attachment drain on connectivity failed: $error');
+          }),
+        );
       }, onError: (_) {});
     } catch (_) {
       // No connectivity plugin available (unit tests, previews). The backoff
@@ -1365,6 +1509,36 @@ class MessageService {
   /// than letting a later message overtake an earlier one.
   Future<void> flushOutbox() => _flushOutbox(outbox);
 
+  /// Returns transport-exhausted entries to the queue and drains it.
+  ///
+  /// Defensive throughout: this runs from a connectivity callback with no
+  /// caller to receive an error, and a device with an unusable media store
+  /// must still get its text messages out.
+  Future<void> _reviveAndFlush() async {
+    try {
+      final queue = outbox;
+      await queue.reviveDeferredFailures();
+      unawaited(
+        _flushOutbox(queue).catchError((Object error) {
+          debugPrint('Outbox drain after reconnect failed: $error');
+        }),
+      );
+    } catch (error) {
+      debugPrint('Outbox revival after reconnect failed: $error');
+    }
+    try {
+      final mediaQueue = attachmentOutbox;
+      await mediaQueue.reviveDeferredFailures();
+      unawaited(
+        _flushAttachmentOutbox(mediaQueue).catchError((Object error) {
+          debugPrint('Attachment drain after reconnect failed: $error');
+        }),
+      );
+    } catch (error) {
+      debugPrint('Attachment revival after reconnect failed: $error');
+    }
+  }
+
   /// Restores and resumes persisted work when the authenticated shell starts.
   /// No new message is required to wake a queue left by an earlier process.
   Future<void> resumeOutbox() async {
@@ -1373,6 +1547,14 @@ class MessageService {
     final mediaQueue = attachmentOutbox;
     await mediaQueue.load();
     _listenForConnectivity();
+    // Repairs what earlier builds did to devices that spent a couple of
+    // minutes without network: those entries are terminal only because the
+    // transport budget ran out, never because the server refused. Their
+    // request ids are preserved, so a send that secretly landed replays.
+    await Future.wait<Object?>([
+      queue.reviveDeferredFailures(),
+      mediaQueue.reviveDeferredFailures(),
+    ]);
     // These queues also drain independently when connectivity returns. A
     // slow text callable must not hold every persisted attachment on restart.
     // Each drain retains its own ordering, account and single-flight guards.
@@ -2065,12 +2247,21 @@ class MessageService {
         return;
       }
       throw StateError('The attachment reservation kept expiring. Try again.');
-    } catch (error) {
+    } catch (error, stackTrace) {
       if (_isAmbiguousAttachmentFailure(error)) {
-        await queue.markRetry(entryId, error);
+        if (_isOfflineFailure(error)) {
+          await queue.markDeferred(entryId, error.runtimeType.toString());
+        } else {
+          await queue.markRetry(entryId, error);
+        }
         _scheduleAttachmentDrain(queue);
       } else {
         await queue.markFailed(entryId, error);
+        recordCallableRefusalIfTerminal(
+          callable: 'finalizeDirectMessageAttachment',
+          error: error,
+          stackTrace: stackTrace,
+        );
       }
       rethrow;
     } finally {

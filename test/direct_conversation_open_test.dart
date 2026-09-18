@@ -4,6 +4,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/messages/data/services/direct_conversation_open_intents.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
@@ -320,6 +321,113 @@ void main() {
     });
   });
 
+  group('one intent, one requestId, with a wall in front of it', () {
+    // `openDirectConversation` runs `beginAttemptPreflight` in its OWN
+    // transaction before the main one. That preflight COMMITS an
+    // `integrityPreflightLedgers` row and consumes `direct.attempt.open`
+    // even when the main transaction rolls back, so a fresh requestId per
+    // attempt leaked a ledger row per failure AND made a lost
+    // acknowledgement impossible to recognise as a replay. Production shows
+    // two 429s right after an eleven-failure burst.
+    DateTime frozenClock() => DateTime.utc(2026, 9, 16, 22);
+
+    MessageService serviceWith(
+      FirebaseFunctions functions, {
+      DirectConversationOpenIntents? intents,
+    }) => MessageService(
+      firestore: db,
+      auth: authFor(callerId),
+      functions: functions,
+      openIntents: intents ?? DirectConversationOpenIntents(clock: frozenClock),
+    );
+
+    test(
+      'two failing opens for the same person send the SAME requestId',
+      () async {
+        final functions = _RecordingThrowingFunctions('data-loss');
+        // A clock that never moves would also freeze the backoff window, so
+        // let the second attempt through by clearing the window by hand.
+        final intents = DirectConversationOpenIntents(
+          baseBackoff: Duration.zero,
+          maxBackoff: Duration.zero,
+        );
+        final service = serviceWith(functions, intents: intents);
+
+        await expectLater(
+          open(service),
+          throwsA(isA<FirebaseFunctionsException>()),
+        );
+        await expectLater(
+          open(service),
+          throwsA(isA<FirebaseFunctionsException>()),
+        );
+
+        expect(functions.requestIds, hasLength(2));
+        expect(
+          functions.requestIds.toSet(),
+          hasLength(1),
+          reason: 'a second id is a second ledger row for one intent',
+        );
+      },
+    );
+
+    test('a tap inside the backoff window never reaches the network', () async {
+      final functions = _RecordingThrowingFunctions('resource-exhausted');
+      final service = serviceWith(functions);
+
+      await expectLater(
+        open(service),
+        throwsA(isA<FirebaseFunctionsException>()),
+      );
+      expect(functions.requestIds, hasLength(1));
+
+      for (var tap = 0; tap < 11; tap++) {
+        await expectLater(
+          open(service),
+          throwsA(isA<FirebaseFunctionsException>()),
+        );
+      }
+
+      expect(
+        functions.requestIds,
+        hasLength(1),
+        reason: 'twelve impatient taps must not manufacture a 429',
+      );
+      expect(await conversationDocs(), isEmpty);
+    });
+
+    test('after a success the next open for the same person is a new '
+        'intent', () async {
+      final intents = DirectConversationOpenIntents(
+        baseBackoff: Duration.zero,
+        maxBackoff: Duration.zero,
+      );
+      final failing = _RecordingThrowingFunctions('unavailable');
+      final failed = serviceWith(failing, intents: intents);
+      await expectLater(
+        open(failed),
+        throwsA(isA<FirebaseFunctionsException>()),
+      );
+
+      final succeeding = _RecordingOpenFunctions('dm_ok');
+      final worked = serviceWith(succeeding, intents: intents);
+      expect(await open(worked), 'dm_ok');
+      expect(
+        succeeding.requestIds.single,
+        failing.requestIds.single,
+        reason: 'the retry of a live intent replays its own id',
+      );
+
+      final again = _RecordingOpenFunctions('dm_ok');
+      expect(await open(serviceWith(again, intents: intents)), 'dm_ok');
+      expect(
+        again.requestIds.single,
+        isNot(succeeding.requestIds.single),
+        reason: 'a settled intent is gone; the next open is a new one',
+      );
+    });
+  });
+
   group('the guard clauses still come first', () {
     test('opening a conversation with yourself is refused before any '
         'callable or write', () async {
@@ -355,6 +463,48 @@ void main() {
       },
     );
   });
+}
+
+/// A refusing server that remembers which request ids reached it.
+class _RecordingThrowingFunctions implements FirebaseFunctions {
+  _RecordingThrowingFunctions(this.code);
+
+  final String code;
+  final List<Object?> requestIds = <Object?>[];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) async {
+        requestIds.add((parameters! as Map)['requestId']);
+        throw FirebaseFunctionsException(
+          code: code,
+          message: 'The server refused.',
+        );
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// An answering server that remembers which request ids reached it.
+class _RecordingOpenFunctions implements FirebaseFunctions {
+  _RecordingOpenFunctions(this.conversationId);
+
+  final String conversationId;
+  final List<Object?> requestIds = <Object?>[];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) async {
+        requestIds.add((parameters! as Map)['requestId']);
+        return <Object?, Object?>{
+          'conversationId': conversationId,
+          'created': true,
+        };
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 /// Stands in for the DEPLOYED `openDirectConversation` by answering with a
