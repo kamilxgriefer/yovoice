@@ -11,9 +11,31 @@ const {
 } = require("../integrity/guards");
 const {
   ALLOWED_DIRECT_REACTIONS,
+  DIRECT_MESSAGE_TYPES,
   canonicalConversationId,
   canonicalPairKey,
+  directMessagePreview,
+  validateConversation,
 } = require("./direct_integrity");
+const { isCanonicalMessageGif } = require("./gif_message");
+
+// `typing` is the one root field this tool deliberately does NOT migrate: it is
+// unauthenticated presence and legacy roots let either participant overwrite
+// the peer's entry, so the canonical root always writes `{}`. Comparing it
+// would therefore mean a healthy root with anybody currently typing could never
+// be reported `alreadyMigrated` — which is what made the operator scan claim
+// that almost every active conversation needed migrating. The WRITE still
+// resets typing; only the equality test ignores it.
+const EPHEMERAL_ROOT_KEYS = Object.freeze(new Set(["typing"]));
+
+function comparableRoot(value) {
+  const source = value ?? {};
+  return Object.fromEntries(
+    Object.keys(source)
+      .filter((key) => !EPHEMERAL_ROOT_KEYS.has(key))
+      .map((key) => [key, source[key]]),
+  );
+}
 
 function samePair(value, participants) {
   if (!Array.isArray(value) || value.length !== 2 ||
@@ -143,8 +165,19 @@ function createDirectMigrationService({
     const data = document.data() ?? {};
     const issues = [];
     if (!participants.includes(data.senderId)) issues.push("invalidMessageSender");
-    if (!["text", "voice", "image"].includes(data.type)) {
+    // Imported from the live writer rather than restated. The local copy said
+    // ["text","voice","image"] and had done since before the video and GIF
+    // rounds, so every modern media message was reported invalid and its whole
+    // conversation reported `conflict`.
+    if (!DIRECT_MESSAGE_TYPES.includes(data.type)) {
       issues.push("invalidMessageType");
+    }
+    const isGif = data.type === "gif";
+    const canonicalGif = isGif
+      ? (data.isDeleted === true ? null : data.gif ?? null)
+      : null;
+    if (isGif && data.isDeleted !== true && !isCanonicalMessageGif(data.gif)) {
+      issues.push("invalidMessageGif");
     }
     if (typeof data.content !== "string" || data.content.length > 2000) {
       issues.push("invalidMessageContent");
@@ -191,6 +224,10 @@ function createDirectMigrationService({
         conversationId,
         senderId: data.senderId,
         type: data.type,
+        // A `gif` message carries its asset alongside its fallback text.
+        // Dropping the key here would have rewritten every GIF message into a
+        // shape validateMessage refuses — a permanent data-loss on read.
+        ...(isGif ? { gif: canonicalGif } : {}),
         content: data.isDeleted === true ? "" : data.content,
         mediaUrl: data.isDeleted === true ? null : data.mediaUrl ?? null,
         durationSeconds: data.isDeleted === true
@@ -377,13 +414,11 @@ function createDirectMigrationService({
       // privacy failure the feature exists to prevent. The cut-off is clamped
       // to the recomputed length because this pass renumbers `sequence`.
       ...canonicalDeletionState(rootData, participants, last?.data.sequence ?? 0),
-      lastMessage: last === null
-        ? ""
-        : last.data.isDeleted
-          ? "Message deleted"
-          : last.data.type === "text"
-            ? last.data.content
-            : "",
+      // Mirrors the live writer through the shared helper. The old local rule
+      // produced "" for every non-text type while the live writer stores
+      // "Photo"/"Video"/"Voice message" and the GIF fallback text, so an apply
+      // against a healthy media thread would have blanked its preview.
+      lastMessage: last === null ? "" : directMessagePreview(last.data),
       lastMessageId: last?.id ?? null,
       lastMessageSequence: last?.data.sequence ?? 0,
       lastMessageType: last?.data.type ?? "text",
@@ -393,11 +428,27 @@ function createDirectMigrationService({
     };
 
     const uniqueIssues = [...new Set(issues)].sort();
-    const rootNeedsMigration = !valuesEqual(rootData, canonicalRoot);
+    const rootNeedsMigration = !valuesEqual(
+      comparableRoot(rootData),
+      comparableRoot(canonicalRoot),
+    );
+    // The safety guard that makes this tool safe to hand an operator even if
+    // the drifts above ever reappear: a root the live readers already accept is
+    // never overwritten, whatever this tool thinks of it.
+    let rootIsCanonical = false;
+    if (rootData.schemaVersion === 2 && guard.exists) {
+      try {
+        validateConversation(root, conversationId, participants[0], guard);
+        rootIsCanonical = true;
+      } catch (_) {
+        rootIsCanonical = false;
+      }
+    }
     return {
       conversationId,
       participants,
       pairKey,
+      rootIsCanonical,
       sourceUpdateTime: root.updateTime,
       sourceGuardExists: guard.exists,
       sourceGuardUpdateTime: guard.updateTime ?? null,
@@ -433,6 +484,13 @@ function createDirectMigrationService({
     if (dryRun || inspection.status === "missing" ||
         inspection.status === "alreadyMigrated") {
       return publicResult;
+    }
+    // Refuse to write over a root the live readers already accept. An apply on
+    // a healthy root would reset its typing map, blank a media preview and
+    // recompute unreadCounts/readSequences from `readBy` — incompatible with
+    // the private read-state mode. Nothing this tool can conclude is worth that.
+    if (inspection.rootIsCanonical === true) {
+      return { ...publicResult, status: "alreadyMigrated" };
     }
     if (inspection.status === "conflict") {
       const conflictId = digest("direct-migration-conflict", conversationId);

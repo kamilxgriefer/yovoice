@@ -457,6 +457,29 @@ function conversationParticipants(snapshot, actorId) {
   return { data, participants };
 }
 
+// The live message type set and the live preview mapping. Both are exported so
+// the migration tool imports them instead of restating them: the tool spent
+// this round reporting every `video` and `gif` message as `invalidMessageType`
+// and every media root as needing migration, purely because it carried its own
+// stale copy of these two facts (ADR-D).
+const DIRECT_MESSAGE_TYPES = Object.freeze([
+  "text",
+  "voice",
+  "image",
+  "video",
+  "gif",
+]);
+
+function directMessagePreview({ content, isDeleted, type }) {
+  if (isDeleted === true) return "Message deleted";
+  if (type === "image") return "Photo";
+  if (type === "video") return "Video";
+  if (type === "voice") return "Voice message";
+  // `text` carries the message; `gif` carries its own fallback text, which
+  // validateMessage already pins to gifMessageFallback(gif).
+  return typeof content === "string" ? content : "";
+}
+
 function validatePairGuard(snapshot, conversationId, participants) {
   if (!snapshot?.exists) {
     fail("data-loss", "The direct-conversation pair guard is missing.");
@@ -646,7 +669,7 @@ function validateMessage(snapshot, conversationId) {
       data.schemaVersion !== 2 || data.conversationId !== conversationId ||
       typeof data.senderId !== "string" ||
       !Number.isSafeInteger(data.sequence) || data.sequence < 1 ||
-      !["text", "voice", "image", "video", "gif"].includes(data.type) ||
+      !DIRECT_MESSAGE_TYPES.includes(data.type) ||
       typeof data.isDeleted !== "boolean" || !Array.isArray(data.readBy) ||
       !isPlainObject(data.reactions)) {
     fail("data-loss", "The direct message schema is not canonical.");
@@ -1725,9 +1748,11 @@ function createDirectMessagingService({
         context.data.lastMessageSequence,
         "lastMessageSequence",
       );
-      const preview = reservation.type === "image"
-        ? "Photo"
-        : reservation.type === "video" ? "Video" : "Voice message";
+      const preview = directMessagePreview({
+        content: reservation.type === "video" ? "Video" : "",
+        isDeleted: false,
+        type: reservation.type,
+      });
       transaction.create(messageRef, {
         schemaVersion: 2,
         sequence,
@@ -2899,13 +2924,16 @@ function createDirectMessagingService({
 module.exports = {
   ALLOWED_DIRECT_REACTIONS,
   DEFAULT_LIMITS,
+  DIRECT_MESSAGE_TYPES,
   canonicalConversationId,
   canonicalPairKey,
   createDirectMessagingService,
   directMediaMessageId,
   directMediaStoragePath,
+  directMessagePreview,
   validateStoredDirectMedia,
   validateDirectMediaProbe,
   validateConversation,
   validateMessage,
+  validatePairGuard,
 };
