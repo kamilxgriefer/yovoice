@@ -1164,3 +1164,131 @@ test("authors can delete expired v2 Reels and abandoned v2 drafts cleanly", asyn
     undefined,
   );
 });
+
+// RC-8. The canonical identity guard validated a display name at 1-120
+// characters and then stored `slice(0, 80)` of it. For a name whose 80th
+// character is whitespace the stored value was UNTRIMMED, and
+// validateReservation asserts `authorName === authorName.trim()` with a
+// `data-loss` refusal. The reservation was written successfully and every
+// later finalize of that draft failed forever — a Yeel draft that could never
+// be published, no matter how many times the composer retried.
+test("a long display name whose 80th character is a space still publishes",
+  async () => {
+    const scenario = fixture();
+    const displayName = `${"A".repeat(79)} ${"B".repeat(20)}`;
+    assert.equal(displayName, displayName.trim());
+    assert.equal(displayName.length, 100);
+    assert.equal(displayName[79], " ");
+    scenario.db.seed(`publicProfiles/${AUTHOR}`, {
+      ...publicProfile(AUTHOR),
+      displayName,
+      displayNameSearch: displayName.toLowerCase(),
+    });
+
+    const reservation = await scenario.service.reserveReelDraftV2({
+      auth: auth(AUTHOR),
+      data: {
+        ...imagePlan("long-display-name-reserve"),
+        availabilityHours: 24,
+      },
+    });
+    const stored = scenario.db.data(
+      `reelUploadReservations/${reservation.reelId}`,
+    );
+    assert.equal(stored.authorName, stored.authorName.trim());
+    assert.ok(stored.authorName.length <= 80);
+
+    scenario.metadata.set(reservation.mediaStoragePath, {
+      generation: "123",
+      size: "1024",
+      contentType: "image/jpeg",
+      metadata: {
+        ownerId: AUTHOR,
+        reelId: reservation.reelId,
+        assetKind: "media",
+      },
+    });
+    // At HEAD this throws `data-loss` on every attempt, forever.
+    await scenario.service.finalizeReelDraftV2({
+      auth: auth(AUTHOR),
+      data: {
+        requestId: "long-display-name-finalize",
+        reelId: reservation.reelId,
+        mediaGeneration: "123",
+        backingAudioGeneration: null,
+        composition: composition(),
+      },
+    });
+    const published = scenario.db.data(`reels/${reservation.reelId}`);
+    assert.equal(published.status, "published");
+    assert.equal(published.authorName, "A".repeat(79));
+  });
+
+// Gate blocker G-1 (SEC-1). The same defect one level up: `updateMyDisplayName`
+// bounds a name at 120 Unicode CODE POINTS while the public-profile projection
+// cuts at 120 UTF-16 CODE UNITS, so an emoji-heavy but perfectly legal name is
+// stored with a trailing space — and `canonicalPublicProfile` refused THAT
+// outright, before the 80-unit canonical cut ever ran. The account could then
+// never publish a Yeel again, no matter how many times the composer retried.
+test("an emoji-heavy legal display name still publishes a Yeel", async () => {
+  const scenario = fixture();
+  const chosen = `${"😀".repeat(10)}${"B".repeat(99)} 😀`;
+  // 111 code points — inside the 120 the callable accepts.
+  assert.equal([...chosen].length, 111);
+  assert.equal(chosen.length, 122);
+  // Exactly the row the writer produced before this round, and the row that
+  // may already exist in production for such an account.
+  const displayName = chosen.trim().slice(0, 120);
+  assert.equal(displayName.length, 120);
+  assert.equal(displayName.charCodeAt(119), 0x20);
+  scenario.db.seed(`publicProfiles/${AUTHOR}`, {
+    ...publicProfile(AUTHOR),
+    displayName,
+    displayNameSearch: displayName.toLowerCase(),
+  });
+
+  // At HEAD this throws `data-loss` — "The canonical public profile is
+  // malformed." — on the reserve, so no draft is ever created.
+  const reservation = await scenario.service.reserveReelDraftV2({
+    auth: auth(AUTHOR),
+    data: {
+      ...imagePlan("emoji-display-name-reserve"),
+      availabilityHours: 24,
+    },
+  });
+  const stored = scenario.db.data(
+    `reelUploadReservations/${reservation.reelId}`,
+  );
+  assert.equal(stored.authorName, stored.authorName.trim());
+  assert.ok(stored.authorName.length <= 80);
+
+  scenario.metadata.set(reservation.mediaStoragePath, {
+    generation: "123",
+    size: "1024",
+    contentType: "image/jpeg",
+    metadata: {
+      ownerId: AUTHOR,
+      reelId: reservation.reelId,
+      assetKind: "media",
+    },
+  });
+  await scenario.service.finalizeReelDraftV2({
+    auth: auth(AUTHOR),
+    data: {
+      requestId: "emoji-display-name-finalize",
+      reelId: reservation.reelId,
+      mediaGeneration: "123",
+      backingAudioGeneration: null,
+      composition: composition(),
+    },
+  });
+  const published = scenario.db.data(`reels/${reservation.reelId}`);
+  assert.equal(published.status, "published");
+  assert.equal(published.authorName, `${"😀".repeat(10)}${"B".repeat(60)}`);
+  // The stored name round-trips through UTF-8: the 80-unit cut did not leave a
+  // lone surrogate behind (SEC-8).
+  assert.equal(
+    Buffer.from(published.authorName, "utf8").toString("utf8"),
+    published.authorName,
+  );
+});

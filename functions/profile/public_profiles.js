@@ -128,6 +128,33 @@ function safeString(value, maximum, fallback = "") {
   return value.trim().slice(0, maximum);
 }
 
+/**
+ * Projects a name that later has to survive `canonicalPublicProfile`.
+ *
+ * `safeString` trims BEFORE its cut and never after, and `maximum` counts
+ * UTF-16 code units while `updateMyDisplayName` bounds a name at 120 code
+ * POINTS. A legal name can therefore be cut on a space (it then fails the
+ * guard's `value === value.trim()` reading) or between a surrogate pair (the
+ * lone high surrogate is not encodable as UTF-8). Trim on both sides of the cut
+ * and take the cut back to the last whole code point, so the row written here
+ * is already canonical instead of depending on the reader to repair it.
+ *
+ * The reader repairs it regardless — this is the writer half of the same
+ * invariant, and it is what keeps a freshly written row byte-identical to what
+ * every consumer will read back.
+ */
+function safeDisplayString(value, maximum, fallback = "") {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  const cut = trimmed.length > maximum ? trimmed.slice(0, maximum) : trimmed;
+  if (cut.length < 1) return fallback;
+  const lastUnit = cut.charCodeAt(cut.length - 1);
+  const whole = lastUnit >= 0xd800 && lastUnit <= 0xdbff
+    ? cut.slice(0, cut.length - 1)
+    : cut;
+  return whole.trim() || fallback;
+}
+
 function canonicalUid(value) {
   // UIDs are opaque, case-sensitive identities. Never trim, lowercase or
   // truncate one: any normalization could alias two Auth accounts into the
@@ -235,9 +262,9 @@ function requireAdultBirthDate(value, nowMs) {
 function derivePublicProfile(uid, source) {
   if (!isActiveAccountProfile(source)) return null;
 
-  const username = safeString(source.username, 80);
+  const username = safeDisplayString(source.username, 80);
   const displayName =
-    safeString(source.displayName, 120) || username || "YO Voice user";
+    safeDisplayString(source.displayName, 120) || username || "YO Voice user";
   const rawAccountType = safeString(source.accountType, 24);
   // Creator is a capability-backed public identity, not merely a private
   // profile string. During the neutral role interlock (and after a completed

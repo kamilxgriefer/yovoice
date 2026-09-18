@@ -3026,3 +3026,45 @@ test("the migration adds no deletion keys to a root that never had them", async 
   // findings such as duplicate conversations for a shared test uid, so it
   // says nothing about this root's shape. The key set is what this test owns.
 });
+
+// Gate blocker G-1 (SEC-1). `openDirectConversation` canonicalises BOTH parties
+// through `canonicalPublicProfile`, so a projection the guard refuses does not
+// merely break its owner's own chats — it makes that account someone NOBODY can
+// start a conversation with. The refused shape is produced by a name a user may
+// legitimately set: `updateMyDisplayName` bounds at 120 Unicode CODE POINTS
+// while the projection cuts at 120 UTF-16 CODE UNITS, so an emoji-heavy name is
+// stored with a trailing space.
+test("a legal emoji-heavy display name can still be opened in a chat",
+  async () => {
+    const chosen = `${"😀".repeat(10)}${"B".repeat(99)} 😀`;
+    assert.equal([...chosen].length, 111);
+    // Exactly the row the writer stored before this round.
+    const displayName = chosen.trim().slice(0, 120);
+    assert.equal(displayName.length, 120);
+    assert.equal(displayName.charCodeAt(119), 0x20);
+    await db.doc(`publicProfiles/${B}`).update({
+      displayName,
+      displayNameSearch: displayName.toLowerCase(),
+    });
+
+    const service = directService();
+    // At HEAD both directions throw `data-loss` — the account is unreachable.
+    const opened = await open(service, A, B, "open-emoji-1");
+    assert.equal(opened.created, true);
+    const conversation = await db
+      .doc(`conversations/${opened.conversationId}`)
+      .get();
+    const storedName = conversation.data().participantNames[B];
+    assert.equal(storedName, `${"😀".repeat(10)}${"B".repeat(60)}`);
+    assert.equal(storedName, storedName.trim());
+    assert.ok(storedName.length <= 80);
+    // No lone surrogate survived the 80-unit cut (SEC-8).
+    assert.equal(
+      Buffer.from(storedName, "utf8").toString("utf8"),
+      storedName,
+    );
+
+    // And the other direction: B can open a chat with A just the same.
+    const reverse = await open(service, B, A, "open-emoji-2");
+    assert.equal(reverse.conversationId, opened.conversationId);
+  });

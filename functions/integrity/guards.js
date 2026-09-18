@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 
 const { HttpsError } = require("firebase-functions/v2/https");
+const logger = require("firebase-functions/logger");
 const { isValidOpaqueUid } = require("../achievements/identity");
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/u;
@@ -33,7 +34,31 @@ const LEGACY_PUBLIC_PROFILE_KEYS = Object.freeze(
   PUBLIC_PROFILE_KEYS.filter((key) => key !== "creatorAudienceVisible"),
 );
 
+// The two "this should be impossible" refusal codes. Every other code is an
+// ordinary, expected outcome (a block, a quota, a bad argument) and stays
+// silent so the signal below keeps meaning something.
+const SILENT_FAILURE_CODES = new Set(["data-loss", "internal"]);
+
+// `fail()` is the single refusal primitive of this backend (~300 call sites in
+// ~40 modules). The callable framework logs nothing for an explicitly thrown
+// HttpsError, so a `data-loss` or `internal` refusal reached the caller with
+// zero server-side evidence — which is exactly how the 2026-09-14 publicProfiles
+// skew stayed invisible for 2.2 days. Logging here, rather than at the call
+// sites, makes the single refusal primitive the single refusal signal and
+// cannot drift when someone adds call site 301.
+//
+// `message` is a static, author-written English string at every call site, so
+// it carries no user data by construction; that is what makes central logging
+// privacy-safe. `fn` comes from the Cloud Run environment, so nothing has to be
+// threaded through the 300 callers.
 function fail(code, message) {
+  if (SILENT_FAILURE_CODES.has(code)) {
+    logger.warn("integrity refusal", {
+      code,
+      reason: message,
+      fn: process.env.FUNCTION_TARGET ?? process.env.K_SERVICE ?? null,
+    });
+  }
   throw new HttpsError(code, message);
 }
 
@@ -212,6 +237,61 @@ function assertNotBlocked(firstSnapshot, secondSnapshot) {
   }
 }
 
+// Every writer of an identity snapshot stores the name this returns
+// (reelUploadReservations.authorName, reels.authorName, reelComments.authorName,
+// voiceMoments.authorName, conversations.participantNames). The strict readers
+// among those — validateReservation, validatePublishedReel,
+// validateReelVoiceCommentReservation — assert `value === value.trim()` and
+// `length <= 80` UTF-16 code units, and refuse with `data-loss` otherwise. A
+// profile name of 81-120 characters whose 80th character is whitespace used to
+// be cut to an untrimmed string here, so the reservation was written
+// successfully and every later finalize of that draft failed forever.
+// Re-trimming after the cut, and asserting the reader's own bound on the
+// result, satisfies "assert the bound at every writer" once instead of at nine
+// call sites.
+//
+// Two properties this function owns, because the bound is measured in UTF-16
+// code units while a display name is chosen in code points:
+//
+//  * The cut is taken back to the last WHOLE code point. Slicing at 80 units
+//    can land between a surrogate pair, and the lone high surrogate that
+//    leaves is not encodable as UTF-8 — @protobufjs/utf8 writes replacement
+//    bytes for it, so the value Firestore stores would no longer be the value
+//    this guard checked, and a later read of the same row would refuse.
+//  * The input is trimmed BEFORE the cut as well as after, so leading
+//    whitespace cannot spend part of the budget and a projection that carries
+//    trailing whitespace is repaired here rather than refused upstream.
+const CANONICAL_DISPLAY_NAME_MAX = 80;
+
+// Cuts `value` to at most `maximum` UTF-16 code units without splitting a
+// surrogate pair: a trailing lone high surrogate (0xD800-0xDBFF) is dropped
+// rather than kept as an unpaired unit.
+function truncateToWholeCodePoints(value, maximum) {
+  const cut = value.length > maximum ? value.slice(0, maximum) : value;
+  if (cut.length < 1) return cut;
+  const lastUnit = cut.charCodeAt(cut.length - 1);
+  return lastUnit >= 0xd800 && lastUnit <= 0xdbff
+    ? cut.slice(0, cut.length - 1)
+    : cut;
+}
+
+function canonicalStoredDisplayName(displayName) {
+  if (typeof displayName !== "string") {
+    fail("data-loss", "The canonical display name is malformed.");
+  }
+  const canonical = truncateToWholeCodePoints(
+    displayName.trim(),
+    CANONICAL_DISPLAY_NAME_MAX,
+  ).trim();
+  if (
+    canonical.length < 1 ||
+    canonical.length > CANONICAL_DISPLAY_NAME_MAX
+  ) {
+    fail("data-loss", "The canonical display name is malformed.");
+  }
+  return canonical;
+}
+
 function canonicalPublicProfile(publicSnapshot, expectedUid) {
   requireUid(expectedUid, "public profile uid");
   if (!publicSnapshot?.exists) {
@@ -230,8 +310,18 @@ function canonicalPublicProfile(publicSnapshot, expectedUid) {
     (exactCurrent && typeof publicProfile.creatorAudienceVisible !== "boolean") ||
     timestampMillis(publicProfile.updatedAt) === null ||
     typeof publicProfile.displayName !== "string" ||
-    publicProfile.displayName !== publicProfile.displayName.trim() ||
-    publicProfile.displayName.length < 1 ||
+    // The projection is bounded at 120 UTF-16 code units by its single writer
+    // (derivePublicProfile). A longer value is out of contract and still
+    // refused. Whitespace at either edge is NOT: `updateMyDisplayName` accepts
+    // 120 code POINTS, one astral character occupies two units, and the
+    // writer's 120-unit cut can therefore land on a space inside a legal name
+    // — "😀"x10 + "B"x99 + " " + "😀" is 111 code points and 122 units, and
+    // projects to 120 units ending in U+0020. Refusing that made the account
+    // permanently unable to publish a Yeel, unable to be opened in a chat by
+    // anybody, and invisible in the Moments feed. It is repaired below by
+    // canonicalStoredDisplayName instead, which trims before and after its own
+    // cut; only a projection with no visible character at all is malformed.
+    publicProfile.displayName.trim().length < 1 ||
     publicProfile.displayName.length > 120
   ) {
     fail("data-loss", "The canonical public profile is malformed.");
@@ -255,7 +345,7 @@ function canonicalPublicProfile(publicSnapshot, expectedUid) {
     }
   }
   return {
-    displayName: publicProfile.displayName.slice(0, 80),
+    displayName: canonicalStoredDisplayName(publicProfile.displayName),
     // Identity snapshots carry uid + name only. Renderers resolve private
     // artwork through a viewer-authorized, short-lived media grant.
     photoUrl: null,
@@ -352,6 +442,7 @@ async function transactionGetAll(transaction, ...references) {
 }
 
 module.exports = {
+  CANONICAL_DISPLAY_NAME_MAX,
   SAFE_ID,
   activeProfile,
   assertLedgerReplay,
@@ -359,6 +450,7 @@ module.exports = {
   assertNotRestricted,
   canonicalPair,
   canonicalPublicProfile,
+  canonicalStoredDisplayName,
   consumeRateLimit,
   digest,
   fail,

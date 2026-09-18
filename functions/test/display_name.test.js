@@ -15,7 +15,12 @@ const {
   createDisplayNameService,
   syncAuthDisplayName,
 } = require("../profile/display_name");
-const { rateLimitReference } = require("../integrity/guards");
+const {
+  CANONICAL_DISPLAY_NAME_MAX,
+  canonicalPublicProfile,
+  rateLimitReference,
+} = require("../integrity/guards");
+const { derivePublicProfile } = require("../profile/public_profiles");
 
 const db = getFirestore();
 const UID = "display-name-user";
@@ -442,5 +447,180 @@ test("a missing Auth account is surfaced without rolling back canonical Firestor
   assert.equal(
     (await db.collection("users").doc(UID).get()).data().displayName,
     "New Voice",
+  );
+});
+
+// RC-8. `canonicalPublicProfile` accepts a display name of 1-120 characters and
+// stores `slice(0, 80)` of it. For a name whose 80th character is whitespace
+// that cut used to produce an UNTRIMMED string, and the strict readers of the
+// value it writes — validateReservation, validatePublishedReel and
+// validateReelVoiceCommentReservation — all assert `value === value.trim()` and
+// refuse with `data-loss` otherwise. The reservation was written successfully
+// and every later finalize of that draft failed forever.
+function canonicalProfileSnapshot(uid, displayName) {
+  return {
+    exists: true,
+    data: () => ({
+      accountType: "personal",
+      bannerUrl: null,
+      bio: "",
+      country: "",
+      creatorAudienceVisible: false,
+      displayName,
+      displayNameSearch: displayName.toLowerCase(),
+      followerCount: 0,
+      followingCount: 0,
+      friendCount: 0,
+      learningLanguages: [],
+      nativeLanguage: "",
+      photoUrl: null,
+      premiumIdentity: false,
+      schemaVersion: 1,
+      spokenLanguages: [],
+      statusMessage: "",
+      uid,
+      updatedAt: Timestamp.fromMillis(1_825_000_000_000),
+      username: uid,
+      usernameSearch: uid,
+      website: null,
+    }),
+  };
+}
+
+test("an 81-120 character display name still yields a trimmed canonical name",
+  () => {
+    assert.equal(CANONICAL_DISPLAY_NAME_MAX, 80);
+    const names = [
+      // The 80th character is the only space, so the cut lands on it.
+      `${"A".repeat(79)} ${"B".repeat(20)}`,
+      // A run of spaces straddling the cut.
+      `${"A".repeat(70)}${" ".repeat(20)}${"B".repeat(30)}`,
+      // Exactly 81 characters with the 80th a space.
+      `${"A".repeat(79)} B`,
+    ];
+    for (const displayName of names) {
+      assert.equal(displayName, displayName.trim());
+      assert.ok(displayName.length > 80 && displayName.length <= 120);
+
+      const identity = canonicalPublicProfile(
+        canonicalProfileSnapshot(UID, displayName),
+        UID,
+      );
+      // The exact invariant every strict reader asserts on the stored value.
+      assert.equal(identity.displayName, identity.displayName.trim());
+      assert.ok(identity.displayName.length >= 1);
+      assert.ok(identity.displayName.length <= 80);
+      assert.equal(identity.photoUrl, null);
+    }
+  });
+
+test("an 80-character or shorter canonical name is returned unchanged", () => {
+  for (const displayName of [
+    "Ada",
+    "A".repeat(80),
+    `${"A".repeat(40)} ${"B".repeat(39)}`,
+    "Głos 🙂",
+  ]) {
+    assert.equal(
+      canonicalPublicProfile(
+        canonicalProfileSnapshot(UID, displayName),
+        UID,
+      ).displayName,
+      displayName,
+    );
+  }
+});
+
+// Gate blocker G-1 (SEC-1). `updateMyDisplayName` bounds a name at 120 Unicode
+// CODE POINTS; `derivePublicProfile` — the single writer of
+// `publicProfiles.displayName` — cuts at 120 UTF-16 CODE UNITS. One astral
+// character costs two units, so the writer's cut can land on a space inside a
+// name a user may legitimately set, and `canonicalPublicProfile` used to refuse
+// the result outright with `data-loss` BEFORE `canonicalStoredDisplayName` ever
+// ran. That refusal is permanent for the account and reaches every consumer of
+// the guard: reserveReelDraftV2/finalizeReelDraftV2, openDirectConversation
+// (which canonicalises BOTH parties, so nobody can start a chat with them) and
+// the Voice Moments feed's per-item swallow (their Moments simply vanish).
+const BREAKING_DISPLAY_NAME = `${"😀".repeat(10)}${"B".repeat(99)} 😀`;
+
+test("a display name a user may set today survives its own projection", () => {
+  assert.equal([...BREAKING_DISPLAY_NAME].length, 111);
+  assert.equal(BREAKING_DISPLAY_NAME.length, 122);
+  assert.equal(BREAKING_DISPLAY_NAME, BREAKING_DISPLAY_NAME.trim());
+
+  // Exactly what the writer stored before this round: trim, then cut at 120
+  // UTF-16 units. Rows in this shape may already exist, so the READER has to
+  // repair them — a writer-only fix would need a backfill.
+  const legacyProjection = BREAKING_DISPLAY_NAME.trim().slice(0, 120);
+  assert.equal(legacyProjection.length, 120);
+  assert.equal(legacyProjection.charCodeAt(119), 0x20);
+  assert.notEqual(legacyProjection, legacyProjection.trim());
+
+  const identity = canonicalPublicProfile(
+    canonicalProfileSnapshot(UID, legacyProjection),
+    UID,
+  );
+  assert.equal(identity.displayName, `${"😀".repeat(10)}${"B".repeat(60)}`);
+  assert.equal(identity.displayName, identity.displayName.trim());
+  assert.equal(identity.displayName.length, CANONICAL_DISPLAY_NAME_MAX);
+
+  // And the writer no longer produces a projection in that shape at all.
+  const projected = derivePublicProfile(UID, {
+    displayName: BREAKING_DISPLAY_NAME,
+    username: UID,
+  });
+  assert.equal(projected.displayName, projected.displayName.trim());
+  assert.ok(projected.displayName.length <= 120);
+  assert.equal(
+    canonicalPublicProfile(
+      canonicalProfileSnapshot(UID, projected.displayName),
+      UID,
+    ).displayName,
+    identity.displayName,
+  );
+});
+
+// SEC-8, closed in the same edit. Both cuts are measured in UTF-16 units, so
+// either can fall between a surrogate pair. The lone high surrogate that leaves
+// is not representable in UTF-8: @protobufjs/utf8 (the encoder under the
+// Firestore client) writes replacement bytes for it, so the value the guard
+// checked is not the value the row would hold, and the next read refuses.
+test("neither canonical cut ever splits a surrogate pair", () => {
+  // "A" plus 40 astral characters is 81 UTF-16 units, so the 80-unit cut lands
+  // between the 40th character's high and low surrogate.
+  const eightyUnitSplit = `A${"😀".repeat(40)}`;
+  assert.equal(eightyUnitSplit.length, 81);
+  // 61 astral characters is 122 units, so the writer's 120-unit cut splits the
+  // 61st the same way.
+  const oneTwentyUnitSplit = "😀".repeat(61);
+  assert.equal(oneTwentyUnitSplit.length, 122);
+
+  for (const raw of [eightyUnitSplit, oneTwentyUnitSplit]) {
+    const projected = derivePublicProfile(UID, {
+      displayName: raw,
+      username: UID,
+    }).displayName;
+    const canonical = canonicalPublicProfile(
+      canonicalProfileSnapshot(UID, projected),
+      UID,
+    ).displayName;
+    for (const value of [projected, canonical]) {
+      assert.ok(value.length >= 1);
+      // A lone surrogate does not survive a UTF-8 round trip; a whole code
+      // point does. This is the property the Firestore encoder depends on.
+      assert.equal(
+        Buffer.from(value, "utf8").toString("utf8"),
+        value,
+        `lone surrogate in ${JSON.stringify(value)}`,
+      );
+      assert.equal([...value].join(""), value);
+    }
+  }
+  assert.equal(
+    canonicalPublicProfile(
+      canonicalProfileSnapshot(UID, eightyUnitSplit),
+      UID,
+    ).displayName,
+    `A${"😀".repeat(39)}`,
   );
 });
