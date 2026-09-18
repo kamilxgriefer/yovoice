@@ -92,6 +92,22 @@ class MomentDiscoveryFeed {
   /// state on purpose: collapsing it into [corpusIsEmpty] is exactly how
   /// a broken upload path hides behind a pre-launch empty state.
   bool get everythingFiltered => fetchedCount > 0 && moments.isEmpty;
+
+  /// The SERVER found candidates and returned none of them.
+  ///
+  /// `getVoiceMomentsFeedV2` counts its candidates (`scannedCount`) before
+  /// a per-item `catch` that swallows every projection failure so a privacy
+  /// refusal stays indistinguishable from absence
+  /// (`functions/moments/integrity.js`). When that catch fires for every
+  /// item the wire still says "3 scanned, 0 moments" — so the client can
+  /// see the drop even though no field names it.
+  ///
+  /// [drops] being empty is what separates this from ordinary filtering:
+  /// this client filtered nothing, because it was given nothing to filter.
+  /// Without the distinction the feed told people their Moments had
+  /// expired, which it had no way of knowing and which was usually false.
+  bool get serverDroppedEverything =>
+      fetchedCount > 0 && moments.isEmpty && drops.isEmpty;
 }
 
 /// The two counters a Moment document carries that can change while it

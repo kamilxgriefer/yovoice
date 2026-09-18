@@ -8,6 +8,7 @@ import 'package:flutter/semantics.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'package:yovoice/core/helpers/callable_failure_reporter.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
@@ -205,6 +206,10 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
   String _viewerUid = '';
   int _accountEpoch = 0;
   int _loadEpoch = 0;
+
+  /// The load whose total server drop has already been reported, so a
+  /// rebuild of the same failed page does not report it again.
+  int? _reportedDropEpoch;
   int _socialEpoch = 0;
   ModalRoute<void>? _observedRoute;
   bool _routeIsCurrent = true;
@@ -643,6 +648,23 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
       }
       _announceReadError(error, 'load-$generation');
     }
+  }
+
+  /// Raises a Crashlytics signal for a feed page the server emptied.
+  ///
+  /// The server cannot say this on the wire: `VoiceMomentFeedPageV2.parse`
+  /// requires an EXACT five-key response, so adding a `droppedCount` field
+  /// would break every installed client at once (ADR-B in the Build 31
+  /// design). The count is derived from what the wire already carries, and
+  /// the alarm is raised from here instead — the previous outage produced
+  /// HTTP 200s and no error line anywhere for 2.2 days.
+  void _reportServerDroppedFeed() {
+    if (_reportedDropEpoch == _loadEpoch) return;
+    _reportedDropEpoch = _loadEpoch;
+    recordCallableRefusal(
+      callable: 'getVoiceMomentsFeedV2',
+      code: 'server-dropped-all',
+    );
   }
 
   Future<void> _refreshAll() async {
@@ -2018,16 +2040,48 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
         onAction: widget.onRecord,
       );
     }
+    if (result.serverDroppedEverything) {
+      // The server scanned candidates and returned none. This client
+      // filtered nothing — it was handed nothing to filter — so it knows
+      // only that the failure was upstream, and must say exactly that.
+      // Before this branch existed the code below ran with an EMPTY drops
+      // map, and `Iterable.every` on an empty iterable is `true`, so the
+      // screen asserted that N Moments had expired: a fabricated
+      // explanation for Moments it never saw.
+      _reportServerDroppedFeed();
+      return _EmptyState(
+        icon: Icons.cloud_off_rounded,
+        title: _copy.text(
+          'These Moments could not be loaded',
+          'Nie udało się wczytać tych Momentów',
+        ),
+        body: _copy.template(
+          'The server returned {count} Moments and none of them could be '
+              'prepared. This is a problem on our side.',
+          'Serwer zwrócił {count} Momentów i żadnego nie udało się '
+              'przygotować. To problem po naszej stronie.',
+          values: <String, Object>{'count': result.fetchedCount},
+        ),
+        actionLabel: _copy.text('Try again', 'Spróbuj ponownie'),
+        onAction: _load,
+      );
+    }
     if (result.moments.isEmpty) {
       // Published Moments exist and none are live. Expiry is the normal
       // reason now; a corpus where something was dropped for
       // unplayability instead is still called out as the pipeline
       // failure it is.
-      final expiredOnly = result.drops.values.every(
-        (reason) =>
-            reason == MomentDropReason.expired ||
-            reason == MomentDropReason.blockedAuthor,
-      );
+      //
+      // `drops.isNotEmpty` is load-bearing: `every` answers true for an
+      // empty iterable, so without it an all-server-dropped page would
+      // claim expiry it cannot know about.
+      final expiredOnly =
+          result.drops.isNotEmpty &&
+          result.drops.values.every(
+            (reason) =>
+                reason == MomentDropReason.expired ||
+                reason == MomentDropReason.blockedAuthor,
+          );
       return _EmptyState(
         icon: expiredOnly
             ? Icons.timer_off_outlined
