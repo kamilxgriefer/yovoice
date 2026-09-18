@@ -33,8 +33,18 @@ const MAX_SUGGESTION_CANDIDATES = 40;
 const MAX_MUTUAL_FRIENDS_SCANNED = 50;
 const DEFAULT_SUGGESTION_LIMIT = 10;
 const MAX_SUGGESTION_LIMIT = 25;
-const FRIEND_DISCOVERY_MINUTE_LIMIT = 2;
-const FRIEND_DISCOVERY_HOUR_LIMIT = 20;
+// Two per minute was set before the Build 27+ "make finding friends easier"
+// surface existed; ordinary browsing of the friends bar drives these callables
+// more than twice a minute, so half of production's getMutualFriends calls were
+// answered with 429. Ten per minute is the ceiling of what a person can drive by
+// hand, and 120 per hour still bounds a script to far less than the per-call
+// graph-read budget GraphReadBudget already enforces. The burst window is what
+// makes normal use feel unlimited while a tight loop still hits a wall inside a
+// second of machine time.
+const FRIEND_DISCOVERY_MINUTE_LIMIT = 10;
+const FRIEND_DISCOVERY_HOUR_LIMIT = 120;
+const FRIEND_DISCOVERY_BURST_MS = 10 * 1000;
+const FRIEND_DISCOVERY_BURST_LIMIT = 5;
 const FRIEND_DISCOVERY_CACHE_TTL_MS = 30 * 1000;
 // Quota and cache reads happen before these budgets. Every subsequent
 // Firestore graph/profile read must reserve its worst-case document count.
@@ -357,6 +367,8 @@ async function consumeFriendDiscoveryRateLimit(
     now = Timestamp.now(),
     minuteLimit = FRIEND_DISCOVERY_MINUTE_LIMIT,
     hourLimit = FRIEND_DISCOVERY_HOUR_LIMIT,
+    burstLimit = FRIEND_DISCOVERY_BURST_LIMIT,
+    burstMs = FRIEND_DISCOVERY_BURST_MS,
   } = {},
 ) {
   if (!["suggestions", "mutuals"].includes(kind)) {
@@ -367,6 +379,22 @@ async function consumeFriendDiscoveryRateLimit(
     const snapshot = await transaction.get(reference);
     const current = snapshot.exists ? (snapshot.data() ?? {}) : {};
     const nowMs = now.toMillis();
+
+    // The burst window is a third fixed window on the same server-owned
+    // document. A stale-revision function reading a document that carries the
+    // two extra fields ignores them; this revision reading a document written
+    // without them treats the burst window as expired and starts at 1. Safe
+    // under a named-target deploy in either order.
+    const burstStartedMs = timestampMillis(current.burstStartedAt, nowMs);
+    const burstExpired =
+      !current.burstStartedAt ||
+      typeof current.burstStartedAt.toMillis !== "function" ||
+      nowMs - burstStartedMs >= burstMs;
+    const burstCount = burstExpired
+      ? 1
+      : Number.isSafeInteger(current.burstCount)
+        ? current.burstCount + 1
+        : 1;
 
     const minuteStartedMs = timestampMillis(current.minuteStartedAt, nowMs);
     const minuteExpired =
@@ -390,7 +418,11 @@ async function consumeFriendDiscoveryRateLimit(
         ? current.hourCount + 1
         : 1;
 
-    if (minuteCount > minuteLimit || hourCount > hourLimit) {
+    if (
+      burstCount > burstLimit ||
+      minuteCount > minuteLimit ||
+      hourCount > hourLimit
+    ) {
       throw new HttpsError(
         "resource-exhausted",
         "Friend discovery is temporarily limited. Please wait and try again.",
@@ -399,13 +431,15 @@ async function consumeFriendDiscoveryRateLimit(
 
     transaction.set(reference, {
       kind: `friendDiscovery.${kind}`,
+      burstStartedAt: burstExpired ? now : current.burstStartedAt,
+      burstCount,
       minuteStartedAt: minuteExpired ? now : current.minuteStartedAt,
       minuteCount,
       hourStartedAt: hourExpired ? now : current.hourStartedAt,
       hourCount,
       updatedAt: now,
     });
-    return { minuteCount, hourCount };
+    return { burstCount, minuteCount, hourCount };
   });
 }
 
@@ -2184,6 +2218,8 @@ module.exports = {
   MAX_MUTUAL_FRIENDS_SCANNED,
   FRIEND_DISCOVERY_MINUTE_LIMIT,
   FRIEND_DISCOVERY_HOUR_LIMIT,
+  FRIEND_DISCOVERY_BURST_LIMIT,
+  FRIEND_DISCOVERY_BURST_MS,
   FRIEND_DISCOVERY_CACHE_TTL_MS,
   SUGGESTION_GRAPH_READ_BUDGET,
   MUTUAL_GRAPH_READ_BUDGET,

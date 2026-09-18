@@ -20,6 +20,9 @@ const {
   MAX_SUGGESTION_CANDIDATES,
   MAX_MUTUAL_FRIENDS_SCANNED,
   FRIEND_DISCOVERY_MINUTE_LIMIT,
+  FRIEND_DISCOVERY_HOUR_LIMIT,
+  FRIEND_DISCOVERY_BURST_LIMIT,
+  FRIEND_DISCOVERY_BURST_MS,
   SUGGESTION_GRAPH_READ_BUDGET,
   MUTUAL_GRAPH_READ_BUDGET,
   QUOTA_MINUTE_MS,
@@ -129,6 +132,107 @@ function guardWrite(ownerId, friendId) {
   ];
 }
 
+// RC-11. Half of production's getMutualFriends calls were 429 at 2/min: the
+// Build 27+ friends surface calls these callables more than twice a minute in
+// ordinary browsing. The shipped configuration must let a person tap five times
+// in ten seconds, keep going to ten in a minute, and still wall a script.
+test("the shipped friend-discovery budget survives hand-driven browsing", async () => {
+  assert.ok(
+    FRIEND_DISCOVERY_MINUTE_LIMIT >= 10,
+    "two per minute is below ordinary hand-driven use of the friends bar",
+  );
+  assert.ok(FRIEND_DISCOVERY_HOUR_LIMIT >= 120);
+  assert.equal(FRIEND_DISCOVERY_BURST_LIMIT, 5);
+  assert.equal(FRIEND_DISCOVERY_BURST_MS, 10_000);
+
+  assert.equal(FRIEND_DISCOVERY_MINUTE_LIMIT, 10);
+  const base = 1_781_000_000_000;
+  const at = (offsetMs) => Timestamp.fromMillis(base + offsetMs);
+
+  for (const kind of ["suggestions", "mutuals"]) {
+    const uid = `fd-burst-${kind}`;
+    trackUser(uid);
+
+    // Five taps inside ten seconds are free; the sixth is refused. At HEAD the
+    // third call already failed.
+    for (let attempt = 1; attempt <= FRIEND_DISCOVERY_BURST_LIMIT; attempt += 1) {
+      const result = await consumeFriendDiscoveryRateLimit(uid, kind, {
+        now: at(attempt * 100),
+      });
+      assert.deepEqual(result, {
+        burstCount: attempt,
+        minuteCount: attempt,
+        hourCount: attempt,
+      });
+    }
+    await assert.rejects(
+      consumeFriendDiscoveryRateLimit(uid, kind, { now: at(600) }),
+      (error) => error.code === "resource-exhausted",
+      "a tight loop still hits the burst wall inside a second",
+    );
+
+    // Ten seconds on, the burst window has reset while the minute window keeps
+    // counting, so browsing continues to the minute wall at ten.
+    for (let attempt = 1; attempt <= FRIEND_DISCOVERY_BURST_LIMIT; attempt += 1) {
+      const result = await consumeFriendDiscoveryRateLimit(uid, kind, {
+        now: at(11_000 + attempt * 100),
+      });
+      assert.equal(result.burstCount, attempt);
+      assert.equal(result.minuteCount, FRIEND_DISCOVERY_BURST_LIMIT + attempt);
+    }
+
+    // A fresh burst window, still inside the same minute: the minute limit is
+    // the only thing that can refuse this one.
+    await assert.rejects(
+      consumeFriendDiscoveryRateLimit(uid, kind, { now: at(30_000) }),
+      (error) => error.code === "resource-exhausted",
+      "the minute window still bounds a loop that paces itself past the burst",
+    );
+
+    // The hour window is the outer wall and is still enforced.
+    const hourly = await consumeFriendDiscoveryRateLimit(uid, kind, {
+      now: at(QUOTA_HOUR_MS - 1),
+    });
+    assert.deepEqual(hourly, {
+      burstCount: 1,
+      minuteCount: 1,
+      hourCount: FRIEND_DISCOVERY_MINUTE_LIMIT + 1,
+    });
+    await assert.rejects(
+      consumeFriendDiscoveryRateLimit(uid, kind, {
+        now: at(QUOTA_HOUR_MS - 1),
+        hourLimit: FRIEND_DISCOVERY_MINUTE_LIMIT + 1,
+      }),
+      (error) => error.code === "resource-exhausted",
+    );
+  }
+  await cleanup();
+});
+
+// A limiter document written by a revision that predates the burst window must
+// not be read as "already five taps in": the two missing fields mean an expired
+// burst window, not a full one. This is the named-target skew case.
+test("a burst-less limiter document from an older revision starts a fresh burst", async () => {
+  const uid = "fd-burst-legacy";
+  const kind = "mutuals";
+  trackUser(uid);
+  const base = Timestamp.fromMillis(1_782_000_000_000);
+  await db.doc(discoveryQuotaPath(uid, kind)).set({
+    kind: `friendDiscovery.${kind}`,
+    minuteStartedAt: base,
+    minuteCount: 1,
+    hourStartedAt: base,
+    hourCount: 1,
+    updatedAt: base,
+  });
+
+  const result = await consumeFriendDiscoveryRateLimit(uid, kind, {
+    now: Timestamp.fromMillis(base.toMillis() + 500),
+  });
+  assert.deepEqual(result, { burstCount: 1, minuteCount: 2, hourCount: 2 });
+  await cleanup();
+});
+
 test("friend-discovery quotas are atomic, isolated and reset both windows", async () => {
   const base = Timestamp.fromMillis(1_780_000_000_000);
   for (const kind of ["suggestions", "mutuals"]) {
@@ -136,12 +240,15 @@ test("friend-discovery quotas are atomic, isolated and reset both windows", asyn
     const otherUid = `fd-quota-${kind}-other`;
     trackUser(uid);
     trackUser(otherUid);
+    // The subject of this case is the minute window, so the burst window is
+    // held above it deliberately; the burst window has its own case below.
     const attempts = await Promise.allSettled(
       Array.from({ length: FRIEND_DISCOVERY_MINUTE_LIMIT + 1 }, () =>
         consumeFriendDiscoveryRateLimit(uid, kind, {
           now: base,
           minuteLimit: FRIEND_DISCOVERY_MINUTE_LIMIT,
           hourLimit: FRIEND_DISCOVERY_MINUTE_LIMIT + 1,
+          burstLimit: FRIEND_DISCOVERY_MINUTE_LIMIT + 1,
         }),
       ),
     );
@@ -158,15 +265,22 @@ test("friend-discovery quotas are atomic, isolated and reset both windows", asyn
       now: base,
       minuteLimit: 1,
       hourLimit: 1,
+      burstLimit: 1,
     });
-    assert.deepEqual(independent, { minuteCount: 1, hourCount: 1 });
+    assert.deepEqual(independent, {
+      burstCount: 1,
+      minuteCount: 1,
+      hourCount: 1,
+    });
 
     const minuteReset = await consumeFriendDiscoveryRateLimit(uid, kind, {
       now: Timestamp.fromMillis(base.toMillis() + QUOTA_MINUTE_MS),
       minuteLimit: FRIEND_DISCOVERY_MINUTE_LIMIT,
       hourLimit: FRIEND_DISCOVERY_MINUTE_LIMIT + 1,
+      burstLimit: FRIEND_DISCOVERY_MINUTE_LIMIT + 1,
     });
     assert.deepEqual(minuteReset, {
+      burstCount: 1,
       minuteCount: 1,
       hourCount: FRIEND_DISCOVERY_MINUTE_LIMIT + 1,
     });
@@ -175,6 +289,7 @@ test("friend-discovery quotas are atomic, isolated and reset both windows", asyn
         now: Timestamp.fromMillis(base.toMillis() + 2 * QUOTA_MINUTE_MS),
         minuteLimit: FRIEND_DISCOVERY_MINUTE_LIMIT,
         hourLimit: FRIEND_DISCOVERY_MINUTE_LIMIT + 1,
+        burstLimit: FRIEND_DISCOVERY_MINUTE_LIMIT + 1,
       }),
       (error) => error.code === "resource-exhausted",
     );
@@ -182,8 +297,13 @@ test("friend-discovery quotas are atomic, isolated and reset both windows", asyn
       now: Timestamp.fromMillis(base.toMillis() + QUOTA_HOUR_MS),
       minuteLimit: FRIEND_DISCOVERY_MINUTE_LIMIT,
       hourLimit: FRIEND_DISCOVERY_MINUTE_LIMIT + 1,
+      burstLimit: FRIEND_DISCOVERY_MINUTE_LIMIT + 1,
     });
-    assert.deepEqual(hourReset, { minuteCount: 1, hourCount: 1 });
+    assert.deepEqual(hourReset, {
+      burstCount: 1,
+      minuteCount: 1,
+      hourCount: 1,
+    });
   }
   await cleanup();
 });
@@ -194,8 +314,10 @@ test("N+1 is denied before either endpoint can read a deleted profile graph", as
   const mutualTarget = "fd-nplus-target";
   await seedProfiles([suggestionCaller, mutualCaller, mutualTarget]);
 
-  await runSuggestions(request(suggestionCaller, { limit: 10 }));
-  await runSuggestions(request(suggestionCaller, { limit: 10 }));
+  // Spend the burst window, which is now the first wall a rapid caller meets.
+  for (let attempt = 0; attempt < FRIEND_DISCOVERY_BURST_LIMIT; attempt += 1) {
+    await runSuggestions(request(suggestionCaller, { limit: 10 }));
+  }
   const suggestionCacheRef = friendDiscoveryCacheReference(
     suggestionCaller,
     "suggestions",
@@ -213,8 +335,9 @@ test("N+1 is denied before either endpoint can read a deleted profile graph", as
     suggestionCacheBefore.data().computedAt.toMillis(),
   );
 
-  await runMutuals(request(mutualCaller, { targetUserId: mutualTarget }));
-  await runMutuals(request(mutualCaller, { targetUserId: mutualTarget }));
+  for (let attempt = 0; attempt < FRIEND_DISCOVERY_BURST_LIMIT; attempt += 1) {
+    await runMutuals(request(mutualCaller, { targetUserId: mutualTarget }));
+  }
   const mutualCacheRef = friendDiscoveryCacheReference(
     mutualCaller,
     "mutuals",
