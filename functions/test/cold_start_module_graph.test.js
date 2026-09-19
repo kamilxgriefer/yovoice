@@ -90,7 +90,7 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 249 names.
+// Every export of functions/index.js, sorted. 255 names.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
@@ -136,6 +136,7 @@ const EXPORT_NAMES = Object.freeze([
   "deleteReel",
   "deleteReelComment",
   "deleteRoomSelf",
+  "deleteServerChannelMessageV1",
   "deleteServerChannelV1",
   "deleteServerCompanyFileV1",
   "deleteServerFamilyCheckInV1",
@@ -155,6 +156,7 @@ const EXPORT_NAMES = Object.freeze([
   "expirePremiumIdentity",
   "expirePublishedReelsSchedule",
   "expireRoomCoverUploadReservationsSchedule",
+  "expireServerChannelMessageMediaReservations",
   "expireVoiceMomentsSchedule",
   "finalizeClubMedia",
   "finalizeDirectMessageAttachment",
@@ -164,6 +166,7 @@ const EXPORT_NAMES = Object.freeze([
   "finalizeReelDraftV2",
   "finalizeReelVoiceCommentDraft",
   "finalizeRoomCoverUpload",
+  "finalizeServerChannelMessageMediaV1",
   "finalizeServerCompanyFileV1",
   "finalizeServerFamilyMemoryV1",
   "finalizeVoiceCommentDraft",
@@ -184,6 +187,7 @@ const EXPORT_NAMES = Object.freeze([
   "getReelMediaAccessV2",
   "getReelViewV2",
   "getRoomCoverMediaAccess",
+  "getServerChannelMessageMediaAccessV1",
   "getServerCompanyFileAccessV1",
   "getServerFamilyMemoryMediaAccessV1",
   "getStaffOverview",
@@ -251,6 +255,7 @@ const EXPORT_NAMES = Object.freeze([
   "processPendingContentCleanupSchedule",
   "processPendingReelCleanupSchedule",
   "processPendingServerControlOutboxSchedule",
+  "processServerChannelMessageMediaDeletionJobs",
   "publishPublicShowcaseSchedule",
   "publishPublicStatsSchedule",
   "receiveLiveKitAchievementWebhook",
@@ -271,6 +276,7 @@ const EXPORT_NAMES = Object.freeze([
   "reserveReelDraftV2",
   "reserveReelVoiceCommentDraft",
   "reserveRoomCoverUpload",
+  "reserveServerChannelMessageMediaV1",
   "reserveServerCompanyFileV1",
   "reserveServerFamilyMemoryV1",
   "reserveVoiceCommentDraft",
@@ -392,6 +398,8 @@ const COLD_START_SERVERS_MODULES = Object.freeze([
   "servers/invites.js",
   "servers/management.js",
   "servers/memberships.js",
+  "servers/message_media.js",
+  "servers/message_media_contract.js",
   "servers/message_reactions.js",
   "servers/operations.js",
   "servers/podcast_episodes.js",

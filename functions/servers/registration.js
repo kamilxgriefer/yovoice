@@ -62,6 +62,10 @@ const { createServerConvergenceRuntimeService } = require("./convergence_runtime
 const { createServerSessionControlService } = require("./session_control");
 const { createServerLiveKitAdapter } = require("./session_livekit");
 const { createServerMessageReactionService } = require("./message_reactions");
+const {
+  createServerMessageMediaService,
+  createServerMessageMediaStorageAdapter,
+} = require("./message_media");
 
 const REGION = "europe-west1";
 const OUTBOX_COLLECTION = "serverControlOutbox";
@@ -228,9 +232,25 @@ const SERVERS_V1_EXPORT_NAMES = Object.freeze([
 // deployed by their own explicit selector.
 const SERVER_MESSAGE_CALLABLE_METHODS = Object.freeze({
   setServerChannelMessageReactionV1: "messageReactions",
+  reserveServerChannelMessageMediaV1: "messageMedia",
+  finalizeServerChannelMessageMediaV1: "messageMedia",
+  getServerChannelMessageMediaAccessV1: "messageMedia",
+  deleteServerChannelMessageV1: "messageMedia",
 });
+// The Storage-reaching callables get the Company File media profile: the
+// probe reads bytes, access signs V4 URLs, delete removes the object inline.
+const SERVER_MESSAGE_MEDIA_CALLABLES = Object.freeze([
+  "finalizeServerChannelMessageMediaV1",
+  "getServerChannelMessageMediaAccessV1",
+  "deleteServerChannelMessageV1",
+]);
+const SERVER_MESSAGE_SCHEDULE_EXPORTS = Object.freeze([
+  "expireServerChannelMessageMediaReservations",
+  "processServerChannelMessageMediaDeletionJobs",
+]);
 const SERVER_MESSAGE_EXPORT_NAMES = Object.freeze([
   ...Object.keys(SERVER_MESSAGE_CALLABLE_METHODS),
+  ...SERVER_MESSAGE_SCHEDULE_EXPORTS,
 ]);
 
 // Outbox job kinds and the reviewed worker that owns each of them. The three
@@ -983,14 +1003,27 @@ function createServerMessageRuntime({
   db = null,
   Timestamp: TimestampClass = Timestamp,
   clock = Date.now,
+  bucket = null,
+  storage = null,
+  probeMedia = null,
 } = {}) {
   if (typeof clock !== "function") throw new TypeError("clock must be a function.");
   const database = db ?? getFirestore();
+  // Resolved on first object access, never at module load: the cold-start
+  // graph pins @google-cloud/storage at zero (utils/lazy_bucket.js).
+  const resolvedBucket = bucket ?? createLazyBucket(() => getStorage().bucket());
   const dependencies = { db: database, Timestamp: TimestampClass, clock };
   return Object.freeze({
     db: database,
     clock,
     messageReactions: createServerMessageReactionService(dependencies),
+    messageMedia: createServerMessageMediaService({
+      ...dependencies,
+      storage: storage ?? createServerMessageMediaStorageAdapter(resolvedBucket),
+      // The direct-message trusted probe (reels/probe.js): real image/video
+      // bytes, track presence and a bounded duration from the object itself.
+      probeMedia: probeMedia ?? createTrustedGcsMediaProbe(resolvedBucket),
+    }),
   });
 }
 
@@ -1026,6 +1059,7 @@ function createServerMessageFunctions({
     enforceAppCheck: enforceAppCheck === true,
     consumeAppCheckToken: enforceAppCheck === true,
   };
+  const mediaOptions = { ...callableOptions, memory: "512MiB", timeoutSeconds: 120 };
   const exportsMap = {};
   for (const [name, serviceName] of Object.entries(SERVER_MESSAGE_CALLABLE_METHODS)) {
     const method = resolved?.[serviceName]?.[name];
@@ -1033,10 +1067,57 @@ function createServerMessageFunctions({
       throw new TypeError(`Missing Servers V1 method ${serviceName}.${name}.`);
     }
     exportsMap[name] = registrars.onCall(
-      { ...callableOptions },
+      SERVER_MESSAGE_MEDIA_CALLABLES.includes(name) ? { ...mediaOptions } : { ...callableOptions },
       callableHandler(name, method, activation, log),
     );
   }
+  const media = resolved?.messageMedia;
+  if (typeof media?.expireServerChannelMessageMediaReservations !== "function" ||
+      typeof media?.processServerChannelMessageMediaDeletionJobs !== "function") {
+    throw new TypeError("Missing Servers V1 message media workers.");
+  }
+  // Same gate and paused shape as the Company File sweep: workers run only
+  // while appConfig/serversV1.workersEnabled is true, and durable work
+  // (reservations, deletion jobs) simply waits while they are paused.
+  async function runWorker(name, task, paused) {
+    let enabled = false;
+    try {
+      enabled = await activation.workersEnabled();
+    } catch {
+      // The activation reader already logged a non-sensitive diagnostic.
+    }
+    if (!enabled) {
+      log.info("servers.worker_paused", { worker: name });
+      return paused;
+    }
+    return task();
+  }
+  const scheduleOptions = {
+    region: REGION,
+    memory: "512MiB",
+    timeoutSeconds: 300,
+    schedule: "every 10 minutes",
+    timeZone: "Etc/UTC",
+    maxInstances: 1,
+  };
+  exportsMap.expireServerChannelMessageMediaReservations = registrars.onSchedule(
+    { ...scheduleOptions },
+    async () => runWorker("expireServerChannelMessageMediaReservations", async () => {
+      const line = await media.expireServerChannelMessageMediaReservations({ limit: 20 });
+      if (line.hasMore) log.warn("servers.message_media_reservation_sweep", line);
+      else log.info("servers.message_media_reservation_sweep", line);
+      return line;
+    }, { expired: [], processed: 0, hasMore: false, activationDisabled: true }),
+  );
+  exportsMap.processServerChannelMessageMediaDeletionJobs = registrars.onSchedule(
+    { ...scheduleOptions },
+    async () => runWorker("processServerChannelMessageMediaDeletionJobs", async () => {
+      const line = await media.processServerChannelMessageMediaDeletionJobs({ limit: 20 });
+      if (line.hasMore) log.warn("servers.message_media_deletion_sweep", line);
+      else log.info("servers.message_media_deletion_sweep", line);
+      return line;
+    }, { completed: [], processed: 0, hasMore: false, activationDisabled: true }),
+  );
   return Object.freeze(exportsMap);
 }
 
@@ -1061,6 +1142,8 @@ module.exports = {
   SERVER_CALLABLE_METHODS,
   SERVER_MESSAGE_CALLABLE_METHODS,
   SERVER_MESSAGE_EXPORT_NAMES,
+  SERVER_MESSAGE_MEDIA_CALLABLES,
+  SERVER_MESSAGE_SCHEDULE_EXPORTS,
   SERVERS_V1_EXPORT_NAMES,
   SWEEP_EXPORTS,
   authBoundRequest,

@@ -2924,6 +2924,8 @@ function createDirectMessagingService({
 module.exports = {
   ALLOWED_DIRECT_REACTIONS,
   DEFAULT_LIMITS,
+  // Server channel photo/video messages reuse the image and video bounds.
+  DIRECT_MEDIA_TYPES,
   DIRECT_MESSAGE_TYPES,
   canonicalConversationId,
   canonicalPairKey,

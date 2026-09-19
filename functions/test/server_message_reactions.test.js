@@ -92,6 +92,13 @@ test("Server message reactions: the extension table registers behind the activat
     messageReactions: {
       setServerChannelMessageReactionV1: async (bound) => { calls.push(bound); return { ok: true }; },
     },
+    messageMedia: Object.fromEntries([
+      ...Object.entries(SERVER_MESSAGE_CALLABLE_METHODS)
+        .filter(([, service]) => service === "messageMedia")
+        .map(([name]) => [name, async () => ({ name })]),
+      ["expireServerChannelMessageMediaReservations", async () => ({ expired: [], processed: 0, hasMore: false })],
+      ["processServerChannelMessageMediaDeletionJobs", async () => ({ completed: [], processed: 0, hasMore: false })],
+    ]),
   };
   let admitted = false;
   const gate = {

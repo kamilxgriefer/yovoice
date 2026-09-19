@@ -142,6 +142,74 @@ test("moderator redaction is target-independently rate-limited and audited", asy
   assert.equal(minute.data().count, 1);
 });
 
+test("moderator redaction of a photo/video message strips media, mediaUrl and reactions and enqueues the object deletion", async () => {
+  const {
+    DELETION_JOBS,
+    objectDeletionJobId,
+  } = require("../servers/message_media_contract");
+  const messageId = `cm_${"e".repeat(40)}`;
+  const storagePath = `server_message_media/${CLUB}/${CHANNEL}/${MEMBER}/${messageId}.mp4`;
+  await seedMessage(messageId, MEMBER);
+  await db.doc(`clubs/${CLUB}/channels/${CHANNEL}/messages/${messageId}`).update({
+    content: "Video",
+    type: "video",
+    mediaUrl: `gs://demo-bucket/${storagePath}`,
+    media: {
+      schemaVersion: 1,
+      storagePath,
+      generation: "4242",
+      contentType: "video/mp4",
+      size: 65536,
+      durationSeconds: 9,
+    },
+    reactions: { [OWNER]: "🔥" },
+  });
+  const jobId = objectDeletionJobId(CLUB, CHANNEL, messageId);
+  await db.doc(`${DELETION_JOBS}/${jobId}`).delete();
+
+  assert.deepEqual(await run(request(MODERATOR, messageId)), {
+    outcome: "redacted",
+    redacted: true,
+  });
+  const message = (await db
+    .doc(`clubs/${CLUB}/channels/${CHANNEL}/messages/${messageId}`)
+    .get()).data();
+  assert.equal(message.content, "");
+  assert.equal(message.isDeleted, true);
+  assert.equal(message.moderationRemoved, true);
+  for (const field of ["media", "mediaUrl", "reactions", "gif"]) {
+    assert.equal(field in message, false, field);
+  }
+  const job = (await db.doc(`${DELETION_JOBS}/${jobId}`).get()).data();
+  assert.equal(job.target, "object");
+  assert.equal(job.reason, "moderator");
+  assert.equal(job.storagePath, storagePath);
+  assert.equal(job.generation, "4242");
+  assert.equal(job.ownerId, MEMBER);
+  assert.equal(job.status, "pending");
+  await db.doc(`${DELETION_JOBS}/${jobId}`).delete();
+
+  // A forged descriptor still redacts but never schedules a foreign path.
+  const forgedId = `cm_${"f".repeat(40)}`;
+  await seedMessage(forgedId, MEMBER);
+  await db.doc(`clubs/${CLUB}/channels/${CHANNEL}/messages/${forgedId}`).update({
+    type: "image",
+    media: {
+      schemaVersion: 1,
+      storagePath: "users/victim/profile/avatar.jpg",
+      generation: "1",
+      contentType: "image/jpeg",
+      size: 500,
+      durationSeconds: null,
+    },
+  });
+  assert.equal((await run(request(MODERATOR, forgedId))).redacted, true);
+  assert.equal(
+    (await db.doc(`${DELETION_JOBS}/${objectDeletionJobId(CLUB, CHANNEL, forgedId)}`).get()).exists,
+    false,
+  );
+});
+
 test("club hierarchy protects equal and higher roles", async () => {
   await Promise.all([
     seedMember("moderation-admin", "admin"),
