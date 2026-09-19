@@ -41,7 +41,9 @@ class ReelProgressBar extends StatelessWidget {
   /// on an app surface.
   final bool onMedia;
 
-  static const double trackHeight = 4;
+  /// Slim redesign: a 2 px hairline timeline. On the phone stage it is the
+  /// last row of the frame, directly above the dock.
+  static const double trackHeight = 2;
 
   @override
   Widget build(BuildContext context) {

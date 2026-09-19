@@ -1328,9 +1328,13 @@ class _SoundToggle extends StatelessWidget {
         borderRadius: 999,
         minimumSize: const Size(48, 48),
         focusContrastColor: Colors.black,
+        // Slim look: a 32 px pill (the 48 px target is the tap region's),
+        // 18 px glyph, 13 px label. Same plate, same words, same toggle.
         child: Container(
-          height: 40,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          // A floor, not a height: an accessibility text size grows the
+          // pill instead of clipping its word.
+          constraints: const BoxConstraints(minHeight: 32),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: const BoxDecoration(
             color: reelOverlayPlateColor,
             borderRadius: BorderRadius.all(Radius.circular(999)),
@@ -1338,8 +1342,8 @@ class _SoundToggle extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              Icon(icon, size: 20, color: Colors.white),
-              const SizedBox(width: AppRhythm.tight),
+              Icon(icon, size: 18, color: Colors.white),
+              const SizedBox(width: 6),
               Flexible(
                 child: Text(
                   state,
@@ -1347,6 +1351,7 @@ class _SoundToggle extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: AppTypography.labelLarge.copyWith(
                     color: Colors.white,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
                     shadows: reelOverlayTextShadows,
                   ),
@@ -3015,8 +3020,13 @@ class ReelAuthorRow extends StatelessWidget {
   }
 }
 
-/// The audio line of the frame: attribution (or the generic name) on a 72 %
-/// plate, with the playback toggle leading it when the Reel has backing audio.
+/// The audio line of the frame: attribution (or the generic name), with the
+/// playback toggle leading it when the Reel has backing audio.
+///
+/// Slim look: one line of shadowed white text straight on the scrim, led by
+/// a music glyph — no plate, so the frame's text reads as one layer over the
+/// media. The logic (when it shows, the label, the toggle's gate) is the
+/// same as before.
 ///
 /// The toggle stays an [IconButton] — its key, tooltips and 44 px target are
 /// the contract the playback coordinator coverage holds it to.
@@ -3055,87 +3065,68 @@ class _SoundChip extends StatelessWidget {
       alignment: AlignmentDirectional.centerStart,
       child: SizedBox(
         height: 44,
-        child: Stack(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            // The visible pill is 32 tall; the toggle keeps a 44 px target
-            // that overhangs it by 6 px above and below.
-            const PositionedDirectional(
-              start: 0,
-              end: 0,
-              top: 6,
-              bottom: 6,
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: reelOverlayPlateColor,
-                    borderRadius: BorderRadius.all(Radius.circular(999)),
+            if (showToggle)
+              IconButton(
+                key: const ValueKey('reel-playback-toggle'),
+                tooltip: toggleLabel,
+                onPressed: audioLoading || !audioEnabled ? null : onAudio,
+                iconSize: 22,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints.tightFor(
+                  width: 44,
+                  height: 44,
+                ),
+                style: IconButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  disabledForegroundColor: Colors.white.withValues(alpha: .5),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                icon: audioLoading
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Icon(
+                        audioPlaying
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                        shadows: reelOverlayTextShadows,
+                      ),
+              )
+            else
+              const Padding(
+                padding: EdgeInsetsDirectional.only(end: 6),
+                child: Icon(
+                  Icons.music_note_rounded,
+                  size: 16,
+                  color: Colors.white,
+                  shadows: reelOverlayTextShadows,
+                ),
+              ),
+            Flexible(
+              child: Padding(
+                padding: const EdgeInsetsDirectional.only(end: 4),
+                child: IgnorePointer(
+                  child: Text(
+                    text,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      height: 1.2,
+                      shadows: reelOverlayTextShadows,
+                    ),
                   ),
                 ),
               ),
-            ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                if (showToggle)
-                  IconButton(
-                    key: const ValueKey('reel-playback-toggle'),
-                    tooltip: toggleLabel,
-                    onPressed: audioLoading || !audioEnabled ? null : onAudio,
-                    iconSize: 20,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 44,
-                      height: 44,
-                    ),
-                    style: IconButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      disabledForegroundColor: Colors.white.withValues(
-                        alpha: .5,
-                      ),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    icon: audioLoading
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Icon(
-                            audioPlaying
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                          ),
-                  )
-                else
-                  const Padding(
-                    padding: EdgeInsetsDirectional.only(start: 10, end: 6),
-                    child: Icon(
-                      Icons.music_note_rounded,
-                      size: 14,
-                      color: Colors.white,
-                    ),
-                  ),
-                Flexible(
-                  child: Padding(
-                    padding: const EdgeInsetsDirectional.only(end: 10),
-                    child: IgnorePointer(
-                      child: Text(
-                        text,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                          height: 1.2,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
             ),
           ],
         ),

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
@@ -118,7 +117,11 @@ class YoMomentsLayout {
 
 enum YoMomentsLayoutTier { narrow, medium, wide2, wide3 }
 
-/// The section title row (48) and, 8 below it, the level-1 format switch.
+/// The slim section header: ONE 48 px row — title, level-1 format switch,
+/// create — at ordinary text sizes (Slim redesign: title row ≤ 56, 44+ px
+/// targets, no card under the header). Below 600 ([fullWidthSwitch]) and at
+/// an accessibility text size the switch keeps its own row under the title,
+/// so neither word is ever squeezed.
 ///
 /// Trailing: the create `+` (48, primary disc) when [onCreate] is given —
 /// the phone and tablet layouts, where no local panel exists — or nothing,
@@ -152,7 +155,11 @@ class YoMomentsHeader extends StatelessWidget {
     final textScaler = MediaQuery.textScalerOf(context);
     // At an accessibility text size the title owns its own row; a one-line
     // cap would still truncate some font/locale combinations at 200 %.
-    final accessibilityLayout = textScaler.scale(1) >= 1.6 && fullWidthSwitch;
+    final largeText = textScaler.scale(1) >= 1.6;
+    final accessibilityLayout = largeText && fullWidthSwitch;
+    // Wide slots at ordinary text sizes: the title, the switch and create
+    // share one row instead of stacking two 48 px bands.
+    final inlineSwitch = !fullWidthSwitch && !largeText;
     final title = Semantics(
       header: true,
       child: Text(
@@ -164,7 +171,12 @@ class YoMomentsHeader extends StatelessWidget {
             ? TextOverflow.visible
             : TextOverflow.ellipsis,
         textWidthBasis: TextWidthBasis.parent,
-        style: AppTypography.headlineLarge.copyWith(color: palette.textPrimary),
+        // 22 px w800: the Slim wordmark size. Hierarchy comes from weight,
+        // and the feed below owns the screen's content, not the chrome.
+        style: AppTypography.headlineMedium.copyWith(
+          color: palette.textPrimary,
+          fontWeight: FontWeight.w800,
+        ),
       ),
     );
     final back = showBack
@@ -185,8 +197,46 @@ class YoMomentsHeader extends StatelessWidget {
       fullWidth: fullWidthSwitch,
     );
 
+    if (inlineSwitch) {
+      return Padding(
+        padding: EdgeInsets.fromLTRB(gutter, AppRhythm.tight, gutter, 0),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            minHeight: AppSizing.standardControlHeight,
+          ),
+          child: Row(
+            children: <Widget>[
+              if (back != null)
+                Padding(
+                  padding: const EdgeInsetsDirectional.only(
+                    end: AppRhythm.tight,
+                  ),
+                  child: back,
+                ),
+              Expanded(
+                // Both loose, so a narrow medium slot or a long locale
+                // shortens the words (ellipsis) instead of overflowing; at
+                // every width the boards use both keep their natural size.
+                child: Row(
+                  children: <Widget>[
+                    Flexible(child: title),
+                    const SizedBox(width: AppRhythm.section),
+                    Flexible(flex: 2, child: switcher),
+                  ],
+                ),
+              ),
+              if (create != null) ...<Widget>[
+                const SizedBox(width: AppRhythm.item),
+                create,
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
     return Padding(
-      padding: EdgeInsets.fromLTRB(gutter, AppRhythm.title, gutter, 0),
+      padding: EdgeInsets.fromLTRB(gutter, AppRhythm.tight, gutter, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -232,7 +282,8 @@ class YoMomentsHeader extends StatelessWidget {
 }
 
 /// Level 1 on the canvas: trackless "Głos" | "Yeels" text tabs with a 48 px
-/// interaction target and theme-aware violet active state.
+/// interaction target and theme-aware violet active state. Slim segments:
+/// 96–160 wide, so the pair sits beside the title in one header row.
 class YoMomentsFormatSwitch extends StatelessWidget {
   const YoMomentsFormatSwitch({
     required this.selected,
@@ -245,8 +296,9 @@ class YoMomentsFormatSwitch extends StatelessWidget {
   final ValueChanged<YoMomentsFormat> onSelected;
   final bool fullWidth;
 
-  /// Desktop segments: min 120, max 160 (board 150 per segment).
-  static const double segmentMinWidth = 120;
+  /// Desktop segments: min 96, max 160 (Slim: the words plus 12 px of air
+  /// on either side, never a wide empty tab).
+  static const double segmentMinWidth = 96;
   static const double segmentMaxWidth = 160;
 
   @override
@@ -300,7 +352,9 @@ class YoMomentsFilterOption {
 
 /// Level 2 below 1100: the pool filters as canvas chips (ink 36 in a 48
 /// target) with an optional trailing control (the feed's refresh, which is
-/// also the focus-recovery target after an expiry removal).
+/// also the focus-recovery target after an expiry removal). Slim: no card
+/// or outline under an unselected chip; only the selected one carries a
+/// tonal wash (plus weight and the `selected` flag).
 class YoMomentsFilterChips extends StatelessWidget {
   const YoMomentsFilterChips({
     required this.options,
@@ -349,12 +403,13 @@ class YoMomentsFilterChips extends StatelessWidget {
   }
 }
 
-/// Level 2 at ≥ 1100: the local panel — filter rows (48, radius 14,
+/// Level 2 at ≥ 1100: the local panel — filter rows (48, `AppRadius.md`,
 /// selected wash), an optional trailing control and the "Utwórz" action.
 ///
 /// `surfaceMuted` with a trailing hairline, flush with the slot's leading
 /// edge exactly like the rail it sits beside. It carries NO title: the main
-/// header owns "YO Moments" (spec §11 forbids a duplicated heading).
+/// header owns "YO Moments" (spec §11 forbids a duplicated heading). Slim:
+/// 12 px insets, rows without an outline, a flat create bar.
 class YoMomentsLocalPanel extends StatelessWidget {
   const YoMomentsLocalPanel({
     required this.options,
@@ -392,7 +447,7 @@ class YoMomentsLocalPanel extends StatelessWidget {
           border: BorderDirectional(end: BorderSide(color: palette.border)),
         ),
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(AppRhythm.title),
+          padding: const EdgeInsets.all(AppRhythm.item),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
@@ -410,7 +465,7 @@ class YoMomentsLocalPanel extends StatelessWidget {
                 trailing!,
               ],
               if (onCreate != null) ...<Widget>[
-                const SizedBox(height: AppRhythm.section),
+                const SizedBox(height: AppRhythm.title),
                 YoMomentsCreateButton(onTap: onCreate!),
               ],
             ],
@@ -455,15 +510,13 @@ class _LocalPanelRowState extends State<_LocalPanelRow> {
       focused: _focused,
       excludeSemantics: true,
       child: Material(
-        color: selected ? primary.withValues(alpha: .16) : Colors.transparent,
+        // Selection is the tonal wash + weight + ink (and the semantic flag);
+        // no outline, so the panel reads as a list, not a stack of cards.
+        color: selected ? primary.withValues(alpha: .14) : Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: AppRadius.md,
           side: BorderSide(
-            color: _focused
-                ? palette.focus
-                : selected
-                ? primary.withValues(alpha: .40)
-                : Colors.transparent,
+            color: _focused ? palette.focus : Colors.transparent,
             width: _focused ? 2 : 1,
           ),
         ),
@@ -514,9 +567,10 @@ class _LocalPanelRowState extends State<_LocalPanelRow> {
   }
 }
 
-/// "Utwórz" — the gradient create action. On the local panel it is a full-
-/// width 48 bar (the rail's create geometry: radius 14, primary→secondary,
-/// white w800); [compact] is the 48 disc the phone header carries.
+/// "Utwórz" — the create action, the screen's one violet accent. On the
+/// local panel it is a full-width 48 bar (`AppRadius.md`, solid primary,
+/// white w800, no gradient and no shadow: it does not float); [compact] is
+/// the 48 disc the phone header carries.
 ///
 /// Always enabled: the active-Moment cap is the server's rule, enforced by
 /// `reserveMomentDraft`, and the recorder surfaces its refusal honestly.
@@ -569,20 +623,11 @@ class _YoMomentsCreateButtonState extends State<YoMomentsCreateButton> {
         child: DecoratedBox(
           decoration: BoxDecoration(
             borderRadius: AppRadius.md,
-            gradient: LinearGradient(
-              colors: <Color>[colors.primary, colors.secondary],
-            ),
+            color: colors.primary,
             border: Border.all(
               color: _focused ? colors.onPrimary : Colors.transparent,
               width: 2,
             ),
-            boxShadow: <BoxShadow>[
-              BoxShadow(
-                color: AppColors.primary.withValues(alpha: .32),
-                blurRadius: 18,
-                offset: const Offset(0, 5),
-              ),
-            ],
           ),
           child: Material(
             color: Colors.transparent,

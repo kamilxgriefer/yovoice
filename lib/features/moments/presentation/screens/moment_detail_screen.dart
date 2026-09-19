@@ -1253,7 +1253,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       key: const ValueKey('moment-detail-player-card'),
       decoration: BoxDecoration(
         color: palette.surface,
-        borderRadius: AppRadius.lg,
+        // Slim: the card radius token, 1 px hairline, no shadow.
+        borderRadius: AppRadius.md,
         border: Border.all(color: palette.border),
       ),
       padding: EdgeInsets.all(compact ? AppRhythm.title : AppRhythm.section),
@@ -2135,7 +2136,10 @@ class _ActionChip extends StatelessWidget {
       button: onTap != null,
       label: semanticLabel ?? label,
       child: Material(
-        color: destructive ? palette.dangerSurface : palette.surfaceRaised,
+        // Slim: a quiet action on the player card's own surface — no second
+        // tile under it. Delete keeps its error tint so a destructive action
+        // never looks like one more neutral chip.
+        color: destructive ? palette.dangerSurface : Colors.transparent,
         borderRadius: AppRadius.md,
         child: InkWell(
           onTap: onTap,
