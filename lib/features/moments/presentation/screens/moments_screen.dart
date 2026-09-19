@@ -414,6 +414,7 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                               selectedFormat: _format,
                               onFormatSelected: _selectFormat,
                               onCreate: () => unawaited(_showCreateChooser()),
+                              onCanvas: true,
                             ),
                           )
                         else
@@ -465,17 +466,28 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
 /// The two formats are large, trackless text tabs. The active format gains
 /// violet ink, weight and a short animated glow line; the pool filters below
 /// stay deliberately quieter, so the two levels cannot be parsed as one row.
+///
+/// [onCanvas] is the Voice feed's variant: the same keys, labels, slots and
+/// callbacks, drawn in palette roles because Głos sits on the page canvas,
+/// not over footage (white words with a black glyph outline on a Pearl
+/// canvas were the wrong theme colours). Yeels stays immersive in both
+/// themes and keeps the media plates.
 ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
   BuildContext context, {
   required bool showBack,
   required YoMomentsFormat selectedFormat,
   required ValueChanged<YoMomentsFormat> onFormatSelected,
   required VoidCallback onCreate,
+  bool onCanvas = false,
 }) {
   final copy = AppLocalizations.of(context);
+  final palette = context.appPalette;
+  final colors = Theme.of(context).colorScheme;
+  final backLabel = MaterialLocalizations.of(context).backButtonTooltip;
   return ImmersiveFeedHeaderSlots(
     formatSwitch: ImmersiveSegmentedSwitch(
       key: const ValueKey<String>('yo-moments-format-tabs'),
+      onCanvas: onCanvas,
       groupLabel: copy.contextualText(
         'yoMoments.contentFormat',
         'Content format',
@@ -497,15 +509,30 @@ ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
     leading: showBack
         ? OverlayPlateButton(
             icon: Icons.arrow_back_rounded,
-            semanticLabel: MaterialLocalizations.of(context).backButtonTooltip,
+            semanticLabel: backLabel,
             onTap: () => Navigator.of(context).maybePop(),
+            glyphColor: onCanvas ? palette.textPrimary : Colors.white,
+            plateColor: onCanvas ? Colors.transparent : null,
+            hoverPlateColor: onCanvas ? palette.surfaceMuted : null,
           )
         : null,
+    // On the canvas the create plate is the screen's one violet accent (a
+    // primary disc, like the wide header's); over media it stays the black
+    // plate every other media control is made of. Same control, key and
+    // spoken label in both.
     trailing: OverlayPlateButton(
       key: const ValueKey('moments-create-cta'),
       icon: Icons.add_rounded,
       semanticLabel: copy.text('CREATE', 'UTWÓRZ'),
       onTap: onCreate,
+      glyphColor: onCanvas ? colors.onPrimary : Colors.white,
+      plateColor: onCanvas ? colors.primary : null,
+      hoverPlateColor: onCanvas
+          ? Color.alphaBlend(
+              colors.onPrimary.withValues(alpha: .12),
+              colors.primary,
+            )
+          : null,
     ),
   );
 }

@@ -47,6 +47,8 @@ class OverlayPlateButton extends StatefulWidget {
     this.tooltip,
     this.glyphColor = Colors.white,
     this.focusNode,
+    this.plateColor,
+    this.hoverPlateColor,
     super.key,
   });
 
@@ -56,6 +58,14 @@ class OverlayPlateButton extends StatefulWidget {
   final String? tooltip;
   final Color glyphColor;
   final FocusNode? focusNode;
+
+  /// The disc's fill. Null keeps the media plate ([overlayPlateColor]); a
+  /// host that lays the same control on the page CANVAS (the Voice feed)
+  /// passes palette roles instead, so Pearl never gets a black disc.
+  final Color? plateColor;
+
+  /// The disc's hovered fill; null keeps [overlayPlateHoverColor].
+  final Color? hoverPlateColor;
 
   @override
   State<OverlayPlateButton> createState() => _OverlayPlateButtonState();
@@ -86,6 +96,8 @@ class _OverlayPlateButtonState extends State<OverlayPlateButton> {
               ? widget.glyphColor.withValues(alpha: .6)
               : widget.glyphColor,
           hovered: _hovered && widget.onTap != null,
+          fill: widget.plateColor,
+          hoverFill: widget.hoverPlateColor,
         ),
       ),
     );
@@ -103,12 +115,18 @@ class OverlayPlate extends StatelessWidget {
     required this.color,
     required this.hovered,
     this.ring,
+    this.fill,
+    this.hoverFill,
     super.key,
   });
 
   final IconData icon;
   final Color color;
   final bool hovered;
+
+  /// Optional fills for a canvas host; null keeps the media plate colours.
+  final Color? fill;
+  final Color? hoverFill;
 
   /// Drawn on the plate rather than around the whole control: a rail item is
   /// a circle with a number under it, and a ring that enclosed both would run
@@ -123,7 +141,9 @@ class OverlayPlate extends StatelessWidget {
       width: 48,
       height: 48,
       decoration: BoxDecoration(
-        color: hovered ? overlayPlateHoverColor : overlayPlateColor,
+        color: hovered
+            ? hoverFill ?? overlayPlateHoverColor
+            : fill ?? overlayPlateColor,
         shape: BoxShape.circle,
         border: ringColor == null || ringColor.a == 0
             ? null

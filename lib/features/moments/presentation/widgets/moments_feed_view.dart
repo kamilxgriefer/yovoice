@@ -1812,6 +1812,9 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
             if (usesImmersiveChrome)
               ImmersiveFeedChrome(
                 key: const ValueKey<String>('voice-immersive-chrome'),
+                // Głos is a list on the page canvas, not footage: the same
+                // compact two-level chrome, drawn in palette roles.
+                onCanvas: true,
                 gutter: layout.gutter,
                 formatSwitch: immersiveHeader.formatSwitch,
                 leading: immersiveHeader.leading,
@@ -1830,6 +1833,9 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
                   semanticLabel: copy.text('Reload Moments', 'Odśwież Momenty'),
                   focusNode: _expiryRecoveryFocus,
                   onTap: _refreshAll,
+                  glyphColor: context.appPalette.textSecondary,
+                  plateColor: Colors.transparent,
+                  hoverPlateColor: context.appPalette.surfaceMuted,
                 ),
               )
             else
@@ -2712,8 +2718,10 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
           onExit: (_) => setState(() => _hovered = false),
           child: Material(
             color: palette.surface,
+            // Slim: cards take the card radius token (`AppRadius.md`), not
+            // the sheet one; the hairline stays 1 px.
             shape: RoundedRectangleBorder(
-              borderRadius: AppRadius.lg,
+              borderRadius: AppRadius.md,
               side: BorderSide(
                 color: _hovered ? palette.borderStrong : palette.border,
               ),
@@ -2725,7 +2733,7 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
               // own name; a second, unnamed tap node under it is what a
               // screen reader would read instead of the name.
               excludeFromSemantics: true,
-              borderRadius: AppRadius.lg,
+              borderRadius: AppRadius.md,
               child: Padding(
                 padding: const EdgeInsets.all(AppRhythm.title),
                 child: Column(

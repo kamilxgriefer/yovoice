@@ -93,12 +93,19 @@ class ImmersiveFeedChrome extends StatelessWidget {
     this.leading,
     this.trailing,
     this.filterTrailing,
+    this.onCanvas = false,
     super.key,
   });
 
   /// Level 1. Supplied by the host that owns the format, so this widget never
   /// has to know what a format is.
   final Widget? formatSwitch;
+
+  /// True when the chrome sits on the page CANVAS rather than over media
+  /// (the Voice feed): level 2 then draws the theme-aware canvas chips. The
+  /// host hands a matching canvas [formatSwitch] and plates. Default false
+  /// keeps the over-media look unchanged.
+  final bool onCanvas;
 
   /// Horizontal gutter, shared with the stage below.
   final double gutter;
@@ -132,6 +139,11 @@ class ImmersiveFeedChrome extends StatelessWidget {
       // No safe-area inset is added here: every host that mounts this chrome
       // already sits inside a SafeArea, so reserving the notch again would
       // push the first row down by the status bar a second time.
+      //
+      // The two 48 px rows ARE the header (title row 4 + 48 ≤ 56). The
+      // total height is deliberately unchanged by the Slim pass: the Yeels
+      // stage measures this chrome and derives its shallow-frame geometry
+      // (horizontal action row vs rail) from the media height left under it.
       padding: EdgeInsetsDirectional.fromSTEB(
         gutter,
         AppRhythm.hairline,
@@ -157,6 +169,7 @@ class ImmersiveFeedChrome extends StatelessWidget {
                   selectedIndex: selectedFilterIndex,
                   onSelected: onFilterSelected,
                   groupLabel: filterGroupLabel,
+                  onCanvas: onCanvas,
                 ),
               ),
               ?filterTrailing,
@@ -580,10 +593,10 @@ class ImmersiveFilterRow extends StatelessWidget {
   final ValueChanged<int> onSelected;
   final String? groupLabel;
 
-  /// On the page canvas the selected chip is a low-opacity PRIMARY wash with
-  /// a primary hairline and the unselected ones carry the palette hairline
-  /// (a chip's shape, so it is never mistaken for plain copy). Over media
-  /// (default) the existing white wash and plain text stay unchanged.
+  /// On the page canvas the selected chip is a low-opacity PRIMARY wash and
+  /// the unselected ones are plain secondary text: no card, fill or outline
+  /// under a chip that is not chosen (Slim redesign). Over media (default)
+  /// the existing white wash and plain text stay unchanged.
   final bool onCanvas;
 
   /// Scroll padding, so a full-bleed row can keep the page gutter as the
@@ -726,7 +739,8 @@ class _FilterInkState extends State<_FilterInk>
 
   /// The canvas chip: the same 36-in-48 ink and the same semantics, in
   /// palette roles. Selection is carried by the primary wash AND the
-  /// hairline AND the weight, never by colour alone.
+  /// weight AND the ink, never by colour alone; the unselected chip has no
+  /// background of its own.
   Widget _buildOnCanvas(BuildContext context, bool selected) {
     final palette = context.appPalette;
     final primary = Theme.of(context).colorScheme.primary;
@@ -757,15 +771,11 @@ class _FilterInkState extends State<_FilterInk>
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: selected
-                      ? primary.withValues(alpha: .16)
+                      ? primary.withValues(alpha: .14)
                       : Colors.transparent,
                   borderRadius: const BorderRadius.all(Radius.circular(999)),
                   border: Border.all(
-                    color: _focused
-                        ? palette.focus
-                        : selected
-                        ? primary.withValues(alpha: .40)
-                        : palette.border,
+                    color: _focused ? palette.focus : Colors.transparent,
                     width: _focused ? 2 : 1,
                   ),
                 ),
