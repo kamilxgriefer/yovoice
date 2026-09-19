@@ -32,8 +32,9 @@ function canonicalNotificationData({
   targetLabel = null,
   dedupeKey,
   bellSuppressed = false,
+  targetSubId = null,
 }) {
-  return {
+  const data = {
     type,
     ...publicIdentity(actorId, actorProfile),
     targetId: targetId || null,
@@ -45,15 +46,22 @@ function canonicalNotificationData({
     dedupeKey,
     bellSuppressed,
   };
+  // Additive and optional (2026-09-19): the secondary deep-link identity a
+  // newer client uses to land on the exact comment or channel. Absent for
+  // every type written before it existed, so no legacy row changes shape.
+  if (typeof targetSubId === "string" && targetSubId.length > 0) {
+    data.targetSubId = targetSubId.slice(0, 128);
+  }
+  return data;
 }
 
-function notificationReference(recipientId, notificationId) {
-  return db.doc(`users/${recipientId}/notifications/${notificationId}`);
+function notificationReference(recipientId, notificationId, firestore = db) {
+  return firestore.doc(`users/${recipientId}/notifications/${notificationId}`);
 }
 
-function eventLedgerReference(eventId) {
+function eventLedgerReference(eventId, firestore = db) {
   const digest = crypto.createHash("sha256").update(String(eventId)).digest("hex");
-  return db.doc(`notificationDeliveryEvents/${digest}`);
+  return firestore.doc(`notificationDeliveryEvents/${digest}`);
 }
 
 function restrictionIsActive(restriction, nowMillis = Date.now()) {
@@ -87,27 +95,42 @@ async function createNotificationForEvent({
   sourcePath,
   sourceGeneration = null,
   validate,
+  targetSubId = null,
+  // A reminder the recipient asked for about their OWN event has no second
+  // party. Only such a writer opts in; every social writer keeps the
+  // self-notification refusal.
+  allowSelf = false,
+  firestore = db,
 }) {
-  if (!eventId || !recipientId || !actorId || recipientId === actorId) {
+  if (!eventId || !recipientId || !actorId ||
+      (recipientId === actorId && allowSelf !== true)) {
     return "skipped:invalid-parties";
   }
 
-  const actorReference = db.doc(`users/${actorId}`);
-  const recipientReference = db.doc(`users/${recipientId}`);
-  const actorRestrictionReference = db.doc(`restrictions/${actorId}`);
-  const recipientRestrictionReference = db.doc(`restrictions/${recipientId}`);
-  const actorBlockReference = db.doc(`users/${actorId}/blocked/${recipientId}`);
-  const recipientBlockReference = db.doc(
+  const actorReference = firestore.doc(`users/${actorId}`);
+  const recipientReference = firestore.doc(`users/${recipientId}`);
+  const actorRestrictionReference = firestore.doc(`restrictions/${actorId}`);
+  const recipientRestrictionReference = firestore.doc(
+    `restrictions/${recipientId}`,
+  );
+  const actorBlockReference = firestore.doc(
+    `users/${actorId}/blocked/${recipientId}`,
+  );
+  const recipientBlockReference = firestore.doc(
     `users/${recipientId}/blocked/${actorId}`,
   );
-  const notification = notificationReference(recipientId, notificationId);
-  const ledger = eventLedgerReference(eventId);
+  const notification = notificationReference(
+    recipientId,
+    notificationId,
+    firestore,
+  );
+  const ledger = eventLedgerReference(eventId, firestore);
   const receiptCreatedAt = Timestamp.now();
   const receiptExpiresAt = Timestamp.fromMillis(
     receiptCreatedAt.toMillis() + EVENT_LEDGER_RETENTION_MS,
   );
 
-  return db.runTransaction(async (transaction) => {
+  return firestore.runTransaction(async (transaction) => {
     const [
       delivered,
       actor,
@@ -163,6 +186,7 @@ async function createNotificationForEvent({
       targetLabel,
       dedupeKey: notificationId,
       bellSuppressed,
+      targetSubId,
     });
     const normalizedSourcePath = normalizeText(sourcePath, 512);
     if (normalizedSourcePath) notificationData.sourcePath = normalizedSourcePath;

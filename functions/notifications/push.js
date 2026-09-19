@@ -178,6 +178,15 @@ const PUSH_TITLES = {
     label ? `${actor} mentioned you in ${label}` : `${actor} mentioned you`,
   reply: (actor, label) =>
     label ? `${actor} replied to you in ${label}` : `${actor} replied to you`,
+  // Engagement and Server types (2026-09-19). The lock-screen body stays the
+  // generic "Tap to open YO Voice": a comment's words never enter a push.
+  momentComment: (actor) => `${actor} commented on your Moment`,
+  reelComment: (actor) => `${actor} commented on your Yeel`,
+  commentMention: (actor) => `${actor} mentioned you in a comment`,
+  serverEventReminder: (_actor, label) =>
+    label ? `Starting soon: ${label}` : "An event is starting soon",
+  serverRole: (actor, label) =>
+    label ? `${actor} promoted you in ${label}` : `${actor} promoted you in a server`,
   achievementUnlocked: (_actor, label) =>
     label ? `Achievement unlocked: ${label}` : "Achievement unlocked",
   moderation: (_actor, label) => label || "A moderator took action on your account",
@@ -357,6 +366,7 @@ async function handleNotificationCreated(event, {
         notificationId,
         title,
         collapseId: claim.collapseId,
+        targetSubId: currentData.targetSubId ?? null,
       }),
     });
     if (afterExternalSend) await afterExternalSend(delivery);

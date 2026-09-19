@@ -90,7 +90,12 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 248 names.
+// Every export of functions/index.js, sorted. 253 names.
+// 2026-09-19 (ADR-212): onMomentCommentCreated/Deleted,
+// onReelCommentCreated/Deleted and sendServerEventRemindersSchedule join the
+// map — the comment-notification triggers and the Server event reminder
+// worker. Extending this list is the deliberate review step the header
+// describes, not a drive-by edit.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
@@ -233,12 +238,16 @@ const EXPORT_NAMES = Object.freeze([
   "onDirectoryVipGrantChanged",
   "onGlobalMessageModerated",
   "onModerationVoiceEnforcementCreated",
+  "onMomentCommentCreated",
+  "onMomentCommentDeleted",
   "onNotificationCreated",
   "onPinnedCreatorEntitlementChanged",
   "onPinnedCreatorProfileChanged",
   "onPinnedMomentEligibilityChanged",
   "onProfileIdentityChanged",
   "onReelCleanupOutboxCreated",
+  "onReelCommentCreated",
+  "onReelCommentDeleted",
   "onRoomLiveChanged",
   "onRoomLiveFanoutOutboxWritten",
   "onServerControlOutboxCreated",
@@ -294,6 +303,7 @@ const EXPORT_NAMES = Object.freeze([
   "sendDirectMessage",
   "sendFriendRequest",
   "sendRoomMessage",
+  "sendServerEventRemindersSchedule",
   "setClubMemberBan",
   "setClubModerationStatus",
   "setCommunityServerFollowV1",

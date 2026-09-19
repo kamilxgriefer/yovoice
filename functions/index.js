@@ -179,6 +179,17 @@ const {
   onServerInviteWritten,
   sweepExpiredServerInvitesSchedule,
 } = require("./notifications/invites");
+// Comments and @mentions on Voice Moments and Yeels, and the Server event
+// reminders the app has accepted opt-ins for since Servers V1 (ADR-212).
+const {
+  onMomentCommentCreated,
+  onMomentCommentDeleted,
+  onReelCommentCreated,
+  onReelCommentDeleted,
+} = require("./notifications/engagement");
+const {
+  sendServerEventRemindersSchedule,
+} = require("./notifications/server_events");
 
 /*
 |--------------------------------------------------------------------------
@@ -309,6 +320,11 @@ exports.onClubInviteCreated = onClubInviteCreated;
 exports.onClubMemberCreated = onClubMemberCreated;
 exports.onServerInviteWritten = onServerInviteWritten;
 exports.sweepExpiredServerInvitesSchedule = sweepExpiredServerInvitesSchedule;
+exports.onMomentCommentCreated = onMomentCommentCreated;
+exports.onMomentCommentDeleted = onMomentCommentDeleted;
+exports.onReelCommentCreated = onReelCommentCreated;
+exports.onReelCommentDeleted = onReelCommentDeleted;
+exports.sendServerEventRemindersSchedule = sendServerEventRemindersSchedule;
 
 /*
 |--------------------------------------------------------------------------

@@ -1033,7 +1033,14 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     if (text.isEmpty || service == null || _sending) return;
     setState(() => _sending = true);
     try {
-      await service.createTextComment(momentId: _moment.id, text: text);
+      await service.createTextComment(
+        momentId: _moment.id,
+        text: text,
+        // Exactly the names this composer resolved for this viewer. The
+        // server revalidates each one against the mentioned person's
+        // audience and blocks before anybody is notified (ADR-212).
+        mentionUserIds: mentionedUserIds(text, _composerMentionDirectory()),
+      );
       _composer.clear();
       await _loadView(trigger: _MomentDetailRefreshTrigger.mutation);
     } catch (_) {
