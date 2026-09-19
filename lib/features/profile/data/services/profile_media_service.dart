@@ -60,6 +60,20 @@ class ProfileMediaService {
   final ProfileMediaClock _clock;
 
   static const int maxCacheEntries = 256;
+
+  /// The lifetime every positive grant is minted with by
+  /// `functions/profile/media_contract.js`
+  /// (`PROFILE_MEDIA_ACCESS_TTL_MS = 90_000`). A cached grant never outlives
+  /// this many seconds of *device* time, so a fast device clock cannot
+  /// stretch a grant beyond the server contract.
+  static const Duration grantTtl = Duration(seconds: 90);
+
+  /// Consumer device clocks drift by seconds — sometimes minutes — in both
+  /// directions. Anything outside this window is treated as a malformed
+  /// grant rather than skew; anything inside it is accepted and then
+  /// re-measured against the device clock.
+  static const Duration clockSkewAllowance = Duration(minutes: 5);
+
   static final Map<String, ProfileMediaAccess> _cache = {};
   static final Map<String, Future<ProfileMediaAccess>> _pending = {};
   static final Map<String, int> _targetEpochs = {};
@@ -228,12 +242,30 @@ class ProfileMediaService {
           isUtc: true,
         );
         final receivedAt = nowUtc;
-        if (!expiresAt.isAfter(receivedAt) ||
-            expiresAt.isAfter(receivedAt.add(const Duration(seconds: 91)))) {
+        final serverRemaining = expiresAt.difference(receivedAt);
+        // The previous ceiling left a 1 s budget for clock skew and rejected
+        // every grant on a device running a couple of seconds behind Google's
+        // clock, blanking every avatar and banner in the app. The window is
+        // now a plausibility check on both sides; the lifetime that is
+        // actually cached is derived from the device clock below, so a fast
+        // device clock still cannot extend a grant.
+        if (serverRemaining < -clockSkewAllowance ||
+            serverRemaining > grantTtl + clockSkewAllowance) {
           throw const FormatException('Unsafe profile-media grant expiry.');
         }
+        // A device running ahead of the server computes a negative remaining
+        // lifetime for a grant the server minted seconds ago. Falling back to
+        // the contract TTL keeps the entry usable (the signed URL is judged by
+        // Google's clock, not the phone's) and, critically, prevents an
+        // already-expired cache entry from evicting and re-requesting itself
+        // in a loop.
+        final lifetime =
+            serverRemaining <= Duration.zero || serverRemaining > grantTtl
+            ? grantTtl
+            : serverRemaining;
+        final localExpiry = receivedAt.add(lifetime);
         if (!available) {
-          final access = ProfileMediaAccess(uri: null, expiresAt: expiresAt);
+          final access = ProfileMediaAccess(uri: null, expiresAt: localExpiry);
           _storeCache(key, access);
           return access;
         }
@@ -263,7 +295,7 @@ class ProfileMediaService {
             uri.userInfo.isNotEmpty) {
           throw const FormatException('Unsafe profile-media grant URL.');
         }
-        final access = ProfileMediaAccess(uri: uri, expiresAt: expiresAt);
+        final access = ProfileMediaAccess(uri: uri, expiresAt: localExpiry);
         _storeCache(key, access);
         return access;
       } finally {

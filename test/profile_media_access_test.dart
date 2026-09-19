@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,7 +20,7 @@ void main() {
     bool available = true,
     String url = 'https://storage.googleapis.com/test-bucket/object?sig=x',
     DateTime? now,
-    Duration lifetime = const Duration(seconds: 80),
+    Duration lifetime = const Duration(seconds: 90),
   }) => {
     'schemaVersion': 1,
     'available': available,
@@ -474,6 +475,177 @@ void main() {
       expect(find.byType(Image), findsNWidgets(2));
     },
   );
+
+  test('only transient callable failures are worth another grant', () {
+    for (final code in const [
+      'unavailable',
+      'internal',
+      'deadline-exceeded',
+      'aborted',
+      'unauthenticated',
+      'cancelled',
+    ]) {
+      expect(
+        isRetryableProfileMediaFailure(_CallableFailure(code)),
+        isTrue,
+        reason: '$code describes a moment, not an answer',
+      );
+    }
+    for (final code in const [
+      'permission-denied',
+      'not-found',
+      'invalid-argument',
+      'resource-exhausted',
+      'failed-precondition',
+      'unimplemented',
+    ]) {
+      expect(
+        isRetryableProfileMediaFailure(_CallableFailure(code)),
+        isFalse,
+        reason: '$code is a decision the server already made',
+      );
+    }
+    expect(
+      isRetryableProfileMediaFailure(const FormatException('malformed grant')),
+      isFalse,
+    );
+    expect(
+      isRetryableProfileMediaFailure(StateError('cache cleared')),
+      isFalse,
+    );
+    expect(
+      isRetryableProfileMediaFailure(TimeoutException('slow network')),
+      isTrue,
+    );
+  });
+
+  testWidgets('a transient grant failure re-resolves itself', (tester) async {
+    var calls = 0;
+    final service = ProfileMediaService(
+      auth: auth('viewer'),
+      invoker: (_, __) async {
+        calls += 1;
+        if (calls == 1) throw _CallableFailure('unavailable');
+        return grant();
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProfileMediaImage(
+          userId: 'target',
+          kind: ProfileMediaKind.avatar,
+          fit: BoxFit.cover,
+          service: service,
+          fallback: const Text('T'),
+          imageProvider: (_) => MemoryImage(_onePixelPng),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+    expect(find.byType(Image), findsNothing);
+    expect(find.text('T'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    expect(
+      calls,
+      2,
+      reason: 'one network blip must not strand the avatar for the session',
+    );
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.text('T'), findsNothing);
+  });
+
+  testWidgets('a denied grant is a permanent answer and is not retried', (
+    tester,
+  ) async {
+    var calls = 0;
+    final service = ProfileMediaService(
+      auth: auth('viewer'),
+      invoker: (_, __) async {
+        calls += 1;
+        throw _CallableFailure('permission-denied');
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProfileMediaImage(
+          userId: 'target',
+          kind: ProfileMediaKind.avatar,
+          fit: BoxFit.cover,
+          service: service,
+          fallback: const Text('T'),
+          imageProvider: (_) => MemoryImage(_onePixelPng),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pumpAndSettle();
+
+    expect(
+      calls,
+      1,
+      reason:
+          'friends-only visibility and blocks answer permission-denied, and '
+          're-asking would only spend the per-caller callable budget',
+    );
+    expect(find.byType(Image), findsNothing);
+    expect(find.text('T'), findsOneWidget);
+  });
+
+  testWidgets('a logout boundary cancels a pending grant retry', (
+    tester,
+  ) async {
+    var calls = 0;
+    final service = ProfileMediaService(
+      auth: auth('viewer'),
+      invoker: (_, __) async {
+        calls += 1;
+        throw _CallableFailure('unavailable');
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProfileMediaImage(
+          userId: 'target',
+          kind: ProfileMediaKind.avatar,
+          fit: BoxFit.cover,
+          service: service,
+          fallback: const Text('T'),
+          imageProvider: (_) => MemoryImage(_onePixelPng),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+
+    ProfileMediaService.clearAllMediaAccessCaches();
+    await tester.pump();
+    // Long enough to cover both backoff steps: a retry queued before the
+    // boundary must not survive it.
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+
+    expect(calls, 1, reason: 'logout boundaries must fail closed');
+    expect(find.byType(Image), findsNothing);
+    expect(find.text('T'), findsOneWidget);
+  });
+}
+
+/// The concrete failure `cloud_functions` raises for a backend error. Its
+/// constructor is `@protected`, so this extends it the way the plugin itself
+/// does instead of substituting a different exception type.
+class _CallableFailure extends FirebaseFunctionsException {
+  _CallableFailure(String code)
+    : super(message: 'profile media grant failed', code: code);
 }
 
 final Uint8List _onePixelPng = base64Decode(

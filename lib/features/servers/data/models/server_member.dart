@@ -51,7 +51,10 @@ class ServerMember {
     return ServerMember(
       id: id,
       displayName: name,
-      photoUrl: _string(data['photoUrl']),
+      // Deliberately dropped, not parsed: a denormalized member photo URL
+      // bypasses the live visibility/block recheck. Member avatars resolve
+      // from the uid through ProfileMediaImage like everywhere else.
+      photoUrl: null,
       role: role,
       isOnline: data['isOnline'] == true,
       isBanned: data['banned'] == true,

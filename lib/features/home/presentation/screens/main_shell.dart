@@ -56,6 +56,7 @@ import 'package:yovoice/features/servers/data/server_links.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
 import 'package:yovoice/features/servers/presentation/screens/create_server_screen.dart';
 import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_edge_back_gesture.dart';
@@ -1083,8 +1084,11 @@ class _MainShellState extends State<MainShell>
   ) {
     final otherUserId = conversation.otherUserId(currentUserId);
     final senderName = conversation.displayNameFor(otherUserId);
-    final photoUrl = conversation.photoUrlFor(otherUserId);
-    final preview = conversation.previewFor(currentUserId);
+    final preview = conversationPreview(
+      conversation,
+      currentUserId,
+      AppLocalizations.of(context),
+    );
     _removeMessageOverlay();
     final controller = YoTopNotificationHost.maybeOf(context);
     // Tests/embedded shells without the app host retain the existing unread
@@ -1096,9 +1100,9 @@ class _MainShellState extends State<MainShell>
         body: preview,
         type: NotificationType.directMessage,
         source: _messageNotificationSource,
-        leading: _IncomingMessageAvatar(
+        leading: incomingMessageNotificationLeading(
+          userId: otherUserId,
           senderName: senderName,
-          photoUrl: photoUrl,
         ),
         onOpen: () {
           if (mounted) _onDestinationSelected(1);
@@ -1960,42 +1964,34 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
   }
 }
 
+/// The leading avatar of the in-app "new message" notification.
+///
+/// It stays a widget rather than an inline [UserAvatar] so the theme is read
+/// at build time, not when the overlay is created.
+@visibleForTesting
+Widget incomingMessageNotificationLeading({
+  required String userId,
+  required String senderName,
+}) => _IncomingMessageAvatar(userId: userId, senderName: senderName);
+
 class _IncomingMessageAvatar extends StatelessWidget {
   const _IncomingMessageAvatar({
     required this.senderName,
-    required this.photoUrl,
+    required this.userId,
   });
   final String senderName;
-  final String photoUrl;
+  final String userId;
 
   @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final initial = senderName.trim().isEmpty
-        ? '?'
-        : senderName.trim().characters.first.toUpperCase();
-    final fallback = ColoredBox(
-      color: colors.primary,
-      child: Center(
-        child: Text(
-          initial,
-          style: TextStyle(
-            color: colors.onPrimary,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-      ),
-    );
-    return ClipOval(
-      child: photoUrl.trim().isEmpty
-          ? fallback
-          : Image.network(
-              photoUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => fallback,
-            ),
-    );
-  }
+  Widget build(BuildContext context) => UserAvatar(
+    // Exactly fills the host's 38x38 leading slot.
+    radius: 19,
+    userId: userId,
+    displayName: senderName,
+    // The conversation's denormalized photo URL was a dead hint the avatar
+    // never dereferenced, so this notification could only ever show a letter.
+    backgroundColor: Theme.of(context).colorScheme.primary,
+  );
 }
 
 class _VoiceActionSheet extends StatelessWidget {

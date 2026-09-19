@@ -37,6 +37,7 @@ import 'package:yovoice/features/settings/presentation/screens/two_factor_authen
 import 'package:yovoice/features/settings/presentation/widgets/appearance_language_settings_section.dart';
 import 'package:yovoice/features/settings/presentation/widgets/message_privacy_settings_tile.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
@@ -390,32 +391,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             alignment: ResponsiveContentAlignment.topLeft,
             child: Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(6, 10, 18, 6),
-                  child: Row(
-                    children: [
-                      if (!widget.isRootTab) ...[
-                        YoIconButton(
-                          icon: Icons.arrow_back_ios_new_rounded,
-                          iconSize: 18,
-                          size: 40,
-                          backgroundColor: palette.surface,
-                          borderColor: palette.border,
-                          onPressed: () => Navigator.of(context).pop(),
-                        ),
-                        const SizedBox(width: 6),
-                      ],
-                      Text(
-                        copy.text('Settings', 'Ustawienia'),
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontSize: 26,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                    ],
-                  ),
+                SettingsHeaderBar(
+                  showBackButton: !widget.isRootTab,
+                  onBack: () => Navigator.of(context).pop(),
                 ),
                 Expanded(
                   child: StreamBuilder<UserProfile>(
@@ -494,10 +472,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _SettingsTile(
               icon: Icons.workspace_premium_outlined,
               title: copy.text('Account type', 'Typ konta'),
-              subtitle: copy.text(
-                profile.accountType.label,
-                _polishAccountType(profile.accountType.label),
-              ),
+              subtitle: settingsAccountTypeLabel(copy, profile.accountType),
             ),
             _SettingsTile(
               icon: Icons.event_available_outlined,
@@ -1247,12 +1222,19 @@ String _formatByteSize(int bytes) {
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
-String _polishAccountType(String label) => switch (label.toLowerCase()) {
-  'creator' => 'Twórca',
-  'business' => 'Firma',
-  'user' || 'member' => 'Użytkownik',
-  _ => label,
-};
+/// Localized name of an account type, worded exactly like the account-type
+/// badge in `profile_header.dart` so the two surfaces cannot drift.
+///
+/// The switch is exhaustive on purpose: a fourth [AccountType] becomes a
+/// compile error here instead of silently leaking an English enum label into
+/// a translated UI.
+@visibleForTesting
+String settingsAccountTypeLabel(AppLocalizations copy, AccountType type) =>
+    switch (type) {
+      AccountType.personal => copy.text('Personal', 'Osobiste'),
+      AccountType.creator => copy.text('Creator', 'Twórca'),
+      AccountType.official => copy.text('Official', 'Oficjalne'),
+    };
 
 String _polishPlanLabel(String label) => switch (label.toLowerCase()) {
   'monthly' => 'miesięczny',
@@ -1284,7 +1266,6 @@ class _ProfileHeroCard extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final avatar = profile.photoUrl?.trim();
     final expanded = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
     return Semantics(
       button: true,
@@ -1319,24 +1300,16 @@ class _ProfileHeroCard extends StatelessWidget {
                       colors: [colors.primary, colors.secondary],
                     ),
                   ),
-                  child: CircleAvatar(
+                  // `photoUrl` is null on every server-projected profile, so
+                  // this hero could only ever paint the initial. The uid
+                  // resolves through the viewer-authorized grant instead.
+                  child: UserAvatar(
+                    key: const ValueKey('settings-profile-hero-avatar'),
                     radius: 30,
+                    userId: profile.uid,
+                    mediaRevision: profile.profileUpdatedAt,
+                    displayName: profile.displayName,
                     backgroundColor: colors.primary,
-                    backgroundImage: avatar?.isNotEmpty == true
-                        ? NetworkImage(avatar!)
-                        : null,
-                    child: avatar?.isNotEmpty == true
-                        ? null
-                        : Text(
-                            profile.displayName.isEmpty
-                                ? '?'
-                                : profile.displayName[0].toUpperCase(),
-                            style: TextStyle(
-                              color: colors.onPrimary,
-                              fontSize: 24,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
                   ),
                 ),
                 const SizedBox(width: 14),
@@ -1645,6 +1618,74 @@ class _MiniSpinner extends StatelessWidget {
             color: color ?? Theme.of(context).colorScheme.primary,
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The Settings title row: an optional Back button and the screen title.
+///
+/// Lifted out of [SettingsScreen.build] unchanged except for the bound placed
+/// on the title. The title used to be the `Row`'s last child with no flex and
+/// no `overflow`, so at 200 % text scale a ~52 px "Ustawienia" ran past the
+/// right edge of a narrow phone and the `Row` reported a RenderFlex overflow.
+/// [Expanded] + `maxLines: 1` + [TextOverflow.ellipsis] is the same shape
+/// `creator_studio_screen.dart` already uses for its header. At the shipped
+/// text size the title is far shorter than the row, so nothing about the
+/// default layout moves — narrow, medium and wide all render exactly as
+/// before.
+///
+/// It is a separate widget because [SettingsScreen] builds a [ProfileService]
+/// and an [AuthService] while its `State` is constructed and its stream throws
+/// `Bad state: User is not signed in` under `flutter test`; the header alone
+/// pumps with no Firebase app, which is what makes the overflow testable.
+class SettingsHeaderBar extends StatelessWidget {
+  const SettingsHeaderBar({
+    required this.showBackButton,
+    required this.onBack,
+    super.key,
+  });
+
+  /// False when Settings *is* the shell's current content (a desktop content
+  /// slot), where the shell owns navigation and a Back button would have
+  /// nothing to pop.
+  final bool showBackButton;
+
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 10, 18, 6),
+      child: Row(
+        children: [
+          if (showBackButton) ...[
+            YoIconButton(
+              icon: Icons.arrow_back_ios_new_rounded,
+              iconSize: 18,
+              size: 40,
+              backgroundColor: palette.surface,
+              borderColor: palette.border,
+              onPressed: onBack,
+            ),
+            const SizedBox(width: 6),
+          ],
+          Expanded(
+            child: Text(
+              copy.text('Settings', 'Ustawienia'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontSize: 26,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -0.5,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

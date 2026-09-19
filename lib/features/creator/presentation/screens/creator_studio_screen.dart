@@ -23,6 +23,7 @@ import 'package:yovoice/features/servers/data/models/server.dart';
 import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/features/servers/presentation/screens/create_server_screen.dart';
 import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -596,7 +597,6 @@ class _ProfileOverviewCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final avatar = profile.photoUrl?.trim();
     final verification = switch (profile.accountType) {
       AccountType.official => (
         copy.text('Officially verified', 'Oficjalnie zweryfikowane konto'),
@@ -636,24 +636,17 @@ class _ProfileOverviewCard extends StatelessWidget {
                 colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
               ),
             ),
-            child: CircleAvatar(
+            // `photoUrl` is null on every profile the server projects, so
+            // this header could only ever draw the initial. The uid resolves
+            // through the viewer-authorized grant like every other avatar.
+            child: UserAvatar(
+              key: const ValueKey('creator-studio-hero-avatar'),
               radius: 30,
+              userId: profile.uid,
+              mediaRevision: profile.profileUpdatedAt,
+              displayName: profile.displayName,
               backgroundColor: const Color(0xFF281133),
-              backgroundImage: avatar?.isNotEmpty == true
-                  ? NetworkImage(avatar!)
-                  : null,
-              child: avatar?.isNotEmpty == true
-                  ? null
-                  : Text(
-                      profile.displayName.isEmpty
-                          ? '?'
-                          : profile.displayName[0].toUpperCase(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
+              premium: profile.premiumIdentity,
             ),
           ),
           const SizedBox(width: 14),
