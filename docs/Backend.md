@@ -119,6 +119,62 @@ social triggers are gone, reports aggregate counts, preserves genuine legacy
 rows with a live pointer-less source, and converges source-less or upgraded-
 source duplicates that a transient event-time cleanup could have missed.
 
+### Comments, @mentions, Server event reminders and role promotions (ADR-212, source only, NOT deployed)
+
+Five notification types were added on 2026-09-19 and none of them is deployed
+yet:
+
+- `onMomentCommentCreated` / `onReelCommentCreated`
+  (`functions/notifications/engagement.js`) — Firestore triggers on
+  `voiceMoments/{id}/comments/{id}` and `reels/{id}/comments/{id}`. One trigger
+  covers the text and the voice path of each surface, because both callables
+  commit the same comment document. The parent's author gets one
+  `momentComment` / `reelComment` row; everybody the comment's server-only
+  mention record names (minus the commenter and the author) gets one
+  `commentMention` row, charged against a per-actor hourly budget.
+  `onMomentCommentDeleted` / `onReelCommentDeleted` retire those rows using the
+  delivery ledger, which is the only record of which recipient and document id
+  a comment produced.
+- `sendServerEventRemindersSchedule` (`functions/notifications/server_events.js`)
+  — every five minutes, a `collectionGroup("events")` query over the next
+  fifteen minutes, then the opted-in responses per event. Both queries are
+  **paged with a cursor** until exhausted or until a 240 s wall-clock budget
+  is spent, and a run that does not finish is logged as a WARNING; the
+  earlier single `limit(100)` page was a permanent silent cliff rather than
+  backpressure (ADR-214). The notification id carries the event revision, but
+  delivery is gated by a stamp on the event
+  (`reminderDeliveredAt`/`reminderDeliveredStartsAt`/`reminderDeliveredRevision`,
+  additive and Admin-SDK-only), so only a reschedule beyond the horizon —
+  never a cosmetic edit — re-arms a reminder, and never more than once an
+  hour. `createServerEventV1` is charged to `server.v1.create` for the same
+  reason. Requires the COLLECTION_GROUP index on
+  `events (reminderOptInEnabled, status, startsAt)`; the emulator never
+  enforces index requirements, so `functions/test/server_event_reminders.test.js`
+  asserts the declaration AND runs the real cross-parent query, including its
+  cursor form (ADR-007).
+- `createServerRolePromotionNotifier`
+  (`functions/notifications/server_roles.js`) — injected into the membership
+  service by `servers/registration.js` and called right after
+  `setServerMemberRoleV1` / `transferServerOwnershipV1` commit. Promotions and
+  ownership only; a demotion, removal or ban is silent by design. Silence on
+  demotion is not enough on its own — `authorizationRevision` moves on every
+  role change — so the notice is also charged against a
+  per-actor-per-recipient-per-role budget (1 per 24 h, ADR-214): a cycled
+  role announces once, a real chain announces each role, and exhausting the
+  budget never fails the role change.
+
+`notificationSourceIsCurrent` now **denies by default**: the five new types
+have real validators (`functions/notifications/engagement_source.js`), the
+legacy types keep their historical paths through an explicit allow-list, and an
+unregistered type is refused instead of pushing unrevalidated. The refusal is
+**two-valued** (ADR-214): a genuinely stale source is cleaned up, while an
+unregistered type is skipped with `pushSkipReason: "unregistered-type"` and
+the recipient's bell row is left intact — `isRegisteredNotificationType` is
+the predicate, and a contract test pins every `PUSH_TITLES` key as a
+registered type. `buildPushMessage`
+carries an optional `data.targetSubId` (the comment, the channel); the
+lock-screen body stays generic and no comment text ever enters a payload.
+
 ## Friends
 
 > **The ADR-114 friend/follow lifecycle below is DEPLOYED (2026-08-25).**

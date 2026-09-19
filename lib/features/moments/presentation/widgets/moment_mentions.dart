@@ -199,6 +199,30 @@ List<MentionSegment> splitMentions(String text, MentionDirectory directory) {
   return segments;
 }
 
+/// The user ids a comment body actually mentions, in the order they appear.
+///
+/// Resolution is the same rendering decision [splitMentions] makes, run on
+/// the composer's own directory before the comment is sent. The server
+/// re-checks every id against the mentioned person's audience and both
+/// block directions, so this is a HINT about who was meant, never a claim
+/// that they may be told (ADR-212).
+List<String> mentionedUserIds(
+  String text,
+  MentionDirectory directory, {
+  int limit = 5,
+}) {
+  if (limit < 1) return const <String>[];
+  final ids = <String>[];
+  for (final segment in splitMentions(text, directory)) {
+    final candidate = segment.candidate;
+    if (candidate == null) continue;
+    if (ids.contains(candidate.userId)) continue;
+    ids.add(candidate.userId);
+    if (ids.length == limit) break;
+  }
+  return List<String>.unmodifiable(ids);
+}
+
 /// Comment copy with its resolvable `@mentions` tinted and tappable.
 ///
 /// An unresolvable `@something` renders exactly like the surrounding

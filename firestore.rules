@@ -4802,6 +4802,18 @@ service cloud.firestore {
       }
     }
 
+    // Who a Voice Moment or Yeel comment @-mentions (ADR-212), written by
+    // the comment callable in the SAME transaction as the comment and
+    // deleted with it. Server-only in both directions, and deliberately not
+    // a field on the comment: a Voice Moment comment IS readable by the
+    // Moment's audience, so a list of mentioned uids stored there would be
+    // published to everyone who can read the thread, and every comment
+    // reader validates an exact key set that an additive field would fail.
+    // The notification writer and the push boundary are the only readers.
+    match /commentMentions/{mentionId} {
+      allow read, write: if false;
+    }
+
     // Server-only serialization state for the exact 10-active cap.
     match /momentCapacityLedgers/{userId} {
       allow read, write: if false;

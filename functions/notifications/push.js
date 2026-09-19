@@ -10,6 +10,7 @@ const { buildPushMessage } = require("./push_payload");
 const { isCurrentNotificationGeneration } = require("./push_generation");
 const {
   isLegacySocialNotificationId,
+  isRegisteredNotificationType,
   notificationSourceIsCurrent: sourceIsCurrent,
   socialNotificationSourceIsCurrent: socialSourceIsCurrent,
 } = require("./social_source");
@@ -178,6 +179,15 @@ const PUSH_TITLES = {
     label ? `${actor} mentioned you in ${label}` : `${actor} mentioned you`,
   reply: (actor, label) =>
     label ? `${actor} replied to you in ${label}` : `${actor} replied to you`,
+  // Engagement and Server types (2026-09-19). The lock-screen body stays the
+  // generic "Tap to open YO Voice": a comment's words never enter a push.
+  momentComment: (actor) => `${actor} commented on your Moment`,
+  reelComment: (actor) => `${actor} commented on your Yeel`,
+  commentMention: (actor) => `${actor} mentioned you in a comment`,
+  serverEventReminder: (_actor, label) =>
+    label ? `Starting soon: ${label}` : "An event is starting soon",
+  serverRole: (actor, label) =>
+    label ? `${actor} promoted you in ${label}` : `${actor} promoted you in a server`,
   achievementUnlocked: (_actor, label) =>
     label ? `Achievement unlocked: ${label}` : "Achievement unlocked",
   moderation: (_actor, label) => label || "A moderator took action on your account",
@@ -240,6 +250,11 @@ async function handleNotificationCreated(event, {
   messaging = getMessaging(),
   afterExternalSend = null,
   beforeDispatchClaim = null,
+  // Seam, like the three above: every shipped type currently has both a push
+  // title and a source validator, so the "unregistered type" branch cannot
+  // be reached with real data. A test injects the registry to prove the
+  // branch keeps the recipient's row instead of deleting it.
+  isRegisteredType = isRegisteredNotificationType,
 } = {}) {
   const snapshot = event.data;
   if (!snapshot) return;
@@ -277,6 +292,20 @@ async function handleNotificationCreated(event, {
       notificationId,
       notification: currentData,
     }))) {
+      // Two different refusals arrive here. A row whose source is genuinely
+      // gone is cleaned up. A row of a type nobody registered a validator
+      // for is only SKIPPED: "we do not know how to revalidate this" must
+      // degrade to no push, never to destroying the recipient's bell row.
+      if (!isRegisteredType(currentData?.type)) {
+        logger.warn("Skipping push for an unregistered notification type", {
+          notificationId,
+          type: typeof currentData?.type === "string"
+            ? currentData.type.slice(0, 64)
+            : null,
+        });
+        await skipPushDelivery(deliveryArgs, "unregistered-type");
+        return;
+      }
       await skipPushDelivery(deliveryArgs, "invalid-source");
       currentNotification = await snapshot.ref.get();
       await cleanupInvalidSource({
@@ -357,6 +386,7 @@ async function handleNotificationCreated(event, {
         notificationId,
         title,
         collapseId: claim.collapseId,
+        targetSubId: currentData.targetSubId ?? null,
       }),
     });
     if (afterExternalSend) await afterExternalSend(delivery);
@@ -426,6 +456,7 @@ exports.onNotificationCreated = onDocumentCreated(
 
 module.exports = {
   onNotificationCreated: exports.onNotificationCreated,
+  PUSH_TITLES,
   claimPushDelivery,
   completePushDelivery,
   deleteTokenReferences,

@@ -1,6 +1,34 @@
 const {
   serverInviteNotificationSourceIsCurrent,
 } = require("./invites");
+const {
+  ENGAGEMENT_NOTIFICATION_TYPES,
+  engagementNotificationSourceIsCurrent,
+} = require("./engagement_source");
+
+// Every type that existed before per-type source validation (2026-09-19).
+// They keep their historical behaviour exactly: a type below with no branch
+// of its own still falls through to the permissive social default. Any type
+// NOT in this list and NOT registered with a validator is refused, so a new
+// writer can never push unchecked just because nobody added a branch.
+const LEGACY_NOTIFICATION_TYPES = Object.freeze([
+  "friendRequest",
+  "friendAccepted",
+  "follow",
+  "clubInvite",
+  "clubInviteAccepted",
+  "roomInvite",
+  "broadcastInvite",
+  "liveStarted",
+  "directMessage",
+  "directCall",
+  "missedCall",
+  "mention",
+  "reply",
+  "achievementUnlocked",
+  "moderation",
+  "system",
+]);
 
 function isLegacySocialNotificationId(notificationId, notification) {
   const actorId = notification?.actorId;
@@ -208,13 +236,44 @@ async function socialNotificationSourceIsCurrent({
   }
 }
 
+/**
+ * Whether a type has a source validator at all.
+ *
+ * `notificationSourceIsCurrent` answers false for two very different
+ * situations — "this source is gone" and "nobody registered this type" — and
+ * the push boundary must not treat them alike: a stale row is cleaned up,
+ * while an unregistered type is only skipped, because deleting the
+ * recipient's bell row is not a safe way to say "we did not know how to
+ * revalidate this". Callers that only push can ignore this; the caller that
+ * DELETES cannot.
+ */
+function isRegisteredNotificationType(type) {
+  return ENGAGEMENT_NOTIFICATION_TYPES.includes(type) ||
+    LEGACY_NOTIFICATION_TYPES.includes(type);
+}
+
 async function notificationSourceIsCurrent({
   recipientId,
   notificationId,
   notification,
   firestore,
   reader = null,
+  nowMs = Date.now(),
 }) {
+  if (ENGAGEMENT_NOTIFICATION_TYPES.includes(notification?.type)) {
+    return engagementNotificationSourceIsCurrent({
+      recipientId,
+      notification,
+      reader: reader ?? firestore,
+      firestore,
+      nowMs,
+    });
+  }
+  if (!LEGACY_NOTIFICATION_TYPES.includes(notification?.type)) {
+    // Deny by default: an unregistered new type is never revalidated, so it
+    // must never be treated as current.
+    return false;
+  }
   if (["directMessage", "reply"].includes(notification?.type)) {
     return directMessageSourceIsCurrent({
       recipientId,
@@ -253,9 +312,11 @@ async function notificationSourceIsCurrent({
 }
 
 module.exports = {
+  LEGACY_NOTIFICATION_TYPES,
   directMessageSourceIsCurrent,
   documentGeneration,
   isLegacySocialNotificationId,
+  isRegisteredNotificationType,
   liveRoomSourceIsCurrent,
   notificationSourceIsCurrent,
   socialNotificationSourceIsCurrent,

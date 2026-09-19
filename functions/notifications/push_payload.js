@@ -27,7 +27,7 @@ const SOUND_PROFILES = Object.freeze({
 });
 
 function soundProfileForNotification(type) {
-  if (["directMessage", "mention", "reply"].includes(type)) {
+  if (["directMessage", "mention", "reply", "commentMention"].includes(type)) {
     return SOUND_PROFILES.message;
   }
   if ([
@@ -39,11 +39,18 @@ function soundProfileForNotification(type) {
     "roomInvite",
     "broadcastInvite",
     "liveStarted",
+    "momentComment",
+    "reelComment",
+    "serverRole",
   ].includes(type)) {
     return SOUND_PROFILES.social;
   }
   if (type === "achievementUnlocked") return SOUND_PROFILES.achievement;
   if (type === "directCall") return SOUND_PROFILES.call;
+  // Listed explicitly rather than reached by the fallback below: a reminder
+  // the member asked for is a time-sensitive alert, and naming it keeps the
+  // choice deliberate when the fallback ever changes.
+  if (type === "serverEventReminder") return SOUND_PROFILES.alert;
   return SOUND_PROFILES.alert;
 }
 
@@ -55,6 +62,7 @@ function buildPushMessage({
   notificationId,
   title,
   collapseId,
+  targetSubId = null,
 }) {
   if (typeof collapseId !== "string" || collapseId.length === 0 ||
       collapseId.length > 64) {
@@ -85,6 +93,12 @@ function buildPushMessage({
       targetId: targetId ? String(targetId) : "",
       actorId: actorId ? String(actorId) : "",
       notificationId,
+      // Additive and optional: present only for types that carry a secondary
+      // deep-link identity (a comment, a channel). Installed clients read the
+      // four keys above and ignore this one.
+      ...(typeof targetSubId === "string" && targetSubId.length > 0
+        ? { targetSubId: targetSubId.slice(0, 128) }
+        : {}),
     },
     android: {
       priority: "high",

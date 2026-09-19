@@ -72,6 +72,44 @@ waveform family): a fixed silhouette, still unless the caller holds the
 player's real position. Every caller kept its state machine, gate, key and
 target; the normalisations are listed in the ADR.
 
+## FIXED IN SOURCE — four repeat/drop defects in the ADR-212 notification slice (2026-09-20, review round)
+
+Found by a pre-merge review of `nb/notifications`, all four on source that was
+never deployed. Fixed on the same branch; ADR-214 has the reasoning.
+
+1. **The reminder worker dropped events permanently.** One
+   `collectionGroup("events")` query with `limit(100)`, never paged,
+   `hasMore` computed and discarded by the scheduler. Ordered by `startsAt`
+   over a fifteen-minute horizon, so the hundred-and-first event in that
+   window was not delayed — it was skipped on that run and on every later
+   run. The cap was global across every Server and `createServerEventV1` was
+   charged only to the 120/min attempt budget, so one account could mint
+   ~7200 events/hour in its own Family server. Fixed by a `startsAt`/`__name__`
+   cursor bounded by wall clock, a WARNING when a run does not finish, and
+   `{ creation: true }` on `createServerEventV1`.
+2. **A cosmetic edit re-armed a reminder.** The notification id carried the
+   event revision and `updateServerEventV1` bumps the revision for any patch,
+   so parking an event just inside the horizon and re-editing it between runs
+   delivered a fresh attacker-titled push to every opted-in member every five
+   minutes. Fixed by the server-written delivery stamp on the event: re-arm
+   needs a start that moved further than the horizon, plus a one-hour
+   cooldown.
+3. **A cycled role was a repeatable push channel.** The promotion notice was
+   keyed on `authorizationRevision`, which moves on every role change, so
+   demote/re-promote in a loop produced a new id, row and push each time.
+   Fixed by a per-actor-per-recipient-per-role budget (1 per 24 h).
+4. **An unregistered notification type deleted the recipient's bell row.**
+   Deny-by-default refused it at the push boundary and `cleanupInvalidSource`
+   then treated "no validator" exactly like "the source is gone". Fixed by
+   splitting the two outcomes (`pushSkipReason: "unregistered-type"`, row
+   kept) and by a contract assertion that every `PUSH_TITLES` key is a
+   registered type.
+
+Also in that round: the reminder worker reads the per-recipient delivery
+ledger before the ACL read and the eight-read transaction (roughly fifteen
+reads per opted-in member per run became one for anyone already decided), and
+the previously silent 500-response truncation is now a cursor.
+
 ## OPEN — two screenshot harnesses fail on a fixture stream before any frame (2026-09-19)
 
 On the clean Build 33 tree, `flutter test test/desktop_screenshot.dart` fails

@@ -403,8 +403,23 @@ class NotificationService {
   }
 
   Future<void> setPreference(NotificationType type, bool enabled) async {
-    await _users.doc(_currentUser.uid).update({
-      'notificationPreferences.${type.name}': enabled,
+    await setPreferences(<NotificationType>[type], enabled);
+  }
+
+  /// Writes one switch's decision to every type it covers, in ONE update.
+  ///
+  /// A preferences row can stand for several server types — "Comments and
+  /// mentions" covers Moment comments, Yeel comments and comment mentions —
+  /// and the push boundary still reads one key per type
+  /// (`notificationPreferences.<type> == false`). Writing them together
+  /// keeps a single visible switch from leaving half of its types enabled.
+  Future<void> setPreferences(
+    List<NotificationType> types,
+    bool enabled,
+  ) async {
+    if (types.isEmpty) return;
+    await _users.doc(_currentUser.uid).update(<String, Object?>{
+      for (final type in types) 'notificationPreferences.${type.name}': enabled,
     });
   }
 }

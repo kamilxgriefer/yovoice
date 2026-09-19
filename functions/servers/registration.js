@@ -52,6 +52,9 @@ const {
 } = require("./company_files");
 const { createServerInviteService } = require("./invites");
 const { createServerMembershipService } = require("./memberships");
+const {
+  createServerRolePromotionNotifier,
+} = require("../notifications/server_roles");
 const { createServerManagementService } = require("./management");
 const { createServerSessionService } = require("./sessions");
 const { createServerCommunityBroadcastService } = require("./community_broadcast");
@@ -460,7 +463,19 @@ function createServersV1Runtime({
       storage: privateCompanyFileStorage,
     }),
     invites: createServerInviteService(dependencies),
-    memberships: createServerMembershipService(dependencies),
+    // Role promotions and ownership transfers announce themselves (ADR-212).
+    // The notifier is injected rather than imported by the membership
+    // service so a focused runtime without a default Firebase app still
+    // constructs the service.
+    memberships: createServerMembershipService({
+      ...dependencies,
+      notifyServerRolePromotion: createServerRolePromotionNotifier({
+        firestore: database,
+        // The same clock the rest of the runtime uses, so the notice's
+        // per-actor-per-recipient budget cannot be moved by a second one.
+        clock,
+      }),
+    }),
     management: createServerManagementService(dependencies),
     sessions: createServerSessionService(dependencies),
     broadcast: createServerCommunityBroadcastService(dependencies),

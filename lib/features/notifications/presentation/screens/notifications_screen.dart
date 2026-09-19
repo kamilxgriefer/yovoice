@@ -251,6 +251,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       targetId: notification.targetId,
       actorId: notification.actorId,
       notificationId: notification.id,
+      targetSubId: notification.targetSubId,
+      sourcePath: notification.sourcePath,
     );
   }
 
@@ -1030,6 +1032,11 @@ class _NotificationCard extends StatelessWidget {
     NotificationType.missedCall: Icons.call_missed_rounded,
     NotificationType.mention: Icons.alternate_email_rounded,
     NotificationType.reply: Icons.reply_rounded,
+    NotificationType.momentComment: Icons.mode_comment_rounded,
+    NotificationType.reelComment: Icons.mode_comment_rounded,
+    NotificationType.commentMention: Icons.alternate_email_rounded,
+    NotificationType.serverEventReminder: Icons.event_available_rounded,
+    NotificationType.serverRole: Icons.workspace_premium_rounded,
     NotificationType.achievementUnlocked: Icons.emoji_events_rounded,
     NotificationType.moderation: Icons.shield_rounded,
     NotificationType.system: Icons.info_rounded,
@@ -1161,6 +1168,44 @@ class _NotificationCard extends StatelessWidget {
             : copy.template(
                 '{actor} replied to you',
                 '{actor} odpowiada Ci',
+                values: {'actor': actor},
+              ),
+      NotificationType.momentComment => copy.template(
+        '{actor} commented on your Moment',
+        '{actor} komentuje Twój Moment',
+        values: {'actor': actor},
+      ),
+      NotificationType.reelComment => copy.template(
+        '{actor} commented on your Yeel',
+        '{actor} komentuje Twojego Yeela',
+        values: {'actor': actor},
+      ),
+      NotificationType.commentMention => copy.template(
+        '{actor} mentioned you in a comment',
+        '{actor} oznacza Cię w komentarzu',
+        values: {'actor': actor},
+      ),
+      NotificationType.serverEventReminder =>
+        hasLabel
+            ? copy.template(
+                'Starting soon: {label}',
+                'Niedługo start: {label}',
+                values: {'label': label},
+              )
+            : copy.text(
+                'An event is starting soon',
+                'Wydarzenie niedługo się zacznie',
+              ),
+      NotificationType.serverRole =>
+        hasLabel
+            ? copy.template(
+                '{actor} promoted you in {label}',
+                '{actor} awansuje Cię na serwerze {label}',
+                values: {'actor': actor, 'label': label},
+              )
+            : copy.template(
+                '{actor} promoted you in a server',
+                '{actor} awansuje Cię na serwerze',
                 values: {'actor': actor},
               ),
       NotificationType.achievementUnlocked =>

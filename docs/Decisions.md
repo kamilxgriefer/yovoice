@@ -14133,6 +14133,109 @@ idempotency (ADR-204, ADR-205) are unchanged.
 - Frames: `yovoice-evidence/2026-09-19/next-build/confirm-upload/` (390 and
   1440, Dark and Pearl), from `test/nb_confirm_upload_capture.dart`.
 
+## ADR-212: A comment notifies the author, a mention is validated against the mentioned person's audience, and a reminder finally gets sent
+
+**Date:** 2026-09-19
+
+### Context
+
+The notification surface covered friendships, follows, Server invitations,
+direct messages and calls. The three loops the product is actually built on
+did not notify at all: a comment (text or voice) on your Voice Moment or your
+Yeel, an `@Name` typed into one of those comments, and the "remind me" a
+Family or Podcast member taps on a Server event — `respondToServerEventV1`
+stored the intent and counted it transactionally, and
+`docs/Servers.md` said out loud that nothing delivered it. A Moment lives 24
+hours by default, so an author who only discovers a comment by reopening the
+Moment usually discovers it after the conversation is over. Server roles
+changed silently as well.
+
+Two properties of the existing pipeline shaped the design. First,
+`onNotificationCreated` skips any type with no `PUSH_TITLES` entry and, until
+this change, revalidated only a known list of types: every other type fell
+through to `return true`, so a new type would have pushed with NO source
+recheck. Second, an installed client maps an unknown type to `system`, which
+renders as a plain, non-tappable row.
+
+### Decision
+
+- Comments produce notifications from a **Firestore trigger on the comment
+  subcollection** (`voiceMoments/{id}/comments/{id}`, `reels/{id}/comments/{id}`),
+  not from a change to the four comment callables. One create trigger covers
+  the text and the voice path of each surface, and the matching delete trigger
+  retires the rows when the comment is deleted — by its author, by the Yeel's
+  author, or by a parent's deletion cascade.
+- Only the **parent's author** is notified about a comment in this build, never
+  the commenter and never other participants of the thread.
+- `@mentions` are sent by the composer as an OPTIONAL `mentionUserIds` input on
+  the four comment callables, capped at five, deduplicated and stripped of the
+  caller. The callable stores the list in a **server-only
+  `commentMentions/{kind}_{parentId}_{commentId}` document written in the same
+  transaction as the comment** — not as a field on the comment, because a Voice
+  Moment comment is readable by the Moment's audience and every comment reader
+  validates an exact key set. Eligibility (audience, blocks, account state) is
+  decided by the notification writer and again at push time, never by the
+  callable, and an ineligible id is dropped silently so the response cannot be
+  used to probe who blocked whom. The list participates in the idempotency
+  input hash only when present, so an installed client's request, hash and
+  stored comment are byte for byte what they were.
+- Server event reminders are a **5-minute scheduled worker** running one
+  `collectionGroup("events")` query over a 15-minute horizon, with a new
+  COLLECTION_GROUP composite index. The notification id carries the event's
+  revision, so rescheduling re-arms the reminder and a redelivery is a no-op;
+  cancelling removes the event from the query and fails the source validator.
+- Server roles notify on **promotion and ownership transfer only**. A demotion,
+  removal or ban is silent: an admin who can cycle a role would otherwise have
+  a repeatable way to push at somebody. The write happens immediately after the
+  membership transaction commits, through an injected notifier, because the
+  canonical writer needs eight reads and Firestore forbids a read after a
+  write.
+- The push boundary now **denies by default**: `notificationSourceIsCurrent`
+  routes the five new types to real validators, keeps every legacy type on its
+  historical path through an explicit allow-list, and refuses anything else.
+- Preferences gain one "Moments & Yeels" group with a single "Comments and
+  mentions" switch covering `momentComment`, `reelComment` and
+  `commentMention`, plus "Server events" and "Your server role" under Servers.
+  One switch writes every key it covers in one update; the push boundary still
+  reads one key per type.
+- Push payloads gain an optional `targetSubId` (the comment, the channel).
+  The lock-screen body stays the generic "Tap to open YO Voice" and a comment's
+  words never enter a notification, a push or a `targetLabel`.
+
+### Reasoning
+
+Deriving the row from the committed comment means the notification cannot
+drift from what was actually written, and leaves four transactional,
+idempotency-ledgered callables untouched. Keeping the mention list beside the
+comment rather than in it avoids both a leak (to every reader of the thread)
+and an outage (an exact-key validator refusing a comment with an extra field).
+Validating a mention against the MENTIONED person's audience is what stops a
+mention from announcing the existence of a friends-only Moment to somebody who
+cannot open it — the one genuinely new disclosure risk in this slice.
+Deny-by-default at the push boundary converts "somebody forgot to add a
+validator" from a silent unchecked push into no push at all.
+
+### Consequences
+
+- New Firestore collection `commentMentions` (server-only, explicit deny in
+  `firestore.rules`), new optional notification fields `targetSubId` and
+  `sourcePath`, and a new COLLECTION_GROUP index on `events`. All additive.
+- Five new exported Functions: `onMomentCommentCreated`,
+  `onMomentCommentDeleted`, `onReelCommentCreated`, `onReelCommentDeleted`,
+  `sendServerEventRemindersSchedule`.
+- Deploy order matters: Functions (titles, sound map, validators) before any
+  writer, and the index before the scheduler. A row of an unknown type is
+  skipped as `unknown-type`, so an app shipped first simply sees nothing.
+- Installed clients (Build 34 and older) render the five new types as plain,
+  non-tappable `system` rows until they update. Accepted by the owner.
+- Preferences still gate PUSH only; the bell row is written either way, which
+  is the existing behaviour of every toggle.
+- Not in this slice: like/follow aggregation (needs an update-in-place row, a
+  `sortAt` field and an index), Server channel mentions, the friend-is-live
+  fan-out, DM reactions, and an @-picker in the Yeel comment composer (the
+  callables accept `mentionUserIds` for Yeels already; only the Moment
+  composer sends one).
+
 ## ADR-213: GIPHY is searched by the client and resolved by the server at send time (option B)
 
 *(Numbered 210 on branch `nb/giphy` as the next free number after ADR-209. If
@@ -14247,3 +14350,117 @@ secret-free deploy discovery unchanged until the secret genuinely exists.
   render received GIPHY messages through the existing pinned-URL path.
 - Activation steps are in
   [DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-213).
+
+
+## ADR-214: A notification that repeats on demand is a channel, not a notice — reminders page, re-arm on the schedule, and refuse two ways
+
+**Date:** 2026-09-20
+
+### Context
+
+[ADR-212](#adr-212-a-comment-notifies-the-author-a-mention-is-validated-against-the-mentioned-persons-audience-and-a-reminder-finally-gets-sent)
+shipped three new producers. A review round before the merge found four
+places where the design's own promises were not actually kept by the code.
+
+1. The reminder worker ran **one** `collectionGroup("events")` query with
+   `limit(100)` and never paged. `hasMore` was computed and thrown away by
+   the scheduler. The ordering is `startsAt` ascending over a fifteen-minute
+   horizon, so the hundred-and-first event in that window was not "delayed" —
+   it was dropped on that run and on every later run, silently and
+   permanently. The cap is global across every Server, and
+   `createServerEventV1` was charged only to the 120/min attempt budget, so
+   one account could mint roughly 7200 events an hour inside its own Family
+   server and bury everybody else's.
+2. The reminder's notification id carried the event's **revision**, and
+   `updateServerEventV1` bumps the revision for ANY patch — a
+   description-only edit included. An event manager could park an event just
+   inside the horizon and re-edit it between scheduler runs, delivering a
+   fresh push carrying a 120-character attacker-controlled title to every
+   opted-in member every five minutes, for an event that never happens.
+3. A promotion notice was keyed on the **membership revision**, and
+   `setServerMemberRoleV1` increments that on every role change. Demotion is
+   silent, so an owner or coOwner could demote and re-promote in a loop: a
+   fresh id, a fresh bell row and a fresh push each time, bounded only by the
+   shared 120/min budget. "A demotion is silent" was the whole defence, and
+   it was not enough.
+4. Deny-by-default at the push boundary was correct, but the refusal path was
+   destructive: an unregistered type took the same branch as a vanished
+   source, and `cleanupInvalidSource` DELETES `users/{uid}/notifications/{id}`.
+   "Nobody added a validator" degraded to "the recipient's bell row is gone".
+
+### Decision
+
+- The due-event query is **paged with a `startsAt`/`__name__` cursor** until
+  the set is exhausted or a wall-clock budget (240 s, under the 300 s
+  timeout) is spent. The opted-in responses of one event are paged the same
+  way instead of being cut at 500 with no cursor. A run that does not finish
+  says so — `hasMore`/`budgetExhausted` are now logged as a WARNING rather
+  than computed and discarded.
+- `createServerEventV1` is charged to **`server.v1.create`** (30/hour), not
+  only to the attempt budget. A scheduled event is durable fan-out work in a
+  shared queue.
+- A delivered event is **stamped** with three additive, server-written fields
+  (`reminderDeliveredAt`, `reminderDeliveredStartsAt`,
+  `reminderDeliveredRevision`). A reminder re-arms only when the start moves
+  further than the whole horizon AND a cooldown (1 h) has passed, so a real
+  reschedule still reminds and a cosmetic edit — or a five-minute nudge —
+  does not. A run that did not reach the end of an event's audience does not
+  stamp, and the per-recipient delivery ledger keeps the finished tail from
+  being delivered twice.
+- Before the ACL read and the eight-read canonical transaction, the worker
+  reads the **delivery ledger** for that (event, revision, recipient). An
+  already-decided recipient costs one get per run instead of roughly fifteen.
+- The promotion notice is charged against a **per-actor-per-recipient-per-role
+  budget** (1 per 24 h), the way `engagement.js` charges mentions. A real
+  chain (member → moderator → admin → coOwner) announces each role; a cycled
+  role announces once. Exhaustion drops the notice, never the role change.
+- The push boundary distinguishes its two refusals.
+  `isRegisteredNotificationType` is exported, an unregistered type is skipped
+  with `pushSkipReason: "unregistered-type"` and the row is left intact, and
+  only a genuinely stale source is cleaned up.
+
+### Reasoning
+
+A document-count cap on a time-ordered queue is not backpressure; it is a
+cliff that the clock never moves. A wall-clock budget degrades into "the next
+run finishes it" — five minutes away, inside a fifteen-minute horizon — which
+is the behaviour the horizon was designed for.
+
+Keying a notice on a revision counter keys it on *edits* when the news is a
+*schedule* or a *role*. Both repeat vectors have the same shape: an actor who
+may legitimately change a thing repeatedly turns a per-change notice into a
+lock-screen channel aimed at one person, with attacker-controlled text. The
+fix in both cases is to bound the notice by what actually changed, and to
+charge it, rather than to trust that the mutation is rare.
+
+Deleting a row because the server does not know how to revalidate its type
+gets the failure direction backwards: a missing validator is our gap, and the
+recipient's data should not pay for it. Skipping the push is the honest
+degradation the ADR-212 text already claimed.
+
+### Consequences
+
+- Three additive fields on `clubs/{id}/channels/{id}/events/{id}`, written by
+  the Admin SDK only (`firestore.rules` keeps `allow write: if false` on
+  events and responses). No rules change, no index change: the paged query
+  filters and orders exactly what the declared COLLECTION_GROUP composite
+  already covers, and the responses cursor orders by `__name__` behind an
+  equality filter, which the automatic single-field index serves.
+- Events created before this change carry no stamp, so their first reminder
+  after deploy behaves as it always would have.
+- A legitimate reschedule inside the same horizon, or within the cooldown,
+  does not send a second reminder. Accepted: the member already has a
+  reminder for that event, and the event detail carries the current time.
+- Re-promoting somebody to a role they already held today is silent. Accepted
+  for the same reason a demotion is.
+- `handleNotificationCreated` takes one more test seam (`isRegisteredType`),
+  because every shipped type currently has both a title and a validator, so
+  the branch cannot be reached with real data. The containment itself is
+  pinned by an assertion in `engagement_push_contract.test.js`.
+- The reminder scan still reads zero-opt-in events, one document each. A
+  `reminderCount`-based filter would need either a second inequality field in
+  the composite (forcing `reminderCount` into the sort) or a new
+  `hasReminders` equality flag and a backfill for events that already carry
+  opt-ins. Deliberately not done here: paging removes the harm, the creation
+  budget removes the cheap volume, and `remindableEvent` already refuses a
+  zero-opt-in event before it reads a single response.

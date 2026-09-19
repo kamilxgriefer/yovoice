@@ -503,7 +503,10 @@ class _NotificationCard extends StatelessWidget {
     NotificationType.achievementUnlocked => Icons.emoji_events_rounded,
     NotificationType.directMessage ||
     NotificationType.mention ||
-    NotificationType.reply => Icons.chat_bubble_outline_rounded,
+    NotificationType.reply ||
+    NotificationType.momentComment ||
+    NotificationType.reelComment ||
+    NotificationType.commentMention => Icons.chat_bubble_outline_rounded,
     NotificationType.friendRequest ||
     NotificationType.friendAccepted ||
     NotificationType.follow => Icons.person_add_alt_1_rounded,
@@ -511,7 +514,9 @@ class _NotificationCard extends StatelessWidget {
     NotificationType.broadcastInvite ||
     NotificationType.liveStarted => Icons.graphic_eq_rounded,
     NotificationType.clubInvite ||
-    NotificationType.clubInviteAccepted => Icons.hub_outlined,
+    NotificationType.clubInviteAccepted ||
+    NotificationType.serverRole => Icons.hub_outlined,
+    NotificationType.serverEventReminder => Icons.event_available_outlined,
     NotificationType.moderation => Icons.shield_outlined,
     _ => Icons.notifications_none_rounded,
   };
