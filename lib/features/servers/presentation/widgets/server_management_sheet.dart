@@ -1,9 +1,16 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
@@ -23,6 +30,8 @@ Future<ServerManagementOutcome?> showServerManagementSheet(
   required List<ServerChannel> channels,
   required ServerMemberRole role,
   required ServerRepository repository,
+  FirebaseFirestore? firestore,
+  FirebaseAuth? auth,
 }) {
   if (repository is! ServerManagementRepository) return Future.value();
   final management = repository as ServerManagementRepository;
@@ -40,6 +49,8 @@ Future<ServerManagementOutcome?> showServerManagementSheet(
         role: role,
         repository: repository,
         management: management,
+        firestore: firestore,
+        auth: auth,
       ),
     ),
   );
@@ -52,6 +63,8 @@ class _ServerManagementSheet extends StatefulWidget {
     required this.role,
     required this.repository,
     required this.management,
+    this.firestore,
+    this.auth,
   });
 
   final Server initialServer;
@@ -59,6 +72,12 @@ class _ServerManagementSheet extends StatefulWidget {
   final ServerMemberRole role;
   final ServerRepository repository;
   final ServerManagementRepository management;
+
+  /// Test-only, as elsewhere in the app: production passes nothing and the
+  /// profile preview opened from a member row resolves its own Firebase
+  /// instances, which a widget test does not have.
+  final FirebaseFirestore? firestore;
+  final FirebaseAuth? auth;
 
   @override
   State<_ServerManagementSheet> createState() => _ServerManagementSheetState();
@@ -491,13 +510,38 @@ class _ServerManagementSheetState extends State<_ServerManagementSheet> {
             return ListTile(
               key: ValueKey('server-management-member-${member.id}'),
               minTileHeight: 64,
-              leading: CircleAvatar(
-                foregroundImage: member.photoUrl == null
-                    ? null
-                    : NetworkImage(member.photoUrl!),
-                child: member.photoUrl == null
-                    ? Text(member.displayName.characters.first.toUpperCase())
-                    : null,
+              // The canonical widget, exactly as the sibling invite sheet
+              // uses it: the denormalized photoUrl bypassed the viewer /
+              // visibility / block recheck, and a failed load painted an
+              // empty disc with no initial at all.
+              //
+              // The avatar alone is the profile target; the trailing
+              // role/ban/remove menu keeps its own. The preview is
+              // read-only, so it stays live while a mutation is in flight.
+              leading: AccessibleTapRegion(
+                key: ValueKey('server-management-profile-${member.id}'),
+                circular: true,
+                semanticLabel: copy.text('Open profile', 'Otwórz profil'),
+                tooltip: copy.text('Open profile', 'Otwórz profil'),
+                onTap: () => unawaited(
+                  showProfilePreview(
+                    context,
+                    userId: member.id,
+                    displayName: member.displayName,
+                    firestore: widget.firestore,
+                    auth: widget.auth,
+                  ),
+                ),
+                child: ExcludeSemantics(
+                  child: UserAvatar(
+                    radius: 20,
+                    userId: member.id,
+                    displayName: member.displayName,
+                    backgroundColor: ServerIdentity.of(server.type)
+                        .resolve(Theme.of(context).brightness)
+                        .iconSurface,
+                  ),
+                ),
               ),
               title: Text(member.displayName),
               subtitle: Text(

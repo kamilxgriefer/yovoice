@@ -12,10 +12,12 @@ import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
 import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
 import 'package:yovoice/features/media/data/services/gif_transport.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_composer_panel.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_gif_send_status.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_text_field.dart';
 import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
@@ -41,6 +43,7 @@ class ServerTextChannelScene extends StatefulWidget {
     this.gifMessageInvoker,
     this.moderatorIds = const {},
     this.compact = false,
+    this.onOpenProfile,
     super.key,
   });
 
@@ -63,6 +66,9 @@ class ServerTextChannelScene extends StatefulWidget {
 
   /// Tighter paddings inside a context panel.
   final bool compact;
+
+  /// Test seam; production opens the shared profile preview sheet.
+  final void Function(String userId, String displayName)? onOpenProfile;
 
   @override
   State<ServerTextChannelScene> createState() => _ServerTextChannelSceneState();
@@ -394,6 +400,7 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
               isModerator: widget.moderatorIds.contains(
                 messages[index].senderId,
               ),
+              onOpenProfile: widget.onOpenProfile,
             ),
           );
         },
@@ -406,11 +413,15 @@ class _MessageTile extends StatelessWidget {
     required this.isMine,
     required this.type,
     this.isModerator = false,
+    this.onOpenProfile,
   });
   final ClubMessage message;
   final bool isMine;
   final Server type;
   final bool isModerator;
+
+  /// Test seam; production opens the shared profile preview sheet.
+  final void Function(String userId, String displayName)? onOpenProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -427,11 +438,47 @@ class _MessageTile extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          UserAvatar(
-            radius: 18,
-            userId: message.senderId,
-            displayName: message.senderName,
-            backgroundColor: colors.iconSurface,
+          // The avatar is the same "who is this?" affordance it is in
+          // Moments and every chat surface — a complete button, not an
+          // inert picture (the thread carries no other way to reach a
+          // member's profile).
+          AccessibleTapRegion(
+            onTap: () {
+              final open = onOpenProfile;
+              if (open != null) {
+                open(message.senderId, message.senderName);
+                return;
+              }
+              unawaited(
+                showProfilePreview(
+                  context,
+                  userId: message.senderId,
+                  displayName: message.senderName,
+                ),
+              );
+            },
+            // The name is substituted AFTER localization: a key built by
+            // interpolation can never be looked up outside EN/PL, which left
+            // the label and the tooltip in raw English in 41 locales.
+            semanticLabel: copy.template(
+              'Open profile of {name}',
+              'Otwórz profil: {name}',
+              values: <String, Object>{'name': message.senderName},
+            ),
+            tooltip: copy.template(
+              'Open profile of {name}',
+              'Otwórz profil: {name}',
+              values: <String, Object>{'name': message.senderName},
+            ),
+            circular: true,
+            child: ExcludeSemantics(
+              child: UserAvatar(
+                radius: 18,
+                userId: message.senderId,
+                displayName: message.senderName,
+                backgroundColor: colors.iconSurface,
+              ),
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(

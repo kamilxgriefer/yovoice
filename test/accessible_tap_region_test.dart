@@ -2,9 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_conversation_thread.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_mentions.dart';
+import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/avatars/yo_avatar.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
@@ -102,5 +108,105 @@ void main() {
     expect(tester.getSize(author).height, greaterThanOrEqualTo(44));
     expect(tester.getSize(author).width, greaterThanOrEqualTo(44));
     expect(tester.takeException(), isNull);
+  });
+
+  group('a commenter is as reachable as the moment author', () {
+    late PublicIdentityRepository originalIdentity;
+
+    setUp(() {
+      originalIdentity = PublicIdentityRepository.instance;
+      PublicIdentityRepository.instance = PublicIdentityRepository(
+        auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')),
+        fetchOverride: (uids) async => <String, dynamic>{
+          for (final uid in uids)
+            uid: {'role': 'user', 'vip': false, 'uid': uid},
+        },
+        flushDelay: const Duration(milliseconds: 1),
+      );
+    });
+
+    tearDown(() {
+      PublicIdentityRepository.instance = originalIdentity;
+    });
+
+    MomentComment commentBy(String authorId, String authorName) =>
+        MomentComment(
+          id: 'c-$authorName',
+          type: 'text',
+          authorId: authorId,
+          authorName: authorName,
+          authorPhotoUrl: null,
+          text: 'This one stayed with me.',
+          durationSeconds: 0,
+          createdAt: DateTime(2026, 9, 18, 10),
+        );
+
+    Future<void> pumpThread(
+      WidgetTester tester, {
+      required List<MomentComment> comments,
+      void Function(MentionCandidate candidate)? onMentionTap,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: MomentConversationThread(
+                momentId: 'moment',
+                comments: comments,
+                commentCount: comments.length,
+                currentUserId: 'me',
+                mentions: MentionDirectory.empty,
+                onMentionTap: onMentionTap,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    testWidgets('a comment avatar is a named 44px profile action', (
+      tester,
+    ) async {
+      final opened = <String>[];
+      await pumpThread(
+        tester,
+        comments: <MomentComment>[commentBy('nina-uid', 'Nina')],
+        onMentionTap: (candidate) => opened.add(candidate.userId),
+      );
+
+      final avatar = find.bySemanticsLabel('Open profile of Nina');
+      expect(
+        avatar,
+        findsOneWidget,
+        reason: 'the commenter must be reachable, not only an @mention',
+      );
+      expect(tester.getSize(avatar).width, greaterThanOrEqualTo(44));
+      expect(tester.getSize(avatar).height, greaterThanOrEqualTo(44));
+      expect(opened, isEmpty, reason: 'rendering opens nobody');
+
+      await tester.tap(avatar);
+      await tester.pump();
+
+      expect(opened, <String>['nina-uid']);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('an authorless comment row stays inert', (tester) async {
+      await pumpThread(
+        tester,
+        comments: <MomentComment>[commentBy('', 'Nina')],
+        onMentionTap: (_) => fail('an empty uid must open nothing'),
+      );
+
+      expect(
+        find.bySemanticsLabel('Open profile of Nina'),
+        findsNothing,
+        reason: 'the preview asserts on an empty document id',
+      );
+      expect(find.text('Nina'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
@@ -15,13 +16,13 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
 import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
-import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/messages/presentation/widgets/delete_conversation_dialog.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
 /// Opens the production New message route.
@@ -65,6 +66,7 @@ class MessagesScreen extends StatefulWidget {
     this.messageService,
     this.friendService,
     this.auth,
+    this.firestore,
     this.onFindFriends,
     this.gifService,
     this.gifMessageInvoker,
@@ -78,6 +80,11 @@ class MessagesScreen extends StatefulWidget {
   final MessageService? messageService;
   final FriendService? friendService;
   final FirebaseAuth? auth;
+
+  /// Handed to the profile preview opened from a conversation avatar, the
+  /// same way [ChatScreen] does. Production leaves it null and the preview
+  /// resolves the live instance itself.
+  final FirebaseFirestore? firestore;
 
   /// Optional direct-chat GIF seams for local previews and widget tests.
   /// Production leaves both null, so [ChatScreen] keeps its authoritative
@@ -573,7 +580,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                 (friendsById[otherId]?.displayName ??
                                         conversation.displayNameFor(otherId))
                                     .toLowerCase();
-                            final preview = _localizedConversationPreview(
+                            final preview = conversationPreview(
                               conversation,
                               currentUserId,
                               AppLocalizations.of(context),
@@ -616,6 +623,17 @@ class _MessagesScreenState extends State<MessagesScreen> {
                             onTap: () => _openConversation(
                               conversation,
                               liveFriend: liveFriend,
+                            ),
+                            onOpenProfile: () => showProfilePreview(
+                              context,
+                              userId: otherUserId,
+                              displayName:
+                                  liveFriend?.displayName ??
+                                  conversation.displayNameFor(otherUserId),
+                              photoUrl: liveFriend?.photoUrl ?? '',
+                              firestore: widget.firestore,
+                              auth: _auth,
+                              messageService: _messageService,
                             ),
                             onArchive: () => _archiveConversation(conversation),
                             onUnarchive: () =>
@@ -987,6 +1005,7 @@ class _ConversationTile extends StatelessWidget {
     required this.preferenceBusy,
     required this.service,
     required this.onTap,
+    required this.onOpenProfile,
     required this.onArchive,
     required this.onUnarchive,
     required this.onToggleMute,
@@ -1003,6 +1022,10 @@ class _ConversationTile extends StatelessWidget {
   /// see [_ConversationAvatar].
   final MessageService service;
   final VoidCallback onTap;
+
+  /// Opens the profile preview for the other participant. See
+  /// [_ConversationAvatar.onOpenProfile].
+  final VoidCallback onOpenProfile;
   final VoidCallback onArchive;
   final VoidCallback onUnarchive;
   final VoidCallback onToggleMute;
@@ -1020,7 +1043,7 @@ class _ConversationTile extends StatelessWidget {
         ? conversation.photoUrlFor(otherUserId)
         : friend.photoUrl ?? '';
     final unread = conversation.unreadCountFor(currentUserId);
-    final preview = _localizedConversationPreview(
+    final preview = conversationPreview(
       conversation,
       currentUserId,
       AppLocalizations.of(context),
@@ -1065,6 +1088,7 @@ class _ConversationTile extends StatelessWidget {
                             userId: otherUserId,
                             mediaRevision: friend?.profileUpdatedAt,
                             service: service,
+                            onOpenProfile: onOpenProfile,
                           ),
                           const SizedBox(width: 12),
                           Expanded(
@@ -1148,6 +1172,7 @@ class _ConversationTile extends StatelessWidget {
                         userId: otherUserId,
                         mediaRevision: friend?.profileUpdatedAt,
                         service: service,
+                        onOpenProfile: onOpenProfile,
                       ),
                       const SizedBox(width: 13),
                       Expanded(
@@ -1416,6 +1441,7 @@ class _ConversationAvatar extends StatefulWidget {
     required this.userId,
     required this.mediaRevision,
     required this.service,
+    required this.onOpenProfile,
   });
 
   final String name;
@@ -1423,6 +1449,11 @@ class _ConversationAvatar extends StatefulWidget {
   final String userId;
   final Object? mediaRevision;
   final MessageService service;
+
+  /// The avatar is a door to the person, not a second door to the thread.
+  /// Tapping the row opens the conversation; tapping the photo opens the
+  /// canonical profile preview, which is where the full-size photo lives.
+  final VoidCallback onOpenProfile;
 
   @override
   State<_ConversationAvatar> createState() => _ConversationAvatarState();
@@ -1454,39 +1485,62 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
         final palette = context.appPalette;
         final copy = AppLocalizations.of(context);
 
-        return Semantics(
-          label:
-              '$name, ${online ? copy.text('online', 'aktywny') : copy.text('offline', 'nieaktywny')}',
-          image: true,
-          excludeSemantics: true,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              UserAvatar(
-                radius: 29,
-                userId: widget.userId,
-                backgroundColor: Theme.of(context).brightness == Brightness.dark
-                    ? palette.surfaceSunken
-                    : Theme.of(context).colorScheme.primary,
-                photoUrl: photoUrl,
-                mediaRevision: widget.mediaRevision,
-                displayName: name,
-              ),
-              if (online)
-                Positioned(
-                  right: 1,
-                  bottom: 1,
-                  child: Container(
-                    width: 16,
-                    height: 16,
-                    decoration: BoxDecoration(
-                      color: palette.successForeground,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: palette.background, width: 3),
+        final openProfileLabel = copy.template(
+          'Open {name} profile',
+          'Otwórz profil użytkownika {name}',
+          values: {'name': name},
+        );
+        final presenceLabel = online
+            ? copy.text('online', 'aktywny')
+            : copy.text('offline', 'nieaktywny');
+
+        // The hover hint is mounted here rather than through
+        // AccessibleTapRegion's `tooltip`, which would use Tooltip's default
+        // long-press trigger. That recognizer sits below the row's own
+        // InkWell and would win the arena, costing the row its long-press
+        // mute/archive/delete sheet on exactly the 58 px the photo covers.
+        // Manual mode registers no recognizer; pointer hover is unaffected.
+        return Tooltip(
+          message: openProfileLabel,
+          triggerMode: TooltipTriggerMode.manual,
+          excludeFromSemantics: true,
+          child: AccessibleTapRegion(
+            onTap: widget.onOpenProfile,
+            circular: true,
+            // The avatar already occupies 58 px, so promoting it to its own
+            // target changes nothing about the row's layout at any width.
+            minimumSize: const Size(58, 58),
+            semanticLabel: '$openProfileLabel, $presenceLabel',
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                UserAvatar(
+                  radius: 29,
+                  userId: widget.userId,
+                  backgroundColor:
+                      Theme.of(context).brightness == Brightness.dark
+                      ? palette.surfaceSunken
+                      : Theme.of(context).colorScheme.primary,
+                  photoUrl: photoUrl,
+                  mediaRevision: widget.mediaRevision,
+                  displayName: name,
+                ),
+                if (online)
+                  Positioned(
+                    right: 1,
+                    bottom: 1,
+                    child: Container(
+                      width: 16,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: palette.successForeground,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: palette.background, width: 3),
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -1923,7 +1977,7 @@ class _RecentChatTile extends StatelessWidget {
         ),
       ),
       subtitle: Text(
-        _localizedConversationPreview(
+        conversationPreview(
           conversation,
           currentUserId,
           AppLocalizations.of(context),
@@ -2351,24 +2405,4 @@ class _MessagesError extends StatelessWidget {
       ),
     );
   }
-}
-
-String _localizedConversationPreview(
-  Conversation conversation,
-  String currentUserId,
-  AppLocalizations copy,
-) {
-  if (conversation.lastMessage.isEmpty) {
-    return copy.text('Start a conversation', 'Rozpocznij rozmowę');
-  }
-  final prefix = conversation.lastMessageSenderId == currentUserId
-      ? copy.text('You: ', 'Ty: ')
-      : '';
-  final content = switch (conversation.lastMessageType) {
-    MessageType.voice => copy.text('Voice message', 'Wiadomość głosowa'),
-    MessageType.image => copy.text('Photo', 'Zdjęcie'),
-    MessageType.video => copy.text('Video', 'Film'),
-    MessageType.text || MessageType.gif => conversation.lastMessage,
-  };
-  return '$prefix$content';
 }

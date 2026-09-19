@@ -25,6 +25,7 @@ import 'package:yovoice/features/staff/presentation/widgets/user_actions_menu.da
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
@@ -230,8 +231,6 @@ class ProfilePreviewSheet extends StatefulWidget {
 }
 
 class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
-  static const _online = Color(0xFF35D07F);
-
   late final FirebaseFirestore _firestore =
       widget.firestore ?? FirebaseFirestore.instance;
   late final FirebaseAuth _auth = widget.auth;
@@ -251,6 +250,15 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   bool _busyMessage = false;
   bool _destinationChosen = false;
   String? _messageError;
+
+  /// Server-owned presence projection for the person being previewed.
+  ///
+  /// Null means "not readable" — a stranger's `socialPresence` read is denied
+  /// by the rules — and the sheet then shows no dot at all. Printing
+  /// "Offline" there was a guess, and it contradicted the chat header and the
+  /// Home rail for the very same user.
+  ChatPresence? _presence;
+  StreamSubscription<ChatPresence>? _presenceSubscription;
 
   String get _currentUid => _auth.currentUser?.uid ?? '';
   bool get _isSelf => widget.userId == _currentUid;
@@ -279,6 +287,16 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
           .catchError((_) {});
     }
     if (!_isSelf) {
+      _presenceSubscription = _messages
+          .watchUserPresence(widget.userId)
+          .listen(
+            (presence) {
+              if (mounted) setState(() => _presence = presence);
+            },
+            onError: (_) {
+              if (mounted) setState(() => _presence = null);
+            },
+          );
       unawaited(_loadRelationship());
       unawaited(
         _socialGraph
@@ -291,6 +309,28 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
             .catchError((_) {}),
       );
     }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_presenceSubscription?.cancel());
+    super.dispose();
+  }
+
+  /// The one mapping from presence to status used by every other surface, so
+  /// the sheet cannot disagree with the chat header or the Home rail.
+  PeopleStatus? _statusFor(UserProfile? profile) {
+    if (_isSelf) {
+      // `users/{uid}` genuinely carries the signed-in account's own state.
+      if (profile == null) return null;
+      return PeopleStatus.fromOwnAvailability(profile.availability);
+    }
+    final presence = _presence;
+    if (presence == null) return null;
+    return PeopleStatus.fromPresence(
+      isOnline: presence.isOnline,
+      availability: presence.availability,
+    );
   }
 
   Future<void> _loadRelationship() async {
@@ -307,8 +347,8 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
     displayName: profile.displayName,
     email: profile.email,
     photoUrl: profile.photoUrl,
-    isOnline: false,
-    lastSeen: null,
+    isOnline: _presence?.isOnline ?? false,
+    lastSeen: _presence?.lastSeen,
     profileUpdatedAt: profile.profileUpdatedAt,
     premiumIdentity: profile.premiumIdentity,
     creatorAudienceVisible: profile.creatorAudienceVisible,
@@ -317,7 +357,15 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   void _snack(Object error, String fallback) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(intentionalOrFriendly(error, fallback: fallback))),
+      SnackBar(
+        content: Text(
+          intentionalOrFriendly(
+            error,
+            fallback: fallback,
+            copy: AppLocalizations.of(context),
+          ),
+        ),
+      ),
     );
   }
 
@@ -364,13 +412,15 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
       );
     } catch (error) {
       if (mounted) {
+        final copy = AppLocalizations.of(context);
         setState(
           () => _messageError = intentionalOrFriendly(
             error,
-            fallback: AppLocalizations.of(context).text(
+            fallback: copy.text(
               "Couldn't open this chat. Please try again.",
               'Nie udało się otworzyć czatu. Spróbuj ponownie.',
             ),
+            copy: copy,
           ),
         );
       }
@@ -533,6 +583,7 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
                           seedDisplayName: widget.seedDisplayName,
                           seedPhotoUrl: widget.seedPhotoUrl,
                           isSelf: _isSelf,
+                          status: _statusFor(profile),
                           relationship: _relationship,
                           mutuals: _mutuals,
                           busyFriend: _busyFriend,
@@ -586,6 +637,7 @@ class _Body extends StatelessWidget {
     required this.seedDisplayName,
     required this.seedPhotoUrl,
     required this.isSelf,
+    required this.status,
     required this.relationship,
     required this.mutuals,
     required this.busyFriend,
@@ -606,6 +658,10 @@ class _Body extends StatelessWidget {
   final String? seedDisplayName;
   final String? seedPhotoUrl;
   final bool isSelf;
+
+  /// Null when presence is not readable for this viewer; the sheet then shows
+  /// no dot rather than guessing "Offline".
+  final PeopleStatus? status;
   final FriendRelationshipStatus? relationship;
   final MutualFriendsSummary? mutuals;
   final bool busyFriend;
@@ -694,8 +750,10 @@ class _Body extends StatelessWidget {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        _PresenceDot(online: profile!.isOnline),
+                        if (status case final status?) ...[
+                          const SizedBox(width: 8),
+                          _PresenceDot(status: status),
+                        ],
                       ],
                     ),
                   const SizedBox(height: 7),
@@ -982,9 +1040,9 @@ class _MessageError extends StatelessWidget {
 }
 
 class _PresenceDot extends StatelessWidget {
-  const _PresenceDot({required this.online});
+  const _PresenceDot({required this.status});
 
-  final bool online;
+  final PeopleStatus status;
 
   @override
   Widget build(BuildContext context) {
@@ -998,16 +1056,12 @@ class _PresenceDot extends StatelessWidget {
           height: 8,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: online
-                ? _ProfilePreviewSheetState._online
-                : palette.textTertiary,
+            color: status.foreground(palette),
           ),
         ),
         const SizedBox(width: 5),
         Text(
-          online
-              ? copy.text('Online', 'Online')
-              : copy.text('Offline', 'Offline'),
+          status.localizedLabel(copy),
           style: TextStyle(
             color: palette.textSecondary,
             fontSize: 11.5,
@@ -1201,6 +1255,7 @@ class _ErrorBody extends StatelessWidget {
               "Couldn't load this profile. Please try again.",
               'Nie udało się wczytać profilu. Spróbuj ponownie.',
             ),
+            copy: copy,
           ),
           textAlign: TextAlign.center,
           style: TextStyle(color: palette.textSecondary, fontSize: 14),

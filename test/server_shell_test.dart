@@ -15,8 +15,12 @@ import 'package:yovoice/features/servers/data/models/server_session.dart';
 import 'package:yovoice/features/servers/data/models/server_template.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_media_connector.dart';
+import 'package:yovoice/features/servers/data/models/server_member.dart';
 import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
 import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
+import 'package:yovoice/features/servers/presentation/widgets/server_invite_sheet.dart';
+import 'package:yovoice/features/servers/presentation/widgets/server_management_sheet.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
 import 'server_test_support.dart';
 
@@ -1253,5 +1257,145 @@ void main() {
       expect(find.text('Nie ma jeszcze kanałów'), findsWidgets);
       expect(tester.takeException(), isNull);
     }
+  });
+
+  group('you can look at a person before acting on them', () {
+    late FakeFirebaseFirestore db;
+    late MockFirebaseAuth auth;
+
+    setUp(() async {
+      db = FakeFirebaseFirestore();
+      auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'owner', email: 'owner@yovoice.app'),
+      );
+      await db.collection('publicProfiles').doc('u2').set(<String, dynamic>{
+        'uid': 'u2',
+        'displayName': 'Ola',
+      });
+    });
+
+    testWidgets('an invite candidate avatar opens the profile, not an invite', (
+      tester,
+    ) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = TestServerRepository()
+        ..servers = [shellServer(ServerType.friends)]
+        ..friends = const [
+          ServerInviteCandidate(id: 'u2', displayName: 'Ola'),
+        ];
+
+      await pumpServers(
+        tester,
+        Scaffold(
+          body: ServerInviteSheet(
+            server: shellServer(ServerType.friends),
+            repository: repository,
+            firestore: db,
+            auth: auth,
+          ),
+        ),
+        size: const Size(900, 900),
+      );
+
+      final openProfile = find.byKey(
+        const ValueKey('server-invite-profile-u2'),
+      );
+      expect(openProfile, findsOneWidget);
+      expect(find.bySemanticsLabel('Otwórz profil'), findsOneWidget);
+      final size = tester.getSize(openProfile);
+      expect(size.width, greaterThanOrEqualTo(44));
+      expect(size.height, greaterThanOrEqualTo(44));
+      expect(
+        find.byType(ProfilePreviewSheet),
+        findsNothing,
+        reason: 'nothing is open until the avatar is tapped',
+      );
+
+      await tester.tap(openProfile);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.byType(ProfilePreviewSheet), findsOneWidget);
+      expect(
+        repository.calls,
+        isEmpty,
+        reason: 'looking at a candidate must not dispatch an invite',
+      );
+      expect(find.text('Zaproś'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a member row avatar opens the profile, not a role change', (
+      tester,
+    ) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = TestServerRepository()
+        ..servers = [shellServer(ServerType.friends)]
+        ..channels = shellChannels(ServerType.friends)
+        ..members = const [
+          ServerMember(
+            id: 'u2',
+            displayName: 'Ola',
+            role: ServerMemberRole.member,
+            authorizationRevision: 1,
+          ),
+        ];
+
+      await pumpServers(
+        tester,
+        Scaffold(
+          body: Builder(
+            builder: (context) => Center(
+              child: FilledButton(
+                onPressed: () => unawaited(
+                  showServerManagementSheet(
+                    context,
+                    server: shellServer(ServerType.friends),
+                    channels: shellChannels(ServerType.friends),
+                    role: ServerMemberRole.owner,
+                    repository: repository,
+                    firestore: db,
+                    auth: auth,
+                  ),
+                ),
+                child: const Text('Zarządzaj'),
+              ),
+            ),
+          ),
+        ),
+        size: const Size(900, 900),
+      );
+
+      await tester.tap(find.text('Zarządzaj'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Członkowie').last);
+      await tester.pumpAndSettle();
+
+      final openProfile = find.byKey(
+        const ValueKey('server-management-profile-u2'),
+      );
+      expect(openProfile, findsOneWidget);
+      final size = tester.getSize(openProfile);
+      expect(size.width, greaterThanOrEqualTo(44));
+      expect(size.height, greaterThanOrEqualTo(44));
+      expect(
+        find.byType(ProfilePreviewSheet),
+        findsNothing,
+        reason: 'nothing is open until the avatar is tapped',
+      );
+
+      await tester.tap(openProfile);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.byType(ProfilePreviewSheet), findsOneWidget);
+      expect(
+        repository.calls,
+        isEmpty,
+        reason: 'the preview is read-only: no member mutation may ride on it',
+      );
+      expect(tester.takeException(), isNull);
+    });
   });
 }

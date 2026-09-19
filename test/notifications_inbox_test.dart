@@ -16,6 +16,7 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
 /// The activity inbox's own guarantees.
 ///
@@ -629,6 +630,94 @@ void main() {
         isFalse,
       );
       semantics.dispose();
+    });
+  });
+
+  group('a friend request names a person, not a stranger', () {
+    testWidgets('the sender avatar opens their profile, deciding nothing', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1200, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final auth = authFor(me);
+      await db
+          .collection('users')
+          .doc(me)
+          .collection('friendRequests')
+          .doc(other)
+          .set(<String, dynamic>{
+            'senderId': other,
+            'senderName': 'Ola',
+            'senderPhotoUrl': null,
+            'createdAt': Timestamp.now(),
+          });
+      final mutations = <String>[];
+      final friends = FriendService(
+        firestore: db,
+        auth: auth,
+        mutationInvoker: (name, _) async {
+          mutations.add(name);
+          return const <String, Object?>{'changed': true};
+        },
+      );
+      addTearDown(FriendService.clearSharedReadCaches);
+      final messages = MessageService(
+        firestore: db,
+        auth: auth,
+        notificationService: service,
+      );
+      addTearDown(messages.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: NotificationsScreen(
+            isRootTab: true,
+            acknowledgeOnVisible: false,
+            friendService: friends,
+            messageService: messages,
+            notificationService: service,
+            currentUserId: me,
+            firestore: db,
+            auth: auth,
+          ),
+        ),
+      );
+      for (var pump = 0; pump < 8; pump++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+
+      final openProfile = find.byKey(
+        ValueKey('notification-request-profile-$other'),
+      );
+      expect(
+        openProfile,
+        findsOneWidget,
+        reason: 'the inbox must let you look before you accept',
+      );
+      expect(find.bySemanticsLabel('Open profile of Ola'), findsOneWidget);
+      final size = tester.getSize(openProfile);
+      expect(size.width, greaterThanOrEqualTo(44));
+      expect(size.height, greaterThanOrEqualTo(44));
+      expect(
+        find.byType(ProfilePreviewSheet),
+        findsNothing,
+        reason: 'nothing is open until the avatar is tapped',
+      );
+
+      await tester.tap(openProfile);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.byType(ProfilePreviewSheet), findsOneWidget);
+      expect(
+        mutations,
+        isEmpty,
+        reason: 'no accept or decline may ride on a profile tap',
+      );
+      expect(tester.takeException(), isNull);
     });
   });
 

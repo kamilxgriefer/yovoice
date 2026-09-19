@@ -26,6 +26,7 @@ import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 
@@ -208,6 +209,26 @@ class _FriendsScreenState extends State<FriendsScreen> {
       ),
     ),
   );
+
+  /// "Who is this?" for an incoming request. The preview is the app-wide
+  /// answer to that question everywhere else, and it gets this screen's
+  /// already-injected services rather than the Firebase singletons, exactly
+  /// as ChatScreen does for its header avatar.
+  Future<void> _previewRequester(FriendRequest request) {
+    final name = request.senderName.trim();
+    return _runNavigation(
+      () => showProfilePreview(
+        context,
+        userId: request.senderId,
+        displayName: name.isEmpty ? null : name,
+        firestore: _firestore,
+        auth: _auth,
+        friendService: _friendService,
+        messageService: _messageService,
+        profileMediaService: _profileMediaService,
+      ),
+    );
+  }
 
   Future<void> _startChat(FriendUser friend) => _runNavigation(() async {
     // The bubble shows its own progress and disables itself while the
@@ -841,6 +862,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
               processing: _processingRequestIds.contains(request.senderId),
               onAccept: () => _acceptRequest(request),
               onDecline: () => _declineRequest(request),
+              onOpenProfile: () => unawaited(_previewRequester(request)),
             );
           }, childCount: requests.length * 2 - 1),
         ),
@@ -1252,6 +1274,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
           processing: _processingRequestIds.contains(request.senderId),
           onAccept: () => _acceptRequest(request),
           onDecline: () => _declineRequest(request),
+          onOpenProfile: () => unawaited(_previewRequester(request)),
         );
         return ListView.separated(
           key: const ValueKey('friend-requests-scroll'),
@@ -1602,6 +1625,7 @@ class FriendRequestCard extends StatelessWidget {
     required this.processing,
     required this.onAccept,
     required this.onDecline,
+    this.onOpenProfile,
     super.key,
   });
 
@@ -1610,6 +1634,12 @@ class FriendRequestCard extends StatelessWidget {
   final bool processing;
   final VoidCallback onAccept;
   final VoidCallback onDecline;
+
+  /// Opens the sender's profile preview, so the decision is made about a
+  /// person rather than about a name. Optional: layout-only harnesses build
+  /// this card without any service to navigate with, and an inert avatar is
+  /// better there than a tap into unresolvable Firebase singletons.
+  final VoidCallback? onOpenProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -1630,12 +1660,35 @@ class FriendRequestCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          UserAvatar(
-            radius: 27,
-            userId: request.senderId,
-            mediaService: profileMediaService,
-            displayName: name,
-            backgroundColor: palette.surfaceSunken,
+          // Only the avatar becomes the target — never the whole card, and
+          // never the name column, which also hosts Accept/Decline. The
+          // avatar already measures 54 px, so promoting it to its own
+          // button changes nothing about this row at any width.
+          Builder(
+            builder: (context) {
+              final avatar = UserAvatar(
+                radius: 27,
+                userId: request.senderId,
+                mediaService: profileMediaService,
+                displayName: name,
+                backgroundColor: palette.surfaceSunken,
+              );
+              if (onOpenProfile == null) return avatar;
+              final openLabel = copy.template(
+                'Open profile of {name}',
+                'Otwórz profil: {name}',
+                values: <String, Object>{'name': name},
+              );
+              return AccessibleTapRegion(
+                key: ValueKey('friend-request-profile-${request.senderId}'),
+                onTap: onOpenProfile,
+                semanticLabel: openLabel,
+                tooltip: openLabel,
+                circular: true,
+                minimumSize: const Size(54, 54),
+                child: ExcludeSemantics(child: avatar),
+              );
+            },
           ),
           const SizedBox(width: 13),
           Expanded(

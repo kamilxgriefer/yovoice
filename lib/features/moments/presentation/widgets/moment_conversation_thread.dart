@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
@@ -12,6 +14,8 @@ import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels
 import 'package:yovoice/features/moments/presentation/widgets/reply_playback_arbiter.dart';
 import 'package:yovoice/features/moments/presentation/widgets/voice_reply_mini_player.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// One row of the "Rozmowa" thread: who replied, when, what they said —
@@ -57,12 +61,34 @@ class MomentCommentRow extends StatelessWidget {
   /// Opens the existing report flow for this comment.
   final ValueChanged<MomentComment>? onReport;
 
+  /// Opens a person's profile from this thread — a tapped `@mention` in a
+  /// reply, or a tapped commenter avatar. Null uses the app-wide profile
+  /// preview sheet, which is what production does.
   final void Function(MentionCandidate candidate)? onMentionTap;
 
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
 
   bool get _canReport => onReport != null && !isOwn && comment.id.isNotEmpty;
+
+  void _openAuthor(BuildContext context) {
+    final candidate = MentionCandidate(
+      userId: comment.authorId,
+      displayName: comment.authorName,
+    );
+    final handler = onMentionTap;
+    if (handler != null) {
+      handler(candidate);
+      return;
+    }
+    unawaited(
+      showProfilePreview(
+        context,
+        userId: candidate.userId,
+        displayName: candidate.displayName,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -71,6 +97,17 @@ class MomentCommentRow extends StatelessWidget {
     final resolve = resolveReplyMedia;
     final reply = onReplyTo;
     final age = momentRelativeAge(comment.createdAt, copy: copy);
+    final avatar = UserAvatar(
+      radius: 20,
+      userId: comment.authorId,
+      photoUrl: comment.authorPhotoUrl,
+      displayName: comment.authorName,
+    );
+    final openLabel = copy.template(
+      'Open profile of {name}',
+      'Otwórz profil: {name}',
+      values: <String, Object>{'name': comment.authorName},
+    );
 
     return Padding(
       key: ValueKey('moment-comment-card-${comment.id}'),
@@ -78,12 +115,22 @@ class MomentCommentRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          UserAvatar(
-            radius: 20,
-            userId: comment.authorId,
-            photoUrl: comment.authorPhotoUrl,
-            displayName: comment.authorName,
-          ),
+          // The moment's author is already a profile action one row above;
+          // a commenter must be one too. An authorless row (a directly
+          // constructed model) stays inert rather than opening a sheet that
+          // would assert on an empty document id — the same guard the
+          // identity badges below already apply.
+          if (comment.authorId.isEmpty)
+            avatar
+          else
+            AccessibleTapRegion(
+              key: ValueKey('moment-comment-profile-${comment.id}'),
+              onTap: () => _openAuthor(context),
+              semanticLabel: openLabel,
+              tooltip: openLabel,
+              circular: true,
+              child: ExcludeSemantics(child: avatar),
+            ),
           const SizedBox(width: AppRhythm.item),
           Expanded(
             child: Column(

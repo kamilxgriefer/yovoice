@@ -1,8 +1,14 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
@@ -22,6 +28,8 @@ Future<void> showServerInviteSheet(
   BuildContext context, {
   required Server server,
   required ServerRepository repository,
+  FirebaseFirestore? firestore,
+  FirebaseAuth? auth,
 }) => showModalBottomSheet<void>(
   context: context,
   isScrollControlled: true,
@@ -30,7 +38,12 @@ Future<void> showServerInviteSheet(
   constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
   builder: (_) => FractionallySizedBox(
     heightFactor: .85,
-    child: ServerInviteSheet(server: server, repository: repository),
+    child: ServerInviteSheet(
+      server: server,
+      repository: repository,
+      firestore: firestore,
+      auth: auth,
+    ),
   ),
 );
 
@@ -38,10 +51,18 @@ class ServerInviteSheet extends StatefulWidget {
   const ServerInviteSheet({
     required this.server,
     required this.repository,
+    this.firestore,
+    this.auth,
     super.key,
   });
   final Server server;
   final ServerRepository repository;
+
+  /// Test-only, as elsewhere in the app: production passes nothing and the
+  /// profile preview opened from a candidate row resolves its own Firebase
+  /// instances, which a widget test does not have.
+  final FirebaseFirestore? firestore;
+  final FirebaseAuth? auth;
 
   @override
   State<ServerInviteSheet> createState() => _ServerInviteSheetState();
@@ -185,11 +206,32 @@ class _ServerInviteSheetState extends State<ServerInviteSheet> {
                   return ListTile(
                     key: ValueKey('server-invite-${person.id}'),
                     minTileHeight: 56,
-                    leading: UserAvatar(
-                      radius: 20,
-                      userId: person.id,
-                      displayName: person.displayName,
-                      backgroundColor: colors.iconSurface,
+                    // The avatar only: the tile deliberately has no onTap
+                    // so the trailing Invite button stays the single primary
+                    // action. Looking at someone before inviting them is a
+                    // read-only detour, so it stays live while a row sends.
+                    leading: AccessibleTapRegion(
+                      key: ValueKey('server-invite-profile-${person.id}'),
+                      circular: true,
+                      semanticLabel: copy.text('Open profile', 'Otwórz profil'),
+                      tooltip: copy.text('Open profile', 'Otwórz profil'),
+                      onTap: () => unawaited(
+                        showProfilePreview(
+                          context,
+                          userId: person.id,
+                          displayName: person.displayName,
+                          firestore: widget.firestore,
+                          auth: widget.auth,
+                        ),
+                      ),
+                      child: ExcludeSemantics(
+                        child: UserAvatar(
+                          radius: 20,
+                          userId: person.id,
+                          displayName: person.displayName,
+                          backgroundColor: colors.iconSurface,
+                        ),
+                      ),
                     ),
                     title: Text(
                       person.displayName,

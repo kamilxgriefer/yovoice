@@ -14,6 +14,7 @@ import 'package:yovoice/features/friends/presentation/screens/friends_screen.dar
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
 void main() {
   const me = 'receiver';
@@ -512,4 +513,84 @@ void main() {
       reason: 'search/filter rebuilds must not churn the Firestore fanout',
     );
   });
+
+  testWidgets('the requester avatar opens their profile before deciding', (
+    tester,
+  ) async {
+    await seedRequest();
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+
+    final openProfile = find.byKey(
+      const ValueKey('friend-request-profile-sender'),
+    );
+    expect(
+      openProfile,
+      findsOneWidget,
+      reason: 'a request must be decidable about a person, not a name',
+    );
+    expect(
+      find.bySemanticsLabel('Open profile of Ola'),
+      findsOneWidget,
+      reason: 'the target names who it opens',
+    );
+    final size = tester.getSize(openProfile);
+    expect(size.width, greaterThanOrEqualTo(44));
+    expect(size.height, greaterThanOrEqualTo(44));
+    expect(
+      find.byType(ProfilePreviewSheet),
+      findsNothing,
+      reason: 'nothing is open until the avatar is tapped',
+    );
+
+    await tester.tap(openProfile);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.byType(ProfilePreviewSheet), findsOneWidget);
+    expect(
+      calls,
+      isEmpty,
+      reason: 'looking at the sender must accept or decline nothing',
+    );
+    expect(find.text('Accept'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // The pre-fix shape of the same card, still reachable by any harness that
+  // has no service to navigate with: no wiring, no target, no crash.
+  testWidgets('an unwired request card exposes no profile target at all', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.darkTheme,
+        home: const Scaffold(
+          body: FriendRequestCard(
+            request: FriendRequest(
+              senderId: 'sender',
+              senderName: 'Ola',
+              senderEmail: '',
+              senderPhotoUrl: null,
+              createdAt: null,
+            ),
+            processing: false,
+            onAccept: _noop,
+            onDecline: _noop,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('friend-request-profile-sender')),
+      findsNothing,
+    );
+    expect(find.bySemanticsLabel('Open profile of Ola'), findsNothing);
+    expect(find.text('Accept'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
+
+void _noop() {}

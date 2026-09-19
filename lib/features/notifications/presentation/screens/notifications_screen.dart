@@ -1,5 +1,8 @@
 import 'dart:async';
 
+// Narrowed on purpose: the unrestricted export carries `count`/`sum`
+// aggregate helpers that collide with this file's own callback parameters.
+import 'package:cloud_firestore/cloud_firestore.dart' show FirebaseFirestore;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
@@ -18,6 +21,8 @@ import 'package:yovoice/features/notifications/presentation/notification_router.
 import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 Color _notificationSuccess(BuildContext context) =>
@@ -30,6 +35,8 @@ class NotificationsScreen extends StatefulWidget {
     this.messageService,
     this.notificationService,
     this.currentUserId,
+    this.firestore,
+    this.auth,
     this.acknowledgeOnVisible = true,
     super.key,
   });
@@ -50,6 +57,13 @@ class NotificationsScreen extends StatefulWidget {
   /// Test-only, for the same reason as the services above: reading it
   /// from FirebaseAuth needs an initialised Firebase app.
   final String? currentUserId;
+
+  /// Test-only as well, and for the same reason. The profile preview opened
+  /// from a friend-request row resolves a real Firestore/Auth pair in
+  /// production; a widget test has neither, so it injects its fakes here
+  /// rather than the sheet reaching for the singletons.
+  final FirebaseFirestore? firestore;
+  final FirebaseAuth? auth;
 
   /// Keeps the bell honest: visiting Activity acknowledges its unread rows and
   /// dismisses any foreground notification already covering that destination.
@@ -159,6 +173,24 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       request,
       () => _friendService.declineFriendRequest(request.senderId),
       copy.text('Friend request declined.', 'Zaproszenie zostało odrzucone.'),
+    );
+  }
+
+  /// The inbox answers "who is this?" the same way every other surface
+  /// does. Injected services are forwarded when a test supplied them;
+  /// production passes nothing and the preview resolves its own Firebase.
+  Future<void> _previewRequester(FriendRequest request) {
+    final name = request.senderName.trim();
+    return showProfilePreview(
+      context,
+      userId: request.senderId,
+      displayName: name.isEmpty ? null : name,
+      firestore: widget.firestore,
+      auth: widget.auth,
+      friendService: widget.friendService,
+      // showProfilePreview refuses a MessageService without the matching
+      // Auth, so the pair travels together or not at all.
+      messageService: widget.auth == null ? null : widget.messageService,
     );
   }
 
@@ -507,6 +539,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           ),
                           onAccept: () => _acceptRequest(request),
                           onDecline: () => _declineRequest(request),
+                          onOpenProfile: () =>
+                              unawaited(_previewRequester(request)),
                         ),
                         const SizedBox(height: 10),
                       ],
@@ -733,12 +767,14 @@ class _FriendRequestCard extends StatelessWidget {
     required this.isProcessing,
     required this.onAccept,
     required this.onDecline,
+    required this.onOpenProfile,
   });
 
   final FriendRequest request;
   final bool isProcessing;
   final VoidCallback onAccept;
   final VoidCallback onDecline;
+  final VoidCallback onOpenProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -749,12 +785,31 @@ class _FriendRequestCard extends StatelessWidget {
         ? request.senderName.trim()
         : copy.text('YO Voice user', 'Użytkownik YO Voice');
 
+    final openLabel = copy.template(
+      'Open profile of {name}',
+      'Otwórz profil: {name}',
+      values: <String, Object>{'name': name},
+    );
     final identity = Row(
       children: [
-        _Avatar(
-          userId: request.senderId,
-          name: name,
-          photoUrl: request.senderPhotoUrl ?? '',
+        // The avatar alone, not the row: the name shares its column with
+        // the request line, and the trailing Accept/Decline pair must keep
+        // every pixel of its own targets. The disc is already 50 px, so
+        // nothing about this card reflows.
+        AccessibleTapRegion(
+          key: ValueKey('notification-request-profile-${request.senderId}'),
+          onTap: onOpenProfile,
+          semanticLabel: openLabel,
+          tooltip: openLabel,
+          circular: true,
+          minimumSize: const Size(50, 50),
+          child: ExcludeSemantics(
+            child: _Avatar(
+              userId: request.senderId,
+              name: name,
+              photoUrl: request.senderPhotoUrl ?? '',
+            ),
+          ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -879,7 +934,7 @@ class _UnreadMessageCard extends StatelessWidget {
     final unreadCount = conversation.unreadCountFor(currentUserId);
     final preview = conversation.lastMessage.trim().isEmpty
         ? copy.text('New message', 'Nowa wiadomość')
-        : conversation.lastMessage.trim();
+        : localizedMessageTombstone(conversation.lastMessage.trim(), copy);
 
     return Material(
       color: palette.surface,

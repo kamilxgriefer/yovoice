@@ -5,9 +5,11 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -110,8 +112,14 @@ Future<FocusNode> _openPreview(
     'premiumIdentity': true,
     'creatorAudienceVisible':
         creatorAudienceVisible ?? accountType == 'creator',
-    'isOnline': true,
     'followerCount': 1842,
+  });
+  // Presence is the server-owned socialPresence projection, never a
+  // publicProfiles field: publicProfileSchemaIsExact rejects that shape.
+  await firestore.collection('socialPresence').doc('creator').set({
+    'uid': 'creator',
+    'isOnline': true,
+    'availability': 'available',
   });
   if (isFriend) {
     await firestore
@@ -543,7 +551,6 @@ void main() {
         'username': 'Otee',
         'email': 'otee@yovoice.app',
         'accountType': 'user',
-        'isOnline': false,
       });
       await firestore.collection('conversations').doc('me_creator').set({
         'participantIds': ['me', 'creator'],
@@ -803,4 +810,176 @@ void main() {
     );
     semantics.dispose();
   });
+
+  testWidgets('a friend\'s presence in the sheet matches every other surface', (
+    tester,
+  ) async {
+    await _openPreviewLocalized(tester, presence: {
+      'uid': 'creator',
+      'isOnline': true,
+      'availability': 'available',
+    });
+
+    expect(find.text('Dostępny'), findsOneWidget);
+    expect(
+      find.text('Offline'),
+      findsNothing,
+      reason: 'the sheet printed raw English inside a Polish UI',
+    );
+  });
+
+  testWidgets('a "be right back" friend is not flattened to online', (
+    tester,
+  ) async {
+    await _openPreviewLocalized(tester, presence: {
+      'uid': 'creator',
+      'isOnline': true,
+      'availability': 'away',
+    });
+
+    expect(find.text('Zaraz wracam'), findsOneWidget);
+  });
+
+  testWidgets('unreadable presence shows no dot instead of guessing Offline', (
+    tester,
+  ) async {
+    await _openPreviewLocalized(tester, denyPresence: true);
+
+    expect(find.text('Dostępny'), findsNothing);
+    expect(find.text('Nieobecny'), findsNothing);
+    expect(find.text('Offline'), findsNothing);
+  });
+
+  testWidgets('built-in failure copy inside the sheet is localized', (
+    tester,
+  ) async {
+    await _openPreviewLocalized(
+      tester,
+      presence: {'uid': 'creator', 'isOnline': true},
+      openConversation:
+          ({
+            required otherUserId,
+            required otherDisplayName,
+            required otherEmail,
+            required otherPhotoUrl,
+          }) async {
+            throw FirebaseException(
+              plugin: 'cloud_firestore',
+              code: 'permission-denied',
+            );
+          },
+    );
+
+    final message = find.widgetWithText(FilledButton, 'Wiadomość');
+    await tester.ensureVisible(message);
+    await tester.tap(message);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Nie masz uprawnień, aby to zrobić.'), findsOneWidget);
+    expect(find.text("You don't have permission to do that."), findsNothing);
+  });
+}
+
+/// Polish-locale harness for the presence and error-copy regressions. The
+/// shared [_openPreview] helper renders in English, which is exactly how the
+/// untranslated strings stayed invisible.
+Future<void> _openPreviewLocalized(
+  WidgetTester tester, {
+  Map<String, Object?>? presence,
+  bool denyPresence = false,
+  _OpenConversation? openConversation,
+}) async {
+  tester.view.physicalSize = const Size(390, 844);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+
+  final firestore = FakeFirebaseFirestore();
+  final auth = MockFirebaseAuth(
+    signedIn: true,
+    mockUser: MockUser(uid: 'me', email: 'me@yovoice.app'),
+  );
+  await firestore.collection('users').doc('me').set({
+    'uid': 'me',
+    'displayName': 'Me',
+  });
+  await firestore.collection('publicProfiles').doc('creator').set({
+    'uid': 'creator',
+    'displayName': 'Maya Voice',
+    'username': 'mayavoice',
+    'bio': 'Independent interviews.',
+    'accountType': 'user',
+  });
+  if (presence != null) {
+    await firestore.collection('socialPresence').doc('creator').set(presence);
+  }
+  await firestore
+      .collection('users')
+      .doc('me')
+      .collection('friends')
+      .doc('creator')
+      .set({'uid': 'creator'});
+
+  final messages = denyPresence
+      ? _PresenceDeniedMessageService(firestore: firestore, auth: auth)
+      : openConversation == null
+      ? null
+      : _PreviewMessageService(
+          firestore: firestore,
+          auth: auth,
+          openConversation: openConversation,
+        );
+
+  await tester.pumpWidget(
+    MaterialApp(
+      locale: const Locale('pl'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizationsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      theme: AppTheme.darkTheme,
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => Center(
+            child: FilledButton(
+              onPressed: () => unawaited(
+                showProfilePreview(
+                  context,
+                  userId: 'creator',
+                  displayName: 'Maya Voice',
+                  firestore: firestore,
+                  auth: auth,
+                  messageService: messages,
+                ),
+              ),
+              child: const Text('Open profile preview'),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.tap(find.text('Open profile preview'));
+  await tester.pumpAndSettle();
+}
+
+/// Reproduces production for a viewer the presence rules deny: the stream
+/// errors instead of emitting a falsely-offline projection.
+class _PresenceDeniedMessageService extends MessageService {
+  _PresenceDeniedMessageService({
+    required FirebaseFirestore firestore,
+    required FirebaseAuth auth,
+  }) : super(
+         firestore: firestore,
+         auth: auth,
+         outbox: MessageOutbox(preferences: null),
+       );
+
+  @override
+  Stream<ChatPresence> watchUserPresence(String userId) => Stream<ChatPresence>.error(
+    FirebaseException(plugin: 'cloud_firestore', code: 'permission-denied'),
+  );
 }

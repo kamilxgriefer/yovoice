@@ -32,6 +32,10 @@ void main() {
           'value: status.label',
           'Text(\n                      status.label',
         ],
+        'lib/shared/widgets/profile/profile_preview_sheet.dart': <String>[
+          "copy.text('Offline', 'Offline')",
+          '_PresenceDot(online:',
+        ],
         'lib/shared/widgets/states/yo_error_state.dart': <String>[
           'friendlyErrorMessage(error!);',
           "Text(\n                    'Something went wrong'",
@@ -91,5 +95,26 @@ void main() {
     expect(status, contains('localizedLabel(AppLocalizations copy)'));
     expect(errors, contains('AppLocalizations? copy'));
     expect(errors, contains('copy?.text(english, polish)'));
+  });
+
+  test('the profile preview sheet localizes every built-in error it shows', () {
+    // The helper already carried the Polish strings; three call sites simply
+    // never passed the localizations, so a Polish UI rendered the English
+    // sentence. Pin all of them rather than the one that was reported.
+    final source = File(
+      'lib/shared/widgets/profile/profile_preview_sheet.dart',
+    ).readAsStringSync();
+    final calls = RegExp(r'intentionalOrFriendly\(').allMatches(source).length;
+    final localized = RegExp(
+      r'intentionalOrFriendly\((?:[^()]|\([^()]*\))*copy:',
+      dotAll: true,
+    ).allMatches(source).length;
+
+    expect(calls, greaterThan(0), reason: 'guard lost its subject');
+    expect(
+      localized,
+      calls,
+      reason: 'every intentionalOrFriendly call must pass the localizations',
+    );
   });
 }

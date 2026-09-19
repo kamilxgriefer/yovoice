@@ -34,9 +34,11 @@ import 'package:yovoice/features/servers/data/models/server_channel.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/presentation/widgets/server_text_channel_scene.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_composer_panel.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_gif_picker.dart';
 import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 import 'support/fake_gif_transport.dart';
 
@@ -145,6 +147,7 @@ void main() {
     bool light = false,
     double textScale = 1,
     Locale locale = const Locale('en'),
+    void Function(String userId, String displayName)? onOpenProfile,
   }) {
     final Widget screen = switch (surface) {
       'direct' => ChatScreen(
@@ -212,6 +215,7 @@ void main() {
           chatService: ClubChatService(firestore: db, auth: auth),
           gifService: catalog,
           gifMessageInvoker: invoke,
+          onOpenProfile: onOpenProfile,
         ),
       ),
     };
@@ -545,6 +549,94 @@ void main() {
       }
     },
   );
+
+  // R-04: a server thread carries no other route to "who is this?", so its
+  // message avatar must be the same complete button it is in Moments and in
+  // every other chat surface — not an inert picture.
+  for (final locale in [const Locale('en'), const Locale('pl')]) {
+    testWidgets(
+      'server message avatar opens the sender profile (${locale.languageCode})',
+      (tester) async {
+        await db.doc(path('server')).set(wire());
+        final copy = AppLocalizations(locale);
+        // One catalog key now answers for both the label and the tooltip:
+        // the sender's name is substituted AFTER localization, so the string
+        // is translatable in all 41 non-EN/PL locales instead of being a
+        // key built by interpolation that only EN and PL could ever hit.
+        final label = copy.template(
+          'Open profile of {name}',
+          'Otwórz profil: {name}',
+          values: const <String, Object>{'name': 'A member'},
+        );
+        final tooltip = label;
+        final opened = <String>[];
+        final semantics = tester.ensureSemantics();
+        for (final width in [320.0, 768.0, 1440.0]) {
+          tester.view.devicePixelRatio = 1;
+          tester.view.physicalSize = Size(width, 900);
+          await tester.pumpWidget(
+            host(
+              'server',
+              locale: locale,
+              onOpenProfile: (userId, displayName) =>
+                  opened.add('$userId/$displayName'),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final avatar = find.byType(UserAvatar);
+          expect(avatar, findsOneWidget, reason: 'width $width');
+          final target = find.ancestor(
+            of: avatar,
+            matching: find.byType(AccessibleTapRegion),
+          );
+          expect(target, findsOneWidget, reason: 'width $width');
+          // The affordance stays a real 44pt target at every width, and the
+          // initial inside it is not announced a second time.
+          expect(
+            tester.getSize(target).shortestSide,
+            greaterThanOrEqualTo(44),
+            reason: 'width $width',
+          );
+          expect(
+            find.byTooltip(tooltip),
+            findsOneWidget,
+            reason: 'width $width',
+          );
+          expect(
+            find.bySemanticsLabel(label),
+            findsOneWidget,
+            reason: 'width $width',
+          );
+          expect(
+            tester.getSemantics(find.bySemanticsLabel(label)),
+            isSemantics(
+              label: label,
+              isButton: true,
+              hasEnabledState: true,
+              isEnabled: true,
+              hasTapAction: true,
+            ),
+            reason: 'width $width',
+          );
+
+          await shot(
+            tester,
+            'server-avatar-${locale.languageCode}-${width.toInt()}',
+          );
+
+          await tester.tap(target);
+          await tester.pump();
+          expect(opened, ['other/A member'], reason: 'width $width');
+          opened.clear();
+          expect(tester.takeException(), isNull, reason: 'width $width');
+          await tester.pumpWidget(const SizedBox());
+        }
+        semantics.dispose();
+        tester.view.reset();
+      },
+    );
+  }
 }
 
 class _Messages extends MessageService {
