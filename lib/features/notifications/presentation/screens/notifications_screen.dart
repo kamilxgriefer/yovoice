@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart' show FirebaseFirestore;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
+import 'package:yovoice/shared/widgets/badges/yo_metric_pill.dart';
 import 'package:flutter/semantics.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -534,7 +535,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           'Friend requests',
                           'Zaproszenia do znajomych',
                         ),
-                        trailing: _CountPill(count: requests.length),
+                        trailing: _countPill(requests.length),
                       ),
                       for (final (index, request) in requests.indexed) ...[
                         if (index > 0) const SizedBox(height: 10),
@@ -556,8 +557,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           'Unread messages',
                           'Nieprzeczytane wiadomości',
                         ),
-                        trailing: _CountPill(
-                          count: unreadConversations.fold<int>(
+                        trailing: _countPill(
+                          unreadConversations.fold<int>(
                             0,
                             (sum, conversation) =>
                                 sum +
@@ -661,35 +662,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 }
 
-/// The inbox's count pill, mounted as a section heading's trailer. Filled
-/// primary, `onPrimary` copy, clamped at "99+" — the badge this screen has
-/// always drawn; only the heading around it became the shared
-/// [HomeSectionHeader].
-class _CountPill extends StatelessWidget {
-  const _CountPill({required this.count});
-
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-      decoration: BoxDecoration(
-        color: colors.primary,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        count > 99 ? '99+' : '$count',
-        style: TextStyle(
-          color: colors.onPrimary,
-          fontSize: 11,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-    );
-  }
-}
+/// The inbox's count, mounted as a section heading's trailer: the accent
+/// [YoMetricPill] (filled primary, `onPrimary` copy) clamped at "99+" — the
+/// badge this screen has always drawn.
+YoMetricPill _countPill(int count) => YoMetricPill(
+  value: count > 99 ? '99+' : '$count',
+  tone: YoMetricPillTone.accent,
+);
 
 class _ActivityHeader extends StatelessWidget {
   const _ActivityHeader({required this.count, required this.onMarkAllRead});
@@ -724,7 +703,7 @@ class _ActivityHeader extends StatelessWidget {
                 ),
               );
         final title = copy.text('Activity', 'Aktywność');
-        final pill = _CountPill(count: count);
+        final pill = _countPill(count);
 
         // A narrow phone at large text puts the action under the heading,
         // as it always has; the heading's own 16 px bottom step is the gap.

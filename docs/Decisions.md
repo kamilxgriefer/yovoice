@@ -12966,6 +12966,8 @@ already exists (no `YoLiveBadge`, no `YoStoryRingAvatar`, no `YoPresenceDot`).
 | Kafelek stories (pierścień odsłuchania) | `MomentStoryTile` — `lib/features/moments/presentation/widgets/moment_story_tile.dart`, constructor and statics unchanged; the ring stops are `MomentStoryTile.ringColors` and the new `ringGradient` (unheard `[AppColors.primary, AppColors.secondary]` at `AppGradients.primary`'s angle, heard `palette.border` twice — the same angle in both states, so only the stops change), and every shape paints them: the disc `MomentSeenAvatar` (moved into the same file beside its colour definition, re-exported by `moment_discover_tiles.dart` so no import moved; grew `ringWidth` / `ringInset` (feed 2 / 1.5, tile 2.5 / 2), `ringKey` on the painted `Container`, `mediaRevision`, `fallbackIcon`), the tile's own `_ring` through it, and the `MomentAuthorCapsule` border. The ring is the listened state from `MomentViewsService` through `MomentViewedIds` (fail open), never presence — ADR-155, which the brief and the old file comment mis-cited as ADR-147 | the tile's private `_ring` and the discover copy of `MomentSeenAvatar` (both hardcoded `AppGradients.primary` for unheard, so the unheard stop lived in three places and `ringColors(seen: false)` fed only the capsule), the capsule's plain `LinearGradient(colors: stops)` (no angle), `_StoryBubble` + the `_voiceStories` rail (`home/…/screens/home_screen.dart`: always-on 3 px gradient, raw `NetworkImage`, no seen state, no semantics → `MomentViewedIds` + `buildMomentChains` + `MomentStoryTile`), and the story-look gradient of `_FriendStory` (`messages/…/messages_screen.dart`: three inline hexes `0xFFFF416C` / `0xFFB42DFF` / `0xFF5D00D7` around every friend bubble → a 2 px `palette.border` band, because that rail carries no Moments state) |
 | Inline player głosowy (play + waveform + czas) | `VoicePlayerRow` — `lib/shared/widgets/voice/voice_player_row.dart`, with `VoicePlayerRowStatus`, `VoicePlayerRowStyle` (`.contained` for a thread row, `.inline` for a chat bubble) and the one `formatVoiceClock`. Presentation only: the caller keeps its `AudioPlayer`, its factory seam, the media grant, the arbitration tokens, the retry and snackbar paths, the `ValueKey`, the localized label and the mapping of its own state to a `status` | the whole `build()` of `_VoiceMessageContent` (`messages/…/widgets/message_bubble.dart`: the 44 px icon box, the bounded `YoWaveform`, the raw 11 px clock) and of `VoiceReplyMiniPlayer` (`moments/…/widgets/voice_reply_mini_player.dart`: `build()` + `_disc()` + the private `_clock`, whose `m:ss` was a second copy of the bubble's) |
 | Wiersz kanału | `YoChannelRow` / `YoVoiceChannelRow` (+ the `YoVoiceRowParticipant` value object) — `lib/shared/widgets/rows/yo_channel_row.dart`; the key reaches the `ListTile` through `tileKey`, and the row draws no `Material` of its own so the list's surface stays what the selected wash composites over | `_ChannelTile` and `_HomeTile` (`servers/…/widgets/server_panel.dart`, replaced by `_PanelChannelRow` and a direct `YoChannelRow` — the panel keeps the grouping, the search, the `server-channel-<id>` / `server-home-board` keys, the glyph map, the lock, the liveness copy and the identity wash), the management-sheet channel `ListTile` (`servers/…/widgets/server_management_sheet.dart`, whose second glyph map `serverChannelManagementIcon` — disagreeing with `serverChannelIcon` on 9 of 13 kinds — was retired with it), and the join switch itself: `ServerJoinAction`'s label and icon became `serverJoinLabel` / `serverJoinIcon` (`servers/…/widgets/server_channel_scene.dart`) so the scene CTA and the row's `Dołącz` cannot drift apart |
+| Liczba (metric pill) | `YoMetricPill(value:, icon:, tone:, semanticLabel:)` + `YoMetricPillTone` (`accent` / `outlined` / `tonal` / `overlay`) — `lib/shared/widgets/badges/yo_metric_pill.dart`; new, the brief's truly-new primitive | `_CountPill` (`notifications/…/screens/notifications_screen.dart`, now a one-line `_countPill` helper keeping the "99+" clamp → `accent`) and `_CountPill` (`achievements/…/screens/achievements_screen.dart` → `outlined`); the listener / member counts on live cards and the moments / discover / clubs chips migrate in the phases that redraw those screens |
+| Serwer w railu (+ jego twarz) | `YoServerRailItem(initial:, type:, semanticLabel:, selected:, onTap:)` composing `YoServerTile(initial:, type:, size:)` — `lib/shared/widgets/navigation/yo_server_rail_item.dart`; new; colours from `ServerIdentity.of(type).resolve(brightness)` only | Nothing yet: no server rail exists; phase 2 mounts it in `server_workspace_screen.dart`. The eight inline initial tiles (`servers_screen`, `home_server_overview` ×2, `server_workspace_screen` ×2, `server_panel`, `server_management_sheet`, `creator_studio_screen`) move to `YoServerTile` in phases 1 / 2 / 5 |
 
 The live variant's spec (from the brief's Twitch section): `AppColors.live`
 fill, `AppColors.onLive` copy, `AppTypography.labelSmall` (10 px, height 1.2)
@@ -13469,6 +13471,49 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   `test/server_invite_affordance_screenshot.dart` still constructs the panel as
   it did.
 
+### Consciously NOT built, NOT simplified (new-primitives family)
+
+- **No unread badge, counter or dot on the server rail**, and no parameter
+  for one: server channels have no read cursor, so the makieta's badge
+  would be invented (brief, "Makiety kontra rzeczywistość").
+  `test/yo_server_rail_item_test.dart` asserts the absence.
+- The rail item's selection mark is a 4 px `palette.textPrimary` pill on the
+  start edge (32 px selected, 16 px on hover, 0 idle; mirrored in RTL,
+  `AppMotion.quick`, zero under Reduce Motion). The tap region's own selected
+  ring is suppressed (`selectedBorderColor: transparent`) so selection has one
+  visual carrier; its keyboard focus ring stays. The squircle is 44 px at
+  `AppRadius.md` (14, the brief's server radius — no new radius token) inside
+  a 48 px target in a 64 px slot; the initial's text scale is clamped to 1.3
+  so the slot never grows past the brief's 64–68.
+- `YoServerTile` is the one design decision beyond the brief's two names: the
+  rail's face already existed inline eight times (radii 8 / 14 / 20, sizes
+  32–64), so the rail composes a shared face instead of becoming a ninth
+  drawing. Those eight sites were **not** migrated here — each one changes
+  visible pixels (radius 8 → 14 on Home rows, 20 → 14 on the admission card)
+  and belongs to the phase that takes frames of that screen. The shared
+  widget imports `ServerIdentity` from `features/servers` (precedent:
+  `user_avatar.dart`, `profile_preview_sheet.dart`) so no caller repeats the
+  resolve boilerplate.
+- `YoMetricPill` takes an already formatted string and never renders a zero,
+  a placeholder or an estimate on its own; the caller decides whether a real
+  value exists. It carries no copy (`lib/shared/` is under the localization
+  guard): without `semanticLabel` the value itself is read, which is what
+  both migrated pills did; with one, the sentence replaces it. No `onTap`
+  variant and no `bare` tone were built — no caller needs them yet, and the
+  immersive counters (`RoomCounterPill`, the stage listeners button,
+  `_InsideChip`, the creator analytics / podcast metrics) stay on their
+  immersive tokens. `MomentStoryTile._CountBadge` (frozen by the brief) and
+  the identity chips of the profile surfaces are not metrics and were not
+  touched. The two `compactCount` bodies are not merged here, and the
+  profile's `_Stat.compact` (different rounding, pinned by the brief) never
+  will be.
+- Visible normalisation of the two migrated pills (no test pins either):
+  one geometry for both — `labelMedium` 12 px w800 with tabular figures,
+  padding 8 / 3, `AppRadius.pill` — replacing the inbox's 11 px / 9·4 /
+  radius 20 and Awards' 11.5 px / 8·2. Colours are unchanged: the inbox
+  keeps `colorScheme.primary` / `onPrimary`, Awards keeps `surface` /
+  `border` / `textSecondary` (Dark palette on its immersive route).
+
 ### Reasoning
 
 A marker that is drawn eleven ways cannot be restyled once, cannot be tested
@@ -13518,3 +13563,13 @@ contract in one place.
   spinner's separate ink, the `m:ss` formatter, the key on the full-row target
   and the two semantics shapes, so the next copy of this row has to argue with
   a test.
+- Every count pill beside a heading is one widget in four tones (the
+  remaining counts join it as their screens are redrawn), and
+  `test/yo_metric_pill_test.dart` pins AA ink on every tone in Dark and Pearl
+  (the overlay judged over white artwork), the verbatim value, the optional
+  glyph, the label-replaces-value semantics and the one-line 200 % floor.
+  The server rail has a tested item before it has a rail:
+  `test/yo_server_rail_item_test.dart` pins the 44 / 14 / 48 / 64 geometry,
+  the `ServerIdentity` colours for every type in both themes, the
+  32 / 16 / 0 pill, Reduce Motion, the selected button semantics and the
+  absence of any unread mark.

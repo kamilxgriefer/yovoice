@@ -389,8 +389,7 @@ rules a screen author needs.
   line that is part of the heading ink; `live` for the 6 px `AppColors.live`
   dot; `scale` compact (17 px) on phones and in the desktop secondary column,
   expanded (19 px) for desktop page headings. Never add a scale value, a
-  `topGap` or a private copy; count pills stay with their screen until
-  `YoMetricPill` exists. The title is the heading's semantics name (header
+  `topGap` or a private copy; a count in the trailer is a `YoMetricPill`. The title is the heading's semantics name (header
   flag); leading, trailing and subtitle are not merged into it. Contracts:
   `test/home_rhythm_test.dart` (the frozen 24 / ink / 16 and stacking
   verdicts), `test/home_section_heading_semantics_test.dart`,
@@ -517,6 +516,37 @@ rules a screen author needs.
   `test/server_shell_test.dart` (exactly one marker for one live channel, no
   quiet copy on a live row), `test/server_independent_qa_test.dart` (tapping
   every row reaches no provider).
+- **Count / short value = `YoMetricPill(value:)`**
+  (`lib/shared/widgets/badges/yo_metric_pill.dart`). One line, `labelMedium`
+  12 px w800 with tabular figures, padding 8 / 3, `AppRadius.pill`, an
+  optional 13 px leading glyph. Four tones through `YoMetricPillTone`:
+  `accent` (`colorScheme.primary` / `onPrimary` — a count that asks for
+  attention, the inbox's), `outlined` (`surface` + 1 px `border`,
+  `textSecondary` — a quiet tally, Awards'), `tonal` (`surfaceMuted`,
+  `textPrimary` value, `textSecondary` glyph — a fact on a card) and
+  `overlay` (`overlayPlateColor`, white — a count over artwork). **Real data
+  only:** the caller formats the value ("99+", `compactCount`) and does not
+  mount the pill when there is nothing real to count; the pill never shows a
+  placeholder. `iconColor` tints the glyph only (identity accents);
+  `semanticLabel` (localized by the caller) replaces the value for assistive
+  technology, otherwise the value is read as-is. Not this widget: NA ŻYWO
+  (`YoBadge.live`), the story chain badge on `MomentStoryTile`, identity
+  chips, the immersive room counters. Contract: `test/yo_metric_pill_test.dart`.
+- **Server rail item = `YoServerRailItem(initial:, type:, semanticLabel:,
+  selected:, onTap:)`** with its face **`YoServerTile(initial:, type:,
+  size:)`** (`lib/shared/widgets/navigation/yo_server_rail_item.dart`). A
+  44 px squircle at `AppRadius.md` (14 — the server radius at every size) on
+  `ServerIdentity.of(type).resolve(brightness)`'s `iconSurface` /
+  `iconBorder` / `foreground`, the initial a plain `Text` clamped to 1.3×
+  text scale, inside a 48 px target in a 64 px slot. Selection = a 4 px
+  `textPrimary` pill on the start edge (32 selected, 16 hover, 0 idle,
+  `AppMotion.quick`, still under Reduce Motion); the region's own selected
+  ring is suppressed, its focus ring is not. **No unread badge, counter or
+  dot, ever** — channels have no read cursor. The caller keys it
+  (`server-rail-<id>`), passes the localized server name and owns the list,
+  the selected id and navigation. Any other place that draws a server's
+  initial uses `YoServerTile` (sites migrate in phases 1 / 2 / 5, ADR-209).
+  Contract: `test/yo_server_rail_item_test.dart`.
 
 ## Semantic colour ownership
 

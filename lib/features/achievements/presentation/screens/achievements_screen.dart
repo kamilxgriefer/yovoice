@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
-import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/shared/widgets/badges/yo_metric_pill.dart';
 import 'package:yovoice/shared/widgets/identity/decorated_user_avatar.dart';
 import 'package:yovoice/shared/widgets/identity/identity_name.dart';
 import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
@@ -525,7 +525,13 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                         color: context.appPalette.textSecondary,
                       ),
                       title: title,
-                      trailing: _CountPill(count: items.length),
+                      // The category count: the outlined metric pill in palette
+                      // roles, which on this immersive-dark route resolve to
+                      // the Dark palette.
+                      trailing: YoMetricPill(
+                        value: '${items.length}',
+                        tone: YoMetricPillTone.outlined,
+                      ),
                     ),
                   ),
                 ),
@@ -1437,36 +1443,6 @@ class _RecentUnlocks extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-/// The category count, mounted as a section heading's trailer: an outlined
-/// pill in palette roles (`surface` / `border` / `textSecondary`), which on
-/// this immersive-dark route always resolve to the Dark palette.
-class _CountPill extends StatelessWidget {
-  const _CountPill({required this.count});
-
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: AppRadius.pill,
-        border: Border.all(color: palette.border),
-      ),
-      child: Text(
-        '$count',
-        style: TextStyle(
-          color: palette.textSecondary,
-          fontSize: 11.5,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
     );
   }
 }
