@@ -48,6 +48,7 @@ import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_composer_panel.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/media/yo_media_send_review.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
@@ -85,6 +86,7 @@ class ChatScreen extends StatefulWidget {
     this.photoPicker,
     this.videoPicker,
     this.videoInspector,
+    this.videoPreviewControllerFactory,
     this.voiceRecorderPresenter,
     this.profilePreviewAction,
     this.gifService,
@@ -117,6 +119,10 @@ class ChatScreen extends StatefulWidget {
   final DirectMessagePhotoPicker? photoPicker;
   final DirectMessageVideoPicker? videoPicker;
   final DirectMessageVideoInspector? videoInspector;
+
+  /// Builds the local preview player in the library review (ADR-210).
+  /// Production leaves this null and plays the picked file on the platform.
+  final YoMediaPreviewControllerFactory? videoPreviewControllerFactory;
   final DirectMessageVoiceRecorderPresenter? voiceRecorderPresenter;
 
   /// Deterministic seam for navigation regression tests. Production leaves
@@ -1516,6 +1522,9 @@ class _ChatScreenState extends State<ChatScreen> {
             imageQuality: 88,
           );
     if (image == null || !_ownsMediaInteraction(ownerId)) return;
+    if (source == ImageSource.gallery) {
+      return _reviewLibraryPhoto(image, ownerId: ownerId);
+    }
     setState(() => _sendingMedia = true);
     try {
       if (!_ownsMediaInteraction(ownerId)) return;
@@ -1526,21 +1535,114 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!_ownsMediaInteraction(ownerId)) return;
     } catch (error) {
       if (mounted && _ownsMediaInteraction(ownerId)) {
-        final copy = AppLocalizations.of(context);
-        _showMessage(
-          error is VoiceRecordingException
-              ? [error.message, error.action].whereType<String>().join(' ')
-              : intentionalOrFriendly(
-                  error,
-                  fallback: copy.text(
-                    'Your photo could not be sent. Try again.',
-                    'Nie udało się wysłać zdjęcia. Spróbuj ponownie.',
-                  ),
-                ),
-        );
+        _showMessage(_photoSendFailure(error));
       }
     } finally {
       if (mounted) setState(() => _sendingMedia = false);
+    }
+  }
+
+  String _photoSendFailure(Object error) {
+    final copy = AppLocalizations.of(context);
+    return error is VoiceRecordingException
+        ? [error.message, error.action].whereType<String>().join(' ')
+        : intentionalOrFriendly(
+            error,
+            fallback: copy.text(
+              'Your photo could not be sent. Try again.',
+              'Nie udało się wysłać zdjęcia. Spróbuj ponownie.',
+            ),
+          );
+  }
+
+  String _videoSendFailure(Object error) => intentionalOrFriendly(
+    error,
+    fallback: AppLocalizations.of(context).text(
+      'Your video could not be sent. Choose a video up to 60 seconds and try again.',
+      'Nie udało się wysłać filmu. Wybierz film do 60 sekund i spróbuj ponownie.',
+    ),
+  );
+
+  /// Library picks are confirmed before anything is queued (ADR-210). The
+  /// camera keeps its own OS Use/Retake step and enqueues directly.
+  Future<YoMediaSendDecision?> _reviewLibraryMedia(
+    YoPickedMedia item, {
+    required String ownerId,
+    required String title,
+    required YoMediaSendHandler onSend,
+    required String Function(Object error) describeSendError,
+  }) {
+    final copy = AppLocalizations.of(context);
+    return showYoMediaSendReview(
+      context,
+      item: item,
+      limits: const YoMediaSendLimits(
+        maxImageBytes: directImageMaxBytes,
+        maxVideoBytes: directVideoMaxBytes,
+        maxVideoDuration: Duration(seconds: directVideoMaxSeconds),
+      ),
+      title: title,
+      sendLabel: copy.text('Send', 'Wyślij'),
+      destinationLabel: copy.template(
+        'To {name}',
+        'Do: {name}',
+        values: <String, Object>{'name': widget.otherDisplayName},
+      ),
+      onSend: onSend,
+      describeSendError: describeSendError,
+      // Same revocation contract as the voice recorder sheet: a different
+      // account closes the review and nothing is queued into it.
+      closeWhen: _auth.userChanges().where(
+        (user) => user?.uid.trim() != ownerId,
+      ),
+      videoControllerFactory: widget.videoPreviewControllerFactory,
+    );
+  }
+
+  Future<void> _reviewLibraryPhoto(
+    XFile image, {
+    required String ownerId,
+  }) async {
+    final int length;
+    try {
+      length = await image.length();
+    } catch (error) {
+      if (mounted && _ownsMediaInteraction(ownerId)) {
+        _showMessage(_photoSendFailure(error));
+      }
+      return;
+    }
+    if (!mounted || !_ownsMediaInteraction(ownerId)) return;
+    final copy = AppLocalizations.of(context);
+    final decision = await _reviewLibraryMedia(
+      YoPickedMedia(
+        file: image,
+        kind: YoPickedMediaKind.image,
+        sizeBytes: length,
+        displayName: image.name,
+        contentType: image.mimeType,
+      ),
+      ownerId: ownerId,
+      title: copy.text('Send this photo?', 'Wysłać to zdjęcie?'),
+      describeSendError: _photoSendFailure,
+      onSend: (item) async {
+        if (!_ownsMediaInteraction(ownerId)) {
+          throw StateError('The signed-in account changed.');
+        }
+        setState(() => _sendingMedia = true);
+        try {
+          await _service.enqueueImageMessage(
+            conversationId: widget.conversationId,
+            image: item.file,
+          );
+        } finally {
+          if (mounted) setState(() => _sendingMedia = false);
+        }
+      },
+    );
+    if (decision?.choice == YoMediaSendChoice.chooseAnother &&
+        _ownsMediaInteraction(ownerId)) {
+      return _pickPhoto(ImageSource.gallery, ownerId: ownerId);
     }
   }
 
@@ -1555,6 +1657,10 @@ class _ChatScreenState extends State<ChatScreen> {
               maxDuration: const Duration(seconds: 60),
             );
       if (video == null || !_ownsMediaInteraction(ownerId)) return;
+      if (source == ImageSource.gallery) {
+        await _reviewLibraryVideo(video, ownerId: ownerId);
+        return;
+      }
       setState(() => _sendingMedia = true);
       final duration =
           await (widget.videoInspector ?? inspectPickedDirectVideo)(video);
@@ -1569,19 +1675,74 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!_ownsMediaInteraction(ownerId)) return;
     } catch (error) {
       if (mounted && _ownsMediaInteraction(ownerId)) {
-        final copy = AppLocalizations.of(context);
-        _showMessage(
-          intentionalOrFriendly(
-            error,
-            fallback: copy.text(
-              'Your video could not be sent. Choose a video up to 60 seconds and try again.',
-              'Nie udało się wysłać filmu. Wybierz film do 60 sekund i spróbuj ponownie.',
-            ),
-          ),
-        );
+        _showMessage(_videoSendFailure(error));
       }
     } finally {
       if (mounted) setState(() => _sendingMedia = false);
+    }
+  }
+
+  Future<void> _reviewLibraryVideo(
+    XFile video, {
+    required String ownerId,
+  }) async {
+    int length;
+    Duration? duration;
+    setState(() => _sendingMedia = true);
+    try {
+      length = await video.length();
+      if (!_ownsMediaInteraction(ownerId)) return;
+      try {
+        duration = await (widget.videoInspector ?? inspectPickedDirectVideo)(
+          video,
+        );
+      } catch (_) {
+        // The review's own preview player measures the clip instead; if that
+        // fails too, the review blocks Send with a clear reason.
+        duration = null;
+      }
+    } catch (error) {
+      if (mounted && _ownsMediaInteraction(ownerId)) {
+        _showMessage(_videoSendFailure(error));
+      }
+      return;
+    } finally {
+      if (mounted) setState(() => _sendingMedia = false);
+    }
+    if (!mounted || !_ownsMediaInteraction(ownerId)) return;
+    final copy = AppLocalizations.of(context);
+    final decision = await _reviewLibraryMedia(
+      YoPickedMedia(
+        file: video,
+        kind: YoPickedMediaKind.video,
+        sizeBytes: length,
+        displayName: video.name,
+        contentType: video.mimeType,
+        duration: duration,
+      ),
+      ownerId: ownerId,
+      title: copy.text('Send this video?', 'Wysłać ten film?'),
+      describeSendError: _videoSendFailure,
+      onSend: (item) async {
+        final measured = item.duration;
+        if (!_ownsMediaInteraction(ownerId) || measured == null) {
+          throw StateError('The signed-in account changed.');
+        }
+        setState(() => _sendingMedia = true);
+        try {
+          await _service.enqueueVideoMessage(
+            conversationId: widget.conversationId,
+            video: item.file,
+            durationSeconds: (measured.inMilliseconds + 999) ~/ 1000,
+          );
+        } finally {
+          if (mounted) setState(() => _sendingMedia = false);
+        }
+      },
+    );
+    if (decision?.choice == YoMediaSendChoice.chooseAnother &&
+        _ownsMediaInteraction(ownerId)) {
+      return _pickVideo(ImageSource.gallery, ownerId: ownerId);
     }
   }
 

@@ -240,6 +240,13 @@ class _DirectAttachmentReservation {
   }
 }
 
+/// Direct-message attachment limits. The same values are enforced by
+/// `functions/messaging/direct_integrity.js` and `storage.rules`; the picked
+/// media review (ADR-210) reads these so it can never disagree with them.
+const int directImageMaxBytes = 8 * 1024 * 1024;
+const int directVideoMaxBytes = 64 * 1024 * 1024;
+const int directVideoMaxSeconds = 60;
+
 class MessageService {
   static const int _maxReadReceiptPagesPerPass = 100;
   static const Duration _directAttachmentLeaseDuration = Duration(minutes: 15);
@@ -1706,7 +1713,7 @@ class MessageService {
     _requireAttachmentQueueOwner(capture);
     final declaredLength = await image.length();
     _requireAttachmentQueueOwner(capture);
-    if (declaredLength < 128 || declaredLength > 8 * 1024 * 1024) {
+    if (declaredLength < 128 || declaredLength > directImageMaxBytes) {
       throw StateError('Choose a photo smaller than 8 MB.');
     }
     final source = DirectAttachmentPayloadSource.pickedFile(
@@ -1717,7 +1724,7 @@ class MessageService {
     _requireAttachmentQueueOwner(capture);
     if (digest.length != declaredLength ||
         digest.length < 128 ||
-        digest.length > 8 * 1024 * 1024) {
+        digest.length > directImageMaxBytes) {
       throw StateError('Choose a photo smaller than 8 MB.');
     }
     final contentType = _imageContentType(image);
@@ -1783,7 +1790,7 @@ class MessageService {
     required XFile video,
     required int durationSeconds,
   }) async {
-    if (durationSeconds < 1 || durationSeconds > 60) {
+    if (durationSeconds < 1 || durationSeconds > directVideoMaxSeconds) {
       throw StateError('Videos must be between 1 and 60 seconds.');
     }
     final capture = _captureAttachmentQueueOwner();
@@ -1791,7 +1798,7 @@ class MessageService {
     _requireAttachmentQueueOwner(capture);
     final declaredLength = await video.length();
     _requireAttachmentQueueOwner(capture);
-    if (declaredLength < 1024 || declaredLength > 64 * 1024 * 1024) {
+    if (declaredLength < 1024 || declaredLength > directVideoMaxBytes) {
       throw StateError('Choose a video smaller than 64 MB.');
     }
     final source = DirectAttachmentPayloadSource.pickedFile(
@@ -1802,7 +1809,7 @@ class MessageService {
     _requireAttachmentQueueOwner(capture);
     if (digest.length != declaredLength ||
         digest.length < 1024 ||
-        digest.length > 64 * 1024 * 1024) {
+        digest.length > directVideoMaxBytes) {
       throw StateError('Choose a video smaller than 64 MB.');
     }
     _requireAttachmentQueueOwner(capture);

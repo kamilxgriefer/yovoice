@@ -352,11 +352,76 @@ void main() {
     );
     await tester.tap(find.text('Dodaj plik'));
     await tester.pumpAndSettle();
+    // The picked file is confirmed in the media review first (ADR-210).
+    await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
+    await tester.pumpAndSettle();
     expect(repository.companyFileUploads, 1);
     expect(repository.calls.map((call) => call.$1), [
       'reserveServerCompanyFileV1',
       'finalizeServerCompanyFileV1',
     ]);
+  });
+
+  testWidgets('picked file is reviewed before upload; Cancel publishes none', (
+    tester,
+  ) async {
+    final repository = TestServerRepository()..myRole = ServerMemberRole.member;
+    await pumpServers(
+      tester,
+      ServerCompanyFilesBoard(
+        server: companyFilesServer(),
+        channel: companyFilesChannel(),
+        repository: repository,
+        role: ServerMemberRole.member,
+        online: Stream.value(true),
+        pickFile: () async => ServerCompanyFileSelection(
+          displayName: 'Plan kwartalny.pdf',
+          contentType: 'application/pdf',
+          bytes: Uint8List.fromList(utf8.encode('%PDF-1.7 plan')),
+        ),
+      ),
+      size: const Size(390, 844),
+    );
+    await tester.tap(find.text('Dodaj plik'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('yo-media-review')), findsOneWidget);
+    expect(find.text('Plan kwartalny.pdf'), findsOneWidget);
+    expect(find.text('PDF'), findsOneWidget);
+    expect(repository.calls, isEmpty);
+
+    await tester.tap(find.byKey(const ValueKey('yo-media-review-cancel')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('yo-media-review')), findsNothing);
+    expect(repository.companyFileUploads, 0);
+    expect(repository.calls, isEmpty);
+  });
+
+  testWidgets('a picked image is previewed as a photo before upload', (
+    tester,
+  ) async {
+    final repository = TestServerRepository()..myRole = ServerMemberRole.member;
+    await pumpServers(
+      tester,
+      ServerCompanyFilesBoard(
+        server: companyFilesServer(),
+        channel: companyFilesChannel(),
+        repository: repository,
+        role: ServerMemberRole.member,
+        online: Stream.value(true),
+        pickFile: () async => ServerCompanyFileSelection(
+          displayName: 'tablica.png',
+          contentType: 'image/png',
+          bytes: Uint8List(2048),
+        ),
+      ),
+      size: const Size(390, 844),
+    );
+    await tester.tap(find.text('Dodaj plik'));
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel('Zdjęcie, 2 KB'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
+    await tester.pumpAndSettle();
+    expect(repository.companyFileUploads, 1);
   });
 
   testWidgets('guest and offline states fail closed', (tester) async {

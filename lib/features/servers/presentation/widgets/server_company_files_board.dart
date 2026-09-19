@@ -8,6 +8,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/shared/widgets/media/yo_media_send_review.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
@@ -99,6 +100,11 @@ class _ServerCompanyFilesBoardState extends State<ServerCompanyFilesBoard> {
     try {
       final selection = await (widget.pickFile ?? _pickCompanyFile)();
       if (selection == null || !mounted) return;
+      final decision = await _reviewSelection(selection);
+      if (decision == null || !mounted) return;
+      if (decision.choice == YoMediaSendChoice.chooseAnother) {
+        return _chooseAndUpload();
+      }
       _uploadAttempt = widget.repository.newCompanyFileUploadAttempt(
         serverId: widget.server.id,
         channelId: widget.channel.id,
@@ -109,6 +115,41 @@ class _ServerCompanyFilesBoardState extends State<ServerCompanyFilesBoard> {
       if (!mounted) return;
       setState(() => _error = _failure(error));
     }
+  }
+
+  /// Nothing reaches the shelf before the member has seen what they picked
+  /// (ADR-210). The upload itself stays on the board, with its progress row.
+  Future<YoMediaSendDecision?> _reviewSelection(
+    ServerCompanyFileSelection selection,
+  ) {
+    final copy = AppLocalizations.of(context);
+    final isImage = selection.contentType.startsWith('image/');
+    return showYoMediaSendReview(
+      context,
+      item: YoPickedMedia(
+        file: XFile.fromData(
+          selection.bytes,
+          name: selection.displayName,
+          mimeType: selection.contentType,
+        ),
+        kind: isImage ? YoPickedMediaKind.image : YoPickedMediaKind.document,
+        sizeBytes: selection.bytes.lengthInBytes,
+        displayName: selection.displayName,
+        contentType: selection.contentType,
+        bytes: selection.bytes,
+      ),
+      limits: const YoMediaSendLimits(
+        maxImageBytes: serverCompanyFileMaxBytes,
+        maxDocumentBytes: serverCompanyFileMaxBytes,
+      ),
+      title: copy.text('Upload this file?', 'Dodać ten plik?'),
+      sendLabel: copy.serverCompanyFileUpload,
+      destinationLabel: copy.template(
+        'To {name}',
+        'Do: {name}',
+        values: <String, Object>{'name': copy.serverCompanyFilesTitle},
+      ),
+    );
   }
 
   Future<void> _publishUpload() async {
