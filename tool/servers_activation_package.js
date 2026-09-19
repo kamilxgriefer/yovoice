@@ -21,7 +21,7 @@ const PHASE_FILES = Object.freeze({
 });
 
 // Existing functions that must precede the source-static Servers surface.
-// They are deliberately outside the 54-name Servers V1 base manifest.
+// They are deliberately outside the 55-name Servers V1 base manifest.
 const COMPATIBILITY_EXPORTS = Object.freeze([
   "createCommunityClub",
   "createRoom",
@@ -214,8 +214,14 @@ function inspectServersSource(source, options = {}) {
   const hostileBase = hostileEnvironment.allServerNames.filter(
     (name) => !new Set(hostileEnvironment.podcastNames).has(name),
   );
-  if (allServerNames.length !== 61 || baseline.callableNames.length !== 55 || podcastNames.length !== 7 || baseNames.length !== 54) {
-    fail("Servers registration is not the reviewed 61-total/55-callable/7-Podcast/54-base manifest.");
+  // 2026-09-19 (ADR-180 amendment): the reviewed manifest moved by exactly one
+  // export. `releaseServerChannelSessionIfEmptyV1` — the last-leave signal of
+  // the empty-generation grace — is a Server callable, so total, callable and
+  // base each rise by one while the Podcast set is untouched. Every number
+  // below was recomputed from the merged servers/registration.js, not relaxed
+  // to let this file pass.
+  if (allServerNames.length !== 62 || baseline.callableNames.length !== 56 || podcastNames.length !== 7 || baseNames.length !== 55) {
+    fail("Servers registration is not the reviewed 62-total/56-callable/7-Podcast/55-base manifest.");
   }
   if (JSON.stringify(baseNames) !== JSON.stringify(hostileBase)) {
     fail("A late environment value changes the source-static Servers base manifest.");
@@ -253,7 +259,7 @@ function phasePlan(inventory) {
   }
   if (!baseNames.includes("createServerV1")) fail("The reviewed creation export is missing.");
   const nonCreation = callables.filter((name) => !podcast.has(name) && name !== "createServerV1");
-  if (nonCreation.length !== 48) fail("The reviewed non-creation callable phase must contain exactly 48 exports.");
+  if (nonCreation.length !== 49) fail("The reviewed non-creation callable phase must contain exactly 49 exports.");
 
   const plan = {
     phase0CompatibilityGuards: [...COMPATIBILITY_EXPORTS],
@@ -262,7 +268,7 @@ function phasePlan(inventory) {
     phase3CreationBlocked: ["createServerV1"],
   };
   const selectedBase = Object.values(plan).flat().filter((name) => baseNames.includes(name));
-  if (selectedBase.length !== 54 || new Set(selectedBase).size !== 54 ||
+  if (selectedBase.length !== 55 || new Set(selectedBase).size !== 55 ||
       baseNames.some((name) => !selectedBase.includes(name))) {
     fail("Phase selectors do not cover every source-static Server export exactly once.");
   }

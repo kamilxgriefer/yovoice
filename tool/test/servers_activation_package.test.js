@@ -228,23 +228,27 @@ function selectorNames(file) {
   });
 }
 
-test("phase plan partitions all 54 source-static Server exports exactly once", () => {
+test("phase plan partitions all 55 source-static Server exports exactly once", () => {
   const inventory = canonicalInventory();
   const phases = phasePlan(inventory);
   const podcast = new Set(inventory.podcastNames);
   const selected = Object.values(phases).flat();
   const selectedBase = selected.filter((name) => inventory.baseNames.includes(name));
 
-  assert.equal(inventory.baseNames.length, 54);
-  assert.equal(selectedBase.length, 54);
-  assert.equal(new Set(selectedBase).size, 54);
+  // Recomputed from the merged servers/registration.js when the ADR-180
+  // amendment added releaseServerChannelSessionIfEmptyV1 (54 -> 55). The
+  // partition property below is what this test actually protects; the
+  // absolute number only pins the reviewed surface it partitions.
+  assert.equal(inventory.baseNames.length, 55);
+  assert.equal(selectedBase.length, 55);
+  assert.equal(new Set(selectedBase).size, 55);
   assert.deepEqual(new Set(selectedBase), new Set(inventory.baseNames));
   assert.deepEqual(phases.phase0CompatibilityGuards, EXPECTED_COMPATIBILITY_EXPORTS);
   assert.deepEqual(phases.phase1Infrastructure, EXPECTED_INFRASTRUCTURE_EXPORTS);
   assert.equal(phases.phase1Infrastructure.filter((name) => inventory.baseNames.includes(name)).length, 5);
   assert.equal(phases.phase0CompatibilityGuards.some((name) => inventory.baseNames.includes(name)), false);
   assert.equal(phases.phase1Infrastructure.slice(0, 2).some((name) => inventory.baseNames.includes(name)), false);
-  assert.equal(phases.phase2NonCreationCallables.length, 48);
+  assert.equal(phases.phase2NonCreationCallables.length, 49);
   // The OBS ingress callable is a non-creation callable. It is inert until
   // an operator enables serverRuntimeCapacity/communityBroadcastV1.
   assert.equal(phases.phase2NonCreationCallables.includes("createServerBroadcastIngressV1"), true);
@@ -309,7 +313,7 @@ test("source inspection proves environment-independent registration and no Podca
   const inspected = inspectServersSource(value.source);
   assert.deepEqual(inspected.baseNames, value.inventory.baseNames);
   assert.deepEqual(inspected.podcastNames, value.inventory.podcastNames);
-  assert.equal(inspected.baseNames.length, 54);
+  assert.equal(inspected.baseNames.length, 55);
 });
 
 test("generation fails closed on a mismatched SHA, malformed SHA, dirty tree, and in-tree output", () => {

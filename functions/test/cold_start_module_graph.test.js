@@ -8,7 +8,7 @@ const { test } = require("node:test");
 // of a cold start is invisible once anything else in this process has loaded
 // an SDK, and the export map is what `firebase deploy` reads — a renamed or
 // dropped export is a NOT_FOUND on every client that calls it. The fourth is
-// the source-static functions/servers graph: its exact cost and its 54 base
+// the source-static functions/servers graph: its exact cost and its 55 base
 // exports must change only in a deliberate, reviewed revision.
 
 const FUNCTIONS_DIR = path.resolve(__dirname, "..");
