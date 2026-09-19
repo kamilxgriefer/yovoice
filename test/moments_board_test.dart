@@ -38,6 +38,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -973,6 +974,64 @@ void main() {
           .get();
       expect(heard.docs.map((doc) => doc.id), unorderedEquals(['c1', 'c2']));
     });
+
+    testWidgets('the stage waveform seeks under a finger once the player '
+        'knows the length; the arrows still walk the chain', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final semantics = tester.ensureSemantics();
+
+      final player = _SeekRecordingAudioPlayer();
+      final chain = buildMomentChains(chainOfThree()).single;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MomentStoryViewer(
+              chain: chain,
+              feedService: feed(),
+              momentService: privateMoments(),
+              playerFactory: () => player,
+              autoPlay: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      const scrub = ValueKey('story-progress-scrub');
+      // Nothing loaded yet: no pretend seek.
+      expect(tester.widget<Slider>(find.byKey(scrub)).onChanged, isNull);
+
+      // Left/right stay chain navigation on the story surface.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      expect(find.text('2 of 3'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pump();
+      expect(find.text('1 of 3'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('story-play-toggle')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.widget<Slider>(find.byKey(scrub)).onChanged, isNotNull);
+
+      final node = tester.getSemantics(
+        find.bySemanticsLabel(RegExp('Playback position')),
+      );
+      expect(node.getSemanticsData().flagsCollection.isSlider, isTrue);
+
+      final rect = tester.getRect(find.byKey(scrub));
+      await tester.dragFrom(
+        Offset(rect.left + 4, rect.center.dy),
+        Offset(rect.width / 2 - 4, 0),
+      );
+      await tester.pump();
+      expect(player.seeks, isNotEmpty);
+      expect(player.seeks.last.inMilliseconds, closeTo(6000, 400));
+      expect(find.text('0:06 / 0:12'), findsOneWidget);
+      semantics.dispose();
+    });
   });
 
   group('the filter chips switch data sources', () {
@@ -1447,4 +1506,12 @@ class _FakeAudioPlayer implements audio.AudioPlayer {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Records the seeks the story stage's waveform asks for.
+class _SeekRecordingAudioPlayer extends _FakeAudioPlayer {
+  final List<Duration> seeks = <Duration>[];
+
+  @override
+  Future<void> seek(Duration position) async => seeks.add(position);
 }

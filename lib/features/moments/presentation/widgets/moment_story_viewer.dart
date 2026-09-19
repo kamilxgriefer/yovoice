@@ -610,6 +610,35 @@ class _MomentStoryViewerState extends State<MomentStoryViewer>
     await _play(_current);
   }
 
+  /// Finger-seek on the stage waveform (ADR-210): the same transparent-slider
+  /// pattern as the feed row. Playback keeps its state; only the position
+  /// moves. Offered only once the player has reported a real duration, so a
+  /// Moment that never loaded cannot pretend to be seekable.
+  bool get _canSeek {
+    final duration = _duration;
+    return _player != null &&
+        duration != null &&
+        duration > Duration.zero &&
+        _playbackError == null;
+  }
+
+  Future<void> _seek(Duration target) async {
+    final player = _player;
+    final duration = _duration;
+    if (player == null || duration == null) return;
+    final clamped = target < Duration.zero
+        ? Duration.zero
+        : target > duration
+        ? duration
+        : target;
+    setState(() => _position = clamped);
+    try {
+      await player.seek(clamped);
+    } catch (_) {
+      // The next position event puts the waveform back where the player is.
+    }
+  }
+
   Future<void> _goTo(int index, {required bool play}) async {
     if (index < 0 || index >= _chainMoments.length) return;
     final player = _player;
@@ -924,6 +953,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer>
                 duration: _duration,
                 playbackError: _playbackError,
                 onToggle: () => unawaited(_togglePlay()),
+                onSeek: _canSeek ? (target) => unawaited(_seek(target)) : null,
                 onPreviousZone: _index > 0
                     ? () => unawaited(_goTo(_index - 1, play: widget.autoPlay))
                     : null,
@@ -1145,6 +1175,7 @@ class _StoryStage extends StatelessWidget {
     required this.onToggle,
     required this.onPreviousZone,
     required this.onNextZone,
+    this.onSeek,
   });
 
   final VoiceMoment moment;
@@ -1153,6 +1184,9 @@ class _StoryStage extends StatelessWidget {
   final Duration? duration;
   final String? playbackError;
   final VoidCallback onToggle;
+
+  /// Null while the Moment cannot be moved along (nothing loaded yet).
+  final ValueChanged<Duration>? onSeek;
   final VoidCallback? onPreviousZone;
   final VoidCallback? onNextZone;
 
@@ -1186,7 +1220,20 @@ class _StoryStage extends StatelessWidget {
           ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 34),
-          child: StoryWaveform(progress: progress),
+          child: Stack(
+            children: [
+              StoryWaveform(progress: progress),
+              Positioned.fill(
+                child: _StoryScrubSlider(
+                  position: position,
+                  totalMs: hasTotal
+                      ? (duration?.inMilliseconds ?? totalSeconds * 1000)
+                      : 0,
+                  onSeek: onSeek,
+                ),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 22),
         Semantics(
@@ -1271,6 +1318,74 @@ class _StoryStage extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// A transparent [Slider] over the stage waveform: the drawing stays the
+/// waveform's, the gesture, keyboard and screen-reader adjust are the
+/// slider's. The segmented bars at the top stay previous/next navigation.
+class _StoryScrubSlider extends StatelessWidget {
+  const _StoryScrubSlider({
+    required this.position,
+    required this.totalMs,
+    required this.onSeek,
+  });
+
+  final Duration position;
+  final int totalMs;
+  final ValueChanged<Duration>? onSeek;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final max = totalMs > 0 ? totalMs.toDouble() : 1.0;
+    final value = position.inMilliseconds.toDouble().clamp(0.0, max);
+    final seek = onSeek;
+    // One node carrying the name AND the value, as on the feed row.
+    return MergeSemantics(
+      child: Semantics(
+        container: true,
+        label: copy.contextualText(
+          'yoMoments.playbackPosition',
+          'Playback position',
+          'Pozycja odtwarzania',
+        ),
+        child: SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 44,
+            activeTrackColor: Colors.transparent,
+            inactiveTrackColor: Colors.transparent,
+            disabledActiveTrackColor: Colors.transparent,
+            disabledInactiveTrackColor: Colors.transparent,
+            secondaryActiveTrackColor: Colors.transparent,
+            thumbColor: Colors.transparent,
+            disabledThumbColor: Colors.transparent,
+            overlayColor: Colors.transparent,
+            thumbShape: SliderComponentShape.noThumb,
+            overlayShape: SliderComponentShape.noOverlay,
+            trackShape: const RectangularSliderTrackShape(),
+            showValueIndicator: ShowValueIndicator.never,
+          ),
+          child: Slider(
+            key: const ValueKey('story-progress-scrub'),
+            value: value,
+            max: max,
+            padding: EdgeInsets.zero,
+            onChanged: seek == null || totalMs <= 0
+                ? null
+                : (next) => seek(Duration(milliseconds: next.round())),
+            semanticFormatterCallback: (next) => copy.template(
+              '{position} of {total}',
+              '{position} z {total}',
+              values: <String, Object>{
+                'position': _clock(next ~/ 1000),
+                'total': _clock(totalMs ~/ 1000),
+              },
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
