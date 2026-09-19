@@ -1,6 +1,76 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:yovoice/features/media/data/models/gif_asset.dart';
 
+/// A Servers V1 photo or video written by
+/// `finalizeServerChannelMessageMediaV1`: the private object's path,
+/// generation and bounded metadata — never a URL. Bytes are read only through
+/// a short-lived grant from `getServerChannelMessageMediaAccessV1`.
+class ClubMessageMedia {
+  const ClubMessageMedia({
+    required this.type,
+    required this.storagePath,
+    required this.generation,
+    required this.contentType,
+    required this.size,
+    this.durationSeconds,
+  });
+
+  /// `image` or `video`.
+  final String type;
+  final String storagePath;
+  final String generation;
+  final String contentType;
+  final int size;
+
+  /// Whole seconds, 1-60, for a video; null for a photo.
+  final int? durationSeconds;
+
+  bool get isVideo => type == 'video';
+
+  static final _generation = RegExp(r'^[0-9]{1,30}$');
+
+  /// The descriptor of a live media message, or null for anything else: a
+  /// removed message, a text/GIF message, or a malformed descriptor (which
+  /// then renders as its `Photo`/`Video` content fallback, never a guess).
+  static ClubMessageMedia? fromMessage(Map<String, dynamic> data) {
+    if (data['isDeleted'] == true) return null;
+    final type = data['type'];
+    if (type != 'image' && type != 'video') return null;
+    final media = data['media'];
+    if (media is! Map) return null;
+    final storagePath = media['storagePath'];
+    final generation = media['generation'];
+    final contentType = media['contentType'];
+    final size = media['size'];
+    final duration = media['durationSeconds'];
+    if (storagePath is! String ||
+        !storagePath.startsWith('server_message_media/') ||
+        generation is! String ||
+        !_generation.hasMatch(generation) ||
+        contentType is! String ||
+        contentType.isEmpty ||
+        size is! num ||
+        size <= 0) {
+      return null;
+    }
+    int? durationSeconds;
+    if (type == 'video') {
+      if (duration is! num || duration < 1 || duration > 60) return null;
+      durationSeconds = duration.toInt();
+    } else if (duration != null) {
+      return null;
+    }
+    return ClubMessageMedia(
+      type: type as String,
+      storagePath: storagePath,
+      generation: generation,
+      contentType: contentType,
+      size: size.toInt(),
+      durationSeconds: durationSeconds,
+    );
+  }
+}
+
 class ClubMessage {
   const ClubMessage({
     required this.id,
@@ -18,6 +88,7 @@ class ClubMessage {
     this.gif,
     this.reactions = const <String, String>{},
     this.type,
+    this.media,
   });
 
   final String id;
@@ -41,6 +112,9 @@ class ClubMessage {
   /// `video`. Unknown values are kept so a newer type is never misread as
   /// text by this model; renderers still fall back to [content].
   final String? type;
+
+  /// The photo or video of a live media message; null otherwise.
+  final ClubMessageMedia? media;
 
   /// Who performed the removal. Absent on live messages, and absent on
   /// removals written before the client started stamping it — so a null
@@ -100,6 +174,7 @@ class ClubMessage {
           ? const <String, String>{}
           : _stringMap(data['reactions']),
       type: _nullableString(data['type']),
+      media: ClubMessageMedia.fromMessage(data),
     );
   }
 
