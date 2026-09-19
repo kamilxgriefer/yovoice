@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
+import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 
 class YoAvatar extends StatelessWidget {
   const YoAvatar({
@@ -63,14 +64,11 @@ class YoAvatar extends StatelessWidget {
           Positioned(
             right: 0,
             bottom: 0,
-            child: Container(
-              width: size * 0.27,
-              height: size * 0.27,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppColors.success,
-                border: Border.all(color: palette.background, width: 1.5),
-              ),
+            child: AvailabilityDot(
+              status: PeopleStatus.online,
+              size: size * 0.27,
+              borderColor: palette.background,
+              borderWidth: 1.5,
             ),
           ),
       ],

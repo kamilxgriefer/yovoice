@@ -12,6 +12,8 @@ import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
+import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// The ONE compact Voice Moments story tile.
@@ -239,17 +241,11 @@ class MomentStoryTile extends StatelessWidget {
                       Positioned(
                         left: discLeft + disc - 15,
                         top: disc - 15,
-                        child: Container(
-                          width: 13,
-                          height: 13,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: AppColors.success,
-                            border: Border.all(
-                              color: palette.surfaceSunken,
-                              width: 2,
-                            ),
-                          ),
+                        child: AvailabilityDot(
+                          status: PeopleStatus.online,
+                          size: 13,
+                          borderColor: palette.surfaceSunken,
+                          borderWidth: 2,
                         ),
                       ),
                     if (count != null && count! > 1)

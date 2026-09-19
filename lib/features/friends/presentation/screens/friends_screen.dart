@@ -29,6 +29,7 @@ import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
+import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
 
 enum _FriendsFilter { all, online, requests }
 
@@ -1521,17 +1522,14 @@ class _FriendCard extends StatelessWidget {
                   Positioned(
                     right: 1,
                     bottom: 1,
-                    child: Container(
-                      width: 15,
-                      height: 15,
-                      decoration: BoxDecoration(
-                        color: PeopleStatus.fromPresence(
-                          isOnline: friend.isOnline,
-                          availability: friend.availability,
-                        ).foreground(palette),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: palette.surface, width: 3),
+                    child: AvailabilityDot(
+                      status: PeopleStatus.fromPresence(
+                        isOnline: friend.isOnline,
+                        availability: friend.availability,
                       ),
+                      size: 15,
+                      borderColor: palette.surface,
+                      borderWidth: 3,
                     ),
                   ),
                 ],

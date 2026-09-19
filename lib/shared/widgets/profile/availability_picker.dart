@@ -9,6 +9,7 @@ import 'package:yovoice/core/presence/user_availability.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 
 /// Lets the signed-in user choose the availability their friends see as a
@@ -154,28 +155,6 @@ class _AvailabilityOptions extends StatelessWidget {
                 : null,
           ),
       ],
-    );
-  }
-}
-
-/// A filled circle in a status colour — the ring colour, as a dot.
-class AvailabilityDot extends StatelessWidget {
-  const AvailabilityDot({required this.status, this.size = 10, super.key});
-
-  final PeopleStatus status;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: status.foreground(palette),
-        border: Border.all(color: palette.surfaceRaised, width: 1.5),
-      ),
     );
   }
 }

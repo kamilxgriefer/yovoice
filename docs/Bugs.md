@@ -5,6 +5,28 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED IN SOURCE — the presence dot had three greens and two greys (2026-09-19, Slim phase 0)
+
+Found by the phase-0 inventory. Ten avatars in eight files each drew their
+own online / away / busy / offline disc: `YoAvatar` and `MomentStoryTile` used
+the fixed `AppColors.success` (0xFF35D07F — a bright green that ignores Pearl),
+the three Chats avatars and the club member tile used `palette.successForeground`,
+and the rest used `PeopleStatus.foreground`; the club member tile coloured
+offline `navigationInactive` while every other surface used `textTertiary`.
+Fixed by extracting the canonical `AvailabilityDot` into
+`lib/shared/widgets/profile/availability_dot.dart` with caller-owned halo
+parameters and mounting it at all ten sites (ADR-209, presence-dot family).
+Every caller kept its gate, offset, size and label; the two colour
+normalisations (fixed green → `successForeground`; member offline
+`navigationInactive` → `textTertiary`) are deliberate and listed in the ADR.
+
+**Still open, observed and consciously not touched:** the *word* "Offline" is
+coloured `palette.textSecondary` by `chat_screen.dart` (`_presenceColor`),
+`friends_screen.dart` (`_presenceColor`) and `friend_profile_screen.dart`
+(`_status`), while `PeopleStatus.away` — the dot and the ring — is
+`textTertiary`. A label-contrast choice for those screens' own Slim phases
+(3, 5, 6), not a dot defect.
+
 ## FIXED IN SOURCE — NA ŻYWO was drawn eleven different ways, one of them purple (2026-09-19, Slim phase 0)
 
 Found by the phase-0 inventory for the Slim redesign. The product had one

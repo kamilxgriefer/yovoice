@@ -19,6 +19,8 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_settings_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
+import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 String _localizedLanguage(String language, AppLocalizations copy) {
@@ -802,16 +804,11 @@ class _MemberTile extends StatelessWidget {
           Positioned(
             right: -1,
             bottom: -1,
-            child: Container(
-              width: 13,
-              height: 13,
-              decoration: BoxDecoration(
-                color: member.isOnline
-                    ? palette.successForeground
-                    : palette.navigationInactive,
-                shape: BoxShape.circle,
-                border: Border.all(color: palette.surface, width: 2),
-              ),
+            child: AvailabilityDot(
+              status: PeopleStatus.fromPresence(isOnline: member.isOnline),
+              size: 13,
+              borderColor: palette.surface,
+              borderWidth: 2,
             ),
           ),
         ],

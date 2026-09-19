@@ -7,6 +7,7 @@ import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -163,19 +164,13 @@ class HomeGreetingHeader extends StatelessWidget {
                     PositionedDirectional(
                       start: controlHeight - 12,
                       top: controlHeight - 12,
-                      child: Container(
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: PeopleStatus.fromOwnAvailability(
-                            data.availability,
-                          ).foreground(palette),
-                          border: Border.all(
-                            color: palette.background,
-                            width: 2,
-                          ),
+                      child: AvailabilityDot(
+                        status: PeopleStatus.fromOwnAvailability(
+                          data.availability,
                         ),
+                        size: 12,
+                        borderColor: palette.background,
+                        borderWidth: 2,
                       ),
                     ),
                 ],

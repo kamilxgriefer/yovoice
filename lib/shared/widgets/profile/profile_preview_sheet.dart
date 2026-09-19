@@ -25,6 +25,7 @@ import 'package:yovoice/features/staff/presentation/widgets/user_actions_menu.da
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
@@ -1051,14 +1052,7 @@ class _PresenceDot extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: status.foreground(palette),
-          ),
-        ),
+        AvailabilityDot(status: status, size: 8, borderWidth: 0),
         const SizedBox(width: 5),
         Text(
           status.localizedLabel(copy),

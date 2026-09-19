@@ -23,6 +23,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/invite_to_room_sheet.dart';
 import 'package:yovoice/firebase_options.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
+import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';

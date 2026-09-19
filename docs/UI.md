@@ -315,6 +315,27 @@ rules a screen author needs.
   `test/yo_badge_live_test.dart`, `test/shared_component_accessibility_test.dart`
   (AA contrast of the paired roles), `test/server_podcast_test.dart`
   (taller than 26 px at 320 px / 200 %).
+- **Presence dot = `AvailabilityDot(status:)`**
+  (`lib/shared/widgets/profile/availability_dot.dart`). A filled circle in
+  `PeopleStatus.foreground(palette)` — the same ink `PeopleStatusAvatar`
+  paints as a ring — so `successForeground` online, `warningForeground` be
+  right back, `dangerForeground` do not disturb, `textTertiary` offline or
+  invisible, in both themes; never `AppColors.success` and never a second
+  grey. The caller owns the gate (hide when offline, or draw it grey — both
+  exist and both are kept per surface), the status (`PeopleStatus.fromPresence`
+  for others, `fromOwnAvailability` for the signed-in account), the
+  `Positioned` offset, the `size` (8–16 px on avatars) and the halo:
+  `borderColor` is the surface the avatar sits on (`background`, `surface`,
+  `surfaceRaised`, `surfaceSunken`) and `borderWidth` 0 draws a bare disc
+  (the profile preview's "● Dostępny" row). Defaults (10 px, `surfaceRaised`
+  1.5) are the availability picker's. One presence mark per avatar: a dot OR
+  a `PeopleStatusAvatar` ring, never both, and no dot where the source has no
+  presence (servers). The dot carries no semantics, tooltip or key of its
+  own — the row already says "name, online" — so keys pass through `key:`.
+  Contracts: `test/availability_dot_test.dart` (colours, defaults, halo, no
+  semantics), `test/people_status_ring_theme_test.dart` (the ring host holds
+  exactly one circle), `test/home_blocking_defects_test.dart` (own Start tile
+  is a dot, not a ring).
 
 ## Semantic colour ownership
 

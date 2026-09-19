@@ -12892,6 +12892,7 @@ already exists (no `YoLiveBadge`, no `YoStoryRingAvatar`, no `YoPresenceDot`).
 | State | One primitive | Migrated from (this phase) |
 | --- | --- | --- |
 | NA ŻYWO | `YoBadge(variant: YoBadgeVariant.live)` — `lib/shared/widgets/badges/yo_badge.dart`; on server surfaces through its keyed alias `ServerLivePill` (`servers/presentation/widgets/server_channel_scene.dart`) | `_MiniLivePill` and the `_MobileRoomCard` inline pill (`home/…/mobile/mobile_home_sections.dart`), `_LivePill` (`home/…/desktop/voice_trending_card.dart`), the inline pill in `home/…/live_now_hero.dart`, the live branch of `_StatusBadge` (`home/…/shared/home_room_board.dart`), `_LiveBadge` (`discover/…/hero_live_room.dart`), `_SmallLiveBadge` ×2 (`discover/…/discover_screen.dart`), `_LivePill` (`rooms/…/room_card.dart`), the inline pill in `CreatorStudioRoomsList` (`creator/…/creator_studio_screen.dart`), `ServerLivePill`'s own body and `_LiveDot` (`servers/…/server_panel.dart`) |
+| Obecność (dot) | `AvailabilityDot` — `lib/shared/widgets/profile/availability_dot.dart` (moved out of `availability_picker.dart`; colour = `PeopleStatus.foreground`, the ring's ink, so ring and dot share one source) | 10 sites in 8 files: `_PresenceDot`'s disc (`shared/widgets/profile/profile_preview_sheet.dart`), `YoAvatar.isOnline` (`shared/widgets/avatars/yo_avatar.dart`), the own-availability dot in `HomeGreetingHeader` (`home/…/shared/home_greeting_header.dart`), the presence dot in `HomeFriendTile` (`home/…/shared/home_friend_tile.dart`), the friend row (`friends/…/friends_screen.dart`), `_FriendStory`, `_ConversationAvatarState` and `_FriendTile` (`messages/…/messages_screen.dart`), the member tile (`clubs/…/club_overview_screen.dart`), the online dot of `MomentStoryTile` (`moments/…/moment_story_tile.dart`) |
 
 The live variant's spec (from the brief's Twitch section): `AppColors.live`
 fill, `AppColors.onLive` copy, `AppTypography.labelSmall` (10 px, height 1.2)
@@ -12903,6 +12904,37 @@ the controller is stopped and parked at 1 so no frame is scheduled (the same
 guard `HeroLiveRoom` uses), and the pulse replays when motion is allowed again. The label is rendered verbatim on one unwrapped
 line that elides; `icon` is ignored for this variant; the widget carries no key
 and no `semanticLabel` of its own.
+
+The presence dot's spec: a `Container` circle whose fill is
+`PeopleStatus.foreground(palette)` — `successForeground` online,
+`warningForeground` be right back, `dangerForeground` do not disturb,
+`textTertiary` offline / invisible — with an optional halo
+(`borderColor`, default `palette.surfaceRaised`; `borderWidth`, default 1.5,
+`0` for a bare disc). The brief named two duplicates (`_PresenceDot`,
+`YoAvatar.isOnline`); the inventory found ten, in eight files, drawing the
+same state with three different greens (`AppColors.success`,
+`palette.successForeground`, `PeopleStatus.foreground`) and two different
+greys (`navigationInactive`, `textTertiary`). The canonical could not serve
+them as it stood — it hard-coded the picker's `surfaceRaised` 1.5 halo while
+avatars need the halo in the colour of the surface they sit on (`background`,
+`surface`, `surfaceSunken`) at 2 or 3 px, and the preview sheet's disc has no
+halo at all — so it grew the two halo parameters with defaults that reproduce
+the picker exactly. The caller keeps its visibility gate (`if (isOnline)` in
+the Chats rail, conversation list, new-message sheet, `MomentStoryTile` and
+`YoAvatar`; always drawn, grey when offline, in `HomeFriendTile`, the Friends
+list and the member tile; `if (data != null)` in the greeting header;
+`if (status case final status?)` in the preview sheet), its status derivation
+(`fromPresence` for others, `fromOwnAvailability` for the account itself,
+`PeopleStatus.online` where the gate already proved online), its
+`Positioned` offset — including `HomeFriendTile`'s move to the top corner when
+the Voice badge owns the bottom one — its size (8 / 10 / 12 / 13 / 14 / 15 /
+16 / `size * .27` / the clamped tile dot) and every label `Text` and semantics
+string. One presence mark per avatar: a dot OR a `PeopleStatusAvatar` ring,
+never both — the rule `HomeFriendTile` documents and
+`test/home_blocking_defects_test.dart` (own tile: no `PeopleStatusAvatar`
+inside `HomePeopleStrip`) and `test/people_status_ring_theme_test.dart`
+(`.single` circle inside the ring host) enforce; ADR-150 is the presence
+decision this rule sits on, not its literal wording.
 
 Rules the phase-0 primitives follow, and every later phase inherits:
 
@@ -12966,6 +12998,57 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   cycles on appearance keep the "energy" the brief asks for without either
   cost; the assertions were not touched.
 
+### Consciously NOT built, NOT simplified (presence-dot family)
+
+- No `YoPresenceDot`; `AvailabilityDot` moved to its own file under the same
+  name so nothing that addressed it had to be renamed.
+- No caller was deleted and no gate changed. `YoAvatar` keeps `isOnline`
+  although nothing in `lib/` constructs it (only
+  `test/accessible_tap_region_test.dart`, without `isOnline`); its dot moved
+  to the canonical so the class stays truthful if it is ever mounted.
+- Two deliberate colour normalisations, both visible on Pearl: `YoAvatar`
+  and `MomentStoryTile` painted `AppColors.success` (`0xFF35D07F`, a fixed
+  bright green) and now paint `palette.successForeground` (`0xFF57D99A` Dark,
+  `0xFF08784E` Pearl) like every other online dot — brief rule 3 (palette
+  roles, not fixed hexes) and the same ink `PeopleStatusAvatar` already used
+  on those themes. The club member tile's offline dot moves from
+  `palette.navigationInactive` to `palette.textTertiary`, which is what
+  `PeopleStatus.away` has meant on every other surface; the subtitle text
+  "Online" / "Offline" next to it is untouched.
+- `MomentStoryTile`'s ring is untouched: ADR-147 makes the ring the listened
+  state from `MomentViewsService`, and the brief allows only its colours to
+  change. What migrated is the tile's *dot* (a separate element the strip
+  gates on `online && !showAdd`), so the tile still carries exactly one
+  presence mark and one ring.
+- No dot was added where the source has no presence. `ServerMember.isOnline`
+  is a model field rendered nowhere in servers presentation and stays that
+  way ("kropki obecności tam, gdzie źródło nie ma obecności" is on the
+  brief's rejected list); no dot entered `PeopleStatusAvatar`.
+- The primitive has no `Semantics`, no `Tooltip` and no key of its own:
+  `user_avatar.dart` documents that an extra node makes a screen reader say
+  "K, Kamil, online" per row, and every migrated caller already composes the
+  presence word into its own label (`'<name>, online'` in Chats,
+  `'You. Availability: X. Change'` on Start).
+- Offline still has a second source in TEXT, consciously left alone:
+  `chat_screen.dart` (`_presenceColor`), `friends_screen.dart`
+  (`_presenceColor`) and `friend_profile_screen.dart` (`_status`) colour the
+  *word* "Offline" with `palette.textSecondary`, not `PeopleStatus.away`'s
+  `textTertiary`. Those are label styles, not dots; folding them in would be
+  a text-contrast decision for the screens' own phases (Chats is phase 3,
+  Friends and the profile are phases 5–6), and it is recorded in
+  `docs/Bugs.md` so it is not mistaken for finished.
+- The picker (`AvailabilityChip`, `_AvailabilityOptions`) stays in
+  `availability_picker.dart`; only the dot moved. `HomeGreetingHeader` keeps
+  the bare dot, never the chip (`test/home_rhythm_test.dart` counts zero
+  `AvailabilityChip` there).
+- `_PresenceDot` in the preview sheet stays as a private row wrapper (disc +
+  localized status word) with no `online:` bool — the shape
+  `test/shared_localization_source_guard_test.dart` forbids — because the
+  sheet's tests pin the word next to the disc.
+- Inline hex avatar gradients that sit next to three of these dots
+  (`friends_screen.dart`, `messages_screen.dart`, `profile_preview_sheet.dart`)
+  belong to the avatar-ring family and were not touched here.
+
 ### Reasoning
 
 A marker that is drawn eleven ways cannot be restyled once, cannot be tested
@@ -12980,9 +13063,15 @@ contract in one place.
 
 - Every NA ŻYWO on a normal surface is the same pill in Dark and Pearl and
   goes still under Reduce Motion; restyling it again is a one-file change.
-- Later phases add rows to the table above (stories tile, presence dot,
-  waveform, section header, channel rows) rather than new ADRs, and record
-  their own "consciously not built" items under this heading.
+- Later phases add rows to the table above (stories tile, waveform, section
+  header, channel rows) rather than new ADRs, and record their own
+  "consciously not built" items under this heading; the presence dot's row
+  and list landed in this ADR's second commit.
+- Every presence dot in Dark and Pearl is now `PeopleStatus.foreground`
+  behind a caller-owned halo; restyling online / away / busy / offline is a
+  one-file change and cannot drift from the ring. `test/availability_dot_test.dart`
+  pins the four colours, the picker defaults and the halo contract in both
+  themes, plus the absence of semantics.
 - The live badge grew a dot and 8/3 padding on every server surface; the
   320 px / 200 % contracts (`server_podcast_test`, `server_community_test`,
   `server_independent_qa_layout_test`, `discover_light_theme_test`) still hold,

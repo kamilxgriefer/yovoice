@@ -9,6 +9,7 @@ import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/join_action_identity.dart';
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -320,14 +321,11 @@ class HomeFriendTile extends StatelessWidget {
           PositionedDirectional(
             start: discSize - dot,
             top: hasContent ? 0 : discSize - dot,
-            child: Container(
-              width: dot,
-              height: dot,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: status.foreground(palette),
-                border: Border.all(color: palette.background, width: 2),
-              ),
+            child: AvailabilityDot(
+              status: status,
+              size: dot,
+              borderColor: palette.background,
+              borderWidth: 2,
             ),
           ),
         ],

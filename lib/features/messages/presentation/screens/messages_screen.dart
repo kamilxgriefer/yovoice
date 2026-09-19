@@ -21,6 +21,8 @@ import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart'
 import 'package:yovoice/features/messages/presentation/widgets/delete_conversation_dialog.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
+import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
@@ -965,17 +967,11 @@ class _FriendStory extends StatelessWidget {
                     Positioned(
                       right: 2,
                       bottom: 2,
-                      child: Container(
-                        width: 15,
-                        height: 15,
-                        decoration: BoxDecoration(
-                          color: palette.successForeground,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: palette.background,
-                            width: 3,
-                          ),
-                        ),
+                      child: AvailabilityDot(
+                        status: PeopleStatus.online,
+                        size: 15,
+                        borderColor: palette.background,
+                        borderWidth: 3,
                       ),
                     ),
                 ],
@@ -1529,14 +1525,11 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
                   Positioned(
                     right: 1,
                     bottom: 1,
-                    child: Container(
-                      width: 16,
-                      height: 16,
-                      decoration: BoxDecoration(
-                        color: palette.successForeground,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: palette.background, width: 3),
-                      ),
+                    child: AvailabilityDot(
+                      status: PeopleStatus.online,
+                      size: 16,
+                      borderColor: palette.background,
+                      borderWidth: 3,
                     ),
                   ),
               ],
@@ -2024,14 +2017,11 @@ class _FriendTile extends StatelessWidget {
               Positioned(
                 right: 0,
                 bottom: 0,
-                child: Container(
-                  width: 14,
-                  height: 14,
-                  decoration: BoxDecoration(
-                    color: palette.successForeground,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: palette.surfaceRaised, width: 3),
-                  ),
+                child: AvailabilityDot(
+                  status: PeopleStatus.online,
+                  size: 14,
+                  borderColor: palette.surfaceRaised,
+                  borderWidth: 3,
                 ),
               ),
           ],
