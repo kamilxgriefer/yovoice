@@ -16,6 +16,14 @@ import 'package:yovoice/features/home/presentation/widgets/navigation/yo_preserv
 const _labels = ['Home', 'Servers', 'Chats', 'Moments', 'More'];
 const _serversTab = 13;
 Finder _target(int slot) => find.byKey(ValueKey('yo-destination-$slot'));
+Finder _glyph(int slot) => find.descendant(
+  of: _target(slot),
+  matching: slot == 3
+      ? find.byKey(const ValueKey<String>('yo-moments-frame-echo-clean'))
+      : find.byType(Icon),
+);
+Finder get _caption =>
+    find.byKey(const ValueKey('yo-meniscus-accessible-label'));
 Finder get _bead => find.byKey(const ValueKey('yo-meniscus-bead'));
 Finder get _dock => find.byKey(const ValueKey('yo-floating-navigation-dock'));
 bool _selected(WidgetTester tester, String label) => tester
@@ -976,6 +984,113 @@ void main() {
     expect(tester.takeException(), isNull);
     semantics.dispose();
   });
+  for (final locale in ['en', 'pl']) {
+    testWidgets(
+      'unselected tab centres the icon row in the tall 200% bar: $locale',
+      (tester) async {
+        final semantics = await _pumpDock(
+          tester,
+          // iPad Pro 13" portrait, the width the tablet audit ran at.
+          width: 1032,
+          height: 1376,
+          textScale: 2,
+          locale: Locale(locale),
+          initialSelected: 2,
+          reduceMotion: true,
+        );
+        // Friends owns no dock destination: no bead, no socket, no caption.
+        expect(_bead, findsNothing);
+        expect(_caption, findsNothing);
+        expect(_painter(tester).center, isNull);
+        final dock = tester.getRect(_dock);
+        expect(
+          dock.height,
+          greaterThan(YoFloatingNavigationDock.visualHeight + 40),
+          reason: '200% text must grow the bar, or this proves nothing.',
+        );
+        final bodyTop = dock.top + YoFloatingNavigationDock.bodyTop;
+        final bodyCenter = (bodyTop + dock.bottom) / 2;
+        for (var slot = 0; slot < 5; slot++) {
+          expect(
+            tester.getRect(_glyph(slot)).center.dy,
+            closeTo(bodyCenter, 1),
+            reason:
+                'Slot $slot must sit in the middle of the bar instead of '
+                'hanging under its top edge above a dead band.',
+          );
+          final tile = tester.getRect(_target(slot));
+          expect(tile.top, greaterThanOrEqualTo(bodyTop - .01));
+          expect(tile.bottom, lessThanOrEqualTo(dock.bottom + .01));
+        }
+        expect(tester.takeException(), isNull);
+        semantics.dispose();
+      },
+    );
+  }
+  testWidgets('compact dock keeps its icon row where it always was', (
+    tester,
+  ) async {
+    final semantics = await _pumpDock(
+      tester,
+      width: 1032,
+      height: 1376,
+      initialSelected: 2,
+      reduceMotion: true,
+    );
+    final dock = tester.getRect(_dock);
+    expect(dock.height, YoFloatingNavigationDock.visualHeight);
+    for (var slot = 0; slot < 5; slot++) {
+      expect(tester.getRect(_glyph(slot)).center.dy, closeTo(dock.top + 63, 1));
+    }
+    semantics.dispose();
+  });
+  for (final locale in ['en', 'pl', 'ar']) {
+    testWidgets(
+      'expanded caption names its own destination, not the middle: $locale',
+      (tester) async {
+        final semantics = await _pumpDock(
+          tester,
+          width: 1032,
+          height: 1376,
+          textScale: 2,
+          locale: Locale(locale),
+          reduceMotion: true,
+        );
+        final copy = AppLocalizations.of(tester.element(_dock));
+        final dock = tester.getRect(_dock);
+        void expectCaptionOwns(int slot) {
+          final rect = tester.getRect(_caption);
+          expect(
+            (rect.center.dx - tester.getCenter(_target(slot)).dx).abs(),
+            lessThan((rect.center.dx - tester.getCenter(_target(2)).dx).abs()),
+            reason:
+                'The caption must read as slot $slot label, not as a label '
+                'centred under the middle destination.',
+          );
+          expect(rect.left, greaterThanOrEqualTo(dock.left));
+          expect(rect.right, lessThanOrEqualTo(dock.right));
+          expect(rect.bottom, lessThanOrEqualTo(dock.bottom));
+        }
+
+        expect(tester.widget<Text>(_caption).data, copy.home);
+        expectCaptionOwns(0);
+        await tester.tap(_target(4));
+        await tester.pump();
+        expect(tester.widget<Text>(_caption).data, copy.more);
+        expectCaptionOwns(4);
+        // A caption whose own slot is the middle one still centres.
+        await tester.tap(_target(2));
+        await tester.pump();
+        expect(tester.widget<Text>(_caption).data, copy.chats);
+        expect(
+          tester.getRect(_caption).center.dx,
+          closeTo(tester.getCenter(_target(2)).dx, 1),
+        );
+        expect(tester.takeException(), isNull);
+        semantics.dispose();
+      },
+    );
+  }
 
   testWidgets(
     'reduced motion enabled during drag cancels preview without navigating',

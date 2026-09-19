@@ -73,6 +73,12 @@ class HomeSectionHeader extends StatelessWidget {
   static const double _labelLineHeight = 1.2;
   static const double _liveDot = 6;
 
+  /// The trailing action's own chrome, shared by the button below and by the
+  /// arrangement measurement so the two can never drift: the gap between the
+  /// label and the chevron, and the button's horizontal padding per side.
+  static const double _actionLabelGap = 2;
+  static const double _actionPadding = 8;
+
   bool get _compact => scale == HomeSectionHeaderScale.compact;
 
   double get _titleSize => _compact ? 17 : 19;
@@ -91,6 +97,57 @@ class HomeSectionHeader extends StatelessWidget {
         context,
       ).scale(scale == HomeSectionHeaderScale.compact ? 17 : 19) *
       _titleLineHeight;
+
+  /// The width the arrangement test is answered against: the widest "View
+  /// all" the page can carry, NOT the one this heading happens to carry.
+  ///
+  /// Home's action vocabulary is not one string. Polish declines the object
+  /// of "see all" — "Zobacz wszystkich" for people, "Zobacz wszystkie" for
+  /// places and servers — and the two land on opposite sides of the
+  /// third-of-the-row threshold over a band of widths (the reported case: a
+  /// 1032 pt window at 200 % text, where "Twoi znajomi" pushed its action
+  /// onto a second row while "W Twoich serwerach" and "Ostatnie czaty" kept
+  /// theirs on the heading line). Measuring the vocabulary rather than the
+  /// instance makes every heading on the page answer the test identically,
+  /// which is the invariant `docs/UI.md` states.
+  double _arrangementActionWidth(
+    BuildContext context,
+    TextScaler scaler,
+    Iterable<String> vocabulary,
+  ) {
+    final theme = Theme.of(context);
+    // How the button's own label resolves: `TextButton` has no textStyle in
+    // this app's theme, so its `DefaultTextStyle` is `labelLarge`, and the
+    // `Text` below merges its size/weight/height onto it. Measuring with the
+    // same base keeps the family and letter spacing honest.
+    final base =
+        theme.textButtonTheme.style?.textStyle?.resolve(const <WidgetState>{}) ??
+        theme.textTheme.labelLarge ??
+        const TextStyle();
+    final style = base.copyWith(
+      fontSize: _labelSize,
+      height: _labelLineHeight,
+      fontWeight: FontWeight.w700,
+    );
+    final textDirection = Directionality.of(context);
+    var widestLabel = 0.0;
+    for (final label in vocabulary) {
+      final painter = TextPainter(
+        text: TextSpan(text: label, style: style),
+        textDirection: textDirection,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      widestLabel = math.max(widestLabel, painter.width);
+      painter.dispose();
+    }
+    // The chevron does not follow the text scaler (no `applyTextScaling` in
+    // this theme), which is why `actionInk` below compares against it raw.
+    return math.max(
+      AppSizing.minimumTouchTarget,
+      widestLabel + _actionLabelGap + _chevronSize + 2 * _actionPadding,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -159,6 +216,7 @@ class HomeSectionHeader extends StatelessWidget {
         actionGap: AppRhythm.tight,
         actionInkInset: 0,
         mayStack: false,
+        arrangementActionWidth: 0,
         children: [titleRow],
       );
     }
@@ -169,6 +227,10 @@ class HomeSectionHeader extends StatelessWidget {
     final labelInk = scaler.scale(_labelSize) * _labelLineHeight;
     final actionInk = math.max(labelInk, _chevronSize);
     final actionBox = math.max(AppSizing.minimumTouchTarget, actionInk);
+
+    // The neutral label every caller that passes none renders. It is part of
+    // the page's vocabulary even when this heading overrides it.
+    final neutralSeeAll = copy.text('View all', 'Zobacz wszystkie');
 
     final viewAll = TextButton(
       key: seeAllKey,
@@ -186,7 +248,7 @@ class HomeSectionHeader extends StatelessWidget {
         // Pinned: the ambient platform density would otherwise shave 8 px
         // off the target on a desktop build.
         visualDensity: VisualDensity.standard,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        padding: const EdgeInsets.symmetric(horizontal: _actionPadding),
         foregroundColor: palette.interactiveForeground,
       ),
       child: Row(
@@ -198,7 +260,7 @@ class HomeSectionHeader extends StatelessWidget {
           // still wraps and never ellipsises.
           Flexible(
             child: Text(
-              seeAllLabel ?? copy.text('View all', 'Zobacz wszystkie'),
+              seeAllLabel ?? neutralSeeAll,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -208,7 +270,7 @@ class HomeSectionHeader extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 2),
+          const SizedBox(width: _actionLabelGap),
           Icon(Icons.chevron_right_rounded, size: _chevronSize),
         ],
       ),
@@ -220,6 +282,13 @@ class HomeSectionHeader extends StatelessWidget {
       actionGap: AppRhythm.tight,
       actionInkInset: (actionBox - actionInk) / 2,
       mayStack: mayStack,
+      // Deliberately the whole vocabulary and not `seeAllLabel`: a heading
+      // may not decide the page's arrangement from its own wording.
+      arrangementActionWidth: _arrangementActionWidth(context, scaler, {
+        copy.homeSeeAll,
+        copy.homeSeeAllPeople,
+        neutralSeeAll,
+      }),
       children: [titleRow, viewAll],
     );
   }
@@ -235,6 +304,7 @@ class _SectionHeaderLayout extends MultiChildRenderObjectWidget {
     required this.actionGap,
     required this.actionInkInset,
     required this.mayStack,
+    required this.arrangementActionWidth,
     required super.children,
   });
 
@@ -251,6 +321,10 @@ class _SectionHeaderLayout extends MultiChildRenderObjectWidget {
   /// actually goes there is decided during layout, from the width.
   final bool mayStack;
 
+  /// The width the arrangement test is answered against — a page constant,
+  /// not this action's rendered width. Placement still uses the real one.
+  final double arrangementActionWidth;
+
   @override
   RenderObject createRenderObject(BuildContext context) => _RenderSectionHeader(
     topGap: topGap,
@@ -258,6 +332,7 @@ class _SectionHeaderLayout extends MultiChildRenderObjectWidget {
     actionGap: actionGap,
     actionInkInset: actionInkInset,
     mayStack: mayStack,
+    arrangementActionWidth: arrangementActionWidth,
     textDirection: Directionality.of(context),
   );
 
@@ -272,6 +347,7 @@ class _SectionHeaderLayout extends MultiChildRenderObjectWidget {
       ..actionGap = actionGap
       ..actionInkInset = actionInkInset
       ..mayStack = mayStack
+      ..arrangementActionWidth = arrangementActionWidth
       ..textDirection = Directionality.of(context);
   }
 }
@@ -288,12 +364,14 @@ class _RenderSectionHeader extends RenderBox
     required double actionGap,
     required double actionInkInset,
     required bool mayStack,
+    required double arrangementActionWidth,
     required TextDirection textDirection,
   }) : _topGap = topGap,
        _bottomGap = bottomGap,
        _actionGap = actionGap,
        _actionInkInset = actionInkInset,
        _mayStack = mayStack,
+       _arrangementActionWidth = arrangementActionWidth,
        _textDirection = textDirection;
 
   double _topGap;
@@ -336,17 +414,31 @@ class _RenderSectionHeader extends RenderBox
     markNeedsLayout();
   }
 
+  double _arrangementActionWidth;
+  double get arrangementActionWidth => _arrangementActionWidth;
+  set arrangementActionWidth(double value) {
+    if (_arrangementActionWidth == value) return;
+    _arrangementActionWidth = value;
+    markNeedsLayout();
+  }
+
   /// Whether the action actually moves under the title.
   ///
   /// The test is what the ACTION costs the row, not what the title happens
-  /// to say: every heading on a page carries the same "View all", so this
-  /// answers the same way for all of them and a page never mixes the two
-  /// arrangements. A trailing control that wants more than a third of the
-  /// row has stopped being trailing — that is the phone at 200 % text, and
-  /// it stacks exactly as it does today. A 768 px slate or a 1440 px
-  /// desktop at the same text scale has room to spare, and there the action
-  /// stays on its heading's line instead of being pushed a full row width
-  /// away from the words it belongs to.
+  /// to say. A trailing control that wants more than a third of the row has
+  /// stopped being trailing — that is the phone at 200 % text, and it stacks
+  /// exactly as it does today. A 768 px slate or a 1440 px desktop at the
+  /// same text scale has room to spare, and there the action stays on its
+  /// heading's line instead of being pushed a full row width away from the
+  /// words it belongs to.
+  ///
+  /// The width fed in is [arrangementActionWidth]: the widest "View all" the
+  /// PAGE can carry, never the one this heading renders. Headings on one page
+  /// do not all carry the same string — Polish declines the object, "Zobacz
+  /// wszystkich" for people against "Zobacz wszystkie" for places — and
+  /// answering from the rendered label let one heading stack while its
+  /// neighbours did not. Asking the same question of the same number is what
+  /// keeps a page from mixing the two arrangements.
   static const double _actionShareOfRow = 1 / 3;
 
   bool _stacksAt(double maxWidth, double actionWidth) {
@@ -383,7 +475,10 @@ class _RenderSectionHeader extends RenderBox
     if (action != null) {
       actionSize = layoutChild(action, BoxConstraints(maxWidth: childMaxWidth));
     }
-    final stacked = action != null && _stacksAt(maxWidth, actionSize.width);
+    // Verdict from the page constant; `reserve` and placement below still
+    // use the action's REAL size, so the 24 / titleInk / 16 rhythm is
+    // untouched.
+    final stacked = action != null && _stacksAt(maxWidth, arrangementActionWidth);
     final reserve = (action == null || stacked)
         ? 0.0
         : actionSize.width + actionGap;
@@ -484,8 +579,8 @@ class _RenderSectionHeader extends RenderBox
     if (action == null) {
       return topGap + _title.getMaxIntrinsicHeight(width) + bottomGap;
     }
-    final actionWidth = action.getMaxIntrinsicWidth(double.infinity);
-    if (!_stacksAt(width, actionWidth)) {
+    if (!_stacksAt(width, arrangementActionWidth)) {
+      final actionWidth = action.getMaxIntrinsicWidth(double.infinity);
       final beside = math.max(0.0, width - actionWidth - actionGap);
       return topGap + _title.getMaxIntrinsicHeight(beside) + bottomGap;
     }

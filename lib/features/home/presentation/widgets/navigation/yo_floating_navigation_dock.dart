@@ -10,6 +10,10 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_moments_icon.dart';
 
+/// Resting icon geometry inside a destination tile. The dock centres that row
+/// when no bead anchors it, so both places must read the same numbers.
+const _destinationIconTop = 51.0, _destinationIconSize = 24.0;
+
 /// One moving bead and concave socket. Drag previews paint only; release
 /// requests one destination and the shell remains authoritative.
 class YoFloatingNavigationDock extends StatefulWidget {
@@ -85,6 +89,8 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
   static const _expandedLabelTop = 88.0;
   static const _expandedLabelBottom = 6.0;
   static const _expandedLabelInset = 16.0;
+  static const _restingIconCenter =
+      _destinationIconTop + _destinationIconSize / 2;
   static const _spring = SpringDescription(
     mass: 1,
     stiffness: 230,
@@ -378,6 +384,46 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
                                             : _position.velocity *
                                                   (rtl ? -1 : 1));
                                   final color = _beadColor(position);
+                                  // Anchor the caption under the destination
+                                  // it names. The band stays full width —
+                                  // expandedLabelHeight reserves height
+                                  // against that width — so a caption that
+                                  // fills it still centres, while a short one
+                                  // slides to its own slot instead of naming
+                                  // whichever destination sits in the middle.
+                                  final captionX = shown == null
+                                      ? 0.0
+                                      : ((centerFor(shown.toDouble()) -
+                                                    width / 2) /
+                                                math.max(
+                                                  1.0,
+                                                  width / 2 -
+                                                      _expandedLabelInset,
+                                                ))
+                                            .clamp(-1.0, 1.0);
+                                  // With nothing selected the painter draws
+                                  // neither bead nor socket, so the tiles have
+                                  // nothing to align to and large text leaves
+                                  // them pinned under the top edge of a much
+                                  // taller bar. Centre the resting icon row in
+                                  // the bar body in that state only.
+                                  final destinationTop =
+                                      expanded && _acceptedSlot == null
+                                      ? ((YoFloatingNavigationDock.bodyTop +
+                                                        height) /
+                                                    2 -
+                                                _restingIconCenter)
+                                            .clamp(
+                                              0.0,
+                                              math.max(
+                                                0.0,
+                                                height -
+                                                    YoFloatingNavigationDock
+                                                        .visualHeight,
+                                              ),
+                                            )
+                                            .toDouble()
+                                      : 0.0;
                                   final selectedInk =
                                       color.computeLuminance() > .179
                                       ? AppColors.contrastInk
@@ -472,9 +518,10 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
                                           left:
                                               centerFor(slot.toDouble()) -
                                               math.max(48, step) / 2,
-                                          top: 0,
+                                          top: destinationTop,
                                           width: math.max(48, step),
-                                          height: 92,
+                                          height: YoFloatingNavigationDock
+                                              .visualHeight,
                                           child: KeyedSubtree(
                                             key: widget
                                                 .tourDestinationKeys?[slot],
@@ -521,7 +568,11 @@ class _YoFloatingNavigationDockState extends State<YoFloatingNavigationDock>
                                           bottom: _expandedLabelBottom,
                                           child: IgnorePointer(
                                             child: ExcludeSemantics(
-                                              child: Center(
+                                              child: Align(
+                                                alignment: Alignment(
+                                                  captionX,
+                                                  0,
+                                                ),
                                                 child: Text(
                                                   labels[shown],
                                                   key: const ValueKey(
@@ -734,7 +785,7 @@ class _MeniscusDestinationState extends State<_MeniscusDestination> {
       2 => Icons.chat_bubble_outline_rounded,
       _ => Icons.tune_rounded,
     };
-    final top = 51 - 35 * widget.lift;
+    final top = _destinationIconTop - 35 * widget.lift;
     final slot = widget.slot;
     return FocusTraversalOrder(
       order: NumericFocusOrder(slot.toDouble()),
@@ -782,7 +833,7 @@ class _MeniscusDestinationState extends State<_MeniscusDestination> {
                   top: top,
                   left: 0,
                   right: 0,
-                  height: 24,
+                  height: _destinationIconSize,
                   child: Center(
                     child: slot == 3
                         ? YoMomentsIcon(

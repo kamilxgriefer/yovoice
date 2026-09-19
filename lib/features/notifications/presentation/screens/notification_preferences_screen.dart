@@ -421,11 +421,11 @@ class _PreferenceRow extends StatelessWidget {
               ),
             )
           else
-            Switch.adaptive(
-              value: value,
-              onChanged: onChanged,
-              activeThumbColor: colors.primary,
-            ),
+            // No activeThumbColor override: the theme's switchTheme already
+            // paints the selected thumb with colorScheme.onPrimary against the
+            // primary track. Forcing the thumb to primary made it vanish into
+            // the track, so an ON switch read as a solid lozenge.
+            Switch.adaptive(value: value, onChanged: onChanged),
         ],
       ),
     );

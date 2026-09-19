@@ -1,9 +1,13 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:cloud_firestore/cloud_firestore.dart' hide Type;
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -31,7 +35,20 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 
+import 'support/material_icons_font.dart';
 import 'voice_moment_test_doubles.dart';
+
+/// Opt-in rendered proof for the arrangement invariant, off in CI. The
+/// assertions below never need it — they are font-independent — but a layout
+/// claim wants real painted pixels in real Inter, and the straddle band only
+/// sits where the owner saw it (1032 pt) under the real font.
+///   flutter test test/home_rhythm_test.dart \
+///     --dart-define=YO_CAPTURE_HOME_ARRANGEMENT=true
+const _captureArrangement = bool.fromEnvironment(
+  'YO_CAPTURE_HOME_ARRANGEMENT',
+);
+final _arrangementBoundary = GlobalKey();
+final _pageBoundary = GlobalKey();
 
 /// THE rhythm regression for Home.
 ///
@@ -152,6 +169,17 @@ void main() {
         'archivedBy': <String>[],
         'mutedBy': <String>[],
       });
+
+  setUpAll(() async {
+    if (!_captureArrangement) return;
+    // Loaded ONLY for the capture: the stub test font has different advance
+    // widths, and swapping it in for the whole suite would move every
+    // wrapping assertion above.
+    await (FontLoader(
+      'Inter',
+    )..addFont(rootBundle.load('assets/fonts/InterVariable.ttf'))).load();
+    await loadMaterialIconsFont();
+  });
 
   setUp(() async {
     ProfileService.resetCurrentProfileCache();
@@ -366,9 +394,11 @@ void main() {
     // reader's text preference: a phone at 200 % stacks (it always has),
     // and a slate or a desktop at the same scale keeps the action on its
     // heading's line instead of pushing it a full row away from the words
-    // it belongs to. It answers the same for every heading on a page,
-    // because they all carry the same "View all" — a page never mixes the
-    // two arrangements.
+    // it belongs to. It answers the same for every heading on a page —
+    // not because they all carry the same string (Polish declines the
+    // object: "Zobacz wszystkich" for people against "Zobacz wszystkie"
+    // for places), but because the test is answered against the widest
+    // label the page can carry. A page never mixes the two arrangements.
     for (final (label, width, scale, expectStacked) in const [
       ('a 320 phone at 200 %', 320.0, 2.0, true),
       ('a 390 phone at 200 %', 390.0, 2.0, true),
@@ -433,6 +463,176 @@ void main() {
       });
     }
 
+    // The invariant itself, and the regression that motivated it: at 1032 pt
+    // with 200 % text "Twoi znajomi" pushed its "Zobacz wszystkich" onto a
+    // second, right-aligned row while "W Twoich serwerach" and "Ostatnie
+    // czaty" kept "Zobacz wszystkie" on the heading line — one page, both
+    // arrangements. The assertion below is font-independent on purpose: it
+    // never claims WHICH way a width answers, only that every heading on the
+    // page answers it the same way, so it holds under the stub test font and
+    // under real Inter alike. The sweep steps finely enough (16 pt) to land
+    // inside the straddle band wherever the active font puts it — the band is
+    // three times the width of one Polish glyph at 200 % text, ~37 pt.
+    for (final headerScale in HomeSectionHeaderScale.values) {
+      testWidgets(
+        '${headerScale.name}: every heading on a page picks the same '
+        'arrangement, whichever "View all" it declines',
+        (tester) async {
+          const copy = AppLocalizations(Locale('pl'));
+          final widths = <double>{
+            for (var w = 320.0; w <= 1456.0; w += 16) w,
+            430,
+            834,
+            1032,
+          }.toList()..sort();
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+
+          bool stackedIn(Key key) {
+            final header = find.byKey(key);
+            final title = tester.getRect(
+              find
+                  .descendant(of: header, matching: find.byType(Text))
+                  .first,
+            );
+            final action = tester.getRect(
+              find.descendant(of: header, matching: find.byType(TextButton)),
+            );
+            return action.top >= title.bottom - 0.5;
+          }
+
+          for (final width in widths) {
+            tester.view.physicalSize = Size(width, 2400);
+            await tester.pumpWidget(
+              app(
+                Align(
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(
+                    width: width,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        HomeSectionHeader(
+                          key: const ValueKey('people'),
+                          title: copy.homeYourPeople,
+                          scale: headerScale,
+                          seeAllLabel: copy.homeSeeAllPeople,
+                          onSeeAll: () {},
+                        ),
+                        HomeSectionHeader(
+                          key: const ValueKey('servers'),
+                          title: copy.homeInYourServers,
+                          scale: headerScale,
+                          seeAllLabel: copy.homeSeeAll,
+                          onSeeAll: () {},
+                        ),
+                        HomeSectionHeader(
+                          key: const ValueKey('chats'),
+                          title: 'Ostatnie czaty',
+                          scale: headerScale,
+                          onSeeAll: () {},
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                size: Size(width, 2400),
+                textScale: 2,
+                locale: const Locale('pl'),
+                padding: EdgeInsets.zero,
+              ),
+            );
+            await tester.pump();
+            final people = stackedIn(const ValueKey('people'));
+            expect(
+              stackedIn(const ValueKey('servers')),
+              people,
+              reason:
+                  '"Zobacz wszystkich" and "Zobacz wszystkie" arranged '
+                  'differently at ${width.toInt()} pt '
+                  '(${headerScale.name}, 200 % text)',
+            );
+            expect(
+              stackedIn(const ValueKey('chats')),
+              people,
+              reason:
+                  'the neutral "View all" arranged differently from the '
+                  'people heading at ${width.toInt()} pt '
+                  '(${headerScale.name}, 200 % text)',
+            );
+            expect(tester.takeException(), isNull);
+          }
+        },
+      );
+    }
+
+    testWidgets(
+      'capture: the three Home headings at 1032 pt, Polish, 200 % text',
+      (tester) async {
+        if (!_captureArrangement) return;
+        const copy = AppLocalizations(Locale('pl'));
+        const width = 1032.0;
+        const height = 460.0;
+        // MobileHome's own arithmetic at a 1032 pt window: the content is
+        // clamped to ResponsiveContentWidth.list (880) and inset by the
+        // medium gutter (24), so every heading is laid out in an 832 pt box.
+        // That box, not the window, is what the arrangement test measures.
+        const margin = (width - 880) / 2 + AppRhythm.section;
+        tester.view.physicalSize = const Size(width, height);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          app(
+            RepaintBoundary(
+              key: _arrangementBoundary,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: margin),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    HomeSectionHeader(
+                      title: copy.homeYourPeople,
+                      seeAllLabel: copy.homeSeeAllPeople,
+                      onSeeAll: () {},
+                    ),
+                    HomeSectionHeader(
+                      title: copy.homeInYourServers,
+                      seeAllLabel: copy.homeSeeAll,
+                      onSeeAll: () {},
+                    ),
+                    HomeSectionHeader(
+                      title: 'Ostatnie czaty',
+                      onSeeAll: () {},
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            size: const Size(width, height),
+            textScale: 2,
+            locale: const Locale('pl'),
+            padding: EdgeInsets.zero,
+          ),
+        );
+        await tester.pump();
+        await tester.runAsync(() async {
+          final boundary =
+              _arrangementBoundary.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
+          final image = await boundary.toImage(pixelRatio: 2);
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          final file = File(
+            'test/.screenshots/home-arrangement-1032-pl-200.png',
+          );
+          await file.parent.create(recursive: true);
+          await file.writeAsBytes(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+      },
+    );
+
     testWidgets('the box height does not change when View all appears', (
       tester,
     ) async {
@@ -470,6 +670,45 @@ void main() {
   });
 
   // ----------------------------------------------------- the composition
+  // The same proof on the real page rather than on three headings in a box:
+  // a populated MobileHome at the window the owner photographed. Opt-in,
+  // because it needs the real font.
+  testWidgets(
+    'capture: a populated mobile Home at 1032 pt, Polish, 200 % text',
+    (tester) async {
+      if (!_captureArrangement) return;
+      const size = Size(1032, 2600);
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await seedRoom('r1', 'Evening Talks');
+      await seedRoom('r2', 'Night Shift');
+      await seedFriend('friend-a', 'Ada');
+      await seedFriend('friend-b', 'Marek');
+      await seedConversation('c1', 'Ada');
+      await tester.pumpWidget(
+        app(
+          RepaintBoundary(key: _pageBoundary, child: mobileHome()),
+          size: size,
+          textScale: 2,
+          locale: const Locale('pl'),
+        ),
+      );
+      await settle(tester);
+      await tester.runAsync(() async {
+        final boundary =
+            _pageBoundary.currentContext!.findRenderObject()!
+                as RenderRepaintBoundary;
+        final image = await boundary.toImage(pixelRatio: 1);
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        final file = File('test/.screenshots/home-page-1032-pl-200.png');
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(bytes!.buffer.asUint8List());
+        image.dispose();
+      });
+    },
+  );
+
 
   for (final width in const [320.0, 390.0, 430.0, 768.0]) {
     for (final textScale in const [1.0, 2.0]) {

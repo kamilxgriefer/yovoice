@@ -496,7 +496,13 @@ class _MoreSheetState extends State<MoreSheet> {
         destination: MoreDestination.findCreators,
         icon: Icons.person_search_rounded,
         label: copy.findCreators,
-        subtitle: copy.text('People to follow', 'Osoby warte obserwowania'),
+        // The launcher tile is the narrowest place this subtitle appears —
+        // ~110dp on a 392dp phone, less on a 360dp one. "Osoby warte
+        // obserwowania" (which the roomier desktop popover keeps) needs a
+        // third line there once text is enlarged; this says the same thing
+        // in two. The English key is unchanged, so every other locale reads
+        // the same catalog phrase it always did.
+        subtitle: copy.text('People to follow', 'Warto obserwować'),
       ),
       _MoreEntry(
         destination: MoreDestination.notifications,
@@ -597,12 +603,25 @@ class _MoreSheetState extends State<MoreSheet> {
                         builder: (context, constraints) {
                           final scaler = MediaQuery.textScalerOf(context);
                           final textScale = scaler.scale(14) / 14;
+                          final columns = constraints.maxWidth < 480 ? 2 : 3;
+                          // Roughly what a tile gives its words: the cell,
+                          // less the 8+8 padding, the 34 icon and the 8 gap
+                          // beside it (the 1dp border either side is slack).
+                          // On a 320dp phone that is ~74dp, which a two-line
+                          // enlarged title cannot use — the answer there is
+                          // the full width of the sheet, not a narrower
+                          // column.
+                          final labelWidth =
+                              (constraints.maxWidth - 8 * (columns - 1)) /
+                                  columns -
+                              58;
 
                           // A dense launcher grid fits every ordinary action in
                           // the first expanded phone view. Enlarged text switches
                           // to intrinsic full-width rows instead of making fixed
                           // grid cells taller and narrower at the same time.
-                          if (textScale > 1.3) {
+                          if (textScale > 1.3 ||
+                              labelWidth < scaler.scale(14) * 5) {
                             return Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -625,33 +644,93 @@ class _MoreSheetState extends State<MoreSheet> {
                             );
                           }
 
-                          final usesTwoColumns = constraints.maxWidth < 480;
+                          final rowSpacing = isVeryNarrow ? 6.0 : 8.0;
 
-                          return GridView.count(
-                            crossAxisCount: usesTwoColumns ? 2 : 3,
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            mainAxisSpacing: isVeryNarrow ? 6 : 8,
-                            crossAxisSpacing: 8,
-                            // Compact rows keep the visible product destinations
-                            // in the first owner view on a 390x844 phone while
-                            // preserving a comfortable 44px+ touch target.
-                            mainAxisExtent: 62,
-                            children: [
-                              // Moments took the dock slot Friends held, so
-                              // Friends takes the grid slot Moments held — a
-                              // 1:1 swap without changing the route contract.
-                              // Friends also remains primary tab index 2 with
-                              // its state alive, and one tap from Home's
-                              // "Your circle".
-                              for (final entry in productEntries)
-                                _MoreTile(
-                                  destination: entry.destination,
-                                  icon: entry.icon,
-                                  label: entry.label,
-                                  subtitle: entry.subtitle,
-                                  isLocked: entry.isLocked,
+                          // Rows of equal-height tiles rather than a grid of
+                          // fixed-extent cells. A fixed 62dp cell could only
+                          // ever show one line per label, which clipped
+                          // "Znajdź twórców", "Osoby warte obserwowania" and
+                          // "Powiadomienia" on a 392dp phone — and any cell
+                          // tall enough for two lines at 1.3x text would be
+                          // mostly empty at 1x. Each row now takes the height
+                          // its own tallest tile asks for; `_MoreTile` keeps
+                          // the compact 62dp launcher density as its minimum
+                          // and a 44px+ touch target with it. IntrinsicHeight
+                          // plus a stretched cross axis keeps the tiles in a
+                          // row the same height, exactly as the grid did.
+                          //
+                          // Moments took the dock slot Friends held, so
+                          // Friends takes the grid slot Moments held — a 1:1
+                          // swap without changing the route contract. Friends
+                          // also remains primary tab index 2 with its state
+                          // alive, and one tap from Home's "Your circle".
+                          final rows = <Widget>[];
+                          for (
+                            var start = 0;
+                            start < productEntries.length;
+                            start += columns
+                          ) {
+                            rows.add(
+                              IntrinsicHeight(
+                                child: Row(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    for (
+                                      var column = 0;
+                                      column < columns;
+                                      column++
+                                    ) ...[
+                                      if (column > 0) const SizedBox(width: 8),
+                                      Expanded(
+                                        child:
+                                            start + column <
+                                                productEntries.length
+                                            ? _MoreTile(
+                                                destination:
+                                                    productEntries[start +
+                                                            column]
+                                                        .destination,
+                                                icon:
+                                                    productEntries[start +
+                                                            column]
+                                                        .icon,
+                                                label:
+                                                    productEntries[start +
+                                                            column]
+                                                        .label,
+                                                subtitle:
+                                                    productEntries[start +
+                                                            column]
+                                                        .subtitle,
+                                                isLocked:
+                                                    productEntries[start +
+                                                            column]
+                                                        .isLocked,
+                                              )
+                                            // The last row of an odd count
+                                            // keeps its column width instead
+                                            // of stretching the final tile.
+                                            : const SizedBox.shrink(),
+                                      ),
+                                    ],
+                                  ],
                                 ),
+                              ),
+                            );
+                          }
+
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              for (
+                                var index = 0;
+                                index < rows.length;
+                                index++
+                              ) ...[
+                                if (index > 0) SizedBox(height: rowSpacing),
+                                rows[index],
+                              ],
                             ],
                           );
                         },
@@ -812,6 +891,10 @@ class _MoreTile extends StatelessWidget {
           onTap: open,
           borderRadius: BorderRadius.circular(16),
           child: Container(
+            // The launcher's compact density, as a floor rather than a fixed
+            // height: short labels keep the 62dp row the grid always drew and
+            // a comfortable 44px+ touch target, longer ones grow the row.
+            constraints: const BoxConstraints(minHeight: 62),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
@@ -836,9 +919,15 @@ class _MoreTile extends StatelessWidget {
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // Two lines each: the tile column is ~110dp wide on
+                          // a 392dp phone, which is narrower than "Znajdź
+                          // twórców", "Powiadomienia" or "Osoby warte
+                          // obserwowania" — and narrower still on a 360dp one
+                          // or at 1.3x text. The row grows to hold them; the
+                          // ellipsis stays as the bound for a longer locale.
                           Text(
                             label,
-                            maxLines: 1,
+                            maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: palette.textPrimary,
@@ -849,7 +938,7 @@ class _MoreTile extends StatelessWidget {
                           const SizedBox(height: 1),
                           Text(
                             subtitle,
-                            maxLines: 1,
+                            maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: palette.textSecondary,
