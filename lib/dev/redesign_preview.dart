@@ -83,6 +83,7 @@ import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/models/server_channel.dart';
 import 'package:yovoice/features/servers/data/models/server_creation.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_service.dart';
@@ -1744,7 +1745,8 @@ Widget _still(BuildContext context, Uri mediaUri, Reel reel) {
 /// mobile compositions exercise the production hierarchy without contacting
 /// Firebase.
 class _PreviewServerRepository implements ServerRepository {
-  _PreviewServerRepository({required _State state, required bool longNames}) {
+  _PreviewServerRepository({required _State state, required bool longNames})
+    : _state = state {
     _items = <Server>[
       Server(
         id: 'preview-friends',
@@ -1856,6 +1858,32 @@ class _PreviewServerRepository implements ServerRepository {
     );
     _servers.add(List<Server>.unmodifiable(_items));
     return result;
+  }
+
+  final _State _state;
+
+  /// Channel lists for Start's "Na żywo teraz" (Slim phase 1). Only the
+  /// populated fixture has a live stage, with a start instant 25 minutes ago;
+  /// every other state lists quiet channels, so the section stays absent.
+  @override
+  Stream<List<ServerChannel>> watchChannels(String serverId) {
+    final live = _state == _State.populated && serverId == 'preview-podcast';
+    return Stream<List<ServerChannel>>.value([
+      ServerChannel(
+        id: serverId == 'preview-podcast' ? 'studio' : 'lounge',
+        serverId: serverId,
+        name: serverId == 'preview-podcast' ? 'Studio na żywo' : 'Salon',
+        kind: serverId == 'preview-podcast'
+            ? ServerChannelKind.stage
+            : ServerChannelKind.voice,
+        liveness: live
+            ? ServerChannelLiveness(
+                isLive: true,
+                startedAt: DateTime.now().subtract(const Duration(minutes: 25)),
+              )
+            : ServerChannelLiveness.idle,
+      ),
+    ]);
   }
 
   Future<void> dispose() => _servers.close();

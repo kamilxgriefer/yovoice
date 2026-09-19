@@ -15,6 +15,7 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_greeting_header.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_live_now.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_record_moment_card.dart';
@@ -362,6 +363,26 @@ class _MobileHomeState extends State<MobileHome> {
               onOpenVoice: widget.onOpenChain,
               onRetry: _retryFriends,
               onSeeAll: widget.onOpenFriends,
+            ),
+          ),
+          // Slim phase 1: live channels of the viewer's own servers, only
+          // when a channel document says live. Absent otherwise.
+          _Rail(
+            frameInset: frameInset,
+            child: HomeLiveNowSection(
+              servers: serverSnapshot.hasError
+                  ? const <Server>[]
+                  : serverSnapshot.data ?? const <Server>[],
+              repository: _serverRepository,
+              onOpenServer: (server) {
+                final openServer = widget.onOpenServer;
+                if (openServer != null) {
+                  openServer(server);
+                } else {
+                  _openServers();
+                }
+              },
+              horizontalPadding: gutter,
             ),
           ),
           _Gutter(

@@ -360,62 +360,20 @@ class _ServerLoadingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
-    // A still skeleton in the continue card's own shape, so nothing jumps
-    // when the directory lands. No shimmer: it is decoration, and a
-    // perpetual animation would also hold Reduce Motion readers hostage.
-    Widget bar(double width, double height) => Container(
-      width: width,
-      height: height,
-      decoration: BoxDecoration(
-        color: palette.surfaceRaised,
-        borderRadius: AppRadius.pill,
-      ),
-    );
     return Semantics(
       label: copy.text('Loading servers', 'Wczytywanie serwerów'),
-      child: ExcludeSemantics(
-        child: Container(
-          padding: const EdgeInsets.all(AppRhythm.title),
-          decoration: BoxDecoration(
-            color: palette.surface,
-            borderRadius: AppRadius.card,
-            border: Border.all(color: palette.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: palette.surfaceRaised,
-                      borderRadius: AppRadius.md,
-                    ),
-                  ),
-                  const SizedBox(width: AppRhythm.item),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        bar(72, 10),
-                        const SizedBox(height: AppRhythm.tight),
-                        bar(160, 16),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppRhythm.title),
-              bar(double.infinity, 12),
-              const SizedBox(height: AppRhythm.tight),
-              bar(200, 12),
-              const SizedBox(height: AppRhythm.title),
-              bar(120, 14),
-            ],
-          ),
+      // A calm placeholder in the card's slim shape (radius 12, 1 px
+      // hairline). The indicator stays: it is the one moving signal that
+      // the directory is still on its way.
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 164),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: AppRadius.card,
+          border: Border.all(color: palette.border),
         ),
+        alignment: Alignment.center,
+        child: const CircularProgressIndicator(strokeWidth: 2.4),
       ),
     );
   }

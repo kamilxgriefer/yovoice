@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
-import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
@@ -15,6 +14,7 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_greeting_header.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_live_now.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_record_moment_card.dart';
@@ -400,6 +400,25 @@ class _DesktopHomeState extends State<DesktopHome> {
       onSeeAll: widget.onViewAllFriends,
     );
 
+    // Slim phase 1: live channels of the viewer's own servers, only when a
+    // channel document says live; it heads the main column so the
+    // secondary column keeps its top line.
+    final liveSection = HomeLiveNowSection(
+      servers: serverSnapshot.hasError
+          ? const <Server>[]
+          : serverSnapshot.data ?? const <Server>[],
+      repository: _serverRepository,
+      onOpenServer: (server) {
+        final openServer = widget.onOpenServer;
+        if (openServer != null) {
+          openServer(server);
+        } else {
+          _openServers();
+        }
+      },
+      expanded: true,
+    );
+
     return ListView(
       key: const ValueKey('desktop-home-server-first'),
       primary: false,
@@ -427,6 +446,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                   key: const ValueKey('home-main-column'),
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    liveSection,
                     conversationSection,
                     const SizedBox(height: AppRhythm.section),
                     serversSection,
@@ -449,6 +469,7 @@ class _DesktopHomeState extends State<DesktopHome> {
             ],
           )
         else ...[
+          liveSection,
           conversationSection,
           const SizedBox(height: AppRhythm.section),
           serversSection,
@@ -489,19 +510,13 @@ class _GreetingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return DecoratedBox(
+    // Slim: the greeting is chrome, so it sits on the canvas without a card
+    // behind it (no hero banner that carries no data). The key stays on the
+    // same box, and the vertical rhythm is unchanged.
+    return KeyedSubtree(
       key: const ValueKey('home-greeting-card'),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: AppRadius.lg,
-        border: Border.all(color: palette.border),
-      ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 20,
-          vertical: AppRhythm.title,
-        ),
+        padding: const EdgeInsets.symmetric(vertical: AppRhythm.title),
         child: HomeGreetingHeader(
           profile: profile,
           expanded: true,
