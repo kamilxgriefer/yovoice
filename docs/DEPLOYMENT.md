@@ -4,6 +4,105 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## Build 32 — account deletion, NOT YET DEPLOYED (2026-09-18)
+
+Source-only in this round. Nothing below has run against production, and the
+website ships with `SELF_SERVICE_DELETION_LIVE = false` until every step here is
+done. The order is load-bearing for Play review — see
+[ADR-206](Decisions.md#adr-206-a-deletion-promise-is-a-list-of-stages-and-the-copy-may-not-exceed-it).
+
+### Required runtime variable — set it BEFORE enabling the feature
+
+| Variable | Where | Constraint | What happens if it is missing |
+| --- | --- | --- | --- |
+| `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` | `functions/.env` (process environment; **not** a `defineSecret` parameter) | at least **16 characters**, high-entropy, never rotated casually | `deletedAccountDigests` is silently never written, so **deleting a banned account resets the ban**. The stage logs a warning and sets `banDigestSkipped: true` on the outbox row. |
+
+It is deliberately not a `defineSecret` parameter: Firebase collects every
+eagerly declared `SecretParam` during deploy discovery, so declaring one here
+would make the whole catalog undeployable until the secret exists — the GIPHY
+lesson in `functions/media/gif/catalog.js`.
+
+Rotating the salt does not invalidate old digests, it **orphans** them: an
+existing ban can no longer be matched. Treat a rotation as a deliberate amnesty
+or migrate the rows first.
+
+### Enablement order — each step is a precondition for the next
+
+Backend first, store binary second, website last:
+**functions → rules → indexes → salt → kill switch → app release → website flag.**
+
+1. Deploy the account-deletion exports (`deleteAccountSelfV1`, the outbox
+   worker and its schedule) with the named-target selector. They are **not** in
+   the forbidden set below, but every other export in this file's MUST NOT
+   DEPLOY list still is.
+2. **Deploy `firestore.rules`** (`firebase deploy --only firestore:rules`).
+   This step is load-bearing and was missing from an earlier revision of this
+   list. It carries **two liveness narrowings** that the sweep depends on:
+   `users/{uid}/muted` write and `users/{uid}/momentViews` create/update now
+   also require `isActiveAccount()`. Requesting deletion sets `disabled: true`
+   immediately, and that freeze is what lets the sweep walk a stable snapshot
+   instead of racing a client that keeps appending rows behind it. Without this
+   deploy the freeze is not enforced for those two subcollections and the
+   client keeps writing. `momentViews` is the case that cannot be repaired
+   afterwards: it has no TTL and `allow delete: if false`, so a row written
+   after the sweep has passed is one nobody — not its owner, not the pipeline —
+   ever removes. Reads stay on plain ownership in both, on purpose, so a frozen
+   client renders its own settings rather than erroring.
+
+   **It is *not* what makes the two deny blocks work.** `accountDeletionOutbox`
+   and `deletedAccountDigests` are `allow read, write: if false`, and the
+   pipeline reaches them through the Admin SDK, which bypasses Rules entirely.
+   Those blocks close a client enumeration surface — an outbox row names a uid
+   that is being erased — and they enable nothing. So a missed rules deploy
+   does **not** break the pipeline visibly; it silently removes a guarantee.
+   Deploying it before step 5 is safe on its own: it only extends a freeze that
+   `isActiveAccount()` already applies elsewhere, and nothing sets `disabled`
+   through self-service until the kill switch is on.
+3. Deploy `firestore.indexes.json` — the two sweep composites. The emulator does
+   not require indexes, so no suite will tell you they are missing.
+4. Set `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` and confirm it is live by checking
+   that a deletion of a banned test account writes a `deletedAccountDigests`
+   row and leaves `banDigestSkipped` unset on the outbox row.
+5. Write `appConfig/accountDeletion.enabled = true`. The callable is fail-closed
+   until this lands, so doing it earlier is safe; doing steps 1–4 later is not.
+   Rules and indexes (steps 2–3) both go **before** this one: after it, the
+   first person to tap Delete is already relying on them.
+6. **Release the app** that contains `Settings → Account → Delete account`
+   (Play, then App Store). This is a step, not a consequence of the others: the
+   screen ships inside a store binary with its own review queue and its own
+   staged rollout, so it reaches users days after step 5 and cannot be rolled
+   back by touching Firestore.
+
+   **If the app reaches Play before steps 1–5, the in-app route is dead.** With
+   the exports undeployed the callable answers `not-found`; with them deployed
+   but the switch still `false` it answers `failed-precondition`. The screen
+   handles both — `AccountDeletionFailureKind.unavailable`, which renders "not
+   available yet" and keeps the `privacy@yovoice.app` button — so nobody sees a
+   raw error and no data is touched. But a Play reviewer following the
+   in-app deletion path the store listing declares reaches exactly that dead
+   end, which is a **data-deletion policy failure, not a crash**: the listing
+   promises a route the binary cannot complete. Never submit the build that
+   contains this screen before step 5 is live in production.
+7. Only then land the website with `SELF_SERVICE_DELETION_LIVE = true`.
+   Publishing the site first promises a deletion the servers cannot perform.
+   The website is last because it is the only one of the three that can be
+   reverted in minutes; the store binary cannot, which is why it goes before
+   it and after the backend.
+
+### Deletion is irreversible and touches production data
+
+No step of this pipeline may be exercised against production data from a
+workflow. `functions/scripts/backfill_account_deletion.js` is an operator tool
+and is run by a human who has read what it does. It **refuses to start without
+an explicit `--project`** — there is no default, and a `GCLOUD_PROJECT` that
+disagrees with the flag is a refusal rather than an override — and it writes
+nothing without `--apply`:
+
+```bash
+node functions/scripts/backfill_account_deletion.js --project yovoice-ec54a
+node functions/scripts/backfill_account_deletion.js --project yovoice-ec54a --apply
+```
+
 ## Build 31 named-target backend deploy — 2026-09-18
 
 Seven Cloud Functions, from `main` at

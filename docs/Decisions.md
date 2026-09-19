@@ -12642,3 +12642,179 @@ error each time, which is the intended trade. The server-side preflight ordering
 is **not** fixed and remains the right long-term change. The store is in-memory
 and process-wide: a cold start forgets the intent and mints a new id, which
 re-leaks one row — acceptable, and far from the per-tap leak it replaces.
+
+## ADR-206: A deletion promise is a list of stages, and the copy may not exceed it
+
+**Status:** Accepted (2026-09-18). Implemented in `functions/account/` (new:
+`deletion.js`, `outbox.js`, `stages.js`, `retention.js`),
+`functions/profile/public_profiles.js`, `firestore.rules`,
+`lib/features/account/`, `lib/features/settings/presentation/screens/delete_account_screen.dart`
+and the `yovoice-website` deletion pages; proven by
+`functions/test/account_deletion.test.js`,
+`functions/test/account_deletion_index.test.js`,
+`test/delete_account_screen_test.dart`, `test/account_deletion_service_test.dart`
+and `tests/account-deletion.test.ts` (website). Bugs.md: the three named gaps
+below. Supersedes nothing; the Auth `onDelete` retirement merge in
+`public_profiles.js` becomes this pipeline's LAST step rather than its own
+policy.
+
+**Context.** Google Play requires an app that creates accounts to offer in-app
+account deletion and a public URL for deletion requests, and the Data safety
+form asks for both. YO Voice had neither, and the deployed `onDelete` trigger
+deliberately RETAINED `users/{uid}` including the e-mail address — the opposite
+of what an Art. 17 erasure request means.
+
+**Decision.**
+
+1. **Mark and sweep, never delete-in-the-callable.** `deleteAccountSelfV1`
+   records intent in one transaction and returns; a leased, staged worker walks
+   the teardown in bounded, idempotent pages and ends with
+   `admin.auth().deleteUser`. The client therefore reports "being deleted",
+   which is what actually happened.
+2. **`auth` is second to last.** The uid is the only reliable key to everything
+   else, so destroying the Auth identity early converts a retryable failure into
+   an unrecoverable one. `finalize` removes `users/{uid}` itself.
+3. **The copy may not exceed the stages.** Every line in
+   `delete_account_consequences.dart` and in the website's `DELETION_REMOVES`
+   must be backed by a line of `stages.js`. This is the rule that the first cut
+   of this work broke in four places, and it is the rule this ADR exists for.
+4. **Two counters, two meanings.** `attemptCount` counts leases and mints the
+   lease token; `failureCount` is the retry budget `MAX_ATTEMPTS` bounds. One
+   counter doing both jobs dead-lettered any account large enough to need eight
+   leases on its first transient error.
+5. **Every row write is lease-guarded.** `claim`, `release`, `complete`, the
+   mid-attempt stage marker (`advanceOutboxStage`) and the advisory flag all
+   re-check `status === "processing" && leaseToken === token`. The attempt
+   budget (240 s) is strictly under the lease (300 s) so an attempt always ends
+   inside its own lease.
+6. **Retention is named or it does not happen.** Only a salted e-mail digest for
+   a banned account, re-keyed reports the user filed, moderation records about
+   the account, legally required payment records, short-lived replay guards and
+   Google's own service logs. Each appears in the app, on the website and in the
+   privacy policy with its reason.
+
+**Consequences — the honest retained / not-deleted set.** These are published
+in the app (`deleteAccountConsequences`), on `/delete-account` §5 and in privacy
+§9, and they are tracked in Bugs.md:
+
+- **Server membership is anonymized, not torn down.** The member row keeps the
+  pseudonymous uid; `displayName` and `photoUrl` become the sentinel identity
+  and an owned Server's `ownerName` does too. Removing a member row correctly
+  needs the Servers operations layer (authorization revisions, channel grants,
+  convergence bindings, the membership outbox, both counters), and duplicating
+  that here would desynchronise a live Server or brick one whose owner deleted
+  their account. **Ownership succession is an open owner decision**, so a
+  deleted owner's Server keeps running under an anonymous owner. The copy says
+  exactly this and no longer claims closure.
+- **Comments and reactions the user left on OTHER people's posts survive.**
+  `stages.js` deletes `voiceMoments`/`reels` where `authorId == uid` and
+  `recursiveDelete` takes their own comments and likes; there is no
+  `collectionGroup` query for `comments.authorId` and no index for one. Adding
+  the claim back requires the index plus an ADR-007 test that runs the real
+  query.
+- **Four of the eleven Storage prefixes survive.** The sweep list is exactly
+  the seven that begin with a uid. `family_moments/{clubId}/{uid}/` and
+  `server_company_files/{serverId}/{channelId}/{uid}/` are uid-keyed but nested
+  under somebody else's container; `room_images/{roomId}/` (room covers) and
+  `server_podcast_episodes/{serverId}/{channelId}/` carry no uid in the path at
+  all. None of the four is claimed as deleted anywhere, and all four are named
+  in `/delete-account` §5 and in `docs/Bugs.md`.
+- **`directCalls/{callId}` survives.** Only `directCallLocks/{uid}` and
+  `users/{uid}/incomingCalls` are removed.
+- **Two-factor accounts cannot use the in-app route yet.** The screen detects
+  the second-factor refusal and names the e-mail route instead of dead-ending.
+- **The ban digest needs an operator.** `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT`
+  (≥16 chars) must be set before `appConfig/accountDeletion.enabled` is turned
+  on, or deleting a banned account silently resets the ban. The skip is now a
+  field on the outbox row, not only a log line. The digest is kept for as long
+  as the ban lasts; a permanent ban means indefinitely, and the website says so.
+
+**Sequencing, which is load-bearing for store review.** The website ships with
+`SELF_SERVICE_DELETION_LIVE = false` and its app-route text describes the
+Build 32 screen honestly — a Delete account screen that, while self-service
+deletion is being switched on, offers the e-mail route to `privacy@yovoice.app`.
+The flag flips to `true` only after (1) `deleteAccountSelfV1` is deployed,
+(2) the digest salt is set, (3) `appConfig/accountDeletion.enabled` is
+written, and (4) the app carrying the screen has been released to the stores.
+Flipping it earlier publishes a promise the servers cannot keep, because the
+callable is fail-closed.
+
+The app release is its own step and sits between the backend and the website,
+because it is the one link in the chain that cannot be reverted by an operator:
+a store binary is reviewed and rolled out on someone else's clock. An app that
+reaches Play before (1)–(3) does no harm to data — the callable refuses and the
+screen falls back to `privacy@yovoice.app` — but it hands a Play reviewer a
+declared in-app deletion route that cannot complete, which is a policy failure
+on the listing rather than a bug in the binary. `docs/DEPLOYMENT.md` carries
+the full six-step order.
+
+## ADR-207: An invitation to a server anyone may join is a pointer, not a key
+
+**Status:** Accepted (2026-09-18). Implemented in `functions/servers/authority.js`
+(`admitsPublicJoin`, `canInviteToServer`, `PUBLIC_INVITER_ROLES`),
+`functions/servers/invites.js`, `functions/notifications/invites.js`,
+`firestore.rules`, `lib/features/servers/data/models/server_invite_authority.dart`
+and `server_panel.dart`; proven by `functions/test/servers_invites.test.js`,
+`functions/test/server_invite_notifications.test.js`,
+`firestore-tests/server_rules.test.js`, `test/server_invite_authority_test.dart`,
+`test/server_shell_test.dart` and `test/server_invite_affordance_screenshot.dart`.
+
+**Context.** Owner instruction (2026-09-18): every member who joins a public
+Server should be able to invite other people to it, while on a private Server
+only an admin or a moderator may. Before this, issuing an invitation was a
+manager-and-moderator permission everywhere, which made a public Server — one
+anyone may already join without an invitation at all — behave as if its
+invitations were access grants.
+
+**Decision.**
+
+1. **The predicate follows the join rule, not the role table.** Where
+   `admitsPublicJoin(server)` is true — `serverType` in `community`/`podcast`
+   **and** `privacy === "public"` — the inviter set is owner, coOwner, admin,
+   moderator **and member**. Everywhere else it stays owner, coOwner, admin,
+   moderator. `guest` is excluded in both: it is the demoted state an owner
+   assigns, and `capabilitiesFor` already treats it as a non-member.
+2. **One predicate, evaluated at every site.** `canInviteToServer` is used at
+   issuance (including `createServerInviteV1`'s re-issue shortcut), at
+   acceptance (`pendingInvitation`) and by the notification authority
+   (`canonicalInviterMembership`). Widening one site without the others either
+   mints invitations nobody can accept, or invitations that arrive with no bell
+   row.
+3. **It reads the CURRENT root.** An owner flipping a Server from public to
+   private invalidates every outstanding member-issued invitation at once, with
+   no sweep and no stored snapshot to go stale.
+4. **Fail-closed on anything unknown.** A missing root, an unrecognised template
+   and an unrecognised privacy are all "not public"; the check is
+   `privacy === "public"`, never `!== "private"`.
+
+**Reasoning.** On a Server anyone may already join, an invitation grants no
+access that a link or a search would not — it is a pointer, not a key. Keeping
+it behind a moderator role protected nothing and made the product worse. On a
+private Server the invitation IS the access grant, so it stays with the people
+who are accountable for the room.
+
+**Consequences.** A member of a public community or podcast Server sees the
+invite affordance on the desktop/tablet rail (`server-invite-action`) and in the
+phone channels sheet; a member of a private Server sees nothing there, which is
+captured at 360/420/834/1400 in both languages and at 200 % text. The permission
+is enforced at three server-side **callable** sites, so the UI is a convenience
+and never the boundary. `firestore.rules` is **not** one of those sites and is
+unchanged by this ADR: a V1 invitation is server-owned, so every client write
+is already denied and a member of a public Server gains no client write and no
+foreign read from the widening. `firestore-tests/server_rules.test.js` asserts
+exactly that — it is the evidence that no rules change was needed, not evidence
+that the predicate lives in the rules. A new `docs/SECURITY.md` checklist item
+covers the general shape: widening a permission that is enforced at several
+sites means widening every site in the same change, with a test per site.
+
+**`revokeServerInviteV1` widened too, and has no UI.** Revocation only ever
+narrows, so the callable lets a non-manager withdraw exactly the invitation
+they themselves issued — which is what keeps a member-issued invitation
+withdrawable after an owner flips the Server to private. No client calls that
+branch: the app offers no "cancel this invitation" affordance to a plain
+member, so it is **server-only surface** today, reachable by a direct callable
+invocation and by nothing the app does. It is kept rather than dropped because
+without it a member-issued invitation becomes permanently irrevocable by its
+own issuer the moment the Server turns private; it is recorded here, and in
+`docs/Servers.md`, so the next reader does not mistake an untested-by-UI path
+for a missing screen.

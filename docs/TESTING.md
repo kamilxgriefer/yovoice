@@ -4,6 +4,58 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
+## Build 32 account-deletion and invite-widening suites — 2026-09-18
+
+Source-only round (nothing deployed). These are the suites that prove the two
+new slices, and the exact invocations that run them. Every emulator command uses
+a **demo** project id; none of them touches production.
+
+| Suite | How to run it | What it proves |
+| --- | --- | --- |
+| `functions/test/account_deletion.test.js` | `./firestore-tests/node_modules/.bin/firebase emulators:exec --only auth,firestore --project demo-yovoice 'node --test --test-concurrency=1 functions/test/account_deletion.test.js'` | The callable's contract and refusals, the leased worker (claim, expired-lease reclaim, dead-letter, the auth-stage ordering guard), every stage, the retention artefacts, and the truthfulness case that asserts the seeded e-mail appears in **no** document after a full run. |
+| `functions/test/account_deletion_index.test.js` | same command, same file list | That the two sweep composites are declared **and** that the real pending/processing queries run against them (ADR-007). |
+| `firestore-tests/rules.test.js`, `storage.test.js` | `… emulators:exec --only firestore[,storage] --project demo-yovoice 'npm --prefix firestore-tests test'` / `run test:storage` | That `accountDeletionOutbox` and `deletedAccountDigests` are unreachable from any client, and that the `disabled` freeze the Storage sweep depends on holds. |
+| `firestore-tests/server_rules.test.js` | `… emulators:exec --only firestore,storage --project demo-yovoice-server-acl 'npm --prefix firestore-tests run test:servers'` | The **opposite**, and deliberately so: that the widening buys no Rules access at all. A V1 invitation stays server-owned — every client create, update and delete is denied for owner, admin, ordinary member and outsider alike — and a member of a public Server, who may now *issue* an invitation, still cannot write one, cannot read one they issued, and cannot enumerate the collection. `firestore.rules` is unchanged by ADR-207; the widened inviter predicate is enforced **only** in `createServerInviteV1`, and this suite is the evidence that no rules change was needed rather than a claim that one was made. |
+| `functions/test/servers_invites.test.js`, `server_invite_notifications.test.js` | part of `npm --prefix functions test` | The same predicate at issuance, at acceptance and in the notification authority — the three sites ADR-207 requires to move together. |
+| `test/account_deletion_service_test.dart` | `flutter test test/account_deletion_service_test.dart` | That the forced ID-token refresh happens **before** the callable, that no signed-in user means no call at all, and that a refresh we could not complete is reported rather than papered over. |
+| `test/delete_account_screen_test.dart` | `flutter test test/delete_account_screen_test.dart` | The whole screen flow, the EN+PL copy, and that a two-factor account is sent to the e-mail route instead of dead-ending (both platform codes). |
+| `test/server_invite_authority_test.dart`, `test/server_shell_test.dart` | `flutter test …` | The client-side predicate and that the affordance appears for a member on a public Server and nowhere else, at every width. |
+| `test/server_invite_affordance_screenshot.dart` | `flutter test test/server_invite_affordance_screenshot.dart` (writes to `test/.screenshots/`) | Rendered frames at **360 / 420 / 834 / 1400**, plus the two member cases at 200 % text and in English. Widget assertions prove code health; these frames are what proves the rail actually draws. |
+| `test/delete_account_screenshot.dart` | `flutter test test/delete_account_screenshot.dart` (writes to `test/.screenshots/`) | 320/402/834/1400 × EN/PL × 100/200 % for the deletion screen — **112 frames**, seven per combination: the consequences list, the retained set expanded, the bottom of the column, re-authentication, the confirmation dialog inert and armed, and the pending panel. It asserts as well as captures: the retained tile must actually be open in its own frame, and the pending panel must actually be on screen, so a frame can no longer document a state the harness failed to reach. |
+| `yovoice-website` | `npm test`, `npx tsc --noEmit`, `npm run lint`, `npm run build` | That the published deletion claims match `src/content/account-deletion.ts`, which is the single source the public page, the account page, privacy §9, the Terms and the FAQ all render. |
+
+**Three red-before-green cases were verified by reverting the fix**, not
+asserted on trust: the lease-clobber case fails without the guard on the
+mid-attempt stage write, the retry-budget case fails when `attemptCount` and
+`failureCount` are the same counter, and `finalize deletes the subcollections
+even when users/{uid} is already gone` fails with `friends survived finalize as
+an orphan` when `runFinalize` returns early on a missing root document
+(`b32/fix-3-functions-redbeforegreen.log`). All three were re-run green
+afterwards.
+
+### What this Build 32 gate does NOT prove
+
+**No simulator or device run of the account-deletion flow exists.** The
+deletion screen's only visual evidence is the rendered-frame harness above —
+`flutter test` renders onto an off-screen canvas. That proves layout, wrapping,
+localization and every state the harness drives; it proves nothing about a real
+device. Concretely:
+
+- **Both federated re-authentication providers are UNVERIFIED.**
+  `ReauthenticationService` picks Google, then Apple, then password.
+  `reauthenticateWithPopup` / `reauthenticateWithProvider` are exercised only
+  by widget tests with injected doubles; neither has run against real Firebase
+  Auth on hardware. The password branch's real round trip is unverified too.
+- **No real deletion has been run.** `deleteAccountSelfV1` is undeployed and
+  fail-closed, so every frame showing the pending panel or a failure state came
+  from an injected client, not from the server.
+- **The `dev-*` frames in the evidence directory are superseded, not
+  corroborating.** They came from an uncommitted developer harness on
+  2026-09-18 between 20:29 and 20:48, before the copy corrections at 21:13 and
+  22:28, and render sentences this build no longer ships.
+- The emulator suites use a **demo** project id throughout; nothing in this
+  round touched production data, and nothing was deployed.
+
 ## Build 31 fix-round gate — 2026-09-18
 
 Covers the RC-5…RC-17 fix round, `pubspec.yaml` `2.0.0+31` and the release of

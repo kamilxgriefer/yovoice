@@ -503,8 +503,8 @@ section.
 | `getServerCompanyFileAccessV1` | `{serverId, channelId, fileId, requestId}`; current channel reader only; returns a generation-bound HTTPS read grant valid for at most 90 seconds after a second authority/revision check |
 | `deleteServerCompanyFileV1` | `{serverId, channelId, fileId, requestId, expectedRevision}`; file author or server moderator; exact-revision transition to a durable deletion job, with generation-bound object removal and retry-safe descriptor cleanup |
 | `joinServerV1` | `{serverId, requestId}`; only canonical public admission or applicable invitation, never arbitrary role assignment |
-| `createServerInviteV1` | `{serverId, inviteeId, requestId}`; inviter-capable roles only, active server only, friends only, blocks and sanctions fail closed; writes the pending generation, its expiry and the invitee's private pointer; returns `{serverId, inviteeId, generation, status, expiresAtMillis, alreadyExisted}` |
-| `revokeServerInviteV1` | `{serverId, inviteeId, requestId}`; inviter-capable roles only; pending → revoked as a status transition bound to the current generation, removes the pointer; returns `{…, status, revoked}` |
+| `createServerInviteV1` | `{serverId, inviteeId, requestId}`; `canInviteToServer` roles only (moderator roles everywhere, plus `member` on a publicly joinable root — [ADR-207](Decisions.md#adr-207-an-invitation-to-a-server-anyone-may-join-is-a-pointer-not-a-key)), active server only, friends only, blocks and sanctions fail closed; writes the pending generation, its expiry and the invitee's private pointer; returns `{serverId, inviteeId, generation, status, expiresAtMillis, alreadyExisted}` |
+| `revokeServerInviteV1` | `{serverId, inviteeId, requestId}`; a moderator role withdraws any invitation, any other member exactly the one they issued; pending → revoked as a status transition bound to the current generation, removes the pointer; returns `{…, status, revoked}` |
 | `respondToServerInviteV1` | `{serverId, requestId, response: accept | decline}`; binds the invite to the caller, current status and generation |
 | `leaveServerV1` | `{serverId, requestId}`; member/mirror/count transition and all-channel access/media cleanup |
 | `setServerMemberRoleV1` | `{serverId, memberId, requestId, role}`; existing role hierarchy, revision and media consequences |
@@ -678,19 +678,58 @@ already consumed before a writer existed:
 | `serverName`, `inviterName` | The reviewed pre-join preview: server-owned snapshots, no channel, roster, count or artwork |
 | `createdAt`, `updatedAt`, `respondedAt`, `revokedAt`, `revokedById` | Server timestamps; a re-issue replaces the whole document so an older generation's answer does not linger |
 
-Who may invite: the inviter roles the consumer re-proves at acceptance —
-`owner`, `coOwner`, `admin`, `moderator` — and nobody else, on an **active**
-server only. A held server refuses invitations entirely, including from its
-owner: `admission` denies a preparing root, so an invitation issued while held
-would be undeliverable, and it would disclose the server's name to a third
-party before activation, which the held boundary exists to prevent. The
-invitee must be an active account that is a canonical friend of the inviter
-(both `friendshipGuards`, never the client-writable mirror), not blocked in
-either direction, not communication-muted and not already a member. Every
+Who may invite depends on the server as well as the role, and
+`canInviteToServer` (`functions/servers/authority.js`) is the single predicate
+that decides it — evaluated identically at issuance, at the re-issue shortcut,
+at acceptance (`pendingInvitation`) and by the notification authority
+(`canonicalInviterMembership`). Widening one of those sites without the others
+would mint invitations nobody can accept, or invitations that arrive with no
+bell row.
+
+On a server nobody may join unbidden, the invitation **is** the admission
+capability, so it stays with `owner`, `coOwner`, `admin` and `moderator` and
+nobody else. On a community or podcast root whose `privacy` is `public` —
+`admitsPublicJoin`, the exact condition `admission` already uses to admit
+somebody with no invitation at all — `member` joins that set: there an
+invitation opens nothing, because it points at a door the invitee could
+already walk through. `guest` invites on no server: it is the demoted state an
+owner assigns to a participant they want to keep but not trust, and
+`capabilitiesFor` already withholds `write`, `joinVoice` and `startSession`
+from it, so letting it invite would make demotion stop being a control. A
+legacy root carries no V1 privacy authority and is never widened. Because the
+predicate reads the **current** root, an owner's public → private flip
+invalidates every outstanding member-issued invitation at once — at
+acceptance, not merely at issuance.
+
+**Revocation is the mirror image, and it has no screen.** `canInviteToServer`
+governs who may *issue*; `revokeServerInviteV1` deliberately does not consult
+it, because withdrawing an invitation only ever narrows access. A moderator
+role withdraws any invitation on the server; anybody else withdraws exactly
+the one they issued, identified by `inviterId` and nothing else. That branch is
+what keeps a member-issued invitation withdrawable after the public → private
+flip above has removed the issuer's right to create a new one. **No client
+reaches it:** the app offers a plain member no "cancel this invitation"
+affordance, so today it is server-only surface — reachable by calling the
+callable directly, and by nothing the app does. It is documented rather than
+removed because dropping it would make a member-issued invitation permanently
+irrevocable by its own issuer the moment the server turns private (ADR-207).
+
+All of it holds on an **active** server only. A held server refuses
+invitations entirely, including from its owner: `admission` denies a preparing
+root, so an invitation issued while held would be undeliverable, and it would
+disclose the server's name to a third party before activation, which the held
+boundary exists to prevent. The invitee must be an active account that is a
+canonical friend of the inviter (both `friendshipGuards`, never the
+client-writable mirror), not blocked in either direction, not
+communication-muted and not already a member. Every
 invitee-state refusal is one `permission-denied`, so the callable is not an
 oracle for another account's ban, sanction, block or friendship state. Each
-attempt also charges the actor-wide `server.v1.invite` budget (30 per minute,
-the legacy invite rate) before any target read.
+attempt also charges two actor-wide, target-independent budgets before any
+target read: `server.v1.invite` (30 per minute, the legacy invite rate) and
+`server.v1.invite.hour` (200 per hour, the other half of the same legacy
+budget). The hour window is what the widening actually needed — it multiplies
+the population that can spend the per-minute burst by the member count of
+every public server, so the sustained rate is the rate that changed.
 
 Discovery reuses the `serverChannelRefs` precedent rather than opening a
 query: `users/{inviteeId}/serverInviteRefs/{serverId}` holds
@@ -720,7 +759,11 @@ Revocation is a status transition, not a delete, so the revoked generation
 stays on record and a "revoked or expired invite must not gain new life"
 check has something to compare against; the next invitation to the same
 person is generation + 1. Revocation also works under a communication
-restriction and on a held server, because it only ever narrows.
+restriction and on a held server, and for a member whose server has since
+turned private, because it only ever narrows. A caller without a moderator
+role is answered with the single denial unless the stored invitation names
+them as its inviter, so the `not-found` / `failed-precondition` split below a
+manager's call can never become an oracle for who else was invited.
 
 ## Five complete template experiences
 

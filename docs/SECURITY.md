@@ -1186,6 +1186,16 @@ access to something another user controls:
 - [ ] Does the new query need a composite index, and has that index been
       **deployed** — not merely committed to `firestore.indexes.json`? The
       emulator does not require them, so no suite will tell you.
+- [ ] Are you **widening** a permission rather than adding one? If so, list
+      every site that enforces it *before* changing any of them — issuance,
+      acceptance, any notification or fan-out authority, and the rules — and
+      change them together with a test per site. Widening one site alone either
+      mints tokens nobody can accept, or tokens that arrive with no
+      notification. If the predicate reads a mutable root field (a Server's
+      `privacy`), say in the ADR what happens to outstanding grants when the
+      owner changes it; reading the CURRENT root and letting the flip
+      invalidate them is the answer that needs no sweep
+      ([ADR-207](Decisions.md#adr-207-an-invitation-to-a-server-anyone-may-join-is-a-pointer-not-a-key)).
 
 ### Availability status (2026-09-06, ADR-150)
 
@@ -1284,3 +1294,50 @@ results and future sends. It does **not** blank GIF bubbles already sent,
 because clients do not consult a blocklist at render time. The remedy for a
 specific message is the existing per-surface removal
 (`adminDeleteMessage`, `moderateClubMessage`).
+
+
+## Account deletion (2026-09-18, ADR-206)
+
+Self-service deletion is a **mark-and-sweep** pipeline, and the security
+properties that matter are the ones that stop it doing damage when it goes
+wrong rather than when it goes right.
+
+- **The Auth identity dies second to last.** The uid is the only reliable key to
+  everything else, so `admin.auth().deleteUser` runs only from the `auth` stage,
+  only for a row that has finished every stage before it (`mayDeleteAuthUser`),
+  and never for a row that is `deadLetter` or `completed`. A disabled, flagged
+  account an operator can still recover is strictly better than an Auth identity
+  destroyed with its data in place.
+- **Every write to an outbox row is lease-guarded.** `claimOutboxRow`,
+  `releaseOutboxRow`, `completeOutboxRow`, `advanceOutboxStage` and
+  `flagOutboxRow` all re-check `status === "processing" && leaseToken === token`
+  inside their transaction. The one unguarded write that existed — the
+  mid-attempt `stage: "auth"` marker — let a worker whose lease had expired
+  stamp `auth` onto a row a second worker held at an earlier stage, after which
+  the ordering guard passed and the identity was destroyed early. The attempt
+  budget (240 s) is strictly under the lease (300 s) so an attempt always
+  finishes inside its own lease; **do not raise one without the other**.
+- **Progress is not failure.** `attemptCount` counts leases; `failureCount` is
+  the retry budget. Conflating them dead-letters a large account on its first
+  transient error, which leaves `users/{uid}` and its e-mail address in place
+  after the user was told the account was being deleted.
+- **The callable is fail-closed and requires recent authentication.**
+  `deleteAccountSelfV1` refuses unless `appConfig/accountDeletion.enabled` is
+  true, and `requireRecentPrivilegedAuthentication` refuses a token whose
+  `auth_time` is older than 300 s. The client therefore forces
+  `getIdToken(true)` immediately before the call — a cached token minted before
+  the re-authentication carries the old `auth_time` and makes the affordance
+  unusable.
+- **Two collections are Admin-SDK-only.** `accountDeletionOutbox` (its rows name
+  who is deleting) and `deletedAccountDigests` (salted hashes of e-mail
+  addresses) are `allow read, write: if false`. Both take additive server-owned
+  fields without a rules change; neither is ever a client read.
+- **No unsalted digest, ever.** `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` must be at
+  least 16 characters or the digest is skipped and the skip recorded on the row.
+  An unsalted hash of an e-mail address is reversible and would be worse than
+  keeping nothing. Setting it is a documented **precondition** for enabling the
+  feature — see [DEPLOYMENT.md](DEPLOYMENT.md).
+- **Retention is named or it does not happen.** See ADR-206's Consequences for
+  the honest retained set and for the four categories that currently survive a
+  deletion; they are tracked in [Bugs.md](Bugs.md) and are not claimed by any
+  user-facing copy.

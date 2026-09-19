@@ -14,6 +14,50 @@ someone decide what to pick up next.
 
 ---
 
+## Account deletion and public-Server invites — source landed, not deployed — 2026-09-18
+
+**Status: source complete and green in both repos; nothing deployed, nothing
+committed to `main` by this round's agents. Build 32 ships it.**
+
+Two slices, both driven by an owner instruction.
+
+- **Self-service account deletion**, because Google Play requires an app that
+  creates accounts to offer in-app deletion and a public URL for deletion
+  requests, and the Data safety form asks for both. A mark-and-sweep pipeline
+  (`functions/account/`), a `DeleteAccountScreen` in the app, and
+  `/delete-account` plus `/account/delete` on the website, all rendering one
+  source of truth for what is removed and what is kept
+  ([ADR-206](Decisions.md#adr-206-a-deletion-promise-is-a-list-of-stages-and-the-copy-may-not-exceed-it)).
+- **Invitations on a public Server**, owner instruction: every member who joins
+  a public Server may invite others; on a private Server only an admin or a
+  moderator may
+  ([ADR-207](Decisions.md#adr-207-an-invitation-to-a-server-anyone-may-join-is-a-pointer-not-a-key)).
+
+**What is deliberately NOT done, and is tracked rather than hidden.** Four
+categories survive a completed deletion — comments and reactions left on other
+people's posts, the four Storage prefixes that are not keyed by uid (Family
+memories, Company channel files, room cover images, podcast episodes),
+`directCalls` rows, and Server ownership succession — plus the two-factor
+in-app route and the ban-digest salt. Each is in
+[Bugs.md](Bugs.md) with an owner, and **no user-facing copy claims any of
+them**; the app's consequence list, the public page and privacy §9 were
+rewritten to match what the pipeline actually does.
+
+**Next, in order:** deploy the account-deletion exports, **`firestore.rules`**
+and the two sweep indexes, set `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT`, write
+`appConfig/accountDeletion.enabled = true`, **release the app carrying the
+Delete account screen to the stores**, and only then land the website with
+`SELF_SERVICE_DELETION_LIVE = true`. The rules deploy is not optional and is
+easy to skip because nothing fails loudly without it: it carries the two
+liveness narrowings (`muted` write, `momentViews` create/update now require
+`isActiveAccount()`) that stop a frozen client writing rows behind the sweep,
+and a `momentViews` row written after the sweep has passed can never be deleted
+by anyone. It is *not* what makes the two new deny blocks work — the pipeline
+reaches those collections through the Admin SDK, which bypasses Rules. The app
+release is its own step and sits between the backend and the website because a
+store binary cannot be reverted by an operator — see
+[DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## Build 31 fix round, named-target backend deploy and the 2.0.0 (31) release — 2026-09-18
 
 **Status: source landed and CI-green; seven Cloud Functions deployed and read

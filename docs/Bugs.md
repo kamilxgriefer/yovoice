@@ -5,6 +5,103 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## OPEN — account deletion leaves four named categories behind (2026-09-18)
+
+Found while gating Build 32's account-deletion slice. Each of these is a place
+where personal data outlives a completed deletion. None of them is claimed by
+any user-facing copy any more — the app's consequence list, `/delete-account`
+§2/§5 and privacy §9 were rewritten to match the pipeline
+([ADR-206](Decisions.md#adr-206-a-deletion-promise-is-a-list-of-stages-and-the-copy-may-not-exceed-it))
+— so the product is honest, but the gaps are real and each needs its own stage
+plus an emulator test before the matching claim may come back.
+
+- **Comments and reactions on OTHER people's posts.** `functions/account/stages.js`
+  `runContent` deletes `voiceMoments`/`reels` where `authorId == uid` and
+  `recursiveDelete` takes their own comments and likes with them. There is no
+  `collectionGroup` query for `comments.authorId` and no index for one. The rows
+  carry `authorId`, `authorName`, `text` and a voice-comment `storagePath`.
+  Closing this needs the composite index **and** an ADR-007 test that runs the
+  real query, not a direct-path one. Owner: backend.
+- **Storage objects outside a uid-keyed prefix.** `uidStoragePrefixes` is a
+  fixed seven-element list and `runStorage` sweeps only it. `storage.rules`
+  declares eleven prefixes, so **four** are never deleted by the pipeline — the
+  first disclosure of this named only the first two:
+  1. `family_moments/{clubId}/{uid}/` (`storage.rules:321`) — Family memories.
+  2. `server_company_files/{serverId}/{channelId}/{uid}/` (`storage.rules:434`)
+     — Company channel files. Both are uid-keyed but nested under somebody
+     else's container, so closing them needs the club/server-id enumeration the
+     social stage already walks.
+  3. `room_images/{roomId}/{fileName}` (`storage.rules:165`) — voice-room cover
+     images. The uploader is identifiable (`{uid}_{32 hex}.jpg|png`, plus an
+     `ownerId` in custom metadata) but the uid is nowhere in the path, so
+     closing this needs an enumeration of the rooms the account hosted or a
+     per-object metadata scan.
+  4. `server_podcast_episodes/{serverId}/{channelId}/{fileName}`
+     (`storage.rules:506`) — backend-written (`allow read, write: if false`),
+     with no uid in the path or the object name at all.
+
+  All four are disclosed in `/delete-account` §5 and none is claimed as deleted
+  by any copy. Owner: backend.
+- **`directCalls/{callId}`.** Carries `callerId`/`calleeId` and is never
+  deleted; only `directCallLocks/{uid}` and `users/{uid}/incomingCalls` are.
+  Owner: backend.
+- **Server ownership succession.** A deleted owner's Server keeps running with
+  the deleted person's pseudonymous uid bound as `ownerId`; only `ownerName`,
+  the member `displayName` and `photoUrl` are anonymized. Tearing a membership
+  down correctly needs the Servers operations layer. This is an open **owner**
+  decision (transfer, or close), not a bug to fix silently. Owner: product.
+
+Residual, lower-severity and unclaimed by any copy: `achievementVoiceSessions` /
+`achievementVoiceEvents`, `integrityPreflightLedgers`, `userWarnings`,
+`reelAvailability`/reservations, `directReactionEvents`,
+`privateRateLimits.ownerId` and legacy room participation are not swept either.
+They are pseudonymous or short-lived, which is why the retained-set copy speaks
+of "short-lived records that stop an in-flight operation from being replayed"
+rather than naming each.
+
+## OPEN — two-factor accounts cannot delete their account in-app (2026-09-18)
+
+TOTP two-factor is a shipped feature (`lib/features/auth/data/totp_mfa_service.dart`,
+enrolment in `two_factor_authentication_screen.dart`). For an enrolled account
+`reauthenticateWithCredential` throws, and `DeleteAccountScreen` has no
+second-factor step to drive, so the in-app deletion cannot complete — the users
+who followed the app's own security advice are the ones locked out of the
+affordance Google Play requires.
+
+Mitigated, not fixed: `_runReauth` now detects the refusal (the typed
+`FirebaseAuthMultiFactorException`, and the platform codes
+`second-factor-required` / `multi-factor-auth-required`, because the typed
+exception's only constructor is private to the plugin) and renders an EN+PL
+sentence naming the e-mail route by the exact words on the button below it,
+instead of a generic auth error and a dead end. Covered by
+`test/delete_account_screen_test.dart` for both codes.
+
+The real fix is to drive the existing resolver: `AuthService.createTotpSignInChallenge`
+plus `TotpChallengeScreen`, the same path `responsive_auth_screen.dart` already
+uses for sign-in. It was not taken in this round because it cannot be verified
+end to end here — no deployed callable and no enrolled test account — and
+shipping an unverified resolver into the Play-compliance path is worse than
+shipping the honest fallback. Owner: Flutter.
+
+## OPEN — the ban digest is inert until an operator sets its salt (2026-09-18)
+
+`functions/account/stages.js` writes `deletedAccountDigests/{digest}` only when
+the profile is `banned === true` **and** a salt is configured;
+`functions/account/retention.js` requires
+`YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` of at least 16 characters and otherwise
+returns null. An unsalted digest of an e-mail address is trivially reversible,
+so skipping is the correct behaviour — but if the variable is never set,
+deleting a banned account silently resets the ban.
+
+Closed on the documentation and observability side in this round: the variable
+is documented in [DEPLOYMENT.md](DEPLOYMENT.md) as a **precondition** for
+writing `appConfig/accountDeletion.enabled = true`, and the skip is now written
+to the outbox row as `banDigestSkipped: true` rather than being only a log line,
+as `retention.js` already claimed. Still open: nothing verifies the salt at
+deploy time, and no TTL removes a digest — the retention is indefinite for a
+permanent ban, which the website now states plainly instead of promising
+expiry. Owner: ops.
+
 ## FIXED — reactions on photo, video and GIF bubbles in direct chats (2026-09-18)
 
 Owner report, verbatim: "w czatach znajomych, na wiadomość możesz dodać
