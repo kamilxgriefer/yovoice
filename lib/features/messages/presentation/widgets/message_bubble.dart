@@ -19,6 +19,7 @@ import 'package:yovoice/features/rooms/data/room_links.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
+import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
 class MessageBubble extends StatelessWidget {
   const MessageBubble({
@@ -738,26 +739,16 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
                     minWidth: 48,
                     maxWidth: 126,
                   ),
-                  child: SizedBox(
+                  // Still on purpose: the player reports play / pause /
+                  // loading / failed but no position, and no amplitude is
+                  // recorded, so the bars are the shared silhouette — never
+                  // a per-message shape invented from the duration.
+                  child: YoWaveform(
                     height: 32,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: List.generate(24, (index) {
-                        final height = 7 + ((index * 13 + duration) % 22);
-                        return Expanded(
-                          child: Container(
-                            height: height.toDouble(),
-                            margin: const EdgeInsets.symmetric(horizontal: 1),
-                            decoration: BoxDecoration(
-                              color: widget.foregroundColor.withValues(
-                                alpha: .82,
-                              ),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                          ),
-                        );
-                      }),
-                    ),
+                    color: widget.foregroundColor.withValues(alpha: .82),
+                    barCount: 24,
+                    barGap: 2,
+                    barRadius: 20,
                   ),
                 ),
               ),

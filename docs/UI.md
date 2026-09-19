@@ -336,6 +336,40 @@ rules a screen author needs.
   semantics), `test/people_status_ring_theme_test.dart` (the ring host holds
   exactly one circle), `test/home_blocking_defects_test.dart` (own Start tile
   is a dot, not a ring).
+- **Waveform (bars) = `YoWaveform(color:)`**
+  (`lib/shared/widgets/waveform/yo_waveform.dart`). One `CustomPainter`, exact
+  `height` × `width` (null = the parent's width; an explicit width is kept even
+  in a tight parent), two layouts: flex (`barWidth` null — `barCount` bars share
+  the width with `barGap` between them) and tiled (`barWidth` set — fixed pitch,
+  as many bars as fit, run centred). **No amplitude = static.** No per-Moment or
+  per-message amplitude exists, so the shape is always a fixed `silhouette`
+  (`YoWaveform.bars`, the 30-entry story list; `YoWaveform.ramp(n)` for the
+  Start motif; the podcast stage's five heights) and the widget owns no
+  controller, timer or randomness — never invent a shape from a duration or an
+  id, never animate it. The only real value is `progress`: leave it null unless
+  you hold the player's position; then the bars behind the playhead take
+  `playedColor` (`AppColors.secondary`) or `playedGradient`
+  (`palette.audioProgressGradient`), one whole bar at a time, mirrored in RTL.
+  The caller owns the colour (a palette role, an `AppColors` constant at an
+  alpha, an identity visual), the play / pause state, the seek gesture, any
+  slider overlay and any `Semantics` label; the widget is `ExcludeSemantics`
+  and adds no key, so marker keys (`server-podcast-waveform`) pass through
+  `key:`. Moment players mount `StoryWaveform(progress:)` — the same widget
+  with the player defaults (44 px, gap 3, radius 2, `AppColors.primary` at .32
+  unplayed), pinned by type in `test/moment_feed_card_redesign_test.dart` and
+  `test/moment_position_single_source_test.dart`. Real audio level is a
+  different state: `RoomEnergyWave`, the recorder's level meter and
+  `VoiceCore` are not this widget. Glyph badges (`Icons.graphic_eq_rounded` in
+  a circle: the mini player's `_WaveformBadge`, `HomeFriendTile`'s
+  `_ContentBadge`) are not this widget either. Contracts:
+  `test/yo_waveform_test.dart` (exact box, explicit width, no frame scheduled,
+  no semantics, key pass-through, the ramp, the `StoryWaveform` defaults),
+  `test/server_podcast_test.dart` (the mark exists only for the speaking
+  person). Frames: `flutter test test/waveform_screenshot.dart` →
+  `test/.screenshots/waveform-{dark,pearl}-{ltr,rtl}-600.png`, to be copied to
+  `yovoice-evidence/2026-09-19/slim-0-waveform-frames/after/` by the visual
+  verification step (pending at the implementation commit; see
+  `docs/Sessions/2026-09-19-slim-redesign.md`).
 
 ## Semantic colour ownership
 

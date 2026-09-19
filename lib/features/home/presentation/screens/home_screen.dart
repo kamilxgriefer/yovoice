@@ -38,6 +38,7 @@ import 'package:yovoice/features/home/presentation/widgets/live_now_hero.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_card.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({this.onOpenDiscover, super.key});
@@ -1330,7 +1331,16 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(child: _MiniWaveform()),
+                  // Static ramp: this row has no position source.
+                  Expanded(
+                    child: YoWaveform(
+                      color: palette.interactiveForeground,
+                      height: 34,
+                      silhouette: YoWaveform.ramp(24),
+                      barGap: 3,
+                      barRadius: 10,
+                    ),
+                  ),
                   const SizedBox(width: 10),
                   Text(
                     moment.durationLabel,
@@ -1387,28 +1397,6 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _MiniWaveform extends StatelessWidget {
-  const _MiniWaveform();
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: List.generate(
-        24,
-        (index) => Expanded(
-          child: Container(
-            height: (10 + ((index * 13) % 24)).toDouble(),
-            margin: const EdgeInsets.symmetric(horizontal: 1.5),
-            decoration: BoxDecoration(
-              color: context.appPalette.interactiveForeground,
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        ),
       ),
     );
   }

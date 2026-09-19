@@ -12893,6 +12893,7 @@ already exists (no `YoLiveBadge`, no `YoStoryRingAvatar`, no `YoPresenceDot`).
 | --- | --- | --- |
 | NA ŻYWO | `YoBadge(variant: YoBadgeVariant.live)` — `lib/shared/widgets/badges/yo_badge.dart`; on server surfaces through its keyed alias `ServerLivePill` (`servers/presentation/widgets/server_channel_scene.dart`) | `_MiniLivePill` and the `_MobileRoomCard` inline pill (`home/…/mobile/mobile_home_sections.dart`), `_LivePill` (`home/…/desktop/voice_trending_card.dart`), the inline pill in `home/…/live_now_hero.dart`, the live branch of `_StatusBadge` (`home/…/shared/home_room_board.dart`), `_LiveBadge` (`discover/…/hero_live_room.dart`), `_SmallLiveBadge` ×2 (`discover/…/discover_screen.dart`), `_LivePill` (`rooms/…/room_card.dart`), the inline pill in `CreatorStudioRoomsList` (`creator/…/creator_studio_screen.dart`), `ServerLivePill`'s own body and `_LiveDot` (`servers/…/server_panel.dart`) |
 | Obecność (dot) | `AvailabilityDot` — `lib/shared/widgets/profile/availability_dot.dart` (moved out of `availability_picker.dart`; colour = `PeopleStatus.foreground`, the ring's ink, so ring and dot share one source) | 10 sites in 8 files: `_PresenceDot`'s disc (`shared/widgets/profile/profile_preview_sheet.dart`), `YoAvatar.isOnline` (`shared/widgets/avatars/yo_avatar.dart`), the own-availability dot in `HomeGreetingHeader` (`home/…/shared/home_greeting_header.dart`), the presence dot in `HomeFriendTile` (`home/…/shared/home_friend_tile.dart`), the friend row (`friends/…/friends_screen.dart`), `_FriendStory`, `_ConversationAvatarState` and `_FriendTile` (`messages/…/messages_screen.dart`), the member tile (`clubs/…/club_overview_screen.dart`), the online dot of `MomentStoryTile` (`moments/…/moment_story_tile.dart`) |
+| Waveform (bars) | `YoWaveform` — `lib/shared/widgets/waveform/yo_waveform.dart`; the progress-driven Moment players through its named subclass `StoryWaveform` in the same file, re-exported by `moments/…/moment_story_viewer.dart` so every existing import resolves | `HomeStaticWaveform` (`home/…/shared/home_static_waveform.dart`, file removed with its last caller `home/…/shared/home_here_now_hero.dart`), `_MiniWaveform` (`home/…/screens/home_screen.dart`), `_Waveform` (`moments/…/widgets/moment_card.dart`), `StoryWaveform` + `_TiledWaveformPainter` (`moments/…/widgets/moment_story_viewer.dart`; its five call sites — the story stage, `moments/…/screens/moment_detail_screen.dart`, `moments/…/widgets/moments_feed_view.dart` ×2, `moments/…/widgets/voice_reply_mini_player.dart` — keep constructing `StoryWaveform`), `_Waveform` (`servers/…/widgets/server_podcast_stage.dart`), the inline 24-bar row in `_VoiceMessageContent` (`messages/…/widgets/message_bubble.dart`) |
 
 The live variant's spec (from the brief's Twitch section): `AppColors.live`
 fill, `AppColors.onLive` copy, `AppTypography.labelSmall` (10 px, height 1.2)
@@ -12935,6 +12936,40 @@ never both — the rule `HomeFriendTile` documents and
 inside `HomePeopleStrip`) and `test/people_status_ring_theme_test.dart`
 (`.single` circle inside the ring host) enforce; ADR-150 is the presence
 decision this rule sits on, not its literal wording.
+
+The waveform's spec: one `CustomPainter` under a `RepaintBoundary` in a
+`SizedBox` that is exactly `height` by `width` (or the parent's width when
+`width` is null; an explicit width is honoured even in a tight parent, the
+run centred, so a 30 px five-bar mark can never become fifty bars). Two
+layouts — **flex** (`barWidth` null: `barCount` bars share the width, each
+centred in its slot with `barGap` between them, radius half the bar; what a
+`Row` of `Expanded` containers drew) and **tiled** (`barWidth` set: fixed
+pitch `barWidth + barGap`, as many bars as fit, run centred, cycling the
+silhouette; the old `_TiledWaveformPainter`). The bar shape is always a
+fixed `silhouette` of 0..1 fractions — the 30-entry story list
+`YoWaveform.bars` by default, `YoWaveform.ramp(n)` for the Start motif's
+`(10 + i·13 % 24) / 34`, the podcast stage's five fixed heights — because
+**no amplitude is recorded anywhere and a waveform without real amplitude is
+static**: the widget owns no controller, timer or randomness, and
+`test/yo_waveform_test.dart` pins that no frame is scheduled after it paints.
+The only real value it draws is `progress`: null = still silhouette (the
+honest default); 0..1 = the player's reported position, painted as a played
+run from the leading edge in `playedColor` (`AppColors.secondary`) or swept
+with `playedGradient` (`palette.audioProgressGradient`), a bar counting as
+played once `(index + .5) / count <= progress` so the fill advances one whole
+bar and never half of one. Both layouts mirror under RTL (silhouette and
+played edge). The widget is `ExcludeSemantics` (decoration; a caller that
+wants a label wraps it) and carries no key of its own, so
+`server-podcast-waveform` passes through `key:`. The brief named six
+implementations; the inventory found seven bar waveforms *minus one*:
+`_WaveformBadge` in `rooms/…/mini_player/active_room_info.dart` is not a bar
+waveform (below), and the message bubble's inline row, which the brief lists
+only under the inline player, was — it drew a *different shape per message*
+from `7 + ((i·13 + duration) % 22)`, a fabricated per-message waveform, and is
+the one visible retirement here. Only `StoryWaveform` was ever driven by a
+real value (the player position, five call sites); the podcast mark is static
+but gated by the real `isSpeaking` signal and keeps that gate and its 14 px
+slot; the other four were purely static and stay static.
 
 Rules the phase-0 primitives follow, and every later phase inherits:
 
@@ -13049,6 +13084,54 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   (`friends_screen.dart`, `messages_screen.dart`, `profile_preview_sheet.dart`)
   belong to the avatar-ring family and were not touched here.
 
+### Consciously NOT built, NOT simplified (waveform family)
+
+- No `YoStaticWaveform` / `YoProgressWaveform` pair: one widget, `progress`
+  nullable. `StoryWaveform` survives as a named subclass, not a call-site
+  rename, because `test/moment_feed_card_redesign_test.dart` and
+  `test/moment_position_single_source_test.dart` pin the type with
+  `find.byType(StoryWaveform)` and read `progress`, `barWidth`, `barGap`,
+  `playedGradient`, and the brief forbids editing finders; its `progress`
+  getter is non-null so the position test's `double` reader compiles unchanged.
+- `_WaveformBadge` (`active_room_info.dart`) and `_ContentBadge`
+  (`home/…/shared/home_friend_tile.dart`) are **waveform glyph badges** — a
+  gradient circle around `Icons.graphic_eq_rounded` — not bar waveforms.
+  Forcing the mini player's identity zone into bars would replace a glyph with
+  a silhouette and tempt a fake-live animation; they stay, and the brief's
+  count of six includes the badge by name only. Whether the two badges become
+  one primitive is a later decision (the brief allows only `YoServerRailItem`
+  and `YoMetricPill` as truly new).
+- Real amplitude is a different state and was not migrated: `RoomEnergyWave`
+  (`rooms/…/room_energy_wave.dart`, `VoiceCallService.roomEnergy`, stroke bars,
+  220 ms tween, Semantics "Live audio level"), the recorder's `_LevelMeter`
+  (`moments/…/record_voice_moment_screen.dart`, real samples, labels pinned by
+  `test/record_voice_moment_accessibility_test.dart`) and `VoiceCore`'s glow.
+- No `progress` was added to `MomentCard`, the legacy Home Moment row or the
+  voice message bubble: none has a position source (the bubble's player reports
+  play / pause / loading / failed only), so a fill would fake playback. No
+  animation was added anywhere.
+- No caller was deleted. `HomeScreen` (`home_screen.dart`) is mounted nowhere
+  in `lib/` and imported by no widget test; its row was migrated all the same
+  and is proven only by `flutter analyze`. `home_static_waveform.dart` is the
+  one file removed, after its only caller moved.
+- Deliberate visible normalisations (no golden pins any of them): `MomentCard`'s
+  private 20-entry list and the bubble's duration-seeded shape give way to the
+  shared 30-entry silhouette (the bubble keeps 24 bars, gap 2, pill radius);
+  the story stage and `MomentDetailPanel` flex layout now use gap 3 instead of
+  the `Padding(1.3)` 2.6 and light their first bar at `progress ≥ 1/60`
+  instead of `> 0` (the tiled rule, which also makes them RTL-correct); the
+  Start hero keeps its exact 58 % bar / 42 % gap ratio by passing
+  `barGap: waveWidth / 13 * .42`; the legacy Home row's box is 34 px (its bars
+  were 10..33 px in a 33 px `Row`). Radii are clamped to a pill so the bubble's
+  `20` cannot distort a 3 px bar.
+- The primitive takes no `semanticLabel` and no `excludeSemantics` switch: it
+  is decoration by definition and the callers that voice the transport (the
+  feed row's slider, the detail screen's seek) already do so on their own node.
+- Not in this family: the transparent `Slider` overlays and their keys, the
+  seek `GestureDetector`s, `ExcludeSemantics` wrappers in callers, the
+  `ConstrainedBox(48–126)` and `direct-voice-<id>` target around the bubble's
+  bars, the hero's `PositionedDirectional` geometry — all kept in the callers.
+
 ### Reasoning
 
 A marker that is drawn eleven ways cannot be restyled once, cannot be tested
@@ -13078,3 +13161,12 @@ contract in one place.
   and `test/yo_badge_live_test.dart` pins the height, the one-line elision, the
   verbatim label and the motion guard so the next duplicate has to argue with a
   test.
+- Every bar waveform in Dark and Pearl is one painter; a redesign of the
+  silhouette, the played fill or the radius is a one-file change, and a
+  waveform that starts moving without a real value has to argue with
+  `test/yo_waveform_test.dart` (no scheduled frame, no semantics, exact box,
+  explicit width honoured, the `StoryWaveform` defaults). `flutter test
+  test/waveform_screenshot.dart` renders every host configuration in both
+  themes and directions for a person to look at; the host frames that the
+  existing harnesses cannot produce are listed as UNVERIFIED in
+  `docs/Sessions/2026-09-19-slim-redesign.md`.

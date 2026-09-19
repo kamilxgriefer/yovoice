@@ -18,6 +18,7 @@ import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
 /// An audio-first Moment card: identity, caption, a compact waveform with
 /// play state and duration, and the real reaction/comment counts.
@@ -464,7 +465,16 @@ class _MomentCardState extends State<MomentCard> {
             children: [
               _PlayButton(playing: _playing, enabled: playable, onTap: _toggle),
               const SizedBox(width: 12),
-              const Expanded(child: _Waveform()),
+              // Decorative on purpose: no per-Moment amplitude is recorded and
+              // MomentCard has no position source, so the silhouette is still.
+              Expanded(
+                child: YoWaveform(
+                  height: 26,
+                  color: AppColors.primary.withValues(alpha: .45),
+                  barGap: 2.4,
+                  barRadius: 2,
+                ),
+              ),
               const SizedBox(width: 10),
               // Hidden rather than asserting "0:00": legacy documents
               // carry no duration and a fabricated zero is still fabricated.
@@ -705,61 +715,6 @@ class _PlayButton extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// A static waveform silhouette — deliberately decorative: the real
-/// per-moment amplitude data is not recorded, and inventing a fake
-/// waveform shape per moment would be fabricated data.
-class _Waveform extends StatelessWidget {
-  const _Waveform();
-
-  static const _bars = <double>[
-    .35,
-    .6,
-    .45,
-    .8,
-    .55,
-    .3,
-    .7,
-    .5,
-    .85,
-    .4,
-    .65,
-    .3,
-    .55,
-    .75,
-    .45,
-    .6,
-    .35,
-    .5,
-    .7,
-    .4,
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 26,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          for (final bar in _bars)
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 1.2),
-                child: Container(
-                  height: 26 * bar,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: .45),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-            ),
-        ],
       ),
     );
   }

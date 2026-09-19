@@ -5,6 +5,7 @@ import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
@@ -1265,10 +1266,19 @@ class _StagePerson extends StatelessWidget {
     // stage never jumps when the provider's speaking signal changes.
     final state = SizedBox(
       height: 14,
+      // The speaking mark: five fixed bars, not random and not animated — it
+      // says *that* somebody is speaking, which is the only thing the
+      // provider actually tells us.
       child: live
-          ? _Waveform(
+          ? YoWaveform(
               key: const ValueKey('server-podcast-waveform'),
               color: colors.foreground,
+              width: 30,
+              height: 14,
+              barWidth: 3,
+              barGap: 3,
+              barRadius: 2,
+              silhouette: const [6 / 14, 11 / 14, 1, 9 / 14, 5 / 14],
             )
           : person.isMicrophoneEnabled
           ? null
@@ -1364,37 +1374,6 @@ class _StagePerson extends StatelessWidget {
       ),
     );
   }
-}
-
-/// The speaking mark: five bars, drawn only while the provider says this
-/// person is speaking.
-class _Waveform extends StatelessWidget {
-  const _Waveform({required this.color, super.key});
-  final Color color;
-
-  /// Fixed, not random and not animated: it says *that* somebody is speaking,
-  /// which is the only thing the provider actually tells us.
-  static const _bars = [6.0, 11.0, 14.0, 9.0, 5.0];
-
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    crossAxisAlignment: CrossAxisAlignment.center,
-    children: [
-      for (final height in _bars)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 1.5),
-          child: Container(
-            width: 3,
-            height: height,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-        ),
-    ],
-  );
 }
 
 /// Board 05's `Publiczność` row.

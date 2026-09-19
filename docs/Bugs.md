@@ -5,6 +5,33 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED IN SOURCE — the voice message bubble drew a different waveform per message from its duration (2026-09-19, Slim phase 0)
+
+Found by the phase-0 inventory for the waveform family. `_VoiceMessageContent`
+(`lib/features/messages/presentation/widgets/message_bubble.dart`) drew its 24
+bars from `7 + ((index * 13 + duration) % 22)`: every message got its own
+"waveform" although no amplitude is recorded anywhere — a fabricated shape
+presented as the message's audio. Six other bar waveforms across Home, Moments
+and Servers each drew their own silhouette. Fixed by the one primitive
+`YoWaveform` (`lib/shared/widgets/waveform/yo_waveform.dart`, ADR-209,
+waveform family): a fixed silhouette, still unless the caller holds the
+player's real position. Every caller kept its state machine, gate, key and
+target; the normalisations are listed in the ADR.
+
+## OPEN — two screenshot harnesses fail on a fixture stream before any frame (2026-09-19)
+
+On the clean Build 33 tree, `flutter test test/desktop_screenshot.dart` fails
+its four `roster-*` cases and `flutter test test/moments_discovery_screenshot.dart`
+fails `moments feed loading 390 / 1100` and `moments feed story viewer 390 / 1440`.
+The desktop failure is `Bad state: Stream has already been listened to`, thrown
+while building `HomePeopleStrip` (`desktop_home.dart:388`) from the harness's
+single-subscription fixture stream. These are exactly the frames that show the
+Start hero's portrait cluster (its waveform motif) and the story stage, so the
+waveform family could not produce host-level before/after frames for those two
+surfaces (`docs/Sessions/2026-09-19-slim-redesign.md`, UNVERIFIED). Harness
+fixtures, not product code; the other cases of both harnesses still pass and
+were used. Fix belongs to the QA harness owner, not to a redesign phase.
+
 ## FIXED IN SOURCE — the presence dot had three greens and two greys (2026-09-19, Slim phase 0)
 
 Found by the phase-0 inventory. Ten avatars in eight files each drew their

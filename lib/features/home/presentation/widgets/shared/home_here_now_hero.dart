@@ -15,10 +15,10 @@ import 'package:yovoice/features/home/presentation/widgets/shared/home_places_se
 import 'package:yovoice/features/home/presentation/widgets/shared/home_roster_cache.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart'
     show rankRoomsForHome;
-import 'package:yovoice/features/home/presentation/widgets/shared/home_static_waveform.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 import 'package:yovoice/features/discover/presentation/discover_localized_copy.dart';
 
 /// Where a live room came from. The hero prefers the places the account
@@ -902,10 +902,15 @@ class _PortraitCluster extends StatelessWidget {
           PositionedDirectional(
             bottom: 0,
             start: (width - waveWidth) / 2,
-            child: HomeStaticWaveform(
+            // Static: Home never joins audio, so there is no amplitude here
+            // and there never will be on this surface. The 13-bar ramp keeps
+            // its 58 % bar / 42 % gap proportions at any diameter.
+            child: YoWaveform(
               color: waveformColor,
               width: waveWidth,
               height: waveHeight,
+              silhouette: YoWaveform.ramp(13),
+              barGap: waveWidth / 13 * .42,
             ),
           ),
           for (var index = 0; index < participants.length; index++)
