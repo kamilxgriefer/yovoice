@@ -95,6 +95,10 @@ class UserAvatar extends StatelessWidget {
           ? Icon(fallbackIcon, color: onFill, size: radius)
           : Text(
               _initial,
+              // Sized to the disc, not to the reader's text: at 200 % the
+              // scaled glyph outgrew its circle and the ClipOval cropped
+              // it. The name beside every avatar carries the scaled text.
+              textScaler: TextScaler.noScaling,
               style: TextStyle(
                 color: onFill,
                 fontWeight: FontWeight.w900,

@@ -26,8 +26,9 @@ class HomeGreetingHeader extends StatelessWidget {
     required this.onOpenProfile,
     this.unreadNotificationCount = 0,
     this.expanded = false,
+    bool? showBrand,
     super.key,
-  });
+  }) : showBrand = showBrand ?? !expanded;
 
   /// The shared `watchCurrentProfile()` stream the parent already holds.
   final Stream<UserProfile>? profile;
@@ -37,6 +38,16 @@ class HomeGreetingHeader extends StatelessWidget {
 
   /// Desktop ramp (26 px heading) rather than the phone's 22.
   final bool expanded;
+
+  /// The YO Voice lockup (mark + wordmark) above the greeting. Start on a
+  /// phone or tablet has no app bar and no rail, so this line is where the
+  /// brand stays visible (Slim brief, 2026-09-19). The desktop rail already
+  /// carries the mark at its top, so the expanded header leaves it out by
+  /// default rather than printing the brand twice on one screen.
+  final bool showBrand;
+
+  /// The brand mark's box: 28 px with a radius of 8 (Slim brief).
+  static const double brandMarkSize = 28;
 
   /// The control row's height: the 46 px discs are its tallest members, so
   /// the header is exactly as tall before the profile arrives as after.
@@ -192,6 +203,10 @@ class HomeGreetingHeader extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (showBrand) ...[
+              const HomeBrandLockup(),
+              const SizedBox(height: AppRhythm.tight),
+            ],
             heading,
             const SizedBox(height: AppRhythm.hairline),
             subtitle,
@@ -221,6 +236,67 @@ class HomeGreetingHeader extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// The YO Voice mark before the wordmark, as one quiet line.
+///
+/// The mark sits on a filled 28 px tile (radius 8) so it reads as the app's
+/// icon on both Dark and Pearl and so the line has ink from its first frame,
+/// before the PNG decodes. The wordmark is the product name, not copy, so it
+/// is not localized; the line is one semantics node that reads the name once.
+class HomeBrandLockup extends StatelessWidget {
+  const HomeBrandLockup({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    const size = HomeGreetingHeader.brandMarkSize;
+    return Semantics(
+      key: const ValueKey('home-brand-lockup'),
+      container: true,
+      label: 'YO Voice',
+      excludeSemantics: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            key: const ValueKey('home-brand-mark'),
+            width: size,
+            height: size,
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: palette.surfaceRaised,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: palette.border),
+            ),
+            child: Image.asset(
+              'assets/images/logo.png',
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.medium,
+              errorBuilder: (_, _, _) => Icon(
+                Icons.graphic_eq_rounded,
+                size: 18,
+                color: palette.interactiveForeground,
+              ),
+            ),
+          ),
+          const SizedBox(width: AppRhythm.tight),
+          Flexible(
+            child: Text(
+              'YO Voice',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTypography.titleMedium.copyWith(
+                color: palette.textPrimary,
+                fontWeight: FontWeight.w800,
+                height: 1.2,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

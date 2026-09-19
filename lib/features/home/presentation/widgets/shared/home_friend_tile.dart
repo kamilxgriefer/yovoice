@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
-import 'package:yovoice/core/theme/join_action_identity.dart';
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart'
+    show MomentStoryTile;
 import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -76,7 +78,9 @@ Map<String, HomeFriendVoice> homeFriendVoiceByAuthor({
 /// different questions and must never be collapsed into one:
 ///
 ///  * the RING and the BADGE mean "there is new content you can hear" —
-///    Home's own meaning for the cyan join identity;
+///    the ring paints the one unheard-Moment gradient every story shape in
+///    the app uses ([MomentStoryTile.ringGradient], Slim phase 1), so Start
+///    reads as the same stories rail as YO Moments;
 ///  * the DOT and the status word mean "this is their presence", straight
 ///    from `socialPresence`.
 ///
@@ -184,7 +188,6 @@ class HomeFriendTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final join = JoinAction.resolve(Theme.of(context).brightness);
     final content = voice;
     final presenceWord = statusLabel ?? status.localizedLabel(copy);
     final columnWidth =
@@ -230,7 +233,7 @@ class HomeFriendTile extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _disc(context, palette: palette, join: join, content: content),
+              _disc(context, palette: palette, content: content),
               const SizedBox(height: AppRhythm.tight),
               SizedBox(
                 width: columnWidth,
@@ -269,7 +272,6 @@ class HomeFriendTile extends StatelessWidget {
   Widget _disc(
     BuildContext context, {
     required AppPalette palette,
-    required JoinActionVisuals join,
     required HomeFriendVoice? content,
   }) {
     final hasContent = content != null;
@@ -281,21 +283,20 @@ class HomeFriendTile extends StatelessWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          // The ring slot is ALWAYS 2 px: a hairline border when there is
-          // nothing new, the join colour when there is. The disc therefore
-          // never resizes when content arrives or expires.
-          Container(
-            width: discSize,
-            height: discSize,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: hasContent ? join.ring : palette.border,
-                width: 2,
-              ),
+          // The ring slot is ALWAYS 2 px: a hairline in `border` when there
+          // is nothing new, the unheard-Moment gradient when there is. The
+          // disc therefore never resizes when content arrives or expires.
+          CustomPaint(
+            key: const ValueKey('home-friend-ring'),
+            painter: _RingPainter(
+              gradient: hasContent
+                  ? MomentStoryTile.ringGradient(context, seen: false)
+                  : null,
+              color: palette.border,
             ),
+            // 2 px ring + 2 px gap on each side: the disc stays discSize.
             child: Padding(
-              padding: const EdgeInsets.all(2),
+              padding: const EdgeInsets.all(4),
               child: UserAvatar(
                 radius: avatarRadius,
                 userId: userId,
@@ -311,8 +312,8 @@ class HomeFriendTile extends StatelessWidget {
               top: discSize - badge,
               child: _ContentBadge(
                 size: badge,
-                fill: join.badge,
-                ink: join.onBadge,
+                fill: AppColors.primary,
+                ink: AppColors.white,
                 border: palette.background,
               ),
             ),
@@ -378,6 +379,38 @@ class _StatusLine extends StatelessWidget {
       ],
     );
   }
+}
+
+/// The 2 px ring around a friend's disc: a gradient stroke for an unheard
+/// chain, a flat hairline otherwise. Painted, not a `Border`, because a box
+/// border cannot carry the gradient every other story ring in the app uses.
+class _RingPainter extends CustomPainter {
+  const _RingPainter({required this.gradient, required this.color});
+
+  final Gradient? gradient;
+  final Color color;
+
+  static const double width = 2;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = width
+      ..isAntiAlias = true;
+    final gradient = this.gradient;
+    if (gradient != null) {
+      paint.shader = gradient.createShader(rect);
+    } else {
+      paint.color = color;
+    }
+    canvas.drawCircle(rect.center, size.shortestSide / 2 - width / 2, paint);
+  }
+
+  @override
+  bool shouldRepaint(_RingPainter oldDelegate) =>
+      oldDelegate.gradient != gradient || oldDelegate.color != color;
 }
 
 /// The waveform badge that means "a Voice Moment you have not heard".
