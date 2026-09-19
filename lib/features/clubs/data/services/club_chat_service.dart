@@ -229,6 +229,8 @@ class ClubChatService {
     ClubRole? role;
     String? ownerId;
     var muted = false;
+    // Flips on the first membership snapshot (or its failure), never back.
+    var membershipResolved = false;
     StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? memberSub;
     StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? clubSub;
     StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? restrictionSub;
@@ -249,6 +251,7 @@ class ClubChatService {
           // is not reachable, because the flag never goes back.
           viewerEmailVerified: _auth.currentUser?.emailVerified ?? false,
           viewerIsCommunicationMuted: muted,
+          membershipResolved: membershipResolved,
         ),
       );
     }
@@ -266,10 +269,12 @@ class ClubChatService {
                 role = snapshot.exists
                     ? ClubRole.fromValue(snapshot.data()?['role'])
                     : null;
+                membershipResolved = true;
                 emit();
               },
               onError: (_) {
                 role = null;
+                membershipResolved = true;
                 emit();
               },
             );

@@ -325,14 +325,24 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
       );
     }
     final currentUserId = widget.currentUserId;
+    // Unknown is not read-only: until the viewer's membership row has been
+    // read, the composer (and the emoji button and panel inside it) stays.
+    final pending = ClubChatAuthority(
+      viewerId: currentUserId,
+      membershipResolved: false,
+    );
     return StreamBuilder<ClubChatAuthority>(
       stream: _authority,
-      initialData: ClubChatAuthority(viewerId: currentUserId),
+      initialData: pending,
       builder: (context, authoritySnapshot) {
-        final authority =
-            authoritySnapshot.data ??
-            ClubChatAuthority(viewerId: currentUserId);
-        final canWrite = authority.canSendToChannel(
+        final authority = authoritySnapshot.data ?? pending;
+        // The composer gives way to the read-only sentence only on a
+        // RESOLVED refusal (announcements for a non-moderator, a guest, a
+        // non-member, a mute, an unverified email). It used to give way on
+        // "not known yet" as well, which took the emoji input away on every
+        // channel open and for good whenever the first membership snapshot
+        // was slow or never came. `sendClubMessage` authorizes every send.
+        final canWrite = !authority.showsReadOnlyNotice(
           announcement: _announcement,
         );
         // The whole footer is ONE tap region with the text field: the send
