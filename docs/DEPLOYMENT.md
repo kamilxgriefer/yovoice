@@ -4,6 +4,396 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## Build 33 release round — web deployed, iOS with testers, Play upload outstanding (2026-09-19)
+
+Source for everything below: `main` at
+`46d6b330dabdee6c672faeabb8e9f27dd06df039` (`chore(release): prepare 2.0.0
+build 33`, `pubspec.yaml` `2.0.0+33`), nine commits over the Build 32 tree
+`a18fe789`. All three GitHub Actions workflows are green on that revision —
+`CodeQL` success, `Flutter web browser smoke` success, `Deploy YO Voice to
+Firebase Hosting` success (28 m 16 s). Evidence:
+`yovoice-evidence/2026-09-19/build33-2026-09-19.md` and
+`build33-worktree.md`, plus the `build33-*` logs and JSON beside them.
+Read-backs marked *(re-read while writing this record)* were taken again from
+production, read-only.
+
+**Everything was built in a clean detached worktree, not in the checkout.** The
+Slim-redesign session was editing `/Users/kamil/Documents/GitHub/yovoice` for
+the whole round, so all three artifacts came from
+`/private/tmp/yovoice-b33-build`, created at `46d6b330` and detached. Its `HEAD`
+read `46d6b330…` and its `git status --porcelain` read **0 lines** before and
+after every phase (`build33-worktree.md`, `build33-web-artifact-verify.log`,
+`build33-android-final.log`, `build33-ios-final.log`). The main checkout was
+**never built from and never written to**; the only contact was reading the
+git-ignored upload keystore (below) and reading `HEAD`/`git status`. This is now
+the recommended shape for any release round — see "The build worktree is the
+release surface" at the end of this section.
+
+**There was no backend round, and that is a measured fact rather than an
+omission.** `git diff --name-only a18fe789..46d6b330` returns **0 files** for
+`functions/`, `firestore.rules`, `firestore.indexes.json` and `storage.rules`
+(30 files under `lib/`, 29 under `test/`, 8 under `docs/`, 1 line of
+`pubspec.yaml`, **0** under `android/` and **0** under `ios/`). Build 33 is a
+client-only polish round, so no rules/index/function ordering question arises,
+there is no migration, and nothing was deployed outside Hosting. The Build 32
+backend deployed on 2026-09-19 02:19–02:23Z remains the live backend.
+
+### Where each surface actually stands
+
+| Surface | State | Proof |
+| --- | --- | --- |
+| Hosting / web | **deployed 2026-09-19 07:34:38Z (09:34 CEST)**, release version `ce6c614150a7e8d9`; both hosts serve `build_number 33` | `build33-web-deploy.log`, `build33-web-readback.txt`, `build33-web-hosting-releases-after.json` *(re-read while writing this record)* |
+| iOS | **build 33 `VALID`, in both TestFlight groups, review `APPROVED`, `autoNotifyEnabled true`** | `build33-asc-*.json` *(re-read while writing this record)* |
+| Android | AAB built, verified and **staged only — not uploaded to Play** | `build33-android*.log`, `build33/app-release-33.aab` |
+| Google Play (internal track) | **still on `32 (2.0.0)`**, published 2026-09-19 08:35 CEST by the Build 32 round | `build32-play/play-readback.md` |
+| Cloud Functions | **not deployed** — unchanged since Build 32 | 0 changed files under `functions/`; `getProfileMediaAccess` re-read `ACTIVE`, `updateTime 2026-09-19T02:22:51Z` (`build33-ios-functions-readback.json`) |
+| Firestore rules / indexes | **not deployed** — unchanged since Build 32 | 0 changed files |
+| Storage rules | **not deployed** — unchanged since 2026-09-14 | 0 changed files |
+| `appConfig/accountDeletion` | **absent → deletion pipeline DISABLED** | HTTP 404 `NOT_FOUND`, re-read live during the iOS phase (`build33-ios-killswitch-accountDeletion.json`) |
+| `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` | **still not set** — carried over, **not re-verified this round** | see the Build 32 round below |
+
+### Web — deployed and read back on both hosts
+
+**Preconditions, all read back before the build** (`build33-web-preconditions.log`):
+worktree `HEAD` `46d6b330…` and detached, `git status --porcelain` 0 lines,
+`pubspec.yaml` line 5 `version: 2.0.0+33`, `firebase.json:38`
+`"public": "build/web"` — *the worktree's own* `build/web` — toolchain Flutter
+3.44.6 / Dart 3.12.2 and firebase-tools 15.23.0 (identical to Builds 31 and 32),
+and `firebase login:list` → `No authorized accounts`, i.e. **Application Default
+Credentials only; no interactive login, no password, no secret typed or
+printed**.
+
+**The stale-artifact trap could not fire.** `ls -d build/web` in the worktree
+returned `No such file or directory` — the tree had never been built, so nothing
+existed that could have shipped by accident. That is the structural benefit of
+the fresh worktree; the Build 32 round had to identify and move a genuine
+build-31 bundle aside at this exact step.
+
+**Build**, byte-for-byte the command Builds 31 and 32 used and the one CI's
+`Build Flutter Web` step runs (`.github/workflows/firebase-hosting-merge.yml`),
+with the build number coming from `pubspec.yaml` rather than the command line:
+
+```bash
+cd /private/tmp/yovoice-b33-build
+nice -n 10 flutter build web --release \
+  --dart-define=YOVOICE_WEB_PUSH_VAPID_KEY=BGa6os6npm6shnDdNP4rbqFS8wC5brGTY0RVzt59mZvpOhX3EeaCUpOaZRw2TmQeXK5gpZ1whEKvJEhmSD0mikU \
+  --dart-define=YOVOICE_WEB_RECAPTCHA_SITE_KEY= \
+  --dart-define=YOVOICE_APPLE_SIGN_IN_ENABLED=true
+```
+
+`07:31:56Z → 07:33:57Z` (**121 s**), **exit 0**, final line `✓ Built build/web`
+(`build33-web-build.log`). The empty reCAPTCHA site key is reproduced, not
+invented — the repository has zero Actions variables, so CI expands it to the
+empty string too. **Consequence, unchanged since Build 30: App Check on web
+stays disabled.** That is pre-existing and is the only known gap in this bundle;
+see the App Check entry in [Roadmap.md](Roadmap.md).
+
+**Artifact accepted by content, never by assumption**
+(`build33-web-artifact-verify.log`):
+
+| Check | Value |
+| --- | --- |
+| `build/web/version.json` | `{"app_name":"yovoice","version":"2.0.0","build_number":"33",…}` |
+| `build/web/main.dart.js` sha256 | `5185fad54c05c43f5d304c8543b9f83befaecd0229ae5b78065663e5e00e9847` |
+| size | 11 444 060 B (build 32: 11 394 969 B) |
+| VAPID key baked in | **yes** — the key occurs in `main.dart.js`, so web push is wired |
+| files | 112 |
+| distinct from build 32 | yes — build 32 served `224854be…d5f8d`, so this is a real release, not a mislabelled no-op |
+| `git status` / `HEAD` after the build | still 0 lines / still `46d6b330…` (`.gitignore:33:/build/`) |
+
+**Served state measured before the deploy:** both hosts returned
+`build_number "32"` and served `main.dart.js` `224854be…d5f8d`
+(`build33-web-versionjson-before*.json`, `build33-web-maindartjs-before.sha256`).
+
+**Deploy.** A hard gate re-verified `HEAD`, tree cleanliness, `version.json == 33`,
+VAPID presence and the exact `main.dart.js` hash, and would have aborted on any
+drift. All gates passed, then:
+
+```bash
+cd /private/tmp/yovoice-b33-build
+firebase deploy --only hosting --project yovoice-ec54a --non-interactive \
+  -m "2.0.0+33 / main 46d6b330"
+```
+
+`07:34:22Z → 07:34:39Z` (**17 s**), **exit 0**,
+`found 111 files in build/web` → `release complete` → `Deploy complete!`
+(`build33-web-deploy.log`). **111 deployed against 112 built is expected:** the
+excluded file is `build/web/.last_build_id`, dropped by the
+`"ignore": ["**/.*"]` rule in `firebase.json`. Build 32 deployed the same
+111-of-112.
+
+**`--only hosting` is load-bearing, as always.** `firebase.json` carries
+`functions` (line 25), `firestore` (line 113) and `storage` (line 117) blocks
+beside `hosting` (line 37); an unscoped `firebase deploy` would have redeployed
+the backend. The log names exactly one target — `i deploying hosting` — and
+contains **no** functions/firestore/storage/rules/indexes line
+(`build33-web-postdeploy-verify.log`).
+
+**Read-back — the proof that build 33 is live** (`build33-web-readback.txt`,
+07:34:52Z, and *re-read while writing this record*):
+
+| Check | Value after |
+| --- | --- |
+| `https://app.yovoice.app/version.json` | HTTP 200, `build_number "33"` |
+| `https://yovoice-ec54a.web.app/version.json` | HTTP 200, `build_number "33"` |
+| served `main.dart.js` sha256, both hosts | `5185fad54c05c43f5d304c8543b9f83befaecd0229ae5b78065663e5e00e9847` — **equal to the built artifact** |
+| `/` `last-modified` | `Sat, 19 Sep 2026 07:34:37 GMT` (was 06:22:16 GMT) |
+| CSP / HSTS / `cache-control: no-cache` | present and unchanged |
+
+Hosting release history after the deploy
+(`build33-web-hosting-releases-after.txt`, and re-read from
+`firebasehosting.googleapis.com/v1beta1/sites/yovoice-ec54a/releases` while
+writing this record):
+
+```
+LIVE  2026-09-19T07:34:38.852Z  version ce6c614150a7e8d9  msg "2.0.0+33 / main 46d6b330"
+PREV  2026-09-19T06:22:17.395Z  version 700501f5064286cf  msg "2.0.0+32 / main a18fe789"
+PREV  2026-09-18T15:43:13.151Z  version d8c5da0668b90a18  msg "2.0.0+31 / main 98f9413c"
+PREV  2026-09-16T22:33:58.394Z  version 64101cb53cb8087e  msg "2.0.0+30 / main 121973fc"
+```
+
+**A push to `main` still never deploys Hosting, and that was checked rather than
+assumed this round.** The release-engineering record flagged that the
+push-triggered `Deploy YO Voice to Firebase Hosting` run on `46d6b330` was still
+`in_progress` and might create a Hosting release *later* than
+`ce6c614150a7e8d9`, which would change the rollback target. It did not: the run
+completed **success** in 28 m 16 s, and the newest Hosting release is still
+`ce6c614150a7e8d9`. The reason is structural — both the artifact-packaging step
+and the `deploy_hosting` job are gated
+`if: github.event_name == 'workflow_dispatch' && inputs.deploy_hosting`
+(`.github/workflows/firebase-hosting-merge.yml:163` and `:171-172`), so a push
+build proves the build and the suites, never a release. **This concern is
+closed.**
+
+**Rollback:** re-release Hosting version **`700501f5064286cf`**
+(`2.0.0+32 / main a18fe789`) — Firebase console → Hosting → release history →
+Rollback, or Hosting REST
+`sites/yovoice-ec54a/releases.create?versionName=sites/yovoice-ec54a/versions/700501f5064286cf`.
+That release is runbook-built, contains the VAPID key, and was live and healthy
+for ~72 minutes before this deploy. **Do not** roll back to
+`148b73b04e947c74` (build 28) — it was built without
+`YOVOICE_WEB_PUSH_VAPID_KEY` and web push dies. Rollback is Hosting-only and
+cannot leave the client and backend out of step, because Build 33 shipped no
+backend change.
+
+### iOS — build 33 is with the testers
+
+```bash
+cd /private/tmp/yovoice-b33-build
+nice -n 10 flutter build ipa --release --build-name=2.0.0 --build-number=33 \
+  --export-options-plist=ios/ExportOptions.plist
+```
+
+First attempt, **exit 0**, `07:57:44Z → 08:11:07Z` (**13 m 23 s**;
+`build33-ios.log`). The archive phase alone went 401.7 s → 731.6 s against Build
+32 because the fresh worktree carries no `DerivedData` or `SourcePackages`
+cache — the expected cost of a cold tree, not a symptom. **`flutter clean` was
+not run.** `ios/Podfile.lock` and `ios/Pods/Manifest.lock` both hashed
+`bef050fd…1db81`, the same value Builds 30–32 recorded, so the worktree's
+`pod install` reproduced the locked resolution exactly.
+
+The stale-artifact trap was structurally impossible: `build/ios/ipa` and
+`build/ios/archive` did not exist before the build, and afterwards the IPA
+directory held only this run's four files (`build33-ios-provenance.log`).
+
+| Check | Value |
+| --- | --- |
+| archive `CFBundleVersion` (**gate, read before the upload**) | **33** |
+| IPA sha256 / size | `33d2caec56d27d08fdf9367c868f4bdf81aebf15f69e5bbe0709f1bba93e46d7` / 79 182 553 B |
+| `CFBundleIdentifier` / `CFBundleShortVersionString` / `MinimumOSVersion` | `app.yovoice` / `2.0.0` / 15.0 |
+| signing identity | `Apple Distribution: Kamil Jaguszewski (C3R59P53KB)` → Apple WWDR → Apple Root CA |
+| `codesign --verify --deep --strict` | `valid on disk`, `satisfies its Designated Requirement` |
+| embedded profile | `YO Voice App Store` `6a817efe-d05c-443b-a10b-3f91ca381322` — the documented one; expiry 2027-08-15 |
+| entitlements | `aps-environment=production`, `beta-reports-active=true`, `get-task-allow=false` |
+| staged copy | `yovoice-evidence/2026-09-19/build33/yo_voice-33.ipa` — sha256 and size identical |
+| upload | `xcrun altool --upload-app` under API key `BGK5YPN6V4`; `08:12:11Z → 08:14:37Z`; Delivery UUID `b90ddee4-fd9c-4448-b3eb-1d2a9c8a6e57`; Apple acknowledged **exactly 79 182 553 bytes** |
+| processing | `VALID` on the 8th poll at `08:21:51Z`, 7 m 14 s after the upload finished |
+| ASC build id | `b90ddee4-fd9c-4448-b3eb-1d2a9c8a6e57` — **equal to the altool Delivery UUID**, which links the processed record to the uploaded file |
+
+**Distribution, with the status codes** (`build33-ios-distribution.log`):
+
+| # | Step | Call | Result |
+| --- | --- | --- | --- |
+| 1 | internal group `a6c2c254-…` | automatic — no call | 33 present, 26 builds, tail `…,30,31,32,33` |
+| 2 | "What to Test" | `PATCH /v1/betaBuildLocalizations/85a656d4-7313-47da-86bd-bea04b5361d4` | **200**, 595 chars `en-US`, read back `stored == requested` |
+| 3 | external group attach | `POST /v1/builds/b90ddee4-…/relationships/betaGroups` | **204** |
+| 4 | beta review | `POST /v1/betaAppReviewSubmissions` | **201**, `WAITING_FOR_REVIEW` |
+| 5 | external group confirm | `GET /v1/betaGroups/910d0a45-…/builds` | 33 present, 16 builds, tail `…,30,31,32,33` |
+
+The What-to-Test PATCH was deliberately done **before** the review submission —
+the same ordering change Builds 31 and 32 made, because Apple requires tester
+notes on an external submission.
+
+**Final state**, read back after every write and *re-read from App Store Connect
+while writing this record*: `processingState VALID`, `expired false`,
+`internalBuildState IN_BETA_TESTING`, `externalBuildState IN_BETA_TESTING`
+(from `READY_FOR_BETA_SUBMISSION`), `betaReviewState APPROVED`,
+`autoNotifyEnabled true`. **Apple notifies the testers itself; no console click
+is outstanding for iOS.**
+
+**Provenance is clean.** `HEAD` was `46d6b330` and the tree clean at build start
+and still so after every TestFlight write; the IPA's hash has not changed since
+it was written; the staged copy matches byte for byte; and Apple's acknowledged
+byte count equals the file's size. The uploaded binary is provably what
+`46d6b330` produces, and `46d6b330` is `origin/main`. The redesign session
+committed `f5713426` and `89c3d2be` in the main checkout during this window —
+**none of that is in build 33**, and both commits are local and unpushed. That
+isolation is the point of the worktree.
+
+**Everything in this round's tester notes is exercisable**, which was not true of
+Build 32. All seven claims trace to commits in `a18fe789..46d6b330` and are
+client-side; the single server dependency they lean on, `getProfileMediaAccess`,
+was already deployed on 2026-09-19 and re-read `ACTIVE` during this phase. The
+notes correctly say nothing about account deletion.
+
+**The duplicate `YO Voice App Store` provisioning profile is still installed**
+(`1a59a340-37ab-43a5-bdb2-bdc29d60600d` beside the documented `6a817efe-…`,
+both expiring 2027-08-15) and `ios/ExportOptions.plist` still selects **by
+name**. Build 33 embedded the right one again — that is now **four consecutive
+builds running on luck**. Outstanding since Build 30; the durable fix is to pin
+the UUID.
+
+**Rollback.**
+
+| Situation | Action |
+| --- | --- |
+| defective for **external** testers | `DELETE /v1/builds/b90ddee4-…/relationships/betaGroups` with `{"data":[{"type":"betaGroups","id":"910d0a45-9758-49c4-8ae3-c50ba03922d0"}]}` — build 32 is still `VALID` in that group |
+| defective for **internal** testers | the group has `hasAccessToAllBuilds = true`, so un-adding does nothing — **expire** build 33 instead |
+| the avatar/banner fixes misbehave | no store action helps; the change is in the binary. Fall back to build 32; the server half is shared and needs no change |
+| the tester notes are wrong | `PATCH /v1/betaBuildLocalizations/85a656d4-…` again; `whatsNew` is freely rewritable after release |
+| anything | an uploaded build **cannot be deleted** and **build number 33 can never be re-used** — any re-cut is **34** |
+
+Retained binaries: `yovoice-evidence/2026-09-19/build33/yo_voice-33.ipa`,
+`./build32/yo_voice-32.ipa`, `../2026-09-18/build31/yo_voice-31.ipa`.
+
+### Android — bundle built and verified, nothing uploaded
+
+```bash
+cd /private/tmp/yovoice-b33-build
+nice -n 10 flutter build appbundle --release --build-name=2.0.0 --build-number=33
+```
+
+**Exit 0**, Gradle `bundleRelease` **464.6 s**, wall clock
+`07:43:42Z → 07:51:30Z` (`build33-android.log`). Slower than Build 32's 192.1 s
+for the same reason as iOS — a cold worktree cache. A full-log scan for
+`error` / `failure` / `failed` returns **0 matches**. No `--dart-define` is
+passed, and that is a reproduction rather than an omission: `grep -rln
+'appbundle\|bundleRelease' .github/workflows/` returns **nothing**, so there is
+no Android CI job whose command could differ.
+
+**The upload keystore had to be staged, and it is recorded because it is a
+security action.** `android/app/yovoice-upload-keystore.jks` is git-ignored
+(`.gitignore:50`, `android/.gitignore:13-14`), so `git worktree add` did not
+carry it over, and `android/app/build.gradle.kts:56-60` throws outright without
+it. It was copied read-only from the main checkout with `install -m 600`,
+verified (source and copy sha256 `e7f284e5…3126`, `cmp` identical, mode `0600`),
+and **removed at 07:52:26Z**; a `find` over the worktree afterwards shows no
+`.jks` or `.keystore` anywhere. The private key existed under `/private/tmp` for
+**9 minutes** at owner-only permissions. **Its contents were never read,
+printed or logged** — only size, mode and sha256 appear anywhere. The keystore
+password was never read either: `YOVOICE_UPLOAD_KEY_PASSWORD` was unset, so
+Gradle took it from the macOS Keychain. `git status` stayed at 0 lines
+throughout (`build33-android-keystore.log`).
+
+| Check | Value |
+| --- | --- |
+| AAB sha256 / size | `a24d8bf099c9e28722440362c68b13878ae5a7eb0b8ed9d7a4ade9bf1ae3b92b` / 127 991 091 B |
+| distinct from Build 32 (`147a8c60…948a`, 127 854 172 B) | yes, +136 919 B — as required by the 30 changed `lib/` files |
+| `unzip -t` | rc 0, `No errors detected in compressed data` |
+| `package` | `app.yovoice` |
+| `versionCode` / `versionName` | **33** / `2.0.0` |
+| `minSdkVersion` / `targetSdkVersion` / `compileSdkVersion` | 24 / 36 / 36 |
+| `jarsigner -verify -verbose -certs` | rc 0, exactly one `jar verified.` |
+| signer | `CN=YO Voice Upload Key, O=YO Voice, C=PL`, SHA-256 `75:3A:AC:CB:B2:8E:65:0B:54:A5:EB:F0:F2:A6:CB:AA:23:3C:5E:B0:EF:00:FB:37:90:83:8E:6E:44:51:AE:1E` — identical to Builds 30, 31 and 32 |
+| foreground service | `android:foregroundServiceType="microphone\|mediaPlayback\|mediaProjection"` on `app.yovoice.VoiceSessionService` (`exported="false"`); all four FGS permissions present |
+| ABIs | `arm64-v8a`, `armeabi-v7a`, `x86_64` |
+| staged copy | `yovoice-evidence/2026-09-19/build33/app-release-33.aab` — `cmp` byte-for-byte identical, independently re-verified with its own `jarsigner -verify` and `keytool -printcert` |
+
+**The manifest cross-check is the strongest control available here.** Because
+**zero** files under `android/` changed between `a18fe789` and `46d6b330`, the
+decoded manifest had to differ from Build 32's in `versionCode` alone — and the
+diff is exactly that one line. The same `aapt2`/`bundletool` unavailability as
+Builds 31 and 32 forced the local protobuf decoder
+(`scratchpad/aab_manifest.py`) again; it was re-validated in the same session
+against the retained build-31 and build-32 bundles (reporting 31 and 32) before
+being trusted for 33. `versionCode 33` is confirmed, not assumed.
+
+**Nothing was uploaded.** No Play Console action, no Play Developer API call, no
+browser step. The Play **internal testing** track therefore still shows
+`Najnowsza wersja: 32 (2.0.0)`, published 2026-09-19 08:35 CEST by the Build 32
+round (`build32-play/play-readback.md`). Play will accept neither a re-upload of
+versionCode 32 nor, later, of 33, so a Play rollback is by *release selection*,
+not re-upload — and since nothing is in Play for 33, **the Android rollback
+today is simply "do not upload"**.
+
+### Platform skew a human should expect
+
+**Web serves build 33; iOS testers get build 33; Play internal testers are on
+build 32.** That is the intended order of this round, not a defect. It closes
+only when someone uploads `app-release-33.aab` and hands over the opt-in link.
+
+### Manual actions still outstanding after this round
+
+1. **Upload `app-release-33.aab` to the Play internal track** from
+   `yovoice-evidence/2026-09-19/build33/` and confirm Play parses it as
+   **App bundle 33 (2.0.0)**, API 24+, target 36, ABIs arm64-v8a /
+   armeabi-v7a / x86_64. **Verify the upload-key fingerprint Play reports equals
+   `75:3A:AC:CB:B2:8E:65:0B:54:A5:EB:F0:F2:A6:CB:AA:23:3C:5E:B0:EF:00:FB:37:90:83:8E:6E:44:51:AE:1E`
+   before promoting. If Play shows anything else, stop.**
+2. **Hand testers the Play opt-in link** — Google does not e-mail the Android
+   list (`8331608292559520258`) by itself. Apple does e-mail the TestFlight
+   group, so **no iOS action is needed**.
+3. **Nothing is required to get build 33 to iOS testers.** `autoNotifyEnabled`
+   is `true`, beta review is `APPROVED`, and both groups hold the build.
+4. **Bump `pubspec.yaml` to `2.0.0+34`** before any further store build — 33 is
+   consumed on Apple and cannot be re-uploaded.
+5. **Remove the duplicate `YO Voice App Store` provisioning profile**
+   (`1a59a340-…`) or pin `6a817efe-…` by UUID in `ios/ExportOptions.plist`.
+   Outstanding since Build 30, now four builds running on luck.
+6. **Do not flip `appConfig/accountDeletion.enabled` because these binaries
+   exist.** The gate is iOS *and* Android live in the stores; Android 33 is not
+   in Play. `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` (step 4 of the enablement
+   order) is still unset as far as anyone has checked, and was **not**
+   re-verified this round — re-check it against the Build 32 round below before
+   anyone writes the switch.
+7. **Remove the build worktree** at `/private/tmp/yovoice-b33-build` when the
+   round is closed — and only then, since it is the provenance record for all
+   three artifacts.
+8. **App Check on web stays disabled** (empty reCAPTCHA site key). Changing it
+   means setting the `YOVOICE_WEB_RECAPTCHA_SITE_KEY` Actions variable and
+   rebuilding; it is a decision, not a build fix.
+
+Two items the Build 32 round left open are now **closed**, both by read-back
+rather than by assumption:
+
+- Build 32's TestFlight notes no longer ask testers to delete an account. The
+  corrected `en-US` text (612 chars) reads back live from
+  `betaBuildLocalizations/a13858b1-…` and says the server-side processing
+  "switches on in the coming days" (`build32-asc-whatsnew-corrected.json`).
+- The build-32 web bundle and the Play upload, both outstanding when the Build
+  32 section was drafted, were completed on 2026-09-19 (Hosting `700501f5…` at
+  06:22Z, Play internal at 08:35 CEST).
+
+### The build worktree is the release surface
+
+Build 33 is the first round built entirely outside the working checkout, forced
+by the redesign session editing it, and it removed a whole class of failure
+worth keeping deliberately:
+
+- **No stale artifact could be shipped.** `build/web`, `build/app` and
+  `build/ios` all did not exist in the worktree, so every property in this
+  section is read off a file this round created. Builds 31 and 32 each had to
+  identify and move a predecessor's artifact aside first.
+- **The main checkout's stale trees are now a live trap, not a footnote.**
+  `/Users/kamil/Documents/GitHub/yovoice/build/web/version.json` still says
+  `32`, with two further stale trees beside it
+  (`build/web.stale-1789745972`, `build/web.stale-b31-1789794710`). A
+  `firebase deploy` run from the main checkout would silently ship **build 32
+  labelled as 33**. Deploy from the build worktree, always.
+- **The cost is cold caches**, not correctness: the iOS archive took 731.6 s
+  against 401.7 s and Gradle `bundleRelease` 464.6 s against 192.1 s. That is
+  the price of the guarantee, and it is worth paying.
+
 ## Build 32 release round — backend deployed, iOS, web and Play with testers (2026-09-19)
 
 > **Completion (primary session, 2026-09-19 ~08:40 CEST):** after this section was drafted the two remaining steps were executed — Hosting was deployed from the content-verified `build/web` (`firebase deploy --only hosting -m "2.0.0+32 / main a18fe789"`; both hosts serve `build_number 32`, `main.dart.js` `224854be…`; `yovoice-evidence/2026-09-19/build32-web-deploy.log`, `build32-web-readback.txt`) and the AAB was published to the Play internal track at **08:35 CEST** (`Najnowsza wersja: 32 (2.0.0)`, `build32-play/play-readback.md`). The TestFlight What-to-Test text was corrected to say the server-side deletion switches on later (`build32-asc-whatsnew-corrected.json`). Rows below marked "NOT deployed" / "not uploaded" describe the state at drafting time.

@@ -14,6 +14,86 @@ someone decide what to pick up next.
 
 ---
 
+## Build 33 polish round — web live, iOS with testers, Play upload outstanding — 2026-09-19
+
+**Status: Build 33 is released to testers on two of three surfaces. The web
+build is live on Firebase Hosting and verified by content on both hosts; iOS
+build 33 is `VALID` in the internal *and* external TestFlight groups with review
+`APPROVED` and testers auto-notified; the Android App Bundle is built, verified
+and staged but NOT uploaded, so Play internal testers are still on build 32. No
+backend change shipped and none was deployed.**
+
+Build 33 is `main`
+`46d6b330dabdee6c672faeabb8e9f27dd06df039` (`chore(release): prepare 2.0.0
+build 33`), `pubspec.yaml` `2.0.0+33`, nine commits over the Build 32 tree
+`a18fe789`, with all three GitHub Actions workflows green on that revision.
+
+- **The slice itself** — the polish round the owner asked for before the Slim
+  redesign starts, eight code and docs commits plus the version bump:
+  `a5bd9c0a` (every avatar resolved from the uid through the viewer-authorized
+  grant, and grant validation made tolerant of device clock skew —
+  [ADR-208](Decisions.md#adr-208-a-profile-media-grant-is-judged-by-plausibility-and-cached-by-the-device-clock)),
+  `497e5743` (banner opens fullscreen, and the app says why there is no photo),
+  `4b65e84a` (a face is a door to the person on every surface that shows one),
+  `73d6f337` (one localized conversation preview for the list, Home and the
+  overlay), `ca0ba6fe` (headings, launcher tiles, the dock caption and a switch
+  that read as ON), `0b18922b` (a Moment hand-off no longer leaves the spinner
+  and the like button dead), plus `1c655c6d` and `3d52d9b2` recording the Build
+  32 round and this round's findings in [Bugs.md](Bugs.md), and `46d6b330` the
+  version bump.
+- **It is a client-only round, measured rather than asserted.**
+  `git diff --name-only a18fe789..46d6b330` touches 30 files under `lib/`, 29
+  under `test/`, 8 under `docs/` and one line of `pubspec.yaml`, and **zero**
+  files under `functions/`, `firestore.rules`, `firestore.indexes.json`,
+  `storage.rules`, `android/` or `ios/`. So there was no rule/function ordering
+  question, no migration, and no backend rollout — the Build 32 backend
+  deployed on 2026-09-19 02:19–02:23Z remains live.
+- **Live on the web.** Hosting release `ce6c614150a7e8d9`
+  (`2.0.0+33 / main 46d6b330`) went live at `2026-09-19T07:34:38.852Z`.
+  `app.yovoice.app` and `yovoice-ec54a.web.app` both return `build_number "33"`
+  and serve `main.dart.js` sha256 `5185fad5…e9847` — the exact artifact that was
+  built, matched by hash rather than by the deploy tool's say-so, and distinct
+  from build 32's `224854be…d5f8d`. The deploy was scoped `--only hosting`;
+  nothing outside Hosting was touched.
+- **Released to iOS testers.** Build 33 is `VALID` on App Store Connect (build
+  id `b90ddee4-fd9c-4448-b3eb-1d2a9c8a6e57`, equal to the altool Delivery UUID),
+  `betaReviewState APPROVED`, `internalBuildState` and `externalBuildState` both
+  `IN_BETA_TESTING`, `autoNotifyEnabled true`. Apple notifies the testers; no
+  console click is outstanding. Unlike Build 32, **every claim in the tester
+  notes is exercisable** — all of them are client-side and the one server
+  callable they lean on, `getProfileMediaAccess`, was already deployed and read
+  back `ACTIVE`.
+- **Not released on Android.** `app-release-33.aab` (versionCode 33, sha256
+  `a24d8bf0…b92b`, upload-key fingerprint identical to Builds 30–32) is staged
+  at `yovoice-evidence/2026-09-19/build33/` and was never uploaded. The Play
+  internal track still shows `32 (2.0.0)`, published 2026-09-19 08:35 CEST.
+  Expect that skew — web on 33, iOS on 33, Play on 32 — until a human uploads
+  the bundle and hands over the opt-in link, which Google does not e-mail.
+- **Built entirely outside the working checkout**, because the Slim-redesign
+  session was editing it. All three artifacts came from the clean detached
+  worktree `/private/tmp/yovoice-b33-build` at `46d6b330`, whose `HEAD` never
+  moved and whose tree stayed at 0 dirty lines before and after every phase.
+  This removed the stale-artifact class of failure outright: no `build/` tree
+  existed to be mistaken for this round's output, which Builds 31 and 32 both
+  had to work around. The cost is cold caches — the iOS archive took 731.6 s
+  against Build 32's 401.7 s — and it is worth paying.
+- **Still off on purpose.** `appConfig/accountDeletion` does not exist (HTTP 404
+  re-read during this round), so self-service deletion stays fail-closed and the
+  Delete account screen falls back to the e-mail route. Build 33's tester notes
+  correctly say nothing about it. `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` is still
+  the outstanding step-4 gap from Build 32 and was not re-verified this round;
+  see [Bugs.md](Bugs.md).
+- **Two things this round did not do, and neither is hidden.** Nobody ran build
+  33 on a device or in a simulator, so the avatar, banner and large-text fixes
+  are verified by tests, a rendered-frame audit and CI — not by a tester report
+  on this binary. And the duplicate `YO Voice App Store` provisioning profile is
+  still installed while `ios/ExportOptions.plist` selects by name, so **four**
+  consecutive builds have embedded the documented profile by luck.
+
+Full commands, gates and read-backs:
+[DEPLOYMENT.md](DEPLOYMENT.md#build-33-release-round--web-deployed-ios-with-testers-play-upload-outstanding-2026-09-19).
+Session record: [Sessions/2026-09-19-build-33-release.md](Sessions/2026-09-19-build-33-release.md).
+
 ## Build 32 — backend deployed, iOS with testers, web and Play pending — 2026-09-19
 
 **Status: the backend half of Build 32 is live in production and read back; iOS
