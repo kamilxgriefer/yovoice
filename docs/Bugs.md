@@ -5,6 +5,28 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED IN SOURCE — the Yeel hairline never drew its played part (2026-09-19, next build, `nb/yeels-scrub`)
+
+`ReelProgressBar` (`lib/features/reels/presentation/widgets/reel_progress_row.dart`)
+drew the played part as a childless `ColoredBox` in a `FractionallySizedBox`
+with only a `widthFactor`, under a `Stack` that loosens its height. A
+childless box takes the smallest size it is allowed, so the fill laid out
+`200 × 0` inside a `400 × 2` track: the bar showed the unplayed track and never
+any progress. The existing tests measured only the fill's width. Fixed with
+`heightFactor: 1`; `test/reel_progress_scrubber_test.dart` now pins the
+fill's height (ADR-210).
+
+## FIXED IN SOURCE — Yeels had no way to seek, for anyone (2026-09-19, next build, `nb/yeels-scrub`)
+
+The Yeel timeline was display-only: no drag, no click, and a label/value
+semantics node with no increase/decrease, so a screen-reader or keyboard user
+could not move through a Yeel at all, and the coordinator had no public seek.
+Fixed by the scrub session on `ReelPlaybackCoordinator` and the drag band
+`ReelProgressScrubber` (adjustable slider node ±5 s, arrow keys, mouse click)
+on both stages, plus finger-seek on the Voice story player waveform (ADR-210).
+**Still UNVERIFIED on devices:** seek latency and frame-preview smoothness,
+and the arena feel of a diagonal flick from the bottom edge.
+
 ## FIXED IN SOURCE — the voice message bubble drew a different waveform per message from its duration (2026-09-19, Slim phase 0)
 
 Found by the phase-0 inventory for the waveform family. `_VoiceMessageContent`

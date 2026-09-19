@@ -13941,3 +13941,100 @@ than a primitive built on a premise that a test or the schema contradicts.
   - the dead Home chains and `MomentStoryTile`'s missing mount (phase 1,
     Roadmap 0n);
   - the two failing screenshot-harness fixtures (`docs/Bugs.md`).
+
+## ADR-210: A finger on the Yeel timeline is a scrub session, and the band that takes it is translucent and drag-only
+
+**Date:** 2026-09-19 · **Status:** accepted (in source on `nb/yeels-scrub`;
+device feel UNVERIFIED) · **Base:** `3.0.0+34` (`f71a2ae2`)
+
+### Context
+
+The Yeel progress bar (`ReelProgressBar`, the 2 px hairline of ADR-209) only
+displayed progress. It had no gesture, no adjustable semantics and no keyboard
+path, and `ReelPlaybackCoordinator` had no public seek: the only seeks were
+internal resets to the trim start. A 2 px target is far below the 44–48 px
+minimum, and the bar sits on top of the media's tap-to-pause and
+double-tap-to-like, under the action rail and the identity block, inside a
+vertical feed pager. The investigation and decisions are in
+`docs/briefs/2026-09-19-next-build-*.{md,json}` on `nb/brief` (Task 1).
+
+### Decision
+
+1. **The coordinator owns a scrub session** (`ReelScrubTarget`, implemented by
+   `ReelPlaybackCoordinator`). `beginScrub` records whether the Yeel was
+   playing, bumps the command version and pauses both engines; it is not a
+   hand-pause (`_viewerPaused` untouched). `scrubTo` publishes the finger's
+   offset at once and previews through a pump that keeps one native seek in
+   flight, newest target winning (the `ReelDraftPreviewState.scrub` pattern).
+   `endScrub` commits the video to `trimStart + offset` and the backing track
+   to `_expectedAudioPosition` (audio trim + window modulo), then resumes only
+   if the Yeel was playing and nothing took over since. `seekBy` is the same
+   session in one step (keyboard, screen-reader adjust, mouse click). A finger
+   that lands again before the release committed re-opens the same hold and
+   keeps the original resume decision.
+2. **Guards in existing paths:** autoplay is blocked while scrubbing;
+   `_publishPosition` ignores every source but the finger while scrubbing;
+   `synchronizeVideoTick` neither counts watch time nor loops nor corrects
+   drift during a scrub; a release is clamped 40 ms short of the trim end (a
+   tick there would loop, a play would rewind); `setActive(false)`,
+   `detachVideo`, `pause()` (hence a suspension), `toggle()`, `play()` and
+   `dispose` cancel the scrub without resuming. A photo Yeel scrubbed before
+   its lazy audio load keeps the offset and applies it right after the load.
+3. **The band is an overlay, translucent and drag-only.**
+   `ReelProgressScrubber` is the last child of the phone footer Stack (40 px)
+   and of the card stage's frame controls (48 px). Its only recognizers are a
+   `HorizontalDragGestureRecognizer` (`DragStartBehavior.down`) and a
+   `TapGestureRecognizer` limited to mouse and trackpad. Touch taps fall
+   through to the rail, the identity block, tap-to-pause and
+   double-tap-to-like; a vertical swipe still turns the page. It uses no
+   `FocusableActionDetector` (its `MouseRegion` is opaque and would swallow
+   those taps) and draws its feedback under `IgnorePointer`. The finger is
+   mapped onto the visible bar's own rect through a `GlobalKey`, so padding,
+   the times beside the bar, RTL and the Android edge-gesture inset (the
+   phone band steps inside `systemGestureInsets`) need no special cases. The
+   visible bar keeps key `reel-progress-bar`, its 2 px and its place, so no
+   frame geometry, `ReelOverlayMeasure` height or stage test number moves.
+4. **Feedback:** while scrubbing the track grows to 4 px with a 12 px thumb;
+   on the phone stage (no times printed) a floating `0:11 / 0:18` label rides
+   above the thumb. On the phone stage the hairline is the frame's bottom
+   edge, so the track and thumb grow upward instead of being cut in half. The
+   overlay chrome (identity, rail, sound controls) fades out while
+   scrubbing; **under Reduce Motion it does not fade at all** (our reading of
+   the decision "none under reduced motion": no fade, rather than an instant
+   disappearance). The centred play glyph is hidden under the finger.
+5. **One spoken node:** while the timeline can be moved the band is an
+   adjustable slider ("Playback position", `{position} of {total}`, ±5 s like
+   `MomentTransportControls`) and the bar stops announcing itself; while it
+   cannot, the bar keeps its read-only node. Focused, ArrowLeft/Right step
+   ±5 s (mirrored in RTL) with a 2 px `palette.focus` ring; Space and Enter
+   stay with `ReelPlaybackSurface`.
+6. **Voice:** the full-screen story player's stage waveform gets the feed
+   row's transparent `Slider` pattern (drag, tap, screen-reader adjust),
+   enabled only after the player reported a duration. The segmented bars stay
+   previous/next chain navigation and the story's arrow keys still walk the
+   chain. Yeels and Voice do not share one widget: same need, different
+   control shape.
+
+### Reasoning
+
+Resume-if-was-playing is what the platform players and the familiar
+short-video apps do. Keeping the band out of the Column is what lets every
+existing geometry assertion stand unedited. The backing track is not
+previewed during a drag (both engines are paused) and snaps to the aligned
+position on release; that is intended.
+
+### Consequences
+
+- Latency and frame-preview smoothness were **not measured**. `video_player`
+  seeks exactly on iOS (AVPlayer, zero tolerance) and Android (ExoPlayer),
+  and web sets `currentTime`; coalescing bounds the queue, not the per-seek
+  latency. Measure seek round-trips per drag event on an iPhone, a mid-range
+  Android and Chrome before any smoothness claim.
+- Arena feel (a diagonal flick from the very bottom) can only be judged on a
+  device; widget tests prove the rules, not the feel.
+- `MomentDetailPanel` (wide docked Voice panel) keeps tap-to-seek only; the
+  investigation's slider swap there was not part of the decisions and is
+  deferred.
+- Found on the way: the hairline's played fill laid out 0 px tall (a
+  childless box under the Stack's loose height), so the bar never showed
+  progress. Fixed with `heightFactor: 1` (`docs/Bugs.md`).
