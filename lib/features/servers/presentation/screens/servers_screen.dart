@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/navigation/yo_server_rail_item.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
@@ -14,7 +16,6 @@ import '../../data/models/server.dart';
 import '../../data/services/server_media_connector.dart';
 import '../../data/services/server_service.dart';
 import '../server_localized_copy.dart';
-import '../theme/server_identity.dart';
 import 'create_server_screen.dart';
 import 'server_workspace_screen.dart';
 
@@ -191,123 +192,164 @@ class _ServersScreenState extends State<ServersScreen> {
         }
         final servers = snapshot.data ?? const <Server>[];
         return LayoutBuilder(
-          builder: (context, constraints) => ListView(
-            padding: ResponsiveContentFrame.adaptivePagePadding(
+          builder: (context, constraints) {
+            final padding = ResponsiveContentFrame.adaptivePagePadding(
               constraints.maxWidth,
-            ).add(const EdgeInsets.symmetric(vertical: 16)),
-            children: [
-              Wrap(
-                alignment: WrapAlignment.spaceBetween,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 16,
-                runSpacing: 12,
-                children: [
-                  Text(copy.serversTitle, style: AppTypography.headlineLarge),
-                  FilledButton.icon(
-                    key: const ValueKey('servers-create'),
-                    onPressed: _create,
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(48, 48),
-                    ),
-                    icon: const Icon(Icons.add_rounded),
-                    label: Text(copy.text('Create server', 'Stwórz serwer')),
-                  ),
-                ],
+            );
+            final contentWidth = constraints.maxWidth - padding.horizontal;
+            // Slim: a compact list, not a stack of bordered cards. From the
+            // list measure up the rows flow into two columns so a desktop
+            // slot is never one phone-width row stretched across 1 200 px.
+            final columns = contentWidth >= ResponsiveContentWidth.form.maxWidth
+                ? 2
+                : 1;
+            const columnGap = AppRhythm.section;
+            final rowWidth =
+                (contentWidth - columnGap * (columns - 1)) / columns;
+            return ListView(
+              padding: padding.add(
+                const EdgeInsets.only(
+                  top: AppRhythm.item,
+                  bottom: AppRhythm.page,
+                ),
               ),
-              const SizedBox(height: 24),
-              if (servers.isEmpty)
-                YoEmptyState(
-                  icon: Icons.hub_outlined,
-                  title: copy.text(
-                    'Your place for shared conversations',
-                    'Twoje miejsce na wspólne rozmowy',
-                  ),
-                  subtitle: copy.text(
-                    'Create a server or accept an invitation to get started.',
-                    'Stwórz serwer lub przyjmij zaproszenie, aby zacząć.',
+              children: [
+                // One title row, at most 56 px tall at 100 % text: the
+                // screen's single headline and its single primary action.
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 56),
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: AppRhythm.title,
+                    runSpacing: AppRhythm.item,
+                    children: [
+                      Text(
+                        copy.serversTitle,
+                        style: AppTypography.headlineMedium.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: context.appPalette.textPrimary,
+                        ),
+                      ),
+                      FilledButton.icon(
+                        key: const ValueKey('servers-create'),
+                        onPressed: _create,
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(48, 48),
+                        ),
+                        icon: const Icon(Icons.add_rounded),
+                        label: Text(
+                          copy.text('Create server', 'Stwórz serwer'),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              for (final server in servers)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _ServerTile(
-                    server: server,
-                    onTap: () => _open(server),
+                const SizedBox(height: AppRhythm.item),
+                if (servers.isEmpty)
+                  YoEmptyState(
+                    icon: Icons.hub_outlined,
+                    title: copy.text(
+                      'Your place for shared conversations',
+                      'Twoje miejsce na wspólne rozmowy',
+                    ),
+                    subtitle: copy.text(
+                      'Create a server or accept an invitation to get started.',
+                      'Stwórz serwer lub przyjmij zaproszenie, aby zacząć.',
+                    ),
+                  )
+                else
+                  Wrap(
+                    spacing: columnGap,
+                    runSpacing: AppRhythm.hairline,
+                    children: [
+                      for (final server in servers)
+                        SizedBox(
+                          width: rowWidth,
+                          child: _ServerTile(
+                            server: server,
+                            onTap: () => _open(server),
+                          ),
+                        ),
+                    ],
                   ),
-                ),
-              const SizedBox(height: 32),
-            ],
-          ),
+              ],
+            );
+          },
         );
       },
     ),
   );
 }
 
+/// One server in the directory: a flat 64–68 px row (squircle, name, what
+/// kind of server it is and how many members it has, the description on one
+/// more line) with a hover / press wash instead of a bordered card.
 class _ServerTile extends StatelessWidget {
   const _ServerTile({required this.server, required this.onTap});
   final Server server;
   final VoidCallback onTap;
 
+  static const double _tileSize = 44;
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final identity = ServerIdentity.of(
-      server.type,
-    ).resolve(Theme.of(context).brightness);
-    final avatar = Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        color: identity.iconSurface,
-        borderRadius: AppRadius.md,
-      ),
-      child: Center(
-        child: Text(
-          server.initial,
-          style: AppTypography.titleLarge.copyWith(color: identity.foreground),
-        ),
-      ),
+    final avatar = YoServerTile(
+      initial: server.initial,
+      type: server.type,
+      size: _tileSize,
     );
     final details = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           server.name.isEmpty ? copy.serversTitle : server.name,
-          style: AppTypography.titleMedium.copyWith(color: palette.textPrimary),
+          style: AppTypography.titleMedium.copyWith(
+            fontWeight: FontWeight.w700,
+            color: palette.textPrimary,
+          ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 2),
         Text(
-          copy.serverTypeTitle(server.type),
+          '${copy.serverTypeTitle(server.type)} · '
+          '${copy.serverMembers(server.memberCount)}',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
           style: AppTypography.bodySmall.copyWith(color: palette.textSecondary),
         ),
         if (server.description.isNotEmpty) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: 2),
           Text(
             server.description,
-            maxLines: 3,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: AppTypography.bodySmall.copyWith(
-              color: palette.textSecondary,
+              color: palette.textTertiary,
             ),
           ),
         ],
       ],
     );
-    final arrow = Icon(Icons.chevron_right, color: palette.textSecondary);
+    final arrow = Icon(
+      Icons.chevron_right_rounded,
+      size: 22,
+      color: palette.textTertiary,
+    );
     return Material(
       key: ValueKey('server-directory-${server.id}'),
-      color: palette.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: AppRadius.lg,
-        side: BorderSide(color: palette.border),
-      ),
+      color: Colors.transparent,
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.md),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        borderRadius: AppRadius.lg,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppRhythm.item,
+            vertical: AppRhythm.item,
+          ),
           child: LayoutBuilder(
             builder: (context, constraints) {
               final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
@@ -319,7 +361,7 @@ class _ServerTile extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Row(children: [avatar, const Spacer(), arrow]),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppRhythm.item),
                     details,
                   ],
                 );
@@ -327,9 +369,9 @@ class _ServerTile extends StatelessWidget {
               return Row(
                 children: [
                   avatar,
-                  const SizedBox(width: 16),
+                  const SizedBox(width: AppRhythm.item),
                   Expanded(child: details),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppRhythm.tight),
                   arrow,
                 ],
               );
