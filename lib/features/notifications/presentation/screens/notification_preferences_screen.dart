@@ -7,6 +7,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class _PreferenceGroup {
@@ -250,9 +251,9 @@ class _NotificationPreferencesScreenState
                         ),
                         style: TextStyle(
                           color: palette.textPrimary,
-                          fontSize: 20,
+                          fontSize: 22,
                           fontWeight: FontWeight.w800,
-                          letterSpacing: -0.4,
+                          letterSpacing: -0.3,
                         ),
                       ),
                     ),
@@ -306,21 +307,18 @@ class _NotificationPreferencesScreenState
                                 height: 1.5,
                               ),
                             ),
-                            const SizedBox(height: 20),
                             for (final group in groups) ...[
-                              Text(
-                                _groupTitle(copy, group.title),
-                                style: TextStyle(
-                                  color: palette.textPrimary,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w800,
-                                ),
+                              // THE section heading (ADR-209): it owns the
+                              // 24 px above and 16 px below its ink, so the
+                              // private 20 / 8 / 18 spacers are gone.
+                              HomeSectionHeader(
+                                title: _groupTitle(copy, group.title),
                               ),
-                              const SizedBox(height: 8),
+                              // One flat layer: 1 px border, radius 12.
                               Container(
                                 decoration: BoxDecoration(
                                   color: palette.surface,
-                                  borderRadius: BorderRadius.circular(18),
+                                  borderRadius: BorderRadius.circular(12),
                                   border: Border.all(color: palette.border),
                                 ),
                                 child: Column(
@@ -331,11 +329,12 @@ class _NotificationPreferencesScreenState
                                       index++
                                     ) ...[
                                       if (index > 0)
+                                        // Indented to the rows' 16 px text edge.
                                         Divider(
                                           height: 1,
+                                          thickness: 1,
                                           color: palette.border,
                                           indent: 16,
-                                          endIndent: 16,
                                         ),
                                       _PreferenceRow(
                                         label: _labelFor(
@@ -363,7 +362,6 @@ class _NotificationPreferencesScreenState
                                   ],
                                 ),
                               ),
-                              const SizedBox(height: 18),
                             ],
                           ],
                         );

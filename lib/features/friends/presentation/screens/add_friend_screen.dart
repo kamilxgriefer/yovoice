@@ -12,6 +12,7 @@ import 'package:yovoice/features/friends/presentation/friend_request_error_copy.
 import 'package:yovoice/features/friends/presentation/widgets/friend_suggestion_card.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -457,13 +458,14 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Slim title: the screen's one headline, 22 px w800.
                 Text(
                   copy.text('Add friends', 'Dodaj znajomych'),
                   style: TextStyle(
                     color: palette.textPrimary,
-                    fontSize: 23,
+                    fontSize: 22,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
+                    letterSpacing: -0.3,
                   ),
                 ),
                 const SizedBox(height: 3),
@@ -528,11 +530,11 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
             vertical: 17,
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: palette.border),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: palette.focus, width: 2),
           ),
         ),
@@ -638,18 +640,15 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
           );
         }
 
+        // THE section heading (ADR-209) owns the rhythm above and below
+        // its ink, so the list adds no top air of its own.
         return ListView(
-          padding: const EdgeInsets.fromLTRB(18, 6, 18, 28),
+          padding: const EdgeInsets.fromLTRB(18, 0, 18, 28),
           children: [
             Padding(
-              padding: const EdgeInsets.only(bottom: 10, left: 2),
-              child: Text(
-                copy.text('Suggested for you', 'Proponowane dla Ciebie'),
-                style: TextStyle(
-                  color: context.appPalette.textPrimary,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                ),
+              padding: const EdgeInsets.only(left: 2),
+              child: HomeSectionHeader(
+                title: copy.text('Suggested for you', 'Proponowane dla Ciebie'),
               ),
             ),
             ...suggestions.map(
@@ -721,7 +720,7 @@ class _UserResultCard extends StatelessWidget {
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontSize: 15,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                   UserIdentityBadges(uid: user.id),
@@ -755,7 +754,7 @@ class _UserResultCard extends StatelessWidget {
         foregroundColor: button.foregroundColor,
         disabledForegroundColor: button.disabledForegroundColor,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       child: isProcessing
           ? SizedBox(
@@ -803,20 +802,22 @@ class _UserResultCard extends StatelessWidget {
                 foregroundColor: palette.dangerForeground,
                 disabledForegroundColor: palette.textTertiary,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(13),
+                  borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              icon: const Icon(Icons.close_rounded, size: 20),
+              icon: const Icon(Icons.close_rounded, size: 22),
             ),
           )
         : null;
 
     return Container(
       key: ValueKey('friend-search-result-${user.id}'),
-      padding: const EdgeInsets.all(14),
+      // One flat layer (1 px border, radius 12); a card because the row
+      // carries its own action.
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(19),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: palette.border),
       ),
       child: LayoutBuilder(
@@ -883,13 +884,15 @@ class _UserResultCard extends StatelessWidget {
           foregroundColor: colors.onPrimary,
           disabledForegroundColor: palette.textTertiary,
         );
+      // Tonal like the suggestion cards on this same screen: a result list
+      // is not a stack of violet CTAs (Slim: one accent per screen).
       case FriendRelationshipStatus.none:
         return _FriendButtonPresentation(
           label: copy.text('Add', 'Dodaj'),
           icon: Icons.person_add_alt_1_rounded,
-          backgroundColor: colors.primary,
+          backgroundColor: colors.primaryContainer,
           disabledBackgroundColor: palette.surfaceMuted,
-          foregroundColor: colors.onPrimary,
+          foregroundColor: colors.onPrimaryContainer,
           disabledForegroundColor: palette.textTertiary,
         );
       case FriendRelationshipStatus.blocked:
@@ -933,16 +936,13 @@ class _UserAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
 
+    // Slim: a 2 px neutral ring replaces the decorative violet gradient (and
+    // its two inline hexes); the 52 px geometry is unchanged.
     return Container(
       width: 52,
       height: 52,
       padding: const EdgeInsets.all(2),
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: LinearGradient(
-          colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
-        ),
-      ),
+      decoration: BoxDecoration(shape: BoxShape.circle, color: palette.border),
       child: ProfilePhotoButton(
         userId: user.id,
         displayName: user.displayName,

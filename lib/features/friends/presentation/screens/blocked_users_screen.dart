@@ -119,9 +119,9 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: palette.textPrimary,
-                          fontSize: 23,
+                          fontSize: 22,
                           fontWeight: FontWeight.w800,
-                          letterSpacing: -0.5,
+                          letterSpacing: -0.3,
                         ),
                       ),
                     ),
@@ -239,7 +239,8 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
                             color: palette.surface,
-                            borderRadius: BorderRadius.circular(18),
+                            // Slim: one flat layer, radius 12.
+                            borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: palette.border),
                           ),
                           child: LayoutBuilder(
@@ -280,7 +281,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                   side: BorderSide(color: palette.borderStrong),
                                   minimumSize: const Size(0, 44),
                                   shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(11),
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
                                 ),
                                 child: processing

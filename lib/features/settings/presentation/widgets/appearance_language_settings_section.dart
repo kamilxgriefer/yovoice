@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/settings/presentation/screens/app_language_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/appearance_settings_screen.dart';
 
@@ -33,7 +34,7 @@ class AppearanceLanguageSettingsSection extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
         _SectionLabel(copy.language),
         _PreferenceGroup(
           child: _PreferenceTile(
@@ -47,7 +48,7 @@ class AppearanceLanguageSettingsSection extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
       ],
     );
   }
@@ -79,16 +80,22 @@ class _SectionLabel extends StatelessWidget {
 
   final String text;
 
+  // Matches Settings' own group labels (Slim: 11 px w700 uppercase, .08em)
+  // so the two drop-in groups do not read as a different screen.
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-      child: Text(
-        text.toUpperCase(),
-        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 1,
+    return Semantics(
+      header: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+        child: Text(
+          text.toUpperCase(),
+          style: TextStyle(
+            color: context.appPalette.textSecondary,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 11 * .08,
+          ),
         ),
       ),
     );
@@ -102,12 +109,14 @@ class _PreferenceGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
+    // The same flat group as the Settings rows around it: one layer, 1 px
+    // `palette.border`, radius 12.
     return Material(
-      color: colors.surfaceContainerLow,
+      color: palette.surfaceMuted,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-        side: BorderSide(color: colors.outlineVariant),
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: palette.border),
       ),
       clipBehavior: Clip.antiAlias,
       child: child,
@@ -131,35 +140,38 @@ class _PreferenceTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
+    // Slim row, identical geometry to `_SettingsTile`: 64 px floor, 40 px
+    // tonal leading box, 22 px glyph.
     return ListTile(
-      minTileHeight: 72,
+      minTileHeight: 64,
+      contentPadding: const EdgeInsetsDirectional.symmetric(horizontal: 16),
+      minLeadingWidth: 40,
+      horizontalTitleGap: 12,
       onTap: onTap,
       leading: Container(
-        width: 42,
-        height: 42,
+        width: 40,
+        height: 40,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: colors.primary.withValues(alpha: .13),
-          borderRadius: BorderRadius.circular(13),
+          color: colors.primaryContainer,
+          borderRadius: BorderRadius.circular(12),
         ),
-        child: Icon(icon, color: colors.primary, size: 22),
+        child: Icon(icon, color: colors.onPrimaryContainer, size: 22),
       ),
       title: Text(
         title,
-        style: Theme.of(
-          context,
-        ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+        style: TextStyle(
+          color: palette.textPrimary,
+          fontWeight: FontWeight.w600,
+          fontSize: 15,
+        ),
       ),
       subtitle: Text(
         subtitle,
-        style: Theme.of(
-          context,
-        ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+        style: TextStyle(color: palette.textSecondary, fontSize: 12.5),
       ),
-      trailing: Icon(
-        Icons.chevron_right_rounded,
-        color: colors.onSurfaceVariant,
-      ),
+      trailing: Icon(Icons.chevron_right_rounded, color: palette.textTertiary),
     );
   }
 }

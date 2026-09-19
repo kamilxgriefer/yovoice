@@ -762,17 +762,16 @@ class _FriendsScreenState extends State<FriendsScreen> {
               return _buildSuggestions(friendIds);
             }
 
-            final friend = filtered[index - leadingCount];
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: _FriendCard(
-                friend: friend,
-                profileMediaService: _profileMediaService,
-                openingChat: _openingChatFriendId == friend.id,
-                onProfile: () => _openProfile(friend),
-                onMessage: () => _startChat(friend),
-                onRemove: () => _confirmRemoveFriend(friend),
-              ),
+            final friendIndex = index - leadingCount;
+            final friend = filtered[friendIndex];
+            return _FriendCard(
+              friend: friend,
+              profileMediaService: _profileMediaService,
+              openingChat: _openingChatFriendId == friend.id,
+              showDivider: friendIndex < filtered.length - 1,
+              onProfile: () => _openProfile(friend),
+              onMessage: () => _startChat(friend),
+              onRemove: () => _confirmRemoveFriend(friend),
             );
           }, childCount: leadingCount + filtered.length),
         ),
@@ -898,13 +897,14 @@ class _FriendsScreenState extends State<FriendsScreen> {
           final title = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Slim title: the screen's one headline, 22 px w800.
               Text(
                 copy.text('Friends', 'Znajomi'),
                 style: TextStyle(
                   color: palette.textPrimary,
-                  fontSize: 30,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -.8,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -.3,
                 ),
               ),
               const SizedBox(height: 4),
@@ -930,7 +930,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
               foregroundColor: colors.onPrimary,
               padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 12),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(15),
+                borderRadius: BorderRadius.circular(12),
               ),
             ),
             icon: const Icon(Icons.person_add_alt_1_rounded, size: 20),
@@ -1011,11 +1011,11 @@ class _FriendsScreenState extends State<FriendsScreen> {
           fillColor: palette.surface,
           contentPadding: const EdgeInsets.symmetric(vertical: 13),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(17),
+            borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: palette.border),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(17),
+            borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: palette.focus, width: 2),
           ),
         ),
@@ -1035,52 +1035,57 @@ class _FriendsScreenState extends State<FriendsScreen> {
             _requestFanoutFailed = true;
           }
           final requestCount = snapshot.data ?? 0;
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _FilterChip(
-                  label: copy.text('All', 'Wszyscy'),
-                  selected: _filter == _FriendsFilter.all,
-                  onTap: () => _selectFilter(_FriendsFilter.all),
-                ),
-                const SizedBox(width: 8),
-                _FilterChip(
-                  label: copy.text('Online', 'Online'),
-                  selected: _filter == _FriendsFilter.online,
-                  onTap: () => _selectFilter(_FriendsFilter.online),
-                ),
-                const SizedBox(width: 8),
-                _FilterChip(
-                  label: requestCount > 0
-                      ? copy.text(
-                          'Requests $requestCount',
-                          'Zaproszenia $requestCount',
-                        )
-                      : copy.text('Requests', 'Zaproszenia'),
-                  semanticLabel: requestCount > 0
-                      ? copy.text(
-                          'Friend requests, $requestCount pending',
-                          'Zaproszenia do znajomych, oczekujących: $requestCount',
-                        )
-                      : copy.text(
-                          'Friend requests',
-                          'Zaproszenia do znajomych',
-                        ),
-                  selected: _filter == _FriendsFilter.requests,
-                  onTap: () => _selectFilter(_FriendsFilter.requests),
-                ),
-                const SizedBox(width: 8),
-                _FilterChip(
-                  label: copy.text('Blocked', 'Zablokowani'),
-                  semanticLabel: copy.text(
-                    'Blocked users',
-                    'Zablokowani użytkownicy',
+          // Start-aligned: in the loose-width Column a horizontal scroll
+          // view shrink-wraps its chips and was centred on a wide window.
+          return Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _FilterChip(
+                    label: copy.text('All', 'Wszyscy'),
+                    selected: _filter == _FriendsFilter.all,
+                    onTap: () => _selectFilter(_FriendsFilter.all),
                   ),
-                  selected: false,
-                  onTap: _openBlockedUsers,
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  _FilterChip(
+                    label: copy.text('Online', 'Online'),
+                    selected: _filter == _FriendsFilter.online,
+                    onTap: () => _selectFilter(_FriendsFilter.online),
+                  ),
+                  const SizedBox(width: 8),
+                  _FilterChip(
+                    label: requestCount > 0
+                        ? copy.text(
+                            'Requests $requestCount',
+                            'Zaproszenia $requestCount',
+                          )
+                        : copy.text('Requests', 'Zaproszenia'),
+                    semanticLabel: requestCount > 0
+                        ? copy.text(
+                            'Friend requests, $requestCount pending',
+                            'Zaproszenia do znajomych, oczekujących: $requestCount',
+                          )
+                        : copy.text(
+                            'Friend requests',
+                            'Zaproszenia do znajomych',
+                          ),
+                    selected: _filter == _FriendsFilter.requests,
+                    onTap: () => _selectFilter(_FriendsFilter.requests),
+                  ),
+                  const SizedBox(width: 8),
+                  _FilterChip(
+                    label: copy.text('Blocked', 'Zablokowani'),
+                    semanticLabel: copy.text(
+                      'Blocked users',
+                      'Zablokowani użytkownicy',
+                    ),
+                    selected: false,
+                    onTap: _openBlockedUsers,
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -1186,19 +1191,16 @@ class _FriendsScreenState extends State<FriendsScreen> {
             ),
             const SizedBox(height: 10),
             if (showSuggestions) _buildSuggestions(friendIds),
-            ...filtered.map(
-              (friend) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _FriendCard(
-                  friend: friend,
-                  profileMediaService: _profileMediaService,
-                  openingChat: _openingChatFriendId == friend.id,
-                  onProfile: () => _openProfile(friend),
-                  onMessage: () => _startChat(friend),
-                  onRemove: () => _confirmRemoveFriend(friend),
-                ),
+            for (var index = 0; index < filtered.length; index++)
+              _FriendCard(
+                friend: filtered[index],
+                profileMediaService: _profileMediaService,
+                openingChat: _openingChatFriendId == filtered[index].id,
+                showDivider: index < filtered.length - 1,
+                onProfile: () => _openProfile(filtered[index]),
+                onMessage: () => _startChat(filtered[index]),
+                onRemove: () => _confirmRemoveFriend(filtered[index]),
               ),
-            ),
           ],
         );
       },
@@ -1300,10 +1302,14 @@ class _FriendsSummary extends StatelessWidget {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+      // Inset to the search field's 18 px gutter (the list pads 14 so the
+      // friend rows' ink reaches past their 4 px text inset).
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      // One flat layer: 1 px border, radius 12.
       decoration: BoxDecoration(
-        color: palette.surface.withValues(alpha: .9),
-        borderRadius: BorderRadius.circular(18),
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: palette.border),
       ),
       child: LayoutBuilder(
@@ -1316,7 +1322,8 @@ class _FriendsSummary extends StatelessWidget {
             children: [
               Icon(
                 Icons.groups_2_rounded,
-                color: palette.interactiveForeground,
+                size: 22,
+                color: palette.textSecondary,
               ),
               const SizedBox(width: 10),
               Flexible(
@@ -1329,7 +1336,7 @@ class _FriendsSummary extends StatelessWidget {
                         ),
                   style: TextStyle(
                     color: palette.textPrimary,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -1373,6 +1380,7 @@ class _FriendCard extends StatelessWidget {
     required this.friend,
     this.profileMediaService,
     this.openingChat = false,
+    this.showDivider = false,
     required this.onProfile,
     required this.onMessage,
     required this.onRemove,
@@ -1380,6 +1388,17 @@ class _FriendCard extends StatelessWidget {
 
   final FriendUser friend;
   final ProfileMediaService? profileMediaService;
+
+  /// A 1 px divider under the row, indented to the text edge. The last row
+  /// of the list draws none.
+  final bool showDivider;
+
+  /// Slim row geometry: 4 px inset, 48 px avatar, 12 px gap — the text (and
+  /// the divider) start at [_textInset].
+  static const double _rowInset = 4;
+  static const double _avatarSize = 48;
+  static const double _avatarGap = 12;
+  static const double _textInset = _rowInset + _avatarSize + _avatarGap;
 
   /// True while this friend's conversation is being opened: the bubble
   /// shows a spinner and stops accepting taps (same pattern as the
@@ -1484,57 +1503,53 @@ class _FriendCard extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
 
-    return Material(
-      color: palette.surface,
-      borderRadius: BorderRadius.circular(19),
+    // Slim: a list row, not a card per friend — no box, no border, no
+    // decorative gradient ring (its two inline hexes are gone), a 48 px
+    // avatar carrying exactly one presence mark (the dot), and a 1 px
+    // divider indented to the text edge. The transparent Material keeps
+    // the row's ink visible over the page canvas.
+    final row = Material(
+      type: MaterialType.transparency,
       child: InkWell(
         onTap: onProfile,
         onLongPress: () => _showOptions(context),
-        borderRadius: BorderRadius.circular(19),
-        child: Container(
-          padding: const EdgeInsets.all(13),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(19),
-            border: Border.all(color: palette.border),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: _rowInset,
+            vertical: 8,
           ),
           child: Row(
             children: [
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
-                      ),
-                    ),
-                    child: UserAvatar(
-                      radius: 27,
-                      userId: friend.id,
-                      mediaRevision: friend.profileUpdatedAt,
-                      mediaService: profileMediaService,
-                      displayName: friend.displayName,
-                      backgroundColor: palette.surfaceSunken,
-                    ),
+                  // Tonal disc: with no card behind the row, the old
+                  // `surfaceSunken` initial disc vanished into the canvas.
+                  UserAvatar(
+                    radius: _avatarSize / 2,
+                    userId: friend.id,
+                    mediaRevision: friend.profileUpdatedAt,
+                    mediaService: profileMediaService,
+                    displayName: friend.displayName,
+                    backgroundColor: colors.primaryContainer,
                   ),
                   Positioned(
-                    right: 1,
-                    bottom: 1,
+                    right: -1,
+                    bottom: -1,
                     child: AvailabilityDot(
                       status: PeopleStatus.fromPresence(
                         isOnline: friend.isOnline,
                         availability: friend.availability,
                       ),
-                      size: 15,
-                      borderColor: palette.surface,
-                      borderWidth: 3,
+                      size: 14,
+                      borderColor: palette.background,
+                      borderWidth: 2.5,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(width: 13),
+              const SizedBox(width: _avatarGap),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1550,7 +1565,7 @@ class _FriendCard extends StatelessWidget {
                           style: TextStyle(
                             color: palette.textPrimary,
                             fontSize: 15,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                         UserIdentityBadges(uid: friend.id),
@@ -1613,6 +1628,20 @@ class _FriendCard extends StatelessWidget {
         ),
       ),
     );
+    if (!showDivider) return row;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        row,
+        Divider(
+          height: 1,
+          thickness: 1,
+          indent: _textInset,
+          color: palette.border,
+        ),
+      ],
+    );
   }
 }
 
@@ -1650,22 +1679,24 @@ class FriendRequestCard extends StatelessWidget {
 
     return Container(
       key: ValueKey('friend-request-card-${request.senderId}'),
-      padding: const EdgeInsets.all(14),
+      // A card stays here because it groups its own actions (Accept /
+      // Decline); Slim flattens it to one layer at radius 12.
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(19),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: palette.border),
       ),
       child: Row(
         children: [
           // Only the avatar becomes the target — never the whole card, and
           // never the name column, which also hosts Accept/Decline. The
-          // avatar already measures 54 px, so promoting it to its own
+          // avatar already measures 48 px, so promoting it to its own
           // button changes nothing about this row at any width.
           Builder(
             builder: (context) {
               final avatar = UserAvatar(
-                radius: 27,
+                radius: 24,
                 userId: request.senderId,
                 mediaService: profileMediaService,
                 displayName: name,
@@ -1683,12 +1714,12 @@ class FriendRequestCard extends StatelessWidget {
                 semanticLabel: openLabel,
                 tooltip: openLabel,
                 circular: true,
-                minimumSize: const Size(54, 54),
+                minimumSize: const Size(48, 48),
                 child: ExcludeSemantics(child: avatar),
               );
             },
           ),
-          const SizedBox(width: 13),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1700,7 +1731,7 @@ class FriendRequestCard extends StatelessWidget {
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 15,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -1810,17 +1841,19 @@ class _FilterChip extends StatelessWidget {
         constraints: const BoxConstraints(minHeight: 48),
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
+        // Selected is tonal (container pair), so "Add friend" stays the
+        // screen's one violet accent.
         decoration: BoxDecoration(
-          color: selected ? colors.primary : palette.surface,
+          color: selected ? colors.primaryContainer : palette.surface,
           borderRadius: BorderRadius.circular(99),
           border: selected ? null : Border.all(color: palette.border),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: selected ? colors.onPrimary : palette.textPrimary,
+            color: selected ? colors.onPrimaryContainer : palette.textPrimary,
             fontSize: 12,
-            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
           ),
         ),
       ),
