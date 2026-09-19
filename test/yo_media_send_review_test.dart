@@ -403,6 +403,90 @@ void main() {
     expect(second.completed, isTrue);
     expect(second.result, isNull);
   });
+
+  testWidgets('desktop Enter on a focused Cancel cancels instead of sending', (
+    tester,
+  ) async {
+    var sent = 0;
+    final harness = await _open(
+      tester,
+      item: _image(),
+      size: const Size(1280, 800),
+      onSend: (_) async => sent += 1,
+    );
+    final cancel = find.byKey(const ValueKey('yo-media-review-cancel'));
+    bool cancelFocused() {
+      final focus = FocusManager.instance.primaryFocus?.context;
+      return focus != null &&
+          find
+              .descendant(of: cancel, matching: find.byWidget(focus.widget))
+              .evaluate()
+              .isNotEmpty;
+    }
+
+    for (var i = 0; i < 12 && !cancelFocused(); i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+    }
+    expect(cancelFocused(), isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(sent, 0);
+    expect(harness.completed, isTrue);
+    expect(harness.result, isNull);
+  });
+
+  for (final size in const [Size(390, 844), Size(1280, 800)]) {
+    testWidgets(
+      'a running hand-off cannot be dismissed and still reports failure '
+      '(${size.width.toInt()})',
+      (tester) async {
+        final gate = Completer<void>();
+        var attempts = 0;
+        final harness = await _open(
+          tester,
+          item: _image(),
+          size: size,
+          onSend: (_) async {
+            attempts += 1;
+            await gate.future;
+            throw StateError('disk full');
+          },
+        );
+        await tester.tap(_send);
+        await tester.pump();
+        expect(attempts, 1);
+
+        // Close button, barrier, Esc / back, and a drag down the sheet.
+        await tester.tap(find.byKey(const ValueKey('modal-sheet-close')));
+        await tester.pump();
+        await tester.tapAt(const Offset(4, 4));
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        await tester.binding.handlePopRoute();
+        await tester.pump();
+        await tester.drag(
+          find.byKey(const ValueKey('modal-sheet-close')),
+          const Offset(0, 600),
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(harness.completed, isFalse);
+        expect(find.byKey(const ValueKey('yo-media-review')), findsOneWidget);
+
+        gate.complete();
+        await tester.pumpAndSettle();
+        expect(harness.completed, isFalse);
+        expect(find.text('This could not be sent. Try again.'), findsOneWidget);
+
+        // Once the hand-off settles, the close button works again.
+        await tester.tap(find.byKey(const ValueKey('modal-sheet-close')));
+        await tester.pumpAndSettle();
+        expect(harness.completed, isTrue);
+        expect(harness.result, isNull);
+      },
+    );
+  }
 }
 
 class _FakeVideoController implements VideoPlayerController {

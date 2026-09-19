@@ -217,6 +217,7 @@ class _YoMediaSendReviewState extends State<YoMediaSendReview> {
   bool _closed = false;
   String? _sendError;
   StreamSubscription<Object?>? _closeSubscription;
+  final FocusNode _reviewFocus = FocusNode(debugLabel: 'yo-media-review');
 
   bool get _dialog =>
       MediaQuery.sizeOf(context).width >= yoMediaSendReviewDialogBreakpoint;
@@ -317,6 +318,30 @@ class _YoMediaSendReviewState extends State<YoMediaSendReview> {
     }
   }
 
+  /// Every way out of the review except [closeWhen] waits for a running
+  /// hand-off: closing mid-send would leave the person believing they
+  /// cancelled a message that still goes, or hide a failure.
+  void _cancel() {
+    if (_sending) return;
+    _finish(null);
+  }
+
+  /// Enter sends only while the review itself holds focus. When the person
+  /// has tabbed to a button (Cancel, Close, Play), Enter activates that
+  /// button instead.
+  KeyEventResult _onReviewKey(FocusNode node, KeyEvent event) {
+    if (!node.hasPrimaryFocus || event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key != LogicalKeyboardKey.enter &&
+        key != LogicalKeyboardKey.numpadEnter) {
+      return KeyEventResult.ignored;
+    }
+    unawaited(_send());
+    return KeyEventResult.handled;
+  }
+
   void _finish(YoMediaSendDecision? decision) {
     if (_closed || !mounted) return;
     _closed = true;
@@ -359,6 +384,7 @@ class _YoMediaSendReviewState extends State<YoMediaSendReview> {
   @override
   void dispose() {
     _closeSubscription?.cancel();
+    _reviewFocus.dispose();
     final controller = _controller;
     if (controller != null) {
       controller.pause().catchError((Object _) {});
@@ -401,7 +427,7 @@ class _YoMediaSendReviewState extends State<YoMediaSendReview> {
             YoModalSheetChrome(
               sheetLabel: widget.title,
               surfaceColor: palette.surfaceRaised,
-              onClose: () => _finish(null),
+              onClose: _cancel,
             ),
             Flexible(
               child: SingleChildScrollView(
@@ -466,16 +492,25 @@ class _YoMediaSendReviewState extends State<YoMediaSendReview> {
       ),
     );
 
+    // While a hand-off runs, the sheet's drag-to-dismiss (which pops the
+    // route directly, past PopScope) is claimed here and goes nowhere.
+    body = GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onVerticalDragStart: _sending ? (_) {} : null,
+      onVerticalDragUpdate: _sending ? (_) {} : null,
+      onVerticalDragEnd: _sending ? (_) {} : null,
+      child: body,
+    );
     if (dialog) {
-      body = CallbackShortcuts(
-        bindings: <ShortcutActivator, VoidCallback>{
-          const SingleActivator(LogicalKeyboardKey.enter): _send,
-          const SingleActivator(LogicalKeyboardKey.numpadEnter): _send,
-        },
-        child: Focus(autofocus: true, child: body),
+      body = Focus(
+        focusNode: _reviewFocus,
+        autofocus: true,
+        onKeyEvent: _onReviewKey,
+        child: body,
       );
     }
-    return body;
+    // The barrier, Esc, and system back all go through maybePop.
+    return PopScope(canPop: !_sending, child: body);
   }
 
   String? _issueText(AppLocalizations copy) {
