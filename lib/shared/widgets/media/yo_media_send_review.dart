@@ -375,11 +375,15 @@ class _YoMediaSendReviewState extends State<YoMediaSendReview> {
     final dialog = _dialog;
     final narrow = viewport.width < 600;
     final maxHeight = viewport.height * (dialog ? .8 : .94);
-    final stageHeight = (viewport.height * (narrow ? .46 : .55))
-        .clamp(180.0, 460.0)
-        .toDouble();
     final issue = _issueText(copy);
     final warning = _warningText(copy);
+    // A document has no pixels to inspect, and a blocked file needs its
+    // reason and actions in view more than a large preview.
+    final stageHeight = _item.kind == YoPickedMediaKind.document
+        ? 200.0
+        : (viewport.height * (issue != null ? .32 : (narrow ? .46 : .55)))
+              .clamp(180.0, 460.0)
+              .toDouble();
 
     Widget body = Material(
       key: const ValueKey('yo-media-review'),
@@ -425,13 +429,8 @@ class _YoMediaSendReviewState extends State<YoMediaSendReview> {
                           ),
                         ),
                       ),
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      height: stageHeight,
-                      child: _stage(context, stageHeight),
-                    ),
-                    const SizedBox(height: 12),
-                    _meta(context),
+                    // The reason comes before the preview, so a blocked file
+                    // explains itself without scrolling.
                     if (issue != null)
                       _Banner(
                         key: const ValueKey('yo-media-review-issue'),
@@ -450,6 +449,13 @@ class _YoMediaSendReviewState extends State<YoMediaSendReview> {
                         message: warning,
                         danger: false,
                       ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      height: stageHeight,
+                      child: _stage(context, stageHeight),
+                    ),
+                    const SizedBox(height: 12),
+                    _meta(context),
                   ],
                 ),
               ),
@@ -910,12 +916,18 @@ class _YoMediaSendReviewState extends State<YoMediaSendReview> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   send,
-                  if (chooseAnother != null) ...[
-                    const SizedBox(height: 8),
-                    chooseAnother,
-                  ],
                   const SizedBox(height: 8),
-                  cancel,
+                  if (chooseAnother == null)
+                    cancel
+                  else
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: cancel),
+                        const SizedBox(width: 8),
+                        Expanded(child: chooseAnother),
+                      ],
+                    ),
                 ],
               );
             }
