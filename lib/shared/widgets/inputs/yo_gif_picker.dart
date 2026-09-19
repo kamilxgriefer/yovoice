@@ -8,6 +8,7 @@ import 'package:yovoice/features/media/data/models/gif_asset.dart';
 import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_gif_recents.dart';
 import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
+import 'package:yovoice/shared/widgets/media/yo_giphy_attribution.dart';
 
 /// The GIF tab's body: search, trending, recents, and every failure state.
 ///
@@ -84,6 +85,7 @@ class _YoGifPickerState extends State<YoGifPicker> {
     _recents.addListener(_onChanged);
     widget.service.addListener(_onChanged);
     _recents.load();
+    widget.service.giphyAutoLoad = widget.autoLoad;
     // Availability is fetched on the first open of this tab, not at app
     // start: nothing should pay for a feature nobody has asked for.
     widget.service.start();
@@ -93,6 +95,7 @@ class _YoGifPickerState extends State<YoGifPicker> {
   @override
   void didUpdateWidget(covariant YoGifPicker oldWidget) {
     super.didUpdateWidget(oldWidget);
+    widget.service.giphyAutoLoad = widget.autoLoad;
     if (!identical(oldWidget.service, widget.service)) {
       oldWidget.service.removeListener(_onChanged);
       _search.value = TextEditingValue(
@@ -132,10 +135,60 @@ class _YoGifPickerState extends State<YoGifPicker> {
     if (remaining < 240) widget.service.loadMore();
   }
 
+  bool _preparing = false;
+
   void _select(GifAsset asset) {
+    if (asset.provider == 'giphy') {
+      _selectGiphy(asset);
+      return;
+    }
     widget.onSelected(asset);
     _recents.register(asset);
   }
+
+  /// A GIPHY choice is registered with the server's send-time authority
+  /// before the host composer sees it (ADR-210). One at a time: a second tap
+  /// while the first is resolving is ignored rather than queued.
+  Future<void> _selectGiphy(GifAsset asset) async {
+    if (_preparing) return;
+    setState(() => _preparing = true);
+    final outcome = await widget.service.prepareForSend(asset);
+    if (!mounted) return;
+    setState(() => _preparing = false);
+    if (outcome == GifPrepareOutcome.ready) {
+      widget.onSelected(asset);
+      _recents.register(asset);
+      return;
+    }
+    if (outcome == GifPrepareOutcome.refused) await _recents.forget(asset);
+    if (!mounted) return;
+    final copy = AppLocalizations.of(context);
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          key: const ValueKey('giphy-prepare-failed'),
+          content: Text(
+            outcome == GifPrepareOutcome.refused
+                ? copy.text(
+                    'This GIF is no longer available',
+                    'Ten GIF nie jest już dostępny',
+                  )
+                : copy.text(
+                    'GIFs are unavailable right now. Emoji still work.',
+                    'GIF-y są chwilowo niedostępne. Emoji nadal działają.',
+                  ),
+          ),
+        ),
+      );
+  }
+
+  /// Recents the current picker can actually send. A GIPHY recent is hidden
+  /// while GIPHY is off here (no key in this build, or the server cannot
+  /// resolve it), so a tap can never select a GIF that is bound to fail.
+  List<GifAsset> get _sendableRecents => _recents.value
+      .where((asset) => widget.service.canSend(asset.provider))
+      .toList(growable: false);
 
   Future<void> _report(GifAsset asset) async {
     final override = widget.onReport;
@@ -229,12 +282,29 @@ class _YoGifPickerState extends State<YoGifPicker> {
                             'Pokazujemy popularne GIF-y.',
                           ),
                         ),
+                      if (state.giphyStatus == GiphySectionStatus.error)
+                        _GifBanner(
+                          key: const ValueKey('giphy-unavailable'),
+                          palette: palette,
+                          icon: Icons.cloud_off_rounded,
+                          message: copy.text(
+                            'GIPHY results are unavailable right now.',
+                            'Wyniki GIPHY są chwilowo niedostępne.',
+                          ),
+                        ),
                       Expanded(child: _body(state, palette, copy)),
                       _GifAttributionFooter(
                         text: state.catalog?.attribution?.text,
                         rating: state.catalog?.ratingLabel ?? 'g',
                         palette: palette,
                         copy: copy,
+                        // GIPHY's mark accompanies GIPHY results AND any
+                        // GIPHY recents, i.e. wherever GIPHY content shows.
+                        showGiphyMark:
+                            state.showsGiphy ||
+                            _sendableRecents.any(
+                              (asset) => asset.provider == 'giphy',
+                            ),
                       ),
                     ],
                   ),
@@ -248,7 +318,9 @@ class _YoGifPickerState extends State<YoGifPicker> {
     // A spinner only when there is nothing to look at. Once results are on
     // screen, a refetch leaves them there — replacing a populated grid with a
     // spinner on every keystroke is the worst version of this UI.
-    if (state.status == GifQueryStatus.loading && !state.hasResults) {
+    final giphyLoading = state.giphyStatus == GiphySectionStatus.loading;
+    if ((state.status == GifQueryStatus.loading || giphyLoading) &&
+        !state.hasResults) {
       return const Center(
         key: ValueKey('gif-loading'),
         child: SizedBox(
@@ -273,7 +345,7 @@ class _YoGifPickerState extends State<YoGifPicker> {
       );
     }
 
-    final recents = _recents.value;
+    final recents = _sendableRecents;
     return LayoutBuilder(
       builder: (context, constraints) {
         final columns = _columnsFor(constraints.maxWidth);
@@ -336,6 +408,14 @@ class _YoGifPickerState extends State<YoGifPicker> {
                 palette: palette,
               ),
             ],
+            // Section labels only when GIPHY shares the grid. Without GIPHY
+            // this is exactly the Originals-only picker that shipped before.
+            if (state.showsGiphy && state.items.isNotEmpty)
+              _GifSectionHeader(
+                key: const ValueKey('gif-originals-section'),
+                label: copy.text('YO Voice Originals', 'Oryginały YO Voice'),
+                palette: palette,
+              ),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
               sliver: SliverGrid(
@@ -361,7 +441,52 @@ class _YoGifPickerState extends State<YoGifPicker> {
                 }, childCount: state.items.length),
               ),
             ),
-            if (state.status == GifQueryStatus.loading)
+            if (state.showsGiphy && state.giphyItems.isNotEmpty) ...[
+              // The official mark heads the GIPHY section itself, so GIPHY
+              // results never appear without their attribution in view.
+              const SliverToBoxAdapter(
+                child: Padding(
+                  key: ValueKey('giphy-section'),
+                  padding: EdgeInsets.fromLTRB(14, 8, 14, 4),
+                  child: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: YoGiphyAttribution(),
+                  ),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                sliver: SliverGrid(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    mainAxisExtent: rowHeight,
+                    crossAxisSpacing: 6,
+                    mainAxisSpacing: 6,
+                  ),
+                  delegate: SliverChildBuilderDelegate((context, index) {
+                    final asset = state.giphyItems[index];
+                    return _GiphyImpression(
+                      asset: asset,
+                      onShown: widget.service.giphyShown,
+                      child: _GifCell(
+                        asset: asset,
+                        width: cellWidth,
+                        height: rowHeight,
+                        palette: palette,
+                        copy: copy,
+                        autoLoad: widget.autoLoad,
+                        onTap: () => _select(asset),
+                        onReport: _report,
+                        keyPrefix: 'giphy',
+                      ),
+                    );
+                  }, childCount: state.giphyItems.length),
+                ),
+              ),
+            ],
+            if (state.status == GifQueryStatus.loading ||
+                (state.giphyStatus == GiphySectionStatus.loading &&
+                    state.hasResults))
               const SliverToBoxAdapter(
                 child: Padding(
                   padding: EdgeInsets.symmetric(vertical: 10),
@@ -623,8 +748,48 @@ class _GifSearchRow extends StatelessWidget {
   }
 }
 
+/// Registers a GIPHY result's `onload` pingback when its cell is first built
+/// (the grid is lazy, so a built cell is a cell scrolled into view). The
+/// service de-duplicates per result and suppresses it entirely while
+/// "Load GIFs automatically" is off.
+class _GiphyImpression extends StatefulWidget {
+  const _GiphyImpression({
+    required this.asset,
+    required this.onShown,
+    required this.child,
+  });
+
+  final GifAsset asset;
+  final ValueChanged<GifAsset> onShown;
+  final Widget child;
+
+  @override
+  State<_GiphyImpression> createState() => _GiphyImpressionState();
+}
+
+class _GiphyImpressionState extends State<_GiphyImpression> {
+  @override
+  void initState() {
+    super.initState();
+    widget.onShown(widget.asset);
+  }
+
+  @override
+  void didUpdateWidget(covariant _GiphyImpression oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.asset != widget.asset) widget.onShown(widget.asset);
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
 class _GifSectionHeader extends StatelessWidget {
-  const _GifSectionHeader({required this.label, required this.palette});
+  const _GifSectionHeader({
+    required this.label,
+    required this.palette,
+    super.key,
+  });
 
   final String label;
   final AppPalette palette;
@@ -852,7 +1017,11 @@ class _GifAttributionFooter extends StatelessWidget {
     required this.rating,
     required this.palette,
     required this.copy,
+    this.showGiphyMark = false,
   });
+
+  /// GIPHY's official mark, beside the catalog's own attribution text.
+  final bool showGiphyMark;
 
   final String? text;
   final String rating;
@@ -862,7 +1031,8 @@ class _GifAttributionFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mark = text;
-    if (mark == null || mark.isEmpty) return const SizedBox.shrink();
+    final hasText = mark != null && mark.isNotEmpty;
+    if (!hasText && !showGiphyMark) return const SizedBox.shrink();
     final scaler = MediaQuery.textScalerOf(context);
     final ratingLabel = rating == 'g'
         ? copy.text('Rated G only', 'Tylko ocena G')
@@ -883,13 +1053,25 @@ class _GifAttributionFooter extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final stacked = scaler.scale(10.5) > 14 || constraints.maxWidth < 280;
-        final markText = Text(
-          mark,
-          key: const ValueKey('gif-attribution'),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: style,
-        );
+        final catalogText = hasText
+            ? Text(
+                mark,
+                key: const ValueKey('gif-attribution'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: style,
+              )
+            : null;
+        // Wrap, not Row: the GIPHY mark moves to its own line rather than
+        // being squeezed or clipped at 320 px or 200% text.
+        final Widget markText = showGiphyMark
+            ? Wrap(
+                spacing: 8,
+                runSpacing: 2,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [?catalogText, const YoGiphyAttribution()],
+              )
+            : catalogText!;
         final ratingText = Text(
           ratingLabel,
           maxLines: 1,

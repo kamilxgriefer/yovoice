@@ -561,6 +561,19 @@ their separate production-deployment gates.
   `63507816`. Visiting Activity clears its unread rows and banner, and
   **Mark all read** drains inboxes larger than 400 rows.
 
+- **GIPHY GIFs, option B — client search, server resolve-by-id — source on
+  branch `nb/giphy` 2026-09-19 (ADR-210)** (**NOT DEPLOYED; OWNER STEPS
+  PENDING**): the app searches GIPHY directly with `rating=g` pinned and a
+  compile-time key (`YOVOICE_GIPHY_API_KEY`; none means Originals only), shows
+  GIPHY beside the Originals under the official "Powered By GIPHY" mark, and
+  sends GIPHY Action Register pingbacks gated on **Load GIFs automatically**.
+  The server gains a source-gated `resolveGif` authority (GIPHY_API_KEY secret,
+  rating/denylist/block checks, own hourly budget) and every send path now
+  accepts an allow-set of both providers. Settings discloses what GIPHY
+  receives, in every locale. Waiting on: the GIPHY production key, the official
+  mark files, the `GIPHY_API_KEY` secret, the privacy-policy update, the source
+  flip and one deploy wave ([DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-210)).
+
 - **GIFs in the composer — production-original catalog complete in source
   2026-09-13 (ADR-172/173)** (**BUILD 27 CANDIDATE; BACKEND DEPLOYMENT STILL
   PENDING**): three source-static Cloud Functions callables in `europe-west1`

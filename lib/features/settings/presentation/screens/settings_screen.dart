@@ -852,6 +852,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
+        // GIPHY disclosure (ADR-210). Always shown, not only in builds that
+        // search GIPHY: a GIPHY GIF someone else sent renders here too, and
+        // the switch above is the control for that contact.
+        Padding(
+          key: const ValueKey('settings-giphy-privacy'),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Text(
+            copy.text(
+              'When a GIPHY GIF loads, GIPHY receives your IP address and '
+                  'device information.',
+              'Gdy wczytuje się GIF z GIPHY, GIPHY otrzymuje Twój adres IP '
+                  'i informacje o urządzeniu.',
+            ),
+            style: TextStyle(
+              color: context.appPalette.textTertiary,
+              fontSize: 12,
+            ),
+          ),
+        ),
         const SizedBox(height: 24),
 
         const AppearanceLanguageSettingsSection(),

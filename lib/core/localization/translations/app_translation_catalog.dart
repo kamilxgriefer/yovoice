@@ -19,6 +19,7 @@ import 'translations_server_deletion.dart';
 import 'translations_server_surface.dart';
 import 'translations_gif_messages.dart';
 import 'translations_gif_composer.dart';
+import 'translations_giphy.dart';
 import 'translations_auth_call_release.dart';
 import 'translations_chinese_traditional.dart';
 import 'translations_current_release.dart';
@@ -217,6 +218,7 @@ const appTranslationKeys = <String>{
   ...reelLinksTranslationKeys,
   ...gifMessageTranslationKeys,
   ...gifComposerTranslationKeys,
+  ...giphyTranslationKeys,
   ...yoMomentsTranslationKeys,
   ...mobileNavigationTranslationKeys,
   ...homeTranslationKeys,
@@ -272,6 +274,7 @@ final appTranslations = <String, Map<String, String>>{
         ...reelLinksTranslations[entry.key]!,
         ...gifMessageTranslations[entry.key]!,
         ...gifComposerTranslations[entry.key]!,
+        ...giphyTranslations[entry.key]!,
         ...yoMomentsTranslations[entry.key]!,
         ...mobileNavigationTranslations[entry.key]!,
         ...homeTranslations[entry.key]!,

@@ -750,6 +750,9 @@ function createDirectMessagingService({
   readPageSize = 100,
   limits = DEFAULT_LIMITS,
   gifProviderName = process.env.GIF_PROVIDER,
+  // ADR-210: the send allow-set. When given it wins over the legacy single
+  // provider name, so Originals and GIPHY can both be served at once.
+  gifProviderNames = null,
 }) {
   if (!db || !Timestamp?.fromMillis) {
     throw new TypeError("db and Timestamp are required.");
@@ -1209,7 +1212,11 @@ function createDirectMessagingService({
         "lastMessageSequence",
       );
       const gif = await resolveMessageGif({
-        db, transaction, gif: content.gif, providerName: gifProviderName,
+        db,
+        transaction,
+        gif: content.gif,
+        providerName: gifProviderName,
+        providerNames: gifProviderNames,
       });
       const text = gif ? gifMessageFallback(gif) : content.text;
       const type = gif ? "gif" : "text";

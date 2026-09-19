@@ -5,6 +5,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:yovoice/features/media/data/models/gif_asset.dart';
+import 'package:yovoice/features/media/data/services/giphy_pingbacks.dart';
 
 typedef GifMessageInvoker =
     Future<Object?> Function(String callable, Map<String, Object?> payload);
@@ -20,14 +21,23 @@ class GifMessageController extends ChangeNotifier {
     required Map<String, String> target,
     required String? Function() currentUserId,
     GifMessageInvoker? invoke,
+    GiphyPingbacks? giphyPingbacks,
   }) : _target = Map.unmodifiable(target),
        _currentUserId = currentUserId,
-       _invoke = invoke ?? _call;
+       _invoke = invoke ?? _call,
+       _giphyPingbacks = giphyPingbacks;
 
   final String callable;
   final Map<String, String> _target;
   final String? Function() _currentUserId;
   final GifMessageInvoker _invoke;
+
+  /// GIPHY `onsent` (ADR-210). Fires only for a choice the picker armed with
+  /// `onclick` while "Load GIFs automatically" was on; null or unarmed is a
+  /// no-op, which is every Originals send and every build without a key.
+  final GiphyPingbacks? _giphyPingbacks;
+  GiphyPingbacks? get _pingbacks =>
+      _giphyPingbacks ?? GiphyPingbackRegistry.instance;
   GifAsset? _asset;
   GifAsset? get asset => _owner == _currentUserId() ? _asset : null;
   String? _owner;
@@ -89,6 +99,10 @@ class GifMessageController extends ChangeNotifier {
           (result['messageId'] as String).isEmpty ||
           _target.entries.any((e) => result[e.key] != e.value)) {
         throw const FormatException('Malformed GIF acknowledgement.');
+      }
+      final committed = _asset;
+      if (committed != null && committed.provider == 'giphy') {
+        unawaited(_pingbacks?.sent(committed.id));
       }
       _asset = null;
       _payload = null;
