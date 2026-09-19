@@ -85,6 +85,11 @@ Observed on the way, not changed (rule: never delete functionality):
   `HomeSectionHeader(live:)`. They were migrated, not removed, so no second
   source of truth survives; deciding their fate is a product call for
   phase 1 (Start).
+  The story-tile inventory found the same for the Moments rail:
+  `MomentStoryTile` is mounted on no production surface (`MobileMomentsStrip`
+  lives only inside `DesktopMomentsStrip`, which nothing mounts, and the feed
+  uses `MomentAuthorCapsuleStrip`), although ADR-155 and the tile's old doc
+  comment said every Moments rail draws it. Tracked as Roadmap 0n.
 - **Unused `YoBadge` variants.** `primary`, `success`, `warning`, `error` and
   `info` are mounted only by `test/color_system_visual_qa.dart` and
   `test/shared_component_accessibility_test.dart`; no product surface uses
@@ -97,6 +102,72 @@ Observed on the way, not changed (rule: never delete functionality):
   "$count LIVE" counter (`_LiveRoomCounter`, discover), `_LiveSignal`
   (`followed_creators_card.dart`), the mini-player status lines and the
   channel-group heading — none of them is the NA ŻYWO pill.
+
+## FIXED IN SOURCE — the unheard Moments ring was defined three times, and the Chats rail wore a fake one (2026-09-19, Slim phase 0)
+
+Found by the story-tile inventory. `MomentStoryTile.ringColors(seen: false)`
+reached only `MomentAuthorCapsule`. The tile's own `_ring`, the discover
+`MomentSeenAvatar` and the legacy `_StoryBubble` each hardcoded
+`AppGradients.primary`, so changing the ring in one place changed one shape
+in three. The capsule's gradient also had no angle. Separately, `_FriendStory`
+in `messages_screen.dart` painted a three-hex story gradient (`0xFFFF416C` /
+`0xFFB42DFF` / `0xFF5D00D7`) around every friend and action bubble, although
+that rail carries no Moments state. It read as "unheard" everywhere. Fixed in
+`1d9d85c2` (ADR-209, story-tile family):
+
+- every ring shape paints `MomentStoryTile.ringGradient`, at one angle in both
+  states;
+- the Chats rail wears a 2 px `palette.border` band with identical geometry.
+
+`test/moment_seen_avatar_test.dart` pins the stops, the angle and the
+`ringKey` contract. The brief's flat `AppColors.voice` unheard ring was **not**
+applied: three existing test contracts pin the brand gradient, and changing
+them needs its own ADR.
+
+## FIXED IN SOURCE — channel glyphs disagreed and went unvoiced; channel and voice rows had no visible focus (2026-09-19, Slim phase 0)
+
+- The server management sheet drew channels with its own glyph map
+  (`serverChannelManagementIcon`), which disagreed with the panel's
+  `serverChannelIcon` on 9 of 13 kinds. Retired in `9b639ffb`; the sheet now
+  uses the panel's glyphs and shows the lock on restricted channels.
+- A channel row voiced its glyph only when it was a lock. A screen-reader
+  user could not tell a voice channel from a text channel before selecting it.
+  Every glyph in the panel and the sheet now voices its kind through
+  `copy.serverChannelSpokenKind` (`620807ca`).
+- `YoChannelRow` (a `ListTile`) and `VoicePlayerRow` (an `InkWell`) showed
+  desktop keyboard focus only as the theme's 14 % tint, about 1.25:1 against
+  the surface, so focus was effectively invisible. Both now draw a 2 px focus
+  edge: `palette.focus`, or the bubble's own ink on the brand gradient
+  (`620807ca`).
+- The chat bubble's voice clock was a raw 11 px style without tabular
+  figures, so it changed width as the digits changed. It now uses
+  `AppTypography.bodySmall` with tabular figures, like the thread row
+  (`f8b8d382`).
+
+Pinned by `test/yo_channel_row_test.dart` and `test/voice_player_row_test.dart`.
+Not yet seen on screen (no after-frames; see the session log).
+
+## FIXED IN SOURCE, NEVER RELEASED — phase-0 channel-row regressions caught by review (2026-09-19)
+
+`9b639ffb` introduced three layout defects, which the phase-0 review found
+before any push:
+
+- In the 240 px desktop panel, a live channel's name was squeezed to about
+  3 px by the NA ŻYWO marker plus the new join control.
+- The connected roster overflowed the 216 / 240 px channel columns with four
+  or more people.
+- Each speaking tick grew a face from 28 to 30 px, so the row jittered.
+
+Fixed in `620807ca`:
+
+- the name keeps `minLabelWidth` (96 px);
+- the marker moves under the name below 288 px of row;
+- the join control appears beside a live marker only from 340 px;
+- the roster fits its faces to the width and folds the rest into `+n`;
+- the ring is always 2 px.
+
+Pinned by `test/yo_channel_row_test.dart` at the panel and sheet widths.
+UNVERIFIED on screen until the channel-row after-frames exist.
 
 ## OPEN — build 32's tester notes promise a deletion the server refuses (2026-09-19)
 

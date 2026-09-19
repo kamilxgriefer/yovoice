@@ -12865,175 +12865,259 @@ A 5 min allowance covers real consumer drift while still rejecting nonsense expi
 
 ## ADR-209: Slim redesign: Instagram × Discord × Twitch w języku YO Voice
 
-**Date:** 2026-09-19 · **Status:** accepted · **Build:** 3.0.0 (phase 0 — foundation)
+**Date:** 2026-09-19 · **Status:** accepted (phase 0 landed in source; visual
+gate open) · **Base:** Build 33 (`46d6b330`) · **Release:** ships as
+`3.0.0+34` after all phases; `pubspec.yaml` stays `2.0.0+33` in phase 0
 
 ### Context
 
 The Slim redesign brief (`yovoice-evidence/2026-09-18/slim-redesign-brief.md`)
-rebuilds the visual layer — slimmer, lighter, content-first — while the
-navigation shell, every behaviour, the Firebase schema and Material 3 stay
-untouched. Its phase 0 is an inventory, not a screen: for each visual state the
-repo already had a canonical widget somewhere (often outside
-`lib/shared/widgets/`) *and* several private copies of it. The NA ŻYWO marker is
-the sharpest example. `YoBadge(variant: YoBadgeVariant.live)` existed, was
-mounted by nothing in product code and was byte-identical to the `error`
-variant, while eleven ad-hoc pills drew liveness in eleven ways — a purple
-`_MiniLivePill`, an error-container `_LivePill`, six inline hexes, four
-radii, four font sizes — and the server channel row's `_LiveDot` (not a pill)
-shared the counted `server-live-pill` key with the real header pill.
+rebuilds the visual layer. The goal is slimmer, lighter and content-first. The
+navigation shell (`YoFloatingNavigationDock`, the `MainShell` navigation
+model, `DesktopSidebar`), every behaviour, the Firebase schema and Material 3
+stay as they are. The brief borrows interaction patterns from three products:
+light chrome and full-width media from Instagram, server structure and presence
+from Discord, and live energy from Twitch. Everything is expressed in YO Voice's
+own identity.
+
+Phase 0 is an inventory, not a screen. For each visual state the repo already
+had a canonical widget somewhere, often outside `lib/shared/widgets/`, *and*
+several private copies of it. The NA ŻYWO marker is the sharpest example.
+`YoBadge(variant: YoBadgeVariant.live)` existed, nothing in product code
+mounted it, and it was byte-identical to the `error` variant. Meanwhile eleven
+ad-hoc pills drew liveness in eleven ways: a purple `_MiniLivePill`, an
+error-container `_LivePill`, six inline hexes, four radii and four font sizes.
+The server channel row's `_LiveDot` was not a pill, yet it shared the counted
+`server-live-pill` key with the real header pill. The inventories
+also showed that the brief was wrong or incomplete in more than twenty places
+(see "Brief corrections" below). The code, not the brief, decided each family.
+
+Phase 0 ran as eight families, one commit each (the waveform family took a
+work-in-progress commit plus a finisher), followed by one review-round commit:
+`f5713426` live badge, `89c3d2be` presence dot, `d3552e3d` + `2c18fb02`
+waveform, `1c5722a0` section header, `1d9d85c2` story tile, `f8b8d382` voice
+player, `9b639ffb` channel rows, `1aad9b47` new primitives, `620807ca` review
+round.
 
 ### Decision
 
 **One state = one primitive.** An existing canonical is extended in place and
-every duplicate is migrated to it; nothing is deleted before its last caller
-moved, and no `Yo<State>Widget` twin is created next to a canonical that
-already exists (no `YoLiveBadge`, no `YoStoryRingAvatar`, no `YoPresenceDot`).
+every duplicate is migrated to it. Nothing is deleted until its last caller has
+moved. No `Yo<State>Widget` twin is created next to a canonical that already
+exists: there is no `YoLiveBadge`, no `YoStoryRingAvatar` and no
+`YoPresenceDot`. The brief allows exactly two genuinely new primitives,
+`YoServerRailItem` and `YoMetricPill`. `YoServerTile`, the rail item's face, is
+the one addition beyond that, explained under the new-primitives family.
 
-| State | One primitive | Migrated from (this phase) |
-| --- | --- | --- |
-| NA ŻYWO | `YoBadge(variant: YoBadgeVariant.live)` — `lib/shared/widgets/badges/yo_badge.dart`; on server surfaces through its keyed alias `ServerLivePill` (`servers/presentation/widgets/server_channel_scene.dart`) | `_MiniLivePill` and the `_MobileRoomCard` inline pill (`home/…/mobile/mobile_home_sections.dart`), `_LivePill` (`home/…/desktop/voice_trending_card.dart`), the inline pill in `home/…/live_now_hero.dart`, the live branch of `_StatusBadge` (`home/…/shared/home_room_board.dart`), `_LiveBadge` (`discover/…/hero_live_room.dart`), `_SmallLiveBadge` ×2 (`discover/…/discover_screen.dart`), `_LivePill` (`rooms/…/room_card.dart`), the inline pill in `CreatorStudioRoomsList` (`creator/…/creator_studio_screen.dart`), `ServerLivePill`'s own body and `_LiveDot` (`servers/…/server_panel.dart`) |
-| Obecność (dot) | `AvailabilityDot` — `lib/shared/widgets/profile/availability_dot.dart` (moved out of `availability_picker.dart`; colour = `PeopleStatus.foreground`, the ring's ink, so ring and dot share one source) | 10 sites in 8 files: `_PresenceDot`'s disc (`shared/widgets/profile/profile_preview_sheet.dart`), `YoAvatar.isOnline` (`shared/widgets/avatars/yo_avatar.dart`), the own-availability dot in `HomeGreetingHeader` (`home/…/shared/home_greeting_header.dart`), the presence dot in `HomeFriendTile` (`home/…/shared/home_friend_tile.dart`), the friend row (`friends/…/friends_screen.dart`), `_FriendStory`, `_ConversationAvatarState` and `_FriendTile` (`messages/…/messages_screen.dart`), the member tile (`clubs/…/club_overview_screen.dart`), the online dot of `MomentStoryTile` (`moments/…/moment_story_tile.dart`) |
-| Waveform (bars) | `YoWaveform` — `lib/shared/widgets/waveform/yo_waveform.dart`; the progress-driven Moment players through its named subclass `StoryWaveform` in the same file, re-exported by `moments/…/moment_story_viewer.dart` so every existing import resolves | `HomeStaticWaveform` (`home/…/shared/home_static_waveform.dart`, file removed with its last caller `home/…/shared/home_here_now_hero.dart`), `_MiniWaveform` (`home/…/screens/home_screen.dart`), `_Waveform` (`moments/…/widgets/moment_card.dart`), `StoryWaveform` + `_TiledWaveformPainter` (`moments/…/widgets/moment_story_viewer.dart`; its five call sites — the story stage, `moments/…/screens/moment_detail_screen.dart`, `moments/…/widgets/moments_feed_view.dart` ×2, `moments/…/widgets/voice_reply_mini_player.dart` — keep constructing `StoryWaveform`), `_Waveform` (`servers/…/widgets/server_podcast_stage.dart`), the inline 24-bar row in `_VoiceMessageContent` (`messages/…/widgets/message_bubble.dart`) |
-| Nagłówek sekcji | `HomeSectionHeader` — `lib/shared/widgets/layout/home_section_header.dart` (moved from `home/presentation/widgets/shared/`, class name and `HomeSectionHeaderScale` kept because `test/home_rhythm_test.dart` pins them by type; grew `leading`, `subtitle`, `trailing` and `seeAllVocabulary`, every default reproducing the Home render byte for byte) | `_SectionHeader` + `_SectionLabel` (`home/…/desktop/voice_trending_card.dart`: "Live rooms" with its "See all rooms" action, "Most liked Moments"), `_SectionHeader` (`notifications/…/notifications_screen.dart`: Friend requests, Unread messages, and Activity through `_ActivityHeader`, which keeps its stacking rule and the `notifications-mark-all-read` button), `_SectionHeader` (`achievements/…/achievements_screen.dart`: one per category, key `awards-section-<id>`), `_SectionHeader` (`discover/…/discover_screen.dart`: Search results, Featured, Trending, Rising; the 36 px icon box survives as the trailer `_SectionIcon`) |
-| Kafelek stories (pierścień odsłuchania) | `MomentStoryTile` — `lib/features/moments/presentation/widgets/moment_story_tile.dart`, constructor and statics unchanged; the ring stops are `MomentStoryTile.ringColors` and the new `ringGradient` (unheard `[AppColors.primary, AppColors.secondary]` at `AppGradients.primary`'s angle, heard `palette.border` twice — the same angle in both states, so only the stops change), and every shape paints them: the disc `MomentSeenAvatar` (moved into the same file beside its colour definition, re-exported by `moment_discover_tiles.dart` so no import moved; grew `ringWidth` / `ringInset` (feed 2 / 1.5, tile 2.5 / 2), `ringKey` on the painted `Container`, `mediaRevision`, `fallbackIcon`), the tile's own `_ring` through it, and the `MomentAuthorCapsule` border. The ring is the listened state from `MomentViewsService` through `MomentViewedIds` (fail open), never presence — ADR-155, which the brief and the old file comment mis-cited as ADR-147 | the tile's private `_ring` and the discover copy of `MomentSeenAvatar` (both hardcoded `AppGradients.primary` for unheard, so the unheard stop lived in three places and `ringColors(seen: false)` fed only the capsule), the capsule's plain `LinearGradient(colors: stops)` (no angle), `_StoryBubble` + the `_voiceStories` rail (`home/…/screens/home_screen.dart`: always-on 3 px gradient, raw `NetworkImage`, no seen state, no semantics → `MomentViewedIds` + `buildMomentChains` + `MomentStoryTile`), and the story-look gradient of `_FriendStory` (`messages/…/messages_screen.dart`: three inline hexes `0xFFFF416C` / `0xFFB42DFF` / `0xFF5D00D7` around every friend bubble → a 2 px `palette.border` band, because that rail carries no Moments state) |
-| Inline player głosowy (play + waveform + czas) | `VoicePlayerRow` — `lib/shared/widgets/voice/voice_player_row.dart`, with `VoicePlayerRowStatus`, `VoicePlayerRowStyle` (`.contained` for a thread row, `.inline` for a chat bubble) and the one `formatVoiceClock`. Presentation only: the caller keeps its `AudioPlayer`, its factory seam, the media grant, the arbitration tokens, the retry and snackbar paths, the `ValueKey`, the localized label and the mapping of its own state to a `status` | the whole `build()` of `_VoiceMessageContent` (`messages/…/widgets/message_bubble.dart`: the 44 px icon box, the bounded `YoWaveform`, the raw 11 px clock) and of `VoiceReplyMiniPlayer` (`moments/…/widgets/voice_reply_mini_player.dart`: `build()` + `_disc()` + the private `_clock`, whose `m:ss` was a second copy of the bubble's) |
-| Wiersz kanału | `YoChannelRow` / `YoVoiceChannelRow` (+ the `YoVoiceRowParticipant` value object) — `lib/shared/widgets/rows/yo_channel_row.dart`; the key reaches the `ListTile` through `tileKey`, and the row draws no `Material` of its own so the list's surface stays what the selected wash composites over | `_ChannelTile` and `_HomeTile` (`servers/…/widgets/server_panel.dart`, replaced by `_PanelChannelRow` and a direct `YoChannelRow` — the panel keeps the grouping, the search, the `server-channel-<id>` / `server-home-board` keys, the glyph map, the lock, the liveness copy and the identity wash), the management-sheet channel `ListTile` (`servers/…/widgets/server_management_sheet.dart`, whose second glyph map `serverChannelManagementIcon` — disagreeing with `serverChannelIcon` on 9 of 13 kinds — was retired with it), and the join switch itself: `ServerJoinAction`'s label and icon became `serverJoinLabel` / `serverJoinIcon` (`servers/…/widgets/server_channel_scene.dart`) so the scene CTA and the row's `Dołącz` cannot drift apart |
-| Liczba (metric pill) | `YoMetricPill(value:, icon:, tone:, semanticLabel:)` + `YoMetricPillTone` (`accent` / `outlined` / `tonal` / `overlay`) — `lib/shared/widgets/badges/yo_metric_pill.dart`; new, the brief's truly-new primitive | `_CountPill` (`notifications/…/screens/notifications_screen.dart`, now a one-line `_countPill` helper keeping the "99+" clamp → `accent`) and `_CountPill` (`achievements/…/screens/achievements_screen.dart` → `outlined`); the listener / member counts on live cards and the moments / discover / clubs chips migrate in the phases that redraw those screens |
-| Serwer w railu (+ jego twarz) | `YoServerRailItem(initial:, type:, semanticLabel:, selected:, onTap:)` composing `YoServerTile(initial:, type:, size:)` — `lib/shared/widgets/navigation/yo_server_rail_item.dart`; new; colours from `ServerIdentity.of(type).resolve(brightness)` only | Nothing yet: no server rail exists; phase 2 mounts it in `server_workspace_screen.dart`. The eight inline initial tiles (`servers_screen`, `home_server_overview` ×2, `server_workspace_screen` ×2, `server_panel`, `server_management_sheet`, `creator_studio_screen`) move to `YoServerTile` in phases 1 / 2 / 5 |
+| State | Family (commit) | One primitive | Migrated from (this phase) |
+| --- | --- | --- | --- |
+| NA ŻYWO | live badge (`f5713426`) | `YoBadge(variant: YoBadgeVariant.live)` in `lib/shared/widgets/badges/yo_badge.dart`. Server surfaces use it through its keyed alias `ServerLivePill` (`servers/presentation/widgets/server_channel_scene.dart`) | `_MiniLivePill` and the `_MobileRoomCard` inline pill (`home/…/mobile/mobile_home_sections.dart`), `_LivePill` (`home/…/desktop/voice_trending_card.dart`), the inline pill in `home/…/live_now_hero.dart`, the live branch of `_StatusBadge` (`home/…/shared/home_room_board.dart`), `_LiveBadge` (`discover/…/hero_live_room.dart`), `_SmallLiveBadge` ×2 (`discover/…/discover_screen.dart`), `_LivePill` (`rooms/…/room_card.dart`), the inline pill in `CreatorStudioRoomsList` (`creator/…/creator_studio_screen.dart`), `ServerLivePill`'s own body, and `_LiveDot` (`servers/…/server_panel.dart`) |
+| Obecność (dot) | presence dot (`89c3d2be`) | `AvailabilityDot` in `lib/shared/widgets/profile/availability_dot.dart`, moved out of `availability_picker.dart`. Its colour is `PeopleStatus.foreground`, the ring's ink, so ring and dot share one source | 10 sites in 8 files: `_PresenceDot`'s disc (`shared/widgets/profile/profile_preview_sheet.dart`), `YoAvatar.isOnline` (`shared/widgets/avatars/yo_avatar.dart`), the own-availability dot in `HomeGreetingHeader` (`home/…/shared/home_greeting_header.dart`), the presence dot in `HomeFriendTile` (`home/…/shared/home_friend_tile.dart`), the friend row (`friends/…/friends_screen.dart`), `_FriendStory`, `_ConversationAvatarState` and `_FriendTile` (`messages/…/messages_screen.dart`), the member tile (`clubs/…/club_overview_screen.dart`), and the online dot of `MomentStoryTile` (`moments/…/moment_story_tile.dart`) |
+| Waveform (bars) | waveform (`d3552e3d`, `2c18fb02`) | `YoWaveform` in `lib/shared/widgets/waveform/yo_waveform.dart`. The progress-driven Moment players use its named subclass `StoryWaveform` from the same file, which `moments/…/moment_story_viewer.dart` re-exports so every existing import still resolves | `HomeStaticWaveform` (`home/…/shared/home_static_waveform.dart`, file removed along with its last caller in `home/…/shared/home_here_now_hero.dart`), `_MiniWaveform` (`home/…/screens/home_screen.dart`), `_Waveform` (`moments/…/widgets/moment_card.dart`), `StoryWaveform` + `_TiledWaveformPainter` (`moments/…/widgets/moment_story_viewer.dart`; its five call sites keep constructing `StoryWaveform`), `_Waveform` (`servers/…/widgets/server_podcast_stage.dart`), and the inline 24-bar row in `_VoiceMessageContent` (`messages/…/widgets/message_bubble.dart`) |
+| Nagłówek sekcji | section header (`1c5722a0`) | `HomeSectionHeader` in `lib/shared/widgets/layout/home_section_header.dart`. It moved from `home/presentation/widgets/shared/`. The class name and `HomeSectionHeaderScale` are kept because `test/home_rhythm_test.dart` pins them by type. It gained `leading`, `subtitle`, `trailing` and `seeAllVocabulary`, and every default reproduces the Home render byte for byte | `_SectionHeader` + `_SectionLabel` (`home/…/desktop/voice_trending_card.dart`), `_SectionHeader` (`notifications/…/notifications_screen.dart`, including through `_ActivityHeader`), `_SectionHeader` (`achievements/…/achievements_screen.dart`, key `awards-section-<id>`), and `_SectionHeader` (`discover/…/discover_screen.dart`; its 36 px icon box survives as the trailer `_SectionIcon`) |
+| Kafelek stories (pierścień odsłuchania) | story tile (`1d9d85c2`) | `MomentStoryTile` in `lib/features/moments/presentation/widgets/moment_story_tile.dart`, with its constructor and statics unchanged. `MomentStoryTile.ringColors` defines the stops once and `ringGradient` paints them. Every shape paints that gradient: the disc `MomentSeenAvatar` (moved into the same file; `moment_discover_tiles.dart` re-exports it), the tile's own ring and the `MomentAuthorCapsule` border. The ring is the listened state (ADR-155), never presence | the tile's private `_ring`, and the discover copy of `MomentSeenAvatar` (both hardcoded `AppGradients.primary` for unheard), the capsule's angle-less `LinearGradient`, `_StoryBubble` + the `_voiceStories` rail (`home/…/screens/home_screen.dart`), and the story-look band of `_FriendStory` (`messages/…/messages_screen.dart`: three inline hexes → a 2 px `palette.border` band) |
+| Inline player głosowy (play + waveform + czas) | voice player (`f8b8d382`) | `VoicePlayerRow` in `lib/shared/widgets/voice/voice_player_row.dart`, with `VoicePlayerRowStatus`, `VoicePlayerRowStyle` (`.contained` for a thread row, `.inline` for a chat bubble) and the one `formatVoiceClock`. It is presentation only: the caller keeps its `AudioPlayer`, its factory seam, the media grant, the arbitration tokens, the retry and snackbar paths, the `ValueKey` and the localized label | the whole `build()` of `_VoiceMessageContent` (`messages/…/widgets/message_bubble.dart`) and of `VoiceReplyMiniPlayer` (`moments/…/widgets/voice_reply_mini_player.dart`: `build()` + `_disc()` + the private `_clock`) |
+| Wiersz kanału | channel rows (`9b639ffb`, `620807ca`) | `YoChannelRow` / `YoVoiceChannelRow` (+ the `YoVoiceRowParticipant` value object) in `lib/shared/widgets/rows/yo_channel_row.dart` | `_ChannelTile` and `_HomeTile` (`servers/…/widgets/server_panel.dart`), the management-sheet channel `ListTile` (`servers/…/widgets/server_management_sheet.dart`; its second glyph map `serverChannelManagementIcon` was retired), and the join label/icon switch of `ServerJoinAction`, which became `serverJoinLabel` / `serverJoinIcon` (`servers/…/widgets/server_channel_scene.dart`) |
+| Liczba (metric pill) and serwer w railu | new primitives (`1aad9b47`) | `YoMetricPill(value:, icon:, tone:, semanticLabel:)` + `YoMetricPillTone` (`accent` / `outlined` / `tonal` / `overlay`) in `lib/shared/widgets/badges/yo_metric_pill.dart`. `YoServerRailItem(initial:, type:, semanticLabel:, selected:, onTap:)` composes `YoServerTile(initial:, type:, size:)` in `lib/shared/widgets/navigation/yo_server_rail_item.dart`, with colours from `ServerIdentity.of(type).resolve(brightness)` only | `_CountPill` (`notifications/…/screens/notifications_screen.dart`, now a one-line `_countPill` helper that keeps the "99+" clamp → `accent`) and `_CountPill` (`achievements/…/screens/achievements_screen.dart` → `outlined`). The rail item migrates nothing yet: no server rail exists, and phase 2 mounts it in `server_workspace_screen.dart`. The eight inline initial tiles move to `YoServerTile` in phases 1, 2 and 5 |
 
-The live variant's spec (from the brief's Twitch section): `AppColors.live`
-fill, `AppColors.onLive` copy, `AppTypography.labelSmall` (10 px, height 1.2)
-at w800 with letter-spacing .8, padding 8/3, `AppRadius.pill`, no border, a
-6 px `onLive` dot that pulses in opacity (1 → .55 → 1, three mirrored cycles,
-3.6 s) when the marker appears and then rests, and only while
-`!disableAnimations && !accessibleNavigation && TickerMode.enabled` — otherwise
-the controller is stopped and parked at 1 so no frame is scheduled (the same
-guard `HeroLiveRoom` uses), and the pulse replays when motion is allowed again. The label is rendered verbatim on one unwrapped
-line that elides; `icon` is ignored for this variant; the widget carries no key
-and no `semanticLabel` of its own.
+#### "Smuklej": the rules every later phase enforces on every screen
 
-The presence dot's spec: a `Container` circle whose fill is
-`PeopleStatus.foreground(palette)` — `successForeground` online,
-`warningForeground` be right back, `dangerForeground` do not disturb,
-`textTertiary` offline / invisible — with an optional halo
+From the brief, binding for phases 1–7 and recorded here so that no phase
+re-argues them:
+
+- One layer: a list or a row instead of a card inside a card. A card stays
+  only where it groups something with its own action.
+- Borders are 1 px `palette.border`. Shadows appear only on elements that float
+  above content (dock, sheets, FAB). Cards get no decorative gradients; a
+  gradient stays only on the canvas background and on immersive surfaces.
+- Radii: 12 for cards, inputs and composers; 14 for server squircles (already
+  `AppRadius.md`, so no new token was needed); 20+ only for sheets and the dock.
+- Typography (Inter): hierarchy comes from weight (800 / 700 / 600 / 500 /
+  400), not size. One headline per screen. Secondary copy uses
+  `textSecondary` and meta uses `textTertiary`. Group labels are 11 px w700
+  uppercase with .08em letter-spacing.
+- List rows are 56–68 px, avatars 40–48, icons 22–24, targets ≥ 44 px, and
+  dividers are 1 px, indented to the text edge. Denser, but the rhythm is kept.
+- One accent per screen: the primary CTA is violet and everything else is tonal
+  or outline. Red appears only for NA ŻYWO, counter badges and errors.
+- The first screen after opening shows content, not chrome. There are no hero
+  banners that carry no data.
+
+Inside those rules, the phase-0 primitives follow four more that every later
+phase inherits:
+
+- The caller owns the state gate (`isLive`, `connected`, `seen`,
+  `isOnline`), the copy (locale string, in the case the surface needs it), the
+  keys and the placement (Wrap / Positioned / floor gating). The primitive owns
+  only the drawing. No copy crosses into `lib/shared/`, which
+  `test/localization_source_guard_test.dart` scans.
+- Counted keys are contracts. Seven server test files address
+  `server-live-pill` with `findsNothing` / `findsOneWidget` / `findsWidgets`,
+  so it is attached exactly once per marker: inside `ServerLivePill`, on the
+  `YoBadge`. The wrapper itself takes no second key. The same applies to
+  `server-join` (only the scene's full-size CTA) versus the row's
+  `server-channel-join-<id>`.
+- Palette only: `AppColors` / `AppPalette` / `AppImmersiveColors`. Phase 0
+  removed inline hexes (six live hexes, three `_FriendStory` hexes, six on
+  Awards and Discover) and added none.
+- Tests are never made green by editing assertions, finders or rhythm numbers.
+  Where a test pins a type (`StoryWaveform`, `HomeSectionHeader`), a label's
+  case (`'Live'`, `'LIVE NOW'`) or a colour contract (the unheard ring), the
+  primitive keeps it and this ADR records the tension instead.
+
+#### Primitive specs
+
+**Live badge.** This is the brief's Twitch spec. It uses an `AppColors.live`
+fill and `AppColors.onLive` copy, `AppTypography.labelSmall` (10 px, height
+1.2) at w800 with letter-spacing .8, padding 8/3, `AppRadius.pill` and no
+border. A 6 px `onLive` dot pulses in opacity (1 → .55 → 1, three mirrored
+cycles, 3.6 s) when the marker appears, then rests. The pulse runs only while
+`!disableAnimations && !accessibleNavigation && TickerMode.enabled`. Otherwise
+the controller is stopped and parked at 1, so no frame is scheduled (the same
+guard `HeroLiveRoom` uses). The pulse replays when motion is allowed again.
+The label is rendered verbatim on one unwrapped line that elides. `icon` is
+ignored for this variant. The widget carries no key and no `semanticLabel` of
+its own.
+
+**Presence dot.** It is a `Container` circle filled with
+`PeopleStatus.foreground(palette)`: `successForeground` for online,
+`warningForeground` for be right back, `dangerForeground` for do not disturb,
+and `textTertiary` for offline / invisible. It has an optional halo
 (`borderColor`, default `palette.surfaceRaised`; `borderWidth`, default 1.5,
-`0` for a bare disc). The brief named two duplicates (`_PresenceDot`,
-`YoAvatar.isOnline`); the inventory found ten, in eight files, drawing the
-same state with three different greens (`AppColors.success`,
-`palette.successForeground`, `PeopleStatus.foreground`) and two different
-greys (`navigationInactive`, `textTertiary`). The canonical could not serve
-them as it stood — it hard-coded the picker's `surfaceRaised` 1.5 halo while
-avatars need the halo in the colour of the surface they sit on (`background`,
-`surface`, `surfaceSunken`) at 2 or 3 px, and the preview sheet's disc has no
-halo at all — so it grew the two halo parameters with defaults that reproduce
-the picker exactly. The caller keeps its visibility gate (`if (isOnline)` in
-the Chats rail, conversation list, new-message sheet, `MomentStoryTile` and
-`YoAvatar`; always drawn, grey when offline, in `HomeFriendTile`, the Friends
-list and the member tile; `if (data != null)` in the greeting header;
-`if (status case final status?)` in the preview sheet), its status derivation
-(`fromPresence` for others, `fromOwnAvailability` for the account itself,
-`PeopleStatus.online` where the gate already proved online), its
-`Positioned` offset — including `HomeFriendTile`'s move to the top corner when
-the Voice badge owns the bottom one — its size (8 / 10 / 12 / 13 / 14 / 15 /
-16 / `size * .27` / the clamped tile dot) and every label `Text` and semantics
-string. One presence mark per avatar: a dot OR a `PeopleStatusAvatar` ring,
-never both — the rule `HomeFriendTile` documents and
-`test/home_blocking_defects_test.dart` (own tile: no `PeopleStatusAvatar`
-inside `HomePeopleStrip`) and `test/people_status_ring_theme_test.dart`
-(`.single` circle inside the ring host) enforce; ADR-150 is the presence
-decision this rule sits on, not its literal wording.
+`0` for a bare disc). The caller keeps:
 
-The waveform's spec: one `CustomPainter` under a `RepaintBoundary` in a
-`SizedBox` that is exactly `height` by `width` (or the parent's width when
-`width` is null; an explicit width is honoured even in a tight parent, the
-run centred, so a 30 px five-bar mark can never become fifty bars). Two
-layouts — **flex** (`barWidth` null: `barCount` bars share the width, each
-centred in its slot with `barGap` between them, radius half the bar; what a
-`Row` of `Expanded` containers drew) and **tiled** (`barWidth` set: fixed
-pitch `barWidth + barGap`, as many bars as fit, run centred, cycling the
-silhouette; the old `_TiledWaveformPainter`). The bar shape is always a
-fixed `silhouette` of 0..1 fractions — the 30-entry story list
-`YoWaveform.bars` by default, `YoWaveform.ramp(n)` for the Start motif's
-`(10 + i·13 % 24) / 34`, the podcast stage's five fixed heights — because
-**no amplitude is recorded anywhere and a waveform without real amplitude is
-static**: the widget owns no controller, timer or randomness, and
-`test/yo_waveform_test.dart` pins that no frame is scheduled after it paints.
-The only real value it draws is `progress`: null = still silhouette (the
-honest default); 0..1 = the player's reported position, painted as a played
-run from the leading edge in `playedColor` (`AppColors.secondary`) or swept
-with `playedGradient` (`palette.audioProgressGradient`), a bar counting as
-played once `(index + .5) / count <= progress` so the fill advances one whole
-bar and never half of one. Both layouts mirror under RTL (silhouette and
-played edge). The widget is `ExcludeSemantics` (decoration; a caller that
-wants a label wraps it) and carries no key of its own, so
-`server-podcast-waveform` passes through `key:`. The brief named six
-implementations; the inventory found seven bar waveforms *minus one*:
-`_WaveformBadge` in `rooms/…/mini_player/active_room_info.dart` is not a bar
-waveform (below), and the message bubble's inline row, which the brief lists
-only under the inline player, was — it drew a *different shape per message*
-from `7 + ((i·13 + duration) % 22)`, a fabricated per-message waveform, and is
-the one visible retirement here. Only `StoryWaveform` was ever driven by a
-real value (the player position, five call sites); the podcast mark is static
-but gated by the real `isSpeaking` signal and keeps that gate and its 14 px
-slot; the other four were purely static and stay static.
+- its visibility gate;
+- its status derivation (`fromPresence` for others, `fromOwnAvailability` for
+  the account itself);
+- its `Positioned` offset (including `HomeFriendTile`'s move to the top corner
+  when the Voice badge owns the bottom one);
+- its size (8 / 10 / 12 / 13 / 14 / 15 / 16 / `size * .27` / the clamped tile
+  dot);
+- every label `Text` and semantics string.
 
-Rules the phase-0 primitives follow, and every later phase inherits:
+One presence mark per avatar: a dot OR a `PeopleStatusAvatar` ring, never
+both. `HomeFriendTile` documents this rule, and two tests enforce it:
+`test/home_blocking_defects_test.dart` and
+`test/people_status_ring_theme_test.dart`. ADR-150 is the presence decision
+this rule rests on, but it does not state the rule literally.
 
-- The caller owns the state gate (`isLive`), the copy (locale string, in the
-  case the surface needs) and the placement (Wrap / Positioned / floor gating);
-  the primitive owns only the drawing.
-- Counted keys are contracts. `server-live-pill` is addressed by seven server
-  test files with `findsNothing` / `findsOneWidget` / `findsWidgets`, so it is
-  attached exactly once per marker — inside `ServerLivePill`, on the `YoBadge`
-  — and the wrapper itself takes no second key. The channel row's marker was
-  replaced 1:1 (`_LiveDot` → `ServerLivePill`) so every count is unchanged.
-- Palette only: `AppColors` / `AppPalette` / `AppImmersiveColors`; the
-  migration removed six inline live hexes and added none.
-- Tests are never greened by editing assertions. Where a test pins a label's
-  case, the caller keeps that case: `VoiceTrendingCard` still passes
-  `'Live' / 'Na żywo'` (`test/desktop_shell_test.dart` counts `find.text('Live')`
-  ×2), the Discover hero still says `'LIVE NOW' / 'TERAZ NA ŻYWO'`
-  (`test/remaining_features_polish_localization_test.dart`), and the
-  accessibility sweep mounts `variant.name` = `'live'`. The brief's "uppercase"
-  is therefore a property of the copy callers pass, not a transform inside the
-  widget.
+**Waveform.** It is one `CustomPainter` under a `RepaintBoundary` in a
+`SizedBox` that is exactly `height` by `width`. When `width` is null it takes
+the parent's width. An explicit width is honoured even in a tight parent, with
+the run centred. There are two layouts:
 
-The channel row's spec: a `ListTile` with `minTileHeight` 48 (a floor, not a
-height — a subtitle grows it into the brief's 56–68 band), 12 px content
-padding, `AppRadius.md`, a 21 px glyph and a name in `AppTypography.bodyMedium`
-on one unwrapped line that elides (two lines, wrapping, only on the home board,
-whose label is a sentence). `YoVoiceChannelRow` adds the liveness contract of
-ADR-177 and nothing else: **before joining the row draws only what the channel
-document carries** — the marker the caller builds (`liveBadge`, so
-`ServerLivePill` keeps the counted `server-live-pill` key attached exactly once
-and a row never mints a second one), the clock line `od 19:40`
-(`copy.serverLiveSinceShort` over `serverLiveClock`, the short form because the
-marker on the same line already names the state) and the connection glyph. It
-never prints the quiet copy: an idle channel says nothing rather than announcing
-silence, which is what `test/server_shell_test.dart` asserts while a live
-sibling is selected. `participants` are ignored unless `connected` is true, so
-no face can reach a pre-join row even if a caller hands one in; when connected
-they come from `ServerSessionController.participants` through
-`ListenableBuilder` scoped to that one row, drawn as up to four 22 px avatars
-with a 2 px `AppColors.success` speaking ring (the brief's Discord section),
-`palette.border` at 1 px otherwise, a crossed microphone for
-`!isMicrophoneEnabled`, and a real `+n` for the rest. Joining is a separate
-44 px control under its own `server-channel-join-<id>` key — never `server-join`,
-which counts the scene's single full-size CTA — and the row's own tap stays
-select-only, which `test/server_independent_qa_test.dart` walks every row to
-prove. The control steps aside below 240 px of row width or above 1.5× text,
-where a marker and a button together would leave the channel name two letters;
-the scene's CTA is one tap away and never hides.
+- **Flex** (`barWidth` null): `barCount` bars share the width, each centred in
+  its slot with `barGap` between them.
+- **Tiled** (`barWidth` set): fixed pitch, as many bars as fit, the run
+  centred, the silhouette cycling.
+
+The bar shape is always a fixed `silhouette` of 0..1 fractions: the 30-entry
+`YoWaveform.bars` by default, `YoWaveform.ramp(n)` for the Start motif, or the
+podcast stage's five fixed heights. **No amplitude is recorded anywhere, and a
+waveform without real amplitude is static.** The widget owns no controller,
+timer or randomness. The only real value it draws is `progress`. Null means a
+still silhouette. A value from 0 to 1 is the player's reported position, drawn
+as a played run from the leading edge in `playedColor` or swept with
+`playedGradient`. A bar counts as played once `(index + .5) / count <=
+progress`. Both layouts mirror under RTL. The widget is `ExcludeSemantics` and
+carries no key of its own.
+
+**Channel row.** It is a `ListTile` with a `minTileHeight` of 48. That is a
+floor, not a height: a subtitle grows the row into the brief's 56–68 band. The
+row has 12 px content padding, `AppRadius.md`, a 21 px glyph, and the name in
+`AppTypography.bodyMedium` on one unwrapped line that elides. Only the home
+board's sentence gets two lines. The row draws no `Material` of its own, so the
+list's surface stays what the selected wash composites over. The glyph voices
+the channel's kind (`copy.serverChannelSpokenKind`: `Kanał głosowy`,
+`Kanał sceny`, …). A restricted channel's lock appends its access to that
+label. Keyboard focus draws a 2 px `palette.focus` edge on the row's shape.
+
+`YoVoiceChannelRow` adds the liveness contract of ADR-177 and nothing else.
+**Before joining, the row draws only what the channel document carries:**
+
+- the marker the caller builds (`liveBadge`, i.e. `ServerLivePill`);
+- the clock line `od 19:40` (`copy.serverLiveSinceShort` over
+  `serverLiveClock`);
+- the connection glyph.
+
+It never prints the quiet copy. `participants` are ignored unless `connected`
+is true, so no face can reach a pre-join row. When the row is connected, the
+faces come from `ServerSessionController.participants` through a
+`ListenableBuilder` scoped to that one row. The row shows as many 22 px faces
+as its width holds (at most four) and folds the rest into a real `+n`. Every
+face has a fixed 2 px ring (30 px per face in total): `AppColors.success` while
+speaking and `palette.border` otherwise, so a speaking tick changes a colour,
+never the width. A crossed microphone marks `!isMicrophoneEnabled`.
+
+Joining is a separate 44 px icon control under its own
+`server-channel-join-<id>` key. The row's own tap stays select-only. The
+name's measure is protected by named thresholds:
+
+- the name keeps at least `minLabelWidth` (96 px at 1.0 text);
+- below `liveTrailingFloorWidth` (288 px of row, scaled with the text), the
+  `NA ŻYWO` marker moves onto the line under the name, beside the clock;
+- the join control rides beside a live marker only from
+  `liveJoinFloorWidth` (340 px, scaled);
+- the control steps aside entirely below `joinFloorWidth` (240 px) or above
+  `joinFloorTextScale` (1.5×).
+
+The scene's full-size CTA is one tap away and never hides.
+
+**Voice player row, metric pill and server rail item.** These are specified in
+`docs/UI.md` ("Shared primitives (Slim redesign, phase 0)"). Their decisions
+are listed under the families below.
+
+### Makiety kontra rzeczywistość: consciously NOT built
+
+The reference mockups draw several things the backend does not carry. None of
+them was built as drawn, and none will be until the named backend exists:
+
+- **Unread badges on the server rail**, and a counter on text channels.
+  Server channels have no read cursor. The only unread count in the code is
+  the DM `_UnreadBadge` in `messages_screen.dart`. `YoServerRailItem` has no
+  badge parameter, and `test/yo_server_rail_item_test.dart` asserts that none
+  is drawn.
+- **Avatars or a head count in a voice-channel row before joining.**
+  `rooms/{roomId}`, `participants` and `channelSessions` are closed to the
+  client (ADR-177). `YoVoiceChannelRow` drops `participants` unless
+  `connected` is true, instead of trusting callers.
+- **ONLINE / OFFLINE sections in the member list**, and a "W SALONIE"
+  heading. `ServerMember.isOnline` is written `false` for V1 servers and never
+  raised (gap G6), so such a split would show everyone offline. `Salon` is a
+  seeded channel name (`lounge`), not a feature name.
+- **"Dla Ciebie / Obserwujesz / Twoje" filters in Moments.** The existing
+  `MomentsFilter` (Voice) and `ReelFeedScope` (Yeels) stay with their keys.
+  Yeels gets no "Obserwowani" filter because `listReelsV2` has no friends or
+  author scope.
+- **Presence dots where the source has no presence.** For example,
+  `ServerMember.isOnline` is rendered nowhere in servers presentation, and no
+  dot was added.
+- **Listener, like and comment counts as sample data.** `YoMetricPill`
+  renders only a value the caller already holds. It never shows a zero, a
+  placeholder or an estimate.
+- On the login mockups, the e-mail address and user name are sample data
+  (phase 7).
+
+What was consciously **not simplified** is recorded per family below. In every
+family, no behaviour, gate, key, focus node, semantics string, state machine or
+caller was removed.
 
 ### Legal hygiene
 
 The brief borrows *interaction patterns* from Instagram, Discord and Twitch.
-Their names appear only here and in code comments; never in UI copy, store
-listings or marketing. No third-party colour, icon, sound, logo or feature
-name ("Stories", "Reels", "Nitro", "Boost") enters the product; the live
-marker is YO Voice's own `AppColors.live` and the words are our copy.
+Their names appear only in this ADR and in code comments. They never appear in
+UI copy, store listings or marketing. No third-party name, logo, icon, sound or
+brand colour enters the product. Feature names stay ours: YO Moments, Głos,
+Yeels, Serwery. No "Stories", "Reels", "Nitro" or "Boost" labels. The live
+marker is YO Voice's own `AppColors.live`, and the words are our copy. "Salon"
+is not a feature name. It is the seeded name of the `lounge` channel in some
+templates, so the UI always shows `channel.name` in the nominative, never
+declined and never hardcoded. Internal `reels` identifiers in code and schema
+stay.
 
-### Consciously NOT built, NOT simplified (this family)
+### Consciously NOT built, NOT simplified — per family
+
+#### Live-badge family (`f5713426`)
 
 - No `YoLiveBadge`; the canonical was extended.
 - No caller was deleted. `HomeScreen`, `LiveNowHero`, `RoomCard`,
@@ -13066,7 +13150,7 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   cycles on appearance keep the "energy" the brief asks for without either
   cost; the assertions were not touched.
 
-### Consciously NOT built, NOT simplified (presence-dot family)
+#### Presence-dot family (`89c3d2be`)
 
 - No `YoPresenceDot`; `AvailabilityDot` moved to its own file under the same
   name so nothing that addressed it had to be renamed.
@@ -13117,7 +13201,7 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   (`friends_screen.dart`, `messages_screen.dart`, `profile_preview_sheet.dart`)
   belong to the avatar-ring family and were not touched here.
 
-### Consciously NOT built, NOT simplified (waveform family)
+#### Waveform family (`d3552e3d`, `2c18fb02`)
 
 - No `YoStaticWaveform` / `YoProgressWaveform` pair: one widget, `progress`
   nullable. `StoryWaveform` survives as a named subclass, not a call-site
@@ -13165,7 +13249,7 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   `ConstrainedBox(48–126)` and `direct-voice-<id>` target around the bubble's
   bars, the hero's `PositionedDirectional` geometry — all kept in the callers.
 
-### Consciously NOT built, NOT simplified (section-header family)
+#### Section-header family (`1c5722a0`)
 
 - No new heading and no rename. `HomeSectionHeader` moved to
   `lib/shared/widgets/layout/` under its Home-era name: `test/home_rhythm_test.dart`
@@ -13220,8 +13304,9 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   `primary` / `onPrimary`, "99+" clamp; Awards: outlined palette pill, no
   clamp — each exactly what its screen drew). They are the brief's
   truly-new `YoMetricPill` in waiting; building a shared pill here would
-  pre-empt that primitive's spec, and a third source of truth is avoided by
-  routing both through it when it lands.
+  have pre-empted that primitive's spec. Superseded within the phase:
+  `1aad9b47` routed both through `YoMetricPill` (`accent` / `outlined`), so
+  no private count pill survives.
 - `_ActivityHeader` keeps its `LayoutBuilder` and the stacking rule
   (`maxWidth < 360 && scaled 14 px >= 21`): stacked, the "Mark all read"
   button sits under the heading and the heading's own 16 px step is the
@@ -13243,7 +13328,7 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   `_SectionLabel`). Group labels are the brief's "11 px w700 uppercase"
   rule, a different state.
 
-### Consciously NOT built, NOT simplified (story-tile family)
+#### Story-tile family (`1d9d85c2`)
 
 - **The brief's colour change is not implemented; the unheard source is
   unified instead.** The brief says "change only the ring colours:
@@ -13357,7 +13442,7 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   they are marks on the disc, not the ring, and no test reads them as
   ring stops.
 
-### Consciously NOT built, NOT simplified (voice-player family)
+#### Voice-player family (`f8b8d382`)
 
 - **Only the drawing moved.** `_VoiceMessageContentState` keeps
   `_runPlayerCommand` / `_interruptPlayer` / `_mediaGeneration` /
@@ -13425,7 +13510,7 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   `reel_draft_preview.dart` — all transport buttons, not play + waveform +
   time rows.
 
-### Consciously NOT built, NOT simplified (channel-rows family)
+#### Channel-rows family (`9b639ffb`, review round `620807ca`)
 
 - The brief's makieta of a voice row with avatars and a head count **before**
   joining is not built and will not be: `rooms/{roomId}`, `participants` and
@@ -13485,7 +13570,7 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   on the brand gradient), because the theme's 14 % focus tint measured about
   1.25:1 against the list surface.
 
-### Consciously NOT built, NOT simplified (new-primitives family)
+#### New-primitives family (`1aad9b47`)
 
 - **No unread badge, counter or dot on the server rail**, and no parameter
   for one: server channels have no read cursor, so the makieta's badge
@@ -13528,63 +13613,202 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   keeps `colorScheme.primary` / `onPrimary`, Awards keeps `surface` /
   `border` / `textSecondary` (Dark palette on its immersive route).
 
+### Brief corrections (from the phase-0 inventories)
+
+The brief is binding on intent. Where its facts were wrong, the code decided.
+Each correction below was acted on as described:
+
+- **Live badge.** The brief lists 6 duplicates; the family has 11 pills plus
+  2 two-state chips. It missed `_LiveDot` (which carries the counted key),
+  the `LiveNowHero`, `_MobileRoomCard` and `CreatorStudioRoomsList` inline
+  pills, `_StatusBadge` and the immersive `_StatusChip`. "Used identically on
+  Start" is not possible today: the mounted Start (`MobileHome` /
+  `DesktopHome`) contains no live pill, and every Home pill the brief names
+  lives in unmounted or dev-preview code. There is no live marker in
+  `lib/features/profile` ("i na profilu"). `YoBadgeVariant.live` was
+  byte-identical to `error`, not merely "styled like danger". `_MiniLivePill`
+  was purple and mixed-case, and tests pin the label case of two callers.
+- **Presence dot.** The brief names 2 duplicates; the inventory found 10 in
+  8 files. `YoAvatar` has no production call site. `_PresenceDot` is a disc
+  plus a localized word, and only the disc migrated. The canonical needed halo
+  parameters before it could serve any caller. ADR-150 does not state "ring OR
+  dot" literally. The *word* "Offline" still has a second colour source (see
+  `docs/Bugs.md`).
+- **Waveform.** The brief's "six" is five bar waveforms plus a glyph badge
+  (`_WaveformBadge`, not migrated), plus a seventh bar waveform it missed: the
+  message bubble's duration-seeded row. Only `StoryWaveform` was driven by a
+  real value. `lib/shared/widgets/waveform/` was empty *and untracked*.
+  `HomeScreen` is mounted nowhere. Two tests pin `StoryWaveform` by type, so
+  it survives as a subclass.
+- **Section header.** `test/.screenshots/home_rhythm_capture.dart` does not
+  exist; the capture is a dart-define inside `home_rhythm_test.dart`. The
+  brief's "four private `_SectionHeader`s" are 5 classes in 4 files with 12
+  construction sites. The stacking verdict depends on the page's "View all"
+  vocabulary (Build 33, `ca0ba6fe`), hence `seeAllVocabulary`. Discover is
+  retired. Twelve heading-like classes the brief does not mention belong to
+  other states and are listed as out of family.
+- **Story tile.** The ring decision is **ADR-155**, not ADR-147 (ADR-147 is
+  tab transitions). The brief, the old file comment and an earlier draft of
+  this ADR all cited ADR-147. "`AppColors.voice` for unseen" contradicts three
+  pinned test contracts and was not implemented (see the story-tile family).
+  `MomentStoryTile` is mounted on no production surface. The unheard stop was
+  defined in three places, and `ringColors` fed only the capsule. Four
+  duplicates and one sibling exist where the brief named none.
+- **Voice player.** "Exists twice" means two classes with five production
+  mount sites. `lib/shared/widgets/voice/` already held `VoiceCore`. The
+  bubble has no position stream, so `progress` is optional.
+- **Channel rows.** There are two `_ChannelTile` classes: the servers one is
+  the precedent, and the clubs one is a retired-route duplicate. `_HomeTile`,
+  the management-sheet `ListTile` and its second glyph map (which disagrees on
+  9 of 13 kinds), and the create-server seed rows are further sources. The
+  existing speaking colour everywhere is `palette.audioAccent`, not the
+  brief's `AppColors.success`. `ServerPanel` had no access to the session
+  roster. A row-level join cannot reuse `server-join`, and the row's tap must
+  stay select-only.
+- **New primitives.** The rail item's face already existed inline eight times
+  (hence `YoServerTile`). `MomentCountChip` (`moment_discover_tiles.dart`) is
+  already a public icon + count primitive. The inventory said `YoMetricPill`
+  should absorb or wrap it; **not done in phase 0** (no `bare` tone was
+  built), so it remains a second count drawing that the Moments phase (4)
+  must fold in. There are two identical `compactCount` bodies, plus the
+  profile's `_Stat.compact` with different rounding that the brief itself
+  pins. A 14 px radius already equals `AppRadius.md`. `rooms/…/room_card.dart`
+  has no test coverage at all.
+
+### Deviations from the family plans
+
+Recorded so that no later phase mistakes them for oversights:
+
+- **Live badge.** The first cut repeated the pulse forever.
+  `test/content_zoom_responsive_test.dart` and
+  `test/staff_capabilities_test.dart` could then never `pumpAndSettle`. The
+  pulse is now three cycles on appearance. No assertion was touched.
+- **Voice player (`f8b8d382`).**
+  - The inventory's migration step 2 (extend `StoryWaveform` with played
+    colours in `moment_story_viewer.dart`) had already been done by the
+    waveform commit, so it was skipped. `VoicePlayerRow` imports
+    `StoryWaveform` from `lib/shared/`, no feature file was touched for it,
+    and no `shared → features` dependency was created.
+  - The bubble's clock was unified onto `AppTypography.bodySmall` (12 px) with
+    tabular figures instead of keeping a raw-11 px `clockStyle` override.
+  - `VoicePlayerRowStyle.contained` takes `minHeight` / `controlSize` /
+    `waveformHeight` (defaults 56 / 40 / 20), so the mini-player's public
+    statics stay load-bearing.
+  - `Semantics.onTap` is derived from `excludeChildSemantics` rather than
+    exposed as a second switch.
+- **Channel rows (`9b639ffb`).**
+  - The inventory was stale: `_LiveDot` was already `ServerLivePill`, and
+    `server_panel.dart` ↔ `server_channel_scene.dart` has no import cycle, so
+    `serverLiveClock` and `ServerLivePill` stayed where they were.
+  - The row's join is an icon control, not the worded "Dołącz" of the mockup.
+  - The speaking ring is `AppColors.success` while the servers shell's other
+    speaking marks stay `palette.audioAccent`. This two-ink debt is phase 2's.
+  - One new copy string was added: `serverLiveSinceShort` ("od {time}" /
+    "since {time}").
+  - `serverJoinLabel` / `serverJoinIcon` were extracted.
+  - `_HomeTile` and the management-sheet row were migrated too.
+  - `ServerPanel` gained optional `session` / `onJoin`. On the phone, the
+    channel sheet closes with a `_JoinRequest`, then selects and joins.
+- **New primitives (`1aad9b47`).**
+  - `YoServerTile` was added.
+  - The selection pill measures 32 / 16 / 0 px (selected / hover / idle); the
+    inventory proposed 20 / 8 / 0, and the brief gives no numbers.
+  - `YoMetricPill` has four tones, no `bare` tone and no `onTap`.
+  - The two migrated count pills now share one geometry.
+- **Review round (`620807ca`), from the confirmed phase-0 review findings.**
+  - Channel rows:
+    - A live channel's name was squeezed to about 3 px in the 240 px desktop
+      panel by the marker plus the new join control.
+    - The connected roster overflowed the 216 / 240 px channel columns with
+      four or more people.
+    - A speaking tick resized the face from 28 to 30 px.
+  - Focus and semantics:
+    - `YoChannelRow` and `VoicePlayerRow` showed keyboard focus only as a
+      ~1.25:1 tint.
+    - Channel glyphs voiced only the lock, so a voice channel could not be
+      told from a text channel by ear.
+  - This ADR:
+    - It placed the voice-player list inside ADR-001.
+    - It cited both ADR-147 and ADR-155 for the ring.
+    - It carried a stale Consequences bullet.
+  - All of these were fixed in source and in this document. The specs above
+    describe the fixed behaviour.
+- **Commit attribution.** The eight family commits from `f5713426` to
+  `9b639ffb` end with `Co-Authored-By: Claude Fable 5.1`, as the step
+  instructions required. The steps from `f8b8d382` on ran on Opus 5 after
+  the weekly Fable limit was reached. `1aad9b47` and `620807ca` carry the Opus
+  5 (1M context) trailer. The two mislabelled trailers (`f8b8d382`,
+  `9b639ffb`) were left alone because amending history is forbidden.
+
+### Release: 3.0.0
+
+The redesign ships as version **3.0.0**, decided by Kamil on 2026-09-19. Build
+number 33 is consumed in App Store Connect and can never be reused. The next
+free number is 34
+(`yovoice-evidence/2026-09-19/build33-2026-09-19.md`), so the release commit
+sets `version: 3.0.0+34` after all phases close. The release session confirms
+the number together with the Build 33 hash. Phase 0 did not touch
+`pubspec.yaml`, which still reads `version: 2.0.0+33`. Every user-facing text
+that names the release says 3.0.0: no "2.1", no "Build 34", no code names.
+Nothing was deployed or published in phase 0, and phase 0 was not pushed by
+the family steps.
+
 ### Reasoning
 
-A marker that is drawn eleven ways cannot be restyled once, cannot be tested
-once and cannot be trusted to mean one thing; a canonical that nothing uses is
-worse than a duplicate because it documents an intent the code contradicts.
-Extending the existing `YoBadge` (rather than adding a `YoLiveBadge`) keeps the
-accessibility sweep's per-variant AA check covering it for free, and routing
-server surfaces through a three-line keyed alias keeps a seven-file key
-contract in one place.
+A marker drawn eleven ways cannot be restyled once, cannot be tested once and
+cannot be trusted to mean one thing. A canonical that nothing uses is worse than
+a duplicate, because it documents an intent the code contradicts. Extending the
+existing canonical (`YoBadge`, `AvailabilityDot`, `HomeSectionHeader`,
+`MomentStoryTile`) instead of adding a twin keeps every test that already pins
+it, and every accessibility sweep that covers it, covering the new drawing for
+free. Doing the inventory before the screens means phases 1–7 restyle one
+widget per state instead of re-deciding each state per screen. Refusing to draw
+what the backend does not carry keeps the redesign honest with the product
+invariant "never invent backend functionality, fake users, or fake activity".
+Leaving the brief's wrong facts to the code, and recording each one, is cheaper
+than a primitive built on a premise that a test or the schema contradicts.
 
 ### Consequences
 
-- Every NA ŻYWO on a normal surface is the same pill in Dark and Pearl and
-  goes still under Reduce Motion; restyling it again is a one-file change.
-- Every channel row in the product — panel, home board, management sheet — is
-  one widget, so "what a voice row may claim before you join" is enforced in
-  one place instead of being re-argued per surface, and phase 2 can raise the
-  row's height or restyle its selection once.
-- The table above covers every phase-0 family (live badge, presence dot,
-  waveform, section header, story tile, voice player, channel rows, metric
-  pill and server rail item), each with its own "consciously not built"
-  list under this ADR. Phases 1–7 append their rows and lists here rather
-  than opening new ADRs.
-- Every presence dot in Dark and Pearl is now `PeopleStatus.foreground`
-  behind a caller-owned halo; restyling online / away / busy / offline is a
-  one-file change and cannot drift from the ring. `test/availability_dot_test.dart`
-  pins the four colours, the picker defaults and the halo contract in both
-  themes, plus the absence of semantics.
-- The live badge grew a dot and 8/3 padding on every server surface; the
-  320 px / 200 % contracts (`server_podcast_test`, `server_community_test`,
-  `server_independent_qa_layout_test`, `discover_light_theme_test`) still hold,
-  and `test/yo_badge_live_test.dart` pins the height, the one-line elision, the
-  verbatim label and the motion guard so the next duplicate has to argue with a
-  test.
-- Every bar waveform in Dark and Pearl is one painter; a redesign of the
-  silhouette, the played fill or the radius is a one-file change, and a
-  waveform that starts moving without a real value has to argue with
-  `test/yo_waveform_test.dart` (no scheduled frame, no semantics, exact box,
-  explicit width honoured, the `StoryWaveform` defaults). `flutter test
-  test/waveform_screenshot.dart` renders every host configuration in both
-  themes and directions for a person to look at; the host frames that the
-  existing harnesses cannot produce are listed as UNVERIFIED in
-  `docs/Sessions/2026-09-19-slim-redesign.md`.
-- Every inline voice clip in Dark and Pearl is one row: the chat bubble, the
-  shared-media Voice tab, a Voice Moment reply and a Yeel voice comment draw
-  the same disc, bars and clock, and a change to any of them is a one-file
-  change. `test/voice_player_row_test.dart` pins the five statuses, the
-  spinner's separate ink, the `m:ss` formatter, the key on the full-row target
-  and the two semantics shapes, so the next copy of this row has to argue with
-  a test.
-- Every count pill beside a heading is one widget in four tones (the
-  remaining counts join it as their screens are redrawn), and
-  `test/yo_metric_pill_test.dart` pins AA ink on every tone in Dark and Pearl
-  (the overlay judged over white artwork), the verbatim value, the optional
-  glyph, the label-replaces-value semantics and the one-line 200 % floor.
-  The server rail has a tested item before it has a rail:
-  `test/yo_server_rail_item_test.dart` pins the 44 / 14 / 48 / 64 geometry,
-  the `ServerIdentity` colours for every type in both themes, the
-  32 / 16 / 0 pill, Reduce Motion, the selected button semantics and the
-  absence of any unread mark.
+- Each of the nine phase-0 states is now one widget. Restyling NA ŻYWO, a
+  presence dot, a waveform, a section heading, the story ring, an inline voice
+  clip, a channel row, a count pill or a server face is a one-file change.
+  Each primitive has a contract test that the next duplicate has to argue
+  with:
+  - `test/yo_badge_live_test.dart`
+  - `test/availability_dot_test.dart`
+  - `test/yo_waveform_test.dart`
+  - `test/home_section_header_slots_test.dart`
+  - `test/moment_seen_avatar_test.dart`
+  - `test/voice_player_row_test.dart`
+  - `test/yo_channel_row_test.dart`
+  - `test/yo_metric_pill_test.dart`
+  - `test/yo_server_rail_item_test.dart`
+- "What a voice row may claim before you join" is enforced in one place
+  (`YoVoiceChannelRow`) instead of being re-argued per surface. Phase 2 can
+  raise the row's 48 px floor into the 56–68 band, converge the two speaking
+  inks, and restyle the selection once.
+- The table above is complete for phase 0: one row per family, eight families.
+  Phases 1–7 append their rows, their "not built / not simplified" lists and
+  their deviations to this ADR instead of opening new ones. An architectural
+  change inside a phase (for example, mounting `MomentStoryTile` on Home
+  against `test/desktop_home_test.dart`, or a flat `AppColors.voice` ring)
+  still needs its own ADR.
+- Visible normalisations were accepted without golden coverage (each is listed
+  in its family): the live badge's dot and 8/3 padding on server surfaces, the
+  presence dot's two colour moves, the shared waveform silhouette, the heading
+  rhythm on Voice Trending / inbox / Awards / Discover, the capsule's diagonal
+  angle, the bubble's 12 px clock, the management sheet's glyphs, and the count
+  pills' geometry. **None of them has rendered after-frames yet.** The phase-0
+  visual gate of the brief is open, and it blocks phase 1 (see
+  `docs/Sessions/2026-09-19-slim-redesign.md` and `docs/Roadmap.md`).
+- Known debts carried forward, each owned by a later phase:
+  - the speaking-ink split (phase 2);
+  - `minTileHeight` 48 (phase 2);
+  - the eight inline server faces (phases 1 / 2 / 5);
+  - `MomentCountChip` and the remaining count chips (phases 1 / 4 / 6);
+  - the "Offline" word colour (phases 3, 5 and 6);
+  - the bubble's missing position sweep (phase 3);
+  - the dead Home chains and `MomentStoryTile`'s missing mount (phase 1,
+    Roadmap 0n);
+  - the two failing screenshot-harness fixtures (`docs/Bugs.md`).

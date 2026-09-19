@@ -5,6 +5,110 @@ ADR-209 (`docs/Decisions.md`). One flat file for every phase; each phase
 appends its own section with the frames directory, the variant matrix, which
 frames were looked at, and what is UNVERIFIED and why.
 
+## Phase 0 — summary (consolidated)
+
+**Outcome.** Phase 0 (Fundament) is **done in source** and verified at code
+level only. Its **visual gate is open**: no restyled primitive has rendered
+after-frames. Nothing was pushed, deployed or published. `pubspec.yaml` is
+untouched (`2.0.0+33`); the redesign ships later as `3.0.0+34`. Decision
+record: ADR-209, consolidated in this phase's documentation commit, which
+also carries this summary.
+
+**Commits on local `main` over Build 33 (`46d6b330`).**
+
+| Commit | Family | What landed |
+| --- | --- | --- |
+| `f5713426` | live badge | `YoBadge.live` restyled to the brief's spec; 11 ad-hoc pills and `_LiveDot` migrated; `ServerLivePill` became a keyed alias |
+| `89c3d2be` | presence dot | `AvailabilityDot` moved to its own file with halo parameters; 10 sites in 8 files migrated |
+| `d3552e3d` | waveform | wip commit (verification pending) at the end of the step's budget |
+| `2c18fb02` | waveform | finisher: harness fixes in the new test, session log |
+| `1c5722a0` | section header | `HomeSectionHeader` moved to `lib/shared/widgets/layout/`, grew slots, and replaced 5 private headings |
+| `1d9d85c2` | story tile | one `ringGradient` behind every story shape; the Chats rail lost its fake story ring |
+| `f8b8d382` | voice player | `VoicePlayerRow` shared by the chat bubble and the voice-reply mini player |
+| `9b639ffb` | channel rows | `YoChannelRow` / `YoVoiceChannelRow` for the panel, the home board and the management sheet |
+| `1aad9b47` | new primitives | `YoMetricPill` (2 count pills migrated), `YoServerRailItem` + `YoServerTile` (not yet mounted) |
+| `620807ca` | review round | channel-row measure / roster / ring fixes, spoken channel kinds, 2 px focus edges, ADR corrections |
+
+**Tests run.** Every run was bounded (`--concurrency=2`, targeted files). No
+test assertion, finder or rhythm number was edited. Where a count was not
+retained, the table says so rather than inventing one. The per-family logs
+named here were kept in the orchestrating session's scratchpad
+(`/private/tmp/…/scratchpad/`), not in git.
+
+| Step | Result |
+| --- | --- |
+| Baseline (Build 33, live-badge list) | `+605`, all passed |
+| live badge | first run `+607 −2`: `content_zoom_responsive_test`, `staff_capabilities_test`. A perpetual pulse kept `pumpAndSettle` from settling. After bounding the pulse: `+609`, all passed |
+| presence dot | `+615`, all passed |
+| waveform | first run cut off (see below). Finisher: `+791 −4` over 49 files, all four in the new `yo_waveform_test.dart` (harness finders). After the fix, that file passed 7/7 |
+| section header | retained run `+646 −3`, all three in the new `home_section_header_slots_test.dart`. The family committed two minutes later, and no log of its green rerun was retained. The committed file passes in the consolidation run below |
+| story tile | `+715`, all passed |
+| voice player | the commit records the family's 17 pinning files plus `voice_player_row_test.dart` as green; no count retained |
+| channel rows | the family reported green; neither the commit nor a retained log records a count |
+| new primitives | first run failed two expectations in one of the family's new test files (`hasRunningAnimations`, a focus-action matcher). Those tests were fixed, that file rerun, then the full list rerun green (family report; no count retained) |
+| review round | `230 passed, 1 failed` over 14 files: a focus carry-over between theme iterations in the new focus test. After resetting focus, the two primitive files passed 76/76 |
+| Consolidation (documentation step, on `620807ca`) | `flutter analyze`: no issues. `flutter test` over the nine primitive contract files (`availability_dot`, `home_section_header_slots`, `moment_seen_avatar`, `voice_player_row`, `yo_badge_live`, `yo_channel_row`, `yo_metric_pill`, `yo_server_rail_item`, `yo_waveform`): **124 passed, 0 failed** |
+
+The full `flutter test` suite was **not** run in phase 0. The brief requires
+it at each phase gate, so it remains part of the open gate.
+
+**Aborted and interrupted runs.**
+
+- **Waveform cut-off.** The implementation step's budget ended mid-run. It
+  committed `d3552e3d` as `wip(ui): waveform (verification pending)` with the
+  run at 223 passed / 0 failed. The retained log shows that the run continued
+  to `+734 −5`: the four `yo_waveform_test` harness failures, plus a load
+  error in `record_voice_moment_accessibility_test.dart`. It then stopped
+  with a shutdown error (`Bad state: Cannot add event while adding stream`).
+  The finisher (`2c18fb02`) reran the full 49-file list. Only the four
+  harness failures remained, and those were fixed.
+- **Usage-limit stop.** The weekly Fable usage limit stopped a step during
+  the phase. The run records do not show which step it interrupted.
+  Apart from the waveform wip commit, which has its finisher `2c18fb02`, no
+  family commit is partial.
+- **Model switch to Opus.** From the voice-player step (`f8b8d382`) onward,
+  steps ran on Opus 5 (1M context), per the owner's instruction to change
+  models when Fable hits its limit. `f8b8d382` and `9b639ffb` still carry the
+  `Claude Fable 5.1` trailer that their step text required. They were left
+  alone because history may not be rewritten. `1aad9b47`, `620807ca` and
+  this documentation commit carry the Opus 5 trailer.
+
+**UNVERIFIED, and why.**
+
+- **All nine primitives have no rendered after-frames**, on any host, at any
+  width, in either theme. These are the live badge, presence dot, waveform,
+  section header, story ring, `VoicePlayerRow`, `YoChannelRow`, `YoMetricPill`
+  and `YoServerRailItem`. This follows from the step rules: implementation
+  steps ran no screenshot harnesses, and the machine is shared, so a step
+  never ran two Flutter processes at once. Every visible normalisation listed
+  in ADR-209 is therefore a specification, not an observation.
+- **The only frames are "before" frames.**
+  `yovoice-evidence/2026-09-19/slim-0-waveform-frames/before/` holds 92
+  Build 33 PNGs from `test/desktop_screenshot.dart`,
+  `test/moments_discovery_screenshot.dart` and
+  `test/home_light_theme_screenshot.dart`. `after/` is empty, and
+  `test/waveform_screenshot.dart` has not been run.
+- **Two harnesses cannot render some host frames at all**, even on the clean
+  Build 33 tree: the `desktop_screenshot` `roster-*` cases and the
+  `moments_discovery_screenshot` story-viewer and loading cases
+  (`docs/Bugs.md`).
+- **The channel-row frames matter most.** The review predicted the measure,
+  overflow and jitter defects from the code, and `620807ca` fixed them in the
+  code only. They should be the first frames taken.
+- **Gate matrix, an open question for the owner.** The brief's lighter
+  verification mode (390 / 768 / 1440, pl, one en control frame) is written
+  for phases 1–7. The brief does not say whether phase 0's after-frames may
+  use it, or need the original 320–2560 × pl/en matrix.
+
+**Integration note.** Local `main` is 11 commits ahead of `origin/main`,
+counting the documentation commit. `origin/main` carries `b6dbc516` ("docs:
+record the Build 33 polish release"), which local `main` does not have. That
+commit touches `docs/Roadmap.md` at the top of the file and adds
+`docs/DEPLOYMENT.md` and `docs/Sessions/2026-09-19-build-33-release.md`,
+while phase 0 edits the Roadmap's In Progress section. Pushing therefore
+needs a merge first, done by the release or integration step, not by a
+phase-0 step.
+
 ## Phase 0 — foundation, family "waveform"
 
 **What changed.** `lib/shared/widgets/waveform/` (empty, untracked until now)

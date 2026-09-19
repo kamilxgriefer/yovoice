@@ -2115,30 +2115,74 @@ their separate production-deployment gates.
 
 ## In Progress
 
-### Slim redesign — phase 0 (foundation) landed in source, visual gate NOT met
+### Slim redesign (3.0.0) — phase 0 done in source, visual gate open; phases 1–7 planned
 
-**Status:** source on `main`, not released; phase 1 must not start until the
-gate below is met. Brief: `yovoice-evidence/2026-09-18/slim-redesign-brief.md`;
-decision record: [ADR-209](Decisions.md#adr-209-slim-redesign-instagram--discord--twitch-w-języku-yo-voice);
-phase log: [Sessions/2026-09-19-slim-redesign.md](Sessions/2026-09-19-slim-redesign.md).
+**Status:** phase 0 is on local `main`, **not pushed, not released, not
+deployed**. Phase 1 must not start until phase 0's visual gate is met.
+Brief: `yovoice-evidence/2026-09-18/slim-redesign-brief.md`. Decision record:
+[ADR-209](Decisions.md#adr-209-slim-redesign-instagram--discord--twitch-w-języku-yo-voice).
+Phase log: [Sessions/2026-09-19-slim-redesign.md](Sessions/2026-09-19-slim-redesign.md).
+The redesign ships as **3.0.0+34** once every phase has closed. Build 33 is
+consumed, and the release session confirms the number. `pubspec.yaml` stays
+`2.0.0+33` until the release commit.
 
-- **Commits over Build 33 (`46d6b330`):** `f5713426` live badge, `89c3d2be`
-  presence dot, `d3552e3d` + `2c18fb02` waveform, `1c5722a0` section header,
-  `1d9d85c2` story-tile ring, `f8b8d382` `VoicePlayerRow`, `9b639ffb`
-  `YoChannelRow`, `1aad9b47` `YoMetricPill` + `YoServerRailItem`, then the
-  "phase-0 review round" fix commit (channel-row measure and roster fit, fixed
-  speaking-ring geometry, spoken channel kinds, 2 px focus edges, ADR-209
-  corrections).
-- **Verified:** code level only — `flutter analyze` clean and bounded
-  `flutter test` rounds over each family's files.
-- **Not verified, and the gate:** only the waveform family has a frames
-  directory, and its `after/` is empty. Every family needs before/after frames
-  in `yovoice-evidence/2026-09-19/slim-0-<family>-frames/` (320–2560, Dark and
-  Pearl, 1.0 and 2.0 text, pl and en) and a session-log entry naming what was
-  looked at and what stays UNVERIFIED, before phase 1 starts.
+**Phase 0 — Fundament (inventory + shared primitives): Done in source.**
+The commits over Build 33 (`46d6b330`) are:
+
+- `f5713426`: live badge (`YoBadge.live`, `ServerLivePill`).
+- `89c3d2be`: presence dot (`AvailabilityDot`).
+- `d3552e3d` + `2c18fb02`: waveform (`YoWaveform` / `StoryWaveform`).
+- `1c5722a0`: section header (`HomeSectionHeader` in `lib/shared/`).
+- `1d9d85c2`: story-tile ring (`MomentStoryTile.ringGradient`).
+- `f8b8d382`: `VoicePlayerRow`.
+- `9b639ffb`: `YoChannelRow` / `YoVoiceChannelRow`.
+- `1aad9b47`: `YoMetricPill` + `YoServerRailItem` / `YoServerTile`.
+- `620807ca`: review round. It fixed the channel-row measure and roster fit,
+  fixed the speaking-ring geometry, voiced the channel kinds and added 2 px
+  focus edges.
+- The documentation commit that consolidates ADR-209.
+
+What is verified and what is not:
+
+- **Verified:** code level only. On `620807ca`, `flutter analyze` is clean and
+  the nine primitive contract test files pass (124 tests). Each family also
+  ran its own bounded `flutter test` round (session log).
+- **Gate still open:** no family has after-frames. Only
+  `yovoice-evidence/2026-09-19/slim-0-waveform-frames/before/` exists, and
+  its `after/` is empty. The brief's phase-0 gate (after-frames per family,
+  plus a session-log entry naming what was looked at and what stays
+  UNVERIFIED) is not met.
 - **Dependencies:** a visual verification step on a machine free to run the
-  screenshot harnesses.
-- **Priority:** P1 — it blocks the rest of the redesign.
+  screenshot harnesses. The two broken harness fixtures in `docs/Bugs.md`
+  must be fixed, or their frames recorded as UNVERIFIED.
+- **Priority:** P1. It blocks the rest of the redesign.
+
+**Phases 1–7: Planned.** Each phase is one commit on `main`. Every phase uses
+the brief's lighter verification mode (2026-09-19): frames at 390 / 768 /
+1440, Dark and Pearl, 100 % and 200 %, pl, with one en control frame. Every
+phase also needs a full `flutter test` at its gate, one reviewer plus a
+skeptic, and ADR-209 / UI.md / Roadmap / Bugs / session-log updates.
+
+1. **Start**: the Moments rail as stories, "Na żywo teraz" cards, and servers
+   as a compact list. Carried in from phase 0: decide the dead Home chains and
+   where `MomentStoryTile` is mounted (0n below) before touching
+   `test/desktop_home_test.dart`'s contracts.
+2. **Serwery**: the catalogue, plus the workspace with rail / channels /
+   content / members on wide screens. This phase mounts `YoServerRailItem`,
+   converges the two speaking inks, and raises the channel row's 48 px floor.
+3. **Czaty**: the conversation list and `chat_screen.dart` (grouping, date
+   separator, 48 px composer).
+4. **YO Moments**: slimmer chrome for both formats, with every key and label
+   kept. This phase folds `MomentCountChip` into `YoMetricPill`.
+5. **Profil**: own and other people's profiles, one header, stats from real
+   fields only.
+6. **Więcej, Ustawienia, Znajomi, Powiadomienia**: alignment to the
+   primitives only.
+7. **Logowanie i rejestracja**: the immersive auth chain, with new
+   `AppImmersiveColors` roles and catalogue keys in all 41 locales.
+
+After phase 7, the release commit sets `3.0.0+34`, and the "Release notes
+3.0.0" (pl + en) go into the session log for the release session.
 
 ### Build 20 YO Moments, Voice read v2, Reels retention and moderation candidate
 

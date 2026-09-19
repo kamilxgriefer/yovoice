@@ -289,16 +289,37 @@ Reduced Motion, accessible navigation and offstage content.
 
 One state = one primitive. A state that already has a canonical widget is
 extended in place; a second drawing of the same state is a bug, not a variant.
-The table lives in ADR-209 (`Decisions.md#adr-209`); the entries below are the
-rules a screen author needs.
+The table (state → primitive → migrated files), the "Smuklej" rules every
+phase enforces (one layer, 1 px `palette.border`, radii 12 / 14 / 20+, weight
+not size, rows 56–68 px, one accent, content before chrome), the mockup items
+consciously not built and every family's deviations live in ADR-209
+(`Decisions.md#adr-209-slim-redesign-instagram--discord--twitch-w-języku-yo-voice`);
+the entries below are the rules a screen author needs. Three rules hold for
+all of them: the caller owns the state gate, the copy, the keys and the
+placement, and the primitive owns only the drawing; nothing is drawn that the
+backend does not carry (no unread badge on the server rail, no face or count
+in a voice row before joining, no presence dot without a presence source, no
+invented count); and tests are never made green by editing assertions.
+
+**Evidence status (phase 0).** Code level only: `flutter analyze` clean and
+the nine contract tests named below green on `620807ca`. No primitive has
+rendered after-frames yet. The only frames directory is
+`yovoice-evidence/2026-09-19/slim-0-waveform-frames/` (`before/`: 92 Build 33
+frames from the existing harnesses; `after/`: empty). Every visual claim
+below is therefore a specification, UNVERIFIED on screen until the phase-0
+visual step fills `yovoice-evidence/2026-09-19/slim-0-<family>-frames/after/`
+(`docs/Sessions/2026-09-19-slim-redesign.md`).
 
 - **NA ŻYWO = `YoBadge(variant: YoBadgeVariant.live)`**
   (`lib/shared/widgets/badges/yo_badge.dart`). A filled `AppColors.live` pill
   with `AppColors.onLive` copy, `labelSmall` (10 px) at w800, letter-spacing
   .8, 8/3 padding, `AppRadius.pill`, no border, and a 6 px dot that pulses
-  (opacity .55 → 1, 1.2 s) only while motion is allowed — under Reduce
+  (opacity 1 → .55 → 1, three mirrored 1.2 s cycles, 3.6 s in all) when the
+  marker appears and then rests, only while motion is allowed — under Reduce
   Motion, accessible navigation or a disabled `TickerMode` the controller is
-  stopped and parked, so no frame is scheduled. Both tokens are
+  stopped and parked at 1, so no frame is scheduled. Never make it perpetual:
+  a repeating pulse keeps `pumpAndSettle` from settling and ticks forever on a
+  persistent server screen. Both tokens are
   brightness-independent, so Dark and Pearl draw the same marker. The label
   is rendered verbatim, one line, never wrapped, eliding rather than breaking
   the word; the caller owns the copy (`copy.serverLivePill`,
@@ -365,11 +386,10 @@ rules a screen author needs.
   `test/yo_waveform_test.dart` (exact box, explicit width, no frame scheduled,
   no semantics, key pass-through, the ramp, the `StoryWaveform` defaults),
   `test/server_podcast_test.dart` (the mark exists only for the speaking
-  person). Frames: `flutter test test/waveform_screenshot.dart` →
-  `test/.screenshots/waveform-{dark,pearl}-{ltr,rtl}-600.png`, to be copied to
-  `yovoice-evidence/2026-09-19/slim-0-waveform-frames/after/` by the visual
-  verification step (pending at the implementation commit; see
-  `docs/Sessions/2026-09-19-slim-redesign.md`).
+  person). Frames harness: `test/waveform_screenshot.dart` (every host
+  configuration, Dark and Pearl, LTR and RTL; not yet run). Evidence:
+  `yovoice-evidence/2026-09-19/slim-0-waveform-frames/before/` (Build 33);
+  `after/` is empty — UNVERIFIED on screen.
 - **Section heading = `HomeSectionHeader(title:)`**
   (`lib/shared/widgets/layout/home_section_header.dart`; Home-era name kept,
   it is the heading for every scrolling page). Its layout box is exactly
@@ -458,7 +478,10 @@ rules a screen author needs.
   errorForeground:)` is the bubble (no surface of its own, bare 44 px icon
   box, inks injected because the same row is white on the outgoing gradient
   and `textPrimary` on an incoming one, and a waveform bounded to 48–126 px so
-  the bubble keeps shrink-wrapping). `progress` is the player's REAL position
+  the bubble keeps shrink-wrapping). Keyboard focus is a 2 px ring on the
+  row's own shape — `palette.focus` on the thread row, the injected
+  `foreground` in the bubble so it reads on the brand gradient — because the
+  theme's focus tint alone measured about 1.25:1. `progress` is the player's REAL position
   or nothing: a surface without a position stream passes null and gets a still
   `YoWaveform` silhouette — never a fill invented from the duration — while a
   surface with one gets `StoryWaveform` swept by `audioProgressGradient`. Copy
@@ -486,9 +509,14 @@ rules a screen author needs.
   `test/server_workspace_test.dart` reads by type; the row draws no `Material`,
   so the selected wash composites over the list's own surface (the AA check in
   that test). The caller also owns the glyph (`serverChannelIcon(kind)`, or
-  `Icons.lock_outline` with `copy.serverChannelRestricted` as
-  `iconSemanticLabel`), the identity ink and wash, every string and the tap —
-  which selects, never joins. Media channels mount `YoVoiceChannelRow`, which
+  `Icons.lock_outline` for a restricted channel) and its
+  `iconSemanticLabel`, which always voices the kind
+  (`copy.serverChannelSpokenKind(kind, restricted:)`, e.g. "Kanał głosowy",
+  "Kanał tekstowy, ograniczony dostęp"), so a screen-reader user can
+  tell a voice channel from a text one before selecting it; the caller also
+  owns the identity ink and wash, every string and the tap — which selects,
+  never joins. Keyboard focus is a 2 px `palette.focus` edge on the row's
+  shape (the theme tint alone is about 1.25:1). Media channels mount `YoVoiceChannelRow`, which
   before joining draws **only what the channel document carries** (ADR-177):
   the `liveBadge` the caller builds (`ServerLivePill`, so `server-live-pill`
   stays one key per marker), the clock `od 19:40`
@@ -498,20 +526,29 @@ rules a screen author needs.
   `connected`. For the connected channel alone the caller maps
   `ServerSessionController.participants` to `YoVoiceRowParticipant` (with the
   localized `name, mówi` / `name, Mikrofon wyłączony` label) inside a
-  `ListenableBuilder` scoped to that row: up to four 22 px avatars, a 2 px
-  `AppColors.success` ring while speaking, a crossed microphone when muted, a
-  real `+n` for the rest. `onJoin` adds a 44 px icon control (label as tooltip
+  `ListenableBuilder` scoped to that row: as many 22 px faces as the width
+  holds (at most `maxAvatars`, 4) and a real `+n` for the rest, so the roster
+  never overflows the 216 / 240 px columns; every face wears a fixed 2 px
+  ring — `AppColors.success` while speaking, `palette.border` otherwise — so
+  a speaking tick changes a colour, never the width; a crossed microphone
+  when muted. `onJoin` adds a 44 px icon control (label as tooltip
   and semantics, glyph from `serverJoinIcon`, label from `serverJoinLabel` —
   the same switch as the scene's `server-join`) under its own
   `server-channel-join-<id>` key; it is null on a held server, a restricted
-  channel, the channel you are in and a stage you may not start, and it steps
-  aside below 240 px of row or above 1.5× text so the name keeps its measure.
+  channel, the channel you are in and a stage you may not start. The name's
+  measure is protected by named thresholds: it keeps `minLabelWidth` (96 px
+  at 1.0 text); below `liveTrailingFloorWidth` (288 px of row, scaled) the
+  `NA ŻYWO` marker moves under the name beside the clock; the join control
+  sits beside a live marker only from `liveJoinFloorWidth` (340 px, scaled)
+  and steps aside entirely below `joinFloorWidth` (240 px) or above
+  `joinFloorTextScale` (1.5×).
   Not this widget: the create-server seed preview (a template preview, not a
   channel) and the retired clubs row. Contracts: `test/yo_channel_row_test.dart`
   (key on the `ListTile`, selection pass-through, no own `Material`, the lock's
   label, silence when idle, one marker when live, no face before joining,
-  ring / mic / `+n` when connected, the join key, target, select-only tap and
-  the width / text-scale floor), `test/server_workspace_test.dart` (selected
+  ring / mic / `+n` when connected, the join key, target, select-only tap,
+  the width / text-scale floors, `minLabelWidth` at the panel and sheet
+  widths, the roster fit and the focus edge), `test/server_workspace_test.dart` (selected
   contrast; held roots: one inert `server-join`, no marker, no names),
   `test/server_shell_test.dart` (exactly one marker for one live channel, no
   quiet copy on a live row), `test/server_independent_qa_test.dart` (tapping
