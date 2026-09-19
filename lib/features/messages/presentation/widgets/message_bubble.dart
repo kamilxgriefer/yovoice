@@ -78,150 +78,164 @@ class MessageBubble extends StatelessWidget {
                 'Open actions for this message',
                 'Otwórz opcje tej wiadomości',
               ),
-        borderRadius: 22,
-        child: Padding(
-          padding: EdgeInsets.only(
-            left: isMine ? 54 : 0,
-            right: isMine ? 0 : 54,
-            bottom: 10,
-          ),
-          child: Column(
-            crossAxisAlignment: isMine
-                ? CrossAxisAlignment.end
-                : CrossAxisAlignment.start,
-            children: [
-              Container(
-                key: ValueKey(
-                  isMine
-                      ? 'outgoing-message-bubble'
-                      : 'incoming-message-bubble',
-                ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 11,
-                ),
-                decoration: BoxDecoration(
-                  gradient: isMine
-                      ? const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFFA72DFF), Color(0xFF7821E8)],
-                        )
-                      : null,
-                  color: isMine ? null : palette.surfaceRaised,
-                  borderRadius: BorderRadius.only(
-                    topLeft: const Radius.circular(20),
-                    topRight: const Radius.circular(20),
-                    bottomLeft: Radius.circular(isMine ? 20 : 5),
-                    bottomRight: Radius.circular(isMine ? 5 : 20),
-                  ),
-                  border: isMine ? null : Border.all(color: palette.border),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (message.replyToContent?.isNotEmpty == true)
-                      Container(
-                        width: double.infinity,
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.all(9),
-                        decoration: BoxDecoration(
-                          color: isMine
-                              ? Colors.black.withValues(alpha: .18)
-                              : palette.surfaceMuted,
-                          borderRadius: BorderRadius.circular(11),
-                          border: Border(
-                            left: BorderSide(
-                              color: isMine ? Colors.white : palette.focus,
-                              width: 3,
-                            ),
-                          ),
-                        ),
-                        child: Text(
-                          _localizedReplyPreview(message.replyToContent!, copy),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: bubbleMuted, fontSize: 12),
-                        ),
-                      ),
-                    _MessageContent(
-                      message: message,
-                      currentUserId: currentUserId,
-                      foregroundColor: bubbleForeground,
-                      mutedForegroundColor: bubbleMuted,
-                      errorForegroundColor: isMine
-                          ? const Color(0xFFFFE0E7)
-                          : colors.onErrorContainer,
-                      privateMediaLoader: privateMediaLoader,
-                      audioPlayerFactory: audioPlayerFactory,
-                      voiceSourcePreparer: voiceSourcePreparer,
-                      videoSourcePreparer: videoSourcePreparer,
-                      videoAudioPreparer: videoAudioPreparer,
-                      onBrandSurface: isMine,
-                      roomLinkResolver: roomLinkResolver,
-                      roomLinkOpener: roomLinkOpener,
-                    ),
-                  ],
-                ),
-              ),
-              if (reactionSummary.isNotEmpty) ...[
-                const SizedBox(height: 4),
+        borderRadius: 18,
+        // Slim bubble: compact padding, one 18 px radius with a 4 px tail
+        // corner, a 1 px hairline on incoming bubbles and no shadow. The
+        // outgoing brand gradient is the bubble's identity (and pinned by
+        // `message_bubble_overflow_test.dart`), so it stays. On a wide
+        // column the bubble stops at a readable measure instead of running
+        // the full width of the thread.
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: _maxBubbleWidth + 48),
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: isMine ? 48 : 0,
+              right: isMine ? 0 : 48,
+              bottom: 6,
+            ),
+            child: Column(
+              crossAxisAlignment: isMine
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
+              children: [
                 Container(
+                  key: ValueKey(
+                    isMine
+                        ? 'outgoing-message-bubble'
+                        : 'incoming-message-bubble',
+                  ),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
+                    horizontal: 12,
+                    vertical: 8,
                   ),
                   decoration: BoxDecoration(
-                    color: palette.surfaceRaised,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: palette.border),
-                    boxShadow: [
-                      BoxShadow(
-                        color: palette.shadow.withValues(alpha: .18),
-                        blurRadius: 8,
+                    gradient: isMine
+                        ? const LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [Color(0xFFA72DFF), Color(0xFF7821E8)],
+                          )
+                        : null,
+                    color: isMine ? null : palette.surfaceRaised,
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(18),
+                      topRight: const Radius.circular(18),
+                      bottomLeft: Radius.circular(isMine ? 18 : 4),
+                      bottomRight: Radius.circular(isMine ? 4 : 18),
+                    ),
+                    border: isMine ? null : Border.all(color: palette.border),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (message.replyToContent?.isNotEmpty == true)
+                        Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                          decoration: BoxDecoration(
+                            color: isMine
+                                ? Colors.black.withValues(alpha: .18)
+                                : palette.surfaceMuted,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border(
+                              left: BorderSide(
+                                color: isMine ? Colors.white : palette.focus,
+                                width: 3,
+                              ),
+                            ),
+                          ),
+                          child: Text(
+                            _localizedReplyPreview(
+                              message.replyToContent!,
+                              copy,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: bubbleMuted, fontSize: 12),
+                          ),
+                        ),
+                      _MessageContent(
+                        message: message,
+                        currentUserId: currentUserId,
+                        foregroundColor: bubbleForeground,
+                        mutedForegroundColor: bubbleMuted,
+                        errorForegroundColor: isMine
+                            ? const Color(0xFFFFE0E7)
+                            : colors.onErrorContainer,
+                        privateMediaLoader: privateMediaLoader,
+                        audioPlayerFactory: audioPlayerFactory,
+                        voiceSourcePreparer: voiceSourcePreparer,
+                        videoSourcePreparer: videoSourcePreparer,
+                        videoAudioPreparer: videoAudioPreparer,
+                        onBrandSurface: isMine,
+                        roomLinkResolver: roomLinkResolver,
+                        roomLinkOpener: roomLinkOpener,
                       ),
                     ],
                   ),
-                  child: Text(
-                    reactionSummary,
-                    style: const TextStyle(fontSize: 13),
-                  ),
                 ),
-              ],
-              const SizedBox(height: 4),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _formatTime(context, message.sentAt),
-                    style: TextStyle(color: palette.textTertiary, fontSize: 10),
+                if (reactionSummary.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  // A flat pill: it sits in the thread, it does not float
+                  // above it, so it carries a hairline and no shadow.
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: palette.surfaceRaised,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: palette.border),
+                    ),
+                    child: Text(
+                      reactionSummary,
+                      style: const TextStyle(fontSize: 13),
+                    ),
                   ),
-                  if (message.editedAt != null) ...[
-                    const SizedBox(width: 4),
+                ],
+                const SizedBox(height: 3),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                     Text(
-                      copy.text('edited', 'edytowano'),
+                      _formatTime(context, message.sentAt),
                       style: TextStyle(
                         color: palette.textTertiary,
-                        fontSize: 10,
+                        fontSize: 11,
                       ),
                     ),
+                    if (message.editedAt != null) ...[
+                      const SizedBox(width: 4),
+                      Text(
+                        copy.text('edited', 'edytowano'),
+                        style: TextStyle(
+                          color: palette.textTertiary,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                    if (isMine) ...[
+                      const SizedBox(width: 4),
+                      Icon(
+                        wasRead ? Icons.done_all_rounded : Icons.done_rounded,
+                        size: 14,
+                        color: wasRead ? palette.focus : palette.textTertiary,
+                      ),
+                    ],
                   ],
-                  if (isMine) ...[
-                    const SizedBox(width: 5),
-                    Icon(
-                      wasRead ? Icons.done_all_rounded : Icons.done_rounded,
-                      size: 15,
-                      color: wasRead ? palette.focus : palette.textTertiary,
-                    ),
-                  ],
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  /// The widest a bubble grows on a desktop column: a readable measure.
+  static const double _maxBubbleWidth = 560;
 
   static String _reactionSummary(Iterable<String> reactions) {
     final counts = <String, int>{};
