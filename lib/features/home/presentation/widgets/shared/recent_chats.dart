@@ -270,7 +270,11 @@ class _RecentChatCard extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                conversation.previewFor(currentUserId),
+                conversationPreview(
+                  conversation,
+                  currentUserId,
+                  AppLocalizations.of(context),
+                ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -364,8 +368,8 @@ class _BackdropRecentChatCard extends StatelessWidget {
     final unread = conversation.unreadCountFor(currentUserId);
     final displayName = conversation.displayNameFor(otherUserId);
     final conversationPhotoUrl = conversation.photoUrlFor(otherUserId);
-    final preview = conversation.previewFor(currentUserId);
     final copy = AppLocalizations.of(context);
+    final preview = conversationPreview(conversation, currentUserId, copy);
     final openLabel = copy.openChatWith(displayName);
     final unreadLabel = unread == 0 ? '' : copy.unreadMessages(unread);
     final previewLabel = copy.lastMessage(preview);

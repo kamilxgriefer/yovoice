@@ -1,6 +1,52 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+
+/// The wire value a deleted message leaves behind on the conversation root.
+///
+/// `functions/messaging/direct_integrity.js` writes this English literal and
+/// it stays the storage format — every client maps it to the reader's
+/// language at render time via [conversationPreview].
+const conversationDeletedTombstone = 'Message deleted';
+
+/// The ONE way a conversation's last message is turned into list copy.
+///
+/// Chats, Home's recent chats and the shell's incoming-message overlay all
+/// render the same preview for the same thread, so they all come through
+/// here. An English-only duplicate used to live on [Conversation] and made
+/// the Polish Chats list disagree with the Polish thread it opened.
+String conversationPreview(
+  Conversation conversation,
+  String currentUserId,
+  AppLocalizations copy,
+) {
+  if (conversation.lastMessage.isEmpty) {
+    return copy.text('Start a conversation', 'Rozpocznij rozmowę');
+  }
+
+  final prefix = conversation.lastMessageSenderId == currentUserId
+      ? copy.text('You: ', 'Ty: ')
+      : '';
+  final content = switch (conversation.lastMessageType) {
+    MessageType.voice => copy.text('Voice message', 'Wiadomość głosowa'),
+    MessageType.image => copy.text('Photo', 'Zdjęcie'),
+    MessageType.video => copy.text('Video', 'Film'),
+    MessageType.text || MessageType.gif => localizedMessageTombstone(
+      conversation.lastMessage,
+      copy,
+    ),
+  };
+
+  return '$prefix$content';
+}
+
+/// Maps the server-written deletion tombstone onto the reader's language and
+/// returns every other body verbatim. User content is never translated.
+String localizedMessageTombstone(String lastMessage, AppLocalizations copy) {
+  if (lastMessage.trim() != conversationDeletedTombstone) return lastMessage;
+  return copy.text('Message deleted', 'Wiadomość usunięta');
+}
 
 class Conversation {
   const Conversation({
@@ -182,26 +228,6 @@ class Conversation {
       deletedSequences: deletedSequences,
       lastMessageSequence: lastMessageSequence,
     );
-  }
-
-  String previewFor(String currentUserId) {
-    if (lastMessage.isEmpty) {
-      return 'Start a conversation';
-    }
-
-    final prefix = lastMessageSenderId == currentUserId ? 'You: ' : '';
-
-    switch (lastMessageType) {
-      case MessageType.voice:
-        return '${prefix}Voice message';
-      case MessageType.image:
-        return '${prefix}Photo';
-      case MessageType.video:
-        return '${prefix}Video';
-      case MessageType.text:
-      case MessageType.gif:
-        return '$prefix$lastMessage';
-    }
   }
 
   factory Conversation.fromFirestore(

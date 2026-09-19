@@ -1,10 +1,16 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/calls/presentation/direct_call_route_registry.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
+import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
+import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 void main() {
   late ActiveConversationRegistry activeConversations;
@@ -279,4 +285,75 @@ void main() {
       );
     },
   );
+
+  group('the incoming-message banner inside the real notification host', () {
+    // The banner is the one avatar surface whose own widget was deleted when
+    // it moved to the canonical [UserAvatar]. These cases pin what that
+    // widget guaranteed: the sender resolves by uid, the avatar fills the
+    // host's fixed 38x38 leading slot, and the initial is a whole grapheme.
+    setUp(ProfileMediaService.clearAllMediaAccessCaches);
+
+    Future<void> present(
+      WidgetTester tester, {
+      required String userId,
+      required String senderName,
+    }) async {
+      final controller = YoTopNotificationController();
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          builder: (context, child) => YoTopNotificationHost(
+            controller: controller,
+            child: child!,
+          ),
+          home: const Scaffold(body: SizedBox.expand()),
+        ),
+      );
+      controller.show(
+        YoTopNotification(
+          title: senderName,
+          body: 'Nowa wiadomość',
+          type: NotificationType.directMessage,
+          leading: incomingMessageNotificationLeading(
+            userId: userId,
+            senderName: senderName,
+          ),
+          onOpen: () {},
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('resolves the sender by uid and fills the leading slot', (
+      tester,
+    ) async {
+      await present(tester, userId: 'sender-uid', senderName: 'Maja');
+
+      final avatar = find.byType(UserAvatar);
+      expect(avatar, findsOneWidget);
+      expect(
+        tester.widget<ProfileMediaImage>(find.byType(ProfileMediaImage)).userId,
+        'sender-uid',
+        reason: 'the banner must resolve the live, viewer-authorized photo',
+      );
+      expect(
+        tester.getSize(avatar),
+        const Size(38, 38),
+        reason: "radius 19 exactly fills the host's leading slot",
+      );
+      expect(find.text('M'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('an emoji sender name still yields a readable initial', (
+      tester,
+    ) async {
+      await present(tester, userId: 'sender-uid', senderName: '🦊 Maja');
+
+      expect(find.text('🦊'), findsOneWidget);
+      expect(tester.getSize(find.byType(UserAvatar)), const Size(38, 38));
+      expect(tester.takeException(), isNull);
+    });
+  });
 }

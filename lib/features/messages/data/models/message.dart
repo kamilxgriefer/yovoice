@@ -51,24 +51,6 @@ class Message {
 
   bool isReadBy(String userId) => readBy.contains(userId);
 
-  String previewText() {
-    if (isDeleted) {
-      return 'Message deleted';
-    }
-
-    switch (type) {
-      case MessageType.voice:
-        return 'Voice message';
-      case MessageType.image:
-        return 'Photo';
-      case MessageType.video:
-        return 'Video';
-      case MessageType.text:
-      case MessageType.gif:
-        return content;
-    }
-  }
-
   factory Message.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
   ) {
