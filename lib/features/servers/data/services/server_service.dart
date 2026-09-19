@@ -100,6 +100,18 @@ abstract interface class ServerRepository {
     required String requestId,
   });
 
+  /// Tells the backend this person has just left [sessionId]. It never ends
+  /// an occupied room: the backend reads the provider and ends the
+  /// generation only once its room has stayed empty for the reconnect grace.
+  /// Best effort by design — the provider webhook and the scheduled sweep
+  /// cover a leave whose signal never arrives.
+  Future<ServerSessionReleaseResult> releaseChannelSessionIfEmpty({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String requestId,
+  });
+
   /// Raises or lowers the caller's own hand in a live generation
   /// (`setServerSessionHandV1`). The callable refuses anybody who has not
   /// joined and refuses the generation's host, so this is only ever offered
@@ -580,6 +592,26 @@ class ServerService
       'sessionId': sessionId,
       'requestId': requestId,
     });
+  }
+
+  @override
+  Future<ServerSessionReleaseResult> releaseChannelSessionIfEmpty({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    _requireId(sessionId);
+    return ServerSessionReleaseResult.fromMap(
+      await _invoke('releaseServerChannelSessionIfEmptyV1', {
+        'serverId': serverId,
+        'channelId': channelId,
+        'sessionId': sessionId,
+        'requestId': requestId,
+      }),
+    );
   }
 
   @override

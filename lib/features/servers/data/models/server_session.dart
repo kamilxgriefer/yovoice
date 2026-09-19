@@ -141,6 +141,50 @@ class ServerSessionHandResult {
   }
 }
 
+/// `releaseServerChannelSessionIfEmptyV1`'s receipt: the backend's answer to
+/// "I just left this generation".
+///
+/// The backend reads the provider itself and ends a generation only after its
+/// room has stayed empty for the whole reconnect grace, measured on its own
+/// clock. [recheckAfter] is how long that grace still runs when the answer is
+/// [isPending]; asking again afterwards is only a hint, never authority.
+@immutable
+class ServerSessionReleaseResult {
+  const ServerSessionReleaseResult({
+    required this.sessionId,
+    required this.outcome,
+    this.recheckAfter = Duration.zero,
+  });
+
+  /// The longest re-check the client honours, whatever a receipt claims.
+  static const maxRecheckAfter = Duration(minutes: 2);
+
+  final String sessionId;
+
+  /// `ended | pending | occupied | changed | unknown`.
+  final String outcome;
+  final Duration recheckAfter;
+
+  bool get isPending => outcome == 'pending';
+
+  factory ServerSessionReleaseResult.fromMap(Map<Object?, Object?> data) {
+    final sessionId = serverString(data['sessionId']);
+    final outcome = serverString(data['outcome']);
+    if (sessionId == null || outcome == null) {
+      throw const FormatException('Incomplete release receipt.');
+    }
+    final millis = data['recheckAfterMillis'];
+    final recheck = millis is int && millis > 0
+        ? Duration(milliseconds: millis)
+        : Duration.zero;
+    return ServerSessionReleaseResult(
+      sessionId: sessionId,
+      outcome: outcome,
+      recheckAfter: recheck > maxRecheckAfter ? maxRecheckAfter : recheck,
+    );
+  }
+}
+
 /// The common receipt returned by `setServerSessionParticipantRoleV1` and
 /// `setServerSessionMuteV1`.
 ///

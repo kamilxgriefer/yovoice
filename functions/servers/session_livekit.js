@@ -306,11 +306,17 @@ function createServerLiveKitAdapter({
     endRoom,
     /**
      * Read-only occupancy of one V1 generation's provider room, for the
-     * stale-generation sweep (session_staleness.js). One ListParticipants
-     * RPC, no retry. LiveKit deletes a room itself once it has been empty
-     * for its `emptyTimeout`, so NOT_FOUND is a positive "nobody is here",
-     * not a failure. Any other error propagates: the sweep treats it as an
+     * stale-generation sweep, the release callable and the `room_finished`
+     * path (session_staleness.js). One ListParticipants RPC, no retry.
+     * LiveKit deletes a room itself once it has been empty for its
+     * `emptyTimeout`, so NOT_FOUND is a positive "nobody is here", not a
+     * failure. Any other error propagates: every caller treats it as an
      * unknown, and an unknown never ends a generation.
+     *
+     * `participantIdentities` is additive: the release callable excludes the
+     * leaving caller, whose clean disconnect the provider may not have
+     * processed yet. It is null when the provider answer is not a list, so a
+     * caller can never exclude an identity it did not actually see.
      */
     async roomOccupancy(binding) {
       const keys = ["serverId", "channelId", "roomId", "sessionId", "livekitRoomName"];
@@ -320,9 +326,16 @@ function createServerLiveKitAdapter({
       const client = getClient();
       try {
         const participants = await client.listParticipants(expected);
-        return { present: true, participantCount: Array.isArray(participants) ? participants.length : 0 };
+        const listed = Array.isArray(participants);
+        return {
+          present: true,
+          participantCount: listed ? participants.length : 0,
+          participantIdentities: listed
+            ? participants.map((participant) => (typeof participant?.identity === "string" ? participant.identity : null))
+            : null,
+        };
       } catch (error) {
-        if (isNotFound(error)) return { present: false, participantCount: 0 };
+        if (isNotFound(error)) return { present: false, participantCount: 0, participantIdentities: [] };
         throw error;
       }
     } });

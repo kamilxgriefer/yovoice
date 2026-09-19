@@ -115,6 +115,14 @@ class ServerSessionController extends ChangeNotifier
   String? _endRequestId;
   bool _endBusy = false;
 
+  /// One delayed re-check of a generation this device left while the
+  /// backend's reconnect grace was still running. The backend decides on its
+  /// own clock; this only asks again once, so a badge clears about a grace
+  /// after the last person left instead of at the next sweep.
+  Timer? _releaseRecheck;
+  String? _releaseRecheckChannelId;
+  static const _releaseRecheckMargin = Duration(seconds: 2);
+
   /// The last failure a microphone or headphones press produced.
   ///
   /// These two controls stay reachable through a reconnect on purpose — a
@@ -272,6 +280,9 @@ class ServerSessionController extends ChangeNotifier
       // properly before anything new is requested.
       await leave();
     }
+    // Coming back inside the grace: this device is the rejoin, so it must
+    // not ask the backend again whether that channel is empty.
+    if (_releaseRecheckChannelId == target.id) _cancelReleaseRecheck();
     final epoch = ++_epoch;
     _server = server;
     _channel = target;
@@ -548,7 +559,9 @@ class ServerSessionController extends ChangeNotifier
       );
       if (!_current(epoch)) return;
       _endBusy = false;
-      await leave();
+      // The backend already ended this generation; there is nothing to
+      // release.
+      await _leave(releaseGeneration: false);
     } catch (error) {
       if (!_current(epoch)) return;
       _endBusy = false;
@@ -557,10 +570,21 @@ class ServerSessionController extends ChangeNotifier
     }
   }
 
-  /// Leaves the conversation; the server, the channel and any live
-  /// generation stay exactly as they are.
-  Future<void> leave() async {
+  /// Leaves the conversation. The server and the channel stay exactly as they
+  /// are; the generation stays live for everybody still in it.
+  ///
+  /// After the provider link is released, a generation this device was
+  /// connected to gets a best-effort release signal: the backend reads the
+  /// provider itself and ends the generation only once its room has stayed
+  /// empty for the reconnect grace (decisions.md, ~60 s). Leaving never waits
+  /// for that answer and never fails because of it.
+  Future<void> leave() => _leave(releaseGeneration: true);
+
+  Future<void> _leave({required bool releaseGeneration}) async {
     if (!isActive) return;
+    final server = _server;
+    final channel = _channel;
+    final connection = _connection;
     _releaseDevice();
     _epoch++;
     final link = _link;
@@ -581,6 +605,71 @@ class ServerSessionController extends ChangeNotifier
     _endBusy = false;
     _set(ServerSessionPhase.idle);
     _releaseRealtimeAudioIfIdle();
+    // Only a generation this device actually connected to: a join that never
+    // reached the provider has nothing to release.
+    if (releaseGeneration &&
+        link != null &&
+        server != null &&
+        channel != null &&
+        connection != null) {
+      unawaited(
+        _releaseGeneration(
+          serverId: server.id,
+          channelId: channel.id,
+          sessionId: connection.sessionId,
+        ),
+      );
+    }
+  }
+
+  Future<void> _releaseGeneration({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    bool recheck = false,
+  }) async {
+    try {
+      final result = await _repository.releaseChannelSessionIfEmpty(
+        serverId: serverId,
+        channelId: channelId,
+        sessionId: sessionId,
+        requestId: _repository.newRequestId(),
+      );
+      if (recheck ||
+          _disposed ||
+          !result.isPending ||
+          result.recheckAfter <= Duration.zero ||
+          (isActive && _channel?.id == channelId)) {
+        return;
+      }
+      _cancelReleaseRecheck();
+      _releaseRecheckChannelId = channelId;
+      _releaseRecheck = Timer(result.recheckAfter + _releaseRecheckMargin, () {
+        _releaseRecheck = null;
+        _releaseRecheckChannelId = null;
+        if (_disposed || (isActive && _channel?.id == channelId)) return;
+        unawaited(
+          _releaseGeneration(
+            serverId: serverId,
+            channelId: channelId,
+            sessionId: sessionId,
+            recheck: true,
+          ),
+        );
+      });
+    } catch (error) {
+      // Leaving never depends on this signal: the provider webhook and the
+      // scheduled sweep end an empty generation without it.
+      debugPrint(
+        'Server conversation release was not confirmed: ${error.runtimeType}',
+      );
+    }
+  }
+
+  void _cancelReleaseRecheck() {
+    _releaseRecheck?.cancel();
+    _releaseRecheck = null;
+    _releaseRecheckChannelId = null;
   }
 
   /// Clears a failed or blocked outcome once it has been read.
@@ -697,6 +786,7 @@ class ServerSessionController extends ChangeNotifier
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _cancelReleaseRecheck();
     _releaseDevice();
     _epoch++;
     final link = _link;
