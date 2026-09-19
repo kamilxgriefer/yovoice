@@ -15,7 +15,7 @@ class AuthSocialButton extends StatelessWidget {
     required this.onPressed,
     this.svgIconPath,
     this.materialIcon,
-    this.iconSize = 30,
+    this.iconSize = 22,
     this.isLoading = false,
     this.statusLabel,
   }) : assert(
@@ -44,35 +44,29 @@ class AuthSocialButton extends StatelessWidget {
       onTap: onPressed,
       child: ExcludeSemantics(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 58),
+          constraints: const BoxConstraints(minHeight: minHeight),
           child: OutlinedButton(
             onPressed: onPressed,
+            // Slim: 48 px minimum, surface fill, 1 px outline from the
+            // authSocial* roles, radius 12. `side` is a state property so the
+            // keyboard focus boundary (2 px authFocus) is not lost to a static
+            // border, which is what a plain `styleFrom(side:)` would do.
             style: OutlinedButton.styleFrom(
-              backgroundColor: AppImmersiveColors.background.withValues(
-                alpha: .4,
-              ),
-              disabledBackgroundColor: AppImmersiveColors.background.withValues(
-                alpha: .27,
-              ),
+              backgroundColor: AppImmersiveColors.surface,
+              disabledBackgroundColor: AppImmersiveColors.surface,
               foregroundColor: AppImmersiveColors.textPrimary,
               disabledForegroundColor: AppImmersiveColors.navigationInactive,
-              side: BorderSide(
-                color: onPressed == null
-                    ? AppImmersiveColors.authSocialDisabledBorder
-                    : AppImmersiveColors.authSocialBorder,
-                width: 1.3,
-              ),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(12),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-            ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            ).copyWith(side: WidgetStateProperty.resolveWith(_resolveSide)),
             child: isLoading
                 ? const SizedBox(
-                    width: 25,
-                    height: 25,
+                    width: 22,
+                    height: 22,
                     child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
+                      strokeWidth: 2.4,
                       color: AppImmersiveColors.textPrimary,
                     ),
                   )
@@ -80,8 +74,8 @@ class AuthSocialButton extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       SizedBox(
-                        width: 36,
-                        height: 36,
+                        width: _iconBox,
+                        height: _iconBox,
                         child: Center(
                           child: svgIconPath != null
                               ? SvgPicture.asset(
@@ -99,7 +93,7 @@ class AuthSocialButton extends StatelessWidget {
                                 ),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: _iconGap),
                       Expanded(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -111,7 +105,7 @@ class AuthSocialButton extends StatelessWidget {
                                 color: onPressed == null
                                     ? AppImmersiveColors.navigationInactive
                                     : AppImmersiveColors.textPrimary,
-                                fontSize: 16,
+                                fontSize: 15,
                                 height: 1.2,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -134,12 +128,30 @@ class AuthSocialButton extends StatelessWidget {
                           ],
                         ),
                       ),
-                      const SizedBox(width: 46),
+                      // Mirrors the icon column so the label stays centred.
+                      const SizedBox(width: _iconBox + _iconGap),
                     ],
                   ),
           ),
         ),
       ),
     );
+  }
+
+  /// Minimum height; a `statusLabel` grows the control to its content.
+  static const double minHeight = 48;
+  static const double _iconBox = 28;
+  static const double _iconGap = 8;
+
+  static BorderSide _resolveSide(Set<WidgetState> states) {
+    if (states.contains(WidgetState.focused)) {
+      return const BorderSide(color: AppImmersiveColors.authFocus, width: 2);
+    }
+    if (states.contains(WidgetState.disabled)) {
+      return const BorderSide(
+        color: AppImmersiveColors.authSocialDisabledBorder,
+      );
+    }
+    return const BorderSide(color: AppImmersiveColors.authSocialBorder);
   }
 }

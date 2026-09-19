@@ -4,9 +4,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/auth_error_localizer.dart';
-import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
+import 'package:yovoice/features/auth/presentation/screens/responsive_auth_screen.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 const _kResendCooldownSeconds = 60;
@@ -150,145 +152,113 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
               .replaceAll('{seconds}', '$_cooldownSeconds')
         : copy.text('Resend email', 'Wyślij wiadomość ponownie');
 
+    // Slim (phase 7): the calm AuthBackdrop instead of the three-layer
+    // gradient and animated waves, and the same medallion, heading, button
+    // and link atoms as the rest of the sign-in chain.
     final content = Scaffold(
-      body: Stack(
-        children: [
-          const Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment.topCenter,
-                  radius: 1.3,
-                  colors: [
-                    Color(0xFF1B063D),
-                    Color(0xFF0D0618),
-                    Color(0xFF07030E),
-                  ],
-                  stops: [0.0, 0.52, 1.0],
-                ),
-              ),
-            ),
-          ),
-          const AnimatedWavesBackground(),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 430),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 84,
-                        height: 84,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: const Color(
-                            0xFFA02BFF,
-                          ).withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(28),
-                          border: Border.all(color: const Color(0xFF5A2A75)),
-                        ),
-                        child: Icon(
-                          _verified
-                              ? Icons.check_circle_rounded
-                              : Icons.mark_email_unread_rounded,
-                          color: const Color(0xFFD28AFF),
-                          size: 40,
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-                      Text(
-                        _verified
-                            ? copy.text(
-                                'Email verified',
-                                'Adres e-mail zweryfikowany',
-                              )
-                            : copy.text(
-                                'Verify your email',
-                                'Zweryfikuj adres e-mail',
-                              ),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 28,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        _verified
-                            ? copy.text(
-                                'You\'re all set. Taking you onward…',
-                                'Wszystko gotowe. Przechodzimy dalej…',
-                              )
-                            : verificationIntro,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Color(0xFFB8B1C8),
-                          fontSize: 15,
-                          height: 1.4,
-                        ),
-                      ),
-                      if (!_verified) ...[
-                        if (_errorMessage != null) ...[
-                          const SizedBox(height: 20),
-                          _MessageBanner(text: _errorMessage!, isError: true),
-                        ],
-                        if (_successMessage != null &&
-                            _errorMessage == null) ...[
-                          const SizedBox(height: 20),
-                          _MessageBanner(
-                            text: _successMessage!,
-                            isError: false,
-                          ),
-                        ],
-                        const SizedBox(height: 28),
-                        _PrimaryButton(
-                          label: resendLabel,
-                          isLoading: _sending,
-                          onPressed: (_sending || _cooldownSeconds > 0)
-                              ? null
-                              : _resend,
-                        ),
-                        const SizedBox(height: 12),
-                        _SecondaryButton(
-                          label: _checking
-                              ? copy.text('Checking…', 'Sprawdzanie…')
-                              : copy.text(
-                                  'I have verified my email',
-                                  'Adres e-mail jest już zweryfikowany',
-                                ),
-                          isLoading: _checking,
-                          onPressed: _checking ? null : () => _checkNow(),
-                        ),
-                        const SizedBox(height: 20),
-                        TextButton(
-                          onPressed: _skip,
-                          child: Text(
-                            copy.text('Skip for now', 'Pomiń na razie'),
-                            style: const TextStyle(
-                              color: Color(0xFF9189A6),
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
+      backgroundColor: AppImmersiveColors.background,
+      body: AuthBackdrop(
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 430),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AuthStatusMark(
+                      icon: _verified
+                          ? Icons.check_circle_rounded
+                          : Icons.mark_email_unread_rounded,
+                      color: _verified
+                          ? AppColors.success
+                          : AppImmersiveColors.authLink,
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      _verified
+                          ? copy.text(
+                              'Email verified',
+                              'Adres e-mail zweryfikowany',
+                            )
+                          : copy.text(
+                              'Verify your email',
+                              'Zweryfikuj adres e-mail',
                             ),
+                      textAlign: TextAlign.center,
+                      style: AuthTypography.heading,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _verified
+                          ? copy.text(
+                              'You\'re all set. Taking you onward…',
+                              'Wszystko gotowe. Przechodzimy dalej…',
+                            )
+                          : verificationIntro,
+                      textAlign: TextAlign.center,
+                      style: AuthTypography.subtitle,
+                    ),
+                    if (!_verified) ...[
+                      if (_errorMessage != null) ...[
+                        const SizedBox(height: 20),
+                        _MessageBanner(text: _errorMessage!, isError: true),
+                      ],
+                      if (_successMessage != null && _errorMessage == null) ...[
+                        const SizedBox(height: 20),
+                        _MessageBanner(text: _successMessage!, isError: false),
+                      ],
+                      const SizedBox(height: 28),
+                      _PrimaryButton(
+                        label: resendLabel,
+                        isLoading: _sending,
+                        onPressed: (_sending || _cooldownSeconds > 0)
+                            ? null
+                            : _resend,
+                      ),
+                      const SizedBox(height: 12),
+                      _SecondaryButton(
+                        label: _checking
+                            ? copy.text('Checking…', 'Sprawdzanie…')
+                            : copy.text(
+                                'I have verified my email',
+                                'Adres e-mail jest już zweryfikowany',
+                              ),
+                        isLoading: _checking,
+                        onPressed: _checking ? null : () => _checkNow(),
+                      ),
+                      const SizedBox(height: 16),
+                      TextButton(
+                        onPressed: _skip,
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppImmersiveColors.textSecondary,
+                        ),
+                        child: Text(
+                          copy.text('Skip for now', 'Pomiń na razie'),
+                          style: const TextStyle(
+                            color: AppImmersiveColors.textSecondary,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                      ],
+                      ),
                     ],
-                  ),
+                  ],
                 ),
               ),
             ),
           ),
-        ],
+        ),
       ),
     );
     return YoImmersiveDarkSurface(child: content);
   }
 }
 
+/// Inline result of a resend: `AppColors.error` / `AppColors.success` copy on
+/// a faint tint of the same status over the immersive `surface` (≥ 4.5:1 for
+/// both), replacing four one-off hex literals.
 class _MessageBanner extends StatelessWidget {
   const _MessageBanner({required this.text, required this.isError});
 
@@ -297,18 +267,22 @@ class _MessageBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final status = isError ? AppColors.error : AppColors.success;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: isError ? const Color(0xFF481C30) : const Color(0xFF203D2C),
-        borderRadius: BorderRadius.circular(14),
+        color: Color.alphaBlend(
+          status.withValues(alpha: .14),
+          AppImmersiveColors.surface,
+        ),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
         text,
         textAlign: TextAlign.center,
         style: TextStyle(
-          color: isError ? const Color(0xFFFF9EB6) : const Color(0xFF7EE8A6),
+          color: status,
           fontSize: 13,
           fontWeight: FontWeight.w600,
         ),
@@ -317,6 +291,8 @@ class _MessageBanner extends StatelessWidget {
   }
 }
 
+/// Resend action: the shared solid-primary [AuthPrimaryButton]; the cooldown
+/// keeps its dimmed look so the countdown still reads as "not yet".
 class _PrimaryButton extends StatelessWidget {
   const _PrimaryButton({
     required this.label,
@@ -334,50 +310,21 @@ class _PrimaryButton extends StatelessWidget {
 
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 180),
-      opacity: isEnabled ? 1 : 0.6,
-      child: Container(
+      opacity: isEnabled || isLoading ? 1 : 0.6,
+      child: SizedBox(
         width: double.infinity,
-        height: 56,
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF6A00FF), Color(0xFFA12BFF), Color(0xFFC026FF)],
-          ),
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: ElevatedButton(
+        child: AuthPrimaryButton(
+          label: label,
+          loading: isLoading,
           onPressed: onPressed,
-          style: ElevatedButton.styleFrom(
-            disabledBackgroundColor: Colors.transparent,
-            backgroundColor: Colors.transparent,
-            foregroundColor: Colors.white,
-            shadowColor: Colors.transparent,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
-            ),
-          ),
-          child: isLoading
-              ? const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.4,
-                    color: Colors.white,
-                  ),
-                )
-              : Text(
-                  label,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
         ),
       ),
     );
   }
 }
 
+/// Secondary action: a 52 px outline with the auth control outline
+/// (`authBorderStrong`, ≥ 3:1) and the 2 px `authFocus` keyboard boundary.
 class _SecondaryButton extends StatelessWidget {
   const _SecondaryButton({
     required this.label,
@@ -393,32 +340,49 @@ class _SecondaryButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       width: double.infinity,
-      height: 56,
-      child: OutlinedButton(
-        onPressed: onPressed,
-        style: OutlinedButton.styleFrom(
-          foregroundColor: Colors.white,
-          side: const BorderSide(color: Color(0xFF3A3151)),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-        ),
-        child: isLoading
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.2,
-                  color: Colors.white,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: authFieldHeight),
+        child: OutlinedButton(
+          onPressed: onPressed,
+          style:
+              OutlinedButton.styleFrom(
+                foregroundColor: AppImmersiveColors.textPrimary,
+                disabledForegroundColor: AppImmersiveColors.textSecondary,
+                backgroundColor: AppImmersiveColors.surface,
+                disabledBackgroundColor: AppImmersiveColors.surface,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              )
-            : Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
+              ).copyWith(
+                side: WidgetStateProperty.resolveWith(
+                  (states) => states.contains(WidgetState.focused)
+                      ? const BorderSide(
+                          color: AppImmersiveColors.authFocus,
+                          width: 2,
+                        )
+                      : const BorderSide(
+                          color: AppImmersiveColors.authBorderStrong,
+                        ),
                 ),
               ),
+          child: isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: AppImmersiveColors.textPrimary,
+                  ),
+                )
+              : Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+        ),
       ),
     );
   }

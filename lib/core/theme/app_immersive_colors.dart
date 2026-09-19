@@ -30,4 +30,16 @@ class AppImmersiveColors {
   /// semantic colours.
   static const Color authSocialBorder = Color(0xFF7C6790);
   static const Color authSocialDisabledBorder = Color(0xFF5C506D);
+
+  /// Keyboard-focus boundary and inline link ink of the immersive
+  /// authentication atom. They repeat `AppPalette.dark.focus` and
+  /// `AppPalette.dark.interactiveForeground` as literals on purpose: reading a
+  /// field of a `const` object is not a constant expression, and this atom
+  /// does not import `AppPalette` (the same reason `authBorderStrong` repeats
+  /// `dark.borderStrong`). `test/app_theme_test.dart` pins both equalities.
+  static const Color authFocus = Color(0xFFD986FF);
+  static const Color authLink = Color(0xFFD986FF);
+
+  /// Flat fill of the desktop sign-in brand panel (Slim redesign, phase 7).
+  static const Color authBrandPanel = Color(0xFF120A22);
 }

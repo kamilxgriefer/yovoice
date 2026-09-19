@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
@@ -206,6 +207,14 @@ void main() {
       expect(
         _paletteValues(AppPalette.dark.lerp(AppPalette.light, 1)),
         _paletteValues(AppPalette.light),
+      );
+    });
+
+    test('immersive auth focus and link roles mirror the dark palette', () {
+      expect(AppImmersiveColors.authFocus, AppPalette.dark.focus);
+      expect(
+        AppImmersiveColors.authLink,
+        AppPalette.dark.interactiveForeground,
       );
     });
 

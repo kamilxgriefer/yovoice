@@ -2,10 +2,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/auth_error_localizer.dart';
+import 'package:yovoice/features/auth/presentation/screens/responsive_auth_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/check_inbox_sheet.dart';
-import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
@@ -110,194 +111,114 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
+    // Slim (phase 7): the same atoms as sign-in — the calm AuthBackdrop, the
+    // 52 px auth field, the solid primary button and an authLink link — with
+    // the form lying on the backdrop instead of inside a bordered card.
     final content = Scaffold(
-      body: Stack(
-        children: [
-          const Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment.topCenter,
-                  radius: 1.3,
-                  colors: [
-                    Color(0xFF1B063D),
-                    Color(0xFF0D0618),
-                    Color(0xFF07030E),
+      backgroundColor: AppImmersiveColors.background,
+      body: AuthBackdrop(
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: IconButton(
+                        tooltip: copy.backToLogin,
+                        onPressed: _isSending
+                            ? null
+                            : () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.arrow_back_rounded),
+                        color: AppImmersiveColors.textPrimary,
+                        iconSize: 24,
+                        constraints: const BoxConstraints(
+                          minWidth: 48,
+                          minHeight: 48,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    const Center(
+                      child: AuthStatusMark(icon: Icons.lock_reset_rounded),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      copy.resetPassword,
+                      textAlign: TextAlign.center,
+                      style: AuthTypography.heading,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      copy.resetPasswordIntro,
+                      textAlign: TextAlign.center,
+                      style: AuthTypography.subtitle,
+                    ),
+                    const SizedBox(height: 28),
+                    Form(
+                      key: _formKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextFormField(
+                            key: const Key('forgot-password-email'),
+                            controller: _emailController,
+                            autofocus: widget.initialEmail.trim().isEmpty,
+                            enabled: !_isSending,
+                            keyboardType: TextInputType.emailAddress,
+                            textInputAction: TextInputAction.done,
+                            autofillHints: const [AutofillHints.email],
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            onFieldSubmitted: (_) => _sendResetLink(),
+                            validator: _validateEmail,
+                            style: authInputTextStyle,
+                            cursorColor: AppImmersiveColors.authFocus,
+                            decoration: authInputDecoration(
+                              label: copy.emailAddress,
+                              prefixIcon: Icons.mail_outline_rounded,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          AuthPrimaryButton(
+                            key: const Key('send-reset-link'),
+                            label: copy.sendResetLink,
+                            loading: _isSending,
+                            onPressed: _isSending ? null : _sendResetLink,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Center(
+                      child: TextButton.icon(
+                        onPressed: _isSending
+                            ? null
+                            : () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                        label: Text(
+                          copy.backToLogin,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppImmersiveColors.authLink,
+                          minimumSize: const Size(48, 48),
+                        ),
+                      ),
+                    ),
                   ],
-                  stops: [0, .52, 1],
                 ),
               ),
             ),
           ),
-          const AnimatedWavesBackground(),
-          SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 520),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: IconButton(
-                          tooltip: copy.backToLogin,
-                          onPressed: _isSending
-                              ? null
-                              : () => Navigator.of(context).pop(),
-                          icon: const Icon(Icons.arrow_back_rounded),
-                          color: Colors.white,
-                          iconSize: 28,
-                          constraints: const BoxConstraints(
-                            minWidth: 48,
-                            minHeight: 48,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 34),
-                      Center(
-                        child: Container(
-                          width: 82,
-                          height: 82,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: const Color(
-                              0xFF7B2FF7,
-                            ).withValues(alpha: .14),
-                            border: Border.all(
-                              color: const Color(
-                                0xFFB15CFF,
-                              ).withValues(alpha: .5),
-                            ),
-                          ),
-                          child: const Icon(
-                            Icons.lock_reset_rounded,
-                            color: Color(0xFFD7A9FF),
-                            size: 38,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      Text(
-                        copy.resetPassword,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 32,
-                          height: 1.1,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        copy.resetPasswordIntro,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Color(0xFFB8B1C8),
-                          fontSize: 15,
-                          height: 1.5,
-                        ),
-                      ),
-                      const SizedBox(height: 32),
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: const Color(0xCC151021),
-                          borderRadius: BorderRadius.circular(24),
-                          border: Border.all(color: const Color(0xFF3A3151)),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Form(
-                            key: _formKey,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                TextFormField(
-                                  key: const Key('forgot-password-email'),
-                                  controller: _emailController,
-                                  autofocus: widget.initialEmail.trim().isEmpty,
-                                  enabled: !_isSending,
-                                  keyboardType: TextInputType.emailAddress,
-                                  textInputAction: TextInputAction.done,
-                                  autofillHints: const [AutofillHints.email],
-                                  autocorrect: false,
-                                  enableSuggestions: false,
-                                  onFieldSubmitted: (_) => _sendResetLink(),
-                                  validator: _validateEmail,
-                                  style: const TextStyle(color: Colors.white),
-                                  decoration: InputDecoration(
-                                    labelText: copy.emailAddress,
-                                    prefixIcon: const Icon(
-                                      Icons.mail_outline_rounded,
-                                    ),
-                                    filled: true,
-                                    fillColor: const Color(0xFF171126),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 18),
-                                SizedBox(
-                                  height: 56,
-                                  child: FilledButton(
-                                    key: const Key('send-reset-link'),
-                                    onPressed: _isSending
-                                        ? null
-                                        : _sendResetLink,
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor: const Color(0xFF8E24F5),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(17),
-                                      ),
-                                    ),
-                                    child: _isSending
-                                        ? const SizedBox(
-                                            width: 24,
-                                            height: 24,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2.4,
-                                              color: Colors.white,
-                                            ),
-                                          )
-                                        : Text(
-                                            copy.sendResetLink,
-                                            textAlign: TextAlign.center,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.w800,
-                                              letterSpacing: .6,
-                                            ),
-                                          ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 18),
-                      Center(
-                        child: TextButton.icon(
-                          onPressed: _isSending
-                              ? null
-                              : () => Navigator.of(context).pop(),
-                          icon: const Icon(Icons.arrow_back_rounded, size: 19),
-                          label: Text(copy.backToLogin),
-                          style: TextButton.styleFrom(
-                            foregroundColor: const Color(0xFFD7A9FF),
-                            minimumSize: const Size(48, 48),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
     return YoImmersiveDarkSurface(child: content);

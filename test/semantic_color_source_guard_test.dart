@@ -77,6 +77,7 @@ const _forbiddenImmersiveRoles = <String>{
   'divider',
   'authSocialBorder',
   'authSocialDisabledBorder',
+  'authBrandPanel',
 };
 
 void main() {

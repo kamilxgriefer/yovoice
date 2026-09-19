@@ -14,7 +14,6 @@ import 'package:yovoice/features/auth/presentation/screens/forgot_password_scree
 import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/auth_social_button.dart';
-import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 enum AuthMode { login, register }
@@ -721,8 +720,14 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
   }) {
     final veryNarrow = constraints.maxWidth < 340;
     final short = constraints.maxHeight < 700;
-    final pagePadding = compact ? (veryNarrow ? 10.0 : 16.0) : 32.0;
-    final maxWidth = compact ? 430.0 : 560.0;
+    final pagePadding = compact ? (veryNarrow ? 12.0 : 16.0) : 32.0;
+    final maxWidth = compact ? 430.0 : 480.0;
+
+    // Slim: one layer. The form lies directly on the calm backdrop; the old
+    // bordered, shadowed card around it (card-in-card with the fields) is
+    // gone. Registration gets the smaller mark so its longer form starts
+    // higher.
+    final logoSize = short || _displayedMode == AuthMode.register ? 44.0 : 56.0;
 
     return KeyedSubtree(
       key: ValueKey(compact ? 'auth-layout-compact' : 'auth-layout-medium'),
@@ -741,67 +746,42 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _AuthBrandHeader(
-                    logoSize: short ? 56 : (compact ? 72 : 84),
+                    logoSize: logoSize,
                     compact: short,
+                    animate: !_reduceMotion,
                   ),
-                  SizedBox(height: short ? 8 : 12),
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: AppImmersiveColors.surface.withValues(alpha: .94),
-                      borderRadius: BorderRadius.circular(28),
-                      border: Border.all(
-                        color: AppImmersiveColors.authBorderStrong.withValues(
-                          alpha: .54,
+                  SizedBox(height: short ? 16 : 24),
+                  AutofillGroup(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        AuthModeRail(
+                          sourceMode: _sourceMode,
+                          targetMode: _targetMode,
+                          selectedMode: _displayedMode,
+                          progress: _relayTravelProgress,
+                          isAnimating: _isModeAnimating,
+                          isLocked: _interactionLocked,
+                          loginFocusNode: _loginModeFocus,
+                          registerFocusNode: _registerModeFocus,
+                          onSelected: _requestMode,
                         ),
-                      ),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x55000000),
-                          blurRadius: 34,
-                          offset: Offset(0, 18),
-                        ),
-                      ],
-                    ),
-                    child: Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        veryNarrow ? 16 : 20,
-                        short ? 18 : 24,
-                        veryNarrow ? 16 : 20,
-                        24,
-                      ),
-                      child: AutofillGroup(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            AuthModeRail(
-                              sourceMode: _sourceMode,
-                              targetMode: _targetMode,
-                              selectedMode: _displayedMode,
-                              progress: _relayTravelProgress,
-                              isAnimating: _isModeAnimating,
-                              isLocked: _interactionLocked,
-                              loginFocusNode: _loginModeFocus,
-                              registerFocusNode: _registerModeFocus,
-                              onSelected: _requestMode,
+                        SizedBox(height: short ? 20 : 24),
+                        if (_reduceMotion)
+                          _buildAnimatedForm(context, compact: compact)
+                        else
+                          AnimatedSize(
+                            duration: const Duration(milliseconds: 166),
+                            curve: Curves.easeInOutCubic,
+                            alignment: Alignment.topCenter,
+                            clipBehavior: Clip.hardEdge,
+                            child: _buildAnimatedForm(
+                              context,
+                              compact: compact,
                             ),
-                            SizedBox(height: short ? 18 : 24),
-                            if (_reduceMotion)
-                              _buildAnimatedForm(context, compact: compact)
-                            else
-                              AnimatedSize(
-                                duration: const Duration(milliseconds: 166),
-                                curve: Curves.easeInOutCubic,
-                                alignment: Alignment.topCenter,
-                                clipBehavior: Clip.hardEdge,
-                                child: _buildAnimatedForm(
-                                  context,
-                                  compact: compact,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
+                          ),
+                      ],
                     ),
                   ),
                 ],
@@ -962,10 +942,16 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
           child: TextButton(
             key: const ValueKey('auth-forgot-password'),
             onPressed: _interactionLocked ? null : _openForgotPassword,
-            child: Text(copy.forgotPassword),
+            style: TextButton.styleFrom(
+              foregroundColor: AppImmersiveColors.authLink,
+            ),
+            child: Text(
+              copy.forgotPassword,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         AuthPrimaryButton(
           key: const ValueKey('auth-login-submit'),
           label: copy.logIn,
@@ -1089,7 +1075,7 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
             ),
             style: const TextStyle(
               color: AppImmersiveColors.authTextTertiary,
-              fontSize: 12.5,
+              fontSize: 12,
               height: 1.4,
             ),
           ),
@@ -1150,10 +1136,14 @@ class AuthModeRail extends StatelessWidget {
                 ? Curves.easeInOutCubic.transform(progress)
                 : 1.0;
             final capsuleX = sourceX + ((targetX - sourceX) * travel);
+            // Slim: a flat primary tile on a surface track. The track keeps
+            // its authBorderStrong outline (≈3.6:1 on surface) and the tile
+            // is solid primary (≈3.1:1 on surface, white label ≈5.9:1) with
+            // no gradient and no glow.
             return DecoratedBox(
               decoration: BoxDecoration(
-                color: AppImmersiveColors.background.withValues(alpha: .58),
-                borderRadius: BorderRadius.circular(17),
+                color: AppImmersiveColors.surface,
+                borderRadius: BorderRadius.circular(_AuthRadius.control),
                 border: Border.all(color: AppImmersiveColors.authBorderStrong),
               ),
               child: Stack(
@@ -1165,20 +1155,13 @@ class AuthModeRail extends StatelessWidget {
                     bottom: 0,
                     width: half,
                     child: Padding(
-                      padding: const EdgeInsets.all(4),
+                      padding: const EdgeInsets.all(_ModeRailButton.inset),
                       child: DecoratedBox(
                         decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [
-                              Color(0xFF5A20C8),
-                              AppColors.primary,
-                              Color(0xFFA61BE0),
-                            ],
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(
+                            _ModeRailButton.tileRadius,
                           ),
-                          borderRadius: BorderRadius.circular(14),
-                          boxShadow: const [
-                            BoxShadow(color: Color(0x557B2FF7), blurRadius: 13),
-                          ],
                         ),
                       ),
                     ),
@@ -1221,7 +1204,14 @@ class AuthModeRail extends StatelessWidget {
   }
 }
 
-class _ModeRailButton extends StatelessWidget {
+/// Corner radii of the Slim auth atom: 12 for every control (rail, field,
+/// button, provider), 16 for the desktop shell.
+abstract final class _AuthRadius {
+  static const double control = 12;
+  static const double shell = 16;
+}
+
+class _ModeRailButton extends StatefulWidget {
   const _ModeRailButton({
     required this.label,
     required this.selected,
@@ -1231,6 +1221,15 @@ class _ModeRailButton extends StatelessWidget {
     super.key,
   });
 
+  /// Gap between the rail's outline and the selected tile.
+  static const double inset = 4;
+
+  /// Width of the keyboard-focus boundary (authFocus).
+  static const double focusWidth = 2;
+
+  /// Concentric with the rail's 12 px outline across the 4 px [inset].
+  static const double tileRadius = _AuthRadius.control - inset;
+
   final String label;
   final bool selected;
   final FocusNode focusNode;
@@ -1238,38 +1237,115 @@ class _ModeRailButton extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
+  State<_ModeRailButton> createState() => _ModeRailButtonState();
+}
+
+class _ModeRailButtonState extends State<_ModeRailButton> {
+  late bool _hasFocus = widget.focusNode.hasFocus;
+  FocusHighlightMode _highlightMode = FocusManager.instance.highlightMode;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.focusNode.addListener(_syncFocus);
+    FocusManager.instance.addHighlightModeListener(_syncHighlightMode);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ModeRailButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.focusNode == widget.focusNode) return;
+    oldWidget.focusNode.removeListener(_syncFocus);
+    widget.focusNode.addListener(_syncFocus);
+    _hasFocus = widget.focusNode.hasFocus;
+  }
+
+  @override
+  void dispose() {
+    widget.focusNode.removeListener(_syncFocus);
+    FocusManager.instance.removeHighlightModeListener(_syncHighlightMode);
+    super.dispose();
+  }
+
+  void _syncFocus() {
+    final hasFocus = widget.focusNode.hasFocus;
+    if (!mounted || hasFocus == _hasFocus) return;
+    setState(() => _hasFocus = hasFocus);
+  }
+
+  void _syncHighlightMode(FocusHighlightMode mode) {
+    if (!mounted || mode == _highlightMode) return;
+    setState(() => _highlightMode = mode);
+  }
+
+  /// The 2 px authFocus boundary is drawn from the existing focus node, and
+  /// only for keyboard (traditional) highlight mode: after a touch switch the
+  /// screen programmatically focuses the selected option, which must not
+  /// paint a keyboard ring on a phone.
+  bool get _showFocusRing =>
+      _hasFocus && _highlightMode == FocusHighlightMode.traditional;
+
+  @override
   Widget build(BuildContext context) {
+    final selected = widget.selected;
     return Semantics(
       button: true,
       selected: selected,
-      enabled: onTap != null,
-      label: label,
-      onTap: onTap,
+      enabled: widget.onTap != null,
+      label: widget.label,
+      onTap: widget.onTap,
       excludeSemantics: true,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: onTap,
-          focusNode: focusNode,
-          canRequestFocus: !locked,
-          borderRadius: BorderRadius.circular(14),
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                label,
-                maxLines: 2,
-                textAlign: TextAlign.center,
-                softWrap: true,
-                style: TextStyle(
-                  color: selected
-                      ? AppImmersiveColors.textPrimary
-                      : AppImmersiveColors.textSecondary,
-                  fontSize: 14,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+          onTap: widget.onTap,
+          focusNode: widget.focusNode,
+          canRequestFocus: !widget.locked,
+          focusColor: Colors.transparent,
+          borderRadius: BorderRadius.circular(_AuthRadius.control),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // The ring hugs the tile from outside (the 2 px of surface
+              // between the rail outline and the tile), so its pixels change
+              // from surface to authFocus (≈7.5:1) on the selected tile too,
+              // instead of being painted onto the primary fill (≈2.5:1).
+              if (_showFocusRing)
+                Padding(
+                  padding: const EdgeInsets.all(
+                    _ModeRailButton.inset - _ModeRailButton.focusWidth,
+                  ),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(
+                        _ModeRailButton.tileRadius + _ModeRailButton.focusWidth,
+                      ),
+                      border: Border.all(
+                        color: AppImmersiveColors.authFocus,
+                        width: _ModeRailButton.focusWidth,
+                      ),
+                    ),
+                  ),
+                ),
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    widget.label,
+                    maxLines: 2,
+                    textAlign: TextAlign.center,
+                    softWrap: true,
+                    style: TextStyle(
+                      color: selected
+                          ? AppImmersiveColors.textPrimary
+                          : AppImmersiveColors.textSecondary,
+                      fontSize: 14,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                    ),
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ),
@@ -1309,59 +1385,55 @@ class AuthDesktopSplitShell extends StatelessWidget {
         final panelRect = _panelRect(constraints.maxWidth, paneWidth);
         final formOnLeft = displayedMode == AuthMode.register;
 
+        // Slim: the desktop shell is no longer a shadowed card. It is the
+        // page background (so fields filled with `surface` stay distinct),
+        // a 1 px decorative `border` drawn above both panes, radius 16.
         return ClipRRect(
-          borderRadius: BorderRadius.circular(32),
+          borderRadius: BorderRadius.circular(_AuthRadius.shell),
           child: DecoratedBox(
+            position: DecorationPosition.foreground,
             decoration: BoxDecoration(
-              color: AppImmersiveColors.surface,
-              border: Border.all(
-                color: AppImmersiveColors.authBorderStrong.withValues(
-                  alpha: .62,
-                ),
-              ),
-              borderRadius: BorderRadius.circular(32),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x66000000),
-                  blurRadius: 48,
-                  offset: Offset(0, 24),
-                ),
-              ],
+              border: Border.all(color: AppImmersiveColors.border),
+              borderRadius: BorderRadius.circular(_AuthRadius.shell),
             ),
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: formOnLeft
-                            ? _DesktopFormPane(rail: rail, form: form)
-                            : const SizedBox(),
-                      ),
-                      Expanded(
-                        child: formOnLeft
-                            ? const SizedBox()
-                            : _DesktopFormPane(rail: rail, form: form),
-                      ),
-                    ],
-                  ),
-                ),
-                Positioned(
-                  key: const ValueKey('auth-desktop-brand-panel'),
-                  left: panelRect.left,
-                  top: 0,
-                  bottom: 0,
-                  width: panelRect.width,
-                  child: ClipRect(
-                    child: _DesktopBrandPanel(
-                      mode: displayedMode,
-                      isLocked: isLocked,
-                      contentMaxWidth: math.max(0, paneWidth - 96),
-                      onModeSelected: onModeSelected,
+            child: ColoredBox(
+              color: AppImmersiveColors.background,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: formOnLeft
+                              ? _DesktopFormPane(rail: rail, form: form)
+                              : const SizedBox(),
+                        ),
+                        Expanded(
+                          child: formOnLeft
+                              ? const SizedBox()
+                              : _DesktopFormPane(rail: rail, form: form),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-              ],
+                  Positioned(
+                    key: const ValueKey('auth-desktop-brand-panel'),
+                    left: panelRect.left,
+                    top: 0,
+                    bottom: 0,
+                    width: panelRect.width,
+                    child: ClipRect(
+                      child: _DesktopBrandPanel(
+                        mode: displayedMode,
+                        isLocked: isLocked,
+                        seamOnLeft: formOnLeft,
+                        contentMaxWidth: math.max(0, paneWidth - 96),
+                        onModeSelected: onModeSelected,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -1419,14 +1491,30 @@ class _DesktopFormPane extends StatelessWidget {
   final Widget rail;
   final Widget form;
 
+  static const double _maxContentWidth = 400;
+  static const EdgeInsets _padding = EdgeInsets.fromLTRB(32, 38, 32, 40);
+
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.fromLTRB(48, 38, 48, 40),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [rail, const SizedBox(height: 28), form],
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: _padding,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: math.max(0, constraints.maxHeight - _padding.vertical),
+          ),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: _maxContentWidth),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [rail, const SizedBox(height: 28), form],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1436,12 +1524,16 @@ class _DesktopBrandPanel extends StatelessWidget {
   const _DesktopBrandPanel({
     required this.mode,
     required this.isLocked,
+    required this.seamOnLeft,
     required this.contentMaxWidth,
     required this.onModeSelected,
   });
 
   final AuthMode mode;
   final bool isLocked;
+
+  /// The 1 px seam sits on the panel edge that faces the form pane.
+  final bool seamOnLeft;
   final double contentMaxWidth;
   final ValueChanged<AuthMode> onModeSelected;
 
@@ -1449,126 +1541,163 @@ class _DesktopBrandPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final target = mode == AuthMode.login ? AuthMode.register : AuthMode.login;
+    const seam = BorderSide(color: AppImmersiveColors.border);
+    // Slim: a flat authBrandPanel field with one voice glow (22 %) instead of
+    // the violet→magenta gradient; the four faint arcs stay.
     return Semantics(
       container: true,
       child: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF26104B), Color(0xFF6B22CF), Color(0xFFBE20D9)],
-            stops: [0, .56, 1],
-          ),
+        position: DecorationPosition.foreground,
+        decoration: BoxDecoration(
+          border: seamOnLeft
+              ? const Border(left: seam)
+              : const Border(right: seam),
         ),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            const ExcludeSemantics(
-              child: CustomPaint(painter: _BrandArcPainter()),
-            ),
-            LayoutBuilder(
-              builder: (context, constraints) => ExcludeFocus(
-                excluding: isLocked,
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(48),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: math.max(0, constraints.maxHeight - 96),
-                    ),
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(maxWidth: contentMaxWidth),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            ExcludeSemantics(
-                              child: Image.asset(
-                                'assets/images/yo-voice-favicon-512.png',
-                                width: 116,
-                                height: 116,
-                                fit: BoxFit.contain,
-                                filterQuality: FilterQuality.high,
-                              ),
-                            ),
-                            const SizedBox(height: 22),
-                            const Text(
-                              'YO VOICE',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 34,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 5,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              copy.text(
-                                'Speak. Connect. Be you.',
-                                'Mów. Łącz się. Bądź sobą.',
-                              ),
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Color(0xFFE7D8F8),
-                                fontSize: 17,
-                                fontWeight: FontWeight.w500,
-                                letterSpacing: .8,
-                              ),
-                            ),
-                            const SizedBox(height: 26),
-                            Text(
-                              mode == AuthMode.login
-                                  ? copy.text(
-                                      'New here? Create one identity for every voice space.',
-                                      'Jesteś tu pierwszy raz? Utwórz konto i dołącz do rozmów w YO Voice.',
-                                    )
-                                  : copy.text(
-                                      'Already have your voice? Return to your people.',
-                                      'Masz już konto? Wróć do swojej społeczności.',
-                                    ),
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Color(0xFFF0E4FA),
-                                fontSize: 14,
-                                height: 1.4,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            OutlinedButton(
-                              key: const ValueKey('auth-desktop-brand-cta'),
-                              onPressed: isLocked
-                                  ? null
-                                  : () => onModeSelected(target),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.white,
-                                disabledForegroundColor: Colors.white60,
-                                side: const BorderSide(color: Colors.white70),
-                                minimumSize: const Size(180, 48),
-                                shape: const StadiumBorder(),
-                              ),
-                              child: Text(
-                                target == AuthMode.register
-                                    ? copy.text(
-                                        'Create account',
-                                        'Utwórz konto',
-                                      )
-                                    : copy.text('Log in', 'Zaloguj się'),
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
+        child: ColoredBox(
+          color: AppImmersiveColors.authBrandPanel,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(0, -.2),
+                    radius: .9,
+                    colors: [
+                      AppColors.voice.withValues(alpha: .22),
+                      AppColors.voice.withValues(alpha: 0),
+                    ],
+                  ),
+                ),
+              ),
+              const ExcludeSemantics(
+                child: CustomPaint(painter: _BrandArcPainter()),
+              ),
+              LayoutBuilder(
+                builder: (context, constraints) => ExcludeFocus(
+                  excluding: isLocked,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(48),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: math.max(0, constraints.maxHeight - 96),
+                      ),
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: contentMaxWidth,
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              ExcludeSemantics(
+                                child: Image.asset(
+                                  'assets/images/yo-voice-favicon-512.png',
+                                  width: 96,
+                                  height: 96,
+                                  fit: BoxFit.contain,
+                                  filterQuality: FilterQuality.high,
                                 ),
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: 20),
+                              const Text(
+                                'YO Voice',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: AppImmersiveColors.textPrimary,
+                                  fontSize: 22,
+                                  height: 1.2,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                copy.text(
+                                  'Speak. Connect. Be you.',
+                                  'Mów. Łącz się. Bądź sobą.',
+                                ),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: AppImmersiveColors.textSecondary,
+                                  fontSize: 13,
+                                  height: 1.4,
+                                ),
+                              ),
+                              const SizedBox(height: 28),
+                              Text(
+                                mode == AuthMode.login
+                                    ? copy.text(
+                                        'New here? Create one identity for every voice space.',
+                                        'Jesteś tu pierwszy raz? Utwórz konto i dołącz do rozmów w YO Voice.',
+                                      )
+                                    : copy.text(
+                                        'Already have your voice? Return to your people.',
+                                        'Masz już konto? Wróć do swojej społeczności.',
+                                      ),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: AppImmersiveColors.textPrimary,
+                                  fontSize: 14,
+                                  height: 1.45,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              OutlinedButton(
+                                key: const ValueKey('auth-desktop-brand-cta'),
+                                onPressed: isLocked
+                                    ? null
+                                    : () => onModeSelected(target),
+                                style:
+                                    OutlinedButton.styleFrom(
+                                      foregroundColor:
+                                          AppImmersiveColors.textPrimary,
+                                      disabledForegroundColor:
+                                          AppImmersiveColors.navigationInactive,
+                                      minimumSize: const Size(180, 48),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(
+                                          _AuthRadius.control,
+                                        ),
+                                      ),
+                                    ).copyWith(
+                                      side: WidgetStateProperty.resolveWith(
+                                        (states) =>
+                                            states.contains(WidgetState.focused)
+                                            ? const BorderSide(
+                                                color: AppImmersiveColors
+                                                    .authFocus,
+                                                width: 2,
+                                              )
+                                            : const BorderSide(
+                                                color: AppImmersiveColors
+                                                    .authBorderStrong,
+                                              ),
+                                      ),
+                                    ),
+                                child: Text(
+                                  target == AuthMode.register
+                                      ? copy.text(
+                                          'Create account',
+                                          'Utwórz konto',
+                                        )
+                                      : copy.text('Log in', 'Zaloguj się'),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1579,62 +1708,105 @@ class _AuthBackground extends StatelessWidget {
   const _AuthBackground();
 
   @override
+  Widget build(BuildContext context) => const AuthBackdrop();
+}
+
+/// The one calm backdrop of the whole signed-out chain (sign in, sign up,
+/// forgot password, verify email, TOTP): `AppImmersiveColors.background` with
+/// a single `AppColors.voice` glow (16 %) at the top.
+///
+/// It replaced the three-layer radial gradients and the animated waves
+/// (Slim redesign, phase 7). `AnimatedWavesBackground` itself stays in the
+/// repo; the auth chain just no longer mounts it, so Reduce Motion has nothing
+/// left to stop here. The splash (`StartupLoadingScreen`) keeps its own
+/// ADR-052 composition and does not use this widget.
+class AuthBackdrop extends StatelessWidget {
+  const AuthBackdrop({super.key, this.child});
+
+  final Widget? child;
+
+  /// Strength of the single top glow; the brief caps it at 16 %.
+  static const double glowAlpha = .16;
+
+  @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        const Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment.topCenter,
-                radius: 1.25,
-                colors: [
-                  Color(0xFF1C073D),
-                  Color(0xFF0D0618),
-                  Color(0xFF07030E),
-                ],
-                stops: [0, .52, 1],
-              ),
-            ),
+    return ColoredBox(
+      color: AppImmersiveColors.background,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: RadialGradient(
+            center: const Alignment(0, -1.15),
+            radius: 1.2,
+            colors: [
+              AppColors.voice.withValues(alpha: glowAlpha),
+              AppColors.voice.withValues(alpha: 0),
+            ],
           ),
         ),
-        const AnimatedWavesBackground(),
-        const Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Color(0x08000000),
-                  Color(0x20000000),
-                  Color(0x6607030E),
-                ],
-              ),
-            ),
-          ),
+        child: child ?? const SizedBox.expand(),
+      ),
+    );
+  }
+}
+
+/// The status medallion of the auth chain's single-purpose screens (forgot
+/// password, check inbox, verify email): a 64 px circle with a faint primary
+/// tint and outline and a 30 px glyph in `authLink` (or the status colour).
+class AuthStatusMark extends StatelessWidget {
+  const AuthStatusMark({
+    required this.icon,
+    super.key,
+    this.color = AppImmersiveColors.authLink,
+  });
+
+  final IconData icon;
+  final Color color;
+
+  static const double size = 64;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeSemantics(
+      child: Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: AppColors.primary.withValues(alpha: .14),
+          border: Border.all(color: AppColors.primary.withValues(alpha: .4)),
         ),
-      ],
+        child: Icon(icon, color: color, size: 30),
+      ),
     );
   }
 }
 
 class _AuthBrandHeader extends StatelessWidget {
-  const _AuthBrandHeader({required this.logoSize, required this.compact});
+  const _AuthBrandHeader({
+    required this.logoSize,
+    required this.compact,
+    this.animate = true,
+  });
 
   final double logoSize;
   final bool compact;
+  final bool animate;
 
   @override
   Widget build(BuildContext context) {
     final accessibleLayout = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
     final logo = ExcludeSemantics(
-      child: Image.asset(
-        'assets/images/yo-voice-favicon-512.png',
+      child: AnimatedContainer(
+        duration: animate ? const Duration(milliseconds: 166) : Duration.zero,
+        curve: Curves.easeInOutCubic,
         width: logoSize,
         height: logoSize,
-        fit: BoxFit.contain,
-        filterQuality: FilterQuality.high,
+        child: Image.asset(
+          'assets/images/yo-voice-favicon-512.png',
+          fit: BoxFit.contain,
+          filterQuality: FilterQuality.high,
+        ),
       ),
     );
     final copy = Column(
@@ -1643,27 +1815,27 @@ class _AuthBrandHeader extends StatelessWidget {
           : CrossAxisAlignment.start,
       children: [
         Text(
-          'YO VOICE',
+          'YO Voice',
           maxLines: 2,
           textAlign: accessibleLayout ? TextAlign.center : TextAlign.start,
-          style: TextStyle(
+          style: const TextStyle(
             color: AppImmersiveColors.textPrimary,
-            fontSize: compact ? 21 : 24,
+            fontSize: 22,
+            height: 1.2,
             fontWeight: FontWeight.w800,
-            letterSpacing: 2.6,
           ),
         ),
-        const SizedBox(height: 3),
+        const SizedBox(height: 2),
         Text(
           AppLocalizations.of(
             context,
           ).text('Speak. Connect. Be you.', 'Mów. Łącz się. Bądź sobą.'),
           maxLines: 3,
           textAlign: accessibleLayout ? TextAlign.center : TextAlign.start,
-          style: TextStyle(
+          style: const TextStyle(
             color: AppImmersiveColors.textSecondary,
-            fontSize: compact ? 11.5 : 12.5,
-            letterSpacing: .6,
+            fontSize: 13,
+            height: 1.35,
           ),
         ),
       ],
@@ -1680,7 +1852,7 @@ class _AuthBrandHeader extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 logo,
-                SizedBox(width: compact ? 10 : 14),
+                SizedBox(width: compact ? 10 : 12),
                 Flexible(child: copy),
               ],
             ),
@@ -1699,28 +1871,31 @@ class _FormHeading extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title,
-          style: const TextStyle(
-            color: AppImmersiveColors.textPrimary,
-            fontSize: 27,
-            height: 1.1,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -.5,
-          ),
-        ),
-        const SizedBox(height: 7),
-        Text(
-          subtitle,
-          style: const TextStyle(
-            color: AppImmersiveColors.textSecondary,
-            fontSize: 14.5,
-            height: 1.45,
-          ),
-        ),
+        Text(title, style: AuthTypography.heading),
+        const SizedBox(height: 6),
+        Text(subtitle, style: AuthTypography.subtitle),
       ],
     );
   }
+}
+
+/// Text styles shared by every screen of the immersive auth chain.
+abstract final class AuthTypography {
+  /// One headline per screen: 26 px w800, tracking -0.02em.
+  static const TextStyle heading = TextStyle(
+    color: AppImmersiveColors.textPrimary,
+    fontSize: 26,
+    height: 1.15,
+    fontWeight: FontWeight.w800,
+    letterSpacing: 26 * -.02,
+  );
+
+  /// Supporting copy under the headline: 14 px `textSecondary`.
+  static const TextStyle subtitle = TextStyle(
+    color: AppImmersiveColors.textSecondary,
+    fontSize: 14,
+    height: 1.45,
+  );
 }
 
 class _ProviderSection extends StatelessWidget {
@@ -1767,7 +1942,7 @@ class _ProviderSection extends StatelessWidget {
           ? copy.text('Try again', 'Spróbuj ponownie')
           : null,
       materialIcon: Icons.apple,
-      iconSize: 30,
+      iconSize: 24,
       isLoading: appleLoading || applePending,
       onPressed: locked || applePending || notConfigured
           ? null
@@ -1805,29 +1980,37 @@ class _AuthDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        const Expanded(child: Divider(color: AppImmersiveColors.divider)),
-        Flexible(
-          flex: 4,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Text(
-              label,
-              maxLines: 2,
-              textAlign: TextAlign.center,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppImmersiveColors.authTextTertiary,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.4,
+    // The label takes its natural width (at most two thirds of the row) and
+    // the two rules share the rest equally, so the label stays centred at
+    // every width instead of leaving the spare space after the right rule.
+    return LayoutBuilder(
+      builder: (context, constraints) => Row(
+        children: [
+          const Expanded(child: Divider(color: AppImmersiveColors.divider)),
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: constraints.maxWidth * 2 / 3),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                label,
+                maxLines: 2,
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
+                // 12 px w600. The catalog still serves this label in capitals
+                // (the sentence-case key is deferred to 3.0.1), so it keeps the
+                // Slim group-label tracking of .08em instead of 1.4 px.
+                style: const TextStyle(
+                  color: AppImmersiveColors.authTextTertiary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 12 * .08,
+                ),
               ),
             ),
           ),
-        ),
-        const Expanded(child: Divider(color: AppImmersiveColors.divider)),
-      ],
+          const Expanded(child: Divider(color: AppImmersiveColors.divider)),
+        ],
+      ),
     );
   }
 }
@@ -1867,49 +2050,21 @@ class AuthTextField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final decoration = InputDecoration(
-      labelText: label,
-      floatingLabelBehavior: FloatingLabelBehavior.auto,
-      labelStyle: const TextStyle(color: AppImmersiveColors.textSecondary),
-      prefixIcon: Icon(prefixIcon, color: AppImmersiveColors.textSecondary),
-      suffixIcon: suffixIcon == null
+    final decoration = authInputDecoration(
+      label: label,
+      prefixIcon: prefixIcon,
+      suffix: suffixIcon == null
           ? null
           : IconButton(
               tooltip: obscureText
                   ? copy.text('Show password', 'Pokaż hasło')
                   : copy.text('Hide password', 'Ukryj hasło'),
               onPressed: onSuffixPressed,
-              icon: Icon(suffixIcon, color: AppImmersiveColors.textSecondary),
+              icon: Icon(
+                suffixIcon,
+                color: AppImmersiveColors.authTextTertiary,
+              ),
             ),
-      filled: true,
-      fillColor: AppImmersiveColors.background.withValues(alpha: .55),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      errorMaxLines: 3,
-      errorStyle: const TextStyle(color: Color(0xFFFF8CA2), height: 1.25),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(
-          color: AppImmersiveColors.authBorderStrong.withValues(alpha: .76),
-        ),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(
-          color: AppImmersiveColors.authBorderStrong.withValues(alpha: .76),
-        ),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(color: AppColors.secondary, width: 1.8),
-      ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(color: AppColors.error),
-      ),
-      focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(color: AppColors.error, width: 1.8),
-      ),
     );
 
     if (validator == null) {
@@ -1923,11 +2078,8 @@ class AuthTextField extends StatelessWidget {
         autocorrect: false,
         enableSuggestions: !obscureText,
         onSubmitted: onSubmitted,
-        style: const TextStyle(
-          color: AppImmersiveColors.textPrimary,
-          fontSize: 16,
-        ),
-        cursorColor: AppColors.secondary,
+        style: authInputTextStyle,
+        cursorColor: AppImmersiveColors.authFocus,
         decoration: decoration,
       );
     }
@@ -1945,15 +2097,59 @@ class AuthTextField extends StatelessWidget {
       validator: validator,
       autovalidateMode: AutovalidateMode.onUserInteraction,
       onFieldSubmitted: onSubmitted,
-      style: const TextStyle(
-        color: AppImmersiveColors.textPrimary,
-        fontSize: 16,
-      ),
-      cursorColor: AppColors.secondary,
+      style: authInputTextStyle,
+      cursorColor: AppImmersiveColors.authFocus,
       decoration: decoration,
     );
   }
 }
+
+/// Typed text inside every auth field.
+const TextStyle authInputTextStyle = TextStyle(
+  color: AppImmersiveColors.textPrimary,
+  fontSize: 16,
+);
+
+/// The one field decoration of the immersive auth chain (sign in, sign up,
+/// forgot password): a 52 px, `surface`-filled, 12 px-radius field with a
+/// 1 px `authBorderStrong` outline (≈3.6:1 on surface), a 2 px `authFocus`
+/// boundary when focused and the same 2 px in `AppColors.error` when a
+/// focused field is invalid. No glow and no shadow on focus.
+InputDecoration authInputDecoration({
+  required String label,
+  required IconData prefixIcon,
+  Widget? suffix,
+}) {
+  OutlineInputBorder outline(Color color, [double width = 1]) {
+    return OutlineInputBorder(
+      borderRadius: BorderRadius.circular(_AuthRadius.control),
+      borderSide: BorderSide(color: color, width: width),
+    );
+  }
+
+  return InputDecoration(
+    labelText: label,
+    floatingLabelBehavior: FloatingLabelBehavior.auto,
+    labelStyle: const TextStyle(color: AppImmersiveColors.authTextTertiary),
+    prefixIcon: Icon(prefixIcon, color: AppImmersiveColors.authTextTertiary),
+    suffixIcon: suffix,
+    filled: true,
+    fillColor: AppImmersiveColors.surface,
+    constraints: const BoxConstraints(minHeight: authFieldHeight),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    errorMaxLines: 3,
+    errorStyle: const TextStyle(color: AppColors.error, height: 1.25),
+    border: outline(AppImmersiveColors.authBorderStrong),
+    enabledBorder: outline(AppImmersiveColors.authBorderStrong),
+    disabledBorder: outline(AppImmersiveColors.authSocialDisabledBorder),
+    focusedBorder: outline(AppImmersiveColors.authFocus, 2),
+    errorBorder: outline(AppColors.error),
+    focusedErrorBorder: outline(AppColors.error, 2),
+  );
+}
+
+/// Height of an auth field (and of the primary auth button beside it).
+const double authFieldHeight = 52;
 
 class AuthPrimaryButton extends StatelessWidget {
   const AuthPrimaryButton({
@@ -1980,56 +2176,42 @@ class AuthPrimaryButton extends StatelessWidget {
       onTap: onPressed,
       child: ExcludeSemantics(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 54),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [
-                  Color(0xFF6424DE),
-                  AppColors.primary,
-                  AppColors.secondary,
-                ],
+          constraints: const BoxConstraints(minHeight: authFieldHeight),
+          // Slim: solid primary, radius 12, no gradient and no glow. The
+          // FilledButton keeps the 2 px `colorScheme.onPrimary` focus
+          // boundary it inherits from `filledButtonTheme`, so `side` is
+          // deliberately left unset here. While the chain is busy (loading
+          // or a mode relay) the fill stays primary, as the old gradient did.
+          child: FilledButton(
+            onPressed: onPressed,
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: AppImmersiveColors.textPrimary,
+              disabledBackgroundColor: AppColors.primary,
+              disabledForegroundColor: AppImmersiveColors.textPrimary,
+              elevation: 0,
+              shadowColor: Colors.transparent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(_AuthRadius.control),
               ),
-              borderRadius: BorderRadius.circular(17),
-              boxShadow: onPressed == null
-                  ? null
-                  : const [
-                      BoxShadow(
-                        color: Color(0x557B2FF7),
-                        blurRadius: 18,
-                        offset: Offset(0, 8),
-                      ),
-                    ],
             ),
-            child: FilledButton(
-              onPressed: onPressed,
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                disabledBackgroundColor: Colors.transparent,
-                shadowColor: Colors.transparent,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(17),
-                ),
-              ),
-              child: loading
-                  ? const SizedBox.square(
-                      dimension: 23,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.4,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Text(
-                      label,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: .8,
-                      ),
+            child: loading
+                ? const SizedBox.square(
+                    dimension: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.4,
+                      color: AppImmersiveColors.textPrimary,
                     ),
-            ),
+                  )
+                : Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: AppImmersiveColors.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
           ),
         ),
       ),
@@ -2107,13 +2289,18 @@ class _EnsureVisibleOnFocusState extends State<_EnsureVisibleOnFocus>
 class _BrandArcPainter extends CustomPainter {
   const _BrandArcPainter();
 
+  /// Faint, fading outward: .07 / .05 / .035 / .025 from the innermost ring.
+  static const List<double> _ringAlphas = [.07, .05, .035, .025];
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2
-      ..color = Colors.white.withValues(alpha: .16);
+      ..strokeWidth = 1.2;
     for (var i = 0; i < 4; i++) {
+      paint.color = AppImmersiveColors.textPrimary.withValues(
+        alpha: _ringAlphas[i],
+      );
       final inset = 42.0 + (i * 44);
       canvas.drawOval(
         Rect.fromCenter(

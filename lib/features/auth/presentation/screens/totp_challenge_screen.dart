@@ -13,6 +13,7 @@ import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
+import 'package:yovoice/features/auth/presentation/screens/responsive_auth_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/animated_totp_code_input.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
@@ -288,14 +289,10 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
             onPopInvokedWithResult: _handlePopInvoked,
             child: Scaffold(
               backgroundColor: palette.background,
-              body: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: RadialGradient(
-                    center: const Alignment(0, -.88),
-                    radius: 1.1,
-                    colors: <Color>[palette.backgroundTop, palette.background],
-                  ),
-                ),
+              // Slim (phase 7): the body paints the calm auth backdrop
+              // (immersive background + one voice glow) shared by the whole
+              // sign-in chain; it covers the Scaffold colour everywhere.
+              body: AuthBackdrop(
                 child: SafeArea(
                   child: ResponsiveContentFrame(
                     width: ResponsiveContentWidth.form,
