@@ -627,7 +627,9 @@ void main() {
       },
     );
 
-    testWidgets('leaving releases the link and ends nothing server-side', (
+    testWidgets(
+        'leaving releases the link, asks nothing of the server on the press '
+        'path, and sends only the release backstop', (
       tester,
     ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -646,6 +648,7 @@ void main() {
       );
       final link = await qaJoinAndSettle(tester, connector, roster: qaRoster);
       final before = repository.calls.length;
+      final releasesBefore = repository.releases.length;
       await tester.tap(qaLeave);
       await tester.pumpAndSettle();
       expect(link.disconnects, 1);
@@ -654,7 +657,14 @@ void main() {
       expect(
         repository.calls.length,
         before,
-        reason: 'leaving called something server-side; it must not',
+        reason: 'leaving asked the server for something a press never ordered',
+      );
+      // Since the empty-channel fix, leaving also sends the release backstop.
+      // It ends nothing by itself: the server decides after the grace.
+      expect(
+        repository.releases.length,
+        releasesBefore + 1,
+        reason: 'leaving must send the release signal exactly once',
       );
     });
 
