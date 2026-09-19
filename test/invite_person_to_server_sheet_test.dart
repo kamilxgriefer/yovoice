@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/models/server_creation.dart';
 import 'package:yovoice/features/servers/data/models/server_member_role.dart';
 import 'package:yovoice/features/servers/data/models/server_session.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
@@ -174,7 +175,7 @@ void main() {
       servers: Stream.value([_server('mod', 'Moderated')]),
       roles: const {'mod': ServerMemberRole.owner},
       inviteError: FirebaseFunctionsException(
-        message: 'member',
+        message: 'This person already belongs to this server.',
         code: 'failed-precondition',
       ),
     );
@@ -201,6 +202,67 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.text('Could not send the invite.'), findsOneWidget);
+    expect(key('invite-person-to-server-mod'), findsOneWidget);
+  });
+
+  testWidgets('an unverified inviter is asked to verify, not told the person '
+      'is already on the server, and can retry', (tester) async {
+    final repo = _Repo(
+      servers: Stream.value([_server('mod', 'Moderated')]),
+      roles: const {'mod': ServerMemberRole.owner},
+      inviteError: FirebaseFunctionsException(
+        message: 'Verify your email before continuing.',
+        code: 'failed-precondition',
+      ),
+    );
+    await pump(tester, repo);
+    await tester.tap(key('invite-person-to-server-mod'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Already on this server'), findsNothing);
+    expect(find.text('Verify your email'), findsOneWidget);
+    expect(key('invite-person-to-server-mod'), findsOneWidget);
+  });
+
+  testWidgets('a server activation refusal uses the shared availability copy '
+      'and stays retryable', (tester) async {
+    final repo = _Repo(
+      servers: Stream.value([_server('mod', 'Moderated')]),
+      roles: const {'mod': ServerMemberRole.owner},
+      inviteError: FirebaseFunctionsException(
+        message: 'This person already belongs to this server.',
+        code: 'failed-precondition',
+        details: const {'reason': serverActivationUnavailableReason},
+      ),
+    );
+    await pump(tester, repo);
+    await tester.tap(key('invite-person-to-server-mod'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Already on this server'), findsNothing);
+    expect(
+      find.text('This part of YO Voice is still being prepared.'),
+      findsOneWidget,
+    );
+    expect(key('invite-person-to-server-mod'), findsOneWidget);
+  });
+
+  testWidgets('any other failed-precondition is a retryable failure', (
+    tester,
+  ) async {
+    final repo = _Repo(
+      servers: Stream.value([_server('mod', 'Moderated')]),
+      roles: const {'mod': ServerMemberRole.owner},
+      inviteError: FirebaseFunctionsException(
+        message: 'Something else.',
+        code: 'failed-precondition',
+      ),
+    );
+    await pump(tester, repo);
+    await tester.tap(key('invite-person-to-server-mod'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Already on this server'), findsNothing);
     expect(key('invite-person-to-server-mod'), findsOneWidget);
   });
 }

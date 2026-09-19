@@ -246,7 +246,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   Future<void> _startCall(DirectCallMediaType mediaType) async {
     if (_startingCall || _openingChat || _removingFriend) return;
     final friend = widget.friend;
-    _startingCallType = mediaType;
+    // The tile's busy state is owned by the launcher: it may refuse before it
+    // ever reports busy (a live voice session), so the tapped media type is
+    // only recorded once the launcher actually starts.
     await launchDirectCall(
       context,
       calls: _calls,
@@ -269,7 +271,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       showMessage: _showMessage,
       onBusyChanged: (busy) => setState(() {
         _startingCall = busy;
-        if (!busy) _startingCallType = null;
+        _startingCallType = busy ? mediaType : null;
       }),
       onStartAudioInstead: () =>
           unawaited(_startCall(DirectCallMediaType.audio)),

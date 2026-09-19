@@ -11,6 +11,7 @@ import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
 import '../../data/models/server.dart';
+import '../../data/models/server_creation.dart';
 import '../../data/models/server_invite_authority.dart';
 import '../../data/models/server_member_role.dart';
 import '../../data/services/server_service.dart';
@@ -174,19 +175,49 @@ class _InvitePersonToServerSheetState extends State<InvitePersonToServerSheet> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        if (error is FirebaseFunctionsException &&
-            error.code == 'failed-precondition') {
+        if (_isAlreadyMemberRefusal(error)) {
           _rows[server.id] = _InviteRowState.alreadyMember;
           return;
         }
         _rows[server.id] = _InviteRowState.failed;
-        _failures[server.id] =
-            error is FirebaseFunctionsException &&
-                error.code == 'permission-denied'
-            ? copy.text('Could not send the invite.', 'Nie udało się zaprosić.')
-            : serverActionFailureCopy(error, copy, invite: true);
+        _failures[server.id] = _inviteFailureCopy(error, copy);
       });
     }
+  }
+
+  /// `failed-precondition` is shared by several backend refusals: the
+  /// server-shell activation gate (`details.reason`), the inviter's email
+  /// verification guard, and the membership check. Only the membership check
+  /// means the person is already on the server; everything else stays a
+  /// retryable failure with its own copy.
+  static const _alreadyMemberMessage =
+      'This person already belongs to this server.';
+  static const _emailVerificationMessage =
+      'Verify your email before continuing.';
+
+  static bool _isAlreadyMemberRefusal(Object error) =>
+      error is FirebaseFunctionsException &&
+      error.code == 'failed-precondition' &&
+      !isServerActivationUnavailableFailure(error) &&
+      error.message == _alreadyMemberMessage;
+
+  static String _inviteFailureCopy(Object error, AppLocalizations copy) {
+    if (isServerActivationUnavailableFailure(error)) {
+      return serverActionFailureCopy(error, copy, invite: true);
+    }
+    if (error is FirebaseFunctionsException) {
+      if (error.code == 'permission-denied') {
+        return copy.text(
+          'Could not send the invite.',
+          'Nie udało się zaprosić.',
+        );
+      }
+      if (error.code == 'failed-precondition' &&
+          error.message == _emailVerificationMessage) {
+        return copy.text('Verify your email', 'Zweryfikuj adres e-mail');
+      }
+    }
+    return serverActionFailureCopy(error, copy, invite: true);
   }
 
   List<Server> get _eligible => [

@@ -430,6 +430,28 @@ void main() {
       expect(fakes.calls.starts, 0);
     });
 
+    testWidgets('a live voice session refusal leaves no Connecting state '
+        'on either call tile', (tester) async {
+      final fakes = await pumpProfile(
+        tester,
+        voice: _FakeVoice(events: events, busy: true),
+      );
+      for (final tile in const [
+        'friend-profile-call-button',
+        'friend-profile-video-button',
+      ]) {
+        await tester.tap(key(tile));
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('Connecting…'), findsNothing);
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+        expect(enabled(tester, tile), isTrue);
+        expect(enabled(tester, 'friend-profile-message-button'), isTrue);
+      }
+      expect(fakes.calls.starts, 0);
+      await cleanUp(tester);
+    });
+
     testWidgets('single flight: a double tap starts one call and Message is '
         'disabled while it starts, with a Connecting label', (tester) async {
       final voice = _FakeVoice(events: events)..permissionGate = Completer();
