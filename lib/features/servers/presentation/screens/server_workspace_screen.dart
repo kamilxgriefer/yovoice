@@ -914,6 +914,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                       onInvite: _inviteAction(context, server, role),
                       onAddChannel: _addChannelAction(context, server, role),
                       onManage: _manageAction(context, server, channels, role),
+                      labelledSettings: true,
                       onBack: widget.onBack,
                       connectedChannelId: _session.isActive
                           ? _session.channel?.id

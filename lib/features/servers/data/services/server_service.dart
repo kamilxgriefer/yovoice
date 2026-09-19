@@ -237,6 +237,11 @@ abstract interface class ServerManagementRepository {
     required String serverId,
     required String requestId,
   });
+
+  /// Deletes a legacy (pre-V1, `serverSchemaVersion`-less) root through the
+  /// deployed owner callable `deleteClubSelf`. `deleteServerV1` refuses such
+  /// roots, so without this route their owners could not delete them at all.
+  Future<void> deleteLegacyServer({required String serverId});
 }
 
 abstract interface class ServerEventsRepository {
@@ -1578,6 +1583,12 @@ class ServerService
   }
 
   @override
+  Future<void> deleteLegacyServer({required String serverId}) async {
+    _requireId(serverId);
+    await _mutate('deleteClubSelf', {'clubId': serverId});
+  }
+
+  @override
   Stream<ServerMemberRole?> watchMyRole(String serverId) {
     _requireId(serverId);
     return _switchMap(_watchAccountId(), (uid) {
@@ -1668,13 +1679,23 @@ class ServerService
           .snapshots(),
       (snapshot) {
         // Mirrors locate roots, but every root has its own authorized read.
-        final ids = snapshot.docs
-            .map((doc) => serverString(doc.data()['clubId']) ?? doc.id)
-            .toSet()
-            .toList();
+        // The mirror's `role` rides along only as a directory hint (which
+        // action to offer); the callables stay the authority.
+        final roles = <String, ServerMemberRole?>{};
+        for (final doc in snapshot.docs) {
+          final id = serverString(doc.data()['clubId']) ?? doc.id;
+          roles.putIfAbsent(
+            id,
+            () => ServerMemberRole.parse(doc.data()['role']),
+          );
+        }
         return _combineNullable(
-          ids
-              .map((id) => _dropUnreadable(_dropDenied(watchServer(id))))
+          roles.keys
+              .map(
+                (id) => _dropUnreadable(
+                  _dropDenied(watchServer(id)),
+                ).map((server) => server?.withDirectoryRole(roles[id])),
+              )
               .toList(),
         );
       },
