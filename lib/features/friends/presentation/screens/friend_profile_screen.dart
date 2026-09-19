@@ -984,10 +984,14 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             }
             return Padding(
               padding: const EdgeInsets.only(top: 14),
+              // A full-width 44 px bar on the narrow / stacked layout.
               child: measure(
-                ProfileActionBar(
-                  key: const ValueKey('friend-profile-actions'),
-                  primary: _followButton(isFollowing),
+                SizedBox(
+                  width: double.infinity,
+                  child: ProfileActionBar(
+                    key: const ValueKey('friend-profile-actions'),
+                    primary: _followButton(isFollowing),
+                  ),
                 ),
               ),
             );
