@@ -19,7 +19,7 @@ import 'package:yovoice/features/rooms/data/room_links.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
-import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
+import 'package:yovoice/shared/widgets/voice/voice_player_row.dart';
 
 class MessageBubble extends StatelessWidget {
   const MessageBubble({
@@ -684,9 +684,21 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
     final duration = widget.message.durationSeconds ?? 0;
     final copy = AppLocalizations.of(context);
 
-    return Semantics(
-      button: true,
-      label: _failed
+    return VoicePlayerRow(
+      status: _loading
+          ? VoicePlayerRowStatus.loading
+          : _failed
+          ? VoicePlayerRowStatus.failed
+          : _playing
+          ? VoicePlayerRowStatus.playing
+          : _paused
+          ? VoicePlayerRowStatus.paused
+          : VoicePlayerRowStatus.idle,
+      durationSeconds: duration,
+      // No progress: this player reports play / pause / loading / failed and
+      // no position, so the bars stay a still silhouette rather than a fill
+      // invented from the duration.
+      semanticsLabel: _failed
           ? copy.text(
               'Voice message unavailable. Tap to retry.',
               'Wiadomość głosowa jest niedostępna. Dotknij, aby spróbować ponownie.',
@@ -698,71 +710,12 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
               'Odtwórz wiadomość głosową, {duration} s',
               values: <String, Object>{'duration': duration},
             ),
-      child: InkWell(
-        key: ValueKey<String>('direct-voice-${widget.message.id}'),
-        onTap: _toggle,
-        borderRadius: BorderRadius.circular(12),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 44),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox.square(
-                dimension: 44,
-                child: Center(
-                  child: _loading
-                      ? SizedBox.square(
-                          dimension: 24,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: widget.foregroundColor,
-                          ),
-                        )
-                      : Icon(
-                          _failed
-                              ? Icons.refresh_rounded
-                              : _playing
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-                          color: _failed
-                              ? widget.errorForegroundColor
-                              : widget.foregroundColor,
-                          size: 27,
-                        ),
-                ),
-              ),
-              const SizedBox(width: 2),
-              Flexible(
-                fit: FlexFit.loose,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    minWidth: 48,
-                    maxWidth: 126,
-                  ),
-                  // Still on purpose: the player reports play / pause /
-                  // loading / failed but no position, and no amplitude is
-                  // recorded, so the bars are the shared silhouette — never
-                  // a per-message shape invented from the duration.
-                  child: YoWaveform(
-                    height: 32,
-                    color: widget.foregroundColor.withValues(alpha: .82),
-                    barCount: 24,
-                    barGap: 2,
-                    barRadius: 20,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                '${duration ~/ 60}:${(duration % 60).toString().padLeft(2, '0')}',
-                style: TextStyle(
-                  color: widget.mutedForegroundColor,
-                  fontSize: 11,
-                ),
-              ),
-            ],
-          ),
-        ),
+      onTap: _toggle,
+      tapKey: ValueKey<String>('direct-voice-${widget.message.id}'),
+      style: VoicePlayerRowStyle.inline(
+        foreground: widget.foregroundColor,
+        mutedForeground: widget.mutedForegroundColor,
+        errorForeground: widget.errorForegroundColor,
       ),
     );
   }

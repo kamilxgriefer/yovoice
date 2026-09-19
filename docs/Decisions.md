@@ -115,6 +115,74 @@ type. No migration of existing Firestore documents was ever run.
 *write* `'community'` or `'broadcast'` — but reading `'podcast'` must keep
 working indefinitely, until proven otherwise.
 
+### Consciously NOT built, NOT simplified (voice-player family)
+
+- **Only the drawing moved.** `_VoiceMessageContentState` keeps
+  `_runPlayerCommand` / `_interruptPlayer` / `_mediaGeneration` /
+  `_ownsMediaLoad` / `_playOwnedSource` and both the `gs://` and `https://`
+  branches; `_VoiceReplyMiniPlayerState` keeps `_playToken`,
+  `_stillHoldsFloor`, `_abandonStalePlayback`, `_handleArbiter`,
+  `_ensurePlayer` and the lazy first-tap allocation. Not one line of either
+  was edited — the two `build()` bodies were replaced and nothing else.
+- **The two semantics shapes were parameterised, not unified.** The thread
+  row stays its own node (`container: true`, `toggled`, `excludeSemantics:
+  true`, the tap action on the node) because
+  `test/moments_semantics_activation_test.dart` performs
+  `SemanticsAction.tap` on it below a 1200 px slot; the bubble stays a plain
+  labelled button over children that keep their own semantics, because
+  `test/message_bubble_media_state_test.dart` and
+  `test/shared_media_screen_test.dart` drive it with `find.byIcon`. Excluding
+  the children is therefore what moves the action onto the node — the row
+  derives one from the other rather than offering two switches that can
+  disagree.
+- **The bubble did not gain a position sweep.** Its player subscribes to
+  `onPlayerStateChanged` only; adding `onPositionChanged` would be new
+  playback logic in a presentation phase, and inventing a fill from the
+  duration is exactly the dishonesty `YoWaveform` forbids. `progress` is
+  therefore nullable and the bubble passes null. A real sweep there is a
+  candidate for the Chats phase, not a regression.
+- **The bubble's waveform stays bounded, not `Expanded`.** A full-width row
+  would widen every voice bubble and push the reaction pill over the clock;
+  `test/message_bubble_media_state_test.dart` measures exactly that at
+  320–1440 px and 200 % text scale. `VoicePlayerRowStyle.inline` keeps the
+  `ConstrainedBox(48–126)` and `MainAxisSize.min`, `.contained` keeps
+  `Expanded`.
+- **The spinner keeps its own colour role.** The same test pins
+  `CircularProgressIndicator.color == palette.textPrimary` on an incoming
+  bubble in both themes (the injected foreground, so it survives the brand
+  gradient too), while the thread row spins in `palette.audioAccent`. One
+  "accent" default would have broken one of them, so `progressIndicator` is a
+  field of its own.
+- **The thread row still draws `StoryWaveform`.** A row with a real position
+  builds the Moment player's subclass, a row without one builds the plain
+  `YoWaveform`; `test/moment_position_single_source_test.dart` and
+  `test/moment_feed_card_redesign_test.dart` read `StoryWaveform` by type in
+  trees that also contain mini-players, so the type had to survive the move.
+- **No copy crossed into `lib/shared/`.** `test/localization_source_guard_test.dart`
+  scans that tree, and the words belong to the features anyway ("voice
+  message" vs "voice reply from {name}"), so `semanticsLabel` arrives
+  localized and the bubble's raw-copy budget stays at 1.
+- `VoiceReplyMiniPlayer.height` / `.discSize` / `.waveformHeight` and
+  `kVoiceReplyMiniPlayerTarget` stay exported and became the arguments the
+  caller hands `VoicePlayerRowStyle.contained`, so the numbers layouts
+  reserve space with are still the numbers the row draws with.
+- One deliberate visible normalisation: the bubble's clock was a raw
+  `TextStyle(fontSize: 11)` and is now `AppTypography.bodySmall` (12 px) with
+  tabular figures, like the thread row's — a clock that jumps width while it
+  counts is the defect the thread row had already fixed. The 200 % overflow
+  and reaction-pill contracts were re-run at 320 / 390 / 768 / 1440 px.
+- The mini-player keeps its snackbar and has no `failed` status; the bubble
+  keeps its retry glyph and has no snackbar. Both paths survive verbatim —
+  `VoicePlayerRowStatus.failed` simply goes unused on one surface.
+- Not this family and left alone: `VoiceCore`
+  (`lib/shared/widgets/voice/voice_core.dart`, the Rooms centrepiece, with
+  three inline hexes of its own), the recorder's preview transport in
+  `chat_screen.dart`, `server_family_memory_album.dart`'s composer and album
+  rows, `creator_pinned_moment_card.dart`,
+  `server_podcast_episodes_board.dart`, `downloaded_audio_screen.dart` and
+  `reel_draft_preview.dart` — all transport buttons, not play + waveform +
+  time rows.
+
 ### Reasoning
 
 Deleting a two-line compatibility branch is easy. Confirming zero
@@ -12896,6 +12964,7 @@ already exists (no `YoLiveBadge`, no `YoStoryRingAvatar`, no `YoPresenceDot`).
 | Waveform (bars) | `YoWaveform` — `lib/shared/widgets/waveform/yo_waveform.dart`; the progress-driven Moment players through its named subclass `StoryWaveform` in the same file, re-exported by `moments/…/moment_story_viewer.dart` so every existing import resolves | `HomeStaticWaveform` (`home/…/shared/home_static_waveform.dart`, file removed with its last caller `home/…/shared/home_here_now_hero.dart`), `_MiniWaveform` (`home/…/screens/home_screen.dart`), `_Waveform` (`moments/…/widgets/moment_card.dart`), `StoryWaveform` + `_TiledWaveformPainter` (`moments/…/widgets/moment_story_viewer.dart`; its five call sites — the story stage, `moments/…/screens/moment_detail_screen.dart`, `moments/…/widgets/moments_feed_view.dart` ×2, `moments/…/widgets/voice_reply_mini_player.dart` — keep constructing `StoryWaveform`), `_Waveform` (`servers/…/widgets/server_podcast_stage.dart`), the inline 24-bar row in `_VoiceMessageContent` (`messages/…/widgets/message_bubble.dart`) |
 | Nagłówek sekcji | `HomeSectionHeader` — `lib/shared/widgets/layout/home_section_header.dart` (moved from `home/presentation/widgets/shared/`, class name and `HomeSectionHeaderScale` kept because `test/home_rhythm_test.dart` pins them by type; grew `leading`, `subtitle`, `trailing` and `seeAllVocabulary`, every default reproducing the Home render byte for byte) | `_SectionHeader` + `_SectionLabel` (`home/…/desktop/voice_trending_card.dart`: "Live rooms" with its "See all rooms" action, "Most liked Moments"), `_SectionHeader` (`notifications/…/notifications_screen.dart`: Friend requests, Unread messages, and Activity through `_ActivityHeader`, which keeps its stacking rule and the `notifications-mark-all-read` button), `_SectionHeader` (`achievements/…/achievements_screen.dart`: one per category, key `awards-section-<id>`), `_SectionHeader` (`discover/…/discover_screen.dart`: Search results, Featured, Trending, Rising; the 36 px icon box survives as the trailer `_SectionIcon`) |
 | Kafelek stories (pierścień odsłuchania) | `MomentStoryTile` — `lib/features/moments/presentation/widgets/moment_story_tile.dart`, constructor and statics unchanged; the ring stops are `MomentStoryTile.ringColors` and the new `ringGradient` (unheard `[AppColors.primary, AppColors.secondary]` at `AppGradients.primary`'s angle, heard `palette.border` twice — the same angle in both states, so only the stops change), and every shape paints them: the disc `MomentSeenAvatar` (moved into the same file beside its colour definition, re-exported by `moment_discover_tiles.dart` so no import moved; grew `ringWidth` / `ringInset` (feed 2 / 1.5, tile 2.5 / 2), `ringKey` on the painted `Container`, `mediaRevision`, `fallbackIcon`), the tile's own `_ring` through it, and the `MomentAuthorCapsule` border. The ring is the listened state from `MomentViewsService` through `MomentViewedIds` (fail open), never presence — ADR-155, which the brief and the old file comment mis-cited as ADR-147 | the tile's private `_ring` and the discover copy of `MomentSeenAvatar` (both hardcoded `AppGradients.primary` for unheard, so the unheard stop lived in three places and `ringColors(seen: false)` fed only the capsule), the capsule's plain `LinearGradient(colors: stops)` (no angle), `_StoryBubble` + the `_voiceStories` rail (`home/…/screens/home_screen.dart`: always-on 3 px gradient, raw `NetworkImage`, no seen state, no semantics → `MomentViewedIds` + `buildMomentChains` + `MomentStoryTile`), and the story-look gradient of `_FriendStory` (`messages/…/messages_screen.dart`: three inline hexes `0xFFFF416C` / `0xFFB42DFF` / `0xFF5D00D7` around every friend bubble → a 2 px `palette.border` band, because that rail carries no Moments state) |
+| Inline player głosowy (play + waveform + czas) | `VoicePlayerRow` — `lib/shared/widgets/voice/voice_player_row.dart`, with `VoicePlayerRowStatus`, `VoicePlayerRowStyle` (`.contained` for a thread row, `.inline` for a chat bubble) and the one `formatVoiceClock`. Presentation only: the caller keeps its `AudioPlayer`, its factory seam, the media grant, the arbitration tokens, the retry and snackbar paths, the `ValueKey`, the localized label and the mapping of its own state to a `status` | the whole `build()` of `_VoiceMessageContent` (`messages/…/widgets/message_bubble.dart`: the 44 px icon box, the bounded `YoWaveform`, the raw 11 px clock) and of `VoiceReplyMiniPlayer` (`moments/…/widgets/voice_reply_mini_player.dart`: `build()` + `_disc()` + the private `_clock`, whose `m:ss` was a second copy of the bubble's) |
 
 The live variant's spec (from the brief's Twitch section): `AppColors.live`
 fill, `AppColors.onLive` copy, `AppTypography.labelSmall` (10 px, height 1.2)
@@ -13364,3 +13433,10 @@ contract in one place.
   themes and directions for a person to look at; the host frames that the
   existing harnesses cannot produce are listed as UNVERIFIED in
   `docs/Sessions/2026-09-19-slim-redesign.md`.
+- Every inline voice clip in Dark and Pearl is one row: the chat bubble, the
+  shared-media Voice tab, a Voice Moment reply and a Yeel voice comment draw
+  the same disc, bars and clock, and a change to any of them is a one-file
+  change. `test/voice_player_row_test.dart` pins the five statuses, the
+  spinner's separate ink, the `m:ss` formatter, the key on the full-row target
+  and the two semantics shapes, so the next copy of this row has to argue with
+  a test.

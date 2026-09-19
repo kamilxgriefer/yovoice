@@ -440,6 +440,44 @@ rules a screen author needs.
   both themes, the `ringKey` contract, the tile's 2.5 / 2 hand-down, the
   capsule's angle, the re-export), `test/desktop_home_test.dart` (no
   `MomentStoryTile` on desktop Home today).
+- **Inline voice clip = `VoicePlayerRow(status:, durationSeconds:,
+  semanticsLabel:, onTap:, style:)`**
+  (`lib/shared/widgets/voice/voice_player_row.dart`). One row for "an audio
+  clip you can play here": play/pause disc, waveform, `m:ss` clock — the chat
+  bubble, the shared-media Voice tab, a Voice Moment reply and a Yeel voice
+  comment. **Presentation only.** The caller keeps the `AudioPlayer` and its
+  factory seam, the media grant, the playback arbitration and its stale-grant
+  tokens, the retry and snackbar paths, the `ValueKey` (`tapKey`, which lands
+  on the `InkWell` spanning the whole row, so it is also the ≥ 44 px target
+  and the long-press path to a context-action wrapper), the localized label
+  and the mapping of its own booleans to a `VoicePlayerRowStatus` (`loading`
+  wins over everything, `paused` draws what `idle` draws, `failed` is the
+  retry glyph). Two shapes, through `VoicePlayerRowStyle`: `.contained(palette,
+  colorScheme)` is the thread row (`surfaceMuted` card, `border` hairline,
+  bordered 40 px disc on `surfaceRaised`, `audioAccent` spinner, waveform
+  filling the rest) and `.inline(foreground:, mutedForeground:,
+  errorForeground:)` is the bubble (no surface of its own, bare 44 px icon
+  box, inks injected because the same row is white on the outgoing gradient
+  and `textPrimary` on an incoming one, and a waveform bounded to 48–126 px so
+  the bubble keeps shrink-wrapping). `progress` is the player's REAL position
+  or nothing: a surface without a position stream passes null and gets a still
+  `YoWaveform` silhouette — never a fill invented from the duration — while a
+  surface with one gets `StoryWaveform` swept by `audioProgressGradient`. Copy
+  never enters this file (`lib/shared/` is under the localization guard), so
+  `semanticsLabel` arrives localized; `semanticsContainer` /
+  `excludeChildSemantics` / `toggled` choose between the thread row's own
+  node, which also carries the tap action, and the bubble's plain labelled
+  button whose children stay findable. Use `formatVoiceClock(seconds)`
+  wherever a clip's length is printed. Not this widget: transport buttons with
+  no waveform (the recorder preview, the album rows, the podcast episode
+  board), real audio level (`RoomEnergyWave`, the level meter, `VoiceCore`).
+  Contracts: `test/voice_player_row_test.dart` (statuses, the spinner's own
+  ink, the formatter, the key on the full-row target, both semantics shapes,
+  shrink-wrap vs. fill), `test/message_bubble_media_state_test.dart` (the
+  incoming spinner is `textPrimary` in both themes; no overflow and the
+  reaction pill stays below the clock at 320–1440 px / 200 %),
+  `test/moments_semantics_activation_test.dart` (the thread row is activated
+  through `SemanticsAction.tap`), `test/voice_reply_mini_player_test.dart`.
 
 ## Semantic colour ownership
 

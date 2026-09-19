@@ -5,13 +5,9 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
-import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
-import 'package:yovoice/core/theme/app_spacing.dart';
-import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/moments/presentation/widgets/reply_playback_arbiter.dart';
-import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart'
-    show StoryWaveform;
+import 'package:yovoice/shared/widgets/voice/voice_player_row.dart';
 
 /// One voice reply inside a thread: play/pause, a position-fed silhouette
 /// and the real duration of the recording.
@@ -239,7 +235,7 @@ class _VoiceReplyMiniPlayerState extends State<VoiceReplyMiniPlayer> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
-    final duration = _clock(widget.durationSeconds);
+    final duration = formatVoiceClock(widget.durationSeconds);
     final values = <String, Object>{
       'name': widget.authorName,
       'duration': duration,
@@ -256,94 +252,29 @@ class _VoiceReplyMiniPlayerState extends State<VoiceReplyMiniPlayer> {
             values: values,
           );
 
-    return Semantics(
+    return VoicePlayerRow(
       // `container: true` keeps the row its own node below a 1200 slot, where
-      // the surrounding thread fragment would otherwise absorb it.
-      container: true,
-      button: true,
+      // the surrounding thread fragment would otherwise absorb it, and the
+      // excluded children move the tap action onto that node.
+      semanticsContainer: true,
+      excludeChildSemantics: true,
       toggled: _playing,
-      label: label,
+      semanticsLabel: label,
+      status: _busy
+          ? VoicePlayerRowStatus.loading
+          : _playing
+          ? VoicePlayerRowStatus.playing
+          : VoicePlayerRowStatus.idle,
+      durationSeconds: widget.durationSeconds,
+      progress: _progress,
       onTap: () => unawaited(_toggle()),
-      excludeSemantics: true,
-      child: Material(
-        color: palette.surfaceMuted,
-        borderRadius: AppRadius.md,
-        child: InkWell(
-          key: ValueKey('voice-reply-mini-player-${widget.commentId}'),
-          borderRadius: AppRadius.md,
-          onTap: () => unawaited(_toggle()),
-          child: Container(
-            constraints: const BoxConstraints(
-              minHeight: VoiceReplyMiniPlayer.height,
-            ),
-            decoration: BoxDecoration(
-              borderRadius: AppRadius.md,
-              border: Border.all(color: palette.border),
-            ),
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppRhythm.item,
-              vertical: AppRhythm.tight,
-            ),
-            child: Row(
-              children: [
-                _disc(context),
-                const SizedBox(width: AppRhythm.item),
-                Expanded(
-                  child: ValueListenableBuilder<double>(
-                    valueListenable: _progress,
-                    builder: (context, progress, _) => StoryWaveform(
-                      progress: progress,
-                      height: VoiceReplyMiniPlayer.waveformHeight,
-                      barWidth: 2,
-                      barGap: 3,
-                      barRadius: 1,
-                      playedGradient: palette.audioProgressGradient,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: AppRhythm.item),
-                Text(
-                  duration,
-                  maxLines: 1,
-                  style: AppTypography.bodySmall.copyWith(
-                    color: palette.textSecondary,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _disc(BuildContext context) {
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    return SizedBox.square(
-      dimension: VoiceReplyMiniPlayer.discSize,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: palette.surfaceRaised,
-          shape: BoxShape.circle,
-          border: Border.all(color: palette.border),
-        ),
-        child: Center(
-          child: _busy
-              ? SizedBox.square(
-                  dimension: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: palette.audioAccent,
-                  ),
-                )
-              : Icon(
-                  _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                  size: 20,
-                  color: colors.onSurface,
-                ),
-        ),
+      tapKey: ValueKey('voice-reply-mini-player-${widget.commentId}'),
+      style: VoicePlayerRowStyle.contained(
+        palette,
+        Theme.of(context).colorScheme,
+        minHeight: VoiceReplyMiniPlayer.height,
+        controlSize: VoiceReplyMiniPlayer.discSize,
+        waveformHeight: VoiceReplyMiniPlayer.waveformHeight,
       ),
     );
   }
@@ -352,8 +283,3 @@ class _VoiceReplyMiniPlayerState extends State<VoiceReplyMiniPlayer> {
 /// The row is a single 48-px-tall target; [AppSizing.standardControlHeight]
 /// is the floor the Moments surfaces hold themselves to.
 const double kVoiceReplyMiniPlayerTarget = AppSizing.standardControlHeight;
-
-String _clock(int seconds) {
-  final safe = seconds < 0 ? 0 : seconds;
-  return '${safe ~/ 60}:${(safe % 60).toString().padLeft(2, '0')}';
-}
