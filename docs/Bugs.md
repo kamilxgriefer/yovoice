@@ -37,6 +37,28 @@ picker returned. Fixed by the media review (ADR-210): the file is shown first,
 and a video over the limit is blocked in the review with the reason and
 "Choose another". The service and backend checks are unchanged.
 
+## FIXED IN SOURCE — deleting a server was buried, failed for legacy roots and blamed permissions for a live call (2026-09-19)
+
+Kamil: "brakuje opcji usuwania serwerów". The backend (`deleteServerV1`,
+`deleteClubSelf`, `endServerChannelSessionV1`, the `serverDelete` cleanup) was
+deployed, but the only delete button sat under the Overview form of the
+management sheet, behind an unlabelled `...` in the server panel (inside the
+`Kanały` sheet on a phone); the servers list had no delete or leave at all;
+`ServerService.deleteServer` always called `deleteServerV1`, which refuses
+legacy (schema-less) roots, so their owners could never delete them; and the
+live-session `failed-precondition` showed the generic "action denied" copy.
+Fixed client-only: the list row has a `...` button, long press and secondary
+click opening "Usuń serwer" (owner, from the `users/{uid}/clubs` mirror role)
+or "Opuść serwer"; the wide panel shows a labelled settings entry; the sheet
+keeps leave/delete in a separate danger zone; the owner types the server name
+to confirm; legacy roots route to `deleteClubSelf`; a live channel turns the
+confirmation into "Zakończ rozmowy i usuń" (ends each live generation, then
+`deleteServerV1`, which still enforces the order) and a refusal says to end
+the conversation. Members are not notified in this build. Widget coverage:
+`test/server_delete_flow_test.dart`; rendered frames:
+`yovoice-evidence/2026-09-19/server-delete-frames/`. Still UNVERIFIED on a
+device against the deployed backend.
+
 ## FIXED IN SOURCE — the voice message bubble drew a different waveform per message from its duration (2026-09-19, Slim phase 0)
 
 Found by the phase-0 inventory for the waveform family. `_VoiceMessageContent`

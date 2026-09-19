@@ -136,6 +136,21 @@ extension ServerLocalizedCopy on AppLocalizations {
     'Delete this server permanently? This cannot be undone.',
     'Usunąć ten serwer na stałe? Tej operacji nie można cofnąć.',
   );
+  String get serverDeleteConsequences => text(
+    'Channels, messages and files will be removed, and members will lose access.',
+    'Kanały, wiadomości i pliki zostaną usunięte, a członkowie stracą dostęp.',
+  );
+  String get serverDeleteTypeName => text(
+    'Type the server name to confirm',
+    'Wpisz nazwę serwera, aby potwierdzić',
+  );
+  String get serverDeleteLiveBlocked => text(
+    'A conversation is live on this server. End it before deleting the server.',
+    'Na serwerze trwa rozmowa. Zakończ ją przed usunięciem serwera.',
+  );
+  String get serverEndAndDelete =>
+      text('End conversations and delete', 'Zakończ rozmowy i usuń');
+  String get serverDangerZone => text('Danger zone', 'Strefa zagrożenia');
   String get serverConfirm => text('Confirm', 'Potwierdź');
   String get serverCancel => text('Cancel', 'Anuluj');
   String get serverOwnerRole => text('Owner', 'Właściciel');

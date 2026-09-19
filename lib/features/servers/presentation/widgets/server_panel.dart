@@ -38,6 +38,7 @@ class ServerPanel extends StatefulWidget {
     this.onInvite,
     this.onAddChannel,
     this.onManage,
+    this.labelledSettings = false,
     this.onBack,
     this.connectedChannelId,
     this.session,
@@ -60,6 +61,12 @@ class ServerPanel extends StatefulWidget {
   /// Opens server, channel and member settings. Null hides the control for a
   /// read-only integration that does not provide the management contract.
   final VoidCallback? onManage;
+
+  /// Whether [onManage] is drawn as a labelled "Server settings" button under
+  /// the header (the tablet and desktop channel columns) instead of the
+  /// header's compact gear (the phone's channel sheet). The host decides from
+  /// its own width tier; both carry the key `server-manage-action`.
+  final bool labelledSettings;
 
   /// Present when the panel is hosted inline over the directory, so the
   /// person has a way back that the shell's rail does not provide.
@@ -295,19 +302,43 @@ class _ServerPanelState extends State<ServerPanel> {
                   ),
                 ),
               ),
-              if (widget.onManage != null)
+              if (widget.onManage != null && !widget.labelledSettings)
                 IconButton(
                   key: const ValueKey('server-manage-action'),
                   onPressed: widget.onManage,
-                  tooltip: copy.serverManage,
+                  tooltip: copy.serverSettings,
                   style: IconButton.styleFrom(
                     minimumSize: const Size(48, 48),
                     foregroundColor: palette.textSecondary,
                   ),
-                  icon: const Icon(Icons.more_horiz_rounded),
+                  icon: const Icon(Icons.settings_outlined),
                 ),
             ],
           ),
+          if (widget.onManage != null && widget.labelledSettings) ...[
+            const SizedBox(height: 8),
+            // It sits directly under the server's own name, so the visible
+            // label is the short "Settings"; the tooltip (also read by screen
+            // readers) names the whole "Server settings".
+            Tooltip(
+              message: copy.serverSettings,
+              child: TextButton.icon(
+                key: const ValueKey('server-manage-action'),
+                onPressed: widget.onManage,
+                style: TextButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                  alignment: AlignmentDirectional.centerStart,
+                  foregroundColor: palette.textSecondary,
+                ),
+                icon: const Icon(Icons.settings_outlined, size: 20),
+                label: Text(
+                  copy.settings,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ],
           if (canInvite) ...[
             const SizedBox(height: 12),
             OutlinedButton.icon(

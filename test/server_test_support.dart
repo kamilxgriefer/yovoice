@@ -586,6 +586,10 @@ class TestServerRepository
   }, () {});
 
   @override
+  Future<void> deleteLegacyServer({required String serverId}) =>
+      _answer<void>('deleteClubSelf', {'clubId': serverId}, () {});
+
+  @override
   Future<ServerChannelCreationResult> createChannel(
     ServerChannelCreationRequest request,
   ) => _answer(

@@ -13,9 +13,13 @@ import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 
 import '../../data/models/server.dart';
+import '../../data/models/server_channel.dart';
+import '../../data/models/server_member_role.dart';
 import '../../data/services/server_media_connector.dart';
 import '../../data/services/server_service.dart';
+import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
+import '../widgets/server_delete_flow.dart';
 import 'create_server_screen.dart';
 import 'server_workspace_screen.dart';
 
@@ -68,6 +72,15 @@ class _ServersScreenState extends State<ServersScreen> {
   String? _inlineServerId;
   double _width = 0;
 
+  /// Rows this directory just deleted or left. They are hidden at once, so
+  /// the list never shows a server the person has just removed while the
+  /// root's closing read (or the mirror sweep) is still on its way.
+  final _removedIds = <String>{};
+
+  /// Rows with a delete or leave in flight: their action button shows
+  /// progress and a second tap cannot start a second call.
+  final _busyIds = <String>{};
+
   @override
   void initState() {
     super.initState();
@@ -108,6 +121,194 @@ class _ServersScreenState extends State<ServersScreen> {
         ),
       ),
     );
+  }
+
+  /// Delete for the owner, leave for everyone else — the role is the
+  /// viewer's own directory mirror; the callable stays the authority.
+  bool _ownsServer(Server server) {
+    final role = server.directoryRole;
+    if (role != null) return role == ServerMemberRole.owner;
+    final me = _repository.currentUserId;
+    return me.isNotEmpty && server.ownerId == me;
+  }
+
+  Future<void> _showActions(Server server) async {
+    if (_repository is! ServerManagementRepository) return;
+    if (_busyIds.contains(server.id)) return;
+    final copy = AppLocalizations.of(context);
+    final owner = _ownsServer(server);
+    final action = await showModalBottomSheet<_DirectoryAction>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Column(
+          key: const ValueKey('server-directory-actions-sheet'),
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text(
+                server.name.isEmpty ? copy.serversTitle : server.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: AppTypography.titleMedium.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: sheetContext.appPalette.textPrimary,
+                ),
+              ),
+            ),
+            if (owner)
+              ListTile(
+                key: const ValueKey('server-directory-delete'),
+                minTileHeight: 56,
+                leading: Icon(
+                  Icons.delete_outline_rounded,
+                  color: sheetContext.appPalette.dangerForeground,
+                ),
+                title: Text(
+                  copy.serverDelete,
+                  style: TextStyle(
+                    color: sheetContext.appPalette.dangerForeground,
+                  ),
+                ),
+                onTap: () =>
+                    Navigator.of(sheetContext).pop(_DirectoryAction.delete),
+              )
+            else
+              ListTile(
+                key: const ValueKey('server-directory-leave'),
+                minTileHeight: 56,
+                leading: Icon(
+                  Icons.logout_rounded,
+                  color: sheetContext.appPalette.dangerForeground,
+                ),
+                title: Text(
+                  copy.serverLeave,
+                  style: TextStyle(
+                    color: sheetContext.appPalette.dangerForeground,
+                  ),
+                ),
+                onTap: () =>
+                    Navigator.of(sheetContext).pop(_DirectoryAction.leave),
+              ),
+            const SizedBox(height: AppRhythm.tight),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _DirectoryAction.delete:
+        await _delete(server);
+      case _DirectoryAction.leave:
+        await _leave(server);
+    }
+  }
+
+  Future<void> _delete(Server server) async {
+    final management = _repository as ServerManagementRepository;
+    // The live channels decide whether the confirmation offers "End
+    // conversations and delete". One bounded read; an unreadable list simply
+    // offers the plain delete, which the backend still refuses while live.
+    var live = const <ServerChannel>[];
+    if (!server.isLegacy) {
+      try {
+        live = liveServerChannels(
+          await _repository
+              .watchChannels(server.id)
+              .first
+              .timeout(const Duration(seconds: 5)),
+        );
+      } catch (_) {
+        live = const [];
+      }
+    }
+    if (!mounted) return;
+    if (!await confirmServerDeletion(
+      context,
+      server: server,
+      liveChannels: live,
+    )) {
+      return;
+    }
+    await _runRowAction(
+      server,
+      () => deleteServerFor(
+        repository: _repository,
+        management: management,
+        server: server,
+        liveChannels: live,
+      ),
+      failureCopy: (error, copy) =>
+          serverDeletionFailureCopy(error, copy, server),
+    );
+  }
+
+  Future<void> _leave(Server server) async {
+    final management = _repository as ServerManagementRepository;
+    final copy = AppLocalizations.of(context);
+    final confirmed =
+        await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            key: const ValueKey('server-leave-dialog'),
+            content: Text(copy.serverLeaveQuestion),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(copy.serverCancel),
+              ),
+              FilledButton(
+                key: const ValueKey('server-leave-confirm'),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(copy.serverLeave),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+    await _runRowAction(
+      server,
+      () => management.leaveServer(
+        serverId: server.id,
+        requestId: _repository.newRequestId(),
+      ),
+      failureCopy: (error, copy) => serverActionFailureCopy(error, copy),
+    );
+  }
+
+  Future<void> _runRowAction(
+    Server server,
+    Future<void> Function() action, {
+    required String Function(Object error, AppLocalizations copy) failureCopy,
+  }) async {
+    if (_busyIds.contains(server.id)) return;
+    setState(() => _busyIds.add(server.id));
+    try {
+      await action();
+      if (!mounted) return;
+      setState(() {
+        _busyIds.remove(server.id);
+        _removedIds.add(server.id);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _busyIds.remove(server.id));
+      final copy = AppLocalizations.of(context);
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            key: const ValueKey('server-directory-action-error'),
+            content: Text(failureCopy(error, copy)),
+          ),
+        );
+    }
   }
 
   @override
@@ -196,7 +397,10 @@ class _ServersScreenState extends State<ServersScreen> {
             ),
           );
         }
-        final servers = snapshot.data ?? const <Server>[];
+        final servers = [
+          for (final server in snapshot.data ?? const <Server>[])
+            if (!_removedIds.contains(server.id)) server,
+        ];
         return LayoutBuilder(
           builder: (context, constraints) {
             final padding = ResponsiveContentFrame.adaptivePagePadding(
@@ -275,6 +479,10 @@ class _ServersScreenState extends State<ServersScreen> {
                           child: _ServerTile(
                             server: server,
                             onTap: () => _open(server),
+                            onActions: _repository is ServerManagementRepository
+                                ? () => _showActions(server)
+                                : null,
+                            busy: _busyIds.contains(server.id),
                           ),
                         ),
                     ],
@@ -291,10 +499,25 @@ class _ServersScreenState extends State<ServersScreen> {
 /// One server in the directory: a flat 64–68 px row (squircle, name, what
 /// kind of server it is and how many members it has, the description on one
 /// more line) with a hover / press wash instead of a bordered card.
+enum _DirectoryAction { delete, leave }
+
 class _ServerTile extends StatelessWidget {
-  const _ServerTile({required this.server, required this.onTap});
+  const _ServerTile({
+    required this.server,
+    required this.onTap,
+    this.onActions,
+    this.busy = false,
+  });
   final Server server;
   final VoidCallback onTap;
+
+  /// Opens the row's action sheet (delete for the owner, leave otherwise)
+  /// from the trailing button, a long press or a secondary click. Null for a
+  /// read-only repository that cannot administer a server.
+  final VoidCallback? onActions;
+
+  /// A delete or leave for this row is in flight.
+  final bool busy;
 
   static const double _tileSize = 44;
 
@@ -339,29 +562,64 @@ class _ServerTile extends StatelessWidget {
         ],
       ],
     );
-    final arrow = Icon(
+    final chevron = Icon(
       Icons.chevron_right_rounded,
       size: 22,
       color: palette.textTertiary,
     );
+    final actions = onActions;
+    final Widget arrow = actions == null
+        ? chevron
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (busy)
+                const SizedBox.square(
+                  dimension: 48,
+                  child: Center(
+                    child: SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                )
+              else
+                IconButton(
+                  key: ValueKey('server-directory-actions-${server.id}'),
+                  onPressed: actions,
+                  tooltip: copy.serverManage,
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                    foregroundColor: palette.textSecondary,
+                  ),
+                  icon: const Icon(Icons.more_horiz_rounded),
+                ),
+              chevron,
+            ],
+          );
     return Material(
       key: ValueKey('server-directory-${server.id}'),
       color: Colors.transparent,
       shape: const RoundedRectangleBorder(borderRadius: AppRadius.md),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: onTap,
+        onTap: busy ? null : onTap,
+        onLongPress: busy ? null : actions,
+        onSecondaryTap: busy ? null : actions,
         child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppRhythm.item,
-            vertical: AppRhythm.item,
+          padding: EdgeInsetsDirectional.only(
+            start: AppRhythm.item,
+            end: actions == null ? AppRhythm.item : AppRhythm.hairline,
+            top: AppRhythm.item,
+            bottom: AppRhythm.item,
           ),
           child: LayoutBuilder(
             builder: (context, constraints) {
               final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
               final stacked =
                   textScale > 1.3 &&
-                  constraints.maxWidth - 96 < 160 * textScale;
+                  constraints.maxWidth - (actions == null ? 96 : 144) <
+                      160 * textScale;
               if (stacked) {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
