@@ -5898,6 +5898,53 @@ denied terms and per-account `resource-exhausted` responses, plus growth of
 `gifAssets`. `provider_error` and external-provider quota/key alerts are dormant
 while YO Voice Originals is selected.
 
+## GIPHY activation — option B (ADR-210)
+
+**Nothing here is deployed by merging the source.** The committed source keeps
+`GIPHY_SEND_RESOLVE_ENABLED = false` in `functions/index.js`, so `resolveGif`
+is not exported, no `GIPHY_API_KEY` is declared, and `getGifCatalog` answers
+`resolvableProviders: []`. Builds without `--dart-define=YOVOICE_GIPHY_API_KEY`
+show YO Voice Originals only. The send paths already accept both providers
+(the allow-set), which is inert until a GIPHY record exists.
+
+Owner prerequisites (Kamil):
+
+1. GIPHY developer account and an API app at developers.giphy.com; apply for a
+   production key ("Upgrade to Production") with picker screenshots showing
+   the official mark. Ask GIPHY in the same application to confirm the
+   server-side `GET /v1/gifs/{id}` lookup at send time.
+2. Place the official "Powered By GIPHY" artwork, unmodified, at
+   `assets/images/giphy_powered_by_on_light.png` (for light backgrounds) and
+   `assets/images/giphy_powered_by_on_dark.png` (for dark backgrounds). Until
+   then the picker shows GIPHY's wording as plain text.
+3. Set the server secret; paste the key at the hidden prompt, never as an
+   argument, and approve the IAM grant the CLI offers:
+   `firebase functions:secrets:set GIPHY_API_KEY --project yovoice-ec54a`
+4. Update the privacy policy and the yovoice.app privacy page: GIPHY receives
+   the IP address and device information of anyone who loads a GIPHY GIF, and
+   "Load GIFs automatically" turns automatic loading and GIPHY analytics off.
+
+Source activation (one reviewed commit): set `GIPHY_SEND_RESOLVE_ENABLED =
+true`; add `resolveGif` to `EXPORT_NAMES` in
+`functions/test/cold_start_module_graph.test.js`; update
+`functions/test/optional_secret_discovery.test.js` so the committed source
+requires `GIPHY_API_KEY` exactly on `resolveGif`; run the Functions GIF suites
+under the Firestore emulator.
+
+Deploy wave (explicit authorization required; exact selectors only):
+`functions:getGifCatalog,functions:resolveGif,functions:sendDirectMessage,functions:sendRoomMessage,functions:sendClubMessage`.
+Read every revision back as ACTIVE and confirm `secretEnvironmentVariables`
+contains `GIPHY_API_KEY` on `resolveGif` only. Then ship a client built with
+`--dart-define=YOVOICE_GIPHY_API_KEY=<client key>` (from the CI secret store,
+never committed). Canary: send one GIPHY GIF and one Original in a DM and a
+Server text channel on Android and iOS; report the GIPHY GIF, block it through
+`moderateReport`, and confirm a re-send fails with `blocked`.
+
+Rollback: `appConfig/gif.enabled = false` (write the boolean; never delete the
+document). App Check enforcement (`YOVOICE_ENFORCE_GIF_APP_CHECK=true`) is a
+later, separate redeploy after the App Check console shows verified traffic on
+Android, iOS and web.
+
 ## Servers V1 static registration and runtime activation
 
 > **Production is already activated — read this before following the phases.**

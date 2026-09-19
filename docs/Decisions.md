@@ -10392,6 +10392,11 @@ by the Reel feed ranking entry, and 171 was then taken by the Home vertical
 rhythm entry, so it is 172. Anything citing "ADR-167, GIFs" or "ADR-171, GIFs"
 means this.)*
 
+**Amendment — 2026-09-19.** GIPHY is now designed as client-side search with
+server-side resolution by id at send time, per GIPHY's current terms; see
+[ADR-210](#adr-210-giphy-is-searched-by-the-client-and-resolved-by-the-server-at-send-time-option-b).
+The server-proxied search described below stays dormant.
+
 **Amendment — 2026-09-13.** The provider and rollout status below describe the
 original third-party design and are superseded for the current release by
 **YO Voice Originals**. Sixteen original G-rated animations ship in the app at
@@ -13941,3 +13946,118 @@ than a primitive built on a premise that a test or the schema contradicts.
   - the dead Home chains and `MomentStoryTile`'s missing mount (phase 1,
     Roadmap 0n);
   - the two failing screenshot-harness fixtures (`docs/Bugs.md`).
+
+## ADR-210: GIPHY is searched by the client and resolved by the server at send time (option B)
+
+*(Numbered 210 on branch `nb/giphy` as the next free number after ADR-209. If
+another branch takes 210 first it may be renumbered at merge; code comments
+that cite "ADR-210" then mean this entry.)*
+
+**Context (2026-09-19).** ADR-172 designed GIPHY as a server-proxied surface:
+`searchGifs` would call GIPHY with a Secret Manager key and return metadata.
+Re-reading GIPHY's current API documentation found that design in conflict with
+the terms: Search and Trending must be requested **from the client**, and the
+docs say not to proxy API calls or media loads. The GIPHY adapter
+(`functions/media/gif/giphy_provider.js`) was therefore dormant behind an
+activation hold. Two further gaps blocked any GIPHY launch: the send path
+(`resolveMessageGif`) accepted exactly one provider, so switching the catalog to
+GIPHY would have made every YO Voice Original — including every Originals
+recent — unsendable; and GIPHY's Action Register pingbacks (`onload`, `onclick`,
+`onsent`) and official "Powered By GIPHY" mark were not implemented. Kamil chose
+option B on 2026-09-19 ("zatwierdzam wszystko, opcja b").
+
+**Decision.**
+
+- **Search and Trending run in the app.** `GiphyClient`
+  (`lib/features/media/data/services/giphy_client.dart`) calls
+  `api.giphy.com/v1/gifs/{search,trending}` directly with `rating=g` pinned as a
+  constant, `bundle=messaging_non_clips`, and re-filters every result to rating
+  `g`. It derives the message URL from the id with the same template as
+  `gif_ref.js`, drops ids outside the shared grammar, holds preview and
+  analytics URLs to `https` on `giphy.com`, and mirrors the server's static
+  query denylist so a denied term never reaches GIPHY from the app either.
+- **The client key is a compile-time define: `YOVOICE_GIPHY_API_KEY`.** No
+  define means `GiphyClient.fromEnvironment()` is null and the picker is exactly
+  the Originals-only picker that shipped before. The key is never logged,
+  stored, or sent to YO Voice; `GiphyClientException` carries only a status.
+- **The server stays the send-time authority.** The client sends only
+  `{provider: "giphy", id}`. A new callable, `resolveGif`, fetches that one id
+  (`GET /v1/gifs/{id}`) with the server's `GIPHY_API_KEY` secret, refuses a
+  non-`g` rating, a title that trips the static denylist, a blocked or
+  suppressed asset, and a mismatched answer, then writes the `gifAssets` record
+  (the pinned CDN URL is recomputed, never copied) that the message transaction
+  already reads. It charges the per-account bucket first and a separate hourly
+  provider budget (default 90, under a beta key's 100/hour) before any provider
+  call; an existing record answers without contacting GIPHY, so a GIF costs one
+  provider call the first time anyone sends it. 401/403/429 trip the existing
+  breaker. Reports keep the existing `reportGifAsset` → `reports` →
+  `moderateReport` path unchanged.
+- **Every send path serves an allow-set.** `resolveMessageGif` accepts
+  `providerNames`; `functions/index.js` wires `[yovoice, giphy]` into
+  `sendDirectMessage`, `sendRoomMessage` and `sendClubMessage` (Server text
+  channels use the club path). A GIPHY reference resolves only once
+  `resolveGif` has written its server-owned record, so accepting it ahead of the
+  resolver is inert, and Originals can never be stranded by a provider flip.
+  The legacy single `gifProviderName` still works and `fake` stays refused
+  outside the emulator/test environment.
+- **`resolveGif` is source-gated OFF** (`GIPHY_SEND_RESOLVE_ENABLED = false` in
+  `functions/index.js`). Enabling it declares the `GIPHY_API_KEY` secret and
+  adds an export, so it is a reviewed source change made together with the
+  pinned export list (`test/cold_start_module_graph.test.js`) and the
+  secret-discovery expectation, after the secret exists. While it is off,
+  `getGifCatalog` returns `resolvableProviders: []` (a new, additive response
+  field) and the client shows GIPHY only when that list contains `giphy` — so a
+  build carrying a key can never offer a GIF the deployed server cannot send.
+- **Attribution.** The picker heads the GIPHY section with the official
+  "Powered By GIPHY" mark and repeats it in the footer whenever GIPHY results
+  or GIPHY recents are on screen (`YoGiphyAttribution`, light and dark variants
+  at `assets/images/giphy_powered_by_on_light.png` and
+  `assets/images/giphy_powered_by_on_dark.png`). The artwork is GIPHY's: it is
+  not drawn or approximated in the repo. Until the official files are placed at
+  those paths the widget shows GIPHY's wording as plain text, so attribution is
+  never missing.
+- **Action Register pingbacks.** `GiphyPingbacks` registers `onload` once per
+  result per picker session, `onclick` on a deliberate choice (which arms one
+  `onsent`), and `onsent` only after the server commits the message. Each is
+  tagged with a per-install GIPHY `random_id` (from `/v1/randomid`, stored only
+  on the device, never linked to the YO Voice account) sent as `customer_id`,
+  plus `ts`.
+- **"Load GIFs automatically" gates GIPHY contact.** Off means no pingback of
+  any kind, no `/randomid` request, and no GIPHY trending request when the tab
+  opens; a search the person types still runs and its results render
+  tap-to-load. The preference key and its default are unchanged.
+
+**Reasoning.** Option B is compliant with GIPHY's published terms without
+waiting for written approval of a proxy, and keeps every safety property the
+server already owned: rating pin, denylist, block list, per-account and global
+budgets, and a report path that blames no member. Server-side resolution by id
+is a single lookup per chosen asset rather than a proxy of search; GIPHY's
+confirmation of it is part of the production-key application. The allow-set
+removes the split-revision hazard the investigation found (the 2026-09-14 class
+of outage). Source-gating the resolver keeps the committed export map and the
+secret-free deploy discovery unchanged until the secret genuinely exists.
+
+**Consequences.**
+
+- **Privacy.** Every rendered GIPHY GIF sends the viewer's IP address and
+  User-Agent to GIPHY, recipients included, and search requests go from the
+  device to GIPHY. Settings now states this under "Load GIFs automatically" in
+  every locale; the privacy policy and yovoice.app must say the same before
+  launch.
+- **The client key is extractable from any build.** That is GIPHY's model for
+  client keys; rotation needs a new build. The server secret is separate and
+  can be rotated without a release.
+- **App Check stays telemetry-first.** `resolveGif` inherits
+  `YOVOICE_ENFORCE_GIF_APP_CHECK` (false). Attestation is not healthy on Android
+  (undecodable tokens, Play Integrity API not enabled), iOS (App Attest
+  entitlement missing) or web (no reCAPTCHA site key), so enforcing now would
+  refuse most traffic. With enforcement off the resolver is bounded by Auth,
+  the per-account bucket and its hourly budget. Enforcement is a later,
+  separate redeploy once console metrics show verified traffic per platform.
+- **Blocking stays non-retroactive**, as in ADR-172. A GIPHY GIF can only be
+  reported once it has been resolved (sent or chosen), because the report path
+  reads `gifAssets`.
+- **Older clients** ignore `resolvableProviders`, keep sending Originals and
+  render received GIPHY messages through the existing pinned-URL path.
+- Activation steps are in
+  [DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-210).
