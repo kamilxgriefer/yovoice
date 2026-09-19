@@ -29,7 +29,7 @@ Android, Chrome), `MomentDetailPanel` drag-seek.
 ## Next build after 3.0.0 — confirm before upload (T4) — source on `nb/confirm-upload` — 2026-09-19
 
 **Status: Done in source, not released.** One review surface for media picked
-from a library ([ADR-210](Decisions.md#adr-210-one-confirm-before-send-primitive-for-picked-media)):
+from a library ([ADR-211](Decisions.md#adr-211-one-confirm-before-send-primitive-for-picked-media)):
 direct-message Photo library and Video library, and Company team files, now
 show what was picked, with size and length, before anything is queued or
 uploaded; over-limit files are blocked in the review with a re-pick. Camera
@@ -562,7 +562,7 @@ their separate production-deployment gates.
   **Mark all read** drains inboxes larger than 400 rows.
 
 - **GIPHY GIFs, option B — client search, server resolve-by-id — source on
-  branch `nb/giphy` 2026-09-19 (ADR-210)** (**NOT DEPLOYED; OWNER STEPS
+  branch `nb/giphy` 2026-09-19 (ADR-213)** (**NOT DEPLOYED; OWNER STEPS
   PENDING**): the app searches GIPHY directly with `rating=g` pinned and a
   compile-time key (`YOVOICE_GIPHY_API_KEY`; none means Originals only), shows
   GIPHY beside the Originals under the official "Powered By GIPHY" mark, and
@@ -572,7 +572,7 @@ their separate production-deployment gates.
   accepts an allow-set of both providers. Settings discloses what GIPHY
   receives, in every locale. Waiting on: the GIPHY production key, the official
   mark files, the `GIPHY_API_KEY` secret, the privacy-policy update, the source
-  flip and one deploy wave ([DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-210)).
+  flip and one deploy wave ([DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-213)).
 
 - **GIFs in the composer — production-original catalog complete in source
   2026-09-13 (ADR-172/173)** (**BUILD 27 CANDIDATE; BACKEND DEPLOYMENT STILL

@@ -352,7 +352,7 @@ void main() {
     );
     await tester.tap(find.text('Dodaj plik'));
     await tester.pumpAndSettle();
-    // The picked file is confirmed in the media review first (ADR-210).
+    // The picked file is confirmed in the media review first (ADR-211).
     await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
     await tester.pumpAndSettle();
     expect(repository.companyFileUploads, 1);

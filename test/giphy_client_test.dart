@@ -19,7 +19,7 @@ class _MemoryRandomIdStore implements GiphyRandomIdStore {
 }
 
 void main() {
-  group('GiphyClient (ADR-210 client-side search)', () {
+  group('GiphyClient (ADR-213 client-side search)', () {
     test('the build carries no key in tests, so the client is absent', () {
       expect(GiphyClient.apiKeyDefine, 'YOVOICE_GIPHY_API_KEY');
       expect(GiphyClient.isConfiguredInBuild, isFalse);

@@ -118,7 +118,7 @@ class _ServerCompanyFilesBoardState extends State<ServerCompanyFilesBoard> {
   }
 
   /// Nothing reaches the shelf before the member has seen what they picked
-  /// (ADR-210). The upload itself stays on the board, with its progress row.
+  /// (ADR-211). The upload itself stays on the board, with its progress row.
   Future<YoMediaSendDecision?> _reviewSelection(
     ServerCompanyFileSelection selection,
   ) {

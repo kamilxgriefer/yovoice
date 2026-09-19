@@ -33,7 +33,7 @@ and the arena feel of a diagonal flick from the bottom edge.
 longer (or over-64 MB) video from the library was accepted by the picker and
 refused after the enqueue, as a snackbar. Library photos and videos in a
 direct chat, and Company team files, were queued or uploaded the moment the
-picker returned. Fixed by the media review (ADR-210): the file is shown first,
+picker returned. Fixed by the media review (ADR-211): the file is shown first,
 and a video over the limit is blocked in the review with the reason and
 "Choose another". The service and backend checks are unchanged.
 

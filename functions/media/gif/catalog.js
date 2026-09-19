@@ -9,7 +9,7 @@
 //                        so trending is not a second function and not a second
 //                        cold start.
 //   reportGifAsset()  -> a `reports` document in the queue that already exists.
-//   resolveGif(...)   -> ADR-210 option B, registered ONLY when a remote
+//   resolveGif(...)   -> ADR-213 option B, registered ONLY when a remote
 //                        provider is source-enabled for send-time resolution:
 //                        the client searched GIPHY itself and sends
 //                        `{provider, id}`; this callable fetches that one id
@@ -235,7 +235,7 @@ function catalogResponse(state, { resolvableProviders = [] } = {}) {
     // Named so the client can render "Only GIFs rated G" honestly rather than
     // asserting a safety level it cannot verify.
     minimumQueryLength: 2,
-    // ADR-210, additive. Remote providers whose ids this deployment resolves
+    // ADR-213, additive. Remote providers whose ids this deployment resolves
     // at send time (`resolveGif`). A client that searches a provider itself
     // shows those results ONLY when that provider is listed here, so a build
     // carrying a client key can never offer a GIF the server cannot send.
@@ -394,7 +394,7 @@ function createGifFunctions({
   enforceAppCheck = false,
   log = logger,
   providerName = process.env.GIF_PROVIDER,
-  // ADR-210 option B. Remote providers whose ids are resolved server-side at
+  // ADR-213 option B. Remote providers whose ids are resolved server-side at
   // send time. Source-selected (never environment) for the same reason the
   // catalog provider is: deploy discovery reads the export map before .env.
   resolveProviders = [],

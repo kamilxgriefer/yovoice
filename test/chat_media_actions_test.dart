@@ -126,7 +126,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Photo library'));
     await tester.pumpAndSettle();
-    // Library picks are confirmed in the media review first (ADR-210).
+    // Library picks are confirmed in the media review first (ADR-211).
     await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
     await tester.pumpAndSettle();
 
@@ -170,7 +170,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Video library'));
     await tester.pumpAndSettle();
-    // Library picks are confirmed in the media review first (ADR-210).
+    // Library picks are confirmed in the media review first (ADR-211).
     await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
     await tester.pumpAndSettle();
 

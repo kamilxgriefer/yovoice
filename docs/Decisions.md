@@ -10394,7 +10394,7 @@ means this.)*
 
 **Amendment — 2026-09-19.** GIPHY is now designed as client-side search with
 server-side resolution by id at send time, per GIPHY's current terms; see
-[ADR-210](#adr-210-giphy-is-searched-by-the-client-and-resolved-by-the-server-at-send-time-option-b).
+[ADR-213](#adr-213-giphy-is-searched-by-the-client-and-resolved-by-the-server-at-send-time-option-b).
 The server-proxied search described below stays dormant.
 
 **Amendment — 2026-09-13.** The provider and rollout status below describe the
@@ -14057,7 +14057,7 @@ position on release; that is intended.
 
 ---
 
-## ADR-210: One confirm-before-send primitive for picked media
+## ADR-211: One confirm-before-send primitive for picked media
 
 **Date:** 2026-09-19 · **Status:** accepted (source on `nb/confirm-upload`,
 next build after 3.0.0+34) · **Decisions:** `docs/briefs/2026-09-19-next-build-decisions.md`
@@ -14133,11 +14133,11 @@ idempotency (ADR-204, ADR-205) are unchanged.
 - Frames: `yovoice-evidence/2026-09-19/next-build/confirm-upload/` (390 and
   1440, Dark and Pearl), from `test/nb_confirm_upload_capture.dart`.
 
-## ADR-210: GIPHY is searched by the client and resolved by the server at send time (option B)
+## ADR-213: GIPHY is searched by the client and resolved by the server at send time (option B)
 
 *(Numbered 210 on branch `nb/giphy` as the next free number after ADR-209. If
 another branch takes 210 first it may be renumbered at merge; code comments
-that cite "ADR-210" then mean this entry.)*
+that cite "ADR-213" then mean this entry.)*
 
 **Context (2026-09-19).** ADR-172 designed GIPHY as a server-proxied surface:
 `searchGifs` would call GIPHY with a Secret Manager key and return metadata.
@@ -14246,4 +14246,4 @@ secret-free deploy discovery unchanged until the secret genuinely exists.
 - **Older clients** ignore `resolvableProviders`, keep sending Originals and
   render received GIPHY messages through the existing pinned-URL path.
 - Activation steps are in
-  [DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-210).
+  [DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-213).

@@ -42,7 +42,7 @@ class SharedPreferencesGiphyRandomIdStore implements GiphyRandomIdStore {
 /// The three GIPHY Action Register events.
 enum GiphyPingbackEvent { onLoad, onClick, onSent }
 
-/// GIPHY Action Register pingbacks (ADR-210).
+/// GIPHY Action Register pingbacks (ADR-213).
 ///
 /// GIPHY's API terms ask integrations to register `onload` when a result is
 /// shown, `onclick` when one is chosen and `onsent` when it is sent, each

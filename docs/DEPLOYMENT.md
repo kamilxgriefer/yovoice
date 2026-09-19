@@ -5898,7 +5898,7 @@ denied terms and per-account `resource-exhausted` responses, plus growth of
 `gifAssets`. `provider_error` and external-provider quota/key alerts are dormant
 while YO Voice Originals is selected.
 
-## GIPHY activation — option B (ADR-210)
+## GIPHY activation — option B (ADR-213)
 
 **Nothing here is deployed by merging the source.** The committed source keeps
 `GIPHY_SEND_RESOLVE_ENABLED = false` in `functions/index.js`, so `resolveGif`

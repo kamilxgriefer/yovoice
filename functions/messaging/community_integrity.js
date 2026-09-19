@@ -97,7 +97,7 @@ function createCommunityMessagingService({
   clock = () => Date.now(),
   limits = DEFAULT_COMMUNITY_LIMITS,
   gifProviderName = process.env.GIF_PROVIDER,
-  // ADR-210: the send allow-set. When given it wins over the legacy single
+  // ADR-213: the send allow-set. When given it wins over the legacy single
   // provider name, so Originals and GIPHY can both be served at once.
   gifProviderNames = null,
 } = {}) {
