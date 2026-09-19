@@ -768,6 +768,337 @@ class ProfileActionIconButton extends StatelessWidget {
   }
 }
 
+/// How loudly a [ProfileQuickAction] speaks: the screen's one violet accent,
+/// or a neutral hairline tile.
+enum ProfileQuickActionEmphasis { primary, neutral }
+
+/// One slot of [ProfileQuickActions]. The caller owns the key, the callback,
+/// the busy state and every string (ADR-209: the primitive only draws).
+class ProfileQuickAction {
+  const ProfileQuickAction({
+    required this.key,
+    required this.icon,
+    required this.label,
+    required this.semanticLabel,
+    required this.onPressed,
+    this.emphasis = ProfileQuickActionEmphasis.neutral,
+    this.busy = false,
+    this.busyLabel,
+    this.disabledHint,
+    this.iconOnlyWhenWide = false,
+  });
+
+  final Key key;
+  final IconData icon;
+  final String label;
+
+  /// The spoken name, which carries the person's name ("Call Ola").
+  final String semanticLabel;
+
+  /// Null renders the slot disabled.
+  final VoidCallback? onPressed;
+  final ProfileQuickActionEmphasis emphasis;
+
+  /// Swaps the icon for a spinner and the label for [busyLabel], announced
+  /// as a live region.
+  final bool busy;
+  final String? busyLabel;
+
+  /// Why a disabled slot is disabled, exposed as the semantic hint.
+  final String? disabledHint;
+
+  /// The trailing "More" slot: a 44 px square icon button on wide layouts.
+  final bool iconOnlyWhenWide;
+}
+
+/// The friend profile's quick actions row (call, video, message, more).
+///
+/// Layout comes from the available width and the text scale, never a device
+/// label:
+/// * scaled body >= 21 (about 150 % text and up): one full-width row per
+///   action, labels wrap, nothing truncates;
+/// * width >= [wideFromWidth]: a start-aligned toolbar of 44 px icon + label
+///   buttons that hug their labels (tablet and desktop — not four phone tiles
+///   stretched across 840 px);
+/// * width < [gridBelowWidth]: the compact tiles in a 2 x 2 grid;
+/// * otherwise: one row of equal 64 px tiles.
+class ProfileQuickActions extends StatelessWidget {
+  const ProfileQuickActions({required this.actions, super.key});
+
+  final List<ProfileQuickAction> actions;
+
+  static const double wideFromWidth = 560;
+  static const double gridBelowWidth = 300;
+  static const double tileHeight = 64;
+  static const double listRowHeight = 52;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scaledBody = MediaQuery.textScalerOf(context).scale(14);
+        if (scaledBody >= 21) return _list(context);
+        if (constraints.maxWidth >= wideFromWidth) return _wide(context);
+        if (constraints.maxWidth < gridBelowWidth) return _grid(context);
+        // Equal-height tiles even when one label is busy or scaled down.
+        return IntrinsicHeight(child: _tileRow(context, actions));
+      },
+    );
+  }
+
+  ButtonStyle _style(
+    BuildContext context,
+    ProfileQuickAction action, {
+    required Size minimumSize,
+    required EdgeInsetsGeometry padding,
+    AlignmentGeometry? alignment,
+  }) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final primary = action.emphasis == ProfileQuickActionEmphasis.primary;
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(ProfileActionBar.radius),
+    );
+    // A busy slot is disabled but keeps its own colours, so the spinner
+    // reads as progress rather than as "unavailable".
+    final busy = action.busy;
+    final background = primary ? colors.primary : palette.surface;
+    final foreground = primary ? colors.onPrimary : palette.textPrimary;
+    return ButtonStyle(
+      minimumSize: WidgetStatePropertyAll(minimumSize),
+      padding: WidgetStatePropertyAll(padding),
+      alignment: alignment,
+      shape: WidgetStatePropertyAll(shape),
+      elevation: const WidgetStatePropertyAll(0),
+      tapTargetSize: MaterialTapTargetSize.padded,
+      backgroundColor: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.disabled) && !busy
+            ? palette.surfaceMuted
+            : background,
+      ),
+      foregroundColor: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.disabled) && !busy
+            ? palette.textTertiary
+            : foreground,
+      ),
+      overlayColor: WidgetStatePropertyAll(foreground.withValues(alpha: .08)),
+      side: WidgetStateProperty.resolveWith(
+        (states) => primary || (states.contains(WidgetState.disabled) && !busy)
+            ? BorderSide.none
+            : BorderSide(color: palette.border),
+      ),
+    );
+  }
+
+  Widget _spinner(double size) => SizedBox(
+    width: size,
+    height: size,
+    child: const CircularProgressIndicator(strokeWidth: 2),
+  );
+
+  Widget _button(
+    BuildContext context,
+    ProfileQuickAction action, {
+    required ButtonStyle style,
+    required Widget child,
+    bool tooltip = false,
+  }) {
+    final label = action.busy
+        ? (action.busyLabel ?? action.semanticLabel)
+        : action.semanticLabel;
+    final hint = action.onPressed == null && !action.busy
+        ? action.disabledHint
+        : null;
+    Widget button = TextButton(
+      key: action.key,
+      onPressed: action.onPressed,
+      style: style,
+      child: Semantics(
+        label: label,
+        hint: hint,
+        liveRegion: action.busy,
+        child: ExcludeSemantics(child: child),
+      ),
+    );
+    if (tooltip) {
+      button = Tooltip(
+        message: action.semanticLabel,
+        excludeFromSemantics: true,
+        child: button,
+      );
+    }
+    return button;
+  }
+
+  Widget _tile(BuildContext context, ProfileQuickAction action) {
+    final text = action.busy
+        ? (action.busyLabel ?? action.label)
+        : action.label;
+    return _button(
+      context,
+      action,
+      style: _style(
+        context,
+        action,
+        minimumSize: const Size(0, tileHeight),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: 22,
+            child: Center(
+              child: action.busy ? _spinner(18) : Icon(action.icon, size: 22),
+            ),
+          ),
+          const SizedBox(height: 4),
+          // Fits the tile at 100 % text the same way ProfileStatsRow fits
+          // its labels; larger text switches to the list layout instead.
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              text,
+              maxLines: 1,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 16 / 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tileRow(BuildContext context, List<ProfileQuickAction> slots) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < slots.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          Expanded(child: _tile(context, slots[i])),
+        ],
+      ],
+    );
+  }
+
+  Widget _grid(BuildContext context) {
+    final rows = <List<ProfileQuickAction>>[
+      for (var i = 0; i < actions.length; i += 2)
+        actions.sublist(i, i + 2 > actions.length ? actions.length : i + 2),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < rows.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          IntrinsicHeight(child: _tileRow(context, rows[i])),
+        ],
+      ],
+    );
+  }
+
+  Widget _list(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < actions.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          _button(
+            context,
+            actions[i],
+            style: _style(
+              context,
+              actions[i],
+              minimumSize: const Size(0, listRowHeight),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              alignment: AlignmentDirectional.centerStart,
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 22,
+                  child: Center(
+                    child: actions[i].busy
+                        ? _spinner(18)
+                        : Icon(actions[i].icon, size: 22),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    actions[i].busy
+                        ? (actions[i].busyLabel ?? actions[i].label)
+                        : actions[i].label,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _wide(BuildContext context) {
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          for (final action in actions)
+            if (action.iconOnlyWhenWide)
+              ProfileActionIconButton(
+                key: action.key,
+                icon: action.icon,
+                tooltip: action.semanticLabel,
+                onPressed: action.onPressed,
+              )
+            else
+              _button(
+                context,
+                action,
+                tooltip: true,
+                style: _style(
+                  context,
+                  action,
+                  minimumSize: const Size(0, ProfileActionBar.buttonHeight),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: action.busy
+                          ? _spinner(18)
+                          : Icon(action.icon, size: 18),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      action.busy
+                          ? (action.busyLabel ?? action.label)
+                          : action.label,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+}
+
 /// The canonical public Premium mark — rendered only from
 /// `profile.premiumIdentity`, the server-written public mirror of the
 /// entitlement. The check means Premium membership; Creator eligibility and
