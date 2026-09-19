@@ -8,9 +8,42 @@ const {
 
 const MANAGER_ROLES = Object.freeze(["owner", "coOwner", "admin"]);
 const MODERATOR_ROLES = Object.freeze([...MANAGER_ROLES, "moderator"]);
+// On a server anyone may already join without an invitation, an invitation
+// grants no access — it is a pointer, not a key — so every ordinary member
+// may send one. `guest` stays out: it is the demoted state an owner assigns,
+// and `capabilitiesFor` already treats it as a non-member.
+const PUBLIC_INVITER_ROLES = Object.freeze([...MODERATOR_ROLES, "member"]);
 
 function denied() {
   fail("permission-denied", "You do not have access to this server resource.");
+}
+
+/**
+ * The exact condition `admission` (memberships.js) uses to admit somebody
+ * with no invitation at all. Pure and fail-closed: a missing root, an unknown
+ * template and an unknown privacy are all "not public". `canonicalServer`
+ * does not validate `privacy`, which is why this matches `=== "public"` and
+ * never `!== "private"`.
+ */
+function admitsPublicJoin(server) {
+  return Boolean(server) &&
+    ["community", "podcast"].includes(server.serverType) &&
+    server.privacy === "public";
+}
+
+/**
+ * The single inviter predicate, evaluated identically at issuance
+ * (`createServerInviteV1`, including its re-issue shortcut), at acceptance
+ * (`pendingInvitation`) and by the notification authority
+ * (`canonicalInviterMembership`). Widening one site without the others either
+ * mints invitations nobody can accept, or invitations that arrive with no
+ * bell row. Because it reads the CURRENT root, an owner's public → private
+ * flip invalidates every outstanding member-issued invitation at once.
+ */
+function canInviteToServer(server, member) {
+  if (!server || !member || typeof member.role !== "string") return false;
+  return (admitsPublicJoin(server) ? PUBLIC_INVITER_ROLES : MODERATOR_ROLES)
+    .includes(member.role);
 }
 
 function validRevision(value) {
@@ -182,7 +215,8 @@ async function readBoundSessionAccess({ db, transaction, uid, serverId, channelI
 }
 
 module.exports = {
-  MANAGER_ROLES, MODERATOR_ROLES, canonicalChannel, canonicalMember,
+  MANAGER_ROLES, MODERATOR_ROLES, PUBLIC_INVITER_ROLES, admitsPublicJoin,
+  canInviteToServer, canonicalChannel, canonicalMember,
   canonicalServer, capabilitiesFor, denied, grantDocument, grantMatches,
   invitePredatesDeparture, policyAllowsMember, readBoundSessionAccess, readChannelAccess,
   readServerAccess, requireServerManager, validRevision,

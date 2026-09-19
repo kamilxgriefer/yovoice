@@ -18,6 +18,7 @@ const {
   cleanupExpiredServerInvitePointer,
   handleServerInviteWritten,
   onServerInviteWritten,
+  sendClubInvite,
   serverInviteNotificationId,
   serverInviteNotificationSourceIsCurrent,
   sweepExpiredServerInvites,
@@ -50,11 +51,12 @@ async function deleteQuery(query) {
   await Promise.all(snapshot.docs.map((document) => document.ref.delete()));
 }
 
-async function fixture() {
+async function fixture({ serverType = "friends", privacy = "inviteOnly" } = {}) {
   const token = randomUUID().replaceAll("-", "");
   const ownerId = `sin_owner_${token}`;
   const inviteeId = `sin_invitee_${token}`;
   const serverId = `sin_server_${token}`;
+  const extraActors = [];
   const now = Timestamp.fromMillis(NOW_MS);
   const deps = { db, Timestamp, clock: () => NOW_MS };
   const service = {
@@ -76,7 +78,7 @@ async function fixture() {
     }),
     db.doc(`clubs/${serverId}`).set({
       serverSchemaVersion: 1,
-      serverType: "friends",
+      serverType,
       templateVersion: 1,
       type: "community",
       serverActivationState: "active",
@@ -86,7 +88,7 @@ async function fixture() {
       ownerId,
       ownerName: "Canonical Inviter",
       name: "Weekend Crew",
-      privacy: "inviteOnly",
+      privacy,
       memberCount: 1,
       createdAt: now,
       updatedAt: now,
@@ -126,9 +128,47 @@ async function fixture() {
     )}`,
   );
 
-  async function createInvite() {
+  // A second, non-owner roster row in the canonical member shape, befriended
+  // with the invitee so it can exercise the widened inviter predicate.
+  async function addMember(role) {
+    const memberId = `sin_${role}_${randomUUID().replaceAll("-", "")}`;
+    extraActors.push(memberId);
+    await Promise.all([
+      db.doc(`users/${memberId}`).set({
+        displayName: "Canonical Member",
+        status: "active",
+        banned: false,
+        disabled: false,
+      }),
+      db.doc(`clubs/${serverId}/members/${memberId}`).set({
+        userId: memberId,
+        displayName: "Canonical Member",
+        photoUrl: null,
+        role,
+        isOnline: false,
+        joinedAt: now,
+        invitedBy: null,
+        authorizationRevision: 1,
+      }),
+      db.doc(`friendshipGuards/${memberId}/friends/${inviteeId}`).set({
+        ownerId: memberId,
+        friendId: inviteeId,
+        schemaVersion: 1,
+        establishedAt: now,
+      }),
+      db.doc(`friendshipGuards/${inviteeId}/friends/${memberId}`).set({
+        ownerId: inviteeId,
+        friendId: memberId,
+        schemaVersion: 1,
+        establishedAt: now,
+      }),
+    ]);
+    return memberId;
+  }
+
+  async function createInvite(actorId = ownerId) {
     const before = await inviteReference.get();
-    const result = await service.createServerInviteV1(request(ownerId, {
+    const result = await service.createServerInviteV1(request(actorId, {
       serverId,
       inviteeId,
       requestId: requestId("create"),
@@ -138,24 +178,16 @@ async function fixture() {
   }
 
   async function cleanup() {
+    const actors = [ownerId, inviteeId, ...extraActors];
     await Promise.all([
-      db.recursiveDelete(db.doc(`users/${ownerId}`)),
-      db.recursiveDelete(db.doc(`users/${inviteeId}`)),
+      ...actors.map((uid) => db.recursiveDelete(db.doc(`users/${uid}`))),
       db.recursiveDelete(db.doc(`clubs/${serverId}`)),
-      db.recursiveDelete(db.doc(`friendshipGuards/${ownerId}`)),
-      db.recursiveDelete(db.doc(`friendshipGuards/${inviteeId}`)),
-      db.doc(`restrictions/${ownerId}`).delete(),
-      db.doc(`restrictions/${inviteeId}`).delete(),
+      ...actors.map((uid) => db.recursiveDelete(db.doc(`friendshipGuards/${uid}`))),
+      ...actors.map((uid) => db.doc(`restrictions/${uid}`).delete()),
     ]);
     await Promise.all([
-      deleteQuery(db.collection("privateRateLimits").where("ownerId", "in", [
-        ownerId,
-        inviteeId,
-      ])),
-      deleteQuery(db.collection("integrityOperationLedgers").where("uid", "in", [
-        ownerId,
-        inviteeId,
-      ])),
+      deleteQuery(db.collection("privateRateLimits").where("ownerId", "in", actors)),
+      deleteQuery(db.collection("integrityOperationLedgers").where("uid", "in", actors)),
       deleteQuery(db.collection("notificationDeliveryEvents")
         .where("sourcePath", "==", inviteReference.path)),
       deleteQuery(db.collection("serverControlOutbox").where("serverId", "==", serverId)),
@@ -170,6 +202,7 @@ async function fixture() {
     inviteReference,
     pointerReference,
     notificationReference,
+    addMember,
     createInvite,
     cleanup,
   };
@@ -510,5 +543,146 @@ emulatorTest("cleanup never deletes a mismatched bell or a current pointer", asy
     assert.equal((await notification.get()).exists, true);
   } finally {
     await value.cleanup();
+  }
+});
+
+// ADR-207 site 3. The inviter policy is enforced at issuance, at acceptance
+// and here. Without this the widening would write a member-issued invitation
+// that never announces itself, and the invitee would never see it.
+emulatorTest("a member-issued invitation on a publicly joinable server is announced, and a flip to private makes that same source non-current", async () => {
+  const value = await fixture({ serverType: "community", privacy: "public" });
+  try {
+    const memberId = await value.addMember("member");
+    const created = await value.createInvite(memberId);
+    assert.equal(created.result.generation, 1);
+    assert.equal(created.after.data().inviterId, memberId);
+    const event = changeEvent({ ...value, ...created }, requestId("member-invite"));
+    assert.equal(
+      await handleServerInviteWritten(event, { nowMs: NOW_MS }),
+      "written",
+    );
+    const reference = value.notificationReference(1);
+    const notification = (await reference.get()).data();
+    assert.equal(notification.type, "clubInvite");
+    assert.equal(notification.actorId, memberId);
+    assert.equal(notification.targetId, value.serverId);
+    assert.equal(notification.targetLabel, "Weekend Crew");
+
+    const sourceIsCurrent = () => serverInviteNotificationSourceIsCurrent({
+      recipientId: value.inviteeId,
+      notificationId: reference.id,
+      notification,
+      firestore: db,
+      nowMs: NOW_MS,
+    });
+    const pushSourceIsCurrent = () => notificationSourceIsCurrent({
+      recipientId: value.inviteeId,
+      notificationId: reference.id,
+      notification,
+      firestore: db,
+    });
+    assert.equal(await sourceIsCurrent(), true);
+    assert.equal(await pushSourceIsCurrent(), true);
+
+    // The notification authority reads the CURRENT root, so an owner's
+    // public -> private flip retires a member's authority immediately.
+    await db.doc(`clubs/${value.serverId}`).update({ privacy: "private" });
+    assert.equal(await sourceIsCurrent(), false, "private");
+    assert.equal(await pushSourceIsCurrent(), false, "private: shared push gate");
+    await db.doc(`clubs/${value.serverId}`).update({ privacy: "inviteOnly" });
+    assert.equal(await sourceIsCurrent(), false, "inviteOnly maps to private");
+    await db.doc(`clubs/${value.serverId}`).update({ privacy: "public" });
+    assert.equal(await sourceIsCurrent(), true, "restored");
+
+    // The narrow set is what the flip falls back to, not "nobody": a
+    // moderator-issued invitation on the same private root stays current.
+    await db.doc(`clubs/${value.serverId}/members/${memberId}`).update({ role: "moderator" });
+    await db.doc(`clubs/${value.serverId}`).update({ privacy: "private" });
+    assert.equal(await sourceIsCurrent(), true, "moderator on a private root");
+    assert.equal((await reference.get()).exists, true,
+      "a source probe does not mutate the inbox row");
+  } finally {
+    await value.cleanup();
+  }
+});
+
+emulatorTest("a guest on a publicly joinable server still issues nothing, and a demotion retires the bell row it already had", async () => {
+  const value = await fixture({ serverType: "community", privacy: "public" });
+  try {
+    const guestId = await value.addMember("guest");
+    await assert.rejects(
+      value.createInvite(guestId),
+      (error) => error.code === "permission-denied",
+    );
+    assert.equal((await value.inviteReference.get()).exists, false);
+
+    const memberId = await value.addMember("member");
+    const created = await value.createInvite(memberId);
+    await handleServerInviteWritten(
+      changeEvent({ ...value, ...created }, requestId("demoted")),
+      { nowMs: NOW_MS },
+    );
+    const reference = value.notificationReference(1);
+    assert.equal((await reference.get()).exists, true);
+    const notification = (await reference.get()).data();
+    await db.doc(`clubs/${value.serverId}/members/${memberId}`).update({ role: "guest" });
+    assert.equal(await serverInviteNotificationSourceIsCurrent({
+      recipientId: value.inviteeId,
+      notificationId: reference.id,
+      notification,
+      firestore: db,
+      nowMs: NOW_MS,
+    }), false);
+    // Revocation is the write that actually retires the row, and it removes
+    // only the generation it matches.
+    const before = await value.inviteReference.get();
+    await value.service.revokeServerInviteV1(request(value.ownerId, {
+      serverId: value.serverId,
+      inviteeId: value.inviteeId,
+      requestId: requestId("revoke-demoted"),
+    }));
+    const after = await value.inviteReference.get();
+    assert.equal(await handleServerInviteWritten(changeEvent({
+      ...value,
+      before,
+      after,
+    }, requestId("retired")), { nowMs: NOW_MS }), "deleted");
+    assert.equal((await reference.get()).exists, false);
+  } finally {
+    await value.cleanup();
+  }
+});
+
+emulatorTest("the legacy Club inviter set is unchanged: a plain member of a legacy club still cannot sendClubInvite", async () => {
+  const token = randomUUID().replaceAll("-", "");
+  const clubId = `sin_legacy_${token}`;
+  const memberId = `sin_legacy_member_${token}`;
+  const inviteeId = `sin_legacy_invitee_${token}`;
+  const run = sendClubInvite.run ?? sendClubInvite;
+  try {
+    await Promise.all([
+      db.doc(`users/${memberId}`).set({ displayName: "Legacy Member", banned: false, disabled: false }),
+      db.doc(`users/${inviteeId}`).set({ displayName: "Legacy Invitee", banned: false, disabled: false }),
+      // No serverSchemaVersion: a legacy Club root, and public at that.
+      db.doc(`clubs/${clubId}`).set({
+        ownerId: `sin_legacy_owner_${token}`, name: "Legacy Club", type: "community",
+        privacy: "public", status: "active", deletionInProgress: false,
+      }),
+      db.doc(`clubs/${clubId}/members/${memberId}`).set({ userId: memberId, role: "member", banned: false }),
+      db.doc(`users/${memberId}/friends/${inviteeId}`).set({ userId: inviteeId }),
+      db.doc(`users/${inviteeId}/friends/${memberId}`).set({ userId: memberId }),
+    ]);
+    await assert.rejects(
+      run({ auth: { uid: memberId, token: { email_verified: true } }, data: { clubId, inviteeId } }),
+      (error) => error.code === "permission-denied",
+    );
+    assert.equal((await db.doc(`clubs/${clubId}/invites/${inviteeId}`).get()).exists, false);
+  } finally {
+    await Promise.all([
+      db.recursiveDelete(db.doc(`users/${memberId}`)),
+      db.recursiveDelete(db.doc(`users/${inviteeId}`)),
+      db.recursiveDelete(db.doc(`clubs/${clubId}`)),
+    ]);
+    await deleteQuery(db.collection("privateRateLimits").where("ownerId", "==", memberId));
   }
 });

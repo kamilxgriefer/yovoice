@@ -3,16 +3,19 @@ const {
 } = require("../integrity/guards");
 const { SERVER_INVITE_TTL_MS, serverInviteRefPath } = require("./contract");
 const {
-  MODERATOR_ROLES, canonicalMember, denied, invitePredatesDeparture,
+  MODERATOR_ROLES, canInviteToServer, canonicalMember, denied, invitePredatesDeparture,
   readServerAccess, validRevision,
 } = require("./authority");
 const { createServerOperations } = require("./operations");
 const { canonicalDisplayName } = require("./documents");
 const { mutationInput } = require("./channels");
 
-// The roles that may issue an invitation are exactly the roles the consumer
-// (memberships.js `pendingInvitation`) re-proves at acceptance time. Widening
-// one side without the other would mint invitations nobody can accept.
+// The roles that may issue an invitation on a server that is NOT publicly
+// joinable: there the invitation IS the admission capability. The complete
+// rule lives in `canInviteToServer` (authority.js), which the consumer
+// (memberships.js `pendingInvitation`) and the notification authority
+// (notifications/invites.js) re-prove; widening one site without the others
+// would mint invitations nobody can accept, or invitations with no bell row.
 const INVITER_ROLES = MODERATOR_ROLES;
 const INVITE_STATUSES = Object.freeze(["pending", "accepted", "declined", "revoked"]);
 
@@ -69,7 +72,7 @@ function createServerInviteService(dependencies) {
       // invitation to one would be undeliverable and would still disclose
       // the server's name to a third party before activation.
       const access = await readServerAccess({ db, transaction, uid: auth.uid, serverId: input.serverId });
-      if (!INVITER_ROLES.includes(access.member.role)) denied();
+      if (!canInviteToServer(access.server, access.member)) denied();
       const inviteReference = access.reference.collection("invites").doc(input.inviteeId);
       const [
         inviteSnapshot, memberSnapshot, inviteeAuthorization, inviteeProfile, inviteeRestriction,
@@ -120,7 +123,7 @@ function createServerInviteService(dependencies) {
             requireUid(existing.inviterId);
             const original = canonicalMember(await transaction.get(
               access.reference.collection("members").doc(existing.inviterId)), existing.inviterId, access.server);
-            inviterStillAuthorized = INVITER_ROLES.includes(original.role) &&
+            inviterStillAuthorized = canInviteToServer(access.server, original) &&
               original.authorizationRevision === existing.inviterAuthorizationRevision;
           } catch {
             inviterStillAuthorized = false;
@@ -157,12 +160,32 @@ function createServerInviteService(dependencies) {
     const input = inviteInput(request.data);
     return operations.execute(request, "server.invite.revoke.v1", input, async ({ transaction, auth, prior, now }) => {
       // Revocation only ever narrows: a held owner and a sanctioned manager
-      // may both withdraw an invitation they could not currently issue.
+      // may both withdraw an invitation they could not currently issue, and a
+      // member who issued one on a server that has since turned private may
+      // still withdraw it.
+      //
+      // SERVER-ONLY SURFACE. No client reaches the non-manager branch: the app
+      // gives a plain member no "cancel this invitation" affordance, so it is
+      // exercised by this suite and by direct callable invocation and by
+      // nothing else. Kept rather than dropped because without it the public →
+      // private flip above makes a member-issued invitation permanently
+      // irrevocable by its own issuer. Documented in ADR-207 and
+      // docs/Servers.md; if a UI ever lands, delete this note, not the branch.
       const access = await readServerAccess({ db, transaction, uid: auth.uid, serverId: input.serverId, allowHeld: true });
-      if (!INVITER_ROLES.includes(access.member.role)) denied();
+      const manager = INVITER_ROLES.includes(access.member.role);
       const inviteReference = access.reference.collection("invites").doc(input.inviteeId);
       const snapshot = await transaction.get(inviteReference);
       const existing = snapshot.exists ? snapshot.data() : null;
+      if (!manager) {
+        // A non-manager withdraws exactly the invitation they issued. Every
+        // other outcome is the one denial, so the not-found /
+        // failed-precondition split below can never become an oracle for
+        // whether somebody else was invited to this server. Identity only,
+        // never status: a replayed receipt must still resolve after the
+        // document has moved to `revoked`.
+        if (!canonicalInvite(existing, input.serverId, input.inviteeId) ||
+            existing.inviterId !== auth.uid) denied();
+      }
       if (prior) {
         if (canonicalInvite(existing, input.serverId, input.inviteeId) && existing.generation === prior.generation) return prior;
         fail("aborted", "The invitation changed after the original request.");

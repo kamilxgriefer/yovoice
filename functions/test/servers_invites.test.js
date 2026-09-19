@@ -20,6 +20,8 @@ if (enabled) {
 }
 const { createServerCreationService } = require("../servers/creation");
 const { createServerInviteService, INVITER_ROLES } = require("../servers/invites");
+const { PUBLIC_INVITER_ROLES } = require("../servers/authority");
+const { DEFAULT_SERVER_LIMITS } = require("../servers/operations");
 const { createServerMembershipService } = require("../servers/memberships");
 const { SERVER_INVITE_TTL_MS, serverInviteRefPath } = require("../servers/contract");
 const { rateLimitReference } = require("../integrity/guards");
@@ -381,4 +383,218 @@ emulatorTest("expiry and inviter authority: an expired invitation is re-issued a
   const joined = await f.respond(invitee, "accept");
   assert.equal(joined.inviteGeneration, 3);
   assert.equal((await db.doc(`clubs/${f.serverId}/members/${invitee}`).get()).data().invitedBy, f.uid);
+});
+
+// ADR-207. On a server anyone may already join without an invitation, the
+// invitation grants nothing — it is a pointer, not a key — so every ordinary
+// member may send one. The same member is refused on every other server. The
+// predicate is proven at all three sites it is enforced: issuance here,
+// acceptance here, and the notification authority in
+// functions/test/server_invite_notifications.test.js.
+
+emulatorTest("a user who joined a public server invites a friend: the exact document and pointer, acceptance, and guest and outsider still refused", async () => {
+  const f = await fixture("community");
+  assert.equal((await db.doc(`clubs/${f.serverId}`).get()).data().privacy, "public");
+  // The real admission path the owner's requirement names — "każdy użytkownik
+  // który dołączy do publicznego serwera" — not a seeded roster row.
+  const joiner = await user("public-joiner");
+  const joined = await f.joinServerV1(request(joiner, operation(f.serverId)));
+  assert.equal(joined.joined, true);
+  assert.equal((await db.doc(`clubs/${f.serverId}/members/${joiner}`).get()).data().role, "member");
+  const guest = await f.member("guest");
+  const outsider = await user("public-outsider");
+  const invitee = await user("public-invitee");
+  for (const inviter of [joiner, guest, outsider]) await friends(inviter, invitee);
+  await rejection(f.invite(guest, invitee), "permission-denied");
+  await rejection(f.invite(outsider, invitee), "permission-denied");
+  assert.equal(await f.inviteDoc(invitee), null);
+  assert.equal((await f.pointer(invitee)).exists, false);
+
+  const issued = await f.invite(joiner, invitee);
+  assert.deepEqual(issued, { serverId: f.serverId, inviteeId: invitee, generation: 1, status: "pending",
+    expiresAtMillis: START_MS + SERVER_INVITE_TTL_MS, alreadyExisted: false });
+  const invite = await f.inviteDoc(invitee);
+  // Zero schema change: the member-issued document is the exact key set the
+  // notification authority and the rules suite already assert.
+  assert.deepEqual(Object.keys(invite).sort(), ["createdAt", "expiresAt", "generation", "inviteeId",
+    "inviterAuthorizationRevision", "inviterId", "inviterName", "serverId", "serverName", "serverSchemaVersion", "status", "updatedAt"]);
+  assert.equal(invite.inviterId, joiner);
+  assert.equal(invite.inviterAuthorizationRevision, 1);
+  assert.equal(invite.serverName, "Invite server");
+  const pointer = await f.pointer(invitee);
+  assert.deepEqual(Object.keys(pointer.data()).sort(), ["expiresAt", "generation", "serverId"]);
+  assert.equal(pointer.data().generation, 1);
+
+  // Site 2 accepts it, and `invitedBy` now legitimately holds a plain member.
+  const admitted = await f.respond(invitee, "accept");
+  assert.equal(admitted.joined, true);
+  assert.equal(admitted.inviteGeneration, 1);
+  assert.equal((await f.inviteDoc(invitee)).status, "accepted");
+  assert.equal((await f.pointer(invitee)).exists, false);
+  assert.equal((await db.doc(`clubs/${f.serverId}/members/${invitee}`).get()).data().invitedBy, joiner);
+});
+
+emulatorTest("the widened branch keys on privacy, not on server type: a private or inviteOnly community refuses the same member and keeps the moderator roles", async () => {
+  // The private-server set is unchanged and stays exported under its own name.
+  assert.deepEqual([...INVITER_ROLES], ["owner", "coOwner", "admin", "moderator"]);
+  assert.deepEqual([...PUBLIC_INVITER_ROLES], ["owner", "coOwner", "admin", "moderator", "member"]);
+  // `inviteOnly` maps to private: no code path distinguishes the two.
+  for (const privacy of ["private", "inviteOnly"]) {
+    const f = await fixture("community");
+    await db.doc(`clubs/${f.serverId}`).update({ privacy });
+    const member = await f.member("member");
+    const moderator = await f.member("moderator");
+    const invitee = await user(`narrow-${privacy}`);
+    await friends(member, invitee);
+    await friends(moderator, invitee);
+    await assert.rejects(f.invite(member, invitee), (error) => {
+      assert.equal(error.code, "permission-denied", privacy);
+      assert.equal(error.message, "You do not have access to this server resource.", privacy);
+      return true;
+    });
+    assert.equal(await f.inviteDoc(invitee), null, privacy);
+    assert.equal((await f.pointer(invitee)).exists, false, privacy);
+    assert.equal((await f.invite(moderator, invitee)).generation, 1, privacy);
+    assert.equal((await f.inviteDoc(invitee)).inviterId, moderator, privacy);
+  }
+  // An absent or unrecognised privacy falls to the narrow set, because the
+  // predicate matches `=== "public"` and canonicalServer never validates it.
+  for (const privacy of [null, "unknown-future-value"]) {
+    const f = await fixture("community");
+    await db.doc(`clubs/${f.serverId}`).update({ privacy });
+    const member = await f.member("member");
+    const invitee = await user("unvalidated-privacy");
+    await friends(member, invitee);
+    await rejection(f.invite(member, invitee), "permission-denied");
+    assert.equal(await f.inviteDoc(invitee), null);
+  }
+});
+
+emulatorTest("an owner's public to private flip invalidates an outstanding member-issued invitation at acceptance and refuses its re-issue", async () => {
+  const f = await fixture("community");
+  const member = await f.member("member");
+  const invitee = await user("flip-invitee");
+  await friends(member, invitee);
+  assert.equal((await f.invite(member, invitee)).generation, 1);
+  // updateServerV1 is owner/co-owner only; the fixture applies the same field.
+  await db.doc(`clubs/${f.serverId}`).update({ privacy: "private" });
+
+  await rejection(f.respond(invitee, "accept"), "permission-denied");
+  assert.equal((await db.doc(`clubs/${f.serverId}/members/${invitee}`).get()).exists, false);
+  assert.equal((await f.inviteDoc(invitee)).status, "pending");
+  // The re-issue shortcut must not hand the same member a stale receipt.
+  f.advance(60_000);
+  await rejection(f.invite(member, invitee), "permission-denied");
+  assert.equal((await f.inviteDoc(invitee)).generation, 1);
+  // A moderator does not reuse the now-unauthorised member-issued generation
+  // either: it re-issues under its own authority, and that one is accepted.
+  const moderator = await f.member("moderator");
+  await friends(moderator, invitee);
+  const reissued = await f.invite(moderator, invitee);
+  assert.equal(reissued.generation, 2);
+  assert.equal(reissued.alreadyExisted, false);
+  assert.equal((await f.inviteDoc(invitee)).inviterId, moderator);
+  assert.equal((await f.respond(invitee, "accept")).inviteGeneration, 2);
+});
+
+emulatorTest("a member-issued invitation dies with its inviter: demotion to guest and leaving the server both deny acceptance", async () => {
+  const scenarios = [
+    ["demoted to guest", (f, inviter) =>
+      f.setServerMemberRoleV1(request(f.uid, operation(f.serverId, { memberId: inviter, role: "guest" })))],
+    ["left the server", (f, inviter) => f.leaveServerV1(request(inviter, operation(f.serverId)))],
+  ];
+  for (const [label, invalidate] of scenarios) {
+    const f = await fixture("community");
+    const inviter = await user(`dead-inviter-${label.replaceAll(" ", "-")}`);
+    await f.joinServerV1(request(inviter, operation(f.serverId)));
+    const invitee = await user(`dead-invitee-${label.replaceAll(" ", "-")}`);
+    await friends(inviter, invitee);
+    assert.equal((await f.invite(inviter, invitee)).generation, 1, label);
+    await invalidate(f, inviter);
+    await rejection(f.respond(invitee, "accept"), "permission-denied");
+    assert.equal((await db.doc(`clubs/${f.serverId}/members/${invitee}`).get()).exists, false, label);
+    await rejection(f.invite(inviter, invitee), "permission-denied");
+    // The invitee can still reach the public server on their own: nothing
+    // about public admission changed.
+    assert.equal((await f.joinServerV1(request(invitee, operation(f.serverId)))).joined, true, label);
+  }
+});
+
+emulatorTest("revocation: a member withdraws exactly the invitation they issued and every other outcome is one denial, never an oracle", async () => {
+  const f = await fixture("community");
+  const member = await f.member("member");
+  const moderator = await f.member("moderator");
+  const invitee = await user("revoke-own");
+  const other = await user("revoke-other");
+  const never = await user("revoke-never");
+  await friends(member, invitee);
+  await friends(moderator, other);
+  const denial = (promise, label) => assert.rejects(promise, (error) => {
+    assert.equal(error.code, "permission-denied", label);
+    assert.equal(error.message, "You do not have access to this server resource.", label);
+    return true;
+  });
+  // A non-existent invitation is the same denial a foreign one gets, so the
+  // manager-only not-found / failed-precondition split is not a probe.
+  await denial(f.revoke(member, never), "absent");
+  await f.invite(member, invitee);
+  await f.invite(moderator, other);
+  await denial(f.revoke(member, other), "issued by somebody else");
+  assert.equal((await f.inviteDoc(other)).status, "pending");
+
+  const revokeId = randomUUID();
+  const revoked = await f.revoke(member, invitee, revokeId);
+  assert.deepEqual(revoked, { serverId: f.serverId, inviteeId: invitee, generation: 1, status: "revoked",
+    expiresAtMillis: START_MS + SERVER_INVITE_TTL_MS, revoked: true });
+  const stored = await f.inviteDoc(invitee);
+  assert.equal(stored.status, "revoked");
+  assert.equal(stored.revokedById, member);
+  assert.equal((await f.pointer(invitee)).exists, false);
+  await rejection(f.respond(invitee, "accept"), "permission-denied");
+  // Identity only, never status: the receipt still resolves once the document
+  // has moved to `revoked`, and a fresh call is idempotent.
+  assert.deepEqual(await f.revoke(member, invitee, revokeId), revoked);
+  assert.deepEqual(await f.revoke(member, invitee), { ...revoked, revoked: false });
+  // A manager keeps the disclosure it has always had on its own server.
+  await rejection(f.revoke(f.uid, never), "not-found");
+  assert.equal((await f.revoke(f.uid, other)).revoked, true);
+  // Revocation is never charged the invite budget, by either role.
+  assert.equal((await rateLimitReference(db, "server.v1.invite", member).get()).data().count, 1);
+  assert.equal((await rateLimitReference(db, "server.v1.invite.hour", member).get()).data().count, 1);
+  assert.equal((await rateLimitReference(db, "server.v1.invite", f.uid).get()).exists, false);
+});
+
+emulatorTest("the invite budget carries the legacy hour window beside the minute window, and both scopes stay target-independent", async () => {
+  // The value the legacy sendClubInvite path has always enforced.
+  assert.deepEqual({ ...DEFAULT_SERVER_LIMITS.invitesHour }, { maxEvents: 200, windowMs: 3_600_000 });
+  const f = await fixture("community");
+  const member = await f.member("member");
+  const first = await user("hour-first");
+  const second = await user("hour-second");
+  await friends(member, first);
+  await friends(member, second);
+  await f.invite(member, first);
+  const hour = await rateLimitReference(db, "server.v1.invite.hour", member).get();
+  assert.equal(hour.data().ownerId, member);
+  assert.equal(hour.data().scope, "server.v1.invite.hour");
+  assert.equal(hour.data().count, 1);
+  assert.equal(hour.data().windowStartedAt.toMillis(), START_MS);
+
+  // Saturate the hour window in the exact shape consumeRateLimit writes, then
+  // move past ten minute windows so only the hour budget can refuse.
+  await rateLimitReference(db, "server.v1.invite.hour", member).set({
+    schemaVersion: 1, ownerId: member, scope: "server.v1.invite.hour",
+    windowStartedAt: Timestamp.fromMillis(START_MS), count: 200,
+    updatedAt: Timestamp.fromMillis(START_MS),
+  });
+  f.advance(10 * 60_000);
+  await rejection(f.invite(member, second), "resource-exhausted");
+  assert.equal(await f.inviteDoc(second), null);
+  assert.equal((await f.pointer(second)).exists, false);
+  // The refused pre-authorization transaction commits nothing at all, so the
+  // minute window is still the single event from the first invitation.
+  assert.equal((await rateLimitReference(db, "server.v1.invite", member).get()).data().count, 1);
+  // Past the hour the budget reopens without any other change.
+  f.advance(60 * 60_000);
+  assert.equal((await f.invite(member, second)).generation, 1);
 });

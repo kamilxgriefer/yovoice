@@ -1539,6 +1539,58 @@ async function main() {
         assert.equal(stored.inviterAuthorizationRevision, 1);
       });
     });
+    // ADR-207 widened WHO may call createServerInviteV1 on a publicly joinable
+    // server to every ordinary member. That is a callable-side predicate and
+    // deliberately buys no Rules access at all: this check is what turns "no
+    // firestore.rules change is needed" from an assertion into evidence.
+    const PUBLIC_V1 = "server-public-v1";
+    await check("a member of a PUBLIC V1 server gains no client write and no foreign read on invites: the widened inviter predicate is callable-side only", async () => {
+      await seed({
+        [`clubs/${PUBLIC_V1}`]: server(PUBLIC_V1, { serverType: "community", privacy: "public", name: "Public community" }),
+        [`clubs/${PUBLIC_V1}/members/${OWNER}`]: member(OWNER, "owner"),
+        [`clubs/${PUBLIC_V1}/members/${ADMIN}`]: member(ADMIN, "admin"),
+        [`clubs/${PUBLIC_V1}/members/${MEMBER}`]: member(MEMBER, "member"),
+        [`clubs/${PUBLIC_V1}/invites/${OUTSIDER}`]: v1Invite(OUTSIDER, { serverId: PUBLIC_V1, inviterId: MEMBER, serverName: "Public community" }),
+        [`clubs/${PUBLIC_V1}/invites/${STRANGER}`]: v1Invite(STRANGER, { serverId: PUBLIC_V1, inviterId: MEMBER, serverName: "Public community" }),
+      });
+      const publicInvite = `clubs/${PUBLIC_V1}/invites/${OUTSIDER}`;
+      // The member who may now ISSUE an invitation still writes nothing.
+      for (const uid of [OWNER, ADMIN, MEMBER, OUTSIDER]) {
+        await assertFails(setDoc(doc(db(uid), `clubs/${PUBLIC_V1}/invites/forged-${uid}`),
+          v1Invite(`forged-${uid}`, { serverId: PUBLIC_V1, inviterId: uid })));
+        await assertFails(setDoc(doc(db(uid), publicInvite), v1Invite(OUTSIDER, { serverId: PUBLIC_V1, status: "accepted" })));
+        await assertFails(updateDoc(doc(db(uid), publicInvite), { status: "accepted" }));
+        await assertFails(updateDoc(doc(db(uid), publicInvite), { generation: 99 }));
+        await assertFails(deleteDoc(doc(db(uid), publicInvite)));
+      }
+      // Reading is unchanged too: the invitee and the managers, never the
+      // plain member who issued it, and never a second invitee's document.
+      await assertSucceeds(read(OUTSIDER, publicInvite));
+      await assertSucceeds(read(OWNER, publicInvite));
+      await assertSucceeds(read(ADMIN, publicInvite));
+      await assertFails(read(MEMBER, publicInvite));
+      await assertFails(read(STRANGER, publicInvite));
+      await assertFails(read(OUTSIDER, `clubs/${PUBLIC_V1}/invites/${STRANGER}`));
+      // The self-scoped collection group is still the only discovery, and a
+      // public root does not widen it.
+      const own = await assertSucceeds(getDocs(query(collectionGroup(db(OUTSIDER), "invites"), where("inviteeId", "==", OUTSIDER))));
+      assert.ok(own.docs.some((item) => item.ref.path === publicInvite));
+      await assertFails(getDocs(query(collectionGroup(db(MEMBER), "invites"), where("serverId", "==", PUBLIC_V1))));
+      await assertFails(getDocs(collection(db(MEMBER), `clubs/${PUBLIC_V1}/invites`)));
+      // The private pointer stays server-written on a public root as well.
+      await assertFails(setDoc(doc(db(MEMBER), `users/${OUTSIDER}/serverInviteRefs/${PUBLIC_V1}`),
+        { serverId: PUBLIC_V1, generation: 1, expiresAt: new Date(Date.now() + 86_400_000) }));
+      await assertFails(setDoc(doc(db(OUTSIDER), `users/${OUTSIDER}/serverInviteRefs/${PUBLIC_V1}`),
+        { serverId: PUBLIC_V1, generation: 1, expiresAt: new Date(Date.now() + 86_400_000) }));
+      await env.withSecurityRulesDisabled(async (ctx) => {
+        const stored = (await getDoc(doc(ctx.firestore(), publicInvite))).data();
+        assert.equal(stored.status, "pending");
+        assert.equal(stored.generation, 1);
+        assert.equal(stored.inviterId, MEMBER);
+      });
+      await seed({ [`clubs/${PUBLIC_V1}/invites/${OUTSIDER}`]: null,
+        [`clubs/${PUBLIC_V1}/invites/${STRANGER}`]: null });
+    });
     await check("the invitee and the server's managers read a V1 invitation; a plain member, another account and a banned invitee do not; it still opens no root or channel", async () => {
       const invitePath = `clubs/${ACTIVE}/invites/${OUTSIDER}`;
       assert.equal((await assertSucceeds(read(OUTSIDER, invitePath))).data().generation, 1);

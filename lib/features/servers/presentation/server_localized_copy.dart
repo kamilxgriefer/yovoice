@@ -521,6 +521,14 @@ extension ServerLocalizedCopy on AppLocalizations {
     'Invitations go to your friends. They accept it themselves.',
     'Zaproszenia trafiają do Twoich znajomych. Sami je przyjmują.',
   );
+
+  /// The header line on a server anyone may already join. The invitation is a
+  /// pointer, not a key — saying so is what makes a member-issued invitation
+  /// make sense to the member sending it.
+  String get serverInvitePublicBody => text(
+    'Anyone can join this server. Your invitation lets a friend find it right away.',
+    'Do tego serwera może dołączyć każdy. Twoje zaproszenie pozwala znajomemu trafić tu od razu.',
+  );
   String get serverInviteHeldBody => text(
     'Invitations open once the server is ready.',
     'Zaproszenia będą możliwe, gdy serwer będzie gotowy.',

@@ -20,22 +20,26 @@ import 'package:yovoice/features/servers/presentation/screens/servers_screen.dar
 
 import 'server_test_support.dart';
 
-Server shellServer(ServerType type, {bool held = false, int members = 12}) =>
-    Server(
-      id: 's',
-      name: 'Po godzinach',
-      description: '',
-      ownerId: 'owner',
-      type: type,
-      privacy: type.allowsPublic
-          ? ServerPrivacy.public
-          : ServerPrivacy.inviteOnly,
-      memberCount: members,
-      defaultChannelId: firstText(type),
-      schemaVersion: 1,
-      activationState: held ? 'held' : 'active',
-      status: held ? 'preparing' : 'active',
-    );
+Server shellServer(
+  ServerType type, {
+  bool held = false,
+  int members = 12,
+  ServerPrivacy? privacy,
+}) => Server(
+  id: 's',
+  name: 'Po godzinach',
+  description: '',
+  ownerId: 'owner',
+  type: type,
+  privacy:
+      privacy ??
+      (type.allowsPublic ? ServerPrivacy.public : ServerPrivacy.inviteOnly),
+  memberCount: members,
+  defaultChannelId: firstText(type),
+  schemaVersion: 1,
+  activationState: held ? 'held' : 'active',
+  status: held ? 'preparing' : 'active',
+);
 
 String firstText(ServerType type) => serverTemplateChannelsFor(
   type,
@@ -468,7 +472,10 @@ void main() {
       find.text('Będzie można słuchać, gdy scena zacznie nadawać.'),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('server-invite-action')), findsNothing);
+    // Starting a stage needs moderator power and still does. Inviting does
+    // not: this community server is public, so an ordinary member may hand a
+    // friend a pointer to a place that friend could already join.
+    expect(find.byKey(const ValueKey('server-invite-action')), findsOneWidget);
     expect(find.byKey(const ValueKey('server-add-channel')), findsNothing);
   });
 
@@ -748,6 +755,155 @@ void main() {
     expect(find.text('Tej osoby nie można teraz zaprosić.'), findsOneWidget);
     expect(find.textContaining('PERMISSION_DENIED'), findsNothing);
   });
+
+  testWidgets(
+    'a member invites on a public server and nowhere else, at every width',
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      // Phone, tablet and desktop. The phone keeps the panel in the `Kanały`
+      // sheet, so the affordance is reached one tap later — the rule it
+      // follows is the same one.
+      for (final width in [390.0, 900.0, 1440.0]) {
+        for (final entry in {
+          // Anyone may already join: the invitation is a pointer, not a key.
+          shellServer(ServerType.community): true,
+          shellServer(ServerType.podcast): true,
+          // The same template, made private by its owner: the invitation
+          // becomes the admission capability again.
+          shellServer(ServerType.community, privacy: ServerPrivacy.private):
+              false,
+          shellServer(ServerType.community, privacy: ServerPrivacy.inviteOnly):
+              false,
+          shellServer(ServerType.friends): false,
+          shellServer(ServerType.family): false,
+          shellServer(ServerType.company): false,
+        }.entries) {
+          final server = entry.key;
+          await pumpServers(
+            tester,
+            ServerWorkspaceScreen(
+              key: UniqueKey(),
+              serverId: 's',
+              repository: TestServerRepository()
+                ..servers = [server]
+                ..channels = shellChannels(server.type)
+                ..myRole = ServerMemberRole.member,
+              isRootTab: true,
+              chatService: fakeChat(),
+              connector: FakeServerMediaConnector(),
+            ),
+            size: Size(width, 900),
+          );
+          if (width < ServerWorkspaceScreen.tabletBreakpoint) {
+            await tester.tap(
+              find.byKey(const ValueKey('server-open-channels')),
+            );
+            await tester.pumpAndSettle();
+          }
+          expect(
+            find.byKey(const ValueKey('server-invite-action')),
+            entry.value ? findsOneWidget : findsNothing,
+            reason: '${server.type}/${server.privacy} at $width',
+          );
+          if (width < ServerWorkspaceScreen.tabletBreakpoint) {
+            Navigator.of(
+              tester.element(find.byKey(const ValueKey('server-panel'))),
+            ).pop();
+            await tester.pumpAndSettle();
+          }
+        }
+      }
+    },
+  );
+
+  testWidgets('a guest of a public server is offered no invitation', (
+    tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    // `guest` is the demoted state an owner assigns, not an ordinary joiner —
+    // if it could invite, demotion would stop being a control.
+    await pumpServers(
+      tester,
+      ServerWorkspaceScreen(
+        serverId: 's',
+        repository: TestServerRepository()
+          ..servers = [shellServer(ServerType.community)]
+          ..channels = shellChannels(ServerType.community)
+          ..myRole = ServerMemberRole.guest,
+        isRootTab: true,
+        chatService: fakeChat(),
+        connector: FakeServerMediaConnector(),
+      ),
+      size: const Size(1440, 900),
+    );
+    expect(find.byKey(const ValueKey('server-invite-action')), findsNothing);
+  });
+
+  testWidgets('a moderator of a private server still invites', (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await pumpServers(
+      tester,
+      ServerWorkspaceScreen(
+        serverId: 's',
+        repository: TestServerRepository()
+          ..servers = [shellServer(ServerType.friends)]
+          ..channels = shellChannels(ServerType.friends)
+          ..myRole = ServerMemberRole.moderator,
+        isRootTab: true,
+        chatService: fakeChat(),
+      ),
+      size: const Size(1440, 900),
+    );
+    expect(find.byKey(const ValueKey('server-invite-action')), findsOneWidget);
+  });
+
+  testWidgets(
+    "a member's invitation on a public server reaches createServerInviteV1",
+    (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = TestServerRepository()
+        ..servers = [shellServer(ServerType.community)]
+        ..channels = shellChannels(ServerType.community)
+        ..myRole = ServerMemberRole.member
+        ..friends = const [ServerInviteCandidate(id: 'u2', displayName: 'Ola')];
+      await pumpServers(
+        tester,
+        ServerWorkspaceScreen(
+          serverId: 's',
+          repository: repository,
+          isRootTab: true,
+          chatService: fakeChat(),
+          connector: FakeServerMediaConnector(),
+        ),
+        size: const Size(1100, 800),
+      );
+      await tester.tap(find.byKey(const ValueKey('server-invite-action')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('server-invite-sheet')), findsOneWidget);
+      // The sheet says what a member's invitation actually is here.
+      expect(
+        find.text(
+          'Do tego serwera może dołączyć każdy. Twoje zaproszenie pozwala '
+          'znajomemu trafić tu od razu.',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('server-invite-u2')),
+          matching: find.text('Zaproś'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(repository.calls.single.$1, 'createServerInviteV1');
+      expect(repository.calls.single.$2, {
+        'serverId': 's',
+        'inviteeId': 'u2',
+        'requestId': 'request-1',
+      });
+      expect(find.text('Wysłano zaproszenie do Ola'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'adding a channel sends the exact createServerChannelV1 payload',

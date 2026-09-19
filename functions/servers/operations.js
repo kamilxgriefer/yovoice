@@ -12,6 +12,12 @@ const DEFAULT_SERVER_LIMITS = Object.freeze({
   // invitation lands in another person's private tree, so it is charged as
   // outbound communication, not as an ordinary server mutation.
   invites: Object.freeze({ maxEvents: 30, windowMs: 60_000 }),
+  // The other half of that legacy budget (CLUB_INVITE_ATTEMPT_LIMITS.hour),
+  // which the V1 path never adopted. `canInviteToServer` multiplies the
+  // population that can spend the per-minute budget by the member count of
+  // every public server, so the sustained rate — not the burst rate — is what
+  // this widening actually changes.
+  invitesHour: Object.freeze({ maxEvents: 200, windowMs: 60 * 60_000 }),
 });
 
 function createServerOperations({ db, Timestamp, clock = Date.now, limits = DEFAULT_SERVER_LIMITS }) {
@@ -30,7 +36,12 @@ function createServerOperations({ db, Timestamp, clock = Date.now, limits = DEFA
     const restrictionReference = db.doc(`restrictions/${auth.uid}`);
     const scopes = [{ scope: "server.v1.attempt", config: limits.attempts }];
     if (creation) scopes.push({ scope: "server.v1.create", config: limits.creation });
-    if (invite) scopes.push({ scope: "server.v1.invite", config: limits.invites });
+    // Both invite scopes stay target-independent: the pre-authorization
+    // transaction never keys a document on a caller-supplied serverId.
+    if (invite) {
+      scopes.push({ scope: "server.v1.invite", config: limits.invites });
+      scopes.push({ scope: "server.v1.invite.hour", config: limits.invitesHour });
+    }
     const rates = scopes.map((item) => ({ ...item, reference: rateLimitReference(db, item.scope, auth.uid) }));
 
     // This target-independent budget commits before authorization reads.

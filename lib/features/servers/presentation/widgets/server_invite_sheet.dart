@@ -8,6 +8,7 @@ import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
 import '../../data/models/server.dart';
+import '../../data/models/server_invite_authority.dart';
 import '../../data/models/server_session.dart';
 import '../../data/services/server_service.dart';
 import '../server_action_failure.dart';
@@ -130,7 +131,9 @@ class _ServerInviteSheetState extends State<ServerInviteSheet> {
               ),
               const SizedBox(height: 4),
               Text(
-                copy.serverInviteBody,
+                serverAdmitsPublicJoin(widget.server)
+                    ? copy.serverInvitePublicBody
+                    : copy.serverInviteBody,
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
                 style: AppTypography.bodySmall.copyWith(

@@ -5,7 +5,7 @@ const {
   MAX_SERVER_CHANNELS, ROLE_POWER, ROLES, requireEnum, serverChannelRefId, serverInviteRefPath,
 } = require("./contract");
 const {
-  MODERATOR_ROLES, canonicalChannel, canonicalMember, canonicalServer, denied,
+  admitsPublicJoin, canInviteToServer, canonicalChannel, canonicalMember, canonicalServer, denied,
   invitePredatesDeparture, readServerAccess, validRevision,
 } = require("./authority");
 const {
@@ -128,7 +128,10 @@ async function pendingInvitation({ db, transaction, reference, server, uid, nowM
       db.doc(`friendshipGuards/${invite.inviterId}/friends/${uid}`),
       db.doc(`friendshipGuards/${uid}/friends/${invite.inviterId}`));
   const inviter = canonicalMember(inviterSnapshot, invite.inviterId, server);
-  if (!MODERATOR_ROLES.includes(inviter.role) || inviter.authorizationRevision !== invite.inviterAuthorizationRevision) denied();
+  // The complete issuance policy, re-proved against the CURRENT root: an
+  // owner's public → private flip takes an outstanding member-issued
+  // invitation with it instead of letting a seven-day-old pointer become a key.
+  if (!canInviteToServer(server, inviter) || inviter.authorizationRevision !== invite.inviterAuthorizationRevision) denied();
   try {
     activeProfile(inviterProfile, "Inviting");
     assertNotRestricted(inviterRestriction, "Inviting", nowMs);
@@ -174,7 +177,11 @@ function createServerMembershipService(dependencies) {
         }
         denied();
       }
-      const publicJoin = !respond && ["community", "podcast"].includes(server.serverType) && server.privacy === "public";
+      // One helper, shared with the inviter predicate: if these two ever
+      // drifted, a server would exist where a member may invite but the
+      // invitee cannot join without that invitation — which silently turns an
+      // ordinary member into an admission granter.
+      const publicJoin = !respond && admitsPublicJoin(server);
       const invitation = publicJoin ? null : await pendingInvitation({
         db, transaction, reference, server, uid: auth.uid, nowMs,
         snapshot: inviteSnapshot, authorization: revisionSnapshot,

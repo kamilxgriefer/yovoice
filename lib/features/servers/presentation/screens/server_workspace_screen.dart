@@ -13,6 +13,7 @@ import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
+import '../../data/models/server_invite_authority.dart';
 import '../../data/models/server_member_role.dart';
 import '../../data/models/server_type.dart';
 import '../../data/services/server_company_file_service.dart';
@@ -1420,8 +1421,10 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     ServerMemberRole? role,
   ) {
     // `createServerInviteV1` refuses a held root and non-inviter roles; the
-    // affordance follows the same two facts.
-    if (server.isHeld || !(role?.canModerate ?? false)) return null;
+    // affordance follows the same two facts. Who counts as an inviter depends
+    // on the server as well as the role — on a server anyone may already join,
+    // an ordinary member may invite too (`server_invite_authority.dart`).
+    if (server.isHeld || !canInviteToServer(server, role)) return null;
     final override = widget.onInvite;
     if (override != null) return () => override(server);
     return () =>

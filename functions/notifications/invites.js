@@ -27,9 +27,15 @@ const {
   SERVER_TYPES,
   serverInviteRefPath,
 } = require("../servers/contract");
+const { canInviteToServer } = require("../servers/authority");
 
 const REGION = "europe-west1";
-const INVITER_ROLES = new Set(["owner", "coOwner", "admin", "moderator"]);
+// The LEGACY Club inviter set, used only by `sendClubInvite` and the
+// `onClubInviteCreated` validator, both of which refuse a versioned root.
+// A V1 server's inviter policy lives in `canInviteToServer` (authority.js)
+// and is wider on a publicly joinable server; widening it here instead
+// would change the legacy path, which nothing asked for.
+const LEGACY_CLUB_INVITER_ROLES = new Set(["owner", "coOwner", "admin", "moderator"]);
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 const SERVER_INVITE_SWEEP_LIMIT = 50;
 const CLUB_INVITE_ATTEMPT_LIMITS = Object.freeze({
@@ -127,7 +133,7 @@ function canonicalServerRootForInvite(server, serverId) {
 
 function canonicalInviterMembership(member, invite, server) {
   return Boolean(member) && member.userId === invite.inviterId &&
-    member.banned !== true && INVITER_ROLES.has(member.role) &&
+    member.banned !== true && canInviteToServer(server, member) &&
     Number.isSafeInteger(member.authorizationRevision) &&
     member.authorizationRevision > 0 &&
     member.authorizationRevision < Number.MAX_SAFE_INTEGER &&
@@ -620,7 +626,7 @@ const sendClubInvite = onCall(
         inviteeData.disabled === true ||
         membership.data()?.userId !== auth.uid ||
         membership.data()?.banned === true ||
-        !INVITER_ROLES.has(membership.data()?.role) ||
+        !LEGACY_CLUB_INVITER_ROLES.has(membership.data()?.role) ||
         restrictionIsActive(inviterRestriction.data()) ||
         restrictionIsActive(inviteeRestriction.data()) ||
         inviterBlock.exists ||
@@ -717,7 +723,7 @@ const onClubInviteCreated = onDocumentCreated(
           clubData.deletionInProgress === true ||
           membership.data()?.userId !== inviterId ||
           membership.data()?.banned === true ||
-          !INVITER_ROLES.has(role) ||
+          !LEGACY_CLUB_INVITER_ROLES.has(role) ||
           member.exists
         ) {
           return false;

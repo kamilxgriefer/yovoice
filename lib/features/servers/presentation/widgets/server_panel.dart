@@ -7,6 +7,7 @@ import 'package:yovoice/core/theme/app_typography.dart';
 
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
+import '../../data/models/server_invite_authority.dart';
 import '../../data/models/server_member_role.dart';
 import '../../data/models/server_type.dart';
 import '../server_localized_copy.dart';
@@ -168,7 +169,7 @@ class _ServerPanelState extends State<ServerPanel> {
         MapEntry(homeGroup, const []),
       ...groups.entries,
     ];
-    final canInvite = widget.role?.canModerate ?? false;
+    final canInvite = canInviteToServer(widget.server, widget.role);
     return Material(
       color: palette.surfaceMuted,
       child: ListView(
