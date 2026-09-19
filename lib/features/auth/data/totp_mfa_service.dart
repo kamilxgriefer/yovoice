@@ -1,6 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
+import 'reauthentication_service.dart';
+
 class TotpFactorSummary {
   const TotpFactorSummary({
     required this.uid,
@@ -88,10 +90,24 @@ abstract interface class TotpMfaClient {
 }
 
 class TotpMfaService implements TotpMfaClient {
-  TotpMfaService({FirebaseAuth? firebaseAuth})
-    : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance;
+  TotpMfaService({
+    FirebaseAuth? firebaseAuth,
+    ReauthenticationClient? reauthentication,
+  }) : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
+       _reauthentication =
+           reauthentication ??
+           ReauthenticationService(
+             firebaseAuth: firebaseAuth,
+             signedOutMessage:
+                 'You must be signed in to manage two-factor authentication.',
+           );
 
   final FirebaseAuth _firebaseAuth;
+
+  /// Proving who you are is the same operation everywhere in the app, so it
+  /// has one implementation (`reauthentication_service.dart`) and this service
+  /// delegates to it rather than keeping a second copy of the provider rules.
+  final ReauthenticationClient _reauthentication;
   TotpSecret? _pendingSecret;
   String? _pendingQrCodeUrl;
 
@@ -223,46 +239,19 @@ class TotpMfaService implements TotpMfaClient {
   }
 
   @override
-  Future<void> reauthenticateWithPassword(String password) async {
-    final user = _requiredUser;
-    final email = user.email?.trim();
-    if (email == null || email.isEmpty) {
-      throw StateError('This account does not have an email password.');
-    }
-    if (password.isEmpty) {
-      throw const FormatException('Enter your password.');
-    }
-    await user.reauthenticateWithCredential(
-      EmailAuthProvider.credential(email: email, password: password),
-    );
-  }
+  Future<void> reauthenticateWithPassword(String password) =>
+      _reauthentication.reauthenticateWithPassword(password);
 
   @override
-  Future<void> reauthenticateWithGoogle() async {
-    final provider = GoogleAuthProvider()
-      ..setCustomParameters({'prompt': 'select_account'});
-    if (kIsWeb) {
-      await _requiredUser.reauthenticateWithPopup(provider);
-    } else {
-      await _requiredUser.reauthenticateWithProvider(provider);
-    }
-  }
+  Future<void> reauthenticateWithGoogle() =>
+      _reauthentication.reauthenticateWithGoogle();
 
   @override
-  Future<void> reauthenticateWithApple() async {
-    final provider = AppleAuthProvider();
-    if (kIsWeb) {
-      await _requiredUser.reauthenticateWithPopup(provider);
-    } else {
-      await _requiredUser.reauthenticateWithProvider(provider);
-    }
-  }
+  Future<void> reauthenticateWithApple() =>
+      _reauthentication.reauthenticateWithApple();
 
   @override
-  List<String> get providerIds => _requiredUser.providerData
-      .map((provider) => provider.providerId)
-      .toSet()
-      .toList(growable: false);
+  List<String> get providerIds => _reauthentication.providerIds;
 }
 
 String _normalizeTotpCode(String value) {

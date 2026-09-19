@@ -31,6 +31,7 @@ import 'package:yovoice/features/profile/presentation/screens/profile_screen.dar
 import 'package:yovoice/features/settings/presentation/screens/profile_visibility_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/premium_messaging_privacy_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/downloaded_audio_screen.dart';
+import 'package:yovoice/features/settings/presentation/screens/delete_account_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/device_sessions_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/two_factor_authentication_screen.dart';
 import 'package:yovoice/features/settings/presentation/widgets/appearance_language_settings_section.dart';
@@ -365,99 +366,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _openDeleteAccountRequest() async {
-    final copy = AppLocalizations.of(context);
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: palette.surfaceRaised,
-      showDragHandle: false,
-      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
-        context,
-        maxWidth: 560,
-      ),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) => Padding(
-        padding: const EdgeInsets.fromLTRB(22, 24, 22, 34),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            YoModalSheetChrome(
-              sheetLabel: copy.text(
-                'delete account request',
-                'prośba o usunięcie konta',
-              ),
-              surfaceColor: palette.surfaceRaised,
-            ),
-            Container(
-              width: 46,
-              height: 46,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: colors.errorContainer,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Icon(
-                Icons.warning_rounded,
-                color: colors.onErrorContainer,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              copy.text('Delete your account', 'Usuń swoje konto'),
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              copy.text(
-                'Self-service account deletion isn\'t available yet. Email support and '
-                    'we\'ll permanently delete your account, profile and content by hand.',
-                'Samodzielne usuwanie konta nie jest jeszcze dostępne. Napisz do pomocy technicznej, '
-                    'a trwale usuniemy Twoje konto, profil i treści.',
-              ),
-              style: TextStyle(
-                color: palette.textSecondary,
-                height: 1.45,
-                fontSize: 13.5,
-              ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  backgroundColor: colors.errorContainer,
-                  foregroundColor: colors.onErrorContainer,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-                onPressed: () {
-                  Navigator.pop(sheetContext);
-                  _openUrl(
-                    'mailto:support@yovoice.app?subject=Delete%20my%20YO%20Voice%20account',
-                  );
-                },
-                icon: const Icon(Icons.mail_outline_rounded),
-                label: Text(
-                  copy.text(
-                    'Email support to delete my account',
-                    'Napisz do pomocy technicznej, aby usunąć konto',
-                  ),
-                  maxLines: 2,
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+  /// The Danger-zone entry point. Deletion is a full flow — consequences,
+  /// re-authentication, a typed confirmation and an asynchronous pipeline —
+  /// so it is a route that can scroll at 200 % text scale, not a sheet. The
+  /// email route it replaces is preserved as a secondary action there.
+  Future<void> _openDeleteAccount() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const DeleteAccountScreen()),
     );
   }
 
@@ -1135,7 +1050,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'Trwale usuń konto i wszystkie dane',
               ),
               danger: true,
-              onTap: _openDeleteAccountRequest,
+              onTap: _openDeleteAccount,
             ),
           ],
         ),
