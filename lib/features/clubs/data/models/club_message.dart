@@ -16,6 +16,8 @@ class ClubMessage {
     this.deletedBy,
     this.deletedByRole,
     this.gif,
+    this.reactions = const <String, String>{},
+    this.type,
   });
 
   final String id;
@@ -29,6 +31,16 @@ class ClubMessage {
   final DateTime? editedAt;
   final bool isDeleted;
   final GifAsset? gif;
+
+  /// One reaction per person, `uid -> emoji`, written only by the
+  /// `setServerChannelMessageReactionV1` callable (Servers V1). Absent on
+  /// every older message and read as empty; a removed message shows none.
+  final Map<String, String> reactions;
+
+  /// The stored message type: absent (plain text), `gif`, `image` or
+  /// `video`. Unknown values are kept so a newer type is never misread as
+  /// text by this model; renderers still fall back to [content].
+  final String? type;
 
   /// Who performed the removal. Absent on live messages, and absent on
   /// removals written before the client started stamping it — so a null
@@ -84,7 +96,29 @@ class ClubMessage {
           : GifAsset.fromMessage(data['gif']),
       deletedBy: _nullableString(data['deletedBy']),
       deletedByRole: _nullableString(data['deletedByRole']),
+      reactions: data['isDeleted'] == true
+          ? const <String, String>{}
+          : _stringMap(data['reactions']),
+      type: _nullableString(data['type']),
     );
+  }
+
+  /// `Message._stringMap`'s rule: only string -> non-empty string entries
+  /// survive, anything else is dropped rather than guessed.
+  static Map<String, String> _stringMap(Object? value) {
+    if (value is! Map) return const <String, String>{};
+    final result = <String, String>{};
+    for (final entry in value.entries) {
+      final key = entry.key;
+      final emoji = entry.value;
+      if (key is String &&
+          key.isNotEmpty &&
+          emoji is String &&
+          emoji.isNotEmpty) {
+        result[key] = emoji;
+      }
+    }
+    return Map<String, String>.unmodifiable(result);
   }
 
   static String? _nullableString(Object? value) {

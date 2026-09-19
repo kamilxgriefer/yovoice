@@ -90,7 +90,7 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 248 names.
+// Every export of functions/index.js, sorted. 249 names.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
@@ -313,6 +313,7 @@ const EXPORT_NAMES = Object.freeze([
   "setRoomStatusSelf",
   "setRoomVisibilitySelf",
   "setServerChannelAccessV1",
+  "setServerChannelMessageReactionV1",
   "setServerMemberBanV1",
   "setServerMemberRoleV1",
   "setServerPodcastQuestionOnAirV1",
@@ -391,6 +392,7 @@ const COLD_START_SERVERS_MODULES = Object.freeze([
   "servers/invites.js",
   "servers/management.js",
   "servers/memberships.js",
+  "servers/message_reactions.js",
   "servers/operations.js",
   "servers/podcast_episodes.js",
   "servers/podcast_questions.js",

@@ -7,16 +7,21 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/clubs/data/models/club_chat_authority.dart';
+import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
 import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
 import 'package:yovoice/features/media/data/services/gif_transport.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/interactions/message_reactions.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_composer_panel.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_gif_send_status.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_text_field.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
@@ -24,6 +29,7 @@ import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
+import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
 
@@ -214,6 +220,94 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
     }
   }
 
+  /// Whether the viewer may be OFFERED reactions: any non-guest member. The
+  /// callable is the authority (restricted grant, mute, verified email) and
+  /// decides every request; this only avoids offering a guest a sheet whose
+  /// every action the server would refuse.
+  static bool _mayOfferReactions(ClubChatAuthority authority) {
+    final role = authority.role;
+    return role != null && role != ClubRole.guest;
+  }
+
+  Future<void> _openMessageActions(ClubMessage message) async {
+    if (message.isDeleted) return;
+    final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
+    final mine = message.reactions[widget.currentUserId];
+    // Dropped before the sheet so the route does not hand focus back to the
+    // composer (and the keyboard back over the thread) when it closes.
+    _focus.unfocus();
+    final emoji = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      showDragHandle: false,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 520,
+      ),
+      builder: (sheetContext) => Container(
+        key: const ValueKey('server-message-actions'),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          12,
+          16,
+          18 + MediaQuery.paddingOf(sheetContext).bottom,
+        ),
+        decoration: BoxDecoration(
+          color: palette.surfaceRaised,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              YoModalSheetChrome(
+                sheetLabel: copy.text('message actions', 'opcje wiadomości'),
+                surfaceColor: palette.surfaceRaised,
+              ),
+              const SizedBox(height: 1),
+              MessageReactionPickerRow(
+                selected: mine,
+                onReaction: (value) => Navigator.pop(sheetContext, value),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (emoji == null || !mounted) return;
+    await _toggleReaction(message, emoji);
+  }
+
+  Future<void> _toggleReaction(ClubMessage message, String emoji) async {
+    try {
+      await _service.toggleServerReaction(
+        serverId: widget.server.id,
+        channelId: widget.channel.id,
+        messageId: message.id,
+        emoji: emoji,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final copy = AppLocalizations.of(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            serverActionFailureCopy(
+              error,
+              copy,
+              fallback: copy.text(
+                'Could not update your reaction.',
+                'Nie udało się zmienić reakcji.',
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
@@ -323,7 +417,7 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
         return LayoutBuilder(
           builder: (context, constraints) => Column(
             children: [
-              Expanded(child: _thread(copy, currentUserId)),
+              Expanded(child: _thread(copy, currentUserId, authority)),
               ConstrainedBox(
                 constraints: BoxConstraints(
                   maxHeight: constraints.maxHeight.isFinite
@@ -346,65 +440,72 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
     );
   }
 
-  Widget _thread(AppLocalizations copy, String currentUserId) =>
-      StreamBuilder<List<ClubMessage>>(
-        stream: _messages,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return SingleChildScrollView(
-              child: YoErrorState(
-                error: snapshot.error,
-                compact: widget.compact,
-                onRetry: () => setState(_listen),
-              ),
-            );
-          }
-          if (snapshot.connectionState == ConnectionState.waiting &&
-              !snapshot.hasData) {
-            return Center(
-              child: Semantics(
-                label: copy.serverChat,
-                child: const CircularProgressIndicator(),
-              ),
-            );
-          }
-          final messages = snapshot.data ?? const <ClubMessage>[];
-          if (messages.isEmpty) {
-            return SingleChildScrollView(
-              child: YoEmptyState(
-                icon: _announcement
-                    ? Icons.campaign_outlined
-                    : Icons.forum_outlined,
-                title: copy.serverNoMessagesTitle,
-                subtitle: copy.serverNoMessagesBody(widget.channel.name),
-                compact: widget.compact,
-              ),
-            );
-          }
-          return ListView.builder(
-            key: const ValueKey('server-message-list'),
-            reverse: true,
-            // A drag on the thread puts the keyboard away.
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: EdgeInsets.fromLTRB(
-              widget.compact ? 12 : 16,
-              12,
-              widget.compact ? 12 : 16,
-              16,
-            ),
-            itemCount: messages.length,
-            itemBuilder: (context, index) => _MessageTile(
-              message: messages[index],
-              isMine: messages[index].senderId == currentUserId,
-              type: widget.server,
-              isModerator: widget.moderatorIds.contains(
-                messages[index].senderId,
-              ),
-              onOpenProfile: widget.onOpenProfile,
-            ),
+  Widget _thread(
+    AppLocalizations copy,
+    String currentUserId,
+    ClubChatAuthority authority,
+  ) => StreamBuilder<List<ClubMessage>>(
+    stream: _messages,
+    builder: (context, snapshot) {
+      if (snapshot.hasError) {
+        return SingleChildScrollView(
+          child: YoErrorState(
+            error: snapshot.error,
+            compact: widget.compact,
+            onRetry: () => setState(_listen),
+          ),
+        );
+      }
+      if (snapshot.connectionState == ConnectionState.waiting &&
+          !snapshot.hasData) {
+        return Center(
+          child: Semantics(
+            label: copy.serverChat,
+            child: const CircularProgressIndicator(),
+          ),
+        );
+      }
+      final messages = snapshot.data ?? const <ClubMessage>[];
+      if (messages.isEmpty) {
+        return SingleChildScrollView(
+          child: YoEmptyState(
+            icon: _announcement
+                ? Icons.campaign_outlined
+                : Icons.forum_outlined,
+            title: copy.serverNoMessagesTitle,
+            subtitle: copy.serverNoMessagesBody(widget.channel.name),
+            compact: widget.compact,
+          ),
+        );
+      }
+      return ListView.builder(
+        key: const ValueKey('server-message-list'),
+        reverse: true,
+        // A drag on the thread puts the keyboard away.
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: EdgeInsets.fromLTRB(
+          widget.compact ? 12 : 16,
+          12,
+          widget.compact ? 12 : 16,
+          16,
+        ),
+        itemCount: messages.length,
+        itemBuilder: (context, index) {
+          final message = messages[index];
+          return _MessageTile(
+            message: message,
+            isMine: message.senderId == currentUserId,
+            type: widget.server,
+            isModerator: widget.moderatorIds.contains(message.senderId),
+            onOpenProfile: widget.onOpenProfile,
+            onOpenActions: !message.isDeleted && _mayOfferReactions(authority)
+                ? () => unawaited(_openMessageActions(message))
+                : null,
           );
         },
       );
+    },
+  );
 }
 
 class _MessageTile extends StatelessWidget {
@@ -414,6 +515,7 @@ class _MessageTile extends StatelessWidget {
     required this.type,
     this.isModerator = false,
     this.onOpenProfile,
+    this.onOpenActions,
   });
   final ClubMessage message;
   final bool isMine;
@@ -422,6 +524,12 @@ class _MessageTile extends StatelessWidget {
 
   /// Test seam; production opens the shared profile preview sheet.
   final void Function(String userId, String displayName)? onOpenProfile;
+
+  /// The message actions sheet (reactions). Long-press on touch, right-click
+  /// on a pointer, Enter/Space/context-menu key and a semantics action — the
+  /// same `AccessibleContextAction` the direct-message bubble uses. Null for
+  /// a removed message or a viewer who may not react.
+  final VoidCallback? onOpenActions;
 
   @override
   Widget build(BuildContext context) {
@@ -435,136 +543,174 @@ class _MessageTile extends StatelessWidget {
     ).formatTimeOfDay(TimeOfDay.fromDateTime(message.sentAt.toLocal()));
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // The avatar is the same "who is this?" affordance it is in
-          // Moments and every chat surface — a complete button, not an
-          // inert picture (the thread carries no other way to reach a
-          // member's profile).
-          AccessibleTapRegion(
-            onTap: () {
-              final open = onOpenProfile;
-              if (open != null) {
-                open(message.senderId, message.senderName);
-                return;
-              }
-              unawaited(
-                showProfilePreview(
-                  context,
-                  userId: message.senderId,
-                  displayName: message.senderName,
-                ),
-              );
-            },
-            // The name is substituted AFTER localization: a key built by
-            // interpolation can never be looked up outside EN/PL, which left
-            // the label and the tooltip in raw English in 41 locales.
-            semanticLabel: copy.template(
-              'Open profile of {name}',
-              'Otwórz profil: {name}',
-              values: <String, Object>{'name': message.senderName},
-            ),
-            tooltip: copy.template(
-              'Open profile of {name}',
-              'Otwórz profil: {name}',
-              values: <String, Object>{'name': message.senderName},
-            ),
-            circular: true,
-            child: ExcludeSemantics(
-              child: UserAvatar(
-                radius: 18,
+      child: AccessibleContextAction(
+        onOpen: onOpenActions,
+        semanticLabel: isMine
+            ? copy.text(
+                'Open actions for your message',
+                'Otwórz opcje swojej wiadomości',
+              )
+            : copy.text(
+                'Open actions for this message',
+                'Otwórz opcje tej wiadomości',
+              ),
+        borderRadius: 12,
+        child: _body(context, copy, palette, colors, time),
+      ),
+    );
+  }
+
+  Widget _body(
+    BuildContext context,
+    AppLocalizations copy,
+    AppPalette palette,
+    ServerIdentityVisuals colors,
+    String time,
+  ) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // The avatar is the same "who is this?" affordance it is in
+        // Moments and every chat surface — a complete button, not an
+        // inert picture (the thread carries no other way to reach a
+        // member's profile).
+        AccessibleTapRegion(
+          onTap: () {
+            final open = onOpenProfile;
+            if (open != null) {
+              open(message.senderId, message.senderName);
+              return;
+            }
+            unawaited(
+              showProfilePreview(
+                context,
                 userId: message.senderId,
                 displayName: message.senderName,
-                backgroundColor: colors.iconSurface,
               ),
+            );
+          },
+          // The name is substituted AFTER localization: a key built by
+          // interpolation can never be looked up outside EN/PL, which left
+          // the label and the tooltip in raw English in 41 locales.
+          semanticLabel: copy.template(
+            'Open profile of {name}',
+            'Otwórz profil: {name}',
+            values: <String, Object>{'name': message.senderName},
+          ),
+          tooltip: copy.template(
+            'Open profile of {name}',
+            'Otwórz profil: {name}',
+            values: <String, Object>{'name': message.senderName},
+          ),
+          circular: true,
+          child: ExcludeSemantics(
+            child: UserAvatar(
+              radius: 18,
+              userId: message.senderId,
+              displayName: message.senderName,
+              backgroundColor: colors.iconSurface,
             ),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(13, 10, 13, 11),
-              decoration: BoxDecoration(
-                color: isMine ? colors.selectedWash : palette.surface,
-                borderRadius: AppRadius.md,
-                border: Border.all(
-                  color: isMine ? colors.iconBorder : palette.border,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.fromLTRB(13, 10, 13, 11),
+                decoration: BoxDecoration(
+                  color: isMine ? colors.selectedWash : palette.surface,
+                  borderRadius: AppRadius.md,
+                  border: Border.all(
+                    color: isMine ? colors.iconBorder : palette.border,
+                  ),
                 ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 8,
-                    runSpacing: 2,
-                    children: [
-                      Text(
-                        message.senderName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTypography.labelMedium.copyWith(
-                          color: palette.textPrimary,
-                        ),
-                      ),
-                      Text(
-                        time,
-                        style: AppTypography.labelSmall.copyWith(
-                          color: palette.textTertiary,
-                        ),
-                      ),
-                      if (isModerator)
-                        Container(
-                          key: ValueKey('server-moderator-badge-${message.id}'),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 2,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 2,
+                      children: [
+                        Text(
+                          message.senderName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTypography.labelMedium.copyWith(
+                            color: palette.textPrimary,
                           ),
-                          decoration: BoxDecoration(
-                            color: colors.selectedWash,
-                            borderRadius: AppRadius.pill,
-                            border: Border.all(color: colors.iconBorder),
+                        ),
+                        Text(
+                          time,
+                          style: AppTypography.labelSmall.copyWith(
+                            color: palette.textTertiary,
                           ),
-                          child: Text(
-                            copy.serverModerator,
-                            style: AppTypography.labelSmall.copyWith(
-                              color: colors.selectedForeground,
-                              fontWeight: FontWeight.w700,
+                        ),
+                        if (isModerator)
+                          Container(
+                            key: ValueKey(
+                              'server-moderator-badge-${message.id}',
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: colors.selectedWash,
+                              borderRadius: AppRadius.pill,
+                              border: Border.all(color: colors.iconBorder),
+                            ),
+                            child: Text(
+                              copy.serverModerator,
+                              style: AppTypography.labelSmall.copyWith(
+                                color: colors.selectedForeground,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  if (!message.isDeleted && message.gif != null)
-                    YoGifView(
-                      asset: message.gif!,
-                      autoLoad:
-                          AppPreferencesScope.maybeOf(
-                            context,
-                          )?.value.gifAutoLoadEnabled ??
-                          true,
-                    )
-                  else
-                    Text(
-                      message.isDeleted
-                          ? copy.serverMessageDeleted
-                          : message.content,
-                      style: AppTypography.bodyMedium.copyWith(
-                        color: message.isDeleted
-                            ? palette.textTertiary
-                            : palette.textPrimary,
-                        fontStyle: message.isDeleted
-                            ? FontStyle.italic
-                            : FontStyle.normal,
-                      ),
+                      ],
                     ),
-                ],
+                    const SizedBox(height: 4),
+                    if (!message.isDeleted && message.gif != null)
+                      YoGifView(
+                        asset: message.gif!,
+                        autoLoad:
+                            AppPreferencesScope.maybeOf(
+                              context,
+                            )?.value.gifAutoLoadEnabled ??
+                            true,
+                      )
+                    else
+                      Text(
+                        message.isDeleted
+                            ? copy.serverMessageDeleted
+                            : message.content,
+                        style: AppTypography.bodyMedium.copyWith(
+                          color: message.isDeleted
+                              ? palette.textTertiary
+                              : palette.textPrimary,
+                          fontStyle: message.isDeleted
+                              ? FontStyle.italic
+                              : FontStyle.normal,
+                        ),
+                      ),
+                  ],
+                ),
               ),
-            ),
+              // The direct-message reaction pill, under the bubble.
+              if (message.reactions.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                MessageReactionSummaryPill(
+                  key: ValueKey('server-message-reactions-${message.id}'),
+                  reactions: message.reactions.values,
+                ),
+              ],
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

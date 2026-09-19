@@ -61,6 +61,7 @@ const { createServerConvergenceService } = require("./convergence");
 const { createServerConvergenceRuntimeService } = require("./convergence_runtime");
 const { createServerSessionControlService } = require("./session_control");
 const { createServerLiveKitAdapter } = require("./session_livekit");
+const { createServerMessageReactionService } = require("./message_reactions");
 
 const REGION = "europe-west1";
 const OUTBOX_COLLECTION = "serverControlOutbox";
@@ -214,6 +215,22 @@ const SERVERS_V1_EXPORT_NAMES = Object.freeze([
   ...Object.keys(ALL_SERVER_CALLABLE_METHODS),
   ...DISPATCHER_EXPORTS,
   ...SWEEP_EXPORTS,
+]);
+
+// Server channel messaging parity with direct messages (reactions, photos and
+// videos). A SEPARATE extension, deliberately outside ALL_SERVER_CALLABLE_METHODS
+// and SERVERS_V1_EXPORT_NAMES: the reviewed 61-total / 55-callable / 54-base
+// manifest is pinned by the activation-package tool
+// (tool/servers_activation_package.js) and by the registration and cold-start
+// suites, and docs/Servers.md mirrors the frozen 54-entry table. These exports
+// are built by createServerMessageFunctions below, behind the same runtime
+// activation gate, with the same callable options and Auth binding, and are
+// deployed by their own explicit selector.
+const SERVER_MESSAGE_CALLABLE_METHODS = Object.freeze({
+  setServerChannelMessageReactionV1: "messageReactions",
+});
+const SERVER_MESSAGE_EXPORT_NAMES = Object.freeze([
+  ...Object.keys(SERVER_MESSAGE_CALLABLE_METHODS),
 ]);
 
 // Outbox job kinds and the reviewed worker that owns each of them. The three
@@ -958,6 +975,71 @@ function createServersV1Functions({
   return Object.freeze(exportsMap);
 }
 
+/**
+ * The reviewed message-parity services over one Firestore handle. Like
+ * createServersV1Runtime it performs no I/O and loads no provider SDK.
+ */
+function createServerMessageRuntime({
+  db = null,
+  Timestamp: TimestampClass = Timestamp,
+  clock = Date.now,
+} = {}) {
+  if (typeof clock !== "function") throw new TypeError("clock must be a function.");
+  const database = db ?? getFirestore();
+  const dependencies = { db: database, Timestamp: TimestampClass, clock };
+  return Object.freeze({
+    db: database,
+    clock,
+    messageReactions: createServerMessageReactionService(dependencies),
+  });
+}
+
+/**
+ * Builds the message-parity export map (SERVER_MESSAGE_EXPORT_NAMES). Every
+ * callable passes through the same Auth binding, the same server-owned
+ * appConfig/serversV1 activation gate and the same error mapping as the base
+ * Servers callables; nothing here is reachable while Servers are disabled.
+ */
+function createServerMessageFunctions({
+  runtime = null,
+  registrars = defaultRegistrars(),
+  enforceAppCheck = false,
+  activationGate = null,
+  log = logger,
+} = {}) {
+  for (const name of ["onCall", "onSchedule"]) {
+    if (typeof registrars?.[name] !== "function") {
+      throw new TypeError(`Missing Cloud Functions registrar: ${name}.`);
+    }
+  }
+  const resolved = runtime ?? createServerMessageRuntime();
+  const activation = activationGate ?? createServersV1ActivationGate({ db: resolved.db, log });
+  if (typeof activation?.requireCallable !== "function" || typeof activation?.workersEnabled !== "function") {
+    throw new TypeError("A Servers V1 runtime activation gate is required.");
+  }
+  const callableOptions = {
+    region: REGION,
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    maxInstances: 50,
+    minInstances: 0,
+    enforceAppCheck: enforceAppCheck === true,
+    consumeAppCheckToken: enforceAppCheck === true,
+  };
+  const exportsMap = {};
+  for (const [name, serviceName] of Object.entries(SERVER_MESSAGE_CALLABLE_METHODS)) {
+    const method = resolved?.[serviceName]?.[name];
+    if (typeof method !== "function") {
+      throw new TypeError(`Missing Servers V1 method ${serviceName}.${name}.`);
+    }
+    exportsMap[name] = registrars.onCall(
+      { ...callableOptions },
+      callableHandler(name, method, activation, log),
+    );
+  }
+  return Object.freeze(exportsMap);
+}
+
 module.exports = {
   ALL_SERVER_CALLABLE_METHODS,
   ACTIVATION_ACCESS,
@@ -977,10 +1059,14 @@ module.exports = {
   REGION,
   SECRET_BOUND_CALLABLES,
   SERVER_CALLABLE_METHODS,
+  SERVER_MESSAGE_CALLABLE_METHODS,
+  SERVER_MESSAGE_EXPORT_NAMES,
   SERVERS_V1_EXPORT_NAMES,
   SWEEP_EXPORTS,
   authBoundRequest,
   canonicalActivationConfig,
+  createServerMessageFunctions,
+  createServerMessageRuntime,
   createServersV1ActivationGate,
   createServersV1Dispatcher,
   createServersV1Functions,

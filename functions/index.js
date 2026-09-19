@@ -654,7 +654,10 @@ exports.receiveLiveKitAchievementWebhook = receiveLiveKitAchievementWebhook;
 | remains source-disabled: none of its seven exports, service construction or
 | missing credential is part of this registration.
 */
-const { createServersV1Functions } = require("./servers/registration");
+const {
+  createServerMessageFunctions,
+  createServersV1Functions,
+} = require("./servers/registration");
 Object.assign(exports, createServersV1Functions({
   // App Check remains in telemetry mode for this first internal rollout. A
   // later source-reviewed revision may set it true after platform telemetry.
@@ -663,6 +666,11 @@ Object.assign(exports, createServersV1Functions({
   // only after its dedicated credential exists and the provider drill passes.
   enablePodcastRecording: false,
 }));
+// Server channel messaging parity with direct messages: emoji reactions and
+// photo/video messages. A separate, explicitly listed extension
+// (SERVER_MESSAGE_EXPORT_NAMES) behind the same appConfig/serversV1 gate; the
+// frozen base manifest above is unchanged.
+Object.assign(exports, createServerMessageFunctions({ enforceAppCheck: false }));
 
 // Cold-start observability. Emitted once per instance start, only inside the
 // Cloud Run / Functions runtime (K_SERVICE and FUNCTION_TARGET are set there

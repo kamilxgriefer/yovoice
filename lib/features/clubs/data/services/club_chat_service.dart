@@ -14,6 +14,14 @@ typedef ClubMessageModerationInvoker =
 typedef ClubMessageSendInvoker =
     Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
 
+/// Invokes one Servers V1 message callable by name. The test seam for the
+/// reaction, media and author-delete callables, which share one shape.
+typedef ServerMessageCallableInvoker =
+    Future<Map<Object?, Object?>> Function(
+      String name,
+      Map<String, Object?> request,
+    );
+
 class ClubChatService {
   ClubChatService({
     FirebaseFirestore? firestore,
@@ -21,12 +29,14 @@ class ClubChatService {
     FirebaseFunctions? functions,
     ClubMessageModerationInvoker? moderationInvoker,
     ClubMessageSendInvoker? messageSendInvoker,
+    ServerMessageCallableInvoker? serverMessageInvoker,
     String Function()? requestIdFactory,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _functionsOverride = functions,
        _moderationInvoker = moderationInvoker,
        _messageSendInvoker = messageSendInvoker,
+       _serverMessageInvoker = serverMessageInvoker,
        _requestIdFactory = requestIdFactory ?? _newRequestId;
 
   final FirebaseFirestore _firestore;
@@ -34,6 +44,7 @@ class ClubChatService {
   final FirebaseFunctions? _functionsOverride;
   final ClubMessageModerationInvoker? _moderationInvoker;
   final ClubMessageSendInvoker? _messageSendInvoker;
+  final ServerMessageCallableInvoker? _serverMessageInvoker;
   final String Function() _requestIdFactory;
 
   FirebaseFunctions get _functions =>
@@ -147,6 +158,51 @@ class ClubChatService {
       return;
     }
     await _functions.httpsCallable('sendClubMessage').call(payload);
+  }
+
+  Future<Map<Object?, Object?>> _callServerMessage(
+    String name,
+    Map<String, Object?> payload,
+  ) async {
+    final invoker = _serverMessageInvoker;
+    if (invoker != null) return invoker(name, payload);
+    final response = await _functions
+        .httpsCallable(name)
+        .call<Map<Object?, Object?>>(payload);
+    return response.data;
+  }
+
+  /// Toggles the viewer's reaction on a Servers V1 channel message, exactly
+  /// as `MessageService.toggleReaction` does for a direct message: one
+  /// reaction per person, and choosing the current one again removes it.
+  ///
+  /// Callable-only. `firestore.rules` keeps V1 message updates closed to
+  /// every client, so there is deliberately no direct-write fallback: the
+  /// `setServerChannelMessageReactionV1` callable is the only writer of the
+  /// map and decides who may react (members, including in announcement and
+  /// rules channels; never guests).
+  Future<void> toggleServerReaction({
+    required String serverId,
+    required String channelId,
+    required String messageId,
+    required String emoji,
+  }) async {
+    final user = _user;
+    // Decided against the stored map rather than the rendered tile, the way
+    // the direct-message toggle reads its document first.
+    final snapshot = await _messages(
+      clubId: serverId,
+      channelId: channelId,
+    ).doc(messageId).get();
+    final stored = snapshot.data()?['reactions'];
+    final current = stored is Map ? stored[user.uid] : null;
+    await _callServerMessage('setServerChannelMessageReactionV1', {
+      'serverId': serverId,
+      'channelId': channelId,
+      'messageId': messageId,
+      'emoji': current == emoji ? null : emoji,
+      'requestId': _requestIdFactory(),
+    });
   }
 
   /// The viewer's removal authority in [clubId], kept live.
