@@ -5,6 +5,16 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED IN SOURCE — a library video over 60 s was refused only after it was queued, and library media sent without a look (2026-09-19, next build T4)
+
+`ImagePicker.pickVideo(maxDuration: 60 s)` limits only camera recording, so a
+longer (or over-64 MB) video from the library was accepted by the picker and
+refused after the enqueue, as a snackbar. Library photos and videos in a
+direct chat, and Company team files, were queued or uploaded the moment the
+picker returned. Fixed by the media review (ADR-210): the file is shown first,
+and a video over the limit is blocked in the review with the reason and
+"Choose another". The service and backend checks are unchanged.
+
 ## FIXED IN SOURCE — the voice message bubble drew a different waveform per message from its duration (2026-09-19, Slim phase 0)
 
 Found by the phase-0 inventory for the waveform family. `_VoiceMessageContent`

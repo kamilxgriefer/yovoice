@@ -112,6 +112,15 @@ through the authenticated Firebase Storage SDK. Upload and finalization are
 idempotent, so a lost network response reuses the same reservation and object
 instead of creating a duplicate message.
 
+A photo or video picked from the library is reviewed before anything is
+queued (next build after 3.0.0, ADR-210): the review shows the photo, or a
+paused and muted local video with play, scrub and mute, with its size and
+length, and names the recipient. Send queues it; Cancel sends nothing. A video
+over 60 seconds or 64 MB, or a photo over 8 MB, is blocked in the review with
+the reason and a "Choose another" that reopens the library. Taking a photo or
+recording a video with the camera keeps the camera's own Use/Retake step.
+Company team files use the same review before an upload.
+
 Confirmed friends can also place a real-time 1:1 voice call from the phone
 action in a DM. The callee sees an app-level incoming-call screen and can answer
 or decline; the caller can cancel while ringing, either participant can mute or
