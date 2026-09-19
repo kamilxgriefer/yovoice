@@ -17,7 +17,7 @@
     "scrub:retired-social-notifications": "node scripts/scrub_retired_social_notifications.js"
   },
   "dependencies": {
-    "firebase-admin": "14.3.0",
+    "firebase-admin": "14.4.0",
     "firebase-functions": "7.3.2",
     "livekit-server-sdk": "2.18.0",
     "music-metadata": "11.15.0",
