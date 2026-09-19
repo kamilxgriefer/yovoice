@@ -90,7 +90,7 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 248 names.
+// Every export of functions/index.js, sorted. 249 names.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
@@ -255,6 +255,7 @@ const EXPORT_NAMES = Object.freeze([
   "publishPublicStatsSchedule",
   "receiveLiveKitAchievementWebhook",
   "reconcileAchievementsV1",
+  "releaseServerChannelSessionIfEmptyV1",
   "removeClubMember",
   "removeClubMemberSelf",
   "removeFriend",
@@ -433,8 +434,8 @@ test("the deployed export map is exactly the pinned name list", () => {
   assert.deepEqual(inspectColdStart().exportNames, [...EXPORT_NAMES]);
 });
 
-test("Servers exposes exactly 54 base exports and no Podcast recording surface", () => {
-  assert.equal(inspectColdStart().serverExports.length, 54);
+test("Servers exposes exactly 55 base exports and no Podcast recording surface", () => {
+  assert.equal(inspectColdStart().serverExports.length, 55);
   assert.deepEqual(inspectColdStart().podcastRecordingExports, []);
 });
 

@@ -9,15 +9,22 @@ const { createServerOperations } = require("./operations");
 const {
   SESSION_TOKEN_ATTEMPT_LIMIT, SESSION_TOKEN_ATTEMPT_SCOPE, SESSION_TOKEN_TTL_SECONDS,
   assertRoomBinding, assertSessionBinding, canonicalSessionId, hasUnresolvedRevocationAttempt,
-  isCommunityBroadcastChannel, sessionInput,
+  isCommunityBroadcastChannel, sessionInput, tokenRecipientId, validateRecipient,
 } = require("./session_contract");
 const { readSessionTokenAuthority, requireIssuableRecipient } = require("./session_authority");
 const { createServerSessionControlService } = require("./session_control");
+const { createServerSessionStalenessService, occupancyVerdict } = require("./session_staleness");
 const {
   communityBroadcastBinding, storedBroadcastIngressId, validProvisioningLease,
 } = require("./community_broadcast_contract");
 
 const TOKEN_KIND = "server.session.token.v1";
+const RELEASE_KIND = "server.session.release.v1";
+// Each release costs one provider ListParticipants, so it has its own
+// actor-only budget, charged before any target is read. It is separate from
+// the token budget so leaving can never starve a rejoin.
+const SESSION_RELEASE_ATTEMPT_SCOPE = "server.session.release.attempt.v1";
+const SESSION_RELEASE_ATTEMPT_LIMIT = Object.freeze({ maxEvents: 12, windowMs: 60_000 });
 
 function checkedNow(clock) {
   const nowMs = clock();
@@ -286,7 +293,114 @@ function createServerSessionService(dependencies) {
     }
   }
 
-  return { startServerChannelSessionV1, createServerChannelTokenV1, endServerChannelSessionV1 };
+  // The grace engine needs the read-only occupancy RPC. Built on first use so
+  // a service over a revocation-only adapter keeps constructing as before.
+  let staleness = null;
+  function stalenessEngine() {
+    if (staleness === null) {
+      if (typeof livekit.roomOccupancy !== "function") fail("failed-precondition", "Server media is not configured.");
+      staleness = createServerSessionStalenessService(dependencies);
+    }
+    return staleness;
+  }
+
+  /** Authority for a release: an active member who may join voice on this
+   * channel AND whom this exact generation admitted (a `tokenRecipients`
+   * document). A member who never joined cannot probe or end somebody
+   * else's session; a session of another channel does not bind here. */
+  async function readReleaseAccess(transaction, uid, input) {
+    const access = await readChannelAccess({ db, transaction, uid, ...input, capability: "joinVoice" });
+    const roomReference = db.doc(`rooms/${access.channel.roomId}`);
+    const sessionReference = access.channelReference.collection("channelSessions").doc(input.sessionId);
+    const recipientReference = sessionReference.collection("tokenRecipients").doc(tokenRecipientId(uid));
+    const [roomSnapshot, sessionSnapshot, recipientSnapshot] = await transactionGetAll(transaction,
+      roomReference, sessionReference, recipientReference);
+    const room = roomSnapshot.exists ? roomSnapshot.data() : null;
+    const session = sessionSnapshot.exists ? sessionSnapshot.data() : null;
+    assertRoomBinding(room, access);
+    const livekitRoomName = assertSessionBinding(session, { ...input, roomId: roomReference.id });
+    if (!recipientSnapshot.exists) denied();
+    validateRecipient(recipientSnapshot.data(), { serverId: input.serverId, channelId: input.channelId,
+      roomId: roomReference.id, sessionId: input.sessionId, livekitRoomName, userId: uid, participantIdentity: uid });
+    const live = session.status === "live" && access.channel.activeSessionId === input.sessionId &&
+      room.isLive === true && room.voiceSessionId === input.sessionId && room.livekitRoomName === livekitRoomName;
+    return { anchor: { serverId: input.serverId, channelId: input.channelId, roomId: roomReference.id,
+      sessionId: input.sessionId }, session, livekitRoomName, live };
+  }
+
+  /**
+   * Best-effort signal from a client that has just left a live generation.
+   * It never ends an occupied room and never errors on one: the provider is
+   * read outside any transaction (the caller excluded, since a clean
+   * disconnect may not have reached it yet), and the empty-generation grace
+   * in session_staleness.js decides — record an observation, keep a running
+   * one, or end the generation once it has been empty for the whole grace.
+   * `unknown` (a provider error) writes nothing and no receipt, so a retry
+   * with the same requestId tries again; every other outcome is a receipt.
+   */
+  async function releaseServerChannelSessionIfEmptyV1(request) {
+    const input = sessionInput(request.data);
+    const auth = requireActor(request);
+    const nowMs = checkedNow(clock);
+    const now = Timestamp.fromMillis(nowMs);
+    const { requestId, ...operationInput } = input;
+    const identity = operationIdentity(RELEASE_KIND, auth.uid, requestId, operationInput);
+    const ledgerReference = db.doc(`integrityOperationLedgers/${identity.id}`);
+    const rateReference = rateLimitReference(db, SESSION_RELEASE_ATTEMPT_SCOPE, auth.uid);
+    await db.runTransaction(async (transaction) => {
+      const [profile, restriction, rate] = await transactionGetAll(transaction,
+        db.doc(`users/${auth.uid}`), db.doc(`restrictions/${auth.uid}`), rateReference);
+      activeProfile(profile, "Your"); assertNotRestricted(restriction, "Your", nowMs);
+      consumeRateLimit(transaction, rate, { reference: rateReference, scope: SESSION_RELEASE_ATTEMPT_SCOPE,
+        uid: auth.uid, nowMs, now, ...SESSION_RELEASE_ATTEMPT_LIMIT });
+    });
+    const engine = stalenessEngine();
+    const plan = await db.runTransaction(async (transaction) => {
+      const ledger = await transaction.get(ledgerReference);
+      const access = await readReleaseAccess(transaction, auth.uid, input);
+      livekit.assertSupported();
+      const prior = assertLedgerReplay(ledger, { kind: RELEASE_KIND, uid: auth.uid, inputHash: identity.inputHash });
+      return { prior, access };
+    });
+    if (plan.prior) return plan.prior;
+    let verdict = null;
+    if (plan.access.live) {
+      try {
+        verdict = occupancyVerdict(await livekit.roomOccupancy({ ...plan.access.anchor,
+          livekitRoomName: plan.access.livekitRoomName }), auth.uid);
+      } catch {
+        // An unknown never ends a generation and leaves no receipt.
+        return { sessionId: input.sessionId, outcome: "unknown", recheckAfterMillis: 0 };
+      }
+    }
+    return db.runTransaction(async (transaction) => {
+      const ledger = await transaction.get(ledgerReference);
+      const access = await readReleaseAccess(transaction, auth.uid, input);
+      const prior = assertLedgerReplay(ledger, { kind: RELEASE_KIND, uid: auth.uid, inputHash: identity.inputHash });
+      if (prior) return prior;
+      // A generation that is no longer live (ended, or superseded by a newer
+      // one) is never touched: the release names one generation only.
+      const settled = verdict === null || !access.live
+        ? { outcome: "changed", recheckAfterMillis: 0 }
+        : await engine.settleEmptyGenerationWithin(transaction, {
+          anchor: access.anchor, observedMaxTokenExpiresAtMillis: plan.access.session.maxTokenExpiresAtMillis,
+          verdict, source: "release", excludeUid: auth.uid,
+        });
+      const result = { sessionId: input.sessionId, outcome: settled.outcome,
+        recheckAfterMillis: settled.recheckAfterMillis ?? 0 };
+      transaction.create(ledgerReference, ledgerData({ kind: RELEASE_KIND, uid: auth.uid, requestId,
+        inputHash: identity.inputHash, result, now: Timestamp.fromMillis(checkedNow(clock)) }));
+      return result;
+    });
+  }
+
+  return {
+    startServerChannelSessionV1, createServerChannelTokenV1, endServerChannelSessionV1,
+    releaseServerChannelSessionIfEmptyV1,
+  };
 }
 
-module.exports = { TOKEN_KIND, authorizedTokenReplay, createServerSessionService };
+module.exports = {
+  RELEASE_KIND, SESSION_RELEASE_ATTEMPT_LIMIT, SESSION_RELEASE_ATTEMPT_SCOPE, TOKEN_KIND,
+  authorizedTokenReplay, createServerSessionService,
+};

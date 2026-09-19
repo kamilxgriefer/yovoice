@@ -24,7 +24,7 @@ const {
   COMPANY_FILE_MEDIA_CALLABLES, FAMILY_MEMORY_MEDIA_CALLABLES,
   PODCAST_EGRESS_CALLABLES, PODCAST_EPISODE_MEDIA_CALLABLES, PODCAST_RECORDING_EXPORTS,
   SECRET_BOUND_CALLABLES, SERVER_CALLABLE_METHODS,
-  SERVERS_V1_EXPORT_NAMES, SWEEP_EXPORTS,
+  SERVERS_V1_EXPORT_NAMES, SESSION_LIFECYCLE_CALLABLE_METHODS, SWEEP_EXPORTS,
   authBoundRequest, createServersV1Dispatcher, createServersV1Functions,
   createServersV1Runtime, describeOutboxJob, isTransientFailure,
 } = require("../servers/registration");
@@ -149,8 +149,8 @@ test("Registration: the obsolete environment gate cannot change the static base 
     (name) => !PODCAST_RECORDING_EXPORTS.includes(name),
   );
   assert.deepEqual(on.exportNames, off.exportNames);
-  assert.equal(SERVERS_V1_EXPORT_NAMES.length, 61);
-  assert.equal(baseServerExports.length, 54);
+  assert.equal(SERVERS_V1_EXPORT_NAMES.length, 62);
+  assert.equal(baseServerExports.length, 55);
   assert.equal(Object.keys(SERVER_CALLABLE_METHODS).length, 54);
   assert.ok(on.serversModules.includes("registration.js"));
   for (const factory of [
@@ -301,7 +301,7 @@ function convergenceJob(overrides = {}) {
 const request = (uid, data, extra = {}) => ({ auth: { uid, token: { email_verified: true } }, data, ...extra });
 const rejects = (promise, code) => assert.rejects(promise, (error) => error instanceof HttpsError && error.code === code);
 
-test("Registration: the export map is exactly sixty-one names with the callable and worker options", () => {
+test("Registration: the export map is exactly sixty-two names with the callable and worker options", () => {
   const registrations = [];
   const functions = createServersV1Functions({
     activationGate: ENABLED_ACTIVATION_GATE,
@@ -313,7 +313,7 @@ test("Registration: the export map is exactly sixty-one names with the callable 
   assert.deepEqual(SWEEP_EXPORTS, [
     SWEEP, FAMILY_MEMORY_SWEEP, COMPANY_FILE_SWEEP, PODCAST_EGRESS_SWEEP,
   ]);
-  assert.equal(registrations.filter((item) => item.kind === "callable").length, 55);
+  assert.equal(registrations.filter((item) => item.kind === "callable").length, 56);
   assert.equal(registrations.filter((item) => item.kind === "created").length, 1);
   assert.equal(registrations.filter((item) => item.kind === "schedule").length, 5);
   for (const name of CALLABLE_NAMES) {
@@ -426,6 +426,93 @@ test("Registration: the sweep schedule asks the staleness worker once and logs i
   });
   await unavailable[SWEEP].handler();
   assert.deepEqual(warned.lines.map((entry) => entry.level), ["warn"]);
+});
+
+test("Registration: the last-leave release callable is secret-bound, scales to zero, sits behind runtime activation and stays outside the documented table", async () => {
+  const NAME = "releaseServerChannelSessionIfEmptyV1";
+  assert.deepEqual(SESSION_LIFECYCLE_CALLABLE_METHODS, { [NAME]: "sessions" });
+  assert.equal(Object.hasOwn(SERVER_CALLABLE_METHODS, NAME), false);
+  assert.equal(ALL_SERVER_CALLABLE_METHODS[NAME], "sessions");
+  assert.ok(SECRET_BOUND_CALLABLES.includes(NAME));
+  assert.ok(SERVERS_V1_EXPORT_NAMES.includes(NAME));
+  const calls = [];
+  const functions = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE, enablePodcastRecording: false,
+    runtime: fakeRuntime({ calls }), registrars: fakeRegistrars([]), log: recordingLog(),
+  });
+  const { options } = functions[NAME];
+  assert.equal(functions[NAME].kind, "callable");
+  assert.equal(options.region, REGION);
+  assert.equal(options.minInstances, 0, "the release signal never keeps a warm instance");
+  assert.equal(options.maxInstances, 50);
+  assert.equal(options.timeoutSeconds, 120);
+  assert.deepEqual(options.secrets.map((secret) => secret.name), LIVEKIT_SECRETS);
+  assert.equal(options.enforceAppCheck, false);
+  assert.equal(options.consumeAppCheckToken, false);
+  assert.deepEqual(await functions[NAME].handler(request("user-1", { serverId: "s" })), { name: NAME });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(Object.keys(calls[0].request).sort(), ["auth", "data"]);
+  await rejects(functions[NAME].handler({ data: {} }), "unauthenticated");
+  assert.equal(calls.length, 1);
+  // The server-owned activation document is checked before the factory.
+  const refused = [];
+  const gated = createServersV1Functions({
+    activationGate: {
+      requireCallable: async () => {
+        throw new HttpsError("failed-precondition", "Servers are not enabled for this account.");
+      },
+      workersEnabled: async () => false,
+    },
+    enablePodcastRecording: false,
+    runtime: fakeRuntime({ calls: refused }), registrars: fakeRegistrars([]), log: recordingLog(),
+  });
+  await rejects(gated[NAME].handler(request("user-1", {})), "failed-precondition");
+  assert.equal(refused.length, 0);
+  const enforced = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE, enablePodcastRecording: false, enforceAppCheck: true,
+    runtime: fakeRuntime(), registrars: fakeRegistrars([]), log: recordingLog(),
+  });
+  assert.equal(enforced[NAME].options.enforceAppCheck, true);
+  assert.equal(enforced[NAME].options.consumeAppCheckToken, true);
+});
+
+test("Registration: the sweep line carries the last-leave and drift counters as counts, warns on unresolved drift, and a paused worker reports the same shape", async () => {
+  const log = recordingLog();
+  const staged = [{ serverId: "clubs/private", channelId: "c", roomId: "r", sessionId: "s", endOperationId: "e" }];
+  const result = {
+    scanned: 2, truncated: false, skippedLegacy: 0, skippedUnbound: 0, skippedYoung: 0,
+    skippedOccupied: 0, providerUnavailable: 0, changed: 0, staged,
+    stagedEmpty: 1, graceRunning: 1, driftRepaired: 2, driftUnresolved: 0, driftTruncated: false,
+  };
+  let current = result;
+  const functions = createServersV1Functions({
+    activationGate: ENABLED_ACTIVATION_GATE, enablePodcastRecording: false,
+    runtime: fakeRuntime({ workers: { staleness: async () => current } }),
+    registrars: fakeRegistrars([]), log,
+  });
+  const line = await functions[SWEEP].handler();
+  assert.deepEqual(line, { ...result, staged: 1 });
+  assert.deepEqual(log.lines, [{ level: "info", message: "servers.stale_session_sweep", payload: line }]);
+  assert.equal(JSON.stringify(log.lines).includes("clubs/private"), false);
+  current = { ...result, driftUnresolved: 1 };
+  await functions[SWEEP].handler();
+  assert.equal(log.lines.at(-1).level, "warn");
+  current = { ...result, driftTruncated: true };
+  await functions[SWEEP].handler();
+  assert.equal(log.lines.at(-1).level, "warn");
+  const pausedLog = recordingLog();
+  const paused = createServersV1Functions({
+    activationGate: { requireCallable: ENABLED_ACTIVATION_GATE.requireCallable, workersEnabled: async () => false },
+    enablePodcastRecording: false,
+    runtime: fakeRuntime({ workers: { staleness: async () => { throw new Error("must not run while paused"); } } }),
+    registrars: fakeRegistrars([]), log: pausedLog,
+  });
+  const idle = await paused[SWEEP].handler();
+  assert.equal(idle.activationDisabled, true);
+  for (const key of ["stagedEmpty", "graceRunning", "driftRepaired", "driftUnresolved"]) assert.equal(idle[key], 0, key);
+  assert.equal(idle.driftTruncated, false);
+  assert.deepEqual(pausedLog.lines, [{ level: "info", message: "servers.worker_paused",
+    payload: { worker: SWEEP } }]);
 });
 
 test("Registration: the Podcast Egress schedule invokes the registered worker with the bounded page and reports backlog", async () => {

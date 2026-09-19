@@ -138,14 +138,21 @@ const SERVER_CALLABLE_METHODS = Object.freeze({
 const COMMUNITY_BROADCAST_CALLABLE_METHODS = Object.freeze({
   createServerBroadcastIngressV1: "broadcast",
 });
+// The last-leave signal of the empty-generation grace (session_staleness.js,
+// ADR-180 amendment), also kept outside the frozen documented table.
+const SESSION_LIFECYCLE_CALLABLE_METHODS = Object.freeze({
+  releaseServerChannelSessionIfEmptyV1: "sessions",
+});
 const ALL_SERVER_CALLABLE_METHODS = Object.freeze({
   ...SERVER_CALLABLE_METHODS,
   ...COMMUNITY_BROADCAST_CALLABLE_METHODS,
+  ...SESSION_LIFECYCLE_CALLABLE_METHODS,
 });
 
 // Only callables that reach the media provider bind the LiveKit secrets:
 // token issuance signs a JWT, session end eagerly runs one revocation page
-// (sessions.js), and OBS provisioning manages an RTMP ingress.
+// (sessions.js), OBS provisioning manages an RTMP ingress, and the release
+// signal reads the room's occupancy (one ListParticipants).
 // `startServerChannelSessionV1` validates the
 // public LIVEKIT_URL only, and the three participation callables
 // (session_participation.js) never touch the provider themselves: a role or
@@ -156,6 +163,7 @@ const SECRET_BOUND_CALLABLES = Object.freeze([
   "createServerChannelTokenV1",
   "endServerChannelSessionV1",
   "createServerBroadcastIngressV1",
+  "releaseServerChannelSessionIfEmptyV1",
 ]);
 
 const FAMILY_MEMORY_MEDIA_CALLABLES = Object.freeze([
@@ -879,20 +887,34 @@ function createServersV1Functions({
       { scanned: 0, completed: 0, deferred: 0, rejected: 0, failed: 0, unsupported: 0,
         hasMore: false, activationDisabled: true }),
   );
-  // Same cadence as the legacy sweepStrandedLiveRoomsSchedule: a stale
-  // generation stays visibly LIVE for at most one grace period plus one
-  // cadence. maxInstances: 1 keeps two runs from racing onto one generation
-  // (the staging transaction makes that correct anyway, but not free).
+  // Same cadence as the legacy sweepStrandedLiveRoomsSchedule. A generation
+  // whose emptiness was observed (release callable or provider
+  // `room_finished`) ends here at most one cadence after its reconnect grace;
+  // an unobserved one keeps the ADR-180 bound. maxInstances: 1 keeps two runs
+  // from racing onto one generation (the staging transaction makes that
+  // correct anyway, but not free).
   exportsMap.sweepStaleServerChannelSessionsSchedule = registrars.onSchedule(
     { ...workerOptions, schedule: "every 5 minutes", timeZone: "Etc/UTC", maxInstances: 1 },
     async () => runWorker("sweepStaleServerChannelSessionsSchedule", async () => {
       const outcome = await resolved.staleness.stageStaleServerChannelSessions();
-      const line = { ...outcome, staged: outcome.staged.length };
-      if (outcome.truncated || outcome.providerUnavailable > 0) log.warn("servers.stale_session_sweep", line);
-      else log.info("servers.stale_session_sweep", line);
+      // Counts only, never ids. The last-leave and drift counters default to
+      // zero so an older worker result still produces one line shape.
+      const line = {
+        ...outcome,
+        staged: outcome.staged.length,
+        stagedEmpty: outcome.stagedEmpty ?? 0,
+        graceRunning: outcome.graceRunning ?? 0,
+        driftRepaired: outcome.driftRepaired ?? 0,
+        driftUnresolved: outcome.driftUnresolved ?? 0,
+        driftTruncated: outcome.driftTruncated ?? false,
+      };
+      if (outcome.truncated || outcome.providerUnavailable > 0 || line.driftUnresolved > 0 || line.driftTruncated) {
+        log.warn("servers.stale_session_sweep", line);
+      } else log.info("servers.stale_session_sweep", line);
       return line;
     }, { scanned: 0, truncated: false, skippedLegacy: 0, skippedUnbound: 0, skippedYoung: 0,
-      skippedOccupied: 0, providerUnavailable: 0, changed: 0, staged: 0, activationDisabled: true }),
+      skippedOccupied: 0, providerUnavailable: 0, changed: 0, staged: 0, stagedEmpty: 0, graceRunning: 0,
+      driftRepaired: 0, driftUnresolved: 0, driftTruncated: false, activationDisabled: true }),
   );
   exportsMap.sweepServerFamilyMemoryMaintenanceSchedule = registrars.onSchedule(
     {
@@ -978,6 +1000,7 @@ module.exports = {
   SECRET_BOUND_CALLABLES,
   SERVER_CALLABLE_METHODS,
   SERVERS_V1_EXPORT_NAMES,
+  SESSION_LIFECYCLE_CALLABLE_METHODS,
   SWEEP_EXPORTS,
   authBoundRequest,
   canonicalActivationConfig,
