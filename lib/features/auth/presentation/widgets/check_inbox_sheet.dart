@@ -8,6 +8,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/auth_error_localizer.dart';
+import 'package:yovoice/features/auth/presentation/screens/responsive_auth_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
@@ -159,30 +160,17 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
                 surfaceColor: AppImmersiveColors.surface,
               ),
               const SizedBox(height: 6),
-              Container(
-                width: 68,
-                height: 68,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.primary.withValues(alpha: .14),
-                  border: Border.all(
-                    color: AppColors.primary.withValues(alpha: .4),
-                  ),
-                ),
-                child: const Icon(
-                  Icons.mark_email_unread_outlined,
-                  color: AppColors.secondary,
-                  size: 30,
-                ),
-              ),
-              const SizedBox(height: 18),
+              // Slim (phase 7): the chain's shared medallion, heading scale,
+              // control outline and solid primary action.
+              const AuthStatusMark(icon: Icons.mark_email_unread_outlined),
+              const SizedBox(height: 16),
               Text(
                 copy.text('Check your inbox', 'Sprawdź skrzynkę odbiorczą'),
+                textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: AppImmersiveColors.textPrimary,
                   fontSize: 22,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
               const SizedBox(height: 8),
@@ -191,7 +179,7 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: AppImmersiveColors.textSecondary,
-                  fontSize: 13.5,
+                  fontSize: 14,
                   height: 1.45,
                 ),
               ),
@@ -203,19 +191,37 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
                   fontSize: 13,
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton(
                   onPressed: _sending || _cooldownSeconds > 0 ? null : _resend,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppImmersiveColors.textPrimary,
-                    side: const BorderSide(color: AppImmersiveColors.border),
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
+                  style:
+                      OutlinedButton.styleFrom(
+                        foregroundColor: AppImmersiveColors.textPrimary,
+                        disabledForegroundColor:
+                            AppImmersiveColors.textSecondary,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ).copyWith(
+                        side: WidgetStateProperty.resolveWith(
+                          (states) => states.contains(WidgetState.focused)
+                              ? const BorderSide(
+                                  color: AppImmersiveColors.authFocus,
+                                  width: 2,
+                                )
+                              : states.contains(WidgetState.disabled)
+                              ? const BorderSide(
+                                  color: AppImmersiveColors
+                                      .authSocialDisabledBorder,
+                                )
+                              : const BorderSide(
+                                  color: AppImmersiveColors.authBorderStrong,
+                                ),
+                        ),
+                      ),
                   child: Text(
                     _sending
                         ? copy.text('Sending…', 'Wysyłanie…')
@@ -241,15 +247,15 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
                   onPressed: () => Navigator.of(context).pop(true),
                   style: FilledButton.styleFrom(
                     backgroundColor: AppColors.primary,
-                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                   child: Text(
                     copy.backToLogin,
                     style: const TextStyle(
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                       color: AppImmersiveColors.textPrimary,
                     ),
                   ),
