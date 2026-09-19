@@ -88,6 +88,91 @@ void main() {
       expect(find.text('Stale projection'), findsNothing);
     });
 
+    // The two layouts that host the conversation differently: below the
+    // player on a phone/tablet, and in the side panel once the thread gets
+    // its own column. The paging flag is shared state, so both must recover.
+    for (final layout in const <({String name, Size size, String scrollKey})>[
+      (
+        name: 'stacked',
+        size: Size(390, 844),
+        scrollKey: 'moment-detail-scroll',
+      ),
+      (
+        name: 'thread panel',
+        size: Size(1440, 1000),
+        scrollKey: 'moment-detail-thread-scroll',
+      ),
+    ]) {
+      testWidgets(
+        'a canonical refresh landing mid-page never strands the load-more '
+        'control (${layout.name})',
+        (tester) async {
+          tester.view.physicalSize = layout.size;
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+
+          final service = _ControlledMomentService();
+          await _pumpDetail(tester, service);
+          service.requests[0].complete(
+            _view(
+              comment: 'First page reply',
+              truncated: true,
+              cursor: 'page-1',
+            ),
+          );
+          await tester.pump();
+
+          final more = find.byKey(const ValueKey('moment-thread-load-more'));
+          await tester.scrollUntilVisible(
+            more,
+            200,
+            scrollable: find
+                .descendant(
+                  of: find.byKey(ValueKey(layout.scrollKey)),
+                  matching: find.byType(Scrollable),
+                )
+                .first,
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(more);
+          await tester.pump();
+          expect(service.requests, hasLength(2));
+          expect(
+            find.descendant(
+              of: more,
+              matching: find.byType(CircularProgressIndicator),
+            ),
+            findsOneWidget,
+          );
+
+          // A resume fires the canonical refresh while that page is still in
+          // flight, so the page comes back against a superseded generation.
+          _resumeApp(tester);
+          await tester.pump();
+          expect(service.requests, hasLength(3));
+
+          service.requests[1].complete(_view(comment: 'Superseded page'));
+          await tester.pump();
+
+          // Its rows are still correctly discarded...
+          expect(find.text('Superseded page'), findsNothing);
+          // ...but the control comes back to life instead of spinning forever.
+          expect(
+            find.descendant(
+              of: more,
+              matching: find.byType(CircularProgressIndicator),
+            ),
+            findsNothing,
+          );
+          expect(tester.widget<TextButton>(more).onPressed, isNotNull);
+
+          await tester.tap(more);
+          await tester.pump();
+          expect(service.requests, hasLength(4));
+        },
+      );
+    }
+
     for (final code in const <String>[
       'permission-denied',
       'not-found',
@@ -266,6 +351,8 @@ VoiceMoment _moment({String caption = 'Seed projection'}) {
 VoiceMomentViewV2 _view({
   String caption = 'Canonical projection',
   String comment = 'Canonical comment',
+  bool truncated = false,
+  String? cursor,
 }) => VoiceMomentViewV2(
   moment: _moment(caption: caption),
   comments: <MomentComment>[
@@ -280,8 +367,8 @@ VoiceMomentViewV2 _view({
       createdAt: DateTime.utc(2026, 8, 30, 12, 1),
     ),
   ],
-  commentsTruncated: false,
-  nextCommentCursor: null,
+  commentsTruncated: truncated,
+  nextCommentCursor: cursor,
   topReactions: const <MomentReactor>[],
 );
 

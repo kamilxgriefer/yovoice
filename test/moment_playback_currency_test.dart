@@ -55,6 +55,22 @@ class _HeldGrants {
   };
 }
 
+/// A like seam whose answer can be held open the same way, so a hand-off can
+/// happen while the round trip is still running.
+class _HeldFeed extends HomeFeedService {
+  _HeldFeed({super.firestore, super.auth});
+
+  final List<String> likes = <String>[];
+  Completer<void>? gate;
+
+  @override
+  Future<void> setLike(String momentId, {required bool liked}) async {
+    likes.add(momentId);
+    final open = gate;
+    if (open != null) await open.future;
+  }
+}
+
 /// A clock the case advances by hand, so a deadline can pass while a grant
 /// is in flight without the test waiting for real time.
 class _TestClock {
@@ -90,6 +106,7 @@ Future<_Harness> _pumpDetail(
   required VoiceMoment moment,
   List<VoiceMoment> neighbours = const <VoiceMoment>[],
   Size size = const Size(1440, 900),
+  HomeFeedService? feedService,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -143,7 +160,8 @@ Future<_Harness> _pumpDetail(
         builder: (_) => MomentDetailScreen(
           moment: moment,
           momentService: moments,
-          feedService: HomeFeedService(firestore: db, auth: auth),
+          feedService:
+              feedService ?? HomeFeedService(firestore: db, auth: auth),
           auth: auth,
           neighbours: neighbours.isEmpty ? null : neighbours,
           neighbourQueue: MomentNeighbourQueue(),
@@ -339,6 +357,75 @@ void main() {
       await _settle(tester);
 
       expect(harness.playCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // The same hand-off, one round trip further in: a like is also a network
+  // call, and the flag that keeps it single-flight is the same flag that
+  // disables the chip (`onTap: _liking ? null : ...`). If the answer arrives
+  // after the viewer has moved on, the Moment they moved TO must still be
+  // likeable.
+  testWidgets(
+    'a like answer that lands after the hand-off leaves the next Moment '
+    'likeable',
+    (tester) async {
+      final current = listenMoment('m-liked', caption: 'The one being left');
+      final next = listenMoment(
+        'm-next',
+        author: 'bartek',
+        authorName: 'Bartek',
+        caption: 'The one handed off to',
+      );
+      final feed = _HeldFeed(
+        firestore: FakeFirebaseFirestore(),
+        auth: listenAuth(),
+      );
+      await _pumpDetail(
+        tester,
+        moment: current,
+        neighbours: <VoiceMoment>[next],
+        feedService: feed,
+      );
+
+      final like = find.byKey(const ValueKey<String>('moment-detail-like'));
+      await tester.ensureVisible(like);
+      await tester.pump();
+      feed.gate = Completer<void>();
+      await tester.tap(like);
+      await _settle(tester);
+      expect(feed.likes, <String>['m-liked']);
+
+      // Hand off while the like is still on the wire.
+      final row = find.byKey(
+        const ValueKey<String>('moments-queue-item-m-next'),
+      );
+      await tester.ensureVisible(row);
+      await tester.pump();
+      await tester.tap(row);
+      await _settle(tester);
+      expect(find.text('The one handed off to'), findsWidgets);
+
+      feed.gate!.complete();
+      await _settle(tester);
+
+      // The answer belongs to a Moment this screen no longer shows, so it
+      // still must not write anything into the new one...
+      expect(feed.likes, <String>['m-liked']);
+
+      // ...but the control it disabled has to come back to life.
+      await tester.ensureVisible(like);
+      await tester.pump();
+      await tester.tap(like);
+      await _settle(tester);
+      expect(
+        feed.likes,
+        <String>['m-liked', 'm-next'],
+        reason:
+            'the in-flight flag is also what disables the chip, so a stranded '
+            'flag leaves the next Moment unlikeable for the life of the '
+            'screen',
+      );
       expect(tester.takeException(), isNull);
     },
   );

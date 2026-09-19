@@ -385,6 +385,17 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
             ),
           ),
         );
+    } finally {
+      // A canonical refresh (resume, route return, retry) landing while this
+      // page is in flight bumps the generation, so both branches above return
+      // early and the button used to keep its spinner for the life of the
+      // screen — every later tap silently rejected by the guard at the top.
+      // Clearing here is safe because that same guard keeps this method
+      // single-flight: the only writer of `_loadingMore = true` is the call
+      // whose `finally` this is. Mirrors MomentCommentsScreen._loadComments.
+      if (mounted && _loadingMore) {
+        setState(() => _loadingMore = false);
+      }
     }
   }
 
@@ -1655,6 +1666,19 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
             ),
           ),
         );
+    } finally {
+      // A neighbour hand-off landing while the like is on the wire swaps
+      // `_moment`, so both branches above return on the id check without
+      // clearing the flag — and `_liking` is also what disables the control
+      // (`onTap: _liking ? null : ...`), so the NEXT Moment's like button
+      // would stay dead for the life of the screen. Clearing here is safe
+      // because the `if (_liking) return;` guard keeps this method
+      // single-flight: the only writer of `_liking = true` is the call whose
+      // `finally` this is, and its request has already settled. Same shape as
+      // `_loadMoreComments`.
+      if (mounted && _liking) {
+        setState(() => _liking = false);
+      }
     }
   }
 
