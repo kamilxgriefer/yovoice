@@ -13758,19 +13758,19 @@ the family steps.
 Released to testers on 2026-09-19 as `version: 3.0.0+34` (the release commit
 `chore(release): YO Voice 3.0.0+34, the Slim redesign`). Phase 0 is the base
 (`43cc2201`); phases 1–7 were built in parallel on `slim/p1`…`slim/p7` and
-merged into `main` in order:
+merged into `main` in order. The release step's `git pull --rebase origin main` linearized that history before the push (tree unchanged, `1d05fa4e`), so `main` carries the phase commits themselves, with new hashes from p2 on, and no merge commits; the branch tips stay reachable through the `slim-pN-ready` tags. Hashes:
 
-| Phase | Branch tip (`slim-pN-ready`) | Merge into `main` |
+| Phase | Branch tip (`slim-pN-ready`) | Commits on `main` |
 | --- | --- | --- |
-| p1 Start | `15351a4f` | `d539bb39` |
-| p2 Serwery | `fee9addd` | `db839134` |
-| p3 Czaty | `cef92248` | `2e46fe44` |
-| p4 YO Moments | `050663ce` | `5b70cb02` |
-| p5 Profil | `596e49d2` | `cf593577` |
-| p6 Więcej | `7ec2caaf` | `73f76ba1` |
-| p7 Logowanie | `89353aa0` | `19c15947` |
+| p1 Start | `15351a4f` | `15351a4f` |
+| p2 Serwery | `fee9addd` | `28d80a7c` |
+| p3 Czaty | `cef92248` | `d8c06734` + `3c6c9fd2` |
+| p4 YO Moments | `050663ce` | `96217c48` + `71d15f85` |
+| p5 Profil | `596e49d2` | `d831c21d` + `5cf67037` |
+| p6 Więcej | `7ec2caaf` | `db0f21f0` + `b9935930` |
+| p7 Logowanie | `89353aa0` | `355a8438` + `010a5f3b` |
 
-The integration review round `9b18fdda` fixed two findings: the Servers tab now
+The integration review round `d24bbd8f` fixed two findings: the Servers tab now
 hands `onOpenServer` to its inline workspace (a rail tap had replaced the root
 route and disposed `MainShell`), and the own profile's Serwery counter counts
 the live `watchMyServers()` list instead of the achievement counter, with the

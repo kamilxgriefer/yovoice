@@ -17,24 +17,24 @@ someone decide what to pick up next.
 ## YO Voice 3.0.0 (34) — the Slim redesign — released to testers — 2026-09-19
 
 **Status: Done for 3.0.0.** `main` carries `version: 3.0.0+34` in the release
-commit `chore(release): YO Voice 3.0.0+34, the Slim redesign`. Scope, per-phase
+commit `176ec120` (`chore(release): YO Voice 3.0.0+34, the Slim redesign`). Scope, per-phase
 MUST list and the 3.0.1 deferrals:
 [ADR-209, "3.0.0 release scope"](Decisions.md#300-release-scope). Run log and
 release notes (en + pl):
 [Sessions/2026-09-19-slim-redesign.md](Sessions/2026-09-19-slim-redesign.md).
 Presentation only: no backend, rules, schema, Function or catalog change.
 
-| Phase | Status | Branch tip | Merge into `main` |
+| Phase | Status | Branch tip | Commits on `main` |
 | --- | --- | --- | --- |
 | 0 Fundament (shared primitives) | Done | — | `43cc2201` (on `origin/main` before tonight) |
-| 1 Start | Done | `15351a4f` | `d539bb39` |
-| 2 Serwery | Done | `fee9addd` | `db839134` |
-| 3 Czaty | Done | `cef92248` | `2e46fe44` |
-| 4 YO Moments | Done | `050663ce` | `5b70cb02` |
-| 5 Profil | Done | `596e49d2` | `cf593577` |
-| 6 Więcej, Ustawienia, Znajomi, Powiadomienia | Done | `7ec2caaf` | `73f76ba1` |
-| 7 Logowanie i rejestracja | Done | `89353aa0` | `19c15947` |
-| Integration review round | Done | — | `9b18fdda` |
+| 1 Start | Done | `15351a4f` | `15351a4f` |
+| 2 Serwery | Done | `fee9addd` | `28d80a7c` |
+| 3 Czaty | Done | `cef92248` | `d8c06734` + `3c6c9fd2` |
+| 4 YO Moments | Done | `050663ce` | `96217c48` + `71d15f85` |
+| 5 Profil | Done | `596e49d2` | `d831c21d` + `5cf67037` |
+| 6 Więcej, Ustawienia, Znajomi, Powiadomienia | Done | `7ec2caaf` | `db0f21f0` + `b9935930` |
+| 7 Logowanie i rejestracja | Done | `89353aa0` | `355a8438` + `010a5f3b` |
+| Integration review round | Done | — | `d24bbd8f` |
 
 Verification: per phase `flutter analyze`, targeted tests and one frame set
 (390 / 1440, Dark and Pearl, pl); on the integrated tree `flutter analyze`

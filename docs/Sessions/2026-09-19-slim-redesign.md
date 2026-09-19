@@ -235,18 +235,18 @@ implementer had been stopped mid-way when the plan switched to parallel
 worktrees; its edits were carried over unchanged as `ded38cd5` and finished
 in `15351a4f`.
 
-| Phase | Branch tip | Merge | Frames (`yovoice-evidence/2026-09-19/`) |
+| Phase | Branch tip | Commits on `main` | Frames (`yovoice-evidence/2026-09-19/`) |
 | --- | --- | --- | --- |
-| p1 Start | `15351a4f` | `d539bb39` | `slim-1-start-frames/after/` |
-| p2 Serwery | `fee9addd` | `db839134` | `slim-2-servers-frames/after/` |
-| p3 Czaty | `cef92248` | `2e46fe44` | `slim-p3-frames/after/` (PC) |
-| p4 YO Moments | `050663ce` | `5b70cb02` | `slim-p4-frames/after/` (PC) |
-| p5 Profil | `596e49d2` | `cf593577` | `slim-p5-frames/after/` (PC) |
-| p6 Więcej | `7ec2caaf` | `73f76ba1` | `slim-p6-frames/after/` (PC) |
-| p7 Logowanie | `89353aa0` | `19c15947` | `slim-p7-frames/after/` (PC) |
+| p1 Start | `15351a4f` | `15351a4f` | `slim-1-start-frames/after/` |
+| p2 Serwery | `fee9addd` | `28d80a7c` | `slim-2-servers-frames/after/` |
+| p3 Czaty | `cef92248` | `d8c06734` + `3c6c9fd2` | `slim-p3-frames/after/` (PC) |
+| p4 YO Moments | `050663ce` | `96217c48` + `71d15f85` | `slim-p4-frames/after/` (PC) |
+| p5 Profil | `596e49d2` | `d831c21d` + `5cf67037` | `slim-p5-frames/after/` (PC) |
+| p6 Więcej | `7ec2caaf` | `db0f21f0` + `b9935930` | `slim-p6-frames/after/` (PC) |
+| p7 Logowanie | `89353aa0` | `355a8438` + `010a5f3b` | `slim-p7-frames/after/` (PC) |
 
-**Integration (Mac).** The seven branches merged in order into `main`. A
-review round over the integrated tree found two defects, fixed in `9b18fdda`
+**Integration (Mac).** The seven branches merged in order into `main`. The release step's `git pull --rebase origin main` linearized that history before the push (tree unchanged, `1d05fa4e`), so `main` carries the phase commits themselves, with new hashes from p2 on, and no merge commits; the branch tips stay reachable through the `slim-pN-ready` tags. A
+review round over the integrated tree found two defects, fixed in `d24bbd8f`
 with new tests (`servers_inline_rail_test`, `profile_own_stats_test`):
 
 - the Servers tab did not pass `onOpenServer` to its inline workspace, so a
@@ -256,11 +256,11 @@ with new tests (`servers_inline_rail_test`, `profile_own_stats_test`):
   the same page, and the Moments counter is left out until a live count
   exists (`momentCount` never decreases).
 
-On `9b18fdda`: `flutter analyze` clean; the full `flutter test` suite in two
+On `d24bbd8f`: `flutter analyze` clean; the full `flutter test` suite in two
 halves, green (odd half +2745, even half +2574, 0 failed). No test assertion,
 finder or rhythm number was edited to go green.
 
-**Release.** `chore(release): YO Voice 3.0.0+34, the Slim redesign` sets
+**Release.** `176ec120` (`chore(release): YO Voice 3.0.0+34, the Slim redesign`) sets
 `version: 3.0.0+34` and writes ADR-209 "3.0.0 release scope", the Roadmap
 entry, the changed UI rules and this section. `main` was pushed; CI on that
 commit runs "Deploy YO Voice to Firebase Hosting" (verify job only; nothing
