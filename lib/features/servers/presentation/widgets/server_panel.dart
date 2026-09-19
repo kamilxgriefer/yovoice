@@ -3,6 +3,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/shared/widgets/navigation/yo_server_rail_item.dart';
 import 'package:yovoice/shared/widgets/rows/yo_channel_row.dart';
 
 import '../../data/models/server.dart';
@@ -14,7 +15,6 @@ import '../../data/services/server_session_controller.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
 import 'server_channel_scene.dart';
-import 'server_type_symbol.dart';
 
 /// The server panel: cover (an identity tile — no artwork writer exists,
 /// contract G7), name, the board's subtitle, `Zaproś`, the channel list
@@ -218,62 +218,95 @@ class _ServerPanelState extends State<ServerPanel> {
             ),
             const SizedBox(height: 12),
           ],
-          _Cover(server: server, colors: colors, onManage: widget.onManage),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        server.name.isEmpty ? copy.serversTitle : server.name,
-                        // A server name nobody sized for (118 characters at
-                        // 200 % text in a 240-px column) ran to a dozen lines
-                        // and pushed `Zaproś` and every channel row out of
-                        // the panel's lazily built viewport — on a phone,
-                        // where this panel IS the channel list. The full name
-                        // is on the surface's own header; here it is an
-                        // identifier, so it takes two lines and elides.
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTypography.titleMedium.copyWith(
-                          color: palette.textPrimary,
-                        ),
-                      ),
-                    ),
-                    if (server.privacy == ServerPrivacy.inviteOnly)
-                      Padding(
-                        padding: const EdgeInsetsDirectional.only(
-                          start: 6,
-                          top: 2,
-                        ),
-                        child: Icon(
-                          Icons.lock_outline,
-                          size: 16,
-                          color: palette.textSecondary,
-                          semanticLabel: copy.serverPrivacyTitle(
-                            server.privacy,
-                          ),
-                        ),
-                      ),
-                  ],
+          // Slim: one header row (squircle, name, subtitle, settings)
+          // instead of a 96 px gradient cover card above a second name
+          // block. The cover carried no data of its own (no artwork writer
+          // exists, contract G7), so nothing is lost by flattening it.
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsetsDirectional.only(start: 4, top: 2),
+                child: YoServerTile(
+                  initial: server.initial,
+                  type: server.type,
+                  size: 40,
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${copy.serverKindSubtitle(server.type, server.privacy)} · '
-                  '${copy.serverMembers(server.memberCount)}',
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTypography.bodySmall.copyWith(
-                    color: palette.textSecondary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              server.name.isEmpty
+                                  ? copy.serversTitle
+                                  : server.name,
+                              // A server name nobody sized for (118
+                              // characters at 200 % text in a 240-px column)
+                              // ran to a dozen lines and pushed `Zaproś` and
+                              // every channel row out of the panel's lazily
+                              // built viewport — on a phone, where this panel
+                              // IS the channel list. The full name is on the
+                              // surface's own header; here it is an
+                              // identifier, so it takes two lines and elides.
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTypography.titleMedium.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: palette.textPrimary,
+                              ),
+                            ),
+                          ),
+                          if (server.privacy == ServerPrivacy.inviteOnly)
+                            Padding(
+                              padding: const EdgeInsetsDirectional.only(
+                                start: 6,
+                                top: 2,
+                              ),
+                              child: Icon(
+                                Icons.lock_outline,
+                                size: 16,
+                                color: palette.textSecondary,
+                                semanticLabel: copy.serverPrivacyTitle(
+                                  server.privacy,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${copy.serverKindSubtitle(server.type, server.privacy)} · '
+                        '${copy.serverMembers(server.memberCount)}',
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTypography.bodySmall.copyWith(
+                          color: palette.textSecondary,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
+              ),
+              if (widget.onManage != null)
+                IconButton(
+                  key: const ValueKey('server-manage-action'),
+                  onPressed: widget.onManage,
+                  tooltip: copy.serverManage,
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                    foregroundColor: palette.textSecondary,
+                  ),
+                  icon: const Icon(Icons.more_horiz_rounded),
+                ),
+            ],
           ),
           if (canInvite) ...[
             const SizedBox(height: 12),
@@ -442,82 +475,6 @@ class _SearchField extends StatelessWidget {
       ),
     );
   }
-}
-
-/// The cover slot. `avatarUrl` and `bannerUrl` are written `null` and no V1
-/// upload reservation exists, so this is the identity tile the directory
-/// already uses — never a placeholder photograph.
-class _Cover extends StatelessWidget {
-  const _Cover({required this.server, required this.colors, this.onManage});
-  final Server server;
-  final ServerIdentityVisuals colors;
-  final VoidCallback? onManage;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    height: 96,
-    decoration: BoxDecoration(
-      borderRadius: AppRadius.lg,
-      border: Border.all(color: colors.iconBorder),
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [colors.selectedWash, colors.cardWash],
-      ),
-    ),
-    child: Stack(
-      children: [
-        PositionedDirectional(
-          end: -12,
-          top: -8,
-          child: ServerTypeSymbol(
-            type: server.type,
-            color: colors.orbit,
-            size: 96,
-          ),
-        ),
-        PositionedDirectional(
-          start: 14,
-          bottom: 14,
-          child: Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: colors.iconSurface,
-              borderRadius: AppRadius.md,
-              border: Border.all(color: colors.iconBorder),
-            ),
-            child: Center(
-              child: Text(
-                server.initial,
-                style: AppTypography.titleLarge.copyWith(
-                  color: colors.foreground,
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (onManage != null)
-          PositionedDirectional(
-            top: 6,
-            end: 6,
-            child: Material(
-              color: Colors.transparent,
-              child: IconButton.filledTonal(
-                key: const ValueKey('server-manage-action'),
-                onPressed: onManage,
-                tooltip: AppLocalizations.of(context).serverManage,
-                style: IconButton.styleFrom(
-                  minimumSize: const Size(48, 48),
-                  foregroundColor: colors.selectedForeground,
-                ),
-                icon: const Icon(Icons.more_horiz_rounded),
-              ),
-            ),
-          ),
-      ],
-    ),
-  );
 }
 
 /// One channel row of the panel.

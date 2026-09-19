@@ -8,6 +8,7 @@ import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/navigation/yo_server_rail_item.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
@@ -96,6 +97,7 @@ class ServerWorkspaceScreen extends StatefulWidget {
     this.companyFileRepository,
     this.shareServer,
     this.isVisible,
+    this.onOpenServer,
     super.key,
   });
   final String serverId;
@@ -152,11 +154,39 @@ class ServerWorkspaceScreen extends StatefulWidget {
   /// exactly as it does on a phone. Null means always visible.
   final ValueListenable<bool>? isVisible;
 
+  /// Opens another of the account's servers from the server rail. The
+  /// directory that hosts a workspace inline swaps it in place; left null,
+  /// the workspace (always the whole of its route) replaces its own route
+  /// with the other server's, carrying the same seams. Either way it is the
+  /// same as going back and opening that server: the conversation belongs to
+  /// the server it was joined in and ends with it.
+  final ValueChanged<Server>? onOpenServer;
+
   /// Phone below, tablet from here.
   static const tabletBreakpoint = 768.0;
 
   /// Three (or four) panels from here.
   static const desktopBreakpoint = 1100.0;
+
+  /// The server rail beside the channel column (tablet and desktop) and
+  /// beside the channel list in the phone's `Kanały` sheet.
+  static const serverRailWidth = YoServerRailItem.railWidth;
+
+  /// The channel column on a desktop, and from a 1 440 px workspace up.
+  /// Kept at the pre-rail widths rather than the brief's 248: below 264 the
+  /// channel row's under-name `NA ŻYWO` marker shares its line with the
+  /// clock and elides (seen in the phase-2 frames).
+  static const desktopChannelColumnWidth = 264.0;
+  static const wideDesktopChannelColumnWidth = 280.0;
+  static const wideDesktopWidth = 1440.0;
+
+  /// The channel column on a tablet. 264, not the former 240: at 240 the
+  /// live row's under-name `NA ŻYWO` marker elided (phase-2 frames).
+  static const tabletChannelColumnWidth = 264.0;
+
+  /// The phone sheet shows the rail only when there is somewhere else to go:
+  /// a one-server rail would take 64 of 320 px to repeat the header.
+  static const phoneRailMinimumServers = 2;
 
   @override
   State<ServerWorkspaceScreen> createState() => _ServerWorkspaceScreenState();
@@ -177,6 +207,12 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
   ServerCompanyFileRepository? _defaultCompanyFiles;
   String? _joinRequestId;
   bool _joining = false;
+
+  /// The account's servers for the server rail, from the same
+  /// `watchMyServers()` read the directory and Start already use. An
+  /// unreadable list leaves the rail with the open server alone.
+  List<Server> _myServers = const [];
+  StreamSubscription<List<Server>>? _myServersSubscription;
   Object? _joinError;
 
   ServerCompanyFileRepository get _companyFiles {
@@ -275,6 +311,55 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     _selectedId = widget.initialChannelId;
     _listen();
     widget.isVisible?.addListener(_onVisibilityChanged);
+    try {
+      _myServersSubscription = _repository.watchMyServers().listen((servers) {
+        if (mounted) setState(() => _myServers = servers);
+      }, onError: (Object _) {});
+    } on Object {
+      // A repository without the account list simply has no rail beyond
+      // the open server.
+    }
+  }
+
+  /// The rail's servers: the account's list, with the open server first if
+  /// the list (still loading, or unreadable) does not carry it yet.
+  List<Server> _railServers(Server current) =>
+      _myServers.any((server) => server.id == current.id)
+      ? _myServers
+      : [current, ..._myServers];
+
+  void _openServer(Server target) {
+    if (target.id == widget.serverId) return;
+    final callback = widget.onOpenServer;
+    if (callback != null) {
+      callback(target);
+      return;
+    }
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => ServerWorkspaceScreen(
+          serverId: target.id,
+          repository: widget.repository,
+          isRootTab: widget.isRootTab,
+          onInvite: widget.onInvite,
+          channelBuilder: widget.channelBuilder,
+          onBack: widget.onBack,
+          connector: widget.connector,
+          anotherVoiceSessionActive: widget.anotherVoiceSessionActive,
+          chatService: widget.chatService,
+          screenShare: widget.screenShare,
+          familyCheckIns: widget.familyCheckIns,
+          familyMemories: widget.familyMemories,
+          sharedList: widget.sharedList,
+          followRepository: widget.followRepository,
+          podcastEpisodeRepository: widget.podcastEpisodeRepository,
+          whiteboardRepository: widget.whiteboardRepository,
+          companyFileRepository: widget.companyFileRepository,
+          shareServer: widget.shareServer,
+          isVisible: widget.isVisible,
+        ),
+      ),
+    );
   }
 
   /// Leaving the surface leaves the conversation. Nothing is muted halfway or
@@ -325,6 +410,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     // The dock lives in this shell; leaving the shell ends the
     // conversation instead of keeping a microphone open behind no UI.
     widget.isVisible?.removeListener(_onVisibilityChanged);
+    _myServersSubscription?.cancel();
     _session.dispose();
     super.dispose();
   }
@@ -790,8 +876,13 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
             ],
           );
         }
-        final panelWidth = width >= 1440 ? 280.0 : 264.0;
-        final contextWidth = width >= 1440 ? 360.0 : 320.0;
+        final wideDesktop = width >= ServerWorkspaceScreen.wideDesktopWidth;
+        final panelWidth = wideDesktop
+            ? ServerWorkspaceScreen.wideDesktopChannelColumnWidth
+            : desktop
+            ? ServerWorkspaceScreen.desktopChannelColumnWidth
+            : ServerWorkspaceScreen.tabletChannelColumnWidth;
+        final contextWidth = wideDesktop ? 360.0 : 320.0;
         final showContextPanel =
             desktop && selected != null && selected.kind.isMedia;
         // The meeting owns its own strip (`Prezentacja | Tablica | Czat`), so
@@ -806,8 +897,14 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  _ServerRail(
+                    servers: _railServers(server),
+                    selectedId: server.id,
+                    onOpen: _openServer,
+                  ),
+                  VerticalDivider(width: 1, color: context.appPalette.border),
                   SizedBox(
-                    width: desktop ? panelWidth : 240,
+                    width: panelWidth,
                     child: ServerPanel(
                       server: server,
                       channels: channels,
@@ -1496,6 +1593,9 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
   ) async {
     final invite = _inviteAction(context, server, role);
     final addChannel = _addChannelAction(context, server, role);
+    final railServers = _railServers(server);
+    final showRail =
+        railServers.length >= ServerWorkspaceScreen.phoneRailMinimumServers;
     final picked = await showModalBottomSheet<Object>(
       context: context,
       isScrollControlled: true,
@@ -1504,48 +1604,59 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
       builder: (sheetContext) => FractionallySizedBox(
         heightFactor: .88,
-        child: StreamBuilder<List<ServerChannel>>(
-          // Its own subscription: the shell's stream is single-subscription
-          // and already listened to.
-          stream: _repository.watchChannels(widget.serverId),
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              return SingleChildScrollView(
-                child: YoErrorState(error: snapshot.error, compact: true),
+        child: _WithServerRail(
+          rail: showRail
+              ? _ServerRail(
+                  servers: railServers,
+                  selectedId: server.id,
+                  onOpen: (target) =>
+                      Navigator.of(sheetContext).pop(_ServerRequest(target)),
+                )
+              : null,
+          child: StreamBuilder<List<ServerChannel>>(
+            // Its own subscription: the shell's stream is single-subscription
+            // and already listened to.
+            stream: _repository.watchChannels(widget.serverId),
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return SingleChildScrollView(
+                  child: YoErrorState(error: snapshot.error, compact: true),
+                );
+              }
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return _loading(AppLocalizations.of(context));
+              }
+              return ServerPanel(
+                server: server,
+                channels: snapshot.data ?? const [],
+                selectedId: _selectedId,
+                role: role,
+                onSelected: (channel) =>
+                    Navigator.of(sheetContext).pop(channel),
+                onInvite: invite == null
+                    ? null
+                    : () => Navigator.of(sheetContext).pop(_SheetAction.invite),
+                onAddChannel: addChannel == null
+                    ? null
+                    : () => Navigator.of(sheetContext).pop(_SheetAction.add),
+                onManage:
+                    !(role?.canModerate ?? false) ||
+                        _repository is! ServerManagementRepository
+                    ? null
+                    : () => Navigator.of(
+                        sheetContext,
+                      ).pop(_ManageRequest(snapshot.data ?? const [])),
+                connectedChannelId: _session.isActive
+                    ? _session.channel?.id
+                    : null,
+                session: _session,
+                // The sheet closes onto the channel it joins, so the join runs
+                // on the screen's own controller, not the sheet's context.
+                onJoin: (channel) =>
+                    Navigator.of(sheetContext).pop(_JoinRequest(channel)),
               );
-            }
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return _loading(AppLocalizations.of(context));
-            }
-            return ServerPanel(
-              server: server,
-              channels: snapshot.data ?? const [],
-              selectedId: _selectedId,
-              role: role,
-              onSelected: (channel) => Navigator.of(sheetContext).pop(channel),
-              onInvite: invite == null
-                  ? null
-                  : () => Navigator.of(sheetContext).pop(_SheetAction.invite),
-              onAddChannel: addChannel == null
-                  ? null
-                  : () => Navigator.of(sheetContext).pop(_SheetAction.add),
-              onManage:
-                  !(role?.canModerate ?? false) ||
-                      _repository is! ServerManagementRepository
-                  ? null
-                  : () => Navigator.of(
-                      sheetContext,
-                    ).pop(_ManageRequest(snapshot.data ?? const [])),
-              connectedChannelId: _session.isActive
-                  ? _session.channel?.id
-                  : null,
-              session: _session,
-              // The sheet closes onto the channel it joins, so the join runs
-              // on the screen's own controller, not the sheet's context.
-              onJoin: (channel) =>
-                  Navigator.of(sheetContext).pop(_JoinRequest(channel)),
-            );
-          },
+            },
+          ),
         ),
       ),
     );
@@ -1562,6 +1673,8 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         addChannel?.call();
       case _ManageRequest request:
         _manageAction(this.context, server, request.channels, role)?.call();
+      case _ServerRequest request:
+        _openServer(request.server);
       default:
         break;
     }
@@ -1576,6 +1689,76 @@ class _ManageRequest {
 }
 
 /// A `Dołącz` pressed on a channel row inside the phone sheet.
+class _ServerRequest {
+  const _ServerRequest(this.server);
+  final Server server;
+}
+
+/// The server rail: the account's servers as [YoServerRailItem] squircles in
+/// a 64 px column. No unread badge, counter or dot: server channels have no
+/// read cursor (ADR-209).
+class _ServerRail extends StatelessWidget {
+  const _ServerRail({
+    required this.servers,
+    required this.selectedId,
+    required this.onOpen,
+  });
+  final List<Server> servers;
+  final String selectedId;
+  final ValueChanged<Server> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    return Material(
+      color: context.appPalette.background,
+      child: SizedBox(
+        width: ServerWorkspaceScreen.serverRailWidth,
+        child: ListView.separated(
+          key: const ValueKey('server-rail'),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          itemCount: servers.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 8),
+          itemBuilder: (context, index) {
+            final server = servers[index];
+            return YoServerRailItem(
+              key: ValueKey('server-rail-${server.id}'),
+              initial: server.initial,
+              type: server.type,
+              semanticLabel: server.name.isEmpty
+                  ? copy.serversTitle
+                  : server.name,
+              selected: server.id == selectedId,
+              onTap: () => onOpen(server),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// The phone sheet's body with the rail beside it, when there is one.
+class _WithServerRail extends StatelessWidget {
+  const _WithServerRail({required this.rail, required this.child});
+  final Widget? rail;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final rail = this.rail;
+    if (rail == null) return child;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        rail,
+        VerticalDivider(width: 1, color: context.appPalette.border),
+        Expanded(child: child),
+      ],
+    );
+  }
+}
+
 class _JoinRequest {
   const _JoinRequest(this.channel);
   final ServerChannel channel;
@@ -1661,9 +1844,6 @@ class _PhoneSurface extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final largeText = MediaQuery.textScalerOf(context).scale(16) > 24;
-    final colors = ServerIdentity.of(
-      server.type,
-    ).resolve(Theme.of(context).brightness);
     final channel = selected;
     // Board 03 states the family's real boundary on the phone header, beside
     // a lock; every other template keeps the member line it already had.
@@ -1716,22 +1896,10 @@ class _PhoneSurface extends StatelessWidget {
                           ),
                           const SizedBox(width: 4),
                         ],
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: colors.iconSurface,
-                            borderRadius: AppRadius.md,
-                            border: Border.all(color: colors.iconBorder),
-                          ),
-                          child: Center(
-                            child: Text(
-                              server.initial,
-                              style: AppTypography.titleMedium.copyWith(
-                                color: colors.foreground,
-                              ),
-                            ),
-                          ),
+                        YoServerTile(
+                          initial: server.initial,
+                          type: server.type,
+                          size: 40,
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -1880,19 +2048,13 @@ class _PublicServerAdmission extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: 64,
-                  height: 64,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: colors.iconSurface,
-                    borderRadius: AppRadius.lg,
-                  ),
-                  child: Text(
-                    server.initial,
-                    style: AppTypography.headlineSmall.copyWith(
-                      color: colors.foreground,
-                    ),
+                YoServerTile(
+                  initial: server.initial,
+                  type: server.type,
+                  size: 64,
+                  bordered: false,
+                  textStyle: AppTypography.headlineSmall.copyWith(
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 16),
