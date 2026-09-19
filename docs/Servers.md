@@ -840,12 +840,17 @@ as the member's response. Family and Podcast members may additionally set the
 exact optional boolean `reminderRequested`; its count changes atomically with
 the response. Since 2026-09-19 (ADR-212) that intent is DELIVERED:
 `sendServerEventRemindersSchedule` runs every five minutes, finds scheduled
-reminder-capable events starting within fifteen minutes through one
+reminder-capable events starting within fifteen minutes through a paged
 `collectionGroup("events")` query (COLLECTION_GROUP index on
 `reminderOptInEnabled, status, startsAt`), and writes one
 `serverEventReminder` notification per opted-in member whose membership and
-channel ACL still hold. The notification id carries the event revision, so a
-reschedule re-arms the reminder and a cancelled event sends nothing.
+channel ACL still hold. Both the event query and the opted-in responses are
+followed by a cursor until exhausted, bounded by a wall-clock budget rather
+than a document count, and an unfinished run is logged (ADR-213). The
+notification id carries the event revision, and a server-written stamp on the
+event decides whether a reminder re-arms: a reschedule that moves the start
+further than the whole horizon does, a description or title edit does not,
+and never more than once an hour. A cancelled event sends nothing.
 
 Firestore clients may read events and response rows only through the parent
 channel ACL; every client write is closed and all mutations go through the four

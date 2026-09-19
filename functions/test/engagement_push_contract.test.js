@@ -30,8 +30,10 @@ const {
 } = require("../notifications/push_payload");
 const {
   LEGACY_NOTIFICATION_TYPES,
+  isRegisteredNotificationType,
   notificationSourceIsCurrent,
 } = require("../notifications/social_source");
+const { PUSH_TITLES } = require("../notifications/push");
 const {
   ENGAGEMENT_NOTIFICATION_TYPES,
 } = require("../notifications/engagement_source");
@@ -168,4 +170,35 @@ test("server and client copy stay in parity for every new type", () => {
   assert.match(preferences, /NotificationType\.serverRole/u);
   // A comment's text must not appear in any server-side push title.
   assert.doesNotMatch(push, /commentText|\$\{comment\}/u);
+});
+
+// Added 2026-09-20 (review round). The deny-by-default rule above is only
+// safe because the push boundary DISTINGUISHES its two refusals. Both halves
+// are pinned here.
+
+test("every push title has a source validator", () => {
+  const registered = new Set([
+    ...LEGACY_NOTIFICATION_TYPES,
+    ...ENGAGEMENT_NOTIFICATION_TYPES,
+  ]);
+  for (const type of Object.keys(PUSH_TITLES)) {
+    // A type with a title but no validator used to reach the push
+    // boundary's refusal path, which DELETES the recipient's bell row. The
+    // boundary now skips instead of deleting, and this assertion keeps the
+    // situation from arising at all.
+    assert.ok(
+      registered.has(type),
+      `${type} has a push title but no source validator`,
+    );
+    assert.equal(isRegisteredNotificationType(type), true, type);
+  }
+  assert.equal(Object.keys(PUSH_TITLES).length, registered.size);
+});
+
+test("the registry predicate refuses anything nobody registered", () => {
+  for (const type of ["brandNewType", "momentLike", "", undefined, null, 7]) {
+    assert.equal(isRegisteredNotificationType(type), false, String(type));
+  }
+  assert.equal(isRegisteredNotificationType("serverEventReminder"), true);
+  assert.equal(isRegisteredNotificationType("friendRequest"), true);
 });

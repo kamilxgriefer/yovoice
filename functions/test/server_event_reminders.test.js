@@ -402,3 +402,176 @@ emulatorTest("the real collectionGroup query spans different parent channels",
       assert.equal(document.data().reminderOptInEnabled, true);
     }
   });
+
+// ---------------------------------------------------------------------
+// Review round, 2026-09-20. Three properties the suite above never had:
+// the due set is PAGED rather than cut at one page, a cosmetic edit does
+// not re-arm a delivered reminder, and a run that ran out of wall clock
+// says so instead of silently dropping its tail.
+// ---------------------------------------------------------------------
+
+emulatorTest("the due set is paged, not cut off at one page", async () => {
+  const value = await fixture();
+  const member = await value.addMember();
+  const events = [];
+  for (const startsInMs of [8 * 60_000, 10 * 60_000, 12 * 60_000]) {
+    const event = await value.scheduleEvent({ startsInMs });
+    await value.respondToServerEventV1(request(member, {
+      serverId: value.serverId,
+      channelId: value.channelId,
+      eventId: event.eventId,
+      requestId: randomUUID(),
+      expectedRevision: event.revision,
+      response: "going",
+      reminderRequested: true,
+    }));
+    events.push(event);
+  }
+
+  const now = Timestamp.fromMillis(value.clock.nowMs);
+  // One document per page: the cursor, not the page size, has to carry the
+  // traversal. Before this, everything past the first page was dropped on
+  // every run — permanently, because the query is ordered by `startsAt`.
+  const outcome = await sendDueServerEventReminders({
+    firestore: db,
+    now,
+    limit: 1,
+  });
+  assert.equal(outcome.notified, 3);
+  assert.ok(outcome.pages >= 3, `paged ${outcome.pages} times`);
+  assert.equal(outcome.budgetExhausted, false);
+  assert.equal(outcome.hasMore, false);
+  const rows = await inbox(member);
+  assert.equal(rows.length, 3);
+  for (const event of events) {
+    assert.ok(
+      rows.some((row) => row.id === reminderNotificationId(event.eventId, 1)),
+      `${event.eventId} was reminded`,
+    );
+  }
+
+  // The real cursor form of the real collection-group query, against the
+  // emulator (ADR-007): page two must not repeat page one.
+  const horizon = Timestamp.fromMillis(value.clock.nowMs + REMINDER_HORIZON_MS);
+  const first = await dueReminderEventsQuery(db, { now, horizon, limit: 1 }).get();
+  assert.equal(first.size, 1);
+  const second = await dueReminderEventsQuery(db, {
+    now,
+    horizon,
+    limit: 1,
+    startAfter: first.docs[0],
+  }).get();
+  assert.equal(second.size, 1);
+  assert.notEqual(second.docs[0].ref.path, first.docs[0].ref.path);
+});
+
+emulatorTest("a cosmetic edit does not re-arm a delivered reminder",
+  async () => {
+    const value = await fixture();
+    const member = await value.addMember();
+    const event = await value.scheduleEvent({ startsInMs: 10 * 60_000 });
+    await value.respondToServerEventV1(request(member, {
+      serverId: value.serverId,
+      channelId: value.channelId,
+      eventId: event.eventId,
+      requestId: randomUUID(),
+      expectedRevision: event.revision,
+      response: "going",
+      reminderRequested: true,
+    }));
+    const now = Timestamp.fromMillis(value.clock.nowMs);
+    assert.equal(
+      (await sendDueServerEventReminders({ firestore: db, now })).notified,
+      1,
+    );
+    assert.equal((await inbox(member)).length, 1);
+    const stamped = (await value.eventReference(event.eventId).get()).data();
+    assert.equal(stamped.reminderDeliveredRevision, 1);
+    assert.ok(stamped.reminderDeliveredAt);
+    assert.equal(
+      stamped.reminderDeliveredStartsAt.toMillis(),
+      stamped.startsAt.toMillis(),
+    );
+
+    // Every patch bumps the revision, so a description-only edit used to
+    // mint a brand-new notification id — and, repeated between scheduler
+    // runs, a brand-new push every five minutes for one event.
+    let revision = event.revision;
+    for (const description of ["Bring cake.", "Bring cake, please.", "Cake."]) {
+      const update = await value.updateServerEventV1(request(value.ownerId, {
+        serverId: value.serverId,
+        channelId: value.channelId,
+        eventId: event.eventId,
+        requestId: randomUUID(),
+        expectedRevision: revision,
+        patch: { description },
+      }));
+      revision = update.revision;
+      assert.equal(
+        (await sendDueServerEventReminders({ firestore: db, now })).notified,
+        0,
+      );
+      assert.equal((await inbox(member)).length, 1);
+    }
+    assert.equal(revision, 4);
+
+    // Parking the event a few minutes further ahead is not a reschedule
+    // either: the start has to move further than the whole horizon.
+    const nudged = await value.updateServerEventV1(request(value.ownerId, {
+      serverId: value.serverId,
+      channelId: value.channelId,
+      eventId: event.eventId,
+      requestId: randomUUID(),
+      expectedRevision: revision,
+      patch: {
+        startsAtMillis: value.clock.nowMs + 14 * 60_000,
+        endsAtMillis: value.clock.nowMs + 74 * 60_000,
+      },
+    }));
+    assert.equal(nudged.revision, 5);
+    assert.equal(
+      (await sendDueServerEventReminders({ firestore: db, now })).notified,
+      0,
+    );
+    assert.equal((await inbox(member)).length, 1);
+  });
+
+emulatorTest("a run out of wall clock reports it and stamps nothing",
+  async () => {
+    const value = await fixture();
+    const member = await value.addMember();
+    const event = await value.scheduleEvent({ startsInMs: 9 * 60_000 });
+    await value.respondToServerEventV1(request(member, {
+      serverId: value.serverId,
+      channelId: value.channelId,
+      eventId: event.eventId,
+      requestId: randomUUID(),
+      expectedRevision: event.revision,
+      response: "going",
+      reminderRequested: true,
+    }));
+    const outcome = await sendDueServerEventReminders({
+      firestore: db,
+      now: Timestamp.fromMillis(value.clock.nowMs),
+      // A budget that is already spent: the run must stop after its first
+      // unit of work and SAY so, which the scheduler logs as a warning.
+      budgetMs: 0,
+      clock: () => 0,
+    });
+    assert.equal(outcome.budgetExhausted, true);
+    assert.equal(outcome.hasMore, true);
+    assert.equal(outcome.pages, 1);
+    const unfinished = (await value.eventReference(event.eventId).get()).data();
+    assert.equal(unfinished.reminderDeliveredAt, undefined);
+
+    // The next ordinary run finishes the work the interrupted one left,
+    // exactly once: nothing was dropped and nothing is delivered twice.
+    const finished = await sendDueServerEventReminders({
+      firestore: db,
+      now: Timestamp.fromMillis(value.clock.nowMs),
+    });
+    assert.equal(finished.budgetExhausted, false);
+    assert.equal((await inbox(member)).length, 1);
+    assert.ok((await value.eventReference(event.eventId).get())
+      .data().reminderDeliveredAt);
+  });

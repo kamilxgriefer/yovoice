@@ -14045,3 +14045,116 @@ validator" from a silent unchecked push into no push at all.
   fan-out, DM reactions, and an @-picker in the Yeel comment composer (the
   callables accept `mentionUserIds` for Yeels already; only the Moment
   composer sends one).
+
+## ADR-213: A notification that repeats on demand is a channel, not a notice — reminders page, re-arm on the schedule, and refuse two ways
+
+**Date:** 2026-09-20
+
+### Context
+
+[ADR-212](#adr-212-a-comment-notifies-the-author-a-mention-is-validated-against-the-mentioned-persons-audience-and-a-reminder-finally-gets-sent)
+shipped three new producers. A review round before the merge found four
+places where the design's own promises were not actually kept by the code.
+
+1. The reminder worker ran **one** `collectionGroup("events")` query with
+   `limit(100)` and never paged. `hasMore` was computed and thrown away by
+   the scheduler. The ordering is `startsAt` ascending over a fifteen-minute
+   horizon, so the hundred-and-first event in that window was not "delayed" —
+   it was dropped on that run and on every later run, silently and
+   permanently. The cap is global across every Server, and
+   `createServerEventV1` was charged only to the 120/min attempt budget, so
+   one account could mint roughly 7200 events an hour inside its own Family
+   server and bury everybody else's.
+2. The reminder's notification id carried the event's **revision**, and
+   `updateServerEventV1` bumps the revision for ANY patch — a
+   description-only edit included. An event manager could park an event just
+   inside the horizon and re-edit it between scheduler runs, delivering a
+   fresh push carrying a 120-character attacker-controlled title to every
+   opted-in member every five minutes, for an event that never happens.
+3. A promotion notice was keyed on the **membership revision**, and
+   `setServerMemberRoleV1` increments that on every role change. Demotion is
+   silent, so an owner or coOwner could demote and re-promote in a loop: a
+   fresh id, a fresh bell row and a fresh push each time, bounded only by the
+   shared 120/min budget. "A demotion is silent" was the whole defence, and
+   it was not enough.
+4. Deny-by-default at the push boundary was correct, but the refusal path was
+   destructive: an unregistered type took the same branch as a vanished
+   source, and `cleanupInvalidSource` DELETES `users/{uid}/notifications/{id}`.
+   "Nobody added a validator" degraded to "the recipient's bell row is gone".
+
+### Decision
+
+- The due-event query is **paged with a `startsAt`/`__name__` cursor** until
+  the set is exhausted or a wall-clock budget (240 s, under the 300 s
+  timeout) is spent. The opted-in responses of one event are paged the same
+  way instead of being cut at 500 with no cursor. A run that does not finish
+  says so — `hasMore`/`budgetExhausted` are now logged as a WARNING rather
+  than computed and discarded.
+- `createServerEventV1` is charged to **`server.v1.create`** (30/hour), not
+  only to the attempt budget. A scheduled event is durable fan-out work in a
+  shared queue.
+- A delivered event is **stamped** with three additive, server-written fields
+  (`reminderDeliveredAt`, `reminderDeliveredStartsAt`,
+  `reminderDeliveredRevision`). A reminder re-arms only when the start moves
+  further than the whole horizon AND a cooldown (1 h) has passed, so a real
+  reschedule still reminds and a cosmetic edit — or a five-minute nudge —
+  does not. A run that did not reach the end of an event's audience does not
+  stamp, and the per-recipient delivery ledger keeps the finished tail from
+  being delivered twice.
+- Before the ACL read and the eight-read canonical transaction, the worker
+  reads the **delivery ledger** for that (event, revision, recipient). An
+  already-decided recipient costs one get per run instead of roughly fifteen.
+- The promotion notice is charged against a **per-actor-per-recipient-per-role
+  budget** (1 per 24 h), the way `engagement.js` charges mentions. A real
+  chain (member → moderator → admin → coOwner) announces each role; a cycled
+  role announces once. Exhaustion drops the notice, never the role change.
+- The push boundary distinguishes its two refusals.
+  `isRegisteredNotificationType` is exported, an unregistered type is skipped
+  with `pushSkipReason: "unregistered-type"` and the row is left intact, and
+  only a genuinely stale source is cleaned up.
+
+### Reasoning
+
+A document-count cap on a time-ordered queue is not backpressure; it is a
+cliff that the clock never moves. A wall-clock budget degrades into "the next
+run finishes it" — five minutes away, inside a fifteen-minute horizon — which
+is the behaviour the horizon was designed for.
+
+Keying a notice on a revision counter keys it on *edits* when the news is a
+*schedule* or a *role*. Both repeat vectors have the same shape: an actor who
+may legitimately change a thing repeatedly turns a per-change notice into a
+lock-screen channel aimed at one person, with attacker-controlled text. The
+fix in both cases is to bound the notice by what actually changed, and to
+charge it, rather than to trust that the mutation is rare.
+
+Deleting a row because the server does not know how to revalidate its type
+gets the failure direction backwards: a missing validator is our gap, and the
+recipient's data should not pay for it. Skipping the push is the honest
+degradation the ADR-212 text already claimed.
+
+### Consequences
+
+- Three additive fields on `clubs/{id}/channels/{id}/events/{id}`, written by
+  the Admin SDK only (`firestore.rules` keeps `allow write: if false` on
+  events and responses). No rules change, no index change: the paged query
+  filters and orders exactly what the declared COLLECTION_GROUP composite
+  already covers, and the responses cursor orders by `__name__` behind an
+  equality filter, which the automatic single-field index serves.
+- Events created before this change carry no stamp, so their first reminder
+  after deploy behaves as it always would have.
+- A legitimate reschedule inside the same horizon, or within the cooldown,
+  does not send a second reminder. Accepted: the member already has a
+  reminder for that event, and the event detail carries the current time.
+- Re-promoting somebody to a role they already held today is silent. Accepted
+  for the same reason a demotion is.
+- `handleNotificationCreated` takes one more test seam (`isRegisteredType`),
+  because every shipped type currently has both a title and a validator, so
+  the branch cannot be reached with real data. The containment itself is
+  pinned by an assertion in `engagement_push_contract.test.js`.
+- The reminder scan still reads zero-opt-in events, one document each. A
+  `reminderCount`-based filter would need either a second inequality field in
+  the composite (forcing `reminderCount` into the sort) or a new
+  `hasReminders` equality flag and a backfill for events that already carry
+  opt-ins. Deliberately not done here: paging removes the harm, the creation
+  budget removes the cheap volume, and `remindableEvent` already refuses a
+  zero-opt-in event before it reads a single response.

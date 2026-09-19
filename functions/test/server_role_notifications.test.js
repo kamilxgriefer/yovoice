@@ -39,8 +39,11 @@ if (enabled) {
 const { createServerCreationService } = require("../servers/creation");
 const { createServerMembershipService } = require("../servers/memberships");
 const {
+  PROMOTION_BUDGET,
+  chargePromotionBudget,
   createServerRolePromotionNotifier,
   isPromotion,
+  promotionBudgetKey,
   serverRoleNotificationId,
 } = require("../notifications/server_roles");
 const {
@@ -270,3 +273,89 @@ emulatorTest("a failing notifier never fails the role change", async () => {
     .doc(`clubs/${value.serverId}/members/${member}`).get();
   assert.equal(stored.data().role, "moderator");
 });
+
+// ---------------------------------------------------------------------
+// Review round, 2026-09-20. Silence on demotion was not enough on its own:
+// `authorizationRevision` moves on EVERY role change, so the notification
+// id, the bell row and the push were all fresh again each time an owner
+// demoted and re-promoted the same member. The notice is now charged
+// against a per-actor-per-recipient-per-role budget.
+// ---------------------------------------------------------------------
+
+emulatorTest("cycling a role announces it once, not once per revision",
+  async () => {
+    const value = await fixture();
+    const member = await value.join();
+    const setRole = (role) => value.setServerMemberRoleV1(request(value.ownerId, {
+      serverId: value.serverId,
+      requestId: randomUUID(),
+      memberId: member,
+      role,
+    }));
+
+    const first = await setRole("moderator");
+    for (let round = 0; round < 3; round += 1) {
+      await setRole("member");
+      await setRole("moderator");
+    }
+    const rows = await inbox(member);
+    assert.equal(
+      rows.length,
+      1,
+      "a cycled role must not be a repeatable push channel",
+    );
+    assert.equal(
+      rows[0].id,
+      serverRoleNotificationId(value.serverId, member, first.membershipRevision),
+    );
+    // The role itself still changed every time; only the notice is bounded.
+    const stored = await db
+      .doc(`clubs/${value.serverId}/members/${member}`).get();
+    assert.equal(stored.data().role, "moderator");
+    assert.ok(
+      stored.data().authorizationRevision > first.membershipRevision,
+      "the membership revision kept moving",
+    );
+
+    // A role the member has NOT been given today is still real news.
+    const admin = await setRole("admin");
+    const after = await inbox(member);
+    assert.equal(after.length, 2);
+    assert.ok(after.some((row) => row.id === serverRoleNotificationId(
+      value.serverId,
+      member,
+      admin.membershipRevision,
+    )));
+  });
+
+emulatorTest("the budget key separates actors, recipients and roles",
+  async () => {
+    const actor = `role-actor-${randomUUID()}`;
+    const member = `role-recipient-${randomUUID()}`;
+    const charge = (uid, target, role) =>
+      chargePromotionBudget(db, uid, target, role, NOW_MS);
+    assert.equal(await charge(actor, member, "moderator"), true);
+    assert.equal(await charge(actor, member, "moderator"), false);
+    // A different role, a different recipient and a different actor each
+    // have their own budget.
+    assert.equal(await charge(actor, member, "admin"), true);
+    assert.equal(await charge(actor, `${member}-other`, "moderator"), true);
+    assert.equal(await charge(`${actor}-other`, member, "moderator"), true);
+    // The window is a day, so the exhausted key stays exhausted.
+    assert.equal(
+      await chargePromotionBudget(db, actor, member, "moderator",
+        NOW_MS + 23 * 60 * 60_000),
+      false,
+    );
+    assert.equal(
+      await chargePromotionBudget(db, actor, member, "moderator",
+        NOW_MS + 25 * 60 * 60_000),
+      true,
+    );
+    assert.equal(PROMOTION_BUDGET.maxEvents, 1);
+    assert.equal(PROMOTION_BUDGET.windowMs, 24 * 60 * 60_000);
+    assert.equal(
+      promotionBudgetKey("a", "b", "moderator"),
+      "a:b:moderator",
+    );
+  });

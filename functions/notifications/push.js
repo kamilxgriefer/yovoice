@@ -10,6 +10,7 @@ const { buildPushMessage } = require("./push_payload");
 const { isCurrentNotificationGeneration } = require("./push_generation");
 const {
   isLegacySocialNotificationId,
+  isRegisteredNotificationType,
   notificationSourceIsCurrent: sourceIsCurrent,
   socialNotificationSourceIsCurrent: socialSourceIsCurrent,
 } = require("./social_source");
@@ -249,6 +250,11 @@ async function handleNotificationCreated(event, {
   messaging = getMessaging(),
   afterExternalSend = null,
   beforeDispatchClaim = null,
+  // Seam, like the three above: every shipped type currently has both a push
+  // title and a source validator, so the "unregistered type" branch cannot
+  // be reached with real data. A test injects the registry to prove the
+  // branch keeps the recipient's row instead of deleting it.
+  isRegisteredType = isRegisteredNotificationType,
 } = {}) {
   const snapshot = event.data;
   if (!snapshot) return;
@@ -286,6 +292,20 @@ async function handleNotificationCreated(event, {
       notificationId,
       notification: currentData,
     }))) {
+      // Two different refusals arrive here. A row whose source is genuinely
+      // gone is cleaned up. A row of a type nobody registered a validator
+      // for is only SKIPPED: "we do not know how to revalidate this" must
+      // degrade to no push, never to destroying the recipient's bell row.
+      if (!isRegisteredType(currentData?.type)) {
+        logger.warn("Skipping push for an unregistered notification type", {
+          notificationId,
+          type: typeof currentData?.type === "string"
+            ? currentData.type.slice(0, 64)
+            : null,
+        });
+        await skipPushDelivery(deliveryArgs, "unregistered-type");
+        return;
+      }
       await skipPushDelivery(deliveryArgs, "invalid-source");
       currentNotification = await snapshot.ref.get();
       await cleanupInvalidSource({
@@ -436,6 +456,7 @@ exports.onNotificationCreated = onDocumentCreated(
 
 module.exports = {
   onNotificationCreated: exports.onNotificationCreated,
+  PUSH_TITLES,
   claimPushDelivery,
   completePushDelivery,
   deleteTokenReferences,

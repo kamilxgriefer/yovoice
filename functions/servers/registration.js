@@ -463,6 +463,9 @@ function createServersV1Runtime({
       ...dependencies,
       notifyServerRolePromotion: createServerRolePromotionNotifier({
         firestore: database,
+        // The same clock the rest of the runtime uses, so the notice's
+        // per-actor-per-recipient budget cannot be moved by a second one.
+        clock,
       }),
     }),
     management: createServerManagementService(dependencies),

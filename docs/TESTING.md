@@ -4,6 +4,34 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
+## ADR-213 notification review round — 2026-09-20 (source only, NOT deployed)
+
+Four defects found by a pre-merge review of `nb/notifications`
+([Bugs.md](Bugs.md), [ADR-213](Decisions.md#adr-213)). New coverage, all of it
+added beside the existing cases rather than by changing an assertion:
+
+| Suite | New cases | What they prove |
+| --- | --- | --- |
+| `functions/test/server_event_reminders.test.js` | 3 | The due set is **paged**, not cut off: with `limit: 1` all three seeded events are reminded across `pages >= 3`, and the real `collectionGroup("events")` query is re-run in its **cursor form** against the emulator so page two cannot repeat page one (ADR-007). A description-only edit — three of them, plus a five-minute nudge, five revisions in total — delivers **nothing** after the first reminder, and the server-written stamp on the event is asserted field by field. A run whose wall-clock budget is already spent reports `budgetExhausted`/`hasMore`, stamps nothing, and the next ordinary run finishes the work exactly once. |
+| `functions/test/server_role_notifications.test.js` | 2 | Demoting and re-promoting the same member seven times produces **one** bell row, while the membership revision keeps moving and the stored role still changes; a genuinely different role is still announced. The budget key is exercised directly: actor, recipient and role each separate, the window is a day, and the exhausted key recovers after it. |
+| `functions/test/push_unregistered_type.test.js` (new) | 2 | A genuinely stale `follow` row is still **deleted** at the push boundary, and the same refusal with an unregistered type **keeps** the row, marking it `pushSkipReason: "unregistered-type"`. The refusal itself is real (no follower edge); only the type registry is injected, because every shipped type currently has both a push title and a validator. |
+| `functions/test/engagement_push_contract.test.js` | 2 | Every `PUSH_TITLES` key is a registered type and the two lists cover it exactly — the containment the earlier version pinned only by repeating both lists literally. |
+
+| Run | Result |
+| --- | --- |
+| The four suites above, `firebase emulators:exec --only auth,firestore --project demo-yovoice-review` | **24 / 24** pass, 0 skipped |
+| The seven suites most exposed to the change (`servers_events`, `servers_memberships`, `cold_start_module_graph`, `activity_notifications`, `push_social_source`, `push_social_claim`, `push_delivery`) | **54 / 54** pass |
+| Full `functions/test/*.test.js` under fresh Auth + Firestore emulators | **2382 / 2382**, 139 suites, 0 fail, 0 skipped (459 s) |
+| `flutter analyze` | clean (no Dart changed in this round) |
+
+`firestore.rules`, `storage.rules` and `firestore.indexes.json` are **unchanged**
+by this round, deliberately: the paged query filters and orders exactly what the
+declared COLLECTION_GROUP composite already covers, the responses cursor orders
+by `__name__` behind an equality filter (served by the automatic single-field
+index), and the three new event fields are Admin-SDK-only under a rules block
+that already reads `allow write: if false`. The existing index-declaration test
+therefore still describes the production query.
+
 ## Build 32 account-deletion and invite-widening suites — 2026-09-18
 
 Source-only round (nothing deployed). These are the suites that prove the two

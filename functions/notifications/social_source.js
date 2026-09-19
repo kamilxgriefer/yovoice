@@ -236,6 +236,22 @@ async function socialNotificationSourceIsCurrent({
   }
 }
 
+/**
+ * Whether a type has a source validator at all.
+ *
+ * `notificationSourceIsCurrent` answers false for two very different
+ * situations — "this source is gone" and "nobody registered this type" — and
+ * the push boundary must not treat them alike: a stale row is cleaned up,
+ * while an unregistered type is only skipped, because deleting the
+ * recipient's bell row is not a safe way to say "we did not know how to
+ * revalidate this". Callers that only push can ignore this; the caller that
+ * DELETES cannot.
+ */
+function isRegisteredNotificationType(type) {
+  return ENGAGEMENT_NOTIFICATION_TYPES.includes(type) ||
+    LEGACY_NOTIFICATION_TYPES.includes(type);
+}
+
 async function notificationSourceIsCurrent({
   recipientId,
   notificationId,
@@ -300,6 +316,7 @@ module.exports = {
   directMessageSourceIsCurrent,
   documentGeneration,
   isLegacySocialNotificationId,
+  isRegisteredNotificationType,
   liveRoomSourceIsCurrent,
   notificationSourceIsCurrent,
   socialNotificationSourceIsCurrent,
