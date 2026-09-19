@@ -12818,3 +12818,47 @@ without it a member-issued invitation becomes permanently irrevocable by its
 own issuer the moment the Server turns private; it is recorded here, and in
 `docs/Servers.md`, so the next reader does not mistake an untested-by-UI path
 for a missing screen.
+## ADR-208: A profile-media grant is judged by plausibility, and cached by the device clock
+
+**Date:** 2026-09-19 · **Status:** accepted · **Build:** 33 (polish round)
+
+### Context
+
+`getProfileMediaAccess` mints every positive grant with a 90 s lifetime taken from the
+server clock (`functions/profile/media_contract.js`, `PROFILE_MEDIA_ACCESS_TTL_MS`). The
+client (`lib/features/profile/data/services/profile_media_service.dart`) refused any grant
+whose `expiresAt` lay more than 91 s ahead of the *device* clock — a 1 s budget for clock
+skew. A consumer phone with automatic time set (the owner's Redmi runs ~1.9 s behind
+Google's clock) therefore threw away every valid grant, every avatar and banner in the app
+fell back to an initial, and the callable was re-polled about 226 times in ten minutes
+because the rejection happened before anything was cached. The server was healthy the
+whole time (HTTP 200 with signed URLs). Evidence:
+`yovoice-evidence/2026-09-18/polish-33/audit-redmi.md`, finding R-01.
+
+### Decision
+
+The client validates a grant's expiry only as a plausibility window: the remaining
+lifetime measured against the device clock must lie within
+`[-clockSkewAllowance, grantTtl + clockSkewAllowance]` with `grantTtl = 90 s` and
+`clockSkewAllowance = 5 min`; anything outside is still refused as malformed. The lifetime
+that is *cached* never comes from the server timestamp: it is `min(remaining, grantTtl)`
+measured from the moment the grant was received, and falls back to `grantTtl` when the
+device clock runs ahead (negative remaining) so an entry cannot evict and re-request itself
+in a loop. Negative grants keep their 30 s TTL and are reused for the whole TTL. A
+deterministic test (`test/profile_media_clock_skew_test.dart`) pins acceptance at 0 s,
+2 s and 10 s of skew in both directions and refusal outside the window.
+
+### Reasoning
+
+Signed Storage URLs are judged by Google's clock, not the phone's, so the device clock has
+no business rejecting a grant the server just minted; it does have a role in bounding how
+long the client trusts a cached URL, which the clamp to `grantTtl` of device time preserves.
+A 5 min allowance covers real consumer drift while still rejecting nonsense expiries.
+
+### Consequences
+
+- Avatars and banners load on devices whose clocks drift by seconds or minutes; the
+  positive-path retry storm disappears (at most one call per target per ~75 s).
+- A device clock running fast cannot stretch a grant past the server contract.
+- Any future change to the server TTL must update `grantTtl` in the same commit; the
+  skew test guards the pair.

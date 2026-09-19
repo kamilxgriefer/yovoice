@@ -81,9 +81,15 @@ A heading's trailing "View all" moves under the title only when it would
 otherwise cost more than a third of the row — a width test, not a text-scale
 one. A phone at 200 % text stacks; a 768 px slate or a 1440 px desktop at the
 same text scale keeps the action on its heading's line rather than pushing it
-a full row width away from the words it belongs to. Because every heading on
-a page carries the same label, the test answers the same for all of them and
-a page never mixes the two arrangements.
+a full row width away from the words it belongs to. **A page never mixes the
+two arrangements**, and the mechanism is not that every heading carries the
+same words — they do not: Polish declines the object of "see all", so the
+friends rail says "Zobacz wszystkich" where servers and chats say "Zobacz
+wszystkie". The test is answered against the *widest* "View all" the page can
+carry, so every heading on it gets the same answer and the widest label is
+the one that decides. Answering it from each heading's own label is what put
+"Zobacz wszystkich" on a second row at a 1032 pt window while its two
+neighbours kept theirs on the heading line (Build 33 polish, `T-2`).
 
 Home is the reference implementation on both platforms, and
 `test/home_rhythm_test.dart` pins it: every gap is asserted against the

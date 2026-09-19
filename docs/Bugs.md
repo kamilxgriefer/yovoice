@@ -206,6 +206,1206 @@ commit to cite.
   can see — either write `lastMessageAt` only when a message lands and let
   the list query on it, or record `openedBy` on the root so clients need no
   local memory of who opened what. Until then the client rule above holds.
+## FIXED IN SOURCE — a nameless profile announced "Zdjęcie w tle:" and opened a differently-named frame (2026-09-18 sweep, fixed 2026-09-19)
+
+Found during the "banner" slice's verification pass over S-02 / S-19 (the
+banner viewer and the friend-profile banner band, both already landed by the
+"profile" and "other" slices — see the entries further down). Fixed in source
+on branch `polish/build-33`; commit `polish/build-33 (pending)`. Full report:
+`yovoice-evidence/2026-09-18/polish-33/fix-banner.md`.
+
+- **The launcher and the frame it opens disagreed about the member's name.**
+  `showProfilePhotoViewer` has always resolved an empty `displayName` to
+  "YO Voice member" / "Użytkownik YO Voice", but `ProfilePhotoButton` and
+  `ProfileBannerButton` interpolated the raw value into their own semantic
+  label and tooltip. `UserProfile.fromFirestore` only substitutes a name when
+  the field is *missing*, so a document carrying `displayName: ''` reaches the
+  UI with an empty name: the avatar and the banner then announced
+  "Zdjęcie profilowe:" and "Zdjęcie w tle:" — a bare colon with nothing after
+  it for a screen reader — and the dialog that opened on tap was titled
+  "…: Użytkownik YO Voice". Two names for one photo, on the exact surface the
+  owner asked to have working everywhere. Fix: one private `_viewerName`
+  helper in `lib/shared/widgets/profile/profile_photo_viewer.dart`, used by
+  the dialog and by both launchers, so the fallback (and the trim, which also
+  stops a padded name being announced with its whitespace) is applied in one
+  place. No new copy key — the existing EN/PL pair moved into the helper. No
+  palette, layout, geometry or schema change; every other call site is
+  unaffected.
+- Regression coverage: `test/profile_banner_viewer_test.dart`, "a nameless
+  profile is named the same way by the launcher and by the frame it opens"
+  (banner) and "the avatar launcher resolves a missing name the same way".
+  Mutation-proved: restoring the raw interpolation fails exactly those two and
+  leaves the other four cases green.
+- **Rendered, but not on a device.** The viewer and the friend-profile band
+  were captured from a real render pass (`polish-33/visual/`,
+  `viewer-banner-*`, `friend-profile-photo-*`): the banner frame is 16:9 and
+  the avatar frame 1:1, the PL title reads "Zdjęcie w tle: …", and the
+  no-photo state is the cosmic gradient with "Brak zdjęcia w tle" — not the
+  initial-letter block. Those captures use a stub image, so **a real uploaded
+  background photo has still never been seen in the new viewer**; no APK was
+  built from this worktree while several agents were editing `lib/`
+  concurrently. Production `getProfileMediaAccess` logged zero ERROR-severity
+  entries in the 24 h to 2026-09-19 07:28 CEST and answers 200, so the grant
+  path the viewer depends on is healthy; the function does not log `kind`, so
+  that check does not single out banner grants.
+
+## FIXED IN SOURCE — the Settings title ran off the right edge at 200 % text (2026-09-18)
+
+Audit ID S-11 from the Build 33 pre-redesign polish sweep
+(`yovoice-evidence/2026-09-18/polish-33/audit-small-things.md`, report
+`yovoice-evidence/2026-09-18/polish-33/fix-overflow.md`). Fixed in source on
+branch `polish/build-33`; commit `polish/build-33 (pending)`.
+
+- **S-11 (P3) — the Settings header title overflowed at large text scale.**
+  The header `Row` in `settings_screen.dart` was
+  `[YoIconButton(40 → 48 pt touch target), SizedBox(6), Text(fontSize: 26)]`
+  and the title was the last child with **no** `Expanded`/`Flexible`, no
+  `maxLines` and no `overflow`. At 200 % text the 26 px title renders at ~52 px,
+  so on a narrow phone "Ustawienia" (and "Settings" behind a Back button) ran
+  past the right edge and `RenderFlex` reported an overflow instead of
+  ellipsizing. Fix: the title is now
+  `Expanded(child: Text(…, maxLines: 1, overflow: TextOverflow.ellipsis))` —
+  the same shape `creator_studio_screen.dart:402` already uses for its own
+  header. **No copy, style, colour, padding or size changed**, and no catalog
+  key was added: the existing `copy.text('Settings', 'Ustawienia')` pair moved
+  verbatim, so `find.text('Settings')` in `test/mobile_staff_parity_test.dart`
+  and `'Ustawienia'` in `test/shared_polish_localization_test.dart` still match.
+  The row was lifted into a new `SettingsHeaderBar` widget in the same file for
+  one reason: `SettingsScreen` builds its own `ProfileService`/`AuthService` and
+  `watchCurrentProfile()` throws `Bad state: User is not signed in` the moment
+  `build()` runs under `flutter test` (measured — the screen renders nothing at
+  all, `find.text('Ustawienia')` is 0 widgets), so the overflow was otherwise
+  untestable. Test: `test/settings_header_text_scale_test.dart`, 22 cases across
+  320 / 390 / 834 / 1440 px × EN/PL × root-tab/pushed-route, asserting the title
+  stays inside the row and no `RenderFlex` overflow is raised, plus a
+  default-text-size case per width pinning that the title still starts flush
+  after the Back button (layout unchanged) and a case that the Back button still
+  fires. Mutation-proved: with the `Expanded` reverted, **8 of 22 fail** — all
+  four 200 % cases at 320 px and all four at 390 px, with
+  "A RenderFlex overflowed by 166 pixels on the right" and
+  "the title ends at 468.0 but the header row ends at 302.0"; the tablet,
+  desktop and default-size cases stay green, which is exactly the blast radius
+  the fix claims. `flutter analyze --no-pub`: clean.
+  **Not visually confirmed on a device** — the audit asked for before/after
+  photographs of S-11 and this fix has only geometry-level proof; the
+  Senior Visual Quality Specialist still owns the rendered check.
+
+## FIXED IN SOURCE — "Show more replies" on a Moment could spin forever (2026-09-18 sweep, fixed 2026-09-19)
+
+Audit ID S-09 (P2) from the Build 33 pre-redesign polish sweep, "futures"
+slice. Fixed in source on branch `polish/build-33`; commit
+`polish/build-33 (pending)`.
+Full report: `yovoice-evidence/2026-09-18/polish-33/fix-futures.md`.
+
+**Symptom.** On the expanded Moment (`MomentDetailScreen`), tapping *Show more
+replies* / *Pokaż więcej odpowiedzi* and then leaving and re-entering the app —
+or returning from a pushed route, or hitting Retry — left the control as a
+permanently disabled spinner. Every later tap on it was silently rejected for
+the rest of the screen's life, so the rest of the conversation became
+unreachable without backing out of the Moment entirely. The window is small but
+entirely ordinary: it is any app-resume or route-return that lands while a
+replies page is still on the wire, which on a slow connection is most of them.
+
+**Cause.** `_loadMoreComments` owned `_loadingMore` on exactly two paths — the
+success `setState` and the `catch` — and both of them sit *behind* the
+staleness guard `if (!mounted || generation != _viewLoadGeneration) return;`.
+A canonical refresh (`_loadView`, fired by resume, route return or retry)
+increments `_viewLoadGeneration`, so a page that comes back afterwards returns
+early and never clears the flag. The flag is also the method's own re-entry
+guard (`if (service == null || cursor == null || _loadingMore) return;`), which
+is what turns a stuck spinner into a dead button.
+
+**Fix.** One `finally` in
+`lib/features/moments/presentation/screens/moment_detail_screen.dart`:
+
+```dart
+} finally {
+  if (mounted && _loadingMore) {
+    setState(() => _loadingMore = false);
+  }
+}
+```
+
+Dart runs `finally` on the early `return`s too, so the stale page is still
+correctly discarded — only the control is released. This cannot stomp a newer
+request, because the re-entry guard keeps `_loadMoreComments` single-flight:
+the sole writer of `_loadingMore = true` is the very call whose `finally` this
+is. It is the same shape `MomentCommentsScreen._loadComments`
+(`moment_comments_screen.dart:227-231`) has carried since it was written — the
+detail screen simply never got it.
+
+The audit's optional second half — also resetting `_loadingMore` inside
+`_openNeighbour`'s `setState` — was **deliberately not taken**. It would break
+the single-flight invariant the `finally` relies on (a swap could clear the
+flag, a tap on the new Moment could start a second page, and the first page's
+`finally` would then release a request that is still running). With the
+`finally` alone, a neighbour swap mid-page self-heals as soon as the stale page
+settles, and `onLoadMore` is null in the meantime anyway, because
+`_openNeighbour` clears `_nextCommentCursor`.
+
+No copy was added or changed (the button and its failure snackbar already exist
+in EN and PL), no layout, no colour token, no schema, no Functions change.
+
+**Regression test.** `test/moment_canonical_refresh_test.dart` — "a canonical
+refresh landing mid-page never strands the load-more control", run at both
+layouts that host the conversation: stacked under the player (390×844) and in
+the wide thread panel (1440×1000). It taps the control, fires a resume while
+the page is in flight, completes the superseded page, and then asserts that the
+superseded rows are still discarded, that the spinner is gone, that
+`onPressed` is non-null, and that a further tap really does issue a new
+request. Mutation-proved: with the `finally` body disabled, both variants fail
+on the surviving `CircularProgressIndicator`.
+
+## FIXED IN SOURCE — a like left the NEXT Moment unlikeable (2026-09-18 sweep, fixed 2026-09-19)
+
+Audit ID S-09b (P2), found while fixing S-09 in the same file — the identical
+in-flight-flag defect one method away. Fixed in source on branch
+`polish/build-33`; commit `polish/build-33 (pending)`.
+Full report: `yovoice-evidence/2026-09-18/polish-33/fix-futures.md`.
+
+**Symptom.** On the expanded Moment, tapping the heart and then handing off to
+the next Moment from the queue *before the like round trip answers* left the
+new Moment's like chip dead — permanently, for the life of the screen. Nothing
+told the viewer; the heart simply stopped responding to taps.
+
+**Cause.** Exactly S-09's shape in `_toggleLike`
+(`lib/features/moments/presentation/screens/moment_detail_screen.dart`). Both
+paths that clear `_liking` sit behind an identity guard — the success path
+returns on `if (!mounted || _moment.id != previous.id) return;` and the `catch`
+only rolls back `if (mounted && _moment.id == previous.id)`. `_openNeighbour`
+replaces `_moment`, and its reset `setState` does not list `_liking`, so a
+hand-off during the round trip strands the flag. `_liking` is also what
+disables the control (`onTap: _liking ? null : () => ...`), so a stranded flag
+is a dead heart.
+
+**Fix.** The same guarded `finally`:
+
+```dart
+} finally {
+  if (mounted && _liking) {
+    setState(() => _liking = false);
+  }
+}
+```
+
+Safe for the same reason: `if (_liking) return;` at the top keeps `_toggleLike`
+single-flight, so the only writer of `_liking = true` is the call whose
+`finally` this is, and its request has already settled by the time it runs. The
+stale answer is still correctly prevented from writing into the Moment the
+viewer moved to — only the control is released. No copy, no layout, no colour
+token, no schema, no Functions change.
+
+**Regression test.** `test/moment_playback_currency_test.dart` — "a like answer
+that lands after the hand-off leaves the next Moment likeable", using that
+file's existing hand-off harness with a `HomeFeedService` double whose
+`setLike` is held open by a `Completer`. It likes the current Moment, hands off
+to the neighbour while the call is in flight, completes it, then asserts both
+halves: the stale answer wrote nothing for the new Moment, and a fresh tap on
+the heart really does issue `setLike('m-next')`. Mutation-proved: with the
+`finally` body disabled the case fails on that second `setLike` never arriving.
+
+## FIXED IN SOURCE — in Pearl the avatar initial was invisible, and a screen reader read every row's identity twice (2026-09-18 sweep, fixed 2026-09-19)
+
+Audit IDs A-26 (P2) and A-23 (P3) from the Build 33 pre-redesign polish sweep,
+"accessibility" slice. Fixed in source on branch `polish/build-33`; commit
+`polish/build-33 (pending)`.
+Full report: `yovoice-evidence/2026-09-18/polish-33/fix-accessibility.md`.
+
+Both defects live in `lib/shared/widgets/profile/user_avatar.dart` — the one
+widget every avatar in the app is drawn by (98 call sites in `lib/`, plus
+`DecoratedUserAvatar`, which delegates to it). One behaviour-only change each
+therefore fixes every list, sheet, header and preview at once, without touching
+a caller. No copy, no layout, no colour token, no schema, no Functions change;
+nothing new is shown to the user, so **no localization key was added** — the
+fixes change how existing content is announced and painted, not what it says.
+
+- **A-26 (P2) — in Pearl the fallback initial was white on a near-white
+  disc.** Eleven avatar call sites pass `palette.surfaceSunken` as the fill
+  (Chats ×2, Friends ×2, Add friend, Blocked users, friend suggestions ×2, the
+  friend profile ×2, Edit profile); in Pearl that token is `#E9E1EF` and the
+  initial was hard-coded `Colors.white` — a measured **1.27:1**, i.e. nothing
+  to see. Pearl is user-reachable, not theoretical: Settings → Appearance
+  offers System / Dark / Light. The fallback foreground is now derived from the
+  fill it is painted on, with the same estimate Material uses for its own
+  foregrounds — `ThemeData.estimateBrightnessForColor(backgroundColor) ==
+  Brightness.light ? AppColors.contrastInk : Colors.white` — following the
+  pattern already established at `room_control_dock.dart:113-118`.
+  `AppColors.contrastInk` (`#211629`) on `#E9E1EF` measures **13.6:1**. Every
+  fill used anywhere in the app today is dark, so **Dark output is
+  byte-identical** (white on `#0C0814` = 19.8:1, white on the widget's default
+  `#64258E` = 9.56:1). Using the named token rather than the hex the audit
+  suggested also keeps `test/semantic_color_source_guard_test.dart` green — it
+  rejects a raw semantic-token literal anywhere under `lib/shared/widgets`.
+  Deliberately left alone, because they are contrast-safe and changing them
+  would be restyling: the default `backgroundColor` at `user_avatar.dart:22`,
+  the gradient rings, and the identity fills in `chat_screen.dart:3963`,
+  `podcast_studio.dart:176` and `broadcast_roster.dart:39`.
+- **A-23 (P3) — a screen reader read every list row's identity twice.** The
+  fallback initial is a `Text`, so it contributed a label of its own and
+  TalkBack/VoiceOver announced "K, Kamil, online" on rows whose adjacent title
+  already says "Kamil". The whole fallback — the initial *and* the placeholder
+  icon — is now wrapped in `ExcludeSemantics`: the letter is still painted, it
+  simply stops being announced, and the name beside it carries the identity.
+  Harmless where an ancestor already excludes. The audit's other half was
+  **rejected on purpose**: a `semanticLabel` in `profile_media_image.dart`
+  would put the name back into the merged row a second time, which is the same
+  defect in a new place.
+- **Audit-ID mapping, so nothing looks fixed twice.** A-24 ("an emoji display
+  name renders a broken initial") is the same defect as **A-13**, already fixed
+  and documented by the "avatars" slice further down. This slice re-verified it
+  and mutation-proved it rather than re-applying it. Its second file —
+  `profile_photo_viewer.dart:181` — is **obsolete**, not skipped: A-02 replaced
+  that viewer's initial-letter fallback with resolution-aware states, so the
+  `displayName[0]` line no longer exists (`git show fe98e651:` still has it at
+  line 182). `name[0].toUpperCase()` does survive at 14 occurrences in 12 other
+  files, including `profile_screen.dart:716` — every one of them another
+  slice's file; worth a follow-up.
+
+Regression coverage, mutation-proved: `test/user_avatar_fill_test.dart`, groups
+"the fallback foreground follows the fill" (3 cases; 2 fail with the ternary
+collapsed back to `Colors.white`) and "the fallback mark is decoration, not an
+announced label" (2 cases; the row case fails without the wrapper — the
+compiled row label is then literally `K\nKamil\nonline`). The semantics case
+reads the **compiled** semantics tree via `test/semantics_probe.dart`, not the
+`Semantics` widgets, because the initial's node is not a boundary: it merges
+into the row rather than sitting beside it, which a widget-level assertion
+cannot see.
+
+**UNVERIFIED on a device, twice over.** No screen has been opened in Light
+appearance to look at the fixed initial, and no TalkBack/VoiceOver pass has
+been run on the Friends/Followers lists. The contrast numbers are computed from
+the palette source and the painted `TextStyle.color` is asserted in a widget
+test; that proves the value, not the pixels. The device proof owed by the
+"avatars" and "profile" slices covers these changes too.
+
+Optional follow-up, deliberately not done because it is another slice's file:
+`messages_screen.dart:1520-1523` still works around this very bug by swapping
+the *fill* in light mode; it can now go back to plain `palette.surfaceSunken`
+like the other ten lists.
+
+## FIXED IN SOURCE — you could not look at the person you were about to accept, invite or promote (2026-09-18 sweep, fixed 2026-09-19)
+
+Audit IDs A-18 (P2), A-19 (P2) and A-20 (P3) from the Build 33 pre-redesign
+polish sweep, "missing" slice. Fixed in source on branch `polish/build-33`;
+commit `polish/build-33 (pending)`.
+Full report: `yovoice-evidence/2026-09-18/polish-33/fix-missing.md`.
+
+The app's one answer to "who is this?" is the profile preview sheet, reached by
+tapping an avatar. Three surfaces had the avatar and not the tap, and all three
+are exactly the places where the viewer is being asked to make a decision about
+a stranger.
+
+- **A-18 (P2) — a friend request showed a name, an avatar and Accept/Decline,
+  and nothing opened the sender's profile.** Both inboxes were affected: the
+  Friends screen's Requests tab (`FriendRequestCard`, used by the coordinated
+  scroll and the tablet/desktop two-pane list) and the Activity inbox's own
+  request card. **The fix** promotes the sender's avatar — and only the avatar
+  — to a named profile action. `FriendRequestCard` gained an *optional*
+  `onOpenProfile`, so the layout-only harness at
+  `test/content_zoom_responsive_test.dart` keeps compiling and renders an inert
+  avatar rather than tapping into unresolvable Firebase singletons. Both
+  `FriendsScreen` call sites pass a `_previewRequester` that runs through the
+  screen's existing `_runNavigation` guard and hands the preview the screen's
+  already-injected `firestore`/`auth`/`FriendService`/`MessageService`/
+  `ProfileMediaService` — never the global singletons — exactly as
+  `ChatScreen` does for its header avatar. `NotificationsScreen` gained the
+  same wiring plus optional test-only `firestore`/`auth` seams, matching the
+  `currentUserId` seam already documented on that widget.
+- **Why the avatar and not the row.** The name shares its column with the
+  request line and, on the Friends card, with Accept/Decline; the inbox card
+  keeps its trailing accept/decline icon buttons. Wrapping the identity row
+  would have swallowed taps aimed at those. The discs are already 54 px
+  (Friends) and 50 px (Activity), so each target was created at its existing
+  size and nothing reflowed.
+- **A-19 (P2) — inside one screen the Moment author's avatar opened a profile
+  and the commenters' avatars did nothing.** Only an `@mention` inside a reply
+  body was tappable, so a person who commented without being mentioned was
+  unreachable. **The fix** wraps `MomentCommentRow`'s avatar in the
+  established `AccessibleTapRegion` pattern and routes it through the row's
+  existing `onMentionTap` seam, whose documented default is already the
+  app-wide preview sheet — no new plumbing, and the same "open this person"
+  contract for a tapped name and a tapped face. A comment with an empty
+  `authorId` stays inert, mirroring the guard the identity badges in the same
+  row already apply: `ProfilePreviewSheet` does `.doc(userId)` and would
+  assert on an empty id.
+- **A-20 (P3) — the server invite sheet and the member management list showed
+  people you could invite or promote without letting you look at them first.**
+  **The fix** makes each leading avatar a profile action in both sheets, and
+  leaves every other control alone: the invite tile still has no tile-level
+  `onTap` (the trailing Invite button stays the single primary action) and the
+  member row keeps its role/ban/remove menu. The preview is read-only, so it
+  stays live while a row is sending. Both sheets gained optional test-only
+  `firestore`/`auth` seams for the same reason `NotificationsScreen` did.
+- **What deliberately did NOT change.** No restyle, no palette or type change,
+  no schema or Cloud Functions change, and no new localization catalog keys —
+  the labels reuse phrasings the app already ships (`Open profile` /
+  `Otwórz profil`, `Open profile for {name}` / `Otwórz profil: {name}`). Two
+  further comment-avatar surfaces named in the audit,
+  `moment_comment_preview.dart` and `MomentCommentsInline` in
+  `moments_feed_view.dart`, were left alone on purpose: nothing in production
+  constructs either (`MomentCard.commentPreview` has no caller and
+  `MomentDetailPanel` is never instantiated), their avatars are 22–28 px, and
+  giving them a 44 px target would reflow compact rows — a restyle this slice
+  forbids.
+- **Known cosmetic consequence, pending a rendered look.** Three of the five
+  avatars were already ≥ 44 px and are pixel-identical. The two `radius: 20`
+  avatars — a Moments comment row and the two server list rows — grow their
+  leading box from 40 px to the 44 px minimum target, shifting the adjacent
+  text about 4 px. That is an accessibility floor, not a redesign, but it has
+  not yet been looked at on a device: see the OPEN item below.
+- **Coverage.** `test/friends_workflow_test.dart` (the requester avatar opens
+  the preview, dispatches no accept/decline, and an unwired card exposes no
+  target at all), `test/notifications_inbox_test.dart` (the same for the
+  Activity inbox), `test/accessible_tap_region_test.dart` (a commenter avatar
+  is a named 44 px action that opens that commenter; an authorless row stays
+  inert) and `test/server_shell_test.dart` (invite and member rows open the
+  preview and dispatch no callable). Each case asserts the sheet is absent
+  before the tap and present after.
+
+## OPEN — the "missing" slice's three surfaces still need a look on a device
+
+Audit IDs A-18, A-19, A-20, Build 33 polish sweep. Code fixed and covered by
+widget tests (above). **Updated 2026-09-19 07:30: rendered frames now exist**
+— 21 real rasterised captures of the shipping widgets (real Inter face, real
+theme, PL+EN, 360/834/1440 and 200 % text) plus 20 matching pre-fix frames, in
+`yovoice-evidence/2026-09-18/polish-33/missing/`. They settle the layout
+question by measurement: the Friends and Activity request rows are **pixel-
+identical** before and after the fix at every width and text scale, and the
+Moments comment column moves by **exactly 4.0 logical px**, as predicted. They
+also contain the frame of the preview sheet actually opening from a request
+card. A headless tester is still not a phone, so a **device pass remains
+outstanding**: all three screens need a signed-in account with real data — a
+genuine pending friend request, a Moment with comments, a server with members —
+and the only signed-in device in the fleet is the Redmi Note 8 Pro, which runs
+Build 31. Both iPad simulators and the iPhone 17 Pro simulator are signed out,
+and credentials must not be entered. What still needs a real look, at narrow,
+medium and wide:
+
+- Friends › Zaproszenia and the Activity inbox with a pending request: the
+  avatar's focus ring and pressed state, and that Accept/Decline are still
+  comfortably hittable beside it.
+- A Moments comment thread: the 4 px leading-column growth per row, at 100 %
+  and 200 % text.
+- The server invite sheet and the member management list: the same 4 px growth
+  inside `ListTile`, and that the trailing Invite button and role menu are
+  unaffected.
+- VoiceOver/TalkBack on any one of them: each avatar must read as one button
+  named for the person, with no duplicate announcement of the fallback initial.
+
+## FIXED IN SOURCE — the localization catalog threw on first read in every locale, and three more polish blockers (2026-09-19)
+
+Found by the Build 33 verification sweep on `polish/build-33`; closed in fix
+round 2. Full write-up and logs in
+`yovoice-evidence/2026-09-18/polish-33/fix-round-2.md`.
+
+- **B1 (P0) — every translated string threw, English included.** The new
+  `translations_profile_media_viewer.dart` defined 40 locales and omitted
+  `fil`, while `app_translation_catalog.dart:285` merges it with
+  `...profileMediaViewerTranslations[entry.key]!` over a driver union that
+  includes `fil`. `appTranslations` is a lazily-initialised top-level `final`,
+  so the null-check throw happened *inside the initializer*: the first catalog
+  read in ANY locale failed and every later read re-ran it and failed again.
+  The navigation dock's Chats destination, the unread badge and the chat
+  header presence line rendered a Flutter error box; the other 39 non-EN/PL
+  locales lost every catalog string. Before/after, same frame:
+  `visual/r2-dock-moments-en-dark-402-200.png` (error box) vs
+  `visual/r3-dock-moments-en-dark-402-200.png` (real glyph + "99+" badge).
+  Fix: one `fil` block, wording aligned with the Filipino copy the catalog
+  already ships. `test/profile_media_viewer_localization_test.dart` states the
+  requirement as a set comparison that never touches `appTranslations`, so a
+  future omission names the missing locale instead of crashing 28 suites.
+- **B2 — a catalog key built by runtime interpolation.**
+  `server_text_channel_scene.dart` passed `'Open profile for ${senderName}'`
+  as the *key*, which can never be looked up outside EN/PL, so every message
+  row in a server text channel fell back to raw English in 41 locales.
+- **B3 — a new user-facing key that existed in no translation module.**
+  `'Open profile for {name}'` was introduced on three surfaces (Moments
+  comment thread, Friends requests, Activity inbox) and appeared nowhere in
+  `lib/core/localization/`. Fix for both: the catalog already carried a
+  reviewed `'Open profile of {name}'` in all 41 locales
+  (`translations_moments_overview.dart`), with the identical Polish string
+  already in use at `moments_follow_panel.dart:325`. All four sites now share
+  that one key — no new copy was minted, and the tooltip that used to be a
+  second, differently-worded key (`"Open {name}'s profile"`) folds into it.
+- **B4** — see the entry below (translucent avatar fill).
+- **B5 (a11y P1, WCAG 1.4.3 / 1.4.11) — the banner viewer's non-photo states
+  were unreadable in the Pearl theme.** `profile_photo_viewer.dart` paints
+  `kProfileBannerFallbackGradient` (fixed dark, `#53108C → #21102E → #09050F`)
+  as the banner backdrop in BOTH themes, but took the message copy from
+  `palette.textSecondary`, the icon from `palette.textTertiary` and the retry
+  label from `palette.interactiveForeground` — all dark inks in Pearl, at
+  1.54:1, 2.00:1 and 1.51:1 against the brightest stop. The loading spinner
+  (`palette.focus`) failed the same way at 1.51:1. Fix: the banner flavour now
+  takes its foreground from `AppImmersiveColors`, the token set this app
+  already uses for fixed-dark routes — 11.5:1 for the copy, the retry label
+  and the spinner, 5.4:1 for the icon, on the *brightest* stop. The avatar
+  flavour is untouched: its backdrop is `palette.surfaceSunken`, which does
+  follow the theme. Pinned in `test/profile_banner_viewer_test.dart`, which
+  recomputes the ratio against all three gradient stops in both themes.
+- **B6 (P1 layout) — the banner viewer overflowed and clipped its own retry
+  button at 320 dp / 200 % text.** The fallback sat in a non-scrolling
+  `Center` inside the `AspectRatio(16/9)` frame. Measured at 320 dp: a 288x162
+  dp viewport holding a 387 dp column, with the retry button ~150 dp below the
+  fold — so a RenderFlex hazard stripe was painted over the user's content and
+  the viewer's only recovery affordance became unreachable, making a transient
+  grant failure a dead end. Before/after:
+  `visual/viewer-banner-failed-pl-dark-320-200.png` vs
+  `visual/r3-viewer-banner-failed-pl-dark-320-200.png`. Fix: the message layer
+  is a `SingleChildScrollView` whose `ConstrainedBox` keeps it centred
+  whenever it fits and scrollable when it does not. Residual, accepted: at
+  320 dp / 200 % the retry control is reachable but requires a scroll gesture
+  inside the banner frame.
+
+## FIXED IN SOURCE — a translucent avatar fill paints the initial in invisible ink (found 2026-09-19, REGRESSION on `polish/build-33`)
+
+Found by the "missing" slice while capturing rendered evidence for A-20;
+proof in `yovoice-evidence/2026-09-18/polish-33/missing/` and
+`fix-missing.md`. Fixed in fix round 2 (blocker B1-B6 sweep,
+`fix-round-2.md`) — the avatars slice had finished editing the file by then.
+Rendered proof of the fix:
+`yovoice-evidence/2026-09-18/polish-33/visual/r3-server-member-avatar-dark-720.png`
+shows a legible white initial on all five server templates, and
+`r3-server-member-avatar-pearl-720.png` shows Pearl unchanged.
+
+- **What it looks like.** In the server member management list the person's
+  fallback initial is invisible: disc `rgb(18,33,43)`, glyph `rgb(33,22,41)`,
+  a contrast ratio of roughly 1.1:1, and the brightest pixel anywhere inside
+  the disc is `rgb(19,33,43)` — there is no light glyph at all. Compare
+  `missing/a20-server-members-pl-900.png` with
+  `missing/before/a20-server-members-pl-900.png`, the same row at base
+  `fe98e651`, where a `CircleAvatar` drew a white initial on violet.
+- **Why it is a regression.** The member row's `CircleAvatar` → `UserAvatar`
+  replacement (S-06 / A-11, avatars slice — correct in itself: the old widget
+  dereferenced a denormalized `photoUrl`) also passes
+  `backgroundColor: ServerIdentity…iconSurface`. The same defect is
+  **pre-existing** in the sibling invite sheet, which has always passed
+  `colors.iconSurface` (`missing/a20-server-invite-pl-390.png`).
+- **Root cause, one line.** `iconSurface` is `primary.withValues(alpha: .12)`
+  in dark mode (`server_identity.dart:99`) — a *light* colour at 12 % alpha.
+  `UserAvatar` chooses its foreground with
+  `ThemeData.estimateBrightnessForColor(backgroundColor)`
+  (`user_avatar.dart:72`), which reads RGB and ignores alpha: it sees a light
+  fill, picks `AppColors.contrastInk` (`#211629`), and paints dark ink on a
+  disc that composites to near-black. Every caller passing a translucent fill
+  is affected.
+- **Blast radius: 9 `UserAvatar` call sites**, all in Servers, all passing
+  `colors.iconSurface` — `server_invite_sheet.dart`,
+  `server_management_sheet.dart`, `server_text_channel_scene.dart`,
+  `server_voice_stage.dart`, `server_community_stage.dart`,
+  `server_podcast_stage.dart` (×2), `server_company_meeting.dart` (×2).
+- **Proposed fix**, a no-op for every opaque caller (`Color.alphaBlend` is the
+  identity when the top colour is opaque, so the eleven `surfaceSunken` callers
+  and every constant-colour caller are untouched; only the translucent server
+  fills change, and only in their foreground):
+
+  ```dart
+  final resolvedFill = Color.alphaBlend(
+    backgroundColor,
+    Theme.of(context).colorScheme.surface,
+  );
+  final onFill =
+      ThemeData.estimateBrightnessForColor(resolvedFill) == Brightness.light
+      ? AppColors.contrastInk
+      : Colors.white;
+  ```
+
+  Applied verbatim in `user_avatar.dart`. `test/user_avatar_fill_test.dart`
+  gained a "a translucent fill is judged after it composites" group that walks
+  every `ServerType`, asserts the Dark fill is still translucent (otherwise the
+  case proves nothing), and pins white ink in Dark / `contrastInk` in Pearl,
+  plus an opaque-fill case proving the eleven `surfaceSunken` callers are
+  byte-identical.
+
+## FIXED IN SOURCE — your own profile photo and your banner could never be opened, and the banner crop was not WYSIWYG (2026-09-18)
+
+Owner report, verbatim: "wszystko ma działać, nawet takie drobiazgi jak podgląd
+zdjęcia profilowego w każdej sekcji, i zdjęcia w tle tak samo". Audit IDs A-01,
+A-02 and A-03 from the Build 33 pre-redesign polish sweep
+(`yovoice-evidence/2026-09-18/polish-33/audit-avatars-code.md`). Fixed in source
+on branch `polish/build-33`; commit `polish/build-33 (pending)`.
+
+- **A-01 (P2) — tapping your own avatar on the Profile screen did nothing.**
+  Evidence: `redmi/02-profile-avatar-tap.png` (Build 31). Every *other* person's
+  avatar opens the profile preview, and a friend's photo opens the fullscreen
+  viewer, but the owner's own avatar in `profile_header.dart` was a bare
+  `Container` + `UserAvatar` with no gesture — there was no way anywhere in the
+  app to enlarge your own profile photo. Fix: wrap that Container (key
+  `profile-header-avatar` deliberately left where it is — two layout tests hang
+  off it) in the existing `ProfilePhotoButton`, mirroring
+  `profile_preview_sheet.dart`. `minimumSize` is the *ring*, not the disc
+  (`(avatarRadius + ringPadding) * 2`), so the ripple is not clipped inside the
+  gradient border and the target is >= 66 pt at every breakpoint. EN+PL copy
+  comes from `ProfilePhotoButton`'s existing template pair — no catalog key
+  added. Test: `test/profile_photo_viewer_test.dart`, "the owner can open their
+  own profile photo from the header". RED with the wrapper removed
+  ("Found 0 widgets with key [<'profile-photo-viewer-close'>]"), GREEN with it.
+- **A-02 (P2) — the banner ("zdjęcie w tle") had no viewer anywhere in the
+  app.** `ProfileBanner` painted it and nothing could open it, on any screen.
+  Fix, three parts: (1) `showProfilePhotoViewer` takes a `ProfileMediaKind`
+  and `showProfileBannerViewer` forwards `banner`; the dialog's frame is now
+  `16/9` for banners (`ProfileImageRules.banner`) instead of a hard-coded 1,
+  the grant it requests carries `kind: banner`, and the banner's no-photo
+  fallback is `kProfileBannerFallbackGradient` — never the initial-letter
+  block, which is wrong in a 16:9 frame. Copy is banner-specific in both
+  languages (`Background photo of {name}` / `Zdjęcie w tle: {name}`,
+  `Close background photo` / `Zamknij zdjęcie w tle`), because reusing the
+  avatar wording would mislabel it in the title *and* in the Semantics route
+  name. (2) A new `ProfileBannerButton` (rectangular, 22px radius, the
+  header's own) wraps the header's banner card. (3) The viewer no longer
+  guesses why there is no picture: `ProfileMediaImage` reports
+  `pending / available / absent / failed` through a new optional
+  `onResolution` callback (null at every existing call site, so nothing else
+  changes), and the dialog shows a spinner, "No background photo yet" /
+  "Brak zdjęcia w tle", or "Photo unavailable" + **Try again** accordingly.
+  Tests: `test/profile_banner_viewer_test.dart` (4) and the new cases in
+  `test/profile_photo_viewer_test.dart`. RED with either wrapper reverted.
+  **Correction to the audit's own advice, measured not assumed:** the audit
+  predicted that wrapping the whole banner card would make taps on the user's
+  name plate open the banner, because "a decorated `Container` does not answer
+  hit tests". It does — `RenderDecoratedBox.hitTestSelf` delegates to
+  `BoxDecoration.hitTest`, which returns true inside the plate's rounded rect.
+  A hit-test dump at a point on the plate that is *inside* the banner's
+  rectangle shows `RenderDecoratedBox` as the deepest target, so no separate
+  tap strip was needed. `test/profile_banner_viewer_test.dart`, "the name plate
+  never falls through to the banner viewer", pins that: it asserts the probe
+  point really is over the banner *and* that nothing opens.
+- **A-03 (P3) — the banner crop editor was not WYSIWYG.** The upload stores
+  16:9 (`ProfileImageRules.banner`) but `ProfileHeader` paints a fixed-height
+  band at content width — about 3.3:1 on a phone and 7.6:1 at the 1040dp feed
+  cap — with `BoxFit.cover`, so only the centre ~52% (phone) to ~23% (wide) of
+  the crop the user deliberately composed ever appears. The crop editor showed
+  no guide, and `profile_image_rules.dart` still described a `SizedBox(height:
+  320)` full-bleed header that no longer exists. Fix, behaviour only: the band
+  geometry stops being two magic numbers (`ProfileHeader.gutter`,
+  `bannerHeightCompact`, `bannerHeightWide`, and `bannerSafeBandFraction`
+  *derived* from the stored ratio, `ResponsiveContentWidth.feed` and the wide
+  band height, so it cannot drift); `ImageCropScreen` draws a horizontal
+  safe-band guide for `ProfileImageKind.banner` only — the mirror image of the
+  shipped room-cover `COMPACT SAFE` overlay — dimming what will be trimmed and
+  labelling the surviving strip `ALWAYS VISIBLE` / `ZAWSZE WIDOCZNE`. The band
+  is a fraction of the frame, so on a short band at large text sizes the pill
+  steps aside instead of being clipped; the same sentence is carried for
+  screen-reader users on the preview's Semantics label, where it costs no
+  vertical space (an explanatory footer line pushed Cancel/Use photo off a
+  390x844 phone at 200% text, which the existing test correctly caught). 16:9
+  stays the stored format on purpose — it is the superset, so a redesign can
+  change the band without asking anyone to re-upload. Tests: four cases in
+  `test/image_crop_screen_test.dart`, including one that re-derives the
+  surviving fraction from `ResponsiveContentWidth.feed` and the header
+  constants and asserts the drawn guide matches it, one PL case, one avatar
+  case proving the guide is banner-only, and one 320px/200%-text case. RED
+  with the overlay removed.
+- **Not verified on a device.** None of this is in an installed build (the
+  Redmi Note 8 Pro runs Build 31); the proof is widget tests plus rendered
+  pixels (`RepaintBoundary.toImage`, real Inter + MaterialIcons) at 320, 390,
+  834, 1280 and 1440 px in `yovoice-evidence/2026-09-18/polish-33/fix-own/`.
+  The gestures on a real phone are UNVERIFIED until Build 33 is installed.
+
+## FIXED IN SOURCE — one network blip during cold start left a screenful of initials for the whole session (2026-09-18 sweep, fixed 2026-09-19)
+
+Audit ID A-22 (P2) from the Build 33 pre-redesign polish sweep, "pipeline" slice.
+Fixed in source on branch `polish/build-33`; commit `polish/build-33 (pending)`.
+Full report: `yovoice-evidence/2026-09-18/polish-33/fix-pipeline.md`.
+
+- **A-22 (P2) — a failed profile-media grant was never retried.**
+  `ProfileMediaImage` asked `getProfileMediaAccess` once per resolution and, on
+  failure, deliberately kept the last image (or the initial) and waited. The
+  only things that ever re-resolved were a new identity, a new
+  `publicProfiles` revision, an access boundary, or the fullscreen viewer's
+  manual Retry (T-6/A-06/A-07 below). So a single `unavailable` during app
+  bootstrap — exactly when every avatar and banner on Home, Chats, Friends and
+  the profile surfaces resolves at once — painted initials that stayed until
+  the user restarted the app. Avatars in a list have no Retry affordance at
+  all, so there was no way back.
+- **The fix.** One production file,
+  `lib/shared/widgets/profile/profile_media_image.dart`: a `_retryTimer` plus
+  an attempt counter, and `_resolve({bool isRetry = false})` which resets the
+  counter for every *fresh* resolution. A failed grant now schedules at most
+  two automatic re-resolutions, ~2 s and ~8 s later. No UI, copy, colour or
+  layout change — the widget renders exactly what it rendered before, it just
+  stops giving up after one try.
+- **What is deliberately *not* retried, and why.** `permission-denied` is the
+  normal, permanent answer for friends-only visibility and for blocks
+  (`functions/profile/media.js`), and retrying it would triple callable traffic
+  against the 180-per-minute per-caller budget (`PROFILE_MEDIA_ACCESS_LIMIT`)
+  to hear the same "no" — so it, `resource-exhausted` and every other decided
+  Firebase code fail closed. `FormatException` (the client rejected the
+  response shape) and every `Error` — notably the `StateError` raised when the
+  cache is cleared mid-flight, i.e. logout — also fail closed. Retried:
+  `unavailable`, `internal`, `deadline-exceeded`, `aborted`, `unauthenticated`,
+  `cancelled` and raw transport failures (socket/TLS/timeout).
+- **Logout stays fail-closed.** The queued retry is cancelled in `dispose()`
+  and on any access boundary, and the timer callback re-checks the resolution
+  generation before firing, so a retry queued before a logout resolves into a
+  no-op rather than a second callable. Without both, a global boundary produced
+  two extra grant calls after sign-out (proved by mutation).
+- **Coverage** in `test/profile_media_access_test.dart`: a transient
+  `FirebaseFunctionsException` followed by a good grant recovers the photo on
+  its own (calls 1 → 2 after 2 s); `permission-denied` stays at one call after
+  10 s; a logout boundary during a pending retry leaves it at one call with no
+  pending timers; and a table test pins the full retryable/permanent code
+  split. All three fail without the fix.
+
+## FIXED IN SOURCE — an emoji display name drew a tofu box where the avatar initial belongs (2026-09-18 sweep, fixed 2026-09-19)
+
+Audit ID A-13 (P3) from the Build 33 pre-redesign polish sweep, "avatars" slice.
+Fixed in source on branch `polish/build-33`; commit `polish/build-33 (pending)`.
+Full report: `yovoice-evidence/2026-09-18/polish-33/fix-avatars.md`.
+
+- **A-13 (P3) — `UserAvatar._initial` took the first UTF-16 *code unit*, not
+  the first grapheme cluster.** For any display name not starting with a BMP
+  character, `name[0]` is half a surrogate pair — an unpaired high surrogate,
+  which every renderer draws as a tofu/replacement box where the initial
+  belongs. A decomposed accent was silently dropped the same way — `Źaneta` fell back to a bare `Z`. This is a reachable
+  production state, not a theoretical one: `resolveAuthProfileName` deliberately
+  **accepts** a display name that is a single emoji, which
+  `test/auth_profile_identity_test.dart` pins. The rule now reads
+  `name.characters.first.toUpperCase()`. No copy, colour, size or layout change
+  — the same glyph box, a complete glyph inside it.
+- **How it got in, and why it was app-wide.** The in-app incoming-message
+  banner used to build its own `_IncomingMessageAvatar`, which took the initial
+  with `characters.first`. When that banner moved to the canonical `UserAvatar`
+  (S-08 below) the widget was deleted and its grapheme-safe rule went with it.
+  Because `UserAvatar` is *the* avatar in this app, the weaker rule it already
+  carried then applied to every fallback initial on every surface — Chats,
+  Friends, server member lists, the notification banner, Settings and Creator
+  Studio — not just to the banner that triggered the move.
+- **Audit-ID mapping, so nothing looks fixed twice.** A-09, A-10, A-11 and the
+  first half of A-13 — the four surfaces that could never render a photo at all
+  — are the same four defects as S-03 / S-04 / S-06 / S-08, already fixed in
+  this same pass by the "profile" slice; see that entry further down. The
+  "avatars" slice re-verified them against its own findings and changed nothing
+  there. One deliberate difference between the two sibling heroes was left
+  standing and is **not** a bug: Creator Studio passes
+  `premium: profile.premiumIdentity` (matching `profile_header.dart`) while the
+  Settings hero does not. Both sit inside their own gradient ring, so this is a
+  presentation choice for the redesign to settle, not behaviour.
+
+Regression coverage, mutation-proved against the unfixed rule:
+`test/user_avatar_fill_test.dart` (+4 cases — emoji, regional-indicator flag,
+decomposed accent, and a control case pinning that plain, accented-precomposed
+and blank names are unchanged; 3 of the 4 fail before the fix) and
+`test/active_conversation_notification_test.dart` (+2 cases, which pump the real
+`YoTopNotificationHost` rather than a bare avatar: the sender resolves by uid
+through `ProfileMediaImage`, the avatar measures exactly 38x38 in the host's
+fixed leading slot, and an emoji sender name yields a readable initial — the
+last one fails before the fix).
+
+**UNVERIFIED on a device.** `flutter analyze` and the widget tests prove the
+string the app renders, not how a screen looks. No build carrying this change
+has been installed on `6tq4g6f6ijrwxwzx` (still Build 31) or on a signed-in
+simulator — deliberately, because several agents were editing `lib/`
+concurrently and a build from that worktree would not be a build of any
+coherent revision. The device proof owed for S-03/S-04/S-06/S-08 covers this
+change too.
+
+## FIXED IN SOURCE — the friend-profile banner band could never grow past its phone size (2026-09-18 sweep, fixed 2026-09-19)
+
+Audit ID A-04 (P2) from the Build 33 pre-redesign polish sweep, "other" slice —
+the verification pass over the banner band the "profile" slice had just added to
+`friend_profile_screen.dart` (see R-03 / T-5 further down). Fixed in source on
+branch `polish/build-33`; commit `polish/build-33 (pending)`. Full report:
+`yovoice-evidence/2026-09-18/polish-33/fix-other.md`.
+
+- **A-04 (P2) — the band's wide branch was unreachable, so every tablet and
+  desktop drew the phone band.** `_banner()` chose 168 px over 116 px at
+  `constraints.maxWidth >= 900`, but this screen's content lives inside
+  `ResponsiveContentFrame(width: ResponsiveContentWidth.list)` — 880 px — and
+  pays a 20 px gutter on each side, so the widest band the builder can ever be
+  handed is 840 px. The 168 px branch was dead code at every window size,
+  2560 px included. The breakpoint is now 700 px, the first step above a 768 pt
+  tablet's 728 px band, and the comment now states the measure so the next edit
+  does not reintroduce a window-sized threshold. Palette, corner radius, copy,
+  semantics and the tap target are untouched — behaviour only, no restyle.
+- **Regression coverage for the band itself.**
+  `test/friend_profile_responsive_test.dart` now pins, at 390 / 768 / 1440:
+  the band exists and carries the friend's uid; it resolves through the
+  screen's injected `ProfileMediaService` rather than the one
+  `ProfileMediaImage._resolve()` would otherwise build for itself (without the
+  injection the widget's `mediaService` is null and any test fake is bypassed);
+  the grant request carries `userId` and `kind: banner` and nothing else — no
+  durable or bearer URL; the band stays above the avatar and spans the content
+  measure; and the 390 band is shorter than the 768 one, which equals the 1440
+  one, because the 880 px measure and not the window is what caps it. All three
+  were mutation-proved: breakpoint back to 900, injected service removed, band
+  removed from the sliver — each makes the test fail.
+
+**Rendered, not device-verified.** The band was rendered and captured from the
+real `FriendProfileScreen` widget tree at 390 / 768 / 1440 px. It has **not**
+been opened on the Redmi Note 8 Pro (still Build 31) or on a signed-in
+simulator in this run, so how a *real uploaded* banner photo looks inside the
+band on a device stays UNVERIFIED.
+
+## FIXED IN SOURCE — Home mixed both heading arrangements on one page (2026-09-18)
+
+Audit ID T-2 (P3) from the Build 33 pre-redesign polish sweep. Fixed in source
+on branch `polish/build-33`; commit `polish/build-33 (pending)`.
+
+- **T-2 (P3) — at a 1032 pt window with 200 % text, "Twoi znajomi" pushed
+  "Zobacz wszystkich ›" onto a second, right-aligned row while "W Twoich
+  serwerach" and "Ostatnie czaty" kept "Zobacz wszystkie ›" on the heading
+  line.** One page, both arrangements — the thing `docs/UI.md` says never
+  happens. `_RenderSectionHeader._stacksAt`
+  (`lib/features/home/presentation/widgets/shared/home_section_header.dart`)
+  answered the third-of-the-row width test against the action's OWN rendered
+  width, and the doc justified that with "every heading on a page carries the
+  same label". That stopped being true when the Polish animate declension
+  landed: the friends rail says "Zobacz wszystkich", servers and chats say
+  "Zobacz wszystkie". Measured with real Inter at 200 % text, the two buttons
+  are 275.70 pt and 260.11 pt wide (compact ramp), so they stack below content
+  widths of 851.10 pt and 804.34 pt respectively — and MobileHome clamps its
+  content to `ResponsiveContentWidth.list` (880) minus the medium gutter
+  (24 x 2) = **832 pt for every window >= 880 pt**, which sits inside that
+  gap. So the mix was not a 1032-only curiosity: it was every MobileHome
+  window from ~852 pt upwards at >= 160 % text. Fix: the header now measures
+  the whole "View all" vocabulary the page can carry (`copy.homeSeeAll`,
+  `copy.homeSeeAllPeople` and the neutral default) with a `TextPainter` at the
+  button's own resolved style and the ambient `TextScaler`, adds the button's
+  fixed chrome (2 px gap + chevron + 2 x 8 px padding, floored at the 44 px
+  target), and passes that page constant to the layout as
+  `arrangementActionWidth`. The verdict is answered against the constant; the
+  action's REAL size still drives `reserve` and placement, so the
+  24 / titleInk / 16 rhythm is untouched and the box height is unchanged in
+  the inline case. Consequence, accepted and intended: inside the straddle
+  band every Home heading now stacks, because the widest label decides — "the
+  page answers the test once". No copy changed (the declensions are correct
+  and stay); no catalog key added. Tests: two cases in
+  `test/home_rhythm_test.dart` sweep 320 → 1456 pt in 16 pt steps (plus 430,
+  834, 1032) at 200 % text in Polish, for both type ramps, and assert that the
+  people, servers and neutral headings pick the SAME arrangement — never which
+  one, so the assertion is font-independent and holds under the stub test font
+  and real Inter alike. RED with the verdict reverted to `actionSize.width`
+  ("arranged differently at 1344 pt" compact, "1408 pt" expanded — the stub
+  font's straddle band), GREEN with the fix. Rendered proof (real painted
+  pixels in real Inter, `RepaintBoundary.toImage`) before and after, both for
+  the three headings at the production 832 pt content box and for a populated
+  `MobileHome` at 1032 pt in Polish at 200 % text, in
+  `yovoice-evidence/2026-09-18/polish-33/fix-home/`. The stale rule is
+  corrected in `docs/UI.md` and in the widget's own doc comment. **Not
+  verified on a device or a simulator**: the fix is not in any installed build
+  (Redmi runs Build 31), and DesktopHome's own columns were checked by
+  arithmetic and widget test rather than by screenshot — at 280-344 pt both
+  declensions stack, so no desktop column falls in the mixing band.
+
+## FIXED IN SOURCE — the floating dock mislabelled itself and left a dead band at 200 % text (2026-09-18 sweep, fixed 2026-09-19)
+
+Audit ID T-1 (P3 as filed, P1 in the tablet audit table) from the Build 33
+pre-redesign polish sweep,
+`yovoice-evidence/2026-09-18/polish-33/audit-ipad.md`. Fixed in source on
+branch `polish/build-33`; commit `polish/build-33 (pending)`. Evidence,
+including before/after renders at the reported geometry:
+`yovoice-evidence/2026-09-18/polish-33/fix-navigation.md`.
+
+- **T-1a — the expanded caption named whichever destination sat in the
+  middle.** Above the large-text threshold the dock replaces the five compact
+  labels with one caption band under the icon row
+  (`lib/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart`).
+  The band is laid out full width, and its single `Text` was wrapped in a
+  `Center`, so a short caption was drawn in the middle of the bar no matter
+  which destination it named. On iPad Pro 13" portrait, Dark, Polish, 200 %
+  text with Home selected, the caption `Start` sat directly under the Chats
+  icon — 182 pt away from the Home bead it belonged to, and under the one icon
+  that also carries the unread badge. Fix: the caption keeps its full-width
+  band (`expandedLabelHeight` reserves the bar's height against that width, so
+  narrowing the band would clip long Polish and Vietnamese captions) but is
+  now positioned with an `Align` whose x is derived from the shown slot's own
+  centre. A caption that fills the band still resolves to centre, a short one
+  slides under its destination, and the clamp to [-1, 1] keeps the existing
+  in-bounds assertions true.
+- **T-1b — a tab with no dock destination left a tall empty box.** Friends and
+  every other tab outside the five visual slots resolve to no accepted slot, so
+  the painter draws neither bead nor socket (`center: null`). The five 92 pt
+  destination tiles were still pinned to `top: 0`, which is correct while a
+  bead anchors the row to the top edge of the bar — but at 200 % text the bar
+  grows to 154 pt, so the icons hung under the top outline with ~45 pt of empty
+  bar below them, and the Chats unread badge rode the top edge. Fix: only when
+  the dock is expanded **and** nothing is selected, the tile row is offset so
+  the resting icons are centred in the bar body; the offset is clamped so the
+  tiles — icon, `InkWell` hit area and focus ring together — stay inside the
+  bar. The dock's height, its reserved height for the host, and the compact
+  (100 % text) dock are untouched: the 100 % renders are byte-identical before
+  and after the fix.
+
+Behaviour only — no restyle, no new widget, no copy and no new localisation
+key (the caption already uses the shipped `home`/`chats`/`more` strings, EN and
+PL). Tests: `test/yo_floating_navigation_dock_test.dart` gains six cases —
+icon-row centring at 1032 pt / 200 % in EN and PL, a compact-dock guard, and
+caption ownership in EN, PL and Arabic (RTL). Each was mutation-proved:
+reverting the tile offset fails the two centring cases by exactly 28 pt,
+reverting the `Align` fails all three caption cases by exactly 182 pt, and in
+both mutations every other case in the file still passes. `flutter analyze`
+is clean for both changed files.
+
+**Not closed by this fix:** the same 200 % bar is still top-weighted *while a
+destination is selected* — the bead must stay in its socket on the top edge, so
+the icons cannot move and the caption band fills the lower half. That is a
+layout question for the Slim redesign, not a correctness defect. The device
+re-render of iPad Pro 13" portrait (replacements for evidence `05`, `07`, `09`)
+was **not** run: YO Voice is not installed on any booted simulator and the
+preview-harness build measured ~50 min under this machine's load. The proof
+here is a real-engine render of the production widget at the reported geometry,
+not a device capture.
+
+## FIXED IN SOURCE — profile photos and banners: no grant survived a slow device clock, and nothing opened a banner (2026-09-18)
+
+Audit IDs R-01, R-02/S-01, R-03/T-5, R-07, T-3, T-6/A-06/A-07, S-03, S-04, S-06,
+S-08 (P1–P3) from the Build 33 pre-redesign polish sweep, "profile" slice. Fixed
+in source on branch `polish/build-33`; commit `polish/build-33 (pending)`. Full
+report: `yovoice-evidence/2026-09-18/polish-33/fix-profile.md`. **Not yet
+verified on a device — see the UNVERIFIED note at the end of this entry.**
+
+- **R-01 (P1) — a device clock running a couple of seconds behind Google's
+  blanked every avatar and banner in the app.** `functions/profile/media_contract.js`
+  mints every grant with `PROFILE_MEDIA_ACCESS_TTL_MS = 90_000` measured on the
+  *server* clock, while `ProfileMediaService.resolveAccess` rejected any expiry
+  more than 91 s ahead of the *device* clock — a 1 s skew budget. The Redmi Note
+  8 Pro (adb `6tq4g6f6ijrwxwzx`, `auto_time=1`) trailed server time by ~1.9 s, so
+  every HTTP 200 grant with a valid signed URL was discarded as
+  `FormatException('Unsafe profile-media grant expiry.')` and every surface fell
+  back to the initial letter with no spinner, error or toast. The ceiling is now
+  a symmetric ±5 min plausibility window, and the lifetime that is *cached* is
+  derived from the device clock and clamped to the 90 s contract
+  (`ProfileMediaService.grantTtl`), so a fast clock cannot stretch a grant
+  either. A device running *ahead* of the server previously computed a negative
+  remaining lifetime; it now falls back to the contract TTL, because the signed
+  URL is judged by Google's clock, not the phone's, and an already-expired cache
+  entry would evict and re-request itself in a loop. No Functions, schema or
+  rules change: the server contract was correct.
+- **R-02 / S-01 (P2) — the owner's own profile photo was a dead tap.** Tapping a
+  friend's avatar opened the fullscreen viewer; tapping your own on Profile did
+  nothing. `profile_header.dart` now wraps the gradient ring (not the disc — the
+  ring is part of the avatar and a smaller target would clip the ripple) in
+  `ProfilePhotoButton` with `minimumSize` equal to the ring's natural diameter,
+  so the layout is unchanged at all six tested widths and
+  `Key('profile-header-avatar')` still measures the same rect.
+- **R-03 / T-5 (P2) — the banner ("zdjęcie w tle") had no fullscreen viewer
+  anywhere in the app, and a friend's profile drew no banner at all.**
+  `profile_photo_viewer.dart` is now parameterized by `ProfileMediaKind`: the
+  banner opens in a 16:9 frame matching `ProfileImageRules.banner` (the shape
+  the upload pipeline actually stores), falls back to
+  `kProfileBannerFallbackGradient` instead of a 96pt initial, and carries its own
+  EN+PL copy. `showProfileBannerViewer` and `ProfileBannerButton` (rectangular,
+  22px radius) are the launchers. The Profile header's banner band and a new
+  banner band on `friend_profile_screen.dart` both open it, so the same identity
+  now reads the same way whichever profile you open. The uid + revision contract
+  is unchanged — no durable or signed URL crosses the boundary. The edit-profile
+  WYSIWYG preview was deliberately left non-tappable: it can show a locally
+  picked image the server grant would contradict.
+- **Name plate hit-test, found while wiring R-03.** The header's identity plate
+  rides over the banner's lower edge, and a `Container` with a `decoration`
+  does not answer hit tests, so tapping your own name fell through and opened
+  the banner viewer. The plate is now wrapped in
+  `MetaData(behavior: HitTestBehavior.opaque)` — no visual change, and the
+  availability chip inside still wins the hit test.
+- **T-6 / A-06 / A-07 (P3) — the viewer promised a photo it could not show.**
+  For an account with no photo it opened a 640x760 panel containing one giant
+  letter, and a failed grant left that letter forever with no retry.
+  `ProfileMediaImage` gained one optional, non-breaking seam —
+  `onResolution: ValueChanged<ProfileMediaResolution>` over
+  `{pending, available, absent, failed}` — emitted from the branches it already
+  computed, deferred past the build phase where it fires during `initState` or
+  an `errorBuilder`. Every other call site is byte-for-byte unchanged. The
+  viewer now shows a progress indicator while pending, a localized "No profile
+  photo yet" / "Brak zdjęcia profilowego" (and the banner wording) only for a
+  genuinely absent photo, and a neutral "Photo unavailable" with a Retry that
+  goes through `ProfileMediaService.evictUser` for a failure — a blocked or
+  private profile is never mislabelled as an empty one.
+- **R-07 (P2) — the preview sheet printed English "Offline" and contradicted the
+  rest of the app.** The same user read "Aktywny 6 min temu" in the chat header
+  and "Nieobecny" on the Home rail. The sheet was reading `profile.isOnline`
+  from the public projection for *everyone*; it now subscribes to
+  `MessageService.watchUserPresence` — the same `socialPresence` stream
+  `chat_screen.dart` uses — and renders through the shared `PeopleStatus`
+  mapping (`Dostępny` / `Nieobecny` / `Zaraz wracam` / `Nie przeszkadzać`), so
+  the two surfaces can no longer disagree. A viewer the rules deny gets **no
+  dot at all** rather than a guess, and the pushed full profile inherits the
+  resolved presence instead of a hardcoded `isOnline: false`. The hardcoded
+  `Color(0xFF35D07F)` is gone in favour of `status.foreground(palette)`.
+  `friend_profile_screen.dart` lost its own `'Offline', 'Offline'` special case
+  the same way. No schema, rules or Functions change — `socialPresence/{uid}`
+  and its canonical-friend read already existed.
+- **T-3 (P2) — the preview sheet rendered built-in error copy in English inside
+  a Polish UI.** `friendlyErrorMessage` already carried
+  `'Nie masz uprawnień, aby to zrobić.'`; three call sites in the sheet simply
+  never passed the localizations, so a permission-denied profile read showed the
+  bare English sentence as the sheet's entire body. All three now pass `copy:`,
+  and `test/shared_localization_source_guard_test.dart` pins every
+  `intentionalOrFriendly` call in that file against regression. Making `copy`
+  required on the helper was deliberately **not** done here: 58 of 95 call sites
+  omit it and some have no `BuildContext` at all — that is its own sweep.
+- **S-03 / S-04 / S-06 / S-08 (P2–P3) — four avatars that could never render a
+  photo, whatever the user uploaded.** The Settings hero, the Creator Studio
+  header, server management member rows and the incoming-DM top notification all
+  dereferenced a denormalized `photoUrl` that the server no longer projects (and
+  which must not be dereferenced anyway — it bypasses the live visibility and
+  block recheck), so each painted the display-name initial unconditionally and
+  the member row painted an *empty* disc when a legacy URL failed to load. All
+  four now use the canonical `UserAvatar`, resolving from the uid, keeping their
+  existing disc colours so nothing is restyled. `ServerMember.fromFirestore`
+  additionally stops parsing `photoUrl` at all (client-side only; the Firestore
+  field, rules and migration allowlist are untouched), so no future call site
+  can dereference it.
+
+All eight new viewer strings were added to the translation catalog as a new
+append-only pack,
+`lib/core/localization/translations/translations_profile_media_viewer.dart`
+(8 keys x 40 locales, wired into `app_translation_catalog.dart`), because the
+viewer is a current-release surface and
+`test/localization_source_guard_test.dart` will not let one fall back to
+English outside EN/PL.
+
+Tests, all failing before the fix and passing after (mutation-proved by running
+them against the base sources: 14 failures):
+`test/profile_media_clock_skew_test.dart` (7 cases, both skew directions plus
+the clamp), `test/profile_banner_viewer_test.dart` (4),
+`test/profile_photo_viewer_test.dart` (+5), `test/profile_preview_sheet_test.dart`
+(+4), `test/profile_avatar_surfaces_test.dart` (5),
+`test/friend_profile_responsive_test.dart` (banner asserted at all 7 widths),
+`test/shared_localization_source_guard_test.dart` (+1).
+`test/profile_media_access_test.dart` now exercises the shipped 90 s TTL instead
+of 80 s.
+
+**UNVERIFIED — device proof is still owed.** `flutter analyze` and the widget
+tests prove code health, not that a screen renders. Nobody has yet installed a
+build carrying R-01 on `6tq4g6f6ijrwxwzx` to confirm the owner's own avatar and
+banner actually appear and that no `[IMAGE] profile media grant failed` line
+remains in logcat. A build was deliberately not made from this worktree while
+several agents were editing `lib/` concurrently — it would not have been a
+build of any coherent revision. If initials persist after R-01 lands, the fix
+is necessary but not sufficient and the signed-URL GET must be instrumented
+next.
+
+**Not covered by this slice:** S-05 (server stage/text-channel avatars opening
+the profile preview) was already being implemented by another agent in
+`server_text_channel_scene.dart` during this pass and was left to them to avoid
+clobbering in-flight work.
+
+## FIXED IN SOURCE — the More sheet clipped three of its six tile labels (2026-09-18)
+
+Audit ID R-10 (P3) from the Build 33 pre-redesign polish sweep,
+`yovoice-evidence/2026-09-18/polish-33/redmi/13-more-menu.png`. Fixed in source
+on branch `polish/build-33`; commit `polish/build-33 (pending)`. Full report:
+`yovoice-evidence/2026-09-18/polish-33/fix-more.md`.
+
+- **R-10 (P3) — half the More sheet's launcher tiles showed a truncated
+  label on a 392.7dp phone**: `Znajdź twór…`, `Osoby warte obs…` and
+  `Powiadomie…`. `more_sheet.dart` drew the six product destinations in a
+  `GridView.count` with a fixed `mainAxisExtent: 62` and `maxLines: 1` on both
+  the title and the subtitle, so one line was all a label could ever get. The
+  tile's text column measures 107.35dp there, and the real Inter face needs
+  114.86dp for `Znajdź twórców` and 109.06dp for `Powiadomienia` on one line.
+  Fix, behaviour only — no colour, padding, icon size or type changed: the
+  fixed-extent grid became a `Column` of `IntrinsicHeight(Row(stretch))` with
+  the same column count and spacing, so each row takes the height its own
+  tallest tile needs; `_MoreTile` keeps 62dp as a *minimum* (unchanged density
+  for short labels, unchanged 44px+ target) and both texts moved to
+  `maxLines: 2`. Raising the fixed extent instead was rejected: a cell tall
+  enough for two lines of each at 1.3x text is ~86dp, which would have made
+  every tile 39% taller at 1.0x and risked the owner sheet no longer fitting
+  390x844. The branch that picks the compact grid is also width-aware now
+  (`textScale > 1.3 || labelWidth < scaler.scale(14) * 5`), so a 320dp phone at
+  1.3x text drops to the full-width rows that already existed instead of a
+  74dp column nothing fits in; 360dp and up keep the grid at 1.0x and 1.3x.
+  One Polish string was shortened in the tile only — `People to follow` maps to
+  `Warto obserwować` there, while the roomier desktop popover keeps `Osoby
+  warte obserwowania`; the English catalog key is unchanged, so no other
+  locale moved. Tests: 14 cases appended to
+  `test/more_sheet_accessibility_test.dart`, which load the shipped
+  `InterVariable.ttf` first (the default test font is a 1em-per-glyph box far
+  wider than Inter and would measure the wrong thing) and assert
+  `didExceedMaxLines == false` for all twelve Polish titles and subtitles at
+  320/360/375/390/392.7/430/834/1280dp across 1.0x and 1.3x, plus the 320dp
+  1.3x row fallback. RED on each part of the fix independently: title back to
+  `maxLines: 1` fails 8 cases; a fixed 62dp cell fails every grid case with
+  `RenderFlex overflowed by 23 pixels`; the old text-scale-only branch fails
+  the 320dp case. Rendered proof (real painted pixels) at six widths in
+  `yovoice-evidence/2026-09-18/polish-33/fix-more/`, including the 3-column
+  tablet branch the audit could not check. **Not re-verified on a device** —
+  the fix is in no installed build (the Redmi runs Build 31), so the on-device
+  result is UNVERIFIED until Build 33 is installed. Known cosmetic residual,
+  left for the redesign: `Powiadomienia` still wraps on a phone, and at exactly
+  392.7dp the break leaves a single `a` on the second line — the word needs
+  109.06dp and the column gives 107.35dp, a 1.71dp shortfall that only a
+  spacing/icon change or a shorter label can close.
+
+## FIXED IN SOURCE — the Chats slice: an English tombstone in a Polish list, and a conversation photo that could not be looked at (2026-09-18)
+
+Audit IDs R-08 (P3) and T-4 (P3) from the Build 33 pre-redesign polish sweep.
+Both fixed in source on branch `polish/build-33`; commit
+`polish/build-33 (pending)`.
+
+- **R-08 (P3) — the Chats list printed `Ty: Message deleted` while the
+  thread it opened printed `Wiadomość usunięta`.** `Message deleted` is the
+  wire value `functions/messaging/direct_integrity.js` writes onto the
+  conversation root when a message is deleted; it is the storage format and
+  it stays English. Two client helpers rendered it: the localized
+  `_localizedConversationPreview` in `messages_screen.dart`, which fell
+  through to the raw field for text/GIF, and an English-only duplicate,
+  `Conversation.previewFor`, which Home's recent chats
+  (`recent_chats.dart:273,367`) and the shell's incoming-message overlay
+  (`main_shell.dart:1087`) used — so those two surfaces were English in every
+  locale, tombstone or not. Fix, client-only, no schema or Functions change:
+  one shared `conversationPreview(Conversation, currentUserId,
+  AppLocalizations)` plus `localizedMessageTombstone(...)` in
+  `lib/features/messages/data/models/conversation.dart`, mapping the exact
+  trimmed literal `Message deleted` and returning every other body verbatim
+  (a message whose text merely contains those words is user content and is
+  never translated). `messages_screen.dart` (list, search filter and the New
+  message sheet's recent rows), `recent_chats.dart` (both card styles, text
+  and semantic label), `main_shell.dart` (overlay body) and
+  `notifications_screen.dart:881` (unread card) all call it;
+  `Conversation.previewFor` and the provably dead `Message.previewText()` are
+  deleted so the English literals cannot come back through a new caller. No
+  catalog key added — `Message deleted` already has all 41 non-EN/PL
+  translations in `translations_gif_messages.dart`. Test:
+  `test/conversation_preview_localization_test.dart`, 7 cases — the Chats row
+  and the Home card under `Locale('pl')` and `Locale('en')`, the empty-thread
+  call to action, and a unit check that `Message deleted?` is left alone. RED
+  on two independent mutations (tombstone mapping neutered: 3 failures;
+  `recent_chats.dart` reverted to the old English-only duplicate: 2
+  failures), GREEN on the fix.
+
+- **T-4 (P3) — tapping a person's photo in the Chats list opened the
+  conversation instead of the photo.** The avatar sat inside the row's single
+  `InkWell`, so the 58 px the face occupies was just more of the row. This is
+  the owner's complaint that the profile-photo preview is missing in some
+  sections, and Chats had no other route to that person's profile. Fix:
+  `_ConversationAvatar` takes an `onOpenProfile` callback and wraps its
+  `Stack` in the canonical `AccessibleTapRegion` (58x58 circular target, so no
+  layout shift at any width), which contributes one enabled *button* node —
+  `Open {name} profile, {status}` / `Otwórz profil użytkownika {name},
+  {status}` — replacing the old `Semantics(image: true)` wrapper, and the
+  callback opens `showProfilePreview(...)`, the same sheet every other avatar
+  in the app opens. Wrapping inside `_ConversationAvatar` covers both the
+  ordinary row and the enlarged-text column branch with one edit. The
+  existing catalog key `Open {name} profile` is reused; no key added.
+  **Regression found while fixing, and fixed here**: the naive wrapper cost
+  the row its long-press mute/archive/delete sheet on exactly those 58 px —
+  not the nested `InkWell` but `Tooltip`, whose default
+  `TooltipTriggerMode.longPress` registers a `LongPressGestureRecognizer`
+  below the row's own and wins the arena. The hover hint is therefore mounted
+  as an explicit `Tooltip(triggerMode: TooltipTriggerMode.manual)` around the
+  tap region, which registers no recognizer while pointer hover is
+  unaffected. A `firestore` injection seam was added to `MessagesScreen`
+  (null in production, exactly as `ChatScreen` does) so the preview is
+  assertable without a live Firebase app. Test:
+  `test/messages_row_profile_preview_test.dart`, 9 cases — avatar tap opens
+  `ProfilePreviewSheet` and pushes no `ChatScreen`, row body still opens the
+  conversation, avatar long-press still opens the actions sheet, each at 1.0x
+  and 1.6x text; the avatar stays its own target at 600 px and 1280 px; and
+  the semantics node is one enabled button >= 48 pt. RED on both mutations
+  (`onTap: null`: 2 failures; tooltip back to `longPress`: 2 failures), GREEN
+  on the fix. **Not verified on a device in this round** — see the evidence
+  file `yovoice-evidence/2026-09-18/polish-33/fix-chats.md` for what was and
+  was not rendered.
+  Home's recent-chat cards (`recent_chats.dart:106,113`) have the same
+  avatar-inside-one-tap-target pattern and were deliberately left alone in
+  this slice.
+
+## FIXED IN SOURCE — a server text channel's message avatars were not tappable (2026-09-18)
+
+Audit ID R-04 (P2) from the Build 33 pre-redesign polish sweep,
+`yovoice-evidence/2026-09-18/polish-33/audit-avatars-code.md`. Fixed in source
+on branch `polish/build-33`; commit `polish/build-33 (pending)`.
+
+- **R-04 (P2) — tapping a sender's avatar in a server text channel did
+  nothing.** The same tap opens the shared profile preview in Moments
+  (`moment_card.dart`), in direct chats, in the room chat panel and in the
+  Home people strip, so the gesture is learned everywhere else in the app; the
+  server thread was the one populated message surface where the avatar was an
+  inert picture, and it carries no other route to a member's profile.
+  `_MessageTile` in
+  `lib/features/servers/presentation/widgets/server_text_channel_scene.dart`
+  built a bare `UserAvatar` with no gesture, no semantics and no tooltip.
+  Fix: wrap it in the canonical `AccessibleTapRegion` — the same wrapper
+  `moment_card.dart` uses — which contributes a real *button* node to the
+  semantics tree, answers Enter/Space, keeps a 44x44 target and draws the
+  focus ring; `onTap` opens `showProfilePreview(userId: message.senderId,
+  displayName: message.senderName)`. The avatar's own initial is wrapped in
+  `ExcludeSemantics` so the button announces the sender's name once instead of
+  the name plus a stray "A". Copy is inline EN+PL (`Open profile for {name}` /
+  `Otwórz profil: {name}`, tooltip `Open {name}'s profile` /
+  `Otwórz profil {name}`) — no catalog key added. A self-tap needs no special
+  case: `profile_preview_sheet.dart`'s `_isSelf` already suppresses the
+  friend/follow actions and shows the self variant. A narrow test seam
+  (`ServerTextChannelScene.onOpenProfile`, null in production) follows the
+  pattern `moment_comment_preview.dart` already uses for the same sheet, so
+  the wiring is assertable without a live Firebase app. Test: two cases in
+  `test/gif_chat_surfaces_test.dart` (EN and PL) pump the real scene at 320,
+  768 and 1440 px, assert the avatar has an `AccessibleTapRegion` ancestor
+  whose rendered target is >= 44 pt, assert the semantics node is an enabled
+  button labelled with the sender's name and carrying a tap action, assert the
+  tooltip, and assert the tap reports `other/A member`. RED with the wrapper
+  reverted to the bare `UserAvatar` ("Found 0 widgets with type
+  AccessibleTapRegion"), GREEN with it. Rendered proof (real painted pixels,
+  `RepaintBoundary.toImage`) at all three widths in EN and PL in
+  `yovoice-evidence/2026-09-18/polish-33/fix-cross-section/`. Known visual
+  consequence, accepted: the 44 pt target makes the row's leading column 44 pt
+  instead of 36 pt, so the bubble starts 8 px further right — the same
+  geometry Moments already has. **Not re-verified on a device**: the fix is
+  not in any installed build (Redmi runs Build 31), so the on-device gesture is
+  UNVERIFIED until Build 33 is installed.
+  `server_management_sheet.dart:491` and `server_invite_sheet.dart:185` have
+  the same gap and are tracked separately as A-20; they are untouched here.
+
+## FIXED IN SOURCE — Settings polish slice: invisible switch thumb and an untranslated account type (2026-09-18)
+
+Two defects from the Build 33 pre-redesign polish sweep (audit IDs R-06 and
+R-09, `yovoice-evidence/2026-09-18/polish-33/redmi/audit-redmi.md`). Both are
+fixed in source on branch `polish/build-33`; commit `polish/build-33 (pending)`.
+
+- **R-06 (P2) — every ON notification switch rendered as a solid purple
+  lozenge with no thumb.** Evidence: `redmi/18-notifications.png` (Build 31).
+  `_PreferenceRow` in
+  `lib/features/notifications/presentation/screens/notification_preferences_screen.dart`
+  passed `activeThumbColor: colors.primary` — the exact colour
+  `AppTheme._buildTheme`'s `switchTheme` already resolves the *selected track*
+  to (`app_theme.dart`, `trackColor` → `primary`), so the thumb was painted
+  the same purple as the track it sits on and disappeared into it. The theme
+  on its own resolves the selected thumb to `colorScheme.onPrimary`. Fix:
+  delete the widget-level override, leaving
+  `Switch.adaptive(value: value, onChanged: onChanged)` so the Material 3
+  switch theme applies. No theme file was touched, and the four other
+  `activeColor` switch overrides elsewhere in `lib/` are a different colour
+  from their track and were left alone. Test:
+  `test/notification_preferences_switch_thumb_test.dart` pumps the real screen
+  under both `AppTheme.darkTheme` and `AppTheme.lightTheme` and asserts, for
+  every rendered toggle, that the resolved selected *thumb* colour differs
+  from the resolved selected *track* colour — a behavioural assertion rather
+  than a hard-coded hex, so it survives a palette change. RED with the
+  override restored (both themes), GREEN without it. Rendered proof (real
+  painted pixels, `RepaintBoundary.toImage`) in
+  `yovoice-evidence/2026-09-18/polish-33/fix-settings/`:
+  `notification-prefs-BEFORE-{dark,light}.png` show the thumbless lozenge,
+  `notification-prefs-{dark,light}.png` show the white thumb, with the one OFF
+  toggle unchanged in both.
+- **R-09 (P3) — "Typ konta: Personal" in the Polish UI.** Evidence:
+  `redmi/14-settings.png` (Build 31, owner's account, `accountType: personal`).
+  The Account row in
+  `lib/features/settings/presentation/screens/settings_screen.dart` rendered
+  `copy.text(profile.accountType.label, _polishAccountType(...))`, and
+  `_polishAccountType` matched on the lowercased English label with cases for
+  `creator`, `business` and `user`/`member` before falling through to
+  `_ => label`. `personal` and `official` had no case, so both leaked the raw
+  English enum label; `business`, `user` and `member` were dead branches — no
+  such `AccountType` exists. Fix: a new `settingsAccountTypeLabel(copy, type)`
+  helper whose switch is exhaustive over `AccountType`, worded exactly like the
+  account-type badge in `profile_header.dart` (Personal/Osobiste,
+  Creator/Twórca, Official/Oficjalne), and `_polishAccountType` deleted. The
+  exhaustive switch makes a future fourth `AccountType` a compile error here
+  instead of a silent English leak. Test:
+  `test/settings_account_type_localization_test.dart` covers all three values
+  in EN and PL, asserts no value renders its English enum label in Polish, and
+  pins the wording to the profile badge's. RED when any branch regresses.
+  **Not visually re-verified on a device**: the fix is not in any installed
+  build, and `SettingsScreen` builds its own `ProfileService`/`AuthService`,
+  so it cannot be pumped in a widget test without a real Firebase app — the
+  rendered Polish row is UNVERIFIED until Build 33 is installed.
+- **Still open, deliberately out of this slice.** `Personal`, `Creator` and
+  `Official` have no entries in any `lib/core/localization/translations/`
+  catalog, so the other 28 selectable locales still fall back to English for
+  this row — exactly as `profile_header.dart`'s badge already does. That is an
+  app-wide catalog gap for the Localization Specialist, not an EN+PL defect.
 
 ## FIXED — reactions on photo, video and GIF bubbles in direct chats (2026-09-18)
 
@@ -2623,9 +3823,21 @@ high, and 6 medium-priority issues plus one client/server contract bug. Within
 that audit's original 13 items, all are fixed except one:
 
 - **`enforceAppCheck: false` on every Cloud Function** (audit item #12) —
-  still open, but deliberately: flipping it needs a token-delivery
-  monitoring period first (Firebase Console → App Check has the metrics).
-  See [ADR-004](Decisions.md#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off).
+  still open, and as of 2026-09-18 it has a **measured hard blocker** in
+  front of it, not just a waiting period: **no platform is known to be
+  delivering a valid App Check token.** The Play-distributed Android
+  client sends one the backend cannot decode, on every single call; iOS
+  and web are unproven either way, because an *absent* token is logged as
+  nothing at all; and `playintegrity.googleapis.com` is not enabled on
+  `yovoice-ec54a`. Flipping enforcement today would reject real users, so
+  the earlier framing — "needs a token-delivery monitoring period first
+  (Firebase Console → App Check has the metrics)" — was too soft, and the
+  monitoring source it named is the only one that can answer the question
+  (Cloud Functions logs cannot). Measurement, and what it does and does
+  not prove: **App Check token delivery is broken on Android and unproven
+  everywhere else**, the dated entry at the end of this file. See also
+  [ADR-004](Decisions.md#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off)
+  for why the integration shipped with enforcement off.
   Not urgent on its own — it removes a layer that raises the cost of
   abusing the backend, it isn't itself an open exploit — but shouldn't be
   forgotten either. Tracked as a Roadmap item too:
@@ -5215,3 +6427,139 @@ Still OPEN from the same gate, and NOT fixed here:
   either changes board 02's phone anatomy or changes how two boards look, and
   neither can be judged without rendered frames. It stays the owner call the
   gate already called it.
+
+## OPEN — App Check token delivery is broken on Android, and unproven everywhere else (2026-09-18)
+
+Found while reading production logs for the profile avatar/banner pipeline:
+**every** `getProfileMediaAccess` call from the Android client logs an App
+Check rejection. It is harmless today — `enforceAppCheck: false`
+(`functions/profile/media_runtime.js:68` and `:76`) is exactly the control
+that keeps it harmless, and it must stay false — but it means the App Check
+integration is not actually working, and the log noise had been reading as
+routine rather than as a broken client. Documentation status: **open → fixed**
+for the *documentation* defect (three documents implied client token delivery
+was working and that only a waiting period stood between the project and
+enforcement); `polish/build-33 (pending)`. The **App Check gap itself stays
+OPEN** and is now a named blocker on
+[Roadmap item 2](Roadmap.md#2-firebase-app-check-enforcement).
+
+### What was measured
+
+Production logs, project `yovoice-ec54a`, service `getprofilemediaaccess`,
+window `2026-09-18T20:30:00Z` – `2026-09-18T21:15:00Z`:
+
+- **662 requests**, split by user agent: **360 `okhttp/4.12.0`** (Android, all
+  `POST` → 200), **298 `app.yovoice/2.0.0 iPhone/…`** (240 on `hw/iPhone18_1`,
+  of which one returned 404, and 58 on `hw/iPhone14_2`), and **2 `POST` + 2
+  `OPTIONS`** from desktop Safari (web).
+- **360 `Failed to validate AppCheck token. FirebaseAppCheckError: Decoding
+  App Check token failed.`**, followed by **359 `Allowing request with invalid
+  AppCheck token because enforcement is disabled`** — exactly the Android
+  request count. Not "most Android calls": **all** of them.
+- Across every Cloud Run service in that window, only three logged App Check
+  messages at all: `getprofilemediaaccess` (719 lines),
+  `getmystaffcapabilities` (2) and `getmutualfriends` (2). The volume is a
+  property of which function the client calls most, not of that function.
+
+Client side, Redmi Note 8 Pro (`6tq4g6f6ijrwxwzx`), `app.yovoice`
+`versionCode=31`, `versionName=2.0.0`,
+`installerPackageName=com.android.vending` (a real Play-distributed release
+build, so `AndroidPlayIntegrityProvider` is the active provider), logcat from
+the running app (pid 24601):
+
+```
+W FirebaseContextProvider: Error getting App Check token. Error: wo0: Too many attempts.
+```
+
+repeating every ~13–18 s, continuously, across the sampled window (device
+clock `02:24:06`–`02:31:02`). The exchange fails on the device *before* a
+token is ever produced; the SDK then backs off, and firebase-functions
+receives an undecodable placeholder rather than a JWT. A re-capture ten
+minutes later produced no lines at all — consistent with the backoff the
+message itself names, and a reminder that an empty logcat here is not a
+recovered client. `playintegrity.googleapis.com` is
+**not enabled** on `yovoice-ec54a` (58 services were enabled when checked;
+none of them was Play Integrity, App Attest or DeviceCheck —
+`firebaseappcheck.googleapis.com` alone is on), which is a sufficient
+explanation for a Play Integrity exchange that never succeeds.
+
+### What it costs today: nothing user-facing, measured
+
+Worth stating plainly, because "App Check rejection" reads alarming in a log:
+**no avatar or banner fails because of this.** `firebase-functions` treats an
+invalid token as `INVALID`, and with `enforceAppCheck: false` that path warns
+and continues — the grant is still issued. Nor does the failed validation cost
+server time: over the same window the request latency on
+`getprofilemediaaccess` was p50 111 ms / p90 1300 ms for the 360 Android calls
+against p50 229 ms / p90 1537 ms for the 298 iOS calls, so the platform that
+fails App Check is, if anything, the faster one. Decoding a malformed token
+fails locally and immediately.
+
+What it does cost: a dead security layer, ~360 warning pairs per 45 minutes of
+log noise that trains readers to ignore this function's logs, and a client-side
+Play Integrity retry loop that ends in `Too many attempts` backoff. Whether
+that loop delays the *first* callable of an app session before the backoff
+widens is **not measured here** — it would need client-side instrumentation,
+not server logs — and is the one open user-impact question this entry does not
+close.
+
+### The part that matters most — silence is not health
+
+`firebase-functions`
+(`functions/node_modules/firebase-functions/lib/common/providers/https.js`)
+warns **only** when a token is present and *invalid*. When the token is
+**missing**, `tokenStatus.app === "MISSING"` and with `enforceAppCheck: false`
+**nothing is logged at all**. So iOS's and web's clean logs prove nothing:
+"delivering valid tokens" and "delivering no tokens" are byte-identical in
+Cloud Run logs. Under enforcement the two are also treated alike — `MISSING`
+throws `unauthenticated` exactly as `INVALID` does — so a platform that is
+quietly sending nothing today goes dark the moment the flag flips. Cloud
+Monitoring cannot settle it either: the Monitoring API returns `404
+NOT_FOUND` for `firebaseappcheck.googleapis.com/request_count` on this
+project. Only **Firebase Console → App Check** separates verified from
+unverified requests per platform.
+
+Release **web** is a third case and is not in doubt: `lib/main.dart` activates
+no provider at all in a release web build unless
+`--dart-define=YOVOICE_WEB_RECAPTCHA_SITE_KEY=…` is supplied, and logs the
+line `Web App Check is not configured for this release build.` instead. That
+branch is deliberate and correct — it is what keeps a missing key from
+crashing startup — but it means web would fail enforcement by construction.
+
+### What was changed here, and what was not
+
+Changed: this entry, the App Check bullet under
+[Security](#security), [Roadmap item 2](Roadmap.md#2-firebase-app-check-enforcement)
+(dependency → blocker) and the App Check section of
+[Firebase.md](Firebase.md#firebase-app-check). **Documentation only.**
+
+Not changed, on purpose: `functions/profile/media_runtime.js`. The two
+`enforceAppCheck: false` options are the control that makes this survivable;
+turning them on is precisely the thing this entry says not to do. No Functions
+source, schema or deploy change was made, and none is needed to stop the
+*harm* — there is none today, only noise and a dead security layer.
+
+### Owner / ops action, outside this build's authority
+
+1. Enable `playintegrity.googleapis.com` on `yovoice-ec54a`.
+2. Confirm the Play Console app is linked to that Cloud project.
+3. Re-read the logs and confirm the `Decoding App Check token failed`
+   warnings stop.
+4. Read Firebase Console → App Check per platform and confirm iOS and web
+   are producing *verified* requests — not merely silent ones — before
+   anyone considers flipping enforcement anywhere.
+
+Until step 4 reports real verified traffic on a platform, `enforceAppCheck`
+stays `false` for that platform's traffic.
+
+### Known-stale, deliberately left alone
+
+`functions/index.js:555`, `:573` and `:588` each comment that clients "attach
+App Check tokens already". Android provably does not, and iOS/web are
+unproven. The comments are behaviourally inert — the four flags they
+annotate are read through `strictBooleanEnvironment`, `functions/.env` sets
+only `YOVOICE_ENFORCE_GIF_APP_CHECK=false` and an unset variable resolves to
+`false`, so all four are off — and correcting them is a
+Functions-source edit, which was out of scope for this documentation pass.
+Worth a one-line correction the next time `functions/` is opened for any
+other reason.

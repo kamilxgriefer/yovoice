@@ -610,10 +610,27 @@ Integrated client-side in the Flutter app
 (`AndroidDebugProvider`/`AppleDebugProvider` in debug,
 `AndroidPlayIntegrityProvider`/`AppleAppAttestWithDeviceCheckFallbackProvider`
 in release, `lib/main.dart`). **`enforceAppCheck` is `false` on every Cloud
-Function** — deliberately, pending a token-delivery monitoring period. See
+Function** — deliberately. See
 [ADR-004](Decisions.md#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off),
 [SECURITY.md](SECURITY.md#firebase-app-check), and [Bugs.md](Bugs.md) for
 current status and what this gap does and doesn't expose.
+
+**Integrated is not the same as working — measured 2026-09-18.** The release
+Android client fails its App Check exchange on the device
+(`FirebaseContextProvider: Error getting App Check token`) and sends an
+undecodable token on every call, which the backend logs as `Decoding App
+Check token failed`; `playintegrity.googleapis.com` is not enabled on
+`yovoice-ec54a`. iOS and web are unproven rather than healthy: a *missing*
+token produces no log line at all while enforcement is off, so silence in
+Cloud Functions logs cannot be read as delivery — only Firebase Console →
+App Check separates verified from unverified requests. A release **web**
+build activates no provider whatsoever unless
+`--dart-define=YOVOICE_WEB_RECAPTCHA_SITE_KEY=…` is supplied; without it the
+app logs `Web App Check is not configured for this release build.` and
+carries on, by design. Treat this section as describing the *integration*,
+not a working attestation path, until
+[Roadmap item 2](Roadmap.md#2-firebase-app-check-enforcement)'s blockers are
+cleared.
 
 Debug builds print a debug token to the device log on first launch — must
 be registered in **Firebase Console → App Check → Apps → Manage debug

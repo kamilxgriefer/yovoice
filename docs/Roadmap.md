@@ -2894,18 +2894,45 @@ regression test pinning the contract.
 
 ### 2. Firebase App Check enforcement
 
-- **Status**: Not started — deliberately deferred, see
-  [ADR-004](Decisions.md#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off).
+- **Status**: **Blocked**, not merely deferred — and the difference is
+  measured, not assumed. On 2026-09-18 the Play-distributed Android client
+  (`versionCode=31`) failed its App Check exchange on the device and sent an
+  undecodable token on **every** `getProfileMediaAccess` call; iOS and web
+  remain unproven in either direction. Enforcement stays `false` until a real
+  device is shown to deliver a verifiable token. Background:
+  [ADR-004](Decisions.md#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off);
+  the measurement and its limits: [Bugs.md](Bugs.md#security).
 - **Description**: Flip `enforceAppCheck: true` on Cloud Functions so
   requests without a valid App Check token are rejected.
-- **Dependencies**: A monitoring period on real token-delivery data
-  (Firebase Console → App Check) — needs the client-side integration to
-  have been live long enough to see how reliably genuine devices are
-  attaching valid tokens across platforms.
+- **Dependencies**: blockers, in order — each one **measured**, not assumed:
+  1. **Enable `playintegrity.googleapis.com` on `yovoice-ec54a`.** It is not
+     enabled — read straight off the project's enabled-services list during
+     this pass: 58 services, none of them Play Integrity, App Attest or
+     DeviceCheck — while the release Android build runs
+     `AndroidPlayIntegrityProvider`. Confirm the
+     Play Console app is linked to this Cloud project in the same pass.
+  2. **Re-measure until the client actually produces a token.** The
+     `Decoding App Check token failed` warnings on `getprofilemediaaccess`
+     must stop first; while they continue, the integration is not delivering
+     anything to enforce.
+  3. **Get per-platform delivery data from a source that separates VALID
+     from MISSING** — Firebase Console → App Check. Cloud Functions logs
+     cannot do this: `firebase-functions` warns on an *invalid* token but
+     logs nothing at all for an *absent* one, so a platform sending nothing
+     is indistinguishable from a healthy one. Both iOS and web are currently
+     silent, and under enforcement `MISSING` is rejected exactly like
+     `INVALID`.
+  4. **Settle the web story before enforcing web traffic.** A release web
+     build activates no provider unless `YOVOICE_WEB_RECAPTCHA_SITE_KEY` is
+     supplied at build time (`lib/main.dart`), so web fails enforcement by
+     construction until that key is wired into the deployment pipeline and
+     registered in the Console.
 - **Priority**: Medium. Not gating an active exploit (Firestore rules and
   Cloud Function authorization checks are the actual gates — see
   [SECURITY.md](SECURITY.md)), but it's a real hardening layer sitting
-  unused.
+  unused — and, as measured, one that is not merely unused: it is not
+  working on the client either, which is why the blockers above come before
+  any flag.
 - **Future considerations**: Flip function-by-function rather than
   globally, starting with the lowest-traffic/lowest-risk functions, so a
   provider misconfiguration on one platform doesn't take down every
