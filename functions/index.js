@@ -578,9 +578,10 @@ function strictBooleanEnvironment(name) {
 
 const { createReelFunctions } = require("./reels");
 Object.assign(exports, createReelFunctions({
-  // Clients attach App Check tokens already. Enforcement follows the staged
-  // project-wide rollout and must not be enabled before platform telemetry is
-  // healthy on iOS, Android and Web.
+  // Clients activate App Check, but platform attestation is not yet healthy
+  // (Android tokens fail to decode, iOS lacks the App Attest entitlement and
+  // web has no reCAPTCHA site key). Enforcement must not be enabled before
+  // console telemetry shows verified traffic on iOS, Android and Web.
   enforceAppCheck: strictBooleanEnvironment(
     "YOVOICE_ENFORCE_REELS_APP_CHECK",
   ),
@@ -594,26 +595,53 @@ Object.assign(exports, createReelFunctions({
 const { createGifFunctions } = require("./media/gif/catalog");
 const { GIF_PROVIDERS } = require("./media/gif/gif_ref");
 const deployedGifProvider = GIF_PROVIDERS.yovoice;
+// GIPHY, option B (ADR-210). Search and trending run in the CLIENT, as GIPHY's
+// API terms require; the server stays the send-time authority. `resolveGif`
+// fetches one chosen GIPHY id with the GIPHY_API_KEY secret, applies the
+// rating/denylist/block filter and writes the `gifAssets` record the message
+// transaction reads. It is SOURCE-GATED OFF: turning it on declares the
+// GIPHY_API_KEY secret and adds an export, so it needs the secret set first,
+// the pinned export list in test/cold_start_module_graph.test.js and the
+// secret-discovery expectation updated in the same reviewed commit, and one
+// deploy wave with the catalog. While it is off, getGifCatalog advertises no
+// resolvable provider, so a client built with a GIPHY key still shows
+// Originals only.
+const GIPHY_SEND_RESOLVE_ENABLED = false;
+// Every send path accepts BOTH providers. A GIPHY reference can only resolve
+// once `resolveGif` has written its server-owned record, so accepting it here
+// ahead of the resolver is inert, and it removes the split-revision hazard
+// where Originals (and every Originals recent) stop sending on a provider flip.
+const gifSendProviders = Object.freeze([
+  GIF_PROVIDERS.yovoice,
+  GIF_PROVIDERS.giphy,
+]);
 Object.assign(exports, createGifFunctions({
   providerName: deployedGifProvider,
-  // Clients attach App Check tokens already. Enforcement follows the staged
-  // project-wide rollout used by Reels and Stage B.
+  resolveProviders: GIPHY_SEND_RESOLVE_ENABLED ? [GIF_PROVIDERS.giphy] : [],
+  // Telemetry first: App Check is activated in clients but attestation is not
+  // yet healthy on every platform, so enforcement stays off until console
+  // metrics show verified traffic on Android, iOS and Web (ADR-210).
   enforceAppCheck: strictBooleanEnvironment(
     "YOVOICE_ENFORCE_GIF_APP_CHECK",
   ),
 }));
 
 const stageBFunctions = createStageBFunctions({
-  // Message publication uses the exact same source-owned provider as catalog
-  // discovery. This prevents a search result from being selectable while the
-  // authoritative direct/room/server send path captured a missing env value.
+  // Message publication uses a source-owned allow-set (ADR-210) rather than a
+  // missing env value, so a selectable Originals or GIPHY result always has a
+  // send path that accepts its provider.
   runtime: createStageBIntegrityRuntime({
-    directOptions: { gifProviderName: deployedGifProvider },
-    communityOptions: { gifProviderName: deployedGifProvider },
+    directOptions: {
+      gifProviderName: deployedGifProvider,
+      gifProviderNames: gifSendProviders,
+    },
+    communityOptions: {
+      gifProviderName: deployedGifProvider,
+      gifProviderNames: gifSendProviders,
+    },
   }),
-  // Rollout switch: clients already attach App Check tokens, but production
-  // enforcement must only flip after Android/iOS/Web attestation telemetry
-  // is healthy. Invalid configuration fails the deployment instead of
+  // Rollout switch: clients activate App Check, but production enforcement
+  // must only flip after Android/iOS/Web attestation telemetry is healthy. Invalid configuration fails the deployment instead of
   // silently weakening enforcement.
   enforceUserAppCheck: strictBooleanEnvironment(
     "YOVOICE_ENFORCE_STAGE_B_APP_CHECK",

@@ -9,6 +9,13 @@
 //                        so trending is not a second function and not a second
 //                        cold start.
 //   reportGifAsset()  -> a `reports` document in the queue that already exists.
+//   resolveGif(...)   -> ADR-210 option B, registered ONLY when a remote
+//                        provider is source-enabled for send-time resolution:
+//                        the client searched GIPHY itself and sends
+//                        `{provider, id}`; this callable fetches that one id
+//                        with the server's secret, applies the content
+//                        filter, and persists the `gifAssets` authority the
+//                        message transaction later reads.
 //
 // Registration follows the Stripe precedent in functions/index.js exactly.
 // Only the GIPHY configuration declares and binds GIPHY_API_KEY; the bundled
@@ -38,6 +45,7 @@ const { createGifModeration, isValidReason } = require("./moderation");
 const { createGifProvider, GifProviderError } = require("./provider");
 const { createGifRateLimiter } = require("./rate_limit");
 const { isDeniedQuery } = require("./denylist");
+const { resolveGifAsset } = require("./resolve");
 const {
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
@@ -214,7 +222,7 @@ async function availability(runtime, { metadataOnly = false } = {}) {
   return { available: true, reason: null, provider };
 }
 
-function catalogResponse(state) {
+function catalogResponse(state, { resolvableProviders = [] } = {}) {
   return {
     available: state.available,
     reason: state.reason,
@@ -227,7 +235,34 @@ function catalogResponse(state) {
     // Named so the client can render "Only GIFs rated G" honestly rather than
     // asserting a safety level it cannot verify.
     minimumQueryLength: 2,
+    // ADR-210, additive. Remote providers whose ids this deployment resolves
+    // at send time (`resolveGif`). A client that searches a provider itself
+    // shows those results ONLY when that provider is listed here, so a build
+    // carrying a client key can never offer a GIF the server cannot send.
+    // Empty whenever the feature is unavailable (kill switch included).
+    resolvableProviders: state.available ? [...resolvableProviders] : [],
   };
+}
+
+/// Remote providers that may be source-enabled for send-time resolution.
+/// Only GIPHY today; the fixture provider is accepted in tests only through
+/// an injected runtime, never through this list.
+const RESOLVABLE_PROVIDERS = Object.freeze(new Set([GIF_PROVIDERS.giphy]));
+
+/// The resolver's own hourly ceiling on real provider calls. Sized under a
+/// GIPHY beta key (100 calls per hour), because the same key tier may be all
+/// the project has when it first flips: a resolve happens once per GIPHY id
+/// ever sent (the record then answers every later send), so this binds only
+/// on a burst of never-seen GIFs, and a refusal is a retryable, labelled
+/// "try again shortly" rather than a broken feature.
+const DEFAULT_RESOLVE_HOURLY_BUDGET = 90;
+
+function refuseResolve(reason) {
+  throw new HttpsError(
+    "failed-precondition",
+    "That GIF is no longer available. Search for it again.",
+    { code: reason },
+  );
 }
 
 /// A `GifAsset` as it goes over the wire. Explicit rather than a spread, so a
@@ -245,12 +280,126 @@ function wireAsset(asset) {
   };
 }
 
+/// `resolveGif` — one remote id in, one server-owned asset record out.
+///
+/// The order is the order of cost: shape, kill switch and key, the caller's
+/// own bucket, an existing record (free, and the only answer for anything a
+/// moderator blocked), the suppression list, the global hourly budget, and
+/// only then one provider request. Everything the send transaction later
+/// trusts — title, rating, dimensions, the pinned URL — is written here by the
+/// server from the provider's answer, never from the client.
+async function resolveGifById(runtime, resolvable, request) {
+  const auth = requireActor(request, { verified: false });
+  const data = requireExactInput(request.data ?? {}, ["provider", "id"], ["provider", "id"]);
+  const provider = typeof data.provider === "string" ? data.provider : "";
+  if (!resolvable.includes(provider) || !isValidGifId(data.id)) {
+    fail("invalid-argument", "The GIF reference is invalid.");
+  }
+  const gifId = data.id;
+
+  const state = await availability(runtime);
+  if (!state.available) {
+    throw new HttpsError(
+      "failed-precondition",
+      "GIFs are not available right now.",
+      { code: state.reason ?? "not_configured" },
+    );
+  }
+  if (state.provider.id !== provider) {
+    throw new HttpsError(
+      "failed-precondition",
+      "GIFs are not available right now.",
+      { code: "not_configured" },
+    );
+  }
+
+  const budget = await runtime.limiter.consume(auth.uid);
+  if (!budget.allowed) {
+    throw new HttpsError(
+      "resource-exhausted",
+      "Too many GIF requests. Please slow down.",
+      { retryAfterSeconds: budget.retryAfterSeconds },
+    );
+  }
+  activeProfile(await runtime.db.doc(`users/${auth.uid}`).get(), "Your");
+
+  const known = await resolveGifAsset({
+    db: runtime.db,
+    provider,
+    gifId,
+    cache: runtime.cache,
+  });
+  if (known.ok) {
+    runtime.log.info("gif.resolve", { provider, cacheHit: true });
+    return { asset: { ...known.asset, rating: GIF_RATING } };
+  }
+  if (known.reason !== "unknown_asset") refuseResolve(known.reason);
+
+  const suppressed = await runtime.cache.suppressedAssetIds();
+  if (suppressed.has(`${provider}_${gifId}`)) refuseResolve("blocked");
+
+  if (!(await runtime.limiter.claimProviderCall())) {
+    runtime.log.warn("gif.resolve", { provider, budgetExhausted: true });
+    throw new HttpsError(
+      "resource-exhausted",
+      "GIFs are busy right now. Please try again shortly.",
+      { code: "budget_exhausted", retryAfterSeconds: 60 },
+    );
+  }
+
+  let page;
+  try {
+    page = await state.provider.resolve({ id: gifId });
+  } catch (error) {
+    const code = error instanceof GifProviderError ? error.code : "provider_error";
+    const status = error instanceof GifProviderError ? error.status : 0;
+    runtime.log.error("gif.provider_error", { code, status, operation: "resolve" });
+    if (code === "provider_unauthorized" || code === "provider_rate_limited") {
+      runtime.breaker.trip(code);
+    }
+    throw new HttpsError("unavailable", "GIFs are unavailable right now.", { code });
+  }
+
+  const fetched = Array.isArray(page?.items) ? page.items[0] ?? null : null;
+  if (!fetched || fetched.provider !== provider || fetched.id !== gifId) {
+    refuseResolve("unknown_asset");
+  }
+  // Layer 2 (rating re-filter) and layer 3 (the static denylist, applied to
+  // the provider's own title because there is no server-side query here).
+  if (fetched.rating !== GIF_RATING) refuseResolve("rating");
+  if (isDeniedQuery(normalizeQuery(fetched.title))) refuseResolve("filtered");
+
+  const { written, blocked } = await runtime.cache.writeAssets([fetched]);
+  const documentId = `${provider}_${gifId}`;
+  if (blocked.has(documentId)) refuseResolve("blocked");
+  if (!written.has(documentId)) {
+    throw new HttpsError("unavailable", "GIFs are unavailable right now.", {
+      code: "asset_write_failed",
+    });
+  }
+  const stored = await resolveGifAsset({
+    db: runtime.db,
+    provider,
+    gifId,
+    cache: runtime.cache,
+  });
+  if (!stored.ok) refuseResolve(stored.reason);
+  runtime.log.info("gif.resolve", { provider, cacheHit: false });
+  return { asset: { ...stored.asset, rating: GIF_RATING } };
+}
+
 function createGifFunctions({
   runtime = null,
   registrars = { onCall },
   enforceAppCheck = false,
   log = logger,
   providerName = process.env.GIF_PROVIDER,
+  // ADR-210 option B. Remote providers whose ids are resolved server-side at
+  // send time. Source-selected (never environment) for the same reason the
+  // catalog provider is: deploy discovery reads the export map before .env.
+  resolveProviders = [],
+  resolveRuntime = null,
+  resolveHourlyBudget = DEFAULT_RESOLVE_HOURLY_BUDGET,
 } = {}) {
   if (typeof registrars?.onCall !== "function") {
     throw new TypeError("Missing Cloud Functions registrar: onCall.");
@@ -284,6 +433,20 @@ function createGifFunctions({
 
   const exportsMap = {};
 
+  const resolvable = [...new Set(Array.isArray(resolveProviders) ? resolveProviders : [])];
+  for (const name of resolvable) {
+    if (!RESOLVABLE_PROVIDERS.has(name)) {
+      throw new TypeError(`GIF provider ${String(name)} cannot be resolved by id.`);
+    }
+  }
+  // The resolver talks to the remote provider, so it is the one place the
+  // GIPHY key is bound under option B. It is only declared when GIPHY is
+  // source-enabled here, so the committed Originals-only source still
+  // deploys without the secret (test/optional_secret_discovery.test.js).
+  const resolveKeyParameter = resolvable.includes(GIF_PROVIDERS.giphy)
+    ? getGiphyApiKey()
+    : null;
+
   // ---------------------------------------------------------------------
   // getGifCatalog — no secret, always registered.
   // ---------------------------------------------------------------------
@@ -291,8 +454,24 @@ function createGifFunctions({
     requireActor(request, { verified: false });
     requireExactInput(request.data ?? {}, [], []);
     const state = await availability(resolved, { metadataOnly: true });
-    return catalogResponse(state);
+    return catalogResponse(state, { resolvableProviders: resolvable });
   });
+
+  if (resolvable.length > 0) {
+    const remote =
+      resolveRuntime ??
+      createGifRuntime({
+        apiKey: () => resolveKeyParameter?.value() ?? "",
+        providerName: resolvable[0],
+        hourlyProviderBudget: resolveHourlyBudget,
+      });
+    exportsMap.resolveGif = registrars.onCall(
+      resolveKeyParameter === null
+        ? baseOptions
+        : { ...baseOptions, secrets: [resolveKeyParameter] },
+      (request) => resolveGifById(remote, resolvable, request),
+    );
+  }
 
   if (!providerConfigured) {
     // No provider: the search/report callables are not registered at all.
@@ -585,6 +764,8 @@ module.exports = {
   BREAKER_WINDOW_MS,
   CATEGORY_KEYS,
   CONFIG_DOCUMENT,
+  DEFAULT_RESOLVE_HOURLY_BUDGET,
+  RESOLVABLE_PROVIDERS,
   availability,
   catalogResponse,
   createBreaker,
