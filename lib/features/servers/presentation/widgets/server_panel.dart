@@ -562,7 +562,12 @@ class _PanelChannelRow extends StatelessWidget {
     final icon = restricted
         ? Icons.lock_outline
         : serverChannelIcon(channel.kind);
-    final iconLabel = restricted ? copy.serverChannelRestricted : null;
+    // The kind is voiced on every row: for a voice-first product it decides
+    // whether selecting leads to talking. The lock adds its access on top.
+    final iconLabel = copy.serverChannelSpokenKind(
+      channel.kind,
+      restricted: restricted,
+    );
     if (!channel.kind.isMedia) {
       return YoChannelRow(
         tileKey: ValueKey('server-channel-${channel.id}'),

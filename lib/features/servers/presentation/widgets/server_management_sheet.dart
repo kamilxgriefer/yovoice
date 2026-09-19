@@ -429,7 +429,10 @@ class _ServerManagementSheetState extends State<_ServerManagementSheet> {
           icon: restricted
               ? Icons.lock_outline
               : serverChannelIcon(channel.kind),
-          iconSemanticLabel: restricted ? copy.serverChannelRestricted : null,
+          iconSemanticLabel: copy.serverChannelSpokenKind(
+            channel.kind,
+            restricted: restricted,
+          ),
           label: channel.name,
           subtitle: Text(
             restricted

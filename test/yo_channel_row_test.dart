@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
 import 'package:yovoice/shared/widgets/rows/yo_channel_row.dart';
 
 /// The one channel row (Slim redesign, phase 0). The server panel, the
@@ -348,6 +350,183 @@ void main() {
 
       await pump(tester, row(), width: 240);
       expect(join, findsOneWidget);
+    });
+  });
+
+  group('YoVoiceChannelRow measure', () {
+    const liveKey = ValueKey('server-live-pill');
+    const joinKey = ValueKey('server-channel-join-lounge');
+    const name = 'Spotkanie zespołu';
+
+    Widget liveRow() => YoVoiceChannelRow(
+      tileKey: key,
+      label: name,
+      icon: Icons.volume_up_outlined,
+      liveBadge: const YoBadge(
+        key: liveKey,
+        label: 'NA ŻYWO',
+        variant: YoBadgeVariant.live,
+      ),
+      liveSince: 'od 19:40',
+      joinLabel: 'Dołącz do rozmowy',
+      joinKey: joinKey,
+      onJoin: () {},
+      onTap: () {},
+    );
+
+    // 240 / 256: the desktop panel (264 / 280) inside its 12 + 12 list
+    // padding; 296: the phone sheet; 340+: where the join control fits too.
+    for (final (width, scale) in [
+      (240.0, 1.0),
+      (256.0, 1.0),
+      (296.0, 1.0),
+      (340.0, 1.0),
+      (420.0, 1.0),
+      (296.0, 1.5),
+      (420.0, 1.5),
+      (296.0, 2.0),
+    ]) {
+      testWidgets('a live channel keeps a readable name with the marker and '
+          'the join path at $width px, ${scale}x', (tester) async {
+        await pump(tester, liveRow(), width: width, textScale: scale);
+        expect(tester.takeException(), isNull);
+        expect(find.byKey(liveKey), findsOneWidget);
+        expect(find.text('od 19:40'), findsOneWidget);
+        expect(
+          tester.getSize(find.text(name)).width,
+          greaterThanOrEqualTo(YoVoiceChannelRow.minLabelWidth),
+        );
+      });
+    }
+
+    testWidgets('the join control rides beside a live marker only where both '
+        'fit next to the name', (tester) async {
+      final join = find.byKey(joinKey);
+      await pump(tester, liveRow(), width: 296);
+      expect(join, findsNothing);
+      await pump(tester, liveRow(), width: 340);
+      expect(join, findsOneWidget);
+      expect(
+        tester.getSize(find.text(name)).width,
+        greaterThanOrEqualTo(YoVoiceChannelRow.minLabelWidth),
+      );
+    });
+
+    Widget connectedRow(int people, {bool speaking = false}) =>
+        YoVoiceChannelRow(
+          tileKey: key,
+          label: 'Salon',
+          icon: Icons.volume_up_outlined,
+          connected: true,
+          connectedLabel: 'połączono',
+          participants: <YoVoiceRowParticipant>[
+            for (var i = 0; i < people; i++)
+              YoVoiceRowParticipant(
+                userId: 'u$i',
+                displayName: 'P$i',
+                isSpeaking: speaking,
+                isMicrophoneEnabled: speaking,
+              ),
+          ],
+          onTap: () {},
+        );
+
+    int faces(WidgetTester tester) => tester
+        .widgetList<Semantics>(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is Semantics &&
+                (widget.properties.label ?? '').startsWith('P'),
+          ),
+        )
+        .length;
+
+    // 216: the tablet column (240) inside the panel's list padding; 240 /
+    // 248: the desktop panel.
+    for (final width in [216.0, 240.0, 248.0]) {
+      for (final scale in [1.0, 2.0]) {
+        for (final speaking in [false, true]) {
+          for (final people in [4, 5, 16]) {
+            testWidgets('the roster fits $width px at ${scale}x with $people '
+                'people${speaking ? ' speaking' : ''}', (tester) async {
+              await pump(
+                tester,
+                connectedRow(people, speaking: speaking),
+                width: width,
+                textScale: scale,
+              );
+              expect(tester.takeException(), isNull);
+              final shown = faces(tester);
+              final hidden = people - shown;
+              expect(shown, lessThanOrEqualTo(YoVoiceChannelRow.maxAvatars));
+              if (hidden > 0) {
+                expect(find.text('+$hidden'), findsOneWidget);
+              } else {
+                expect(find.textContaining('+'), findsNothing);
+              }
+            });
+          }
+        }
+      }
+    }
+
+    testWidgets('speaking changes the ring colour, never the face size', (
+      tester,
+    ) async {
+      Size face() => tester.getSize(
+        find
+            .ancestor(
+              of: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Semantics && widget.properties.label == 'P0',
+              ),
+              matching: find.byType(Padding),
+            )
+            .first,
+      );
+      await pump(tester, connectedRow(2));
+      final silent = face();
+      await pump(tester, connectedRow(2, speaking: true));
+      expect(face(), silent);
+    });
+  });
+
+  group('keyboard focus', () {
+    testWidgets('a focused channel row draws a 2 px focus edge; an '
+        'unfocused one keeps its plain shape', (tester) async {
+      for (final (theme, palette) in [
+        (AppTheme.darkTheme, AppPalette.dark),
+        (AppTheme.lightTheme, AppPalette.light),
+      ]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: theme,
+            home: Scaffold(
+              body: YoChannelRow(
+                tileKey: key,
+                label: 'Salon',
+                icon: Icons.tag_rounded,
+                onTap: () {},
+              ),
+            ),
+          ),
+        );
+        expect(
+          tester.widget<ListTile>(find.byKey(key)).shape,
+          const RoundedRectangleBorder(borderRadius: AppRadius.md),
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        final shape =
+            tester.widget<ListTile>(find.byKey(key)).shape!
+                as RoundedRectangleBorder;
+        expect(shape.side.color, palette.focus);
+        expect(shape.side.width, greaterThanOrEqualTo(2));
+        expect(shape.borderRadius, AppRadius.md);
+        // Reset focus between themes.
+        FocusManager.instance.primaryFocus?.unfocus();
+        await tester.pumpWidget(const SizedBox());
+      }
     });
   });
 }

@@ -73,3 +73,41 @@ look at, same matrix as `before/`:
   level and by `test/message_bubble_media_state_test.dart`,
   `test/creator_pinned_posts_test.dart`, `test/server_podcast_test.dart`.
 - Text scale 2.0, pl/en: the primitive draws no text; not applicable.
+
+## Phase 0 — review round (all families)
+
+**What changed.** The confirmed findings of the phase-0 review, most severe
+first. `YoVoiceChannelRow`: the name keeps at least `minLabelWidth` (96 px at
+1.0 text) — below 288 px of row (scaled) the `NA ŻYWO` marker moves under the
+name beside the clock, and the join control rides beside a live marker only
+from 340 px (before: a live name was 3.4 px wide in the 240 px desktop panel).
+The connected roster fits the faces to the width and folds the rest into
+`+n` (before: 10–48 px overflow in the 216 / 240 px columns), and the ring is
+always 2 px so a speaking tick no longer resizes a face. `YoChannelRow` and
+`VoicePlayerRow` draw a 2 px focus edge. Every channel glyph in the panel and
+the management sheet voices its kind. `docs/Decisions.md`: the voice-player
+"consciously not built" list moved out of ADR-001 into ADR-209, the ring's
+ADR cited as ADR-155, the stale Consequences bullet rewritten.
+
+**Code verification.** `flutter analyze` clean. One bounded `flutter test
+--concurrency=2` over 14 files (`yo_channel_row`, `voice_player_row`,
+`server_workspace`, `server_shell`, `server_review_fixes`,
+`server_creation_gate`, `server_creation`, `voice_reply_mini_player`,
+`message_bubble_media_state`, `message_bubble_overflow`,
+`accessibility_context_action`, `localization_source_guard`,
+`shared_media_screen`, `moments_semantics_activation`): 230 passed, 1 failed —
+a test-harness bug in the new focus test (focus carried over between the two
+theme iterations of one test); the test now resets focus between iterations,
+no expected value changed, and the two primitive files then pass 76/76.
+
+**Frames.** NONE captured in this round: implementation steps do not run
+screenshot harnesses. **UNVERIFIED, all nine families** — live badge, presence
+dot, waveform (its `after/` is still empty), section header, story ring,
+`VoicePlayerRow`, `YoChannelRow`, `YoMetricPill`, `YoServerRailItem` — have no
+after-frames. The phase-0 gate of the brief (after-frames at 320–2560, Dark
+and Pearl, 1.0 and 2.0 text, pl and en, per family in
+`yovoice-evidence/2026-09-19/slim-0-<family>-frames/`) is **not met**, and
+phase 1 must not start until a visual verification step produces and looks
+at them. The channel-row frames should be taken on this round's tree, since
+they are the ones the review predicted would show the measure and overflow
+defects.

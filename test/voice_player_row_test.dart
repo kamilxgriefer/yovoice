@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_palette.dart';
@@ -432,5 +433,67 @@ void main() {
     );
     expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
     expect(find.text('0:12'), findsOneWidget);
+  });
+
+  group('keyboard focus', () {
+    /// Every 2 px ring drawn inside the row, read off the decorations.
+    List<Color> rings(WidgetTester tester) => tester
+        .widgetList<DecoratedBox>(
+          find.descendant(
+            of: find.byType(VoicePlayerRow),
+            matching: find.byType(DecoratedBox),
+          ),
+        )
+        .map((box) => box.decoration)
+        .whereType<BoxDecoration>()
+        .map((decoration) => decoration.border)
+        .whereType<Border>()
+        .where((border) => border.top.width >= 2)
+        .map((border) => border.top.color)
+        .toList();
+
+    testWidgets('the thread row draws a 2 px focus ring in the palette focus '
+        'ink, and nothing while unfocused', (tester) async {
+      for (final (theme, palette) in [
+        (AppTheme.darkTheme, AppPalette.dark),
+        (AppTheme.lightTheme, AppPalette.light),
+      ]) {
+        await pumpRow(
+          tester,
+          theme: theme,
+          row: VoicePlayerRow(
+            status: VoicePlayerRowStatus.idle,
+            durationSeconds: 12,
+            semanticsLabel: 'clip',
+            onTap: () {},
+            style: VoicePlayerRowStyle.contained(palette, theme.colorScheme),
+          ),
+        );
+        expect(rings(tester), isNot(contains(palette.focus)));
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        expect(rings(tester), contains(palette.focus));
+        // Start the next theme from a fresh tree with nothing focused.
+        FocusManager.instance.primaryFocus?.unfocus();
+        await tester.pumpWidget(const SizedBox());
+      }
+    });
+
+    testWidgets('the bubble row rings in its own ink, which reads on the '
+        'brand gradient', (tester) async {
+      await pumpRow(
+        tester,
+        row: VoicePlayerRow(
+          status: VoicePlayerRowStatus.idle,
+          durationSeconds: 12,
+          semanticsLabel: 'clip',
+          onTap: () {},
+          style: inline(),
+        ),
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(rings(tester), contains(Colors.white));
+    });
   });
 }

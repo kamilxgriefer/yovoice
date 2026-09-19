@@ -21,7 +21,7 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// reads by type), the glyph, every string, the selection colours and the tap
 /// — which selects a channel and never joins one. The row adds no `Material`
 /// of its own: the list's surface is what the selected wash composites over.
-class YoChannelRow extends StatelessWidget {
+class YoChannelRow extends StatefulWidget {
   const YoChannelRow({
     required this.label,
     required this.icon,
@@ -83,30 +83,68 @@ class YoChannelRow extends StatelessWidget {
   final Key? tileKey;
 
   @override
+  State<YoChannelRow> createState() => _YoChannelRowState();
+}
+
+/// Keyboard focus is a 2 px [AppPalette.focus] edge on the row's own shape.
+/// The theme's focus tint alone is about 1.25:1 against the list surface, so
+/// a desktop or web user tabbing through a channel column could not see
+/// where they were (WCAG 2.4.7); the server rail beside it already draws the
+/// same ring through `AccessibleTapRegion`.
+class _YoChannelRowState extends State<YoChannelRow> {
+  final FocusNode _focusNode = FocusNode(debugLabel: 'YoChannelRow');
+  bool _focused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_handleFocus);
+  }
+
+  void _handleFocus() {
+    final focused = _focusNode.hasPrimaryFocus;
+    if (focused != _focused) setState(() => _focused = focused);
+  }
+
+  @override
+  void dispose() {
+    _focusNode
+      ..removeListener(_handleFocus)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) => ListTile(
-    key: tileKey,
-    selected: selected,
-    selectedColor: selectedForeground,
-    selectedTileColor: selectedWash,
-    minTileHeight: minHeight,
+    key: widget.tileKey,
+    focusNode: _focusNode,
+    selected: widget.selected,
+    selectedColor: widget.selectedForeground,
+    selectedTileColor: widget.selectedWash,
+    minTileHeight: widget.minHeight,
     contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-    shape: const RoundedRectangleBorder(borderRadius: AppRadius.md),
+    shape: _focused
+        ? RoundedRectangleBorder(
+            borderRadius: AppRadius.md,
+            side: BorderSide(color: context.appPalette.focus, width: 2),
+          )
+        : const RoundedRectangleBorder(borderRadius: AppRadius.md),
     leading: Icon(
-      icon,
+      widget.icon,
       size: 21,
-      color: iconColor,
-      semanticLabel: iconSemanticLabel,
+      color: widget.iconColor,
+      semanticLabel: widget.iconSemanticLabel,
     ),
     title: Text(
-      label,
+      widget.label,
       style: AppTypography.bodyMedium,
-      maxLines: labelMaxLines,
-      softWrap: labelMaxLines > 1,
+      maxLines: widget.labelMaxLines,
+      softWrap: widget.labelMaxLines > 1,
       overflow: TextOverflow.ellipsis,
     ),
-    subtitle: subtitle,
-    trailing: trailing,
-    onTap: onTap,
+    subtitle: widget.subtitle,
+    trailing: widget.trailing,
+    onTap: widget.onTap,
   );
 }
 
@@ -130,7 +168,9 @@ class YoChannelRow extends StatelessWidget {
 /// control, which carries its own key so the channel scene's single
 /// `server-join` CTA stays countable, and which steps aside when the row is
 /// too narrow or the text too large to hold both the name and a button — the
-/// scene's full-size CTA is one tap away and never hides.
+/// scene's full-size CTA is one tap away and never hides. On a narrow row the
+/// live marker itself moves under the name, beside the clock, so the name
+/// always keeps [minLabelWidth].
 class YoVoiceChannelRow extends StatelessWidget {
   const YoVoiceChannelRow({
     required this.label,
@@ -201,9 +241,26 @@ class YoVoiceChannelRow extends StatelessWidget {
 
   /// Below this row width the join control steps aside so the channel name
   /// keeps a readable measure. The phone sheet (296 px of row) and the
-  /// desktop panel (248) are both above it; a 240 px tablet column sits on
-  /// it exactly.
+  /// desktop panel (240 / 256) are both on or above it; a 216 px tablet
+  /// column is below it.
   static const double joinFloorWidth = 240;
+
+  /// The `NA ŻYWO` marker sits beside the name only from this row width
+  /// (scaled with the text). Below it the marker moves onto the line under
+  /// the name, next to the clock: beside the name it takes about 90 px,
+  /// which left a live channel's name 53 px wide in the 240 px desktop
+  /// panel, and 3 px once the join control was added too.
+  static const double liveTrailingFloorWidth = 288;
+
+  /// The join control joins a live marker beside the name only from this
+  /// row width (scaled with the text): marker, gap and 44 px control take
+  /// about 150 px. Below it the scene's full-size CTA stays one tap away.
+  static const double liveJoinFloorWidth = 340;
+
+  /// The least width the name keeps next to every trailing marker at 1.0
+  /// text. Pinned by `test/yo_channel_row_test.dart` at the panel and sheet
+  /// widths.
+  static const double minLabelWidth = 96;
 
   /// And above this scaled body size, where a 44 px control and a marker
   /// together leave a name of two or three letters.
@@ -214,9 +271,7 @@ class YoVoiceChannelRow extends StatelessWidget {
     final palette = context.appPalette;
     final roster = connected ? participants : const <YoVoiceRowParticipant>[];
     final clock = liveSince;
-    final Widget? subtitle = roster.isNotEmpty
-        ? _Roster(people: roster, background: avatarBackground)
-        : clock == null
+    final clockText = clock == null
         ? null
         : Text(
             clock,
@@ -229,10 +284,33 @@ class YoVoiceChannelRow extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final width = constraints.maxWidth;
+        final badge = connected ? null : liveBadge;
+        final badgeBesideName =
+            badge != null && width >= liveTrailingFloorWidth * textScale;
         final roomForJoin =
             onJoin != null &&
-            constraints.maxWidth >= joinFloorWidth &&
-            MediaQuery.textScalerOf(context).scale(1) <= joinFloorTextScale;
+            width >= joinFloorWidth &&
+            textScale <= joinFloorTextScale &&
+            (badge == null || width >= liveJoinFloorWidth * textScale);
+        final Widget? subtitle = roster.isNotEmpty
+            ? _Roster(people: roster, background: avatarBackground)
+            : badge != null && !badgeBesideName
+            ? Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Flexible(child: badge),
+                    if (clockText != null) ...[
+                      const SizedBox(width: 6),
+                      Flexible(child: clockText),
+                    ],
+                  ],
+                ),
+              )
+            : clockText;
         final markers = <Widget>[
           if (connected)
             Icon(
@@ -241,8 +319,8 @@ class YoVoiceChannelRow extends StatelessWidget {
               color: palette.audioAccent,
               semanticLabel: connectedLabel,
             )
-          else if (liveBadge != null)
-            Flexible(child: liveBadge!),
+          else if (badgeBesideName)
+            Flexible(child: badge),
           if (roomForJoin) ...[
             const SizedBox(width: 6),
             IconButton.filledTonal(
@@ -311,73 +389,133 @@ class _Roster extends StatelessWidget {
   final List<YoVoiceRowParticipant> people;
   final Color? background;
 
+  /// One face: a 22 px avatar, 2 px padding and a 2 px ring that is always
+  /// there — speaking changes only its colour, so the roster never changes
+  /// width on a speaking tick (the podcast stage keeps the same rule).
+  static const double faceSize = 30;
+  static const double faceGap = 4;
+  static const double pitch = faceSize + faceGap;
+  static const double ringWidth = 2;
+
+  /// How many faces fit [maxWidth] next to the `+n` for the rest: never more
+  /// than [YoVoiceChannelRow.maxAvatars], and never so many that the count
+  /// is pushed out of the row.
+  static int facesThatFit(
+    int total,
+    double maxWidth,
+    double Function(int hidden) labelWidth,
+  ) {
+    final cap = total < YoVoiceChannelRow.maxAvatars
+        ? total
+        : YoVoiceChannelRow.maxAvatars;
+    for (var shown = cap; shown > 0; shown--) {
+      final hidden = total - shown;
+      final needed =
+          shown * pitch -
+          (hidden > 0 ? 0 : faceGap) +
+          (hidden > 0 ? labelWidth(hidden) : 0);
+      if (needed <= maxWidth) return shown;
+    }
+    return 0;
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final shown = people.take(YoVoiceChannelRow.maxAvatars).toList();
-    final overflow = people.length - shown.length;
+    final labelStyle = AppTypography.labelSmall.copyWith(
+      color: palette.textTertiary,
+    );
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    double labelWidth(int hidden) {
+      final painter = TextPainter(
+        text: TextSpan(text: '+$hidden', style: labelStyle),
+        textDirection: direction,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      final width = painter.width;
+      painter.dispose();
+      return width.ceilToDouble();
+    }
+
     return Padding(
       padding: const EdgeInsets.only(top: 4),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          for (final person in shown)
-            Padding(
-              padding: const EdgeInsetsDirectional.only(end: 4),
-              child: Semantics(
-                label: person.semanticLabel ?? person.displayName,
-                child: ExcludeSemantics(
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: <Widget>[
-                      Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: person.isSpeaking
-                                ? AppColors.success
-                                : palette.border,
-                            width: person.isSpeaking ? 2 : 1,
-                          ),
-                        ),
-                        child: UserAvatar(
-                          radius: 11,
-                          userId: person.userId,
-                          displayName: person.displayName,
-                          backgroundColor: background ?? palette.surfaceSunken,
-                        ),
-                      ),
-                      if (!person.isMicrophoneEnabled)
-                        PositionedDirectional(
-                          end: -1,
-                          bottom: -1,
-                          child: Container(
-                            padding: const EdgeInsets.all(1),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final count = facesThatFit(
+            people.length,
+            constraints.maxWidth,
+            labelWidth,
+          );
+          final shown = people.take(count).toList();
+          final overflow = people.length - shown.length;
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              for (final person in shown)
+                Padding(
+                  padding: const EdgeInsetsDirectional.only(end: faceGap),
+                  child: Semantics(
+                    label: person.semanticLabel ?? person.displayName,
+                    child: ExcludeSemantics(
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: <Widget>[
+                          Container(
+                            padding: const EdgeInsets.all(2),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: palette.surface,
+                              border: Border.all(
+                                color: person.isSpeaking
+                                    ? AppColors.success
+                                    : palette.border,
+                                width: ringWidth,
+                              ),
                             ),
-                            child: Icon(
-                              Icons.mic_off_rounded,
-                              size: 11,
-                              color: palette.textTertiary,
+                            child: UserAvatar(
+                              radius: 11,
+                              userId: person.userId,
+                              displayName: person.displayName,
+                              backgroundColor:
+                                  background ?? palette.surfaceSunken,
                             ),
                           ),
-                        ),
-                    ],
+                          if (!person.isMicrophoneEnabled)
+                            PositionedDirectional(
+                              end: -1,
+                              bottom: -1,
+                              child: Container(
+                                padding: const EdgeInsets.all(1),
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: palette.surface,
+                                ),
+                                child: Icon(
+                                  Icons.mic_off_rounded,
+                                  size: 11,
+                                  color: palette.textTertiary,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-          if (overflow > 0)
-            Text(
-              '+$overflow',
-              style: AppTypography.labelSmall.copyWith(
-                color: palette.textTertiary,
-              ),
-            ),
-        ],
+              if (overflow > 0)
+                Flexible(
+                  child: Text(
+                    '+$overflow',
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.clip,
+                    style: labelStyle,
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
   }

@@ -47,7 +47,7 @@ enum VoicePlayerRowStatus { idle, loading, playing, paused, failed }
 ///   (the bubble supplies it), a bare 44 px icon box, and colours injected by
 ///   the caller because the same row sits on a brand gradient (white ink) and
 ///   on a neutral incoming bubble (`textPrimary`).
-class VoicePlayerRow extends StatelessWidget {
+class VoicePlayerRow extends StatefulWidget {
   const VoicePlayerRow({
     required this.status,
     required this.durationSeconds,
@@ -104,6 +104,22 @@ class VoicePlayerRow extends StatelessWidget {
   /// shape does not carry it.
   final bool? toggled;
 
+  @override
+  State<VoicePlayerRow> createState() => _VoicePlayerRowState();
+}
+
+/// Keyboard focus draws a 2 px ring over the row's own shape. The theme's
+/// focus tint alone is about 1.25:1 against `surfaceMuted` and
+/// `surfaceRaised` in both palettes, so a desktop or web user tabbing through
+/// a thread could not see which clip Enter would play (WCAG 2.4.7).
+class _VoicePlayerRowState extends State<VoicePlayerRow> {
+  bool _focused = false;
+
+  VoicePlayerRowStatus get status => widget.status;
+  VoicePlayerRowStyle get style => widget.style;
+  int get durationSeconds => widget.durationSeconds;
+  ValueListenable<double>? get progress => widget.progress;
+
   bool get _loading => status == VoicePlayerRowStatus.loading;
   bool get _failed => status == VoicePlayerRowStatus.failed;
   bool get _playing => status == VoicePlayerRowStatus.playing;
@@ -111,38 +127,35 @@ class VoicePlayerRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final border = style.borderColor;
+    final onTap = widget.onTap;
     Widget row = InkWell(
-      key: tapKey,
+      key: widget.tapKey,
       onTap: onTap,
       borderRadius: style.borderRadius,
-      child: Container(
-        constraints: BoxConstraints(minHeight: style.minHeight),
-        decoration: border == null
-            ? null
-            : BoxDecoration(
-                borderRadius: style.borderRadius,
-                border: Border.all(color: border),
-              ),
-        padding: style.padding == EdgeInsets.zero ? null : style.padding,
-        child: Row(
-          mainAxisSize: style.waveformConstraints == null
-              ? MainAxisSize.max
-              : MainAxisSize.min,
-          children: [
-            _control(),
-            SizedBox(width: style.controlGap),
-            _waveform(),
-            SizedBox(width: style.clockGap),
-            Text(
-              formatVoiceClock(durationSeconds),
-              maxLines: 1,
-              style: AppTypography.bodySmall.copyWith(
-                color: style.mutedForeground,
-                fontFeatures: const [FontFeature.tabularFigures()],
+      onFocusChange: (focused) {
+        if (focused != _focused) setState(() => _focused = focused);
+      },
+      child: Stack(
+        // The row keeps exactly the constraints it had without the ring.
+        fit: StackFit.passthrough,
+        children: [
+          _content(border),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: style.borderRadius,
+                  border: Border.all(
+                    color: _focused
+                        ? style.focusRing ?? context.appPalette.focus
+                        : Colors.transparent,
+                    width: 2,
+                  ),
+                ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
 
@@ -156,15 +169,45 @@ class VoicePlayerRow extends StatelessWidget {
     }
 
     return Semantics(
-      container: semanticsContainer,
+      container: widget.semanticsContainer,
       button: true,
-      toggled: toggled,
-      label: semanticsLabel,
-      onTap: excludeChildSemantics ? onTap : null,
-      excludeSemantics: excludeChildSemantics,
+      toggled: widget.toggled,
+      label: widget.semanticsLabel,
+      onTap: widget.excludeChildSemantics ? onTap : null,
+      excludeSemantics: widget.excludeChildSemantics,
       child: row,
     );
   }
+
+  Widget _content(Color? border) => Container(
+    constraints: BoxConstraints(minHeight: style.minHeight),
+    decoration: border == null
+        ? null
+        : BoxDecoration(
+            borderRadius: style.borderRadius,
+            border: Border.all(color: border),
+          ),
+    padding: style.padding == EdgeInsets.zero ? null : style.padding,
+    child: Row(
+      mainAxisSize: style.waveformConstraints == null
+          ? MainAxisSize.max
+          : MainAxisSize.min,
+      children: [
+        _control(),
+        SizedBox(width: style.controlGap),
+        _waveform(),
+        SizedBox(width: style.clockGap),
+        Text(
+          formatVoiceClock(durationSeconds),
+          maxLines: 1,
+          style: AppTypography.bodySmall.copyWith(
+            color: style.mutedForeground,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _control() {
     Widget content = Center(
@@ -274,6 +317,7 @@ class VoicePlayerRowStyle {
     this.waveformBarGap = 3,
     this.waveformBarRadius = 1,
     this.waveformConstraints,
+    this.focusRing,
   });
 
   /// The thread row: its own card, a bordered disc and a swept waveform.
@@ -338,6 +382,9 @@ class VoicePlayerRowStyle {
     waveformBarGap: 2,
     waveformBarRadius: 20,
     waveformConstraints: const BoxConstraints(minWidth: 48, maxWidth: 126),
+    // The focus ring takes the bubble's own ink: violet `focus` would vanish
+    // on the outgoing brand gradient, the injected foreground never does.
+    focusRing: foreground,
   );
 
   /// Play / pause / retry ink.
@@ -393,6 +440,9 @@ class VoicePlayerRowStyle {
   /// `null` lets the waveform take the rest of the row ([Expanded]);
   /// otherwise the row shrink-wraps and the bars live inside these bounds.
   final BoxConstraints? waveformConstraints;
+
+  /// The 2 px keyboard-focus ring. `null` takes [AppPalette.focus].
+  final Color? focusRing;
 }
 
 /// `m:ss`, with no leading zero on the minutes and a negative length read as

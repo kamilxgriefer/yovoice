@@ -585,6 +585,44 @@ extension ServerLocalizedCopy on AppLocalizations {
     ServerChannelKind.whiteboard => text('Whiteboard', 'Tablica'),
     ServerChannelKind.files => text('Files', 'Pliki'),
   };
+
+  /// What a screen reader says for a channel row's glyph: the kind decides
+  /// whether selecting the row leads to talking, so it is voiced on every
+  /// row, not only the restricted one.
+  String serverChannelSpokenKind(
+    ServerChannelKind kind, {
+    bool restricted = false,
+  }) {
+    final spoken = switch (kind) {
+      ServerChannelKind.text => text('Text channel', 'Kanał tekstowy'),
+      ServerChannelKind.voice => text('Voice channel', 'Kanał głosowy'),
+      ServerChannelKind.announcements => text(
+        'Announcements channel',
+        'Kanał ogłoszeń',
+      ),
+      ServerChannelKind.stage => text('Stage channel', 'Kanał sceny'),
+      ServerChannelKind.meeting => text('Meeting channel', 'Kanał spotkania'),
+      ServerChannelKind.events => text('Events channel', 'Kanał wydarzeń'),
+      ServerChannelKind.questions => text('Questions channel', 'Kanał pytań'),
+      ServerChannelKind.rules => text('Rules channel', 'Kanał zasad'),
+      ServerChannelKind.episodes => text('Episodes channel', 'Kanał odcinków'),
+      ServerChannelKind.calendar => text(
+        'Calendar channel',
+        'Kanał kalendarza',
+      ),
+      ServerChannelKind.memories => text('Memories channel', 'Kanał wspomnień'),
+      ServerChannelKind.list => text('List channel', 'Kanał listy'),
+      ServerChannelKind.whiteboard => text(
+        'Whiteboard channel',
+        'Kanał tablicy',
+      ),
+      ServerChannelKind.files => text('Files channel', 'Kanał plików'),
+    };
+    return restricted
+        ? '$spoken, ${serverChannelRestricted.toLowerCase()}'
+        : spoken;
+  }
+
   String get serverChannelRestrictedToggle => text(
     'Limited access — only people you choose see it',
     'Ograniczony dostęp — widzą go tylko wybrane osoby',

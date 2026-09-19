@@ -2115,6 +2115,31 @@ their separate production-deployment gates.
 
 ## In Progress
 
+### Slim redesign — phase 0 (foundation) landed in source, visual gate NOT met
+
+**Status:** source on `main`, not released; phase 1 must not start until the
+gate below is met. Brief: `yovoice-evidence/2026-09-18/slim-redesign-brief.md`;
+decision record: [ADR-209](Decisions.md#adr-209-slim-redesign-instagram--discord--twitch-w-języku-yo-voice);
+phase log: [Sessions/2026-09-19-slim-redesign.md](Sessions/2026-09-19-slim-redesign.md).
+
+- **Commits over Build 33 (`46d6b330`):** `f5713426` live badge, `89c3d2be`
+  presence dot, `d3552e3d` + `2c18fb02` waveform, `1c5722a0` section header,
+  `1d9d85c2` story-tile ring, `f8b8d382` `VoicePlayerRow`, `9b639ffb`
+  `YoChannelRow`, `1aad9b47` `YoMetricPill` + `YoServerRailItem`, then the
+  "phase-0 review round" fix commit (channel-row measure and roster fit, fixed
+  speaking-ring geometry, spoken channel kinds, 2 px focus edges, ADR-209
+  corrections).
+- **Verified:** code level only — `flutter analyze` clean and bounded
+  `flutter test` rounds over each family's files.
+- **Not verified, and the gate:** only the waveform family has a frames
+  directory, and its `after/` is empty. Every family needs before/after frames
+  in `yovoice-evidence/2026-09-19/slim-0-<family>-frames/` (320–2560, Dark and
+  Pearl, 1.0 and 2.0 text, pl and en) and a session-log entry naming what was
+  looked at and what stays UNVERIFIED, before phase 1 starts.
+- **Dependencies:** a visual verification step on a machine free to run the
+  screenshot harnesses.
+- **Priority:** P1 — it blocks the rest of the redesign.
+
 ### Build 20 YO Moments, Voice read v2, Reels retention and moderation candidate
 
 - **Status**: **Both invited tester channels available on 2026-09-05;

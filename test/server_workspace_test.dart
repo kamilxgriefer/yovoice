@@ -331,4 +331,33 @@ void main() {
       }
     },
   );
+
+  testWidgets('every channel row voices its kind, not only the lock', (
+    tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = TestServerRepository()
+      ..servers = [fixtureServer(ServerType.friends)]
+      ..channels = fixtureChannels(ServerType.friends);
+    await pumpServers(
+      tester,
+      ServerWorkspaceScreen(
+        serverId: 's',
+        repository: repository,
+        chatService: fakeChatService(),
+      ),
+      size: const Size(1280, 800),
+    );
+    String? glyphLabel(String channelId, IconData icon) => tester
+        .widget<Icon>(
+          find.descendant(
+            of: find.byKey(ValueKey('server-channel-$channelId')),
+            matching: find.byIcon(icon),
+          ),
+        )
+        .semanticLabel;
+    expect(glyphLabel('voice', Icons.volume_up_outlined), 'Kanał głosowy');
+    expect(glyphLabel('chat', Icons.tag_rounded), 'Kanał tekstowy');
+    expect(tester.takeException(), isNull);
+  });
 }

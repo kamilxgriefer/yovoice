@@ -115,74 +115,6 @@ type. No migration of existing Firestore documents was ever run.
 *write* `'community'` or `'broadcast'` — but reading `'podcast'` must keep
 working indefinitely, until proven otherwise.
 
-### Consciously NOT built, NOT simplified (voice-player family)
-
-- **Only the drawing moved.** `_VoiceMessageContentState` keeps
-  `_runPlayerCommand` / `_interruptPlayer` / `_mediaGeneration` /
-  `_ownsMediaLoad` / `_playOwnedSource` and both the `gs://` and `https://`
-  branches; `_VoiceReplyMiniPlayerState` keeps `_playToken`,
-  `_stillHoldsFloor`, `_abandonStalePlayback`, `_handleArbiter`,
-  `_ensurePlayer` and the lazy first-tap allocation. Not one line of either
-  was edited — the two `build()` bodies were replaced and nothing else.
-- **The two semantics shapes were parameterised, not unified.** The thread
-  row stays its own node (`container: true`, `toggled`, `excludeSemantics:
-  true`, the tap action on the node) because
-  `test/moments_semantics_activation_test.dart` performs
-  `SemanticsAction.tap` on it below a 1200 px slot; the bubble stays a plain
-  labelled button over children that keep their own semantics, because
-  `test/message_bubble_media_state_test.dart` and
-  `test/shared_media_screen_test.dart` drive it with `find.byIcon`. Excluding
-  the children is therefore what moves the action onto the node — the row
-  derives one from the other rather than offering two switches that can
-  disagree.
-- **The bubble did not gain a position sweep.** Its player subscribes to
-  `onPlayerStateChanged` only; adding `onPositionChanged` would be new
-  playback logic in a presentation phase, and inventing a fill from the
-  duration is exactly the dishonesty `YoWaveform` forbids. `progress` is
-  therefore nullable and the bubble passes null. A real sweep there is a
-  candidate for the Chats phase, not a regression.
-- **The bubble's waveform stays bounded, not `Expanded`.** A full-width row
-  would widen every voice bubble and push the reaction pill over the clock;
-  `test/message_bubble_media_state_test.dart` measures exactly that at
-  320–1440 px and 200 % text scale. `VoicePlayerRowStyle.inline` keeps the
-  `ConstrainedBox(48–126)` and `MainAxisSize.min`, `.contained` keeps
-  `Expanded`.
-- **The spinner keeps its own colour role.** The same test pins
-  `CircularProgressIndicator.color == palette.textPrimary` on an incoming
-  bubble in both themes (the injected foreground, so it survives the brand
-  gradient too), while the thread row spins in `palette.audioAccent`. One
-  "accent" default would have broken one of them, so `progressIndicator` is a
-  field of its own.
-- **The thread row still draws `StoryWaveform`.** A row with a real position
-  builds the Moment player's subclass, a row without one builds the plain
-  `YoWaveform`; `test/moment_position_single_source_test.dart` and
-  `test/moment_feed_card_redesign_test.dart` read `StoryWaveform` by type in
-  trees that also contain mini-players, so the type had to survive the move.
-- **No copy crossed into `lib/shared/`.** `test/localization_source_guard_test.dart`
-  scans that tree, and the words belong to the features anyway ("voice
-  message" vs "voice reply from {name}"), so `semanticsLabel` arrives
-  localized and the bubble's raw-copy budget stays at 1.
-- `VoiceReplyMiniPlayer.height` / `.discSize` / `.waveformHeight` and
-  `kVoiceReplyMiniPlayerTarget` stay exported and became the arguments the
-  caller hands `VoicePlayerRowStyle.contained`, so the numbers layouts
-  reserve space with are still the numbers the row draws with.
-- One deliberate visible normalisation: the bubble's clock was a raw
-  `TextStyle(fontSize: 11)` and is now `AppTypography.bodySmall` (12 px) with
-  tabular figures, like the thread row's — a clock that jumps width while it
-  counts is the defect the thread row had already fixed. The 200 % overflow
-  and reaction-pill contracts were re-run at 320 / 390 / 768 / 1440 px.
-- The mini-player keeps its snackbar and has no `failed` status; the bubble
-  keeps its retry glyph and has no snackbar. Both paths survive verbatim —
-  `VoicePlayerRowStatus.failed` simply goes unused on one surface.
-- Not this family and left alone: `VoiceCore`
-  (`lib/shared/widgets/voice/voice_core.dart`, the Rooms centrepiece, with
-  three inline hexes of its own), the recorder's preview transport in
-  `chat_screen.dart`, `server_family_memory_album.dart`'s composer and album
-  rows, `creator_pinned_moment_card.dart`,
-  `server_podcast_episodes_board.dart`, `downloaded_audio_screen.dart` and
-  `reel_draft_preview.dart` — all transport buttons, not play + waveform +
-  time rows.
-
 ### Reasoning
 
 Deleting a two-line compatibility branch is easy. Confirming zero
@@ -13151,7 +13083,7 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   `palette.navigationInactive` to `palette.textTertiary`, which is what
   `PeopleStatus.away` has meant on every other surface; the subtitle text
   "Online" / "Offline" next to it is untouched.
-- `MomentStoryTile`'s ring is untouched: ADR-147 makes the ring the listened
+- `MomentStoryTile`'s ring is untouched: ADR-155 makes the ring the listened
   state from `MomentViewsService`, and the brief allows only its colours to
   change. What migrated is the tile's *dot* (a separate element the strip
   gates on `online && !showAdd`), so the tile still carries exactly one
@@ -13425,6 +13357,74 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   they are marks on the disc, not the ring, and no test reads them as
   ring stops.
 
+### Consciously NOT built, NOT simplified (voice-player family)
+
+- **Only the drawing moved.** `_VoiceMessageContentState` keeps
+  `_runPlayerCommand` / `_interruptPlayer` / `_mediaGeneration` /
+  `_ownsMediaLoad` / `_playOwnedSource` and both the `gs://` and `https://`
+  branches; `_VoiceReplyMiniPlayerState` keeps `_playToken`,
+  `_stillHoldsFloor`, `_abandonStalePlayback`, `_handleArbiter`,
+  `_ensurePlayer` and the lazy first-tap allocation. Not one line of either
+  was edited — the two `build()` bodies were replaced and nothing else.
+- **The two semantics shapes were parameterised, not unified.** The thread
+  row stays its own node (`container: true`, `toggled`, `excludeSemantics:
+  true`, the tap action on the node) because
+  `test/moments_semantics_activation_test.dart` performs
+  `SemanticsAction.tap` on it below a 1200 px slot; the bubble stays a plain
+  labelled button over children that keep their own semantics, because
+  `test/message_bubble_media_state_test.dart` and
+  `test/shared_media_screen_test.dart` drive it with `find.byIcon`. Excluding
+  the children is therefore what moves the action onto the node — the row
+  derives one from the other rather than offering two switches that can
+  disagree.
+- **The bubble did not gain a position sweep.** Its player subscribes to
+  `onPlayerStateChanged` only; adding `onPositionChanged` would be new
+  playback logic in a presentation phase, and inventing a fill from the
+  duration is exactly the dishonesty `YoWaveform` forbids. `progress` is
+  therefore nullable and the bubble passes null. A real sweep there is a
+  candidate for the Chats phase, not a regression.
+- **The bubble's waveform stays bounded, not `Expanded`.** A full-width row
+  would widen every voice bubble and push the reaction pill over the clock;
+  `test/message_bubble_media_state_test.dart` measures exactly that at
+  320–1440 px and 200 % text scale. `VoicePlayerRowStyle.inline` keeps the
+  `ConstrainedBox(48–126)` and `MainAxisSize.min`, `.contained` keeps
+  `Expanded`.
+- **The spinner keeps its own colour role.** The same test pins
+  `CircularProgressIndicator.color == palette.textPrimary` on an incoming
+  bubble in both themes (the injected foreground, so it survives the brand
+  gradient too), while the thread row spins in `palette.audioAccent`. One
+  "accent" default would have broken one of them, so `progressIndicator` is a
+  field of its own.
+- **The thread row still draws `StoryWaveform`.** A row with a real position
+  builds the Moment player's subclass, a row without one builds the plain
+  `YoWaveform`; `test/moment_position_single_source_test.dart` and
+  `test/moment_feed_card_redesign_test.dart` read `StoryWaveform` by type in
+  trees that also contain mini-players, so the type had to survive the move.
+- **No copy crossed into `lib/shared/`.** `test/localization_source_guard_test.dart`
+  scans that tree, and the words belong to the features anyway ("voice
+  message" vs "voice reply from {name}"), so `semanticsLabel` arrives
+  localized and the bubble's raw-copy budget stays at 1.
+- `VoiceReplyMiniPlayer.height` / `.discSize` / `.waveformHeight` and
+  `kVoiceReplyMiniPlayerTarget` stay exported and became the arguments the
+  caller hands `VoicePlayerRowStyle.contained`, so the numbers layouts
+  reserve space with are still the numbers the row draws with.
+- One deliberate visible normalisation: the bubble's clock was a raw
+  `TextStyle(fontSize: 11)` and is now `AppTypography.bodySmall` (12 px) with
+  tabular figures, like the thread row's — a clock that jumps width while it
+  counts is the defect the thread row had already fixed. The 200 % overflow
+  and reaction-pill contracts were re-run at 320 / 390 / 768 / 1440 px.
+- The mini-player keeps its snackbar and has no `failed` status; the bubble
+  keeps its retry glyph and has no snackbar. Both paths survive verbatim —
+  `VoicePlayerRowStatus.failed` simply goes unused on one surface.
+- Not this family and left alone: `VoiceCore`
+  (`lib/shared/widgets/voice/voice_core.dart`, the Rooms centrepiece, with
+  three inline hexes of its own), the recorder's preview transport in
+  `chat_screen.dart`, `server_family_memory_album.dart`'s composer and album
+  rows, `creator_pinned_moment_card.dart`,
+  `server_podcast_episodes_board.dart`, `downloaded_audio_screen.dart` and
+  `reel_draft_preview.dart` — all transport buttons, not play + waveform +
+  time rows.
+
 ### Consciously NOT built, NOT simplified (channel-rows family)
 
 - The brief's makieta of a voice row with avatars and a head count **before**
@@ -13470,6 +13470,20 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   the new `session`, and `session` / `onJoin` are optional, so
   `test/server_invite_affordance_screenshot.dart` still constructs the panel as
   it did.
+- Review round (after the family landed): the row's name keeps at least
+  `YoVoiceChannelRow.minLabelWidth` (96 px at 1.0 text) at every panel and
+  sheet width. Below 288 px of row (scaled) the `NA ŻYWO` marker moves onto
+  the line under the name, beside the clock, instead of squeezing the name to
+  3 px in the 240 px desktop panel; the join control rides beside a live
+  marker only from 340 px. The connected roster shows as many faces as the
+  width holds and folds the rest into `+n` (it overflowed the 216 px tablet
+  column with four people), and its ring is always 2 px so a speaking tick
+  changes a colour, never the row's width. Every channel glyph now voices its
+  kind (`Kanał głosowy`, `Kanał sceny`, …) and the lock appends its access.
+  `YoChannelRow` and `VoicePlayerRow` draw a 2 px focus edge
+  (`palette.focus`; the chat bubble's row uses its own ink so the ring reads
+  on the brand gradient), because the theme's 14 % focus tint measured about
+  1.25:1 against the list surface.
 
 ### Consciously NOT built, NOT simplified (new-primitives family)
 
@@ -13532,10 +13546,11 @@ contract in one place.
   one widget, so "what a voice row may claim before you join" is enforced in
   one place instead of being re-argued per surface, and phase 2 can raise the
   row's height or restyle its selection once.
-- Later phases add rows to the table above (stories tile, waveform, section
-  header, channel rows) rather than new ADRs, and record their own
-  "consciously not built" items under this heading; the presence dot's row
-  and list landed in this ADR's second commit.
+- The table above covers every phase-0 family (live badge, presence dot,
+  waveform, section header, story tile, voice player, channel rows, metric
+  pill and server rail item), each with its own "consciously not built"
+  list under this ADR. Phases 1–7 append their rows and lists here rather
+  than opening new ADRs.
 - Every presence dot in Dark and Pearl is now `PeopleStatus.foreground`
   behind a caller-owned halo; restyling online / away / busy / offline is a
   one-file change and cannot drift from the ring. `test/availability_dot_test.dart`
