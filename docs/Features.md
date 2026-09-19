@@ -311,10 +311,19 @@ password reset, email-verification resend/refresh, real
 microphone/camera/push-notification permission status
 (`permission_handler`), real image-cache stats and clearing, real About
 (app version via `package_info_plus`) and Legal/Help links (`url_launcher`
-→ `yovoice.app`). Account deletion routes to a real pre-filled support
-email rather than a self-service delete, since that needs a dedicated
-Cloud Function to clean up Auth + Firestore + Storage together — not
-built yet. Profile visibility, recipient-controlled direct-message privacy
+→ `yovoice.app`). **Account deletion is self-service as of Build 32**
+(`lib/features/settings/presentation/screens/delete_account_screen.dart`,
+[ADR-206](Decisions.md#adr-206-a-deletion-promise-is-a-list-of-stages-and-the-copy-may-not-exceed-it)):
+the screen states what is removed and what is kept, re-authenticates, and calls
+`deleteAccountSelfV1`, which marks the account and hands a staged, leased
+teardown of Auth + Firestore + Storage to an outbox worker. The callable is
+deployed (2026-09-19) but the server kill switch `appConfig/accountDeletion`
+does **not** exist yet, and it is fail-closed, so **what a user actually gets
+today is still the pre-filled `privacy@yovoice.app` route** that the screen
+keeps as its fallback. The screen ships in build 32; enablement order and
+current state are in [DEPLOYMENT.md](DEPLOYMENT.md). Four named categories of
+data survive a completed deletion and are disclosed rather than claimed — see
+[Bugs.md](Bugs.md). Profile visibility, recipient-controlled direct-message privacy
 and authenticator-app two-factor authentication are implemented in source and
 covered by responsive/security tests; they require their coordinated Firebase
 configuration, Functions/Rules and client rollout before being called live.

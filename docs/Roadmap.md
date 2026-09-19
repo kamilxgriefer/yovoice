@@ -14,6 +14,66 @@ someone decide what to pick up next.
 
 ---
 
+## Build 32 — backend deployed, iOS with testers, web and Play pending — 2026-09-19
+
+**Status: the backend half of Build 32 is live in production and read back; iOS
+build 32 is in both TestFlight groups with review APPROVED; the web bundle is
+built and verified but NOT deployed, and the Android AAB is built and verified
+but NOT uploaded. Self-service deletion stays switched off on the server.**
+
+Build 32 is `main` `a18fe789`, thirteen commits over the Build 31 tree
+`98f9413c` (`git log 98f9413c..a18fe789`), `pubspec.yaml` `2.0.0+32`, CI green
+on that revision.
+
+- **The slice itself**, seven commits over `7efbc5e0`: `7efbc5e0` (the staged,
+  leased deletion pipeline in `functions/account/`), `f974a865`
+  (Settings → Delete account with the retained set stated on screen),
+  `6e41c7bd` (a member may invite to a Server anyone may already join),
+  `d7930d8e` ([ADR-206](Decisions.md#adr-206-a-deletion-promise-is-a-list-of-stages-and-the-copy-may-not-exceed-it)
+  and [ADR-207](Decisions.md#adr-207-an-invitation-to-a-server-anyone-may-join-is-a-pointer-not-a-key)),
+  `6793809c` (the version bump), `f2c5cbcc` (profile media answers a block as
+  "no media" instead of `failed-precondition`) and `bffa8db6` (hide
+  message-less threads other people opened, order Chats by last message);
+  `a18fe789` records the last one in [Bugs.md](Bugs.md).
+- **It also closes the Build 31 gap.** The three client fixes that landed on
+  `main` *after* build 31 was cut — `a629fd99` (media long-press reactions),
+  `23b35885` (LiveKit participant name / privacy) and `87fc8632` (composer
+  keyboard dismissal) — are all inside `98f9413c..a18fe789`, so the testers who
+  were asked to re-test chats on build 31 without them now have them.
+- **Deployed and read back**, by the primary session, 01:35–02:23 UTC: the two
+  `accountDeletionOutbox` composites (`READY`), `firestore.rules` (ruleset
+  `7c57cc65-d286-4a0e-a99f-922472c8f95e`) and **nine named Cloud Functions** —
+  `deleteAccountSelfV1`, `onAccountDeletionOutboxCreated`,
+  `processAccountDeletionOutboxSchedule`, `onAuthUserDeleted`,
+  `createServerInviteV1`, `revokeServerInviteV1`, `respondToServerInviteV1`,
+  `onServerInviteWritten`, `getProfileMediaAccess`. All nine ACTIVE with an
+  `updateTime` after the start, the five callables answering 401, exactly nine
+  of 245 functions touched, and an empty `severity>=ERROR` window. Storage
+  rules were **not** deployed. Details:
+  [DEPLOYMENT.md](DEPLOYMENT.md#build-32-release-round--backend-deployed-ios-with-testers-web-and-play-pending-2026-09-19).
+- **Released to iOS testers.** Build 32 is `VALID` on App Store Connect,
+  `betaReviewState APPROVED`, in the internal *and* external groups with
+  `autoNotifyEnabled true`, tester notes stored and read back byte-exact. The
+  uploaded binary is provably what `a18fe789` produces — `HEAD` never moved and
+  the tree stayed clean across the whole build-and-upload window, which is the
+  first clean provenance record in three rounds.
+- **Not released.** Hosting still serves `build_number 31` on both hosts; the
+  verified build-32 bundle sits in `build/web` waiting for a scoped
+  `firebase deploy --only hosting`. The Play upload of
+  `app-release-32.aab` (versionCode 32, upload-key signature identical to
+  Builds 30 and 31) is a separate human step and has not happened.
+- **Still off on purpose.** `appConfig/accountDeletion` does not exist, so
+  `deleteAccountSelfV1` is fail-closed and the Delete account screen falls back
+  to the e-mail route. The tester notes nevertheless ask testers to exercise
+  deletion and promise it "is processed within a few minutes" — untrue while
+  the switch is off, and a human decision (leave it, or `PATCH` the
+  localization) rather than a defect.
+- **The one gap that would bite if the switch were flipped today.**
+  `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` is set neither in `functions/.env` nor
+  in the deployed functions' environment, so deleting a banned account would
+  silently reset the ban. It is step 4 of the enablement order and precedes the
+  kill switch; see [Bugs.md](Bugs.md).
+
 ## Account deletion and public-Server invites — source landed, not deployed — 2026-09-18
 
 **Status: source complete and green in both repos; nothing deployed, nothing
@@ -43,8 +103,10 @@ in-app route and the ban-digest salt. Each is in
 them**; the app's consequence list, the public page and privacy §9 were
 rewritten to match what the pipeline actually does.
 
-**Next, in order:** deploy the account-deletion exports, **`firestore.rules`**
-and the two sweep indexes, set `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT`, write
+**Next, in order** *(the first three ran on 2026-09-19 — see the section above;
+the rest are still outstanding)***:** deploy the account-deletion exports,
+**`firestore.rules`** and the two sweep indexes, set
+`YOVOICE_DELETED_ACCOUNT_DIGEST_SALT`, write
 `appConfig/accountDeletion.enabled = true`, **release the app carrying the
 Delete account screen to the stores**, and only then land the website with
 `SELF_SERVICE_DELETION_LIVE = true`. The rules deploy is not optional and is

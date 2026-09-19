@@ -5,6 +5,34 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## OPEN — build 32's tester notes promise a deletion the server refuses (2026-09-19)
+
+Not a code defect: the binary, the server and the rollout order are all doing
+what they were designed to do. It is a copy-versus-state mismatch that will
+generate tester reports, and it needs a human decision rather than a fix.
+
+The "What to Test" text stored for TestFlight build 32
+(`betaBuildLocalizations/a13858b1-ca22-4a58-b643-192c4d8c4276`, 542 chars,
+`en-US`) tells testers "you can now delete your account from Settings (the
+request is processed within a few minutes)" and asks them to exercise
+`Settings → Delete account`. But `appConfig/accountDeletion` does not exist —
+re-read live on 2026-09-19, HTTP 404 — and `accountDeletionEnabled()`
+(`functions/account/deletion.js:127`) is fail-closed on a missing document by
+design. A tester who follows the instruction reaches the screen, reads the
+retained-data copy and is routed to `privacy@yovoice.app` by
+`AccountDeletionFailureKind.unavailable`. Nothing crashes and no data is
+touched; the promise is simply false while the switch is off.
+
+The other three claims in the same notes are genuinely testable — their server
+halves (`createServerInviteV1`, `getProfileMediaAccess`) were deployed in the
+same round, and the empty-chat-threads fix is client-only.
+
+Two ways out, both cheap: leave it and triage the reports, or `PATCH` the same
+localization to drop the deletion instruction — `whatsNew` is rewritable after
+release and needs no rebuild. Flipping the kill switch instead is **not** an
+option: it is gated on iOS *and* Android being live in the stores, and on the
+ban-digest salt below. Owner: product.
+
 ## OPEN — account deletion leaves four named categories behind (2026-09-18)
 
 Found while gating Build 32's account-deletion slice. Each of these is a place
@@ -101,13 +129,32 @@ as `retention.js` already claimed. Still open: nothing verifies the salt at
 deploy time, and no TTL removes a digest — the retention is indefinite for a
 permanent ban, which the website now states plainly instead of promising
 expiry. Owner: ops.
+
+**Re-verified 2026-09-19, after the Build 32 backend deploy: the variable is
+still not set anywhere.** It is absent from `functions/.env`, and absent from
+the `environmentVariables` of all three deployed account-deletion exports
+(`deleteAccountSelfV1`, `onAccountDeletionOutboxCreated`,
+`processAccountDeletionOutboxSchedule` — read back in
+`yovoice-evidence/2026-09-18/b32/deploy-readback-*.json`). Because a
+`functions/.env` value is materialized into the function environment **at deploy
+time**, setting it is not a live configuration change: it needs an edit *and* a
+redeploy of at least those three exports, and both must happen before anyone
+writes `appConfig/accountDeletion.enabled = true`
+([DEPLOYMENT.md](DEPLOYMENT.md), enablement step 4). Nothing is at risk while
+the kill switch is off, because no deletion can run at all.
 ## FIXED — people you never wrote to hoisted to the top of Chats (2026-09-18)
 
 Tester report via the owner, verbatim: "pokazuje się historia na samej górze
 w czatach ludzi z którymi nie pisał nawet jeszcze, dziwnie ich 'winduje' do
-góry bez sensu". Opened and fixed in source on 2026-09-18 (Build 33
-candidate, commit `78beb43d6312`), with tests that were RED before
-the fix and GREEN after it; not yet verified on a device.
+góry bez sensu". Opened and fixed in source on 2026-09-18, with tests that were
+RED before the fix and GREEN after it; not yet verified on a device.
+
+**Shipped in Build 32 as `bffa8db6`** (`fix(chats): hide message-less threads
+other people opened, order by last message`), which is in the binary iOS testers
+received on 2026-09-19. An earlier revision of this entry cited
+`78beb43d6312` and called it a Build 33 candidate; that object has the identical
+patch-id but is not reachable from any ref, so `bffa8db6` on `main` is the
+commit to cite.
 
 - **Root cause — a conversation root exists for BOTH people from the moment
   either one looks at the other, and the list sorted every root by

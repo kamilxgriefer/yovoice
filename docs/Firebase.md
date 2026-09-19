@@ -75,8 +75,24 @@ Top-level collections (from `firestore.rules`):
 | `directCalls/{callId}` (server-owned; two participants get only) | — |
 | `directCallLocks/{userId}` / `directCallControlOutbox/{callId}` (server-only) | — |
 | `appConfig/{configId}` (server-only runtime configuration; every client read/write denied) | — |
+| `accountDeletionOutbox/{outboxId}` (server-only deletion queue; `allow read, write: if false`, `firestore.rules:2504`) | — |
+| `deletedAccountDigests/{digestId}` (server-only ban-survival digests; `allow read, write: if false`, `firestore.rules:2508`) | — |
 
 Notable fields:
+
+- **Account deletion (ADR-206, deployed 2026-09-19)** — `accountDeletionOutbox`
+  is the queue `deleteAccountSelfV1` writes and the outbox worker leases:
+  `status` (`pending` → `processing` → terminal), `leaseToken`, `leaseUntil`,
+  `nextAttemptAt`, `attemptCount`. Both sweep queries are backed by composite
+  indexes on `(status, leaseUntil)` and `(status, nextAttemptAt)`; the emulator
+  does not need them, so nothing in the test suites reports them missing
+  (ADR-007 again). `deletedAccountDigests/{digestId}` keys on a salted HMAC-
+  SHA-256 of the lowercased e-mail (`functions/account/retention.js:60-69`) so a
+  ban survives the account — and it is written **only** when
+  `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` is configured, which as of 2026-09-19 it
+  is not. Both collections are reached through the Admin SDK, which bypasses
+  Rules; the two deny blocks close a client enumeration surface and enable
+  nothing.
 
 - **Direct-call signaling (ADR-117)** — `directCalls` is the canonical status
   machine (`ringing`, `active`, `declined`, `cancelled`, `ended`, `missed`). A
@@ -302,12 +318,16 @@ branch for that target type, and its field allowlist has no room for
 
 ## Composite indexes
 
-`firestore.indexes.json` currently holds **45** composite indexes and **13**
-`fieldOverrides` (counted 2026-09-17 at `58853fb0`, including the
+`firestore.indexes.json` currently holds **47** composite indexes and **13**
+`fieldOverrides` (counted 2026-09-19 at `a18fe789`; 45 and 13 at `58853fb0` on
+2026-09-17, plus the two `accountDeletionOutbox` composites Build 32 added —
+`(status, leaseUntil)` and `(status, nextAttemptAt)`. The count includes the
 `gifQueryCache.expiresAt` TTL override and the `serverInviteRefs.expiresAt`
-collection-group exemption added that night). Production agrees: the Firestore
-admin API reported 45/45 composite indexes `READY` and the
-`serverInviteRefs.expiresAt` exemption `READY` at `2026-09-16T22:18:55Z`. The
+collection-group exemption). Production agrees: the Firestore admin API
+reported **47/47** composite indexes `READY` after the Build 32 index deploy on
+`2026-09-19` (`yovoice-evidence/2026-09-18/b32/deploy-indexes-readback.json`),
+and 45/45 plus the `serverInviteRefs.expiresAt` exemption `READY` at
+`2026-09-16T22:18:55Z`. The
 2026-08-19 live reading of 19 and 4 is historical, not
 proof of today's production state; re-read production before every release
 rather than subtracting one stale count from another. Note that a live

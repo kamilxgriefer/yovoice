@@ -4,11 +4,349 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
-## Build 32 — account deletion, NOT YET DEPLOYED (2026-09-18)
+## Build 32 release round — backend deployed, iOS, web and Play with testers (2026-09-19)
 
-Source-only in this round. Nothing below has run against production, and the
-website ships with `SELF_SERVICE_DELETION_LIVE = false` until every step here is
-done. The order is load-bearing for Play review — see
+> **Completion (primary session, 2026-09-19 ~08:40 CEST):** after this section was drafted the two remaining steps were executed — Hosting was deployed from the content-verified `build/web` (`firebase deploy --only hosting -m "2.0.0+32 / main a18fe789"`; both hosts serve `build_number 32`, `main.dart.js` `224854be…`; `yovoice-evidence/2026-09-19/build32-web-deploy.log`, `build32-web-readback.txt`) and the AAB was published to the Play internal track at **08:35 CEST** (`Najnowsza wersja: 32 (2.0.0)`, `build32-play/play-readback.md`). The TestFlight What-to-Test text was corrected to say the server-side deletion switches on later (`build32-asc-whatsnew-corrected.json`). Rows below marked "NOT deployed" / "not uploaded" describe the state at drafting time.
+
+Source for everything below: `main` at
+`a18fe7898246604c6a5bb64b0a5be0d874dcc828` (`pubspec.yaml` `2.0.0+32`), all
+three GitHub Actions workflows green on that revision
+(`yovoice-evidence/2026-09-18/b32/ci-a18fe789.txt`). Evidence:
+`yovoice-evidence/2026-09-18/b32/deploy-backend.md` plus the `deploy-*.log` /
+`deploy-readback-*.json` beside it for the backend, and
+`yovoice-evidence/2026-09-19/build32-2026-09-19.md` plus the `build32-*` logs
+for the clients. Read-backs marked *(re-read 2026-09-19)* were taken again from
+production while this record was written, read-only.
+
+### Where each surface actually stands
+
+| Surface | State | Proof |
+| --- | --- | --- |
+| Firestore indexes | **deployed**, both new composites `READY` | `deploy-indexes-readback.json` |
+| Firestore rules | **deployed**, ruleset `7c57cc65-d286-4a0e-a99f-922472c8f95e` | `deploy-rules.log` + release read-back |
+| Cloud Functions | **9 named targets deployed**, all read back ACTIVE | `deploy-readback-*.json` |
+| Storage rules | **not deployed** (unchanged since 2026-09-14) | ruleset `6765c5fd-…`, `updateTime 2026-09-14T06:08:23Z` |
+| Hosting / web | **deployed 2026-09-19 ~07:45 CEST** — both hosts serve build 32 | `build32-web-deploy.log`, `build32-web-readback.txt` (`main.dart.js` `224854be…`) |
+| iOS | **build 32 in both TestFlight groups**, review APPROVED | `build32-asc-*.json` |
+| Android | AAB built, verified and **published to Play internal 2026-09-19 08:35 CEST** | `build32-android*.log`, `build32/app-release-32.aab`, `build32-play/play-readback.md` |
+| `appConfig/accountDeletion` | **absent → deletion pipeline DISABLED** | HTTP 404 *(re-read 2026-09-19)* |
+| `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` | **not set anywhere** | absent from `functions/.env` and from all three deployed functions' `environmentVariables` |
+
+### Backend round — executed by the primary session, 01:35Z–02:23Z
+
+From a clean detached worktree at `a18fe789` (`npm ci --omit=dev`;
+`functions/.env*` checksums unchanged), under Application Default Credentials
+(`firebase login:list` → no authorized accounts; no interactive login, no
+password, no 2FA). Order: **indexes → rules → functions**.
+
+```bash
+FUNCTIONS_DISCOVERY_TIMEOUT=120 firebase deploy \
+  --only "functions:deleteAccountSelfV1,functions:onAccountDeletionOutboxCreated,functions:processAccountDeletionOutboxSchedule,functions:onAuthUserDeleted,functions:createServerInviteV1,functions:revokeServerInviteV1,functions:respondToServerInviteV1,functions:onServerInviteWritten,functions:getProfileMediaAccess" \
+  --project yovoice-ec54a --non-interactive --force
+```
+
+Selector in `deploy-selector.txt`, screened by **exact match** against the
+must-not-deploy list — 0 hits, the discipline the Build 31 section below
+explains.
+
+**Indexes.** The first attempt at `2026-09-19T01:35:31Z` died on a transient
+`Failed to make request to https://firebaserules.googleapis.com/v1/projects/yovoice-ec54a:test`
+(`deploy-indexes.log`) — nothing was applied. The retry succeeded
+(`deploy-indexes-retry1.log`). The read-back lists **47 composite indexes, 47 of
+them `READY`**, including both new `accountDeletionOutbox` composites:
+`(status, leaseUntil, __name__)` id `CICAgJjlwoUK` and
+`(status, nextAttemptAt, __name__)` id `CICAgJjU7p4K`.
+
+Between roughly 02:23Z and 02:35Z, while those two were still building,
+`processAccountDeletionOutboxSchedule` logged `FAILED_PRECONDITION` on every
+two-minute tick. **No user impact** — the queue was empty and the feature is
+switched off. The four ticks after the indexes went `READY` (02:37, 02:39,
+02:41, 02:43Z) are all HTTP 200 (`deploy-sweep-ticks-after-indexes.txt`), and
+the `severity>=ERROR` window over the nine services after 02:35Z is `[]`
+(`deploy-logging-POST.json`).
+
+**Rules.** `firestore.rules` compiled with warnings only (all pre-existing
+lint noise: unused helpers, `Invalid function name: get/exists`) and the CLI
+logged `released rules firestore.rules to cloud.firestore` (`deploy-rules.log`).
+The CLI does not print a ruleset id, so it was recovered from the Rules API
+*(re-read 2026-09-19)*:
+
+```bash
+curl -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+  https://firebaserules.googleapis.com/v1/projects/yovoice-ec54a/releases
+# cloud.firestore  -> projects/yovoice-ec54a/rulesets/7c57cc65-d286-4a0e-a99f-922472c8f95e
+#                     updateTime 2026-09-19T02:19:26.643741Z
+# firebase.storage -> projects/yovoice-ec54a/rulesets/6765c5fd-dc9b-4658-8721-3fc404ef7b51
+#                     updateTime 2026-09-14T06:08:23.577034Z
+```
+
+The Storage release still points at the 2026-09-14 ruleset, which is the
+positive proof that **`storage:rules` was not deployed** in this round, as
+intended (`storage.rules` is unmodified at `a18fe789`).
+
+**Functions.** Three created, six updated, no deletions:
+
+| Function | Operation | `updateTime` | Shape read back |
+| --- | --- | --- | --- |
+| `deleteAccountSelfV1` | create | `02:22:43.838Z` | gen2 ACTIVE, 256 Mi, 60 s, maxInstances 10 |
+| `getProfileMediaAccess` | update | `02:22:51.813Z` | gen2 ACTIVE |
+| `onServerInviteWritten` | update | `02:22:51.559Z` | gen2 ACTIVE, `clubs/{clubId}/invites/{inviteeId}` written, `RETRY_POLICY_RETRY` |
+| `processAccountDeletionOutboxSchedule` | create | `02:22:55.960Z` | gen2 ACTIVE, 512 Mi, 540 s, maxInstances 1 |
+| `createServerInviteV1` | update | `02:22:56.224Z` | gen2 ACTIVE |
+| `respondToServerInviteV1` | update | `02:22:56.245Z` | gen2 ACTIVE |
+| `revokeServerInviteV1` | update | `02:22:56.882Z` | gen2 ACTIVE |
+| `onAccountDeletionOutboxCreated` | create | `02:23:05.322Z` | gen2 ACTIVE, document-created on `accountDeletionOutbox/{outboxId}`, `RETRY_POLICY_RETRY`, 512 Mi, 540 s, maxInstances 5, `triggerRegion europe-west4` |
+| `onAuthUserDeleted` | update | `02:23:24.214Z` | **gen1** ACTIVE, `providers/firebase.auth/eventTypes/user.delete`, failure policy retry |
+
+`triggerRegion: europe-west4` is correct and expected — the Eventarc trigger
+follows the Firestore `(default)` database's location while the function itself
+stays in `europe-west1`, exactly as recorded for `onDirectMessageCreated` in
+the Build 31 section.
+
+**`--force` was required, and only for one reason.** `onAccountDeletionOutboxCreated`
+declares `retry: true` (`functions/account/deletion.js:828`), so the deploy
+*introduces* a failure policy and the CLI refuses non-interactively. Proven both
+ways before anything was deployed: `deploy-dryrun.log` refuses,
+`deploy-dryrun-force.log` reports `Dry run complete!`. With `--only` name-scoped
+to nine exports, `--force` cannot widen the blast radius.
+
+**Blast-radius read-backs.**
+
+| Check | Result |
+| --- | --- |
+| unauthenticated probes — `deleteAccountSelfV1`, `createServerInviteV1`, `revokeServerInviteV1`, `respondToServerInviteV1`, `getProfileMediaAccess` | **401** each, no 500 (`deploy-probes.log`) |
+| forbidden set / everything else | `deploy-functions-list-POST.json` holds **245** functions; **exactly 9** carry an `updateTime` after the `01:35:31Z` start, and they are the nine above (re-counted from the JSON while writing this) |
+| `severity>=ERROR` window on the nine services | `[]` (`deploy-logging-POST.json`) |
+| `functions/.env*` | checksums unchanged; no secret was read, printed or rotated |
+
+### Web — built, content-verified, and deliberately NOT deployed
+
+**Production is untouched.** Hosting `live` is still version
+`d8c5da0668b90a18` (`2.0.0+31 / main 98f9413c`, released
+`2026-09-18T15:43:13.151Z`). *(Re-read 2026-09-19:* `app.yovoice.app/version.json`
+and `yovoice-ec54a.web.app/version.json` both return HTTP 200 with
+`build_number "31"`, and the served `main.dart.js` is still sha256
+`2bf0914f6dd0c33cf761f6781f0e3962fef398f6a4cc1883544922ed8b0f7db2`.*)
+
+**A push to `main` never deploys Hosting.** `.github/workflows/firebase-hosting-merge.yml`
+runs `verify_and_build` on every push, but the `deploy_hosting` job is
+`if: github.event_name == 'workflow_dispatch' && inputs.deploy_hosting`. The
+green "Deploy YO Voice to Firebase Hosting" run on `a18fe789` therefore proves
+the build and the suites, **not** a release.
+
+**The stale-artifact trap fired again, and this time it was the harmless
+variant.** `firebase.json:38` sets `"public": "build/web"`, so whatever sits
+there at deploy time is what ships. The pre-existing tree was the genuine
+build-31 bundle (`version.json` `build_number "31"`, `main.dart.js` sha256
+`2bf0914f…`, 112 files — byte-identical to what is live), and it was moved
+aside before the build to
+`build/web.stale-b31-1789794710`. **It is not a rollback target and must never
+be deployed as 32** — that would be a no-op release mislabelled as a new build.
+
+**The runbook build completed.** `build32-web-build.log` ends with
+`✓ Built build/web` and `exit=0`, `2026-09-19T05:12:06Z → 05:16:36Z`
+(`build32-web-build-start-utc.txt` / `-end-utc.txt`). The command reproduces the
+CI `Build Flutter Web` step verbatim, including the empty reCAPTCHA site key —
+the repository has zero Actions variables
+(`build32-web-actions-variables.json`), so CI expands it to the empty string and
+**App Check on web stays disabled**, unchanged since Build 30:
+
+```bash
+nice -n 10 flutter build web --release \
+  --dart-define=YOVOICE_WEB_PUSH_VAPID_KEY=BGa6os6npm6shnDdNP4rbqFS8wC5brGTY0RVzt59mZvpOhX3EeaCUpOaZRw2TmQeXK5gpZ1whEKvJEhmSD0mikU \
+  --dart-define=YOVOICE_WEB_RECAPTCHA_SITE_KEY= \
+  --dart-define=YOVOICE_APPLE_SIGN_IN_ENABLED=true
+```
+
+> The release-engineering record's §W.2/§W.9 say the compile had not finished
+> and that `build/web` was "absent or partial". The log and the tree say
+> otherwise, and the tree is the ground truth: it was verified by content while
+> this section was written.
+
+**`build/web` content verification (2026-09-19, read-only):**
+
+| Check | Value |
+| --- | --- |
+| `build/web/version.json` | `{"app_name":"yovoice","version":"2.0.0","build_number":"32",…}` |
+| `build/web/main.dart.js` sha256 | `224854be0c51ca9d8b8fc7982cd7b4bbb66727978d9993f3ad137fb3e01d5f8d` |
+| size | 11 394 969 B (build 31: 11 313 634 B) |
+| VAPID key occurrences | **1** — web push will work |
+| files | 112 |
+| distinct from the retained build-31 tree | yes — different `main.dart.js` hash |
+
+So the artifact is ready; only the deploy is outstanding. Whoever runs it must
+re-verify those four rows first, because `build/` is git-ignored and nothing
+else guards the directory.
+
+```bash
+firebase deploy --only hosting --project yovoice-ec54a --non-interactive \
+  -m "2.0.0+32 / main a18fe789"
+```
+
+**`--only hosting` is load-bearing.** `firebase.json` carries `functions`,
+`firestore` and `storage` blocks beside `hosting`; an unscoped
+`firebase deploy` would redeploy the backend this round deliberately scoped to
+nine functions. Never run one. The alternative supported path is
+`workflow_dispatch` on the Hosting workflow with `deploy_hosting: true`, which
+rebuilds on CI and deploys the artifact it verified.
+
+**Rollback after a build-32 deploy:** re-release Hosting version
+**`d8c5da0668b90a18`** (`2.0.0+31 / main 98f9413c`). **Not**
+`148b73b04e947c74` (build 28) — that one was built without the VAPID define and
+kills web push. Rollback is Hosting-only; it touches no function, rule or index.
+
+### iOS — build 32 is with the testers
+
+`nice -n 10 flutter build ipa --release --build-name=2.0.0 --build-number=32
+--export-options-plist=ios/ExportOptions.plist`, first attempt, exit 0, 8 m 48 s
+(05:29:15Z → 05:38:03Z). Build 31's archive and IPA were identified and moved
+aside first, so the gate and the upload could only see what this run produced.
+
+| Check | Value |
+| --- | --- |
+| IPA sha256 / size | `5d5acd293df30c3029ceebc03aab90efe0cee772fc55ee2b7f7842019d08f034` / 79 162 758 B |
+| archive `CFBundleVersion` (gate, read **before** the upload) | **32** |
+| signing identity | `Apple Distribution: Kamil Jaguszewski (C3R59P53KB)` |
+| embedded profile | `YO Voice App Store` `6a817efe-d05c-443b-a10b-3f91ca381322` — the documented one |
+| entitlements | `aps-environment=production`, `get-task-allow=false`, `beta-reports-active=true` |
+| upload | `xcrun altool --upload-app` under API key `BGK5YPN6V4`; Delivery UUID `b2e26e14-5c44-47c4-b5bd-909614c70afa`; Apple acknowledged exactly 79 162 758 bytes |
+| processing | `VALID` on the 7th poll, 9 m 06 s after the upload started |
+| distribution | internal group `a6c2c254-…` automatic; external `910d0a45-…` attached (`POST …/relationships/betaGroups` → **204**), then `betaAppReviewSubmissions` → **201** |
+| final state | `betaReviewState APPROVED`, `internalBuildState` and `externalBuildState` both `IN_BETA_TESTING`, `autoNotifyEnabled true` |
+| "What to Test" | `PATCH /v1/betaBuildLocalizations/a13858b1-…` → **200**, 542 chars `en-US`, read back byte-identical |
+
+The What-to-Test PATCH was deliberately done **before** the review submission,
+because Apple requires tester notes on an external submission — the same
+ordering change Build 31 made.
+
+**Provenance is clean for the first time in three rounds.** `HEAD` was
+`a18fe789` and the tree clean at build start, and both were still so after every
+TestFlight write (`build32-ios-provenance.log`); the IPA's hash has not changed
+since it was written, the staged copy matches, and Apple's acknowledged byte
+count equals the file's size. The uploaded binary is provably what `a18fe789`
+produces.
+
+**The duplicate `YO Voice App Store` provisioning profile is still installed**
+(`1a59a340-37ab-43a5-bdb2-bdc29d60600d` alongside the documented
+`6a817efe-…`), and `ios/ExportOptions.plist` selects **by name**. Three builds
+in a row have embedded the right one by luck. Outstanding since Build 30.
+
+**Rollback.** External: `DELETE /v1/builds/b2e26e14-…/relationships/betaGroups`
+with the group id — build 31 is still `VALID` there. Internal: the group has
+`hasAccessToAllBuilds = true`, so un-adding does nothing; **expire** build 32
+instead. An uploaded build cannot be deleted and **build number 32 can never be
+re-used** — any re-cut is **33**.
+
+### Android — bundle built and verified, nothing uploaded
+
+`nice -n 10 flutter build appbundle --release --build-name=2.0.0
+--build-number=32`, exit 0, Gradle `bundleRelease` 192.1 s. The build-31 bundle
+sitting in the Gradle output path was identified by hash and moved aside first.
+
+| Check | Value |
+| --- | --- |
+| AAB sha256 / size | `147a8c60eec8581863c9bba800cefdc8b0883713320e1acd90d7e5ec7237948a` / 127 854 172 B |
+| `versionCode` / `versionName` | **32** / 2.0.0 |
+| `jarsigner -verify` | rc 0, one `jar verified.` |
+| signer | `CN=YO Voice Upload Key, O=YO Voice, C=PL`, SHA-256 `75:3A:AC:CB:B2:8E:65:0B:54:A5:EB:F0:F2:A6:CB:AA:23:3C:5E:B0:EF:00:FB:37:90:83:8E:6E:44:51:AE:1E` — identical to Builds 30 and 31 |
+| foreground service | `android:foregroundServiceType="microphone\|mediaPlayback\|mediaProjection"` on `app.yovoice.VoiceSessionService`; all four FGS permissions present |
+| staged copy | `yovoice-evidence/2026-09-19/build32/app-release-32.aab`, `cmp` byte-for-byte identical |
+
+Because **zero** files under `android/` changed since the Build 31 tree
+(`git diff --stat 98f9413c..a18fe789 -- android/ pubspec.yaml` touches
+`pubspec.yaml` only), the decoded manifest must differ from Build 31's in
+`versionCode` alone — and the diff is exactly that one line. The same
+`aapt2`/`bundletool` unavailability as Build 31 forced the local protobuf
+decoder again; it was validated on the retained build-30 and build-31 bundles
+(reporting 30 and 31) before being trusted for 32.
+
+**Nothing was uploaded.** No Play Console action, no Play Developer API call.
+Play upload remains a separate human step, and Play will not accept a re-upload
+of versionCode 31 — a Play rollback is by release selection.
+
+### Enablement order — where Build 32 actually is
+
+Against the seven steps in the runbook section below:
+
+| # | Step | State |
+| --- | --- | --- |
+| 1 | account-deletion exports deployed | **done** — 02:22–02:23Z |
+| 2 | `firestore:rules` deployed | **done** — ruleset `7c57cc65-…`, 02:19:26Z |
+| 3 | `firestore:indexes` deployed | **done** — both composites `READY` |
+| 4 | `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` set | **NOT DONE** |
+| 5 | `appConfig/accountDeletion.enabled = true` | **not done, and correctly so** |
+| 6 | app release carrying Delete account | **done** — iOS (both TestFlight groups), Android (Play internal 32), web (build 32) with testers |
+| 7 | website `SELF_SERVICE_DELETION_LIVE = true` | not done |
+
+**Step 4 is a real gap and it is easy to miss.** Verified 2026-09-19:
+`YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` is absent from `functions/.env`, and it is
+absent from the `environmentVariables` of all three deployed account-deletion
+functions (`deploy-readback-deleteAccountSelfV1.json`,
+`deploy-readback-onAccountDeletionOutboxCreated.json`,
+`deploy-readback-processAccountDeletionOutboxSchedule.json`). A `.env` value is
+materialized into the function environment **at deploy time**, so setting it
+means editing `functions/.env` *and* redeploying at least those three exports —
+it is not a live configuration change. Until then, deleting a banned account
+writes no `deletedAccountDigests` row and **silently resets the ban**
+(`banDigestSkipped: true` on the outbox row). Step 4 must precede step 5.
+
+**Step 5 is correctly still off.** *(Re-read 2026-09-19:* a `GET` of
+`projects/yovoice-ec54a/databases/(default)/documents/appConfig/accountDeletion`
+returns **HTTP 404 NOT_FOUND**.*)* `accountDeletionEnabled()`
+(`functions/account/deletion.js:127`) returns
+`snapshot.exists && snapshot.data()?.enabled === true`, so a missing document
+means DISABLED — fail-closed by design and documented as such at
+`deletion.js:119-126`. Shipping clients while the switch is off is the intended
+order, not a regression: the client maps the resulting
+`failed-precondition / account-deletion-disabled` to
+`AccountDeletionFailureKind.unavailable` and the screen falls back to the
+`privacy@yovoice.app` route.
+
+**Consequence for this TestFlight round, stated plainly.** The stored "What to
+Test" text asks testers to exercise `Settings → Delete account` and says the
+request "is processed within a few minutes". With the switch off that sentence
+is not true: testers reach the screen, read the retained-data copy and are
+routed to e-mail. The flow degrades gracefully and the e-mail route is itself
+worth testing, but expect reports. The fix is one `PATCH` of
+`betaBuildLocalizations/a13858b1-…` — `whatsNew` is freely rewritable after
+release and needs no rebuild. The other three claims in the notes (public-Server
+invites, empty chat threads, profile photos) are fully exercisable: their server
+halves are among the nine functions deployed above.
+
+### Manual actions still outstanding after this round
+
+1. **Deploy the web bundle** — content-verify `build/web` (the four rows above)
+   and run the scoped Hosting deploy, or dispatch the Hosting workflow with
+   `deploy_hosting: true`. Never restore `build/web.stale-b31-1789794710`.
+2. **Upload `app-release-32.aab` to the Play Console** from
+   `yovoice-evidence/2026-09-19/build32/` and confirm Play parses it as
+   **App bundle 32 (2.0.0)**, API 24+, target 36, with the upload-key
+   fingerprint above. Because Build 32 adds self-service deletion, review the
+   listing's Data safety / account-deletion declaration before promoting
+   (`yovoice-evidence/2026-09-18/play-declarations/`).
+3. **Hand testers the Play opt-in link** — Google does not e-mail the Android
+   list (`8331608292559520258`) by itself. Apple does e-mail the TestFlight
+   group, so no iOS action is needed.
+4. **Decide what to do about the account-deletion line in the tester notes**
+   (above). Leave it, or `PATCH` it out.
+5. **Set `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` and redeploy the three
+   account-deletion exports** before anyone writes
+   `appConfig/accountDeletion.enabled = true`.
+6. **Bump `pubspec.yaml` to `2.0.0+33`** before any further store build — 32 is
+   consumed on Apple and cannot be re-uploaded.
+7. **Remove the duplicate `YO Voice App Store` provisioning profile**
+   (`1a59a340-…`). Outstanding since Build 30, now three builds running on luck.
+8. **Remove the deploy worktree** at `/private/tmp/yovoice-b32-deploy` when the
+   round is closed.
+
+## Build 32 account-deletion enablement runbook (written 2026-09-18, steps 1–3 executed)
+
+**Status, 2026-09-19: steps 1, 2 and 3 have run against production** — see the
+round above for the read-backs. Steps 4 to 7 have not, so the sentence this
+section opened with ("nothing below has run against production") is no longer
+true and the rest of the section is now a runbook for what remains. The website
+still ships with `SELF_SERVICE_DELETION_LIVE = false`. The order is load-bearing
+for Play review — see
 [ADR-206](Decisions.md#adr-206-a-deletion-promise-is-a-list-of-stages-and-the-copy-may-not-exceed-it).
 
 ### Required runtime variable — set it BEFORE enabling the feature
@@ -31,11 +369,14 @@ or migrate the rows first.
 Backend first, store binary second, website last:
 **functions → rules → indexes → salt → kill switch → app release → website flag.**
 
-1. Deploy the account-deletion exports (`deleteAccountSelfV1`, the outbox
-   worker and its schedule) with the named-target selector. They are **not** in
-   the forbidden set below, but every other export in this file's MUST NOT
-   DEPLOY list still is.
-2. **Deploy `firestore.rules`** (`firebase deploy --only firestore:rules`).
+Steps 1–3 are **DONE** (2026-09-19, read-backs in the round above); steps 4–7
+are outstanding, and step 6 is partially done for iOS only.
+
+1. **DONE.** Deploy the account-deletion exports (`deleteAccountSelfV1`, the
+   outbox worker and its schedule) with the named-target selector. They are
+   **not** in the forbidden set below, but every other export in this file's
+   MUST NOT DEPLOY list still is.
+2. **DONE. Deploy `firestore.rules`** (`firebase deploy --only firestore:rules`).
    This step is load-bearing and was missing from an earlier revision of this
    list. It carries **two liveness narrowings** that the sweep depends on:
    `users/{uid}/muted` write and `users/{uid}/momentViews` create/update now
@@ -58,20 +399,32 @@ Backend first, store binary second, website last:
    Deploying it before step 5 is safe on its own: it only extends a freeze that
    `isActiveAccount()` already applies elsewhere, and nothing sets `disabled`
    through self-service until the kill switch is on.
-3. Deploy `firestore.indexes.json` — the two sweep composites. The emulator does
-   not require indexes, so no suite will tell you they are missing.
-4. Set `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` and confirm it is live by checking
-   that a deletion of a banned test account writes a `deletedAccountDigests`
-   row and leaves `banDigestSkipped` unset on the outbox row.
+3. **DONE.** Deploy `firestore.indexes.json` — the two sweep composites. The
+   emulator does not require indexes, so no suite will tell you they are
+   missing. Both read back `READY`; while they were still building, the sweep
+   logged `FAILED_PRECONDITION` on every tick, which is exactly the failure this
+   step prevents once real rows exist.
+4. **OUTSTANDING.** Set `YOVOICE_DELETED_ACCOUNT_DIGEST_SALT` and confirm it is
+   live by checking that a deletion of a banned test account writes a
+   `deletedAccountDigests` row and leaves `banDigestSkipped` unset on the outbox
+   row. It is absent from `functions/.env` and from the deployed functions'
+   environment as of 2026-09-19, and because a `.env` value is baked in at
+   deploy time, setting it requires **redeploying** the three account-deletion
+   exports, not just editing the file.
 5. Write `appConfig/accountDeletion.enabled = true`. The callable is fail-closed
    until this lands, so doing it earlier is safe; doing steps 1–4 later is not.
    Rules and indexes (steps 2–3) both go **before** this one: after it, the
    first person to tap Delete is already relying on them.
-6. **Release the app** that contains `Settings → Account → Delete account`
-   (Play, then App Store). This is a step, not a consequence of the others: the
-   screen ships inside a store binary with its own review queue and its own
-   staged rollout, so it reaches users days after step 5 and cannot be rolled
-   back by touching Firestore.
+6. **PARTIAL (TestFlight only).** **Release the app** that contains
+   `Settings → Account → Delete account` (Play, then App Store). This is a step,
+   not a consequence of the others: the screen ships inside a store binary with
+   its own review queue and its own staged rollout, so it reaches users days
+   after step 5 and cannot be rolled back by touching Firestore.
+
+   **Build 32 is with iOS beta testers while step 5 is still off.** That is the
+   intended order for a *beta* binary — the screen degrades to the e-mail route
+   — but it is not a public release, and the caveat below about store review
+   still governs what may be submitted for sale.
 
    **If the app reaches Play before steps 1–5, the in-app route is dead.** With
    the exports undeployed the callable answers `not-found`; with them deployed
