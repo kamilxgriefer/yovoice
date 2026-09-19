@@ -6,10 +6,14 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/achievements/presentation/widgets/title_badge.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
+import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 
@@ -37,6 +41,7 @@ class ProfileHeader extends StatelessWidget {
     required this.onEdit,
     this.title,
     this.identityRepository,
+    this.mediaService,
     super.key,
   });
 
@@ -47,10 +52,35 @@ class ProfileHeader extends StatelessWidget {
   /// Test/preview seam. Production resolves through the shared singleton.
   final PublicIdentityRepository? identityRepository;
 
+  /// Test/preview seam for the viewer-authorized media resolver. Production
+  /// lets each media widget construct the shared service itself.
+  final ProfileMediaService? mediaService;
+
   /// Matches the 18px gutter of the content panels below
   /// (profile_screen's SliverPadding), so the toolbar and banner card
   /// line up with the rest of the page instead of the screen edge.
-  static const double _gutter = 18;
+  static const double gutter = 18;
+
+  /// The band the header actually paints the banner into: a fixed height at
+  /// content width, NOT the 16:9 the upload pipeline stores. Public because
+  /// the crop editor has to mark the strip of that 16:9 which survives here;
+  /// two hand-copied numbers are exactly how the crop and the header drifted
+  /// apart in the first place.
+  static const double bannerHeightCompact = 104;
+  static const double bannerHeightWide = 132;
+
+  /// Fraction of the stored banner's height that is still on screen at the
+  /// WIDEST presentation, i.e. the part a user can rely on at every width.
+  ///
+  /// The band is drawn with `BoxFit.cover` and `Alignment.center`, so the
+  /// wider the band gets the less of the 16:9 source fits inside it: roughly
+  /// 52% of it survives on a 390pt phone and only ~23% at the 1040pt feed
+  /// cap. Derived from the three sources that decide it — the stored ratio,
+  /// the widest content measure and the wide band height — so a redesign
+  /// that changes any of them moves the crop editor's guide with it.
+  static final double bannerSafeBandFraction =
+      ProfileImageRules.banner.aspectRatio /
+      ((ResponsiveContentWidth.feed.maxWidth - gutter * 2) / bannerHeightWide);
 
   @override
   Widget build(BuildContext context) {
@@ -61,7 +91,7 @@ class ProfileHeader extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 900;
-        final bannerHeight = isWide ? 132.0 : 104.0;
+        final bannerHeight = isWide ? bannerHeightWide : bannerHeightCompact;
         final (avatarRadius, ringPadding) = switch (constraints.maxWidth) {
           < 360 => (33.0, 3.0),
           < 600 => (37.0, 3.0),
@@ -105,7 +135,7 @@ class ProfileHeader extends StatelessWidget {
     return SafeArea(
       bottom: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(6, 6, _gutter, 0),
+        padding: const EdgeInsets.fromLTRB(6, 6, gutter, 0),
         child: Row(
           children: [
             // A physical Back control whenever there IS somewhere to go
@@ -191,16 +221,23 @@ class ProfileHeader extends StatelessWidget {
       children: [
         Positioned(
           top: 0,
-          left: _gutter,
-          right: _gutter,
+          left: gutter,
+          right: gutter,
           height: bannerHeight,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(22),
-            child: ProfileBanner(
-              userId: profile.uid,
-              bannerUrl: profile.bannerUrl,
-              mediaRevision: profile.profileUpdatedAt,
-              overlay: scrim,
+          child: ProfileBannerButton(
+            userId: profile.uid,
+            displayName: profile.displayName,
+            mediaRevision: profile.profileUpdatedAt,
+            mediaService: mediaService,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: ProfileBanner(
+                userId: profile.uid,
+                bannerUrl: profile.bannerUrl,
+                mediaRevision: profile.profileUpdatedAt,
+                mediaService: mediaService,
+                overlay: scrim,
+              ),
             ),
           ),
         ),
@@ -209,7 +246,7 @@ class ProfileHeader extends StatelessWidget {
           children: [
             SizedBox(height: bannerHeight - avatarOverlap),
             Padding(
-              padding: const EdgeInsets.fromLTRB(_gutter, 0, _gutter, 0),
+              padding: const EdgeInsets.fromLTRB(gutter, 0, gutter, 0),
               child: _identityBlock(
                 context,
                 avatarRadius: avatarRadius,
@@ -239,93 +276,113 @@ class ProfileHeader extends StatelessWidget {
           key: const Key('profile-header-identity-row'),
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Container(
-              key: const Key('profile-header-avatar'),
-              padding: EdgeInsets.all(ringPadding),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  colors: [colors.primary, colors.secondary],
-                ),
+            ProfilePhotoButton(
+              userId: profile.uid,
+              displayName: profile.displayName,
+              mediaRevision: profile.profileUpdatedAt,
+              mediaService: mediaService,
+              // The ring, not the disc: the gradient border is part of the
+              // avatar, and a smaller minimum would clip the ripple inside it.
+              minimumSize: Size(
+                (avatarRadius + ringPadding) * 2,
+                (avatarRadius + ringPadding) * 2,
               ),
-              child: UserAvatar(
-                radius: avatarRadius,
-                userId: profile.uid,
-                photoUrl: profile.photoUrl,
-                mediaRevision: profile.profileUpdatedAt,
-                displayName: profile.displayName,
-                backgroundColor: colors.primary,
-                premium: profile.premiumIdentity,
+              child: Container(
+                key: const Key('profile-header-avatar'),
+                padding: EdgeInsets.all(ringPadding),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [colors.primary, colors.secondary],
+                  ),
+                ),
+                child: UserAvatar(
+                  radius: avatarRadius,
+                  userId: profile.uid,
+                  photoUrl: profile.photoUrl,
+                  mediaRevision: profile.profileUpdatedAt,
+                  mediaService: mediaService,
+                  displayName: profile.displayName,
+                  backgroundColor: colors.primary,
+                  premium: profile.premiumIdentity,
+                ),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Container(
-                  key: const Key('profile-header-name-plate'),
-                  constraints: const BoxConstraints(maxWidth: 420),
-                  padding: const EdgeInsets.fromLTRB(10, 6, 10, 7),
-                  decoration: BoxDecoration(
-                    color: palette.surfaceRaised.withValues(alpha: .94),
-                    borderRadius: BorderRadius.circular(13),
-                    border: Border.all(color: palette.border),
-                    boxShadow: [
-                      BoxShadow(
-                        color: palette.shadow.withValues(alpha: .16),
-                        blurRadius: 14,
-                        offset: const Offset(0, 5),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Semantics(
-                        header: true,
-                        child: Text(
-                          profile.displayName,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: palette.textPrimary,
-                            fontSize: nameSize,
-                            height: 1.02,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -.35,
+                // The plate rides over the banner band, and a decorated
+                // Container does not answer hit tests — without this the
+                // user's own name fell through and opened the banner viewer.
+                // Opaque still lets the availability chip inside win first.
+                child: MetaData(
+                  behavior: HitTestBehavior.opaque,
+                  child: Container(
+                    key: const Key('profile-header-name-plate'),
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    padding: const EdgeInsets.fromLTRB(10, 6, 10, 7),
+                    decoration: BoxDecoration(
+                      color: palette.surfaceRaised.withValues(alpha: .94),
+                      borderRadius: BorderRadius.circular(13),
+                      border: Border.all(color: palette.border),
+                      boxShadow: [
+                        BoxShadow(
+                          color: palette.shadow.withValues(alpha: .16),
+                          blurRadius: 14,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Semantics(
+                          header: true,
+                          child: Text(
+                            profile.displayName,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: palette.textPrimary,
+                              fontSize: nameSize,
+                              height: 1.02,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -.35,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 2),
-                      // Availability sits on the username line so the
-                      // plate keeps its height budget (profile_header_compact_test).
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 4,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          if (profile.username.isNotEmpty) ...[
-                            Text(
-                              '@${profile.username.replaceAll(' ', '').toLowerCase()}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: palette.textSecondary,
-                                fontSize: isWide ? 14 : 13,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: .1,
+                        const SizedBox(height: 2),
+                        // Availability sits on the username line so the
+                        // plate keeps its height budget (profile_header_compact_test).
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            if (profile.username.isNotEmpty) ...[
+                              Text(
+                                '@${profile.username.replaceAll(' ', '').toLowerCase()}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: palette.textSecondary,
+                                  fontSize: isWide ? 14 : 13,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: .1,
+                                ),
                               ),
+                            ],
+                            AvailabilityChip(
+                              availability: profile.availability,
+                              dense: true,
+                              hitTargetSize: 44,
                             ),
                           ],
-                          AvailabilityChip(
-                            availability: profile.availability,
-                            dense: true,
-                            hitTargetSize: 44,
-                          ),
-                        ],
-                      ),
-                    ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

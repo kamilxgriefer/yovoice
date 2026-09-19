@@ -14,6 +14,7 @@ import 'translations_reels_feed_integration.dart';
 import 'translations_reels_stage.dart';
 import 'translations_reels_voice_comments.dart';
 import 'translations_reel_links.dart';
+import 'translations_profile_media_viewer.dart';
 import 'translations_server_surface.dart';
 import 'translations_gif_messages.dart';
 import 'translations_gif_composer.dart';
@@ -227,6 +228,7 @@ const appTranslationKeys = <String>{
   ...reelsVoiceCommentTranslationKeys,
   ...startupTranslationKeys,
   ...serverSurfaceTranslationKeys,
+  ...profileMediaViewerTranslationKeys,
 };
 
 const _retiredServerSurfaceTranslationKeys = <String>{
@@ -280,6 +282,7 @@ final appTranslations = <String, Map<String, String>>{
         ...reelsVoiceCommentTranslations[entry.key]!,
         ...startupTranslations[entry.key]!,
         ...serverSurfaceTranslations[entry.key]!,
+        ...profileMediaViewerTranslations[entry.key]!,
         ...localizedExtendedLanguageNames[entry.key]!,
       }),
     ),

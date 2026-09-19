@@ -49,17 +49,21 @@ class ProfileImageRules {
     aspectRatio: 1,
   );
 
-  /// 16:9.
+  /// 16:9 — deliberately a superset of what any screen shows.
   ///
-  /// The Profile header does not fix a ratio: `profile_screen.dart` paints
-  /// the banner into a full-bleed `SizedBox(height: 320)`, so the *visible*
-  /// band is roughly 1.2:1 on a 375pt phone, ~1.35:1 on a large phone, and
-  /// far wider on desktop web. Because it is drawn with `BoxFit.cover`, the
-  /// stored asset has to be at least as wide as the widest presentation or
-  /// it gets upscaled; 16:9 covers phone through desktop, and the extra
-  /// height above/below the phone crop is what `cover` trims. When the crop
-  /// editor lands it should show this 16:9 frame with the phone-height band
-  /// marked inside it, so the user can see which part always survives.
+  /// The Profile header no longer paints a full-bleed `SizedBox(height: 320)`.
+  /// `ProfileHeader` draws a fixed-height band at content width (104dp
+  /// compact, 132dp at >=900dp) inside an 18dp gutter, so the *visible* ratio
+  /// runs about 3.3:1 on a 390pt phone and about 7.6:1 at the 1040pt feed cap.
+  /// Because it is drawn with `BoxFit.cover` and `Alignment.center`, only the
+  /// middle ~52% of the stored 16:9 survives on a phone and only ~23% at the
+  /// cap. Storing the wider superset is the point: the band can change in a
+  /// redesign without asking anyone to re-upload their banner.
+  ///
+  /// The crop editor marks that surviving strip inside the 16:9 frame
+  /// (`ImageCropScreen`'s banner safe band, sized from
+  /// `ProfileHeader.bannerSafeBandFraction`), so the user can see which part
+  /// always survives instead of discovering it afterwards.
   static const ProfileImageRules banner = ProfileImageRules._(
     kind: ProfileImageKind.banner,
     maxSourceBytes: 10 * 1024 * 1024,

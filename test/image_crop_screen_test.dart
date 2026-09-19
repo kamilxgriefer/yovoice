@@ -3,11 +3,15 @@ import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
 import 'package:yovoice/features/profile/presentation/screens/image_crop_screen.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 Future<ui.Image> _solidImage(int width, int height) async {
   final recorder = ui.PictureRecorder();
@@ -126,6 +130,33 @@ Future<void> _pinch(
   await tester.pump();
   await left.up();
   await right.up();
+  await tester.pumpAndSettle();
+}
+
+/// The banner cases need real localization delegates; [_pumpCrop] deliberately
+/// stays delegate-free so the existing English expectations keep measuring the
+/// screen and not the catalog.
+Future<void> _pumpLocalizedBannerCrop(
+  WidgetTester tester, {
+  required ui.Image image,
+  required Locale locale,
+  Size surface = const Size(390, 844),
+}) async {
+  tester.view.physicalSize = surface;
+  tester.view.devicePixelRatio = 1;
+  await tester.pumpWidget(
+    MaterialApp(
+      locale: locale,
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizationsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      home: ImageCropScreen(image: image, kind: ProfileImageKind.banner),
+    ),
+  );
   await tester.pumpAndSettle();
 }
 
@@ -354,6 +385,159 @@ void main() {
       semantics.dispose();
     },
   );
+
+  testWidgets(
+    'the banner crop marks the strip the profile header always shows',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final semantics = tester.ensureSemantics();
+      final image = await _solidImage(1600, 900);
+      addTearDown(image.dispose);
+
+      await _pumpCrop(
+        tester,
+        image: image,
+        kind: ProfileImageKind.banner,
+        surface: const Size(390, 844),
+        textScale: 1,
+      );
+
+      final frame = tester.getRect(find.byType(InteractiveViewer));
+      expect(
+        frame.width / frame.height,
+        closeTo(16 / 9, .01),
+        reason: 'the stored crop stays the 16:9 superset',
+      );
+
+      // What the profile header can still show at its widest: the band is
+      // ResponsiveContentWidth.feed minus two gutters, at the wide band
+      // height, and the 16:9 source is drawn into it with BoxFit.cover.
+      final widestHeaderBand =
+          (ResponsiveContentWidth.feed.maxWidth - ProfileHeader.gutter * 2) /
+          ProfileHeader.bannerHeightWide;
+      final surviving = ProfileImageRules.banner.aspectRatio / widestHeaderBand;
+      expect(
+        ProfileHeader.bannerSafeBandFraction,
+        closeTo(surviving, 1e-9),
+        reason: 'the header constant and this derivation must not drift',
+      );
+      expect(
+        surviving,
+        inInclusiveRange(.15, .35),
+        reason: 'a wildly different band means the geometry changed, not a typo',
+      );
+
+      final band = tester.getRect(
+        find.byKey(const ValueKey('banner-safe-band')),
+      );
+      expect(
+        band.height / frame.height,
+        closeTo(surviving, .005),
+        reason: 'the guide must mark exactly what survives, not a guess',
+      );
+      expect(band.width, closeTo(frame.width, .5));
+      expect(
+        band.center.dy,
+        closeTo(frame.center.dy, .5),
+        reason: 'the header centres the crop, so the guide is centred too',
+      );
+      expect(find.text('ALWAYS VISIBLE'), findsOneWidget);
+      // The guide is a picture; the same fact has to reach a screen reader.
+      expect(
+        find.bySemanticsLabel(
+          RegExp('Banner crop preview. Your profile always shows'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    },
+  );
+
+  testWidgets('the banner safe band is labelled in Polish too', (tester) async {
+    final semantics = tester.ensureSemantics();
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final image = await _solidImage(1600, 900);
+    addTearDown(image.dispose);
+
+    await _pumpLocalizedBannerCrop(
+      tester,
+      image: image,
+      locale: const Locale('pl'),
+    );
+
+    expect(find.text('ZAWSZE WIDOCZNE'), findsOneWidget);
+    expect(find.text('ALWAYS VISIBLE'), findsNothing);
+    expect(
+      find.bySemanticsLabel(RegExp('twarze i tekst umieść')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
+  });
+
+  testWidgets('the band survives a 320px phone at 200% text', (tester) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final image = await _solidImage(1600, 900);
+    addTearDown(image.dispose);
+
+    await _pumpCrop(
+      tester,
+      image: image,
+      kind: ProfileImageKind.banner,
+      surface: const Size(320, 640),
+      textScale: 2,
+    );
+
+    final frame = tester.getRect(find.byType(InteractiveViewer));
+    final band = tester.getRect(find.byKey(const ValueKey('banner-safe-band')));
+    expect(
+      band.height / frame.height,
+      closeTo(ProfileHeader.bannerSafeBandFraction, .005),
+      reason: 'the guide marks the same share of the crop at every width',
+    );
+
+    // The band is a fraction of the frame, so at this size it is shorter than
+    // a 200%-scaled pill. The label steps aside rather than being clipped.
+    final label = find.text('ALWAYS VISIBLE');
+    if (label.evaluate().isNotEmpty) {
+      expect(tester.getRect(label).height, lessThanOrEqualTo(band.height));
+    }
+    expect(tester.takeException(), isNull);
+
+    for (final action in ['Cancel', 'Use photo']) {
+      final rect = tester.getRect(find.text(action));
+      expect(rect.bottom, lessThanOrEqualTo(640));
+    }
+  });
+
+  testWidgets('the avatar crop keeps its circular mask and no band guide', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final image = await _solidImage(900, 900);
+    addTearDown(image.dispose);
+
+    await _pumpCrop(
+      tester,
+      image: image,
+      kind: ProfileImageKind.avatar,
+      surface: const Size(390, 844),
+      textScale: 1,
+    );
+
+    expect(find.byKey(const ValueKey('banner-safe-band')), findsNothing);
+    expect(find.text('ALWAYS VISIBLE'), findsNothing);
+    expect(
+      find.textContaining('Pinch or use controls'),
+      findsOneWidget,
+      reason: 'the avatar keeps the generic hint',
+    );
+  });
 
   testWidgets('room cover confirmation exports one canonical 1600x686 JPEG', (
     tester,

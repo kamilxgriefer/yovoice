@@ -20,6 +20,8 @@ import 'package:yovoice/features/profile/data/services/profile_media_service.dar
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
+import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 
 class _EmptySocialGraphService implements SocialGraphService {
   @override
@@ -319,6 +321,19 @@ void main() {
       expect(frame.left, expectedLeft, reason: '$size top-centred frame');
       expect(background.width, size.width, reason: '$size full-bleed bg');
       expect(find.text(longDisplayName), findsOneWidget);
+      expect(
+        find.byType(ProfileBanner),
+        findsOneWidget,
+        reason: '$size must draw the friend\'s banner, not only an avatar',
+      );
+      expect(
+        find.ancestor(
+          of: find.byType(ProfileBanner),
+          matching: find.byType(ProfileBannerButton),
+        ),
+        findsOneWidget,
+        reason: '$size banner must open the fullscreen viewer',
+      );
       await tester.scrollUntilVisible(
         find.text(longBio),
         120,
@@ -565,5 +580,104 @@ void main() {
 
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('the friend banner resolves through the injected media service, '
+      'stays above the avatar and grows with the available band', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final bandHeights = <double, double>{};
+    for (final size in const [
+      Size(390, 844),
+      Size(768, 1024),
+      Size(1440, 900),
+    ]) {
+      // Grants are cached in a static map shared by every test in this file,
+      // so a neighbour's entry would otherwise let this one pass without the
+      // screen ever asking the injected service for anything.
+      ProfileMediaService.clearAllMediaAccessCaches();
+      final requests = <Map<String, Object?>>[];
+      final media = ProfileMediaService(
+        auth: auth,
+        invoker: (_, request) async {
+          requests.add(request);
+          return {
+            'schemaVersion': 1,
+            'available': false,
+            'expiresAtMillis': DateTime.now()
+                .toUtc()
+                .add(const Duration(seconds: 80))
+                .millisecondsSinceEpoch,
+          };
+        },
+      );
+      tester.view.physicalSize = size;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          home: buildScreen(
+            key: ValueKey('banner-${size.width}'),
+            profileMediaService: media,
+          ),
+        ),
+      );
+      for (var pump = 0; pump < 8; pump++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+
+      final banner = find.byType(ProfileBanner);
+      expect(
+        banner,
+        findsOneWidget,
+        reason: '$size must draw the friend\'s banner, not only an avatar',
+      );
+      final bannerWidget = tester.widget<ProfileBanner>(banner);
+      expect(bannerWidget.userId, friendId, reason: '$size banner identity');
+      expect(
+        bannerWidget.mediaService,
+        same(media),
+        reason:
+            '$size banner must resolve through the screen\'s injected service '
+            'instead of constructing its own ProfileMediaService',
+      );
+      expect(
+        requests,
+        // `contains` compares elements with `==`, which on a Map is identity;
+        // `equals` is what makes this a deep comparison, and it also pins the
+        // request to exactly these two keys — no durable or bearer media URL
+        // may enter it.
+        contains(equals({'userId': friendId, 'kind': 'banner'})),
+        reason: '$size banner grant must be requested by uid and kind alone',
+      );
+
+      final band = tester.getRect(find.byType(ProfileBannerButton));
+      final avatar = tester.getRect(find.byType(ProfilePhotoButton));
+      expect(
+        band.bottom,
+        lessThanOrEqualTo(avatar.top),
+        reason: '$size banner must stay above the avatar',
+      );
+      expect(
+        band.width,
+        greaterThan(avatar.width),
+        reason: '$size banner must span the content band',
+      );
+      bandHeights[size.width] = band.height;
+      expect(tester.takeException(), isNull, reason: '$size banner');
+    }
+
+    expect(
+      bandHeights[390]!,
+      lessThan(bandHeights[768]!),
+      reason: 'a tablet band must not stay phone-sized',
+    );
+    expect(
+      bandHeights[768],
+      bandHeights[1440],
+      reason: 'the band is capped by the 880px content measure, not the window',
+    );
   });
 }

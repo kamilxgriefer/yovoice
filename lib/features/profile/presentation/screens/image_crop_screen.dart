@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/profile/data/services/image_crop.dart';
 import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 /// The shared image crop editor: pinch to zoom, drag to reposition,
@@ -52,6 +53,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
   ProfileImageRules? get _profileRules =>
       widget.roomCover ? null : ProfileImageRules.of(widget._kind!);
   bool get _isAvatar => widget._kind == ProfileImageKind.avatar;
+  bool get _isBanner => widget._kind == ProfileImageKind.banner;
   bool get _isRoomCover => widget.roomCover;
   double get _aspectRatio => _isRoomCover ? 21 / 9 : _profileRules!.aspectRatio;
   int get _outputWidth => _isRoomCover ? 1600 : _profileRules!.maxOutputEdge;
@@ -74,7 +76,15 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
       'Avatar crop preview',
       'Podgląd kadru awatara',
     ),
-    _ => _copy.text('Banner crop preview', 'Podgląd kadru banera'),
+    // The visual guide inside the frame cannot be seen by a screen-reader
+    // user, and the footer has no vertical budget left at 200% text on a
+    // phone, so the band is explained here instead.
+    _ => _copy.text(
+      'Banner crop preview. Your profile always shows the marked strip; '
+          'keep faces and text inside it.',
+      'Podgląd kadru banera. W profilu zawsze widać zaznaczony pas; '
+          'twarze i tekst umieść właśnie w nim.',
+    ),
   };
   double get _imageWidth => widget.image.width.toDouble();
   double get _imageHeight => widget.image.height.toDouble();
@@ -485,6 +495,14 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                                   const IgnorePointer(
                                     child: _RoomCoverSafeAreaOverlay(),
                                   ),
+                                // The profile header shows a fixed-height
+                                // band, not this 16:9 frame, so the crop is
+                                // only WYSIWYG once the surviving strip is
+                                // drawn on top of it.
+                                if (_isBanner)
+                                  const IgnorePointer(
+                                    child: _BannerSafeBandOverlay(),
+                                  ),
                               ],
                             ),
                           ),
@@ -742,6 +760,117 @@ class _RoomCoverSafeAreaOverlay extends StatelessWidget {
                         ),
                       ),
                     ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The stored banner is 16:9, but the profile header paints it into a fixed
+/// band at content width — roughly 3.4:1 on a phone and ~7.6:1 at the feed's
+/// 1040pt cap — with `BoxFit.cover` and `Alignment.center`. Only the centre
+/// strip therefore survives every width, and without this guide the user
+/// composes a 16:9 picture whose top and bottom are silently discarded.
+///
+/// The frame still stores the full 16:9 on purpose: it is the superset, so a
+/// later band change needs no re-upload.
+class _BannerSafeBandOverlay extends StatelessWidget {
+  const _BannerSafeBandOverlay();
+
+  /// What `ProfileHeader` keeps at its widest — derived there, never a second
+  /// hand-copied number here.
+  static final double _bandFraction = ProfileHeader.bannerSafeBandFraction;
+
+  static const double _labelSize = 7.5;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final dimFactor = (1 - _bandFraction) / 2;
+    Widget dim(Alignment alignment) => Align(
+      alignment: alignment,
+      child: FractionallySizedBox(
+        widthFactor: 1,
+        heightFactor: dimFactor,
+        child: const ColoredBox(color: Color(0x520D0618)),
+      ),
+    );
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        dim(Alignment.topCenter),
+        dim(Alignment.bottomCenter),
+        Center(
+          child: FractionallySizedBox(
+            key: const ValueKey('banner-safe-band'),
+            widthFactor: 1,
+            heightFactor: _bandFraction,
+            child: DecoratedBox(
+              decoration: const BoxDecoration(
+                border: Border.symmetric(
+                  horizontal: BorderSide(color: Color(0xFF0D0618), width: 5),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(
+                    border: Border.symmetric(
+                      horizontal: BorderSide(color: Colors.white, width: 2),
+                    ),
+                  ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      // The band is a fraction of the frame, so on a narrow
+                      // phone at large text sizes it is shorter than its own
+                      // label. A clipped pill is worse than none: the dimmed
+                      // band and the preview's semantics still carry the
+                      // meaning, so the label simply steps aside.
+                      final pillHeight =
+                          MediaQuery.textScalerOf(context).scale(_labelSize) *
+                              1.4 +
+                          6;
+                      if (constraints.maxHeight < pillHeight + 4) {
+                        return const SizedBox.expand();
+                      }
+                      // Left, not centred: the middle of the band is where
+                      // the subject usually is.
+                      return Align(
+                        alignment: Alignment.centerLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: DecoratedBox(
+                            decoration: const BoxDecoration(
+                              color: Color(0xD90D0618),
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(999),
+                              ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              child: Text(
+                                copy.text('ALWAYS VISIBLE', 'ZAWSZE WIDOCZNE'),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: _labelSize,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: .35,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),

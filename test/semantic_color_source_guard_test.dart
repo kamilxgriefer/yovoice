@@ -39,6 +39,10 @@ const _excludedFiles = <String>{
   'lib/features/auth/presentation/widgets/startup_loading_screen.dart',
   'lib/features/moments/presentation/screens/record_voice_moment_screen.dart',
   'lib/features/moments/presentation/widgets/moment_story_viewer.dart',
+  // Fullscreen profile photo/banner viewer: the banner fallback paints the
+  // fixed dark `kProfileBannerFallbackGradient` in both appearances, so its
+  // copy is drawn with the immersive tokens (documented in the widget).
+  'lib/shared/widgets/profile/profile_photo_viewer.dart',
   'lib/features/profile/presentation/screens/image_crop_screen.dart',
   'lib/features/rooms/presentation/screens/broadcast_room_screen.dart',
   'lib/features/rooms/presentation/screens/community_voice_room_screen.dart',

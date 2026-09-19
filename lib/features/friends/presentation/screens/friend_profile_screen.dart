@@ -26,6 +26,7 @@ import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
@@ -373,6 +374,8 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                           padding: const EdgeInsets.fromLTRB(20, 18, 20, 40),
                           sliver: SliverList.list(
                             children: [
+                              _banner(profile),
+                              const SizedBox(height: 14),
                               _avatar(profile),
                               const SizedBox(height: 16),
                               Text(
@@ -551,6 +554,45 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     );
   }
 
+  /// The friend's banner ("zdjęcie w tle"). Own Profile has always drawn one
+  /// and a friend's profile drew none, so the same identity read differently
+  /// depending on whose profile you opened. The band is sized by available
+  /// width, never by a device label.
+  Widget _banner(UserProfile? profile) {
+    final name = profile?.displayName ?? widget.friend.displayName;
+    final revision =
+        profile?.profileUpdatedAt ?? widget.friend.profileUpdatedAt;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Breakpoint on the band's own measure, not the window. This feed is
+        // capped at ResponsiveContentWidth.list (880) and pays a 20px gutter
+        // on each side, so the widest band the screen can ever hand this
+        // builder is 840: a 900 threshold is unreachable here and the banner
+        // would stay phone-sized on tablets and desktop alike. 700 is the
+        // first step above a 768pt tablet's 728px band.
+        final height = constraints.maxWidth >= 700 ? 168.0 : 116.0;
+        return ProfileBannerButton(
+          userId: widget.friend.id,
+          displayName: name,
+          mediaRevision: revision,
+          mediaService: _profileMediaService,
+          child: SizedBox(
+            width: double.infinity,
+            height: height,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: ProfileBanner(
+                userId: widget.friend.id,
+                mediaRevision: revision,
+                mediaService: _profileMediaService,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _avatar(UserProfile? profile) {
     final name = profile?.displayName ?? widget.friend.displayName;
     final revision =
@@ -641,7 +683,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       child: Text(
         switch (status) {
           PeopleStatus.online => copy.text('Online now', 'Teraz online'),
-          PeopleStatus.away => copy.text('Offline', 'Offline'),
+          // Every other state, including away, uses the one shared mapping so
+          // this card can never disagree with the Home rail or the preview
+          // sheet — and can never show untranslated English in a Polish UI.
           _ => status.localizedLabel(copy),
         },
         style: TextStyle(
