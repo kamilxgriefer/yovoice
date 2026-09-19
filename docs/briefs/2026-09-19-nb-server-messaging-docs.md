@@ -380,3 +380,33 @@ manifest or of `tool/servers_activation_package.js`'s phase plan.
   platform-split and could be reused later.
 - A signed grant lasts 90 s, so a video that buffers slowly may need a retry;
   the poster re-requests a fresh grant on every play.
+
+## 10. Final gate evidence (2026-09-20, this worktree)
+
+- `flutter analyze`: **No issues found!**
+- Flutter: the **32** suites that import a changed Dart file, **464/464**,
+  no assertion edited; of those, 25 cases are new
+  (`server_message_reactions_test.dart` 9, `server_composer_emoji_test.dart` 5,
+  `server_channel_media_test.dart` 11).
+- Rules emulator: `test:server-message-media` **9/9** (new),
+  `test:storage` **76/0**, `test` (firestore) **577/0**,
+  `test:servers` **68/3 — the same 3 with and without this branch**.
+- Functions emulator: `npm --prefix functions test` does not fit the shared
+  emulator wrapper's 8-minute cap on this machine (two agents share the
+  ports), so the same 171 files were run through the wrapper in six slices:
+  `[a-c]` 422, `[d-m]` 547, `[n-p]+u+v` 238, `r` 401,
+  `server_*`+`servers_[a-i]`+`stripe` 312, `servers_[j-r]` 296,
+  `servers_[s-z]` 107 — **2323 tests, 2316 pass, 7 fail**, every failure a
+  Windows-platform artifact in a file this branch does not touch:
+  - 4 × "the cold-start Servers module set / base map is statically
+    discoverable / registrationCached" — the inspectors build
+    `process.cwd() + '/servers/'` and compare it with `require.cache` keys,
+    which use `\` on Windows. Verified identical at base f71a2ae2, and the
+    module set matches the pinned list **39/39** once separators are
+    normalized (the numeric 61/55/54 assertions in the same tests pass).
+  - 3 × POSIX file-mode assertions (`mode & 0o777 == 0o600 / 0o700`) in
+    `direct_conversation_photo_poison_repair` and the two
+    `servers_migration_collector` CLI tests; Windows reports `0o666`/`0o777`.
+- `npm --prefix functions run test:smoke`: **exit 0** (all three binding
+  smokes).
+- `git status`: clean; nothing pushed, nothing tagged.
