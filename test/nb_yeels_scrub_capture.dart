@@ -32,6 +32,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
@@ -297,20 +298,25 @@ void main() {
         ]).single;
         await tester.pumpWidget(
           _host(
-            MomentStoryViewer(
-              chain: chain,
-              feedService: HomeFeedService(
-                firestore: FakeFirebaseFirestore(),
-                auth: auth,
+            // As showMomentStoryViewer hosts it: the immersive surface in
+            // either app theme.
+            ColoredBox(
+              color: AppImmersiveColors.background,
+              child: MomentStoryViewer(
+                chain: chain,
+                feedService: HomeFeedService(
+                  firestore: FakeFirebaseFirestore(),
+                  auth: auth,
+                ),
+                momentService: MomentService(
+                  firestore: FakeFirebaseFirestore(),
+                  auth: auth,
+                  storage: MockFirebaseStorage(),
+                  mediaAccessInvoker: fakeMomentMediaAccessInvoker(),
+                ),
+                playerFactory: () => player,
+                autoPlay: false,
               ),
-              momentService: MomentService(
-                firestore: FakeFirebaseFirestore(),
-                auth: auth,
-                storage: MockFirebaseStorage(),
-                mediaAccessInvoker: fakeMomentMediaAccessInvoker(),
-              ),
-              playerFactory: () => player,
-              autoPlay: false,
             ),
             pearl: pearl,
             size: size,

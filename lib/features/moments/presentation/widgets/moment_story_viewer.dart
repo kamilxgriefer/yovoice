@@ -216,6 +216,19 @@ class _MomentStoryViewerState extends State<MomentStoryViewer>
   Duration _position = Duration.zero;
   Duration? _duration;
   String? _playbackError;
+
+  /// Finger-seek state (ADR-210): the latest target not yet sent, whether a
+  /// seek is in flight, and whether a finger holds the waveform. While either
+  /// of the last two is true, engine position events are stale and ignored,
+  /// so the waveform stays under the finger.
+  Duration? _seekPending;
+  bool _seekRunning = false;
+  bool _scrubHeld = false;
+
+  /// The last stretch a finger-seek may land on. Seeking to the very end can
+  /// raise completion on native backends and auto-advance the chain under a
+  /// finger that is still down — the same guard as the Yeel coordinator's.
+  static const Duration _scrubEndGuard = Duration(milliseconds: 40);
   bool _deleting = false;
   String? _likePendingMomentId;
   final FocusNode _storyFocus = FocusNode(debugLabel: 'Voice Moment story');
@@ -376,6 +389,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer>
       ..add(
         player.onPositionChanged.listen((position) {
           if (!mounted) return;
+          if ((_scrubHeld && _canSeek) || _seekRunning) return;
           setState(() {
             _position = position;
             _playbackError = null;
@@ -622,21 +636,49 @@ class _MomentStoryViewerState extends State<MomentStoryViewer>
         _playbackError == null;
   }
 
-  Future<void> _seek(Duration target) async {
-    final player = _player;
+  /// Moves the waveform to [target] at once and sends the seek coalesced:
+  /// at most one seek in flight, and only the latest target follows it.
+  void _seek(Duration target) {
     final duration = _duration;
-    if (player == null || duration == null) return;
+    if (_player == null || duration == null) return;
+    final last = duration - _scrubEndGuard;
+    final ceiling = last > Duration.zero ? last : Duration.zero;
     final clamped = target < Duration.zero
         ? Duration.zero
-        : target > duration
-        ? duration
+        : target > ceiling
+        ? ceiling
         : target;
     setState(() => _position = clamped);
+    _seekPending = clamped;
+    if (!_seekRunning) unawaited(_pumpSeeks());
+  }
+
+  Future<void> _pumpSeeks() async {
+    _seekRunning = true;
     try {
-      await player.seek(clamped);
-    } catch (_) {
-      // The next position event puts the waveform back where the player is.
+      while (_seekPending != null) {
+        final target = _seekPending!;
+        _seekPending = null;
+        final player = _player;
+        if (player == null || !mounted) break;
+        try {
+          await player.seek(target);
+        } catch (_) {
+          // The next position event puts the waveform back where the
+          // player is.
+        }
+      }
+    } finally {
+      _seekRunning = false;
+      _seekPending = null;
     }
+  }
+
+  void _onScrubStart() => _scrubHeld = true;
+
+  void _onScrubEnd(Duration target) {
+    _scrubHeld = false;
+    if (_canSeek) _seek(target);
   }
 
   Future<void> _goTo(int index, {required bool play}) async {
@@ -656,6 +698,8 @@ class _MomentStoryViewerState extends State<MomentStoryViewer>
       _position = Duration.zero;
       _duration = null;
       _playbackError = null;
+      _seekPending = null;
+      _scrubHeld = false;
     });
     _refreshCurrentMomentSnapshot(force: true);
     if (play) await _play(_current);
@@ -953,7 +997,9 @@ class _MomentStoryViewerState extends State<MomentStoryViewer>
                 duration: _duration,
                 playbackError: _playbackError,
                 onToggle: () => unawaited(_togglePlay()),
-                onSeek: _canSeek ? (target) => unawaited(_seek(target)) : null,
+                onSeek: _canSeek ? _seek : null,
+                onSeekStart: _onScrubStart,
+                onSeekEnd: _onScrubEnd,
                 onPreviousZone: _index > 0
                     ? () => unawaited(_goTo(_index - 1, play: widget.autoPlay))
                     : null,
@@ -1176,6 +1222,8 @@ class _StoryStage extends StatelessWidget {
     required this.onPreviousZone,
     required this.onNextZone,
     this.onSeek,
+    this.onSeekStart,
+    this.onSeekEnd,
   });
 
   final VoiceMoment moment;
@@ -1187,6 +1235,11 @@ class _StoryStage extends StatelessWidget {
 
   /// Null while the Moment cannot be moved along (nothing loaded yet).
   final ValueChanged<Duration>? onSeek;
+
+  /// A finger took and released the waveform; the release commits the
+  /// final target.
+  final VoidCallback? onSeekStart;
+  final ValueChanged<Duration>? onSeekEnd;
   final VoidCallback? onPreviousZone;
   final VoidCallback? onNextZone;
 
@@ -1230,6 +1283,8 @@ class _StoryStage extends StatelessWidget {
                       ? (duration?.inMilliseconds ?? totalSeconds * 1000)
                       : 0,
                   onSeek: onSeek,
+                  onSeekStart: onSeekStart,
+                  onSeekEnd: onSeekEnd,
                 ),
               ),
             ],
@@ -1330,11 +1385,15 @@ class _StoryScrubSlider extends StatelessWidget {
     required this.position,
     required this.totalMs,
     required this.onSeek,
+    this.onSeekStart,
+    this.onSeekEnd,
   });
 
   final Duration position;
   final int totalMs;
   final ValueChanged<Duration>? onSeek;
+  final VoidCallback? onSeekStart;
+  final ValueChanged<Duration>? onSeekEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -1375,6 +1434,13 @@ class _StoryScrubSlider extends StatelessWidget {
             onChanged: seek == null || totalMs <= 0
                 ? null
                 : (next) => seek(Duration(milliseconds: next.round())),
+            onChangeStart: seek == null || totalMs <= 0
+                ? null
+                : (_) => onSeekStart?.call(),
+            onChangeEnd: onSeekEnd == null
+                ? null
+                : (next) =>
+                      onSeekEnd?.call(Duration(milliseconds: next.round())),
             semanticFormatterCallback: (next) => copy.template(
               '{position} of {total}',
               '{position} z {total}',

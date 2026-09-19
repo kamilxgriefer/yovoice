@@ -2957,6 +2957,10 @@ class _OverlayFooter extends StatelessWidget {
               total: timeline,
               trackKey: trackKey,
               respectSystemGestureInsets: true,
+              // The rail and identity sit at bottom 12, the horizontal
+              // action row at bottom 8: clicks and the spoken slider keep to
+              // the strip under all of them.
+              controlClearance: AppRhythm.tight,
             ),
           ),
         ],
@@ -2965,9 +2969,10 @@ class _OverlayFooter extends StatelessWidget {
   }
 }
 
-/// Height of the drag band over the phone stage's hairline. It stays inside
-/// the footer scrim (at least 48 px), so the clear-media band is unchanged.
-const double _immersiveScrubBandHeight = 40;
+/// Height of the drag band over the phone stage's hairline: a full 48 px
+/// touch target, as on the card stage. It stays inside the footer scrim (at
+/// least 48 px), so the clear-media band is unchanged.
+const double _immersiveScrubBandHeight = 48;
 
 /// Height of the drag band on the card stage: the frame's 16 px bottom
 /// padding, the 2 px bar and 30 px above it.

@@ -13981,10 +13981,16 @@ vertical feed pager. The investigation and decisions are in
    `dispose` cancel the scrub without resuming. A photo Yeel scrubbed before
    its lazy audio load keeps the offset and applies it right after the load.
 3. **The band is an overlay, translucent and drag-only.**
-   `ReelProgressScrubber` is the last child of the phone footer Stack (40 px)
-   and of the card stage's frame controls (48 px). Its only recognizers are a
+   `ReelProgressScrubber` is the last child of the phone footer Stack (48 px,
+   a full touch target; 40 px before the review round) and of the card
+   stage's frame controls (48 px). Its only recognizers are a
    `HorizontalDragGestureRecognizer` (`DragStartBehavior.down`) and a
-   `TapGestureRecognizer` limited to mouse and trackpad. Touch taps fall
+   tap recognizer limited to mouse and trackpad. On the phone stage the rail
+   and identity block (bottom 12) and the horizontal action row (bottom 8)
+   overlap the band, and a band tap recognizer would win the arena sweep
+   against them, so there the click — and the spoken slider node — keep to
+   the bottom 8 px strip under every control (`controlClearance`); a pointer
+   above it never joins the arena. Touch taps fall
    through to the rail, the identity block, tap-to-pause and
    double-tap-to-like; a vertical swipe still turns the page. It uses no
    `FocusableActionDetector` (its `MouseRegion` is opaque and would swallow
@@ -14010,7 +14016,12 @@ vertical feed pager. The investigation and decisions are in
    stay with `ReelPlaybackSurface`.
 6. **Voice:** the full-screen story player's stage waveform gets the feed
    row's transparent `Slider` pattern (drag, tap, screen-reader adjust),
-   enabled only after the player reported a duration. The segmented bars stay
+   enabled only after the player reported a duration. Its seeks follow the
+   same rules as the coordinator's: clamped 40 ms short of the end (a seek to
+   the end can raise completion and auto-advance the chain under the
+   finger), coalesced to one seek in flight with the newest target winning,
+   committed on `onChangeEnd`, and engine position events are ignored while
+   the finger is down or a seek is in flight. The segmented bars stay
    previous/next chain navigation and the story's arrow keys still walk the
    chain. Yeels and Voice do not share one widget: same need, different
    control shape.

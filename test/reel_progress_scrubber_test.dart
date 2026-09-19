@@ -399,6 +399,70 @@ void main() {
       expect(video.playing, isFalse);
     });
 
+    testWidgets('a mouse click on a control over the band fires it; only the '
+        'strip under every control seeks', (tester) async {
+      final players = FakeReelPlayers();
+      await pumpReelStage(
+        tester,
+        players: players,
+        size: const Size(390, 844),
+        immersive: true,
+      );
+      final video = players.of('reel_1');
+      final band = tester.getRect(inCard(find.byKey(bandKey)));
+      final more = tester.getRect(
+        inCard(find.byKey(const ValueKey('reel-more-action'))),
+      );
+      final bar = tester.getRect(inCard(find.byKey(reelProgressBarKey)));
+      expect(band.height, greaterThanOrEqualTo(44));
+      // The control really does sit inside the band.
+      expect(more.bottom, greaterThan(band.top));
+      final seeksBefore = video.seekPositions.length;
+
+      await tester.tapAt(
+        Offset(more.center.dx, more.bottom - 4),
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump(kDoubleTapTimeout);
+      await tester.pumpAndSettle();
+      expect(video.seekPositions.length, seeksBefore);
+      expect(find.text('Report Yeel'), findsOneWidget);
+      Navigator.of(tester.element(find.text('Report Yeel'))).pop();
+      await tester.pumpAndSettle();
+
+      // Under every control, a click still moves the timeline.
+      await tester.tapAt(
+        Offset(bar.left + bar.width * .25, band.bottom - 3),
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump(kDoubleTapTimeout);
+      await tester.pumpAndSettle();
+      expect(video.seekPositions.length, seeksBefore + 1);
+    });
+
+    testWidgets('the spoken slider keeps to the strip under the controls', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      final players = FakeReelPlayers();
+      await pumpReelStage(
+        tester,
+        players: players,
+        size: const Size(390, 844),
+        immersive: true,
+      );
+      final band = tester.getRect(inCard(find.byKey(bandKey)));
+      final more = tester.getRect(
+        inCard(find.byKey(const ValueKey('reel-more-action'))),
+      );
+      final slider = tester.getRect(
+        find.bySemanticsLabel(RegExp('Playback position')).first,
+      );
+      expect(slider.bottom, band.bottom);
+      expect(slider.top, greaterThanOrEqualTo(more.bottom));
+      semantics.dispose();
+    });
+
     testWidgets('the chrome fades under the finger, not under Reduce Motion', (
       tester,
     ) async {

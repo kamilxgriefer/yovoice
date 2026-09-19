@@ -250,8 +250,17 @@ class ReelProgressScrubber extends StatefulWidget {
     this.onMedia = true,
     this.respectSystemGestureInsets = false,
     this.showTimeLabel = true,
+    this.controlClearance,
     super.key,
   });
+
+  /// Where other controls overlap the band (the phone stage's action rail and
+  /// identity block), only its bottom [controlClearance] px — the strip under
+  /// the lowest control — take a mouse or trackpad click and carry the
+  /// spoken slider. A click higher up belongs to the control it lands on.
+  /// Null: the whole band does both. A drag may start anywhere in the band
+  /// either way: a tap never becomes a drag.
+  final double? controlClearance;
 
   /// False where the stage already prints the times beside the bar: the
   /// floating label would repeat them.
@@ -365,6 +374,16 @@ class _ReelProgressScrubberState extends State<ReelProgressScrubber> {
     if (mounted) setState(() {});
   }
 
+  /// Whether a click at [global] lies in the band's click zone.
+  bool _inClickZone(Offset global) {
+    final clearance = widget.controlClearance;
+    if (clearance == null) return true;
+    final band = _box(_bandKey.currentContext);
+    if (band == null) return false;
+    final local = band.globalToLocal(global);
+    return local.dy >= band.size.height - clearance;
+  }
+
   void _onClick(TapUpDetails details) {
     if (!widget.target.canSeek) return;
     final fraction = _fractionAt(details.globalPosition);
@@ -430,9 +449,10 @@ class _ReelProgressScrubberState extends State<ReelProgressScrubber> {
                     ..onEnd = _onEnd
                     ..onCancel = _release;
                 }),
-            TapGestureRecognizer:
-                GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
-                  () => TapGestureRecognizer(
+            _ZoneTapGestureRecognizer:
+                GestureRecognizerFactoryWithHandlers<_ZoneTapGestureRecognizer>(
+                  () => _ZoneTapGestureRecognizer(
+                    allows: _inClickZone,
                     debugOwner: this,
                     supportedDevices: const <PointerDeviceKind>{
                       PointerDeviceKind.mouse,
@@ -483,13 +503,35 @@ class _ReelProgressScrubberState extends State<ReelProgressScrubber> {
           padding: EdgeInsets.only(left: insets.left, right: insets.right),
           child: band,
         );
-        return _ScrubSemantics(
+        Widget spoken(Widget child) => _ScrubSemantics(
           enabled: canSeek,
           position: widget.position,
           total: widget.total,
           onIncrease: () => _step(true),
           onDecrease: () => _step(false),
-          child: band,
+          child: child,
+        );
+        final clearance = widget.controlClearance;
+        if (clearance == null) return spoken(band);
+        // The slider node covers only the clear strip, so explore-by-touch
+        // on a control above it still lands on that control.
+        return Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            ExcludeSemantics(child: band),
+            Positioned(
+              left: insets.left,
+              right: insets.right,
+              bottom: 0,
+              height: clearance,
+              // An empty box never hit-tests: pointers reach the band.
+              child: spoken(
+                const SizedBox.expand(
+                  key: ValueKey<String>('reel-progress-scrub-spoken'),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -763,4 +805,21 @@ class _ScrubLabelLayout extends SingleChildLayoutDelegate {
   @override
   bool shouldRelayout(_ScrubLabelLayout oldDelegate) =>
       anchorX != oldDelegate.anchorX || bottomGap != oldDelegate.bottomGap;
+}
+
+/// A mouse or trackpad click limited to a zone of the band; a pointer outside
+/// it never joins the arena, so it cannot win a sweep against the control it
+/// landed on.
+class _ZoneTapGestureRecognizer extends TapGestureRecognizer {
+  _ZoneTapGestureRecognizer({
+    required this.allows,
+    super.debugOwner,
+    super.supportedDevices,
+  });
+
+  final bool Function(Offset global) allows;
+
+  @override
+  bool isPointerAllowed(PointerDownEvent event) =>
+      super.isPointerAllowed(event) && allows(event.position);
 }
