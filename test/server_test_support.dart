@@ -1271,6 +1271,45 @@ class TestServerRepository
     'sessionId': sessionId,
     'requestId': requestId,
   }, () {});
+
+  /// Every `releaseServerChannelSessionIfEmptyV1` payload, in order. Kept
+  /// apart from [calls]: it is the backstop signal leaving sends by itself,
+  /// never something a person's press asked for, so a test of what a press
+  /// asked for is not rewritten by it.
+  final releases = <Map<String, Object?>>[];
+
+  /// The receipt the next releases answer with. `occupied` by default, which
+  /// schedules nothing.
+  String releaseOutcome = 'occupied';
+  Duration releaseRecheckAfter = Duration.zero;
+
+  /// Thrown by the next release, once.
+  Object? failNextRelease;
+
+  @override
+  Future<ServerSessionReleaseResult> releaseChannelSessionIfEmpty({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String requestId,
+  }) async {
+    releases.add({
+      'serverId': serverId,
+      'channelId': channelId,
+      'sessionId': sessionId,
+      'requestId': requestId,
+    });
+    final failure = failNextRelease;
+    if (failure != null) {
+      failNextRelease = null;
+      throw failure;
+    }
+    return ServerSessionReleaseResult(
+      sessionId: sessionId,
+      outcome: releaseOutcome,
+      recheckAfter: releaseRecheckAfter,
+    );
+  }
 }
 
 /// A provider link that never touches native audio. Tests move it through

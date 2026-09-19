@@ -154,6 +154,58 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a channel whose server-owned projection flips idle loses its '
+      'card at once and the rest stay newest first', (tester) async {
+    final repository = _Channels();
+    await _pump(
+      tester,
+      servers: [_server('a'), _server('b')],
+      repository: repository,
+      width: 1200,
+    );
+    repository.controllers['a']!.add([
+      _channel('a', 'stage', liveSince: DateTime(2026, 9, 19, 19, 50)),
+      _channel(
+        'a',
+        'voice',
+        kind: ServerChannelKind.voice,
+        liveSince: DateTime(2026, 9, 19, 19, 10),
+      ),
+    ]);
+    repository.controllers['b']!.add([
+      _channel('b', 'stage', liveSince: DateTime(2026, 9, 19, 19, 30)),
+    ]);
+    await _settle(tester);
+    double left(String key) => tester.getTopLeft(find.byKey(ValueKey(key))).dx;
+    expect(left('home-live-a-stage'), lessThan(left('home-live-b-stage')));
+    expect(left('home-live-b-stage'), lessThan(left('home-live-a-voice')));
+
+    // The last person left: the backend retired the projection. The same
+    // stream now says idle for that one channel.
+    repository.controllers['a']!.add([
+      _channel('a', 'stage'),
+      _channel(
+        'a',
+        'voice',
+        kind: ServerChannelKind.voice,
+        liveSince: DateTime(2026, 9, 19, 19, 10),
+      ),
+    ]);
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('home-live-a-stage')), findsNothing);
+    expect(left('home-live-b-stage'), lessThan(left('home-live-a-voice')));
+
+    repository.controllers['a']!.add([
+      _channel('a', 'stage'),
+      _channel('a', 'voice', kind: ServerChannelKind.voice),
+    ]);
+    repository.controllers['b']!.add([_channel('b', 'stage')]);
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('home-live-now')), findsNothing);
+    expect(tester.getSize(find.byType(HomeLiveNowSection)).height, 0);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('listeners are bounded, keyed and never re-subscribed by a '
       'rebuild; a failing server just contributes nothing', (tester) async {
     final repository = _Channels()..failing.add('b');
