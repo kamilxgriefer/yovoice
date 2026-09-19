@@ -528,10 +528,14 @@ class _UnstableLocalizationCall {
 
 Iterable<File> _dartFiles() sync* {
   for (final root in _localizedPresentationRoots()) {
+    // listSync joins entries below the root with the platform separator. The
+    // budgets above and the lib/app/ prefix are POSIX keys, so without this
+    // every file on Windows reads as a new, unbudgeted surface.
     yield* root
         .listSync(recursive: true)
         .whereType<File>()
-        .where((file) => file.path.endsWith('.dart'));
+        .where((file) => file.path.endsWith('.dart'))
+        .map((file) => File(file.path.replaceAll(r'\', '/')));
   }
 }
 

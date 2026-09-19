@@ -310,10 +310,14 @@ Iterable<File> _normalFiles() sync* {
     if (type != FileSystemEntityType.directory) continue;
     for (final entity in Directory(rootPath).listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
-      if (_excludedFiles.contains(entity.path) || !emitted.add(entity.path)) {
+      // listSync joins entries below rootPath with the platform separator,
+      // while _excludedFiles holds POSIX paths. Normalise, or on Windows no
+      // documented immersive atom matches its exclusion.
+      final path = entity.path.replaceAll(r'\', '/');
+      if (_excludedFiles.contains(path) || !emitted.add(path)) {
         continue;
       }
-      yield entity;
+      yield File(path);
     }
   }
 }

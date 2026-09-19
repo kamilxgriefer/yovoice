@@ -126,7 +126,11 @@ void main() {
         final mainActivities = kotlinRoot
             .listSync(recursive: true)
             .whereType<File>()
-            .where((file) => file.path.endsWith('/MainActivity.kt'))
+            // listSync uses the platform separator below the root.
+            .where(
+              (file) =>
+                  file.path.replaceAll(r'\', '/').endsWith('/MainActivity.kt'),
+            )
             .toList(growable: false);
         expect(
           mainActivities,

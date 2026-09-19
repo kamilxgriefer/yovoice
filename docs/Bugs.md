@@ -142,6 +142,43 @@ redeploy of at least those three exports, and both must happen before anyone
 writes `appConfig/accountDeletion.enabled = true`
 ([DEPLOYMENT.md](DEPLOYMENT.md), enablement step 4). Nothing is at risk while
 the kill switch is off, because no deletion can run at all.
+## FIXED — four source-guard tests failed on every Windows checkout (2026-09-19)
+
+Found while setting the project up on a Windows workstation; macOS and CI
+(Linux) never saw it. `flutter test` reported 4 failures there that had nothing
+to do with the product:
+
+- `localization_source_guard_test.dart` — *literal catalog keys without
+  interpolation*: every budgeted file reported as new, e.g.
+  `lib/features\clubs/presentation\screens\clubs_screen.dart: 5, // allowed: 0`.
+- `semantic_color_source_guard_test.dart` — *do not import the immersive
+  palette* and *reject copied semantic and immersive surface values*: every
+  documented immersive atom (`auth_gate.dart`, `image_crop_screen.dart`, the
+  room mini-player, …) reported as a violation.
+- `voice_session_keep_alive_test.dart` — *manifest components resolve to the
+  one active application package*: found zero `MainActivity.kt` files.
+
+- **Root cause.** `Directory.listSync` joins the entries below its root with
+  the platform separator, so on Windows it yields
+  `lib/features/moments/presentation\screens\record_voice_moment_screen.dart`.
+  The guards compared those paths against POSIX keys (the localization
+  budgets, `_excludedFiles`, the `lib/app/` prefix, `/MainActivity.kt`), so no
+  key ever matched.
+- **Fix (tests only).** Each enumeration normalises `\` to `/` where it lists
+  files, the same pattern `sign_out_cleanup_test.dart` already uses. On Windows
+  all 20 cases in the three files pass. A mutation probe still bites: a
+  throwaway `lib/features/home/presentation/*.dart` importing
+  `app_immersive_colors.dart` fails the import guard and is reported with a
+  `/` path.
+- **Related environment trap, not a code change.** The same Windows run
+  failed two more tests (`ios_export_compliance_test.dart`,
+  `localization_platform_configuration_test.dart`) because Git for Windows
+  defaults to `core.autocrlf=true`. With that setting the checkout gets CRLF,
+  and tests that match multi-line source fragments containing `\n` fail. On a
+  Windows clone, set `git config --global core.autocrlf false` before cloning,
+  or re-checkout afterwards. The repository has no `.gitattributes`, so it
+  does not enforce LF itself.
+
 ## FIXED — people you never wrote to hoisted to the top of Chats (2026-09-18)
 
 Tester report via the owner, verbatim: "pokazuje się historia na samej górze
