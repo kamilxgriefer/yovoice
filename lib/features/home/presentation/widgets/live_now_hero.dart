@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -107,24 +108,9 @@ class _FeaturedRoom extends StatelessWidget {
                   ),
                 ),
                 const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.live,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    copy.text('LIVE', 'NA ŻYWO'),
-                    style: const TextStyle(
-                      color: AppColors.onLive,
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: .4,
-                    ),
-                  ),
+                YoBadge(
+                  label: copy.text('LIVE', 'NA ŻYWO'),
+                  variant: YoBadgeVariant.live,
                 ),
               ],
             ),

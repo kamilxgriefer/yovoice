@@ -16,6 +16,7 @@ import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class DiscoverScreen extends StatefulWidget {
@@ -1129,7 +1130,10 @@ class _FeaturedRoomCard extends StatelessWidget {
                               : Icons.groups_rounded,
                         ),
                         const Spacer(),
-                        const _SmallLiveBadge(),
+                        YoBadge(
+                          label: copy.text('LIVE', 'NA ŻYWO'),
+                          variant: YoBadgeVariant.live,
+                        ),
                       ],
                     ),
                     const SizedBox(height: 15),
@@ -1454,7 +1458,10 @@ class _PremiumRoomDetails extends StatelessWidget {
     );
     final statusBadges = <Widget>[
       _TypeBadge(label: roomTypeLabel, icon: roomIcon, accent: accent),
-      const _SmallLiveBadge(),
+      YoBadge(
+        label: copy.text('LIVE', 'NA ŻYWO'),
+        variant: YoBadgeVariant.live,
+      ),
     ];
 
     return Column(
@@ -1707,41 +1714,6 @@ class _HostAvatar extends StatelessWidget {
         userId: hostId,
         displayName: hostName,
         backgroundColor: visuals.surface,
-      ),
-    );
-  }
-}
-
-class _SmallLiveBadge extends StatelessWidget {
-  const _SmallLiveBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFF48162A),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: const Color(0xFFFF416C).withValues(alpha: 0.65),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.circle, color: Color(0xFFFF416C), size: 7),
-          const SizedBox(width: 5),
-          Text(
-            copy.text('LIVE', 'NA ŻYWO'),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 8,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.7,
-            ),
-          ),
-        ],
       ),
     );
   }

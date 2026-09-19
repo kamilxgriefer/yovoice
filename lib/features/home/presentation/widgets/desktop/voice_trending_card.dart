@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
@@ -525,7 +526,11 @@ class _RoomRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            const _LivePill(),
+            // Mixed case on purpose: this row's label is pinned as 'Live'.
+            YoBadge(
+              label: AppLocalizations.of(context).text('Live', 'Na żywo'),
+              variant: YoBadgeVariant.live,
+            ),
             const SizedBox(width: 7),
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -600,39 +605,6 @@ class _RowPlaceholder extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-class _LivePill extends StatelessWidget {
-  const _LivePill();
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(999),
-        color: colors.errorContainer,
-        border: Border.all(color: colors.error.withValues(alpha: .7)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.circle, size: 6, color: colors.error),
-          const SizedBox(width: 5),
-          Text(
-            copy.text('Live', 'Na żywo'),
-            style: TextStyle(
-              color: colors.onErrorContainer,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

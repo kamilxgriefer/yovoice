@@ -285,6 +285,37 @@ with the lazy conversation list on short screens; enlarged-text conversation
 names receive their own full-width row. Decorative live-room pulses stop for
 Reduced Motion, accessible navigation and offstage content.
 
+## Shared primitives (Slim redesign, phase 0)
+
+One state = one primitive. A state that already has a canonical widget is
+extended in place; a second drawing of the same state is a bug, not a variant.
+The table lives in ADR-209 (`Decisions.md#adr-209`); the entries below are the
+rules a screen author needs.
+
+- **NA ŻYWO = `YoBadge(variant: YoBadgeVariant.live)`**
+  (`lib/shared/widgets/badges/yo_badge.dart`). A filled `AppColors.live` pill
+  with `AppColors.onLive` copy, `labelSmall` (10 px) at w800, letter-spacing
+  .8, 8/3 padding, `AppRadius.pill`, no border, and a 6 px dot that pulses
+  (opacity .55 → 1, 1.2 s) only while motion is allowed — under Reduce
+  Motion, accessible navigation or a disabled `TickerMode` the controller is
+  stopped and parked, so no frame is scheduled. Both tokens are
+  brightness-independent, so Dark and Pearl draw the same marker. The label
+  is rendered verbatim, one line, never wrapped, eliding rather than breaking
+  the word; the caller owns the copy (`copy.serverLivePill`,
+  `copy.text('LIVE', 'NA ŻYWO')`, the hero's `'LIVE NOW' / 'TERAZ NA ŻYWO'`)
+  and the `isLive` gate. `icon` is ignored for this variant — the dot is its
+  icon. Marker keys pass through `key:`; the badge adds no key and no
+  semantics of its own, because the word already voices the state. On server
+  surfaces mount `ServerLivePill(label:)`
+  (`servers/presentation/widgets/server_channel_scene.dart`): it is the same
+  badge under the counted `server-live-pill` key that every server test
+  addresses (header pill, stage marker and the channel row's trailing marker
+  share it), and it is never mounted on `CreateServerScreen`
+  (`test/server_creation_gate_test.dart`). Contracts:
+  `test/yo_badge_live_test.dart`, `test/shared_component_accessibility_test.dart`
+  (AA contrast of the paired roles), `test/server_podcast_test.dart`
+  (taller than 26 px at 320 px / 200 %).
+
 ## Semantic colour ownership
 
 `AppColors` owns stable brand and status colours. `AppPalette`, installed as a

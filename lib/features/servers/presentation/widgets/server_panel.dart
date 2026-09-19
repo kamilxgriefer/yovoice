@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
@@ -12,6 +11,7 @@ import '../../data/models/server_member_role.dart';
 import '../../data/models/server_type.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
+import 'server_channel_scene.dart';
 import 'server_type_symbol.dart';
 
 /// The server panel: cover (an identity tile — no artwork writer exists,
@@ -582,44 +582,11 @@ class _ChannelTile extends StatelessWidget {
           // The same key as the header's pill: one finder addresses every
           // live marker in the shell, so "nothing claims liveness" can be
           // asserted once instead of per surface.
-          ? _LiveDot(
-              key: const ValueKey('server-live-pill'),
-              label: copy.serverLivePill,
-            )
+          ? ServerLivePill(label: copy.serverLivePill)
           : null,
       onTap: onTap,
     );
   }
-}
-
-/// The small live marker on a channel row: a dot plus the word, so the
-/// state never depends on colour alone.
-class _LiveDot extends StatelessWidget {
-  const _LiveDot({required this.label, super.key});
-  final String label;
-
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Container(
-        width: 8,
-        height: 8,
-        decoration: const BoxDecoration(
-          shape: BoxShape.circle,
-          color: AppColors.live,
-        ),
-      ),
-      const SizedBox(width: 6),
-      Text(
-        label,
-        style: AppTypography.labelSmall.copyWith(
-          color: context.appPalette.textSecondary,
-          letterSpacing: .8,
-        ),
-      ),
-    ],
-  );
 }
 
 IconData serverChannelIcon(ServerChannelKind kind) => switch (kind) {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
+import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// Which visual family a room belongs to. Users must be able to tell
@@ -136,7 +137,13 @@ class RoomCard extends StatelessWidget {
                         children: [
                           _TypeChip(identity: identity),
                           const Spacer(),
-                          if (room.isLive) const _LivePill(),
+                          if (room.isLive)
+                            YoBadge(
+                              label: AppLocalizations.of(
+                                context,
+                              ).text('LIVE', 'NA ŻYWO'),
+                              variant: YoBadgeVariant.live,
+                            ),
                         ],
                       ),
                       const Spacer(),
@@ -238,31 +245,6 @@ class _TypeChip extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _LivePill extends StatelessWidget {
-  const _LivePill();
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFF416C),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        copy.text('LIVE', 'NA ŻYWO'),
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 9,
-          fontWeight: FontWeight.w900,
-          letterSpacing: .4,
-        ),
       ),
     );
   }

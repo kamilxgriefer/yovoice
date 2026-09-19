@@ -16,6 +16,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/widgets/room_staff_menu.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
+import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/features/discover/presentation/discover_localized_copy.dart';
@@ -909,6 +910,12 @@ class _StatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
+    if (live) {
+      return YoBadge(
+        label: copy.text('LIVE', 'NA ŻYWO'),
+        variant: YoBadgeVariant.live,
+      );
+    }
     // "Not live" rather than "Scheduled": rooms carry no start time in
     // Firestore, so a schedule badge would be claiming something the
     // backend cannot answer.
@@ -916,14 +923,10 @@ class _StatusBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4.5),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(7),
-        color: live
-            ? const Color(0xFFE11D48)
-            : Colors.black.withValues(alpha: .58),
+        color: Colors.black.withValues(alpha: .58),
       ),
       child: Text(
-        live
-            ? copy.text('LIVE', 'NA ŻYWO')
-            : copy.text('NOT LIVE', 'NIE NA ŻYWO'),
+        copy.text('NOT LIVE', 'NIE NA ŻYWO'),
         style: const TextStyle(
           color: Colors.white,
           fontSize: 10,

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
 import 'package:yovoice/features/discover/presentation/discover_category_identity.dart';
 import 'package:yovoice/features/discover/presentation/discover_localized_copy.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -230,7 +231,10 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
                         children: [
                           Row(
                             children: [
-                              _LiveBadge(pulse: pulse),
+                              YoBadge(
+                                label: copy.text('LIVE NOW', 'TERAZ NA ŻYWO'),
+                                variant: YoBadgeVariant.live,
+                              ),
                               const SizedBox(width: 9),
                               Expanded(
                                 child: Text(
@@ -384,46 +388,6 @@ class _HeroLiveRoomState extends State<HeroLiveRoom>
           ),
         );
       },
-    );
-  }
-}
-
-class _LiveBadge extends StatelessWidget {
-  const _LiveBadge({required this.pulse});
-
-  final double pulse;
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: const Color(0xFF4A172B),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(
-          color: const Color(0xFFFF416C).withValues(alpha: 0.7 + pulse * 0.3),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Transform.scale(
-            scale: 0.88 + pulse * 0.22,
-            child: const Icon(Icons.circle, color: Color(0xFFFF416C), size: 9),
-          ),
-          const SizedBox(width: 7),
-          Text(
-            copy.text('LIVE NOW', 'TERAZ NA ŻYWO'),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 9,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.9,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

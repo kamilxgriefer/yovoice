@@ -19,6 +19,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
+import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// Mobile-native presentations of the desktop Home sections.
@@ -634,24 +635,9 @@ class _MobileRoomCard extends StatelessWidget {
                   Positioned(
                     top: 6,
                     left: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(999),
-                        color: Colors.black.withValues(alpha: .55),
-                      ),
-                      child: Text(
-                        copy.text('LIVE', 'NA ŻYWO'),
-                        style: const TextStyle(
-                          color: Color(0xFFFF7A93),
-                          fontSize: 8,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: .5,
-                        ),
-                      ),
+                    child: YoBadge(
+                      label: copy.text('LIVE', 'NA ŻYWO'),
+                      variant: YoBadgeVariant.live,
                     ),
                   ),
                 ],
@@ -755,7 +741,10 @@ class MobileVoiceTrending extends StatelessWidget {
               _MiniRow(
                 title: room.name,
                 subtitle: room.description,
-                trailing: const _MiniLivePill(),
+                trailing: YoBadge(
+                  label: copy.text('LIVE', 'NA ŻYWO'),
+                  variant: YoBadgeVariant.live,
+                ),
                 leading: RoomVisual(room: room, size: 34, radius: 10),
                 onTap: () => onOpenRoom(room),
               ),
@@ -842,31 +831,6 @@ class _MiniNote extends StatelessWidget {
       style: TextStyle(color: context.appPalette.textTertiary, fontSize: 11.5),
     ),
   );
-}
-
-class _MiniLivePill extends StatelessWidget {
-  const _MiniLivePill();
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final copy = AppLocalizations.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(999),
-        color: colors.primaryContainer,
-      ),
-      child: Text(
-        copy.text('Live', 'Na żywo'),
-        style: TextStyle(
-          color: colors.onPrimaryContainer,
-          fontSize: 9,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-    );
-  }
 }
 
 class _MiniRow extends StatelessWidget {

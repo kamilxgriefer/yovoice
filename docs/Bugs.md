@@ -5,6 +5,50 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED IN SOURCE — NA ŻYWO was drawn eleven different ways, one of them purple (2026-09-19, Slim phase 0)
+
+Found by the phase-0 inventory for the Slim redesign. The product had one
+canonical live badge (`YoBadge(variant: YoBadgeVariant.live)`) that nothing
+used and that was byte-identical to the `error` variant, and eleven ad-hoc
+pills that each drew liveness differently: `_MiniLivePill`
+(`mobile_home_sections.dart`) was **purple** (`colors.primaryContainer`) with
+a mixed-case "Live"; `_LivePill` in `voice_trending_card.dart` used the error
+container; `_LiveBadge` / `_SmallLiveBadge` (discover), `_LivePill`
+(`room_card.dart`), `_StatusBadge` (`home_room_board.dart`), the inline pills
+in `live_now_hero.dart`, `_MobileRoomCard` and `CreatorStudioRoomsList` each
+carried their own inline hexes (`0xFFFF416C`, `0xFF4A172B`, `0xFF48162A`,
+`0xFFE11D48`, `0xFFFF7A93`, `0xFFFF335C`) and their own size, weight, radius
+and padding; `_LiveDot` on the server channel row was not a pill at all but
+shared the counted `server-live-pill` key with the real one. Fixed by
+restyling the canonical to the brief's spec and migrating every site to it
+(ADR-209); `ServerLivePill` is now a keyed alias of the same badge. Contract
+pinned in `test/yo_badge_live_test.dart`.
+
+Observed on the way, not changed (rule: never delete functionality):
+
+- **Dead Home chains.** `HomeScreen` (`home_screen.dart`) is mounted nowhere
+  in `lib/`; through it `LiveNowHero`, `RoomCard` (via `_LiveRoomCard`),
+  `HomeRoomBoard`, `MobileLiveRail` / `_MobileRoomCard` and
+  `MobileVoiceTrending` / `_MiniRow` are unreachable from the shipping
+  shell, and `VoiceTrendingCard` mounts only from `lib/dev/desktop_preview.dart`.
+  The mounted Start (`MobileHome` / `DesktopHome` via `main_shell.dart`)
+  contains no live pill at all — its only live marker is the 6 px dot in
+  `HomeSectionHeader(live:)`. They were migrated, not removed, so no second
+  source of truth survives; deciding their fate is a product call for
+  phase 1 (Start).
+- **Unused `YoBadge` variants.** `primary`, `success`, `warning`, `error` and
+  `info` are mounted only by `test/color_system_visual_qa.dart` and
+  `test/shared_component_accessibility_test.dart`; no product surface uses
+  them. Keep until a phase needs a status badge, then reach for these rather
+  than a new pill.
+- **Siblings deliberately left as they are:** the immersive two-state
+  `_StatusChip` in `podcast_studio.dart` (`BroadcastRoomColors`, LIVE /
+  NOT LIVE on a hex-guard-excluded stage), the bare green "LIVE" text in the
+  staff console (`staff_users_section.dart`, `StaffCenterStyle`), the
+  "$count LIVE" counter (`_LiveRoomCounter`, discover), `_LiveSignal`
+  (`followed_creators_card.dart`), the mini-player status lines and the
+  channel-group heading — none of them is the NA ŻYWO pill.
+
 ## OPEN — build 32's tester notes promise a deletion the server refuses (2026-09-19)
 
 Not a code defect: the binary, the server and the rollout order are all doing

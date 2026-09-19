@@ -26,6 +26,7 @@ import 'package:yovoice/features/servers/presentation/screens/server_workspace_s
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
+import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
@@ -1323,23 +1324,9 @@ class CreatorStudioRoomsList extends StatelessWidget {
                         ),
                         const Spacer(),
                         if (room.isLive)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFF335C),
-                              borderRadius: BorderRadius.circular(99),
-                            ),
-                            child: Text(
-                              copy.text('LIVE', 'NA ŻYWO'),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 8.5,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
+                          YoBadge(
+                            label: copy.text('LIVE', 'NA ŻYWO'),
+                            variant: YoBadgeVariant.live,
                           ),
                       ],
                     ),

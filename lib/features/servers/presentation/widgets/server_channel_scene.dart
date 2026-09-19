@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
+import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
 
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
@@ -143,33 +143,21 @@ String serverLiveClock(BuildContext context, DateTime startedAt) =>
       context,
     ).formatTimeOfDay(TimeOfDay.fromDateTime(startedAt.toLocal()));
 
-/// The one liveness colour, used only when the channel document says live.
+/// The one liveness marker, used only when the channel document says live.
+///
+/// A keyed alias of the canonical `YoBadge(variant: YoBadgeVariant.live)`:
+/// the `server-live-pill` key is the contract every server test counts
+/// (header pill, stage marker and the channel row's trailing marker all share
+/// it), so it lives here, once, and the badge itself carries no key.
 class ServerLivePill extends StatelessWidget {
   const ServerLivePill({required this.label, super.key});
   final String label;
 
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) => YoBadge(
     key: const ValueKey('server-live-pill'),
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-    decoration: const BoxDecoration(
-      color: AppColors.live,
-      borderRadius: AppRadius.pill,
-    ),
-    child: Text(
-      label,
-      // One line, never wrapped and never cut through: a marker that says
-      // nothing is worse than no marker, so if the word genuinely cannot fit
-      // it elides rather than losing its shape.
-      maxLines: 1,
-      softWrap: false,
-      overflow: TextOverflow.ellipsis,
-      style: AppTypography.labelSmall.copyWith(
-        color: AppColors.onLive,
-        fontWeight: FontWeight.w700,
-        letterSpacing: .8,
-      ),
-    ),
+    label: label,
+    variant: YoBadgeVariant.live,
   );
 }
 

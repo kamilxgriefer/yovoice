@@ -12862,3 +12862,130 @@ A 5 min allowance covers real consumer drift while still rejecting nonsense expi
 - A device clock running fast cannot stretch a grant past the server contract.
 - Any future change to the server TTL must update `grantTtl` in the same commit; the
   skew test guards the pair.
+
+## ADR-209: Slim redesign: Instagram × Discord × Twitch w języku YO Voice
+
+**Date:** 2026-09-19 · **Status:** accepted · **Build:** 3.0.0 (phase 0 — foundation)
+
+### Context
+
+The Slim redesign brief (`yovoice-evidence/2026-09-18/slim-redesign-brief.md`)
+rebuilds the visual layer — slimmer, lighter, content-first — while the
+navigation shell, every behaviour, the Firebase schema and Material 3 stay
+untouched. Its phase 0 is an inventory, not a screen: for each visual state the
+repo already had a canonical widget somewhere (often outside
+`lib/shared/widgets/`) *and* several private copies of it. The NA ŻYWO marker is
+the sharpest example. `YoBadge(variant: YoBadgeVariant.live)` existed, was
+mounted by nothing in product code and was byte-identical to the `error`
+variant, while eleven ad-hoc pills drew liveness in eleven ways — a purple
+`_MiniLivePill`, an error-container `_LivePill`, six inline hexes, four
+radii, four font sizes — and the server channel row's `_LiveDot` (not a pill)
+shared the counted `server-live-pill` key with the real header pill.
+
+### Decision
+
+**One state = one primitive.** An existing canonical is extended in place and
+every duplicate is migrated to it; nothing is deleted before its last caller
+moved, and no `Yo<State>Widget` twin is created next to a canonical that
+already exists (no `YoLiveBadge`, no `YoStoryRingAvatar`, no `YoPresenceDot`).
+
+| State | One primitive | Migrated from (this phase) |
+| --- | --- | --- |
+| NA ŻYWO | `YoBadge(variant: YoBadgeVariant.live)` — `lib/shared/widgets/badges/yo_badge.dart`; on server surfaces through its keyed alias `ServerLivePill` (`servers/presentation/widgets/server_channel_scene.dart`) | `_MiniLivePill` and the `_MobileRoomCard` inline pill (`home/…/mobile/mobile_home_sections.dart`), `_LivePill` (`home/…/desktop/voice_trending_card.dart`), the inline pill in `home/…/live_now_hero.dart`, the live branch of `_StatusBadge` (`home/…/shared/home_room_board.dart`), `_LiveBadge` (`discover/…/hero_live_room.dart`), `_SmallLiveBadge` ×2 (`discover/…/discover_screen.dart`), `_LivePill` (`rooms/…/room_card.dart`), the inline pill in `CreatorStudioRoomsList` (`creator/…/creator_studio_screen.dart`), `ServerLivePill`'s own body and `_LiveDot` (`servers/…/server_panel.dart`) |
+
+The live variant's spec (from the brief's Twitch section): `AppColors.live`
+fill, `AppColors.onLive` copy, `AppTypography.labelSmall` (10 px, height 1.2)
+at w800 with letter-spacing .8, padding 8/3, `AppRadius.pill`, no border, a
+6 px `onLive` dot that pulses in opacity (1 → .55 → 1, three mirrored cycles,
+3.6 s) when the marker appears and then rests, and only while
+`!disableAnimations && !accessibleNavigation && TickerMode.enabled` — otherwise
+the controller is stopped and parked at 1 so no frame is scheduled (the same
+guard `HeroLiveRoom` uses), and the pulse replays when motion is allowed again. The label is rendered verbatim on one unwrapped
+line that elides; `icon` is ignored for this variant; the widget carries no key
+and no `semanticLabel` of its own.
+
+Rules the phase-0 primitives follow, and every later phase inherits:
+
+- The caller owns the state gate (`isLive`), the copy (locale string, in the
+  case the surface needs) and the placement (Wrap / Positioned / floor gating);
+  the primitive owns only the drawing.
+- Counted keys are contracts. `server-live-pill` is addressed by seven server
+  test files with `findsNothing` / `findsOneWidget` / `findsWidgets`, so it is
+  attached exactly once per marker — inside `ServerLivePill`, on the `YoBadge`
+  — and the wrapper itself takes no second key. The channel row's marker was
+  replaced 1:1 (`_LiveDot` → `ServerLivePill`) so every count is unchanged.
+- Palette only: `AppColors` / `AppPalette` / `AppImmersiveColors`; the
+  migration removed six inline live hexes and added none.
+- Tests are never greened by editing assertions. Where a test pins a label's
+  case, the caller keeps that case: `VoiceTrendingCard` still passes
+  `'Live' / 'Na żywo'` (`test/desktop_shell_test.dart` counts `find.text('Live')`
+  ×2), the Discover hero still says `'LIVE NOW' / 'TERAZ NA ŻYWO'`
+  (`test/remaining_features_polish_localization_test.dart`), and the
+  accessibility sweep mounts `variant.name` = `'live'`. The brief's "uppercase"
+  is therefore a property of the copy callers pass, not a transform inside the
+  widget.
+
+### Legal hygiene
+
+The brief borrows *interaction patterns* from Instagram, Discord and Twitch.
+Their names appear only here and in code comments; never in UI copy, store
+listings or marketing. No third-party colour, icon, sound, logo or feature
+name ("Stories", "Reels", "Nitro", "Boost") enters the product; the live
+marker is YO Voice's own `AppColors.live` and the words are our copy.
+
+### Consciously NOT built, NOT simplified (this family)
+
+- No `YoLiveBadge`; the canonical was extended.
+- No caller was deleted. `HomeScreen`, `LiveNowHero`, `RoomCard`,
+  `HomeRoomBoard`, `MobileLiveRail` and `MobileVoiceTrending` are mounted
+  nowhere in `lib/` and `VoiceTrendingCard` only in `lib/dev/desktop_preview.dart`;
+  the mounted Start (`MobileHome` / `DesktopHome`) never had a live pill, so
+  this family changes nothing a user sees on Start — its only live marker is
+  the `HomeSectionHeader(live:)` dot, kept. Their fate is phase 1's call
+  (`docs/Bugs.md`).
+- `podcast_studio.dart`'s `_StatusChip` stays: an immersive two-state chip
+  (LIVE / NOT LIVE) in `BroadcastRoomColors` on a stage the hex guard excludes
+  on purpose; a brand-red fill on that stage would be a design change outside
+  phase 0, and its not-live half has no canonical.
+- `home_room_board.dart`'s `_StatusBadge` keeps its not-live branch as it was;
+  only the live branch became the badge.
+- The staff console's bare green "LIVE" text (`StaffCenterStyle.good`) stays:
+  the staff console has its own palette and is outside the Slim rules.
+- Not this state at all, left alone: the `"$count LIVE"` counter
+  (`_LiveRoomCounter`), `_LiveSignal` in `followed_creators_card.dart`, the
+  mini-player status lines, the events channel-group heading, and the
+  `_MobileRoomCard` cover's other decoration.
+- `_HeroLiveRoomState._animationController` stays in the hero: its pulse still
+  drives the glow and `_RoomArtwork`; only the badge stopped reading it.
+- No `semanticLabel` on the badge: the server QA harness collects every
+  semantics label as a claim, and the visible word already voices the state.
+- The pulse is bounded, not perpetual. A first cut ran `repeat()` forever;
+  two surfaces that mount the badge (`test/content_zoom_responsive_test.dart`,
+  `test/staff_capabilities_test.dart`) could then never `pumpAndSettle`, and a
+  persistent server screen would tick indefinitely for a decoration. Three
+  cycles on appearance keep the "energy" the brief asks for without either
+  cost; the assertions were not touched.
+
+### Reasoning
+
+A marker that is drawn eleven ways cannot be restyled once, cannot be tested
+once and cannot be trusted to mean one thing; a canonical that nothing uses is
+worse than a duplicate because it documents an intent the code contradicts.
+Extending the existing `YoBadge` (rather than adding a `YoLiveBadge`) keeps the
+accessibility sweep's per-variant AA check covering it for free, and routing
+server surfaces through a three-line keyed alias keeps a seven-file key
+contract in one place.
+
+### Consequences
+
+- Every NA ŻYWO on a normal surface is the same pill in Dark and Pearl and
+  goes still under Reduce Motion; restyling it again is a one-file change.
+- Later phases add rows to the table above (stories tile, presence dot,
+  waveform, section header, channel rows) rather than new ADRs, and record
+  their own "consciously not built" items under this heading.
+- The live badge grew a dot and 8/3 padding on every server surface; the
+  320 px / 200 % contracts (`server_podcast_test`, `server_community_test`,
+  `server_independent_qa_layout_test`, `discover_light_theme_test`) still hold,
+  and `test/yo_badge_live_test.dart` pins the height, the one-line elision, the
+  verbatim label and the motion guard so the next duplicate has to argue with a
+  test.
