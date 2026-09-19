@@ -205,7 +205,7 @@ async function main() {
     fixtures[`rooms/legacy-public`] = { hostId: OWNER, visibility: "public", status: "active", name: "Legacy" };
     await seed(fixtures);
 
-    await check("Server event listing has both committed scheduled-event composites", async () => {
+    await check("Server event listing has its committed scheduled-event composites, including the reminder collection group", async () => {
       const indexes = JSON.parse(fs.readFileSync(
         path.join(__dirname, "../firestore.indexes.json"),
         "utf8",
@@ -226,6 +226,21 @@ async function main() {
           fields: [
             { fieldPath: "status", order: "ASCENDING" },
             { fieldPath: "endsAt", order: "ASCENDING" },
+          ],
+        },
+        // ADR-212: sendServerEventRemindersSchedule queries events ACROSS
+        // channels, and a collection-group query needs a COLLECTION_GROUP
+        // index — automatic single-field indexes are COLLECTION scope only,
+        // and the emulator enforces neither. Declared here and in
+        // functions/test/server_event_reminders.test.js, which also runs the
+        // real cross-parent query (ADR-007).
+        {
+          collectionGroup: "events",
+          queryScope: "COLLECTION_GROUP",
+          fields: [
+            { fieldPath: "reminderOptInEnabled", order: "ASCENDING" },
+            { fieldPath: "status", order: "ASCENDING" },
+            { fieldPath: "startsAt", order: "ASCENDING" },
           ],
         },
       ]);
