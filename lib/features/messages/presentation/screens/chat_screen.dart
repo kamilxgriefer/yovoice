@@ -17,13 +17,12 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
-import 'package:yovoice/features/calls/presentation/screens/direct_call_screen.dart';
+import 'package:yovoice/features/calls/presentation/direct_call_launcher.dart';
 import 'package:yovoice/features/media/data/models/gif_asset.dart';
 import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
 import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
 import 'package:yovoice/features/media/data/services/gif_transport.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_gif_send_status.dart';
-import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
@@ -59,6 +58,13 @@ typedef DirectMessageVoiceRecorderPresenter =
       Future<void> Function(RecordedAudio audio, int durationSeconds) onSend,
     );
 
+/// What a freshly pushed chat does once, right after its first frame.
+///
+/// [recordVoice] opens the voice-message recorder (the friend profile's
+/// "Send a voice message"). The recorder's own record button asks for the
+/// microphone, so no permission is requested without a gesture.
+enum ChatLaunchAction { none, recordVoice }
+
 enum DirectMessageMediaPickAction {
   takePhoto,
   photoLibrary,
@@ -90,10 +96,15 @@ class ChatScreen extends StatefulWidget {
     this.gifService,
     this.gifMessageInvoker,
     this.relationshipStatusResolver,
+    this.initialAction = ChatLaunchAction.none,
     super.key,
   });
 
   final String conversationId;
+
+  /// Runs once after the first frame; [ChatLaunchAction.none] changes
+  /// nothing.
+  final ChatLaunchAction initialAction;
   final GifCatalogService? gifService;
   final GifMessageInvoker? gifMessageInvoker;
   final String otherUserId;
@@ -320,6 +331,12 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     unawaited(_loadOutbox());
     _controller.addListener(_handleTyping);
+    if (widget.initialAction == ChatLaunchAction.recordVoice) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_recordVoiceMessage());
+      });
+    }
   }
 
   @override
@@ -687,149 +704,34 @@ class _ChatScreenState extends State<ChatScreen> {
     DirectCallMediaType mediaType = DirectCallMediaType.audio,
   }) async {
     if (_startingCall) return;
-    final voice = _voice;
-    if (voice.status != VoiceCallStatus.disconnected &&
-        voice.status != VoiceCallStatus.failed) {
-      _showMessage(
-        AppLocalizations.of(context).text(
-          'Leave your current voice session before starting a call.',
-          'Opuść bieżącą rozmowę głosową, zanim rozpoczniesz połączenie.',
-        ),
-      );
-      return;
-    }
-    setState(() => _startingCall = true);
-    String? callId;
-    var effectiveMediaType = mediaType;
-    try {
-      final permissionSnapshot = await voice
-          .prepareMediaPermissionsFromUserGesture(
-            includeCamera: mediaType == DirectCallMediaType.video,
-          );
-      if (!mounted) return;
-      if (!permissionSnapshot[AppPermissionKind.microphone].isUsable) {
-        _showMessage(
-          AppLocalizations.of(context).text(
-            'Allow microphone access in system settings before starting a call.',
-            'Zezwól na dostęp do mikrofonu w ustawieniach systemowych, zanim rozpoczniesz połączenie.',
-          ),
-        );
-        return;
-      }
-      if (mediaType == DirectCallMediaType.video &&
-          !permissionSnapshot[AppPermissionKind.camera].isUsable) {
-        effectiveMediaType = DirectCallMediaType.audio;
-        _showMessage(
-          AppLocalizations.of(context).text(
-            'Camera access is off. The call will start with audio only.',
-            'Dostęp do aparatu jest wyłączony. Połączenie rozpocznie się tylko z dźwiękiem.',
-          ),
-        );
-      }
-      callId = await _calls.startCall(
-        calleeId: widget.otherUserId,
-        conversationId: widget.conversationId,
-        mediaType: effectiveMediaType,
-      );
-      if (!mounted) {
-        await _calls.cancel(callId);
-        return;
-      }
+    // The flow itself (permission gesture chain, backend start, fullscreen
+    // route, exception copy) is shared with the friend profile.
+    await launchDirectCall(
+      context,
+      calls: _calls,
+      voice: _voice,
+      calleeId: widget.otherUserId,
+      resolveConversationId: () => widget.conversationId,
+      mediaType: mediaType,
+      currentUserId: _currentUserId,
+      participantName: () =>
+          _auth.currentUser?.displayName ??
+          _auth.currentUser?.email ??
+          AppLocalizations.of(
+            context,
+          ).text('YO Voice user', 'Użytkownik YO Voice'),
+      showMessage: _showMessage,
+      onBusyChanged: (busy) => setState(() => _startingCall = busy),
+      onStartAudioInstead: () =>
+          unawaited(_startDirectCall(mediaType: DirectCallMediaType.audio)),
       // A mounted chat hidden under the fullscreen call is not active. Leave
       // the foreground-notification registry for the route lifetime so a DM
       // received during the call still banners/sounds.
-      ActiveConversationRegistry.instance.leave(_registeredConversationId);
-      try {
-        await Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(
-            fullscreenDialog: true,
-            builder: (_) => DirectCallScreen(
-              callId: callId!,
-              callService: _calls,
-              currentUserId: _currentUserId,
-              participantName:
-                  _auth.currentUser?.displayName ??
-                  _auth.currentUser?.email ??
-                  AppLocalizations.of(
-                    context,
-                  ).text('YO Voice user', 'Użytkownik YO Voice'),
-            ),
-          ),
-        );
-      } finally {
-        if (mounted) {
-          ActiveConversationRegistry.instance.enter(_registeredConversationId);
-        }
-      }
-    } on DirectVideoCompatibilityException {
-      if (!mounted) return;
-      final copy = AppLocalizations.of(context);
-      final messenger = ScaffoldMessenger.of(context);
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 10),
-          content: Text(
-            copy.text(
-              'This person needs a newer YO Voice version for video. You can call with audio now.',
-              'Ta osoba potrzebuje nowszej wersji YO Voice do wideo. Możesz teraz zadzwonić głosowo.',
-            ),
-          ),
-          action: SnackBarAction(
-            label: copy.text('Start audio', 'Zadzwoń głosowo'),
-            onPressed: () => unawaited(
-              _startDirectCall(mediaType: DirectCallMediaType.audio),
-            ),
-          ),
-        ),
-      );
-    } on DirectCallFriendshipException {
-      if (!mounted) return;
-      final copy = AppLocalizations.of(context);
-      _showMessage(
-        copy.text(
-          'Calls are temporarily unavailable while this friendship is verified. Try again shortly.',
-          'Połączenia są chwilowo niedostępne, dopóki ta znajomość nie zostanie zweryfikowana. Spróbuj ponownie za chwilę.',
-        ),
-      );
-    } on DirectCallConversationException {
-      if (!mounted) return;
-      final copy = AppLocalizations.of(context);
-      _showMessage(
-        copy.text(
-          'This chat is no longer ready for calls. Return to Chats and reopen the conversation.',
-          'Ten czat nie jest już gotowy do połączeń. Wróć do Czatów i ponownie otwórz rozmowę.',
-        ),
-      );
-    } on DirectCallEmailVerificationException {
-      if (!mounted) return;
-      final copy = AppLocalizations.of(context);
-      _showMessage(
-        copy.text(
-          'Verify your email before calling. Use the verification banner on Home.',
-          'Zweryfikuj adres e-mail przed połączeniem. Użyj banera weryfikacji na stronie głównej.',
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      final copy = AppLocalizations.of(context);
-      _showMessage(
-        friendlyErrorMessage(
-          error,
-          fallback: effectiveMediaType == DirectCallMediaType.video
-              ? copy.text(
-                  'Could not start this private video call.',
-                  'Nie udało się rozpocząć prywatnego połączenia wideo.',
-                )
-              : copy.text(
-                  'Could not start this private voice call.',
-                  'Nie udało się rozpocząć prywatnego połączenia głosowego.',
-                ),
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _startingCall = false);
-    }
+      onCoveredStart: () =>
+          ActiveConversationRegistry.instance.leave(_registeredConversationId),
+      onCoveredEnd: () =>
+          ActiveConversationRegistry.instance.enter(_registeredConversationId),
+    );
   }
 
   /// Swaps the system keyboard for the composer panel and back.
