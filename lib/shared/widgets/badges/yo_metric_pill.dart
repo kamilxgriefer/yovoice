@@ -23,6 +23,11 @@ enum YoMetricPillTone {
   /// The documented media plate ([overlayPlateColor]) with white ink, for a
   /// count drawn over artwork or a thumbnail.
   overlay,
+
+  /// `palette.dangerSurface` with `dangerForeground` ink, no border: a value
+  /// that breaks a limit the caller enforces (a picked video over the size
+  /// or length a destination accepts).
+  danger,
 }
 
 /// A small pill carrying one short, real value — a count, a duration — with
@@ -98,6 +103,12 @@ class YoMetricPill extends StatelessWidget {
         border: null,
         ink: AppColors.white,
         iconInk: AppColors.white,
+      ),
+      YoMetricPillTone.danger => (
+        fill: palette.dangerSurface,
+        border: null,
+        ink: palette.dangerForeground,
+        iconInk: palette.dangerForeground,
       ),
     };
   }

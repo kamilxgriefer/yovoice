@@ -26,6 +26,19 @@ Function, pubspec or catalog change. Frames:
 Pearl). Deferred: on-device seek-latency measurement and arena feel (iPhone,
 Android, Chrome), `MomentDetailPanel` drag-seek.
 
+## Next build after 3.0.0 — confirm before upload (T4) — source on `nb/confirm-upload` — 2026-09-19
+
+**Status: Done in source, not released.** One review surface for media picked
+from a library ([ADR-210](Decisions.md#adr-210-one-confirm-before-send-primitive-for-picked-media)):
+direct-message Photo library and Video library, and Company team files, now
+show what was picked, with size and length, before anything is queued or
+uploaded; over-limit files are blocked in the review with a re-pick. Camera
+paths unchanged. App only: no backend, rules, schema, Function or catalog
+change. Deferred by decision: captions (backend has no field), multi-select,
+the camera through the review. Frames:
+`yovoice-evidence/2026-09-19/next-build/confirm-upload/`. Device check
+(iOS Simulator, web) outstanding.
+
 ## YO Voice 3.0.0 (34) — the Slim redesign — released to testers — 2026-09-19
 
 **Status: Done for 3.0.0.** `main` carries `version: 3.0.0+34` in the release

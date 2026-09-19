@@ -14049,3 +14049,81 @@ position on release; that is intended.
 - Found on the way: the hairline's played fill laid out 0 px tall (a
   childless box under the Stack's loose height), so the bar never showed
   progress. Fixed with `heightFactor: 1` (`docs/Bugs.md`).
+
+---
+
+## ADR-210: One confirm-before-send primitive for picked media
+
+**Date:** 2026-09-19 · **Status:** accepted (source on `nb/confirm-upload`,
+next build after 3.0.0+34) · **Decisions:** `docs/briefs/2026-09-19-next-build-decisions.md`
+on `nb/brief`, T4
+
+### Context
+
+A photo or video picked from the device library in a direct chat was queued the
+moment the picker returned, and a file picked for Company team files uploaded
+the same way. Nobody saw what they had picked before it left. A library video
+over 60 s or 64 MB was accepted by the picker (`pickVideo(maxDuration)` limits
+only the camera) and refused only after the enqueue, as a snackbar. Family
+memories, profile avatar and banner, the Yeels composer and the Room cover
+already had their own confirm step (preview, crop or edit, then an explicit
+Save).
+
+### Decision
+
+`YoMediaSendReview` (`lib/shared/widgets/media/yo_media_send_review.dart`,
+opened with `showYoMediaSendReview`) is **the only review surface for media
+picked from a library**. No feature grows a private copy.
+
+- Presentation only. The caller keeps its service, owner guards and outbox and
+  passes them in: `onSend` (the durable hand-off, awaited while the review is
+  open; a throw keeps the review open with the error and Send armed, so a
+  retry needs no re-pick) and `closeWhen` (a stream whose event closes the
+  review with nothing sent — chat passes "the signed-in account is no longer
+  the one that picked", the voice recorder sheet's contract).
+- Limits come from the destination's own constants (`YoMediaSendLimits`):
+  `directImageMaxBytes`, `directVideoMaxBytes`, `directVideoMaxSeconds` in
+  `message_service.dart` (values unchanged, now named) and
+  `serverCompanyFileMaxBytes`. A breach blocks Send in the review with the
+  reason first and a "Choose another" that reopens the same picker; the
+  service and backend checks stay as they were.
+- A video previews locally (`VideoPlayerController.file` on io, the picker's
+  blob URL on web, through `picked_media_video_controller*.dart`), paused and
+  muted, never autoplayed, with play/pause, scrub and mute. Its duration comes
+  from the existing inspector and, if that fails, from the preview player. If
+  the preview cannot play (a desktop without a video plugin, an HEVC file in
+  Chrome), a static card and "Preview unavailable" replace it; the video is
+  still sendable when its duration is known and blocked when it is not.
+- Layout by available width: a bottom sheet below 1100 px (constrained to
+  560 px from 600 px), a centered 640 px dialog at 1100 px and wider with
+  Enter to send and Esc to cancel. The body scrolls; the action row is pinned.
+- `YoMetricPill` gains a `danger` tone (`dangerSurface` / `dangerForeground`)
+  for the size or duration that breaks a limit (ADR-209's "extend the
+  canonical in place").
+
+Adopted by: direct messages → Photo library and Video library; Company team
+files. **Not** adopted, by decision: the camera (`Take photo`, `Record video`)
+keeps the OS Use/Retake step; surfaces that already confirm (above) and the
+retired Clubs/Rooms screens are untouched.
+
+### Reasoning
+
+One primitive means one set of limits, one blocked-state vocabulary and one
+account-switch contract. Running the enqueue inside the review (instead of
+after it closes) is what lets a failure stay in front of the person with the
+file still selected. The review never uploads, so the outbox's durability and
+idempotency (ADR-204, ADR-205) are unchanged.
+
+### Consequences
+
+- One item per pick and no caption in this build. DM attachments have no
+  caption field (`finalizeDirectMessageAttachment` takes ids only); a caption
+  or multi-select needs its own decision and, for captions, backend work.
+- Task 2's server-channel photos and videos must open this review from their
+  first commit.
+- Company files still read and type-check the whole selection before the
+  review (`_pickCompanyFile`), so an over-25 MB file still surfaces as the
+  board error rather than in the review. The review enforces the same limit
+  for any other picker.
+- Frames: `yovoice-evidence/2026-09-19/next-build/confirm-upload/` (390 and
+  1440, Dark and Pearl), from `test/nb_confirm_upload_capture.dart`.
