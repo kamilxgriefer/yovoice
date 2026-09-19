@@ -9,6 +9,7 @@
 // canonical friends under Firestore Rules.
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { logger } = require("firebase-functions/v2");
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const functionsV1 = require("firebase-functions/v1");
 const { getAuth } = require("firebase-admin/auth");
@@ -461,7 +462,35 @@ const onUserPrivacySourceChanged = onDocumentWritten(
   },
 );
 
-async function handleAuthUserDeleted(uid, { database = db } = {}) {
+/**
+ * The account-deletion pipeline's LAST step, and its SECOND entry point.
+ *
+ * Until ADR-206 this handler deliberately RETAINED `users/{uid}` — merged with
+ * `{disabled, isOnline:false, premiumIdentity:false, authDeletedAt}` — so the
+ * e-mail address, display name, username, bio, country, languages and every
+ * counter of a deleted account survived indefinitely. That retirement merge is
+ * no longer the terminal state on any path:
+ *
+ *   - An `accountDeletionOutbox` row at stage `auth` means THIS pipeline asked
+ *     for the Auth deletion. `users/{uid}` is deleted outright and the row is
+ *     completed. The e-mail address goes with the document.
+ *   - No row means the Auth user was deleted out of band (Firebase console,
+ *     staff tooling, an SDK `user.delete()` elsewhere). Today's retirement
+ *     merge still runs as the IMMEDIATE fail-safe — it is what freezes the
+ *     account while the sweep is queued — and a row is enqueued so the full
+ *     teardown, ending in the same document delete, runs one sweep later.
+ *
+ * The exported name, signature and injection points are unchanged, so the
+ * existing suites that drive this function stay meaningful.
+ */
+async function handleAuthUserDeleted(
+  uid,
+  {
+    database = db,
+    enqueueDeletion = null,
+    readOutbox = null,
+  } = {},
+) {
   const cleanUid = canonicalUid(uid);
   if (!cleanUid) return { outcome: "invalidUid" };
   const sourceRef = database.collection("users").doc(cleanUid);
@@ -476,9 +505,57 @@ async function handleAuthUserDeleted(uid, { database = db } = {}) {
     database.collection("marketingConsents").doc(cleanUid),
   ];
 
+  // Required lazily: functions/account/deletion.js registers Cloud Functions
+  // and pulls the stage runner in with it, which this module must not drag
+  // into every profile-fanout cold start.
+  const outbox = require("../account/outbox");
+  // `canonicalUid` and `isValidOpaqueUid` are NOT the same predicate:
+  // canonicalUid admits control characters, isValidOpaqueUid rejects them, and
+  // `outboxIdForUid` answers null rather than throwing on one. `.doc(null)`
+  // throws a TypeError — and a throw HERE is the worst outcome in this file:
+  // the Auth identity is already gone, and the trigger would die before the
+  // fail-safe retirement merge below, leaving `users/{uid}` and the e-mail
+  // address it carries fully intact with nothing left to key a retry on.
+  // An id we cannot derive is therefore treated as "no row", which is the
+  // branch that freezes the account and enqueues the teardown.
+  const outboxId = outbox.outboxIdForUid(cleanUid);
+  const outboxRef = outboxId === null
+    ? null
+    : database.collection(outbox.OUTBOX_COLLECTION).doc(outboxId);
+
+  const pipeline = await (readOutbox
+    ? readOutbox(cleanUid)
+    : outboxRef === null
+      ? null
+      : outboxRef.get().then((snapshot) => (
+        snapshot.exists ? (snapshot.data() ?? {}) : null
+      )));
+  // Only a row this pipeline has actually driven to the `auth` stage licenses
+  // the hard delete. A row still sitting at an earlier stage means the sweep
+  // has not finished, so the fail-safe merge — not the delete — is correct.
+  const ownedByPipeline = pipeline !== null &&
+    outboxRef !== null &&
+    outbox.stageIndex(pipeline.stage) >= outbox.stageIndex("auth");
+
   await database.runTransaction(async (transaction) => {
     const source = await transaction.get(sourceRef);
-    if (source.exists) {
+    if (ownedByPipeline) {
+      if (source.exists) transaction.delete(sourceRef);
+      transaction.set(
+        outboxRef,
+        {
+          status: "completed",
+          stage: "finalize",
+          cursor: null,
+          nextAttemptAt: null,
+          leaseToken: null,
+          leaseUntil: null,
+          completedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } else if (source.exists) {
       transaction.set(
         sourceRef,
         {
@@ -496,7 +573,28 @@ async function handleAuthUserDeleted(uid, { database = db } = {}) {
     }
     for (const reference of projectionRefs) transaction.delete(reference);
   });
-  return { outcome: "retired" };
+
+  if (ownedByPipeline) {
+    return { outcome: "deleted", outboxId: outboxRef.id };
+  }
+
+  // Out-of-band deletion: enqueue so the same bounded teardown runs. A failure
+  // here must not fail the trigger — the retirement merge above has already
+  // frozen the account, and the schedule re-enqueues nothing, so the loud log
+  // is what an operator needs.
+  const enqueue = enqueueDeletion ??
+    ((value) => require("../account/deletion")
+      .enqueueAccountDeletionOutbox(value, { database, source: "authTrigger" }));
+  try {
+    const enqueued = await enqueue(cleanUid);
+    return { outcome: "retired", enqueued: enqueued?.enqueued === true };
+  } catch (error) {
+    logger.error("account deletion could not be enqueued from the Auth trigger", {
+      uid: cleanUid,
+      code: typeof error?.code === "string" ? error.code : "unknown",
+    });
+    return { outcome: "retired", enqueued: false };
+  }
 }
 
 /**

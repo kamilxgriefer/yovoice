@@ -14594,6 +14594,355 @@ async function main() {
     },
   );
 
+
+  // =====================================================================
+  // ACCOUNT DELETION (ADR-206)
+  // =====================================================================
+  //
+  // The whole rules diff for self-service deletion is two deny blocks. These
+  // cases are what make that claim checkable: everything else the design needs
+  // was ALREADY true, and a regression in any of it would silently widen the
+  // deletion surface.
+  //
+  // The last two cases answer the one open question the inventory raised
+  // against the design — whether hard-deleting `users/{uid}` breaks a
+  // SURVIVING peer, because `profileVisibilityOf()` dereferences
+  // `get(users/{id}).data` with no exists() guard. They run the real
+  // production queries against a genuinely missing document.
+
+  const deleting = testEnv.authenticatedContext("deleting-uid", {
+    email_verified: true,
+  });
+  const survivor = testEnv.authenticatedContext("survivor-uid", {
+    email_verified: true,
+  });
+  const moderatorContext = testEnv.authenticatedContext("moderator-uid", {
+    email_verified: true,
+    role: "moderator",
+  });
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const seedDb = ctx.firestore();
+    await Promise.all([
+      // An account mid-deletion: `disabled` is what the callable writes at
+      // request time, reusing the deployed ban authority.
+      setDoc(doc(seedDb, "users/deleting-uid"), {
+        uid: "deleting-uid",
+        displayName: "Deleting",
+        banned: false,
+        disabled: true,
+        accountDeletion: {
+          schemaVersion: 1,
+          state: "pending",
+          source: "app",
+        },
+      }),
+      setDoc(doc(seedDb, "users/survivor-uid"), {
+        uid: "survivor-uid",
+        displayName: "Survivor",
+        banned: false,
+      }),
+      setDoc(doc(seedDb, "users/moderator-uid"), {
+        uid: "moderator-uid",
+        displayName: "Moderator",
+        banned: false,
+        role: "moderator",
+      }),
+      setDoc(doc(seedDb, "accountDeletionOutbox/deadbeef"), {
+        schemaVersion: 1,
+        uid: "deleting-uid",
+        stage: "revoke",
+        status: "pending",
+      }),
+      setDoc(doc(seedDb, "deletedAccountDigests/cafebabe"), {
+        schemaVersion: 1,
+        reason: "ban",
+      }),
+      // The surviving peer's own mirror rows. `gone-uid` deliberately has NO
+      // users/{uid} document at all — it is the account this pipeline finished
+      // deleting.
+      setDoc(doc(seedDb, "users/survivor-uid/friends/gone-uid"), {
+        uid: "gone-uid",
+        displayName: "YO Voice user",
+      }),
+      setDoc(doc(seedDb, "users/survivor-uid/friends/deleting-uid"), {
+        uid: "deleting-uid",
+        displayName: "Deleting",
+      }),
+      setDoc(doc(seedDb, "users/survivor-uid/following/gone-uid"), {
+        uid: "gone-uid",
+        followedAt: Timestamp.now(),
+      }),
+    ]);
+  });
+
+  await check(
+    "ACCOUNT DELETION: the owner can still read their own deletion state while disabled",
+    async () => {
+      const snapshot = await assertSucceeds(
+        getDoc(doc(deleting.firestore(), "users/deleting-uid")),
+      );
+      assert.equal(snapshot.data().accountDeletion.state, "pending");
+      assert.equal(snapshot.data().disabled, true);
+    },
+  );
+
+  await check(
+    "ACCOUNT DELETION: the owner cannot write accountDeletion — it is server-owned by omission",
+    async () => {
+      await assertFails(
+        updateDoc(doc(deleting.firestore(), "users/deleting-uid"), {
+          accountDeletion: { schemaVersion: 1, state: "completed" },
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(deleting.firestore(), "users/deleting-uid"), {
+          accountDeletion: deleteField(),
+        }),
+      );
+      // ...and cannot smuggle it in alongside a field that IS allowed.
+      await assertFails(
+        updateDoc(doc(deleting.firestore(), "users/deleting-uid"), {
+          bio: "still here",
+          accountDeletion: deleteField(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "ACCOUNT DELETION: the account cannot clear its own `disabled` freeze",
+    async () => {
+      await assertFails(
+        updateDoc(doc(deleting.firestore(), "users/deleting-uid"), {
+          disabled: false,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "ACCOUNT DELETION: nobody else can read the deleting account's record",
+    async () => {
+      await assertFails(
+        getDoc(doc(survivor.firestore(), "users/deleting-uid")),
+      );
+      await assertFails(
+        getDoc(doc(moderatorContext.firestore(), "users/deleting-uid")),
+      );
+      await assertFails(getDocs(collection(survivor.firestore(), "users")));
+    },
+  );
+
+  await check(
+    "ACCOUNT DELETION: accountDeletionOutbox is closed to every client, including list",
+    async () => {
+      for (const context of [deleting, survivor, moderatorContext]) {
+        const clientDb = context.firestore();
+        await assertFails(
+          getDoc(doc(clientDb, "accountDeletionOutbox/deadbeef")),
+        );
+        // A list attempt is asserted separately: nobody enumerates who is
+        // deleting their account.
+        await assertFails(
+          getDocs(collection(clientDb, "accountDeletionOutbox")),
+        );
+        await assertFails(
+          setDoc(doc(clientDb, "accountDeletionOutbox/forged"), {
+            uid: "survivor-uid",
+            stage: "auth",
+          }),
+        );
+        await assertFails(
+          updateDoc(doc(clientDb, "accountDeletionOutbox/deadbeef"), {
+            stage: "auth",
+          }),
+        );
+        await assertFails(
+          deleteDoc(doc(clientDb, "accountDeletionOutbox/deadbeef")),
+        );
+      }
+    },
+  );
+
+  await check(
+    "ACCOUNT DELETION: deletedAccountDigests is closed to every client, including list",
+    async () => {
+      for (const context of [deleting, survivor, moderatorContext]) {
+        const clientDb = context.firestore();
+        await assertFails(
+          getDoc(doc(clientDb, "deletedAccountDigests/cafebabe")),
+        );
+        await assertFails(
+          getDocs(collection(clientDb, "deletedAccountDigests")),
+        );
+        await assertFails(
+          setDoc(doc(clientDb, "deletedAccountDigests/forged"), { reason: "ban" }),
+        );
+        await assertFails(
+          deleteDoc(doc(clientDb, "deletedAccountDigests/cafebabe")),
+        );
+      }
+    },
+  );
+
+  await check(
+    "ACCOUNT DELETION: a disabled account cannot file a report or touch its report budget",
+    async () => {
+      const clientDb = deleting.firestore();
+      await assertFails(
+        setDoc(doc(clientDb, "reports/deleting-uid_user_survivor-uid"), {
+          reporterId: "deleting-uid",
+          targetType: "user",
+          targetId: "survivor-uid",
+          reportedUserId: "survivor-uid",
+          contextPath: null,
+          reason: "spam",
+          note: "",
+          createdAt: serverTimestamp(),
+          status: "open",
+        }),
+      );
+      await assertFails(
+        setDoc(doc(clientDb, "reportLimits/deleting-uid"), { count: 1 }),
+      );
+    },
+  );
+
+  await check(
+    "ACCOUNT DELETION: a disabled account cannot write the presence projection",
+    async () => {
+      // socialPresence is a server-owned projection, so the deleting account
+      // cannot re-publish itself to other people's screens after the freeze.
+      await assertFails(
+        setDoc(doc(deleting.firestore(), "socialPresence/deleting-uid"), {
+          isOnline: true,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "ACCOUNT DELETION: the users-update allowlist is gated on isSignedIn(), NOT on liveness — pinned deliberately",
+    async () => {
+      // CHARACTERIZATION, not an endorsement. `allow update` on users/{userId}
+      // checks isSignedIn() rather than isActiveAccount(), so a disabled (and
+      // a banned) account can still rewrite its own allowlisted profile
+      // fields. That is pre-existing ban-freeze behaviour, not something
+      // account deletion introduces, and the deletion promise does not rest on
+      // it: the `finalize` stage deletes users/{uid} outright, so anything
+      // rewritten mid-sweep goes with the document.
+      //
+      // It is pinned here so that tightening it later is a deliberate,
+      // reviewed change to the highest-traffic write path in this file rather
+      // than a silent side effect of an unrelated edit.
+      await assertSucceeds(
+        updateDoc(doc(deleting.firestore(), "users/deleting-uid"), {
+          bio: "still writable while disabled",
+        }),
+      );
+      // The fields that actually matter stay closed either way. `banned: true`
+      // rather than `false`: writing back the value the document already holds
+      // produces an EMPTY diff, which the allowlist passes as a no-op write.
+      await assertFails(
+        updateDoc(doc(deleting.firestore(), "users/deleting-uid"), {
+          banned: true,
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(deleting.firestore(), "users/deleting-uid"), {
+          premiumIdentity: true,
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(deleting.firestore(), "users/deleting-uid"), {
+          role: "superAdmin",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "ACCOUNT DELETION: a disabled account cannot append viewing history the sweep already walked",
+    async () => {
+      // momentViews and reelViews were the ONE hole in the freeze: both were
+      // owner-only with no liveness check at all, so an account whose deletion
+      // was already mid-sweep could keep writing rows behind it — exactly the
+      // race the "disabled freezes the snapshot" claim rules out. They are the
+      // two collections the inventory flags as unbounded AND undeletable by
+      // their own owner, so a lost row is one the user can never remove.
+      const clientDb = deleting.firestore();
+      await assertFails(
+        setDoc(doc(clientDb, "users/deleting-uid/reelViews/reel-1"), {
+          viewedAt: serverTimestamp(),
+          expiresAt: Timestamp.fromMillis(Date.now() + 86400000),
+        }),
+      );
+      await assertFails(
+        setDoc(doc(clientDb, "users/deleting-uid/momentViews/moment-1"), {
+          viewedAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        setDoc(doc(clientDb, "users/deleting-uid/muted/survivor-uid"), {
+          mutedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "ACCOUNT DELETION: an ACTIVE account keeps writing its viewing history and mutes",
+    async () => {
+      // The regression half of the case above: the freeze must bind the
+      // disabled account only. Story rings, Reel ranking and the mute list are
+      // ordinary product behaviour for everybody else.
+      const clientDb = survivor.firestore();
+      await assertSucceeds(
+        setDoc(doc(clientDb, "users/survivor-uid/momentViews/moment-1"), {
+          viewedAt: serverTimestamp(),
+        }),
+      );
+      await assertSucceeds(
+        setDoc(doc(clientDb, "users/survivor-uid/muted/deleting-uid"), {
+          mutedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "ACCOUNT DELETION: a surviving peer's real friends-list query still works after the counterpart's users doc is GONE",
+    async () => {
+      // THE inventory blocker, run rather than argued. `users/gone-uid` does
+      // not exist; the survivor's production query is the one watchFriends()
+      // issues, over their own mirror subcollection.
+      const snapshot = await assertSucceeds(
+        getDocs(collection(survivor.firestore(), "users/survivor-uid/friends")),
+      );
+      const ids = snapshot.docs.map((entry) => entry.id).sort();
+      assert.deepEqual(ids, ["deleting-uid", "gone-uid"]);
+    },
+  );
+
+  await check(
+    "ACCOUNT DELETION: a point read of a deleted counterpart fails CLOSED, not loudly",
+    async () => {
+      // Point reads that resolve per-uid liveness must deny — and denying is
+      // the same observable outcome a disabled account already produced, which
+      // is why the list above is unaffected.
+      await assertFails(
+        getDoc(doc(survivor.firestore(), "users/survivor-uid/friends/gone-uid")),
+      );
+      await assertFails(
+        getDoc(doc(survivor.firestore(), "publicProfiles/gone-uid")),
+      );
+      await assertFails(
+        getDoc(doc(survivor.firestore(), "publicProfiles/deleting-uid")),
+      );
+    },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);

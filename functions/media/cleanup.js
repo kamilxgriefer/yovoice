@@ -207,6 +207,10 @@ module.exports = {
   clubMediaPaths,
   voiceMomentMediaPaths,
   deleteExactPaths,
+  // Exported for the account-deletion `storage` stage, which sweeps the seven
+  // uid-owned prefixes in storage.rules. Additive: every existing caller keeps
+  // reaching it through cleanupRoomMedia/cleanupFamilyMedia unchanged.
+  deleteTrustedPrefix,
   cleanupRoomMedia,
   cleanupFamilyMedia,
   cleanupClubMedia,

@@ -90,7 +90,7 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 246 names.
+// Every export of functions/index.js, sorted. 248 names.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
@@ -127,6 +127,7 @@ const EXPORT_NAMES = Object.freeze([
   "createServerV1",
   "createServerWhiteboardStrokeV1",
   "declineDirectCall",
+  "deleteAccountSelfV1",
   "deleteClubSelf",
   "deleteDirectConversationForMe",
   "deleteDirectMessage",
@@ -209,6 +210,7 @@ const EXPORT_NAMES = Object.freeze([
   "moderateClubMessage",
   "moderateReport",
   "moderateRoomParticipantSelf",
+  "onAccountDeletionOutboxCreated",
   "onAchievementClubMemberCreated",
   "onAchievementClubMessageCreated",
   "onAchievementDirectMessageCreated",
@@ -245,6 +247,7 @@ const EXPORT_NAMES = Object.freeze([
   "onUserPrivacySourceChanged",
   "onVipGrantChanged",
   "openDirectConversation",
+  "processAccountDeletionOutboxSchedule",
   "processPendingContentCleanupSchedule",
   "processPendingReelCleanupSchedule",
   "processPendingServerControlOutboxSchedule",

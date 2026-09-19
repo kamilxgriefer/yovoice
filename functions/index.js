@@ -324,6 +324,32 @@ exports.revokeMyRefreshTokens = revokeMyRefreshTokens;
 
 /*
 |--------------------------------------------------------------------------
+| Account deletion (ADR-206)
+|--------------------------------------------------------------------------
+| One leased pipeline with two entry points. `deleteAccountSelfV1` marks intent
+| and returns; the outbox worker performs the bounded teardown and ends with
+| admin.auth().deleteUser(). The existing onAuthUserDeleted trigger above is
+| both the pipeline's last step and its second entry point, so a console or
+| staff deletion gets the same teardown instead of leaving an e-mail behind.
+|
+| The callable is fail-closed behind appConfig/accountDeletion: a MISSING
+| document means disabled. Deploy the worker and the trigger first, exercise
+| one real account, then write { enabled: true } — see docs/DEPLOYMENT.md.
+*/
+
+const {
+  deleteAccountSelfV1,
+  onAccountDeletionOutboxCreated,
+  processAccountDeletionOutboxSchedule,
+} = require("./account/deletion");
+
+exports.deleteAccountSelfV1 = deleteAccountSelfV1;
+exports.onAccountDeletionOutboxCreated = onAccountDeletionOutboxCreated;
+exports.processAccountDeletionOutboxSchedule =
+  processAccountDeletionOutboxSchedule;
+
+/*
+|--------------------------------------------------------------------------
 | Profile
 |--------------------------------------------------------------------------
 */

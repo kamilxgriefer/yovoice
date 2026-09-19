@@ -2725,6 +2725,112 @@ async function main() {
     ),
   );
 
+
+  // =====================================================================
+  // ACCOUNT DELETION (ADR-206) — the freeze the Storage sweep depends on
+  // =====================================================================
+  //
+  // The `storage` stage clears seven uid-owned prefixes. That sweep is only
+  // truthful if the account cannot upload a NEW object behind it, so this case
+  // proves the denial for the three prefixes the suite did not already cover
+  // (users/{uid}/profile/ and reel_voice_comments/{uid}/ are covered above).
+  //
+  // Each attempt runs against a COMPLETE, valid fixture — reservation,
+  // conversation, draft — and the positive control at the end flips exactly one
+  // field, `users/{uid}.disabled`, and repeats the identical uploads. Without
+  // that control a denial could come from a broken fixture and prove nothing.
+  await check(
+    "ACCOUNT DELETION: a disabled account cannot upload into the prefixes the sweep clears",
+    async () => {
+      const conversationId = "dm_account_deletion";
+      const messageId = `m_${"c".repeat(40)}`;
+      const momentId = "d".repeat(20);
+      const reelId = "AccountDeletionReel1";
+      const directPath =
+        `message_attachments/${DISABLED}/${conversationId}/${messageId}.jpg`;
+      const momentPath = `voice_moments/${DISABLED}/${momentId}.m4a`;
+
+      const reservedReel = await seedReelReservation(testEnv, {
+        reelId,
+        ownerId: DISABLED,
+      });
+
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, `conversations/${conversationId}`), {
+          schemaVersion: 2,
+          participantIds: [DISABLED, BOB],
+        });
+        await setDoc(
+          doc(db, `directMessageUploadReservations/${messageId}`),
+          {
+            schemaVersion: 1,
+            ownerId: DISABLED,
+            conversationId,
+            messageId,
+            recipientId: BOB,
+            type: "image",
+            contentType: "image/jpeg",
+            durationSeconds: null,
+            storagePath: directPath,
+            status: "uploading",
+            createdAt: new Date(),
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+          },
+        );
+        await setDoc(doc(db, `voiceMoments/${momentId}`), {
+          schemaVersion: 2,
+          authorId: DISABLED,
+          isPublished: false,
+          isDeleted: false,
+          status: "uploading",
+          storagePath: momentPath,
+          durationSeconds: 7,
+        });
+      });
+
+      const attempts = [
+        [
+          directPath,
+          smallImage,
+          directMetadata(DISABLED, conversationId, messageId, "image"),
+        ],
+        [
+          reservedReel.mediaStoragePath,
+          smallImage,
+          reelMetadata(DISABLED, reelId, "media", "image/jpeg"),
+        ],
+        [momentPath, smallAudio, momentMetadata(DISABLED, momentId)],
+      ];
+
+      for (const [objectPath, bytes, metadata] of attempts) {
+        await assertFails(uploadBytes(ref(disabled, objectPath), bytes, metadata));
+      }
+
+      // POSITIVE CONTROL. One field changes; the fixtures do not.
+      await testEnv.withSecurityRulesDisabled((ctx) =>
+        setDoc(doc(ctx.firestore(), `users/${DISABLED}`), {
+          uid: DISABLED,
+          banned: false,
+          disabled: false,
+        }),
+      );
+      for (const [objectPath, bytes, metadata] of attempts) {
+        await assertSucceeds(
+          uploadBytes(ref(disabled, objectPath), bytes, metadata),
+        );
+      }
+
+      // Restore the shared identity for every case that follows.
+      await testEnv.withSecurityRulesDisabled((ctx) =>
+        setDoc(doc(ctx.firestore(), `users/${DISABLED}`), {
+          uid: DISABLED,
+          disabled: true,
+        }),
+      );
+    },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);

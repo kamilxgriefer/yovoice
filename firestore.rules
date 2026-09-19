@@ -2482,6 +2482,33 @@ service cloud.firestore {
       }
     }
 
+    // ACCOUNT DELETION (ADR-206) — two server-only collections, declared out
+    // loud the way every other Admin-SDK-only collection in this file is
+    // (roomLiveFanoutOutbox, serverControlOutbox, appConfig, friendshipGuards).
+    //
+    // Nothing else changes for account deletion, and that is the point:
+    //   · the owner already reads their own deletion state through
+    //     `allow get: if isOwner(userId)` on users/{userId} below, which
+    //     carries no active-account check and therefore keeps working after
+    //     `disabled: true` lands;
+    //   · `accountDeletion` is server-owned simply by being ABSENT from the
+    //     owner update allowlist below — a new map field nobody added there
+    //     cannot be written by its subject;
+    //   · `disabled` is likewise absent, so the account cannot clear its own
+    //     freeze, and accountIsActive() already reads it.
+    //
+    // The outbox row carries the uid of an account being erased, so listing it
+    // would be an enumeration of who is deleting. The digests exist only to
+    // honour a ban past deletion and are a salted hash of an e-mail address;
+    // neither is ever a client read.
+    match /accountDeletionOutbox/{outboxId} {
+      allow read, write: if false;
+    }
+
+    match /deletedAccountDigests/{digestId} {
+      allow read, write: if false;
+    }
+
     match /users/{userId} {
       // The root user document is private account state. Owners retain their
       // own profile/settings/presence flow. Staff account-management uses
@@ -2611,7 +2638,13 @@ service cloud.firestore {
       // account only. A preference, never a sanction — the muted person
       // is unaffected and unaware.
       match /muted/{mutedId} {
-        allow read, write: if isOwner(userId);
+        // Read stays on plain ownership: a frozen or banned client must still
+        // be able to render its own settings rather than error. Writes take the
+        // liveness gate every other owner-written list already has, so a
+        // disabled account cannot keep appending rows while the
+        // account-deletion sweep is walking this subcollection (ADR-206).
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId) && isActiveAccount();
       }
 
       // Story-chain viewed state: one row per Voice Moment this account
@@ -2625,7 +2658,15 @@ service cloud.firestore {
       // A re-listen is an update refreshing the same row's viewedAt.
       match /momentViews/{momentId} {
         allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId) &&
+        // isActiveAccount() mirrors reelViewAccountActive() on the Reel twin
+        // below, and it is what makes the account-deletion freeze real
+        // (ADR-206): the moment `disabled` lands, the sweep walks a stable
+        // snapshot instead of racing a client that keeps appending rows behind
+        // it. That race mattered here more than anywhere else — momentViews has
+        // no TTL and `allow delete: if false`, so a row written after the sweep
+        // passed is one its own owner can never remove. READ is deliberately
+        // left on plain ownership so a frozen client renders rather than errors.
+        allow create, update: if isOwner(userId) && isActiveAccount() &&
             request.resource.data.keys().hasOnly(['viewedAt']) &&
             request.resource.data.viewedAt == request.time;
         allow delete: if false;
