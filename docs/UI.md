@@ -301,13 +301,11 @@ backend does not carry (no unread badge on the server rail, no face or count
 in a voice row before joining, no presence dot without a presence source, no
 invented count); and tests are never made green by editing assertions.
 
-**Evidence status (phase 0).** Code level only: `flutter analyze` clean and
-the nine contract tests named below green on `620807ca`. No primitive has
-rendered after-frames yet. The only frames directory is
-`yovoice-evidence/2026-09-19/slim-0-waveform-frames/` (`before/`: 92 Build 33
-frames from the existing harnesses; `after/`: empty). Every visual claim
-below is therefore a specification, UNVERIFIED on screen until the phase-0
-visual step fills `yovoice-evidence/2026-09-19/slim-0-<family>-frames/after/`
+**Evidence status (3.0.0).** Phase 0 itself had code-level evidence only.
+The primitives were then looked at as mounted in the phase 1–7 frame sets
+(390 / 1440, Dark and Pearl, pl, populated; `yovoice-evidence/2026-09-19/`
+`slim-*-frames/after/`) before the 3.0.0 release; the isolated per-primitive
+after-frames of the original phase-0 gate were not produced
 (`docs/Sessions/2026-09-19-slim-redesign.md`).
 
 - **NA ŻYWO = `YoBadge(variant: YoBadgeVariant.live)`**
@@ -584,6 +582,48 @@ visual step fills `yovoice-evidence/2026-09-19/slim-0-<family>-frames/after/`
   the selected id and navigation. Any other place that draws a server's
   initial uses `YoServerTile` (sites migrate in phases 1 / 2 / 5, ADR-209).
   Contract: `test/yo_server_rail_item_test.dart`.
+
+## Slim screen rules (3.0.0)
+
+What changed for screen authors in 3.0.0 (ADR-209, "3.0.0 release scope").
+Everything above still holds.
+
+- **Titles and headers.** Screen titles are 22 px w800 in one slim row with at
+  most one filled (primary) action; other header actions are bare 44 px
+  icons. Every section heading on Start, More, Friends, Add friends and the
+  notification preferences is `HomeSectionHeader`; Settings keeps its 11 px
+  uppercase group labels (a different primitive).
+- **Rows.** Start servers 56 px (`YoServerTile`), server directory 64–68 px
+  flat rows (two columns on wide), Chats conversation rows 68 px, Settings and
+  Friends rows 64 px with 1 px dividers indented to the text edge. A row is
+  one layer: a wash on hover/press, no card per row.
+- **Cards.** Radius 12, 1 px `palette.border`, no decorative gradient, glow or
+  shadow, never a card inside a card. One accent per screen: the violet fill
+  is the screen's primary CTA; other affordances are tonal.
+- **Server faces.** Any server initial is `YoServerTile`; a server switcher is
+  `YoServerRailItem` (workspace rail on tablet/desktop and in the phone
+  "Kanały" sheet), switching through `ServerWorkspaceScreen.onOpenServer`.
+- **Start live cards.** "Teraz na żywo" is real data only: a 16:9 card per live
+  channel with `YoBadge` live and the real start time in a `YoMetricPill`,
+  from a bounded listener on at most 3 servers; the section is absent when
+  nothing is live. The greeting row carries the logo mark (`HomeBrandLockup`)
+  on phone and tablet.
+- **Conversation.** Bubbles 18 px radius with a 4 px tail, flat reaction pill,
+  hairline date separator; the composer is 48 px and purely visual — its
+  `TextField`, `TapRegion` and `PopScope` wiring is not touched by styling.
+- **YO Moments chrome.** Over media, chrome stays immersive-dark in both
+  themes; on the page canvas it uses `ImmersiveFeedChrome(onCanvas: true)`
+  with palette roles. Yeels progress is 2 px directly above the dock. Głos
+  and Yeels keep separate filters and keys.
+- **Profile header.** `ProfileStatsRow` and `ProfileActionBar`
+  (`profile_header.dart`) on own and friend profiles: stats from real fields
+  only, audience counts only when the audience is visible, one primary + one
+  secondary CTA + an icon sheet.
+- **Sign-in chain.** One background layer (`AuthBackdrop`, no waves), no
+  form card, a flat primary mode rail, a solid `FilledButton` primary, 52 px
+  fields with `authBorderStrong` and a 2 px `authFocus` edge, 48 px
+  `OutlinedButton` providers. Auth colours come from `AppImmersiveColors`
+  (`authFocus`, `authLink`, `authBrandPanel` added); no inline hex.
 
 ## Semantic colour ownership
 

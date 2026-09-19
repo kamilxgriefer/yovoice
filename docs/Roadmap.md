@@ -14,6 +14,54 @@ someone decide what to pick up next.
 
 ---
 
+## YO Voice 3.0.0 (34) — the Slim redesign — released to testers — 2026-09-19
+
+**Status: Done for 3.0.0.** `main` carries `version: 3.0.0+34` in the release
+commit `chore(release): YO Voice 3.0.0+34, the Slim redesign`. Scope, per-phase
+MUST list and the 3.0.1 deferrals:
+[ADR-209, "3.0.0 release scope"](Decisions.md#300-release-scope). Run log and
+release notes (en + pl):
+[Sessions/2026-09-19-slim-redesign.md](Sessions/2026-09-19-slim-redesign.md).
+Presentation only: no backend, rules, schema, Function or catalog change.
+
+| Phase | Status | Branch tip | Merge into `main` |
+| --- | --- | --- | --- |
+| 0 Fundament (shared primitives) | Done | — | `43cc2201` (on `origin/main` before tonight) |
+| 1 Start | Done | `15351a4f` | `d539bb39` |
+| 2 Serwery | Done | `fee9addd` | `db839134` |
+| 3 Czaty | Done | `cef92248` | `2e46fe44` |
+| 4 YO Moments | Done | `050663ce` | `5b70cb02` |
+| 5 Profil | Done | `596e49d2` | `cf593577` |
+| 6 Więcej, Ustawienia, Znajomi, Powiadomienia | Done | `7ec2caaf` | `73f76ba1` |
+| 7 Logowanie i rejestracja | Done | `89353aa0` | `19c15947` |
+| Integration review round | Done | — | `9b18fdda` |
+
+Verification: per phase `flutter analyze`, targeted tests and one frame set
+(390 / 1440, Dark and Pearl, pl); on the integrated tree `flutter analyze`
+clean and the full `flutter test` suite green; CI on the pushed release commit
+("Deploy YO Voice to Firebase Hosting" verify job, "Flutter web browser
+smoke"). Store uploads and the web deploy are separate owner steps and are
+not part of this entry.
+
+### 3.0.1 — planned (P1, polish of the redesign)
+
+- Start: desktop layout rework beyond restyling (tall "Tu i teraz" card,
+  recent-chats backdrop tiles, column balance); live rail beyond the first 3
+  servers; deep link straight into the live channel.
+- Serwery: fourth "members" column on wide; restructured members sheet.
+- Czaty: grouping consecutive messages by author; New message sheet restyle.
+- YO Moments: wide Yeels with author / caption / actions on the media scrim
+  (footer-bar geometry is pinned by three tests); "Oryginalny dźwięk ·
+  {autor}" sound label (new copy); thinner phone chrome insets.
+- Profil: Głos / Yeels / Serwery tabs with the 3-column grid; disabled
+  "Wkrótce" tabs on the friend profile.
+- Więcej: Settings sub-screens; "1 dni temu" → "1 dzień temu" in
+  `relativeCompactTime`; Settings title x = 6 px at the root-tab form.
+- Logowanie: catalog label changes in 41 locales (buttons and divider still
+  in capitals); `auth-footer-switch` link; screenshot-harness extension.
+
+---
+
 ## Build 33 polish round — web live, iOS with testers, Play upload outstanding — 2026-09-19
 
 **Status: Build 33 is released to testers on two of three surfaces. The web
@@ -2115,74 +2163,11 @@ their separate production-deployment gates.
 
 ## In Progress
 
-### Slim redesign (3.0.0) — phase 0 done in source, visual gate open; phases 1–7 planned
+### ~~Slim redesign (3.0.0)~~ DONE 2026-09-19
 
-**Status:** phase 0 is on local `main`, **not pushed, not released, not
-deployed**. Phase 1 must not start until phase 0's visual gate is met.
-Brief: `yovoice-evidence/2026-09-18/slim-redesign-brief.md`. Decision record:
-[ADR-209](Decisions.md#adr-209-slim-redesign-instagram--discord--twitch-w-języku-yo-voice).
-Phase log: [Sessions/2026-09-19-slim-redesign.md](Sessions/2026-09-19-slim-redesign.md).
-The redesign ships as **3.0.0+34** once every phase has closed. Build 33 is
-consumed, and the release session confirms the number. `pubspec.yaml` stays
-`2.0.0+33` until the release commit.
-
-**Phase 0 — Fundament (inventory + shared primitives): Done in source.**
-The commits over Build 33 (`46d6b330`) are:
-
-- `f5713426`: live badge (`YoBadge.live`, `ServerLivePill`).
-- `89c3d2be`: presence dot (`AvailabilityDot`).
-- `d3552e3d` + `2c18fb02`: waveform (`YoWaveform` / `StoryWaveform`).
-- `1c5722a0`: section header (`HomeSectionHeader` in `lib/shared/`).
-- `1d9d85c2`: story-tile ring (`MomentStoryTile.ringGradient`).
-- `f8b8d382`: `VoicePlayerRow`.
-- `9b639ffb`: `YoChannelRow` / `YoVoiceChannelRow`.
-- `1aad9b47`: `YoMetricPill` + `YoServerRailItem` / `YoServerTile`.
-- `620807ca`: review round. It fixed the channel-row measure and roster fit,
-  fixed the speaking-ring geometry, voiced the channel kinds and added 2 px
-  focus edges.
-- The documentation commit that consolidates ADR-209.
-
-What is verified and what is not:
-
-- **Verified:** code level only. On `620807ca`, `flutter analyze` is clean and
-  the nine primitive contract test files pass (124 tests). Each family also
-  ran its own bounded `flutter test` round (session log).
-- **Gate still open:** no family has after-frames. Only
-  `yovoice-evidence/2026-09-19/slim-0-waveform-frames/before/` exists, and
-  its `after/` is empty. The brief's phase-0 gate (after-frames per family,
-  plus a session-log entry naming what was looked at and what stays
-  UNVERIFIED) is not met.
-- **Dependencies:** a visual verification step on a machine free to run the
-  screenshot harnesses. The two broken harness fixtures in `docs/Bugs.md`
-  must be fixed, or their frames recorded as UNVERIFIED.
-- **Priority:** P1. It blocks the rest of the redesign.
-
-**Phases 1–7: Planned.** Each phase is one commit on `main`. Every phase uses
-the brief's lighter verification mode (2026-09-19): frames at 390 / 768 /
-1440, Dark and Pearl, 100 % and 200 %, pl, with one en control frame. Every
-phase also needs a full `flutter test` at its gate, one reviewer plus a
-skeptic, and ADR-209 / UI.md / Roadmap / Bugs / session-log updates.
-
-1. **Start**: the Moments rail as stories, "Na żywo teraz" cards, and servers
-   as a compact list. Carried in from phase 0: decide the dead Home chains and
-   where `MomentStoryTile` is mounted (0n below) before touching
-   `test/desktop_home_test.dart`'s contracts.
-2. **Serwery**: the catalogue, plus the workspace with rail / channels /
-   content / members on wide screens. This phase mounts `YoServerRailItem`,
-   converges the two speaking inks, and raises the channel row's 48 px floor.
-3. **Czaty**: the conversation list and `chat_screen.dart` (grouping, date
-   separator, 48 px composer).
-4. **YO Moments**: slimmer chrome for both formats, with every key and label
-   kept. This phase folds `MomentCountChip` into `YoMetricPill`.
-5. **Profil**: own and other people's profiles, one header, stats from real
-   fields only.
-6. **Więcej, Ustawienia, Znajomi, Powiadomienia**: alignment to the
-   primitives only.
-7. **Logowanie i rejestracja**: the immersive auth chain, with new
-   `AppImmersiveColors` roles and catalogue keys in all 41 locales.
-
-After phase 7, the release commit sets `3.0.0+34`, and the "Release notes
-3.0.0" (pl + en) go into the session log for the release session.
+Phases 0–7 shipped to testers as 3.0.0 (34); see the entry at the top of this
+file and ADR-209 "3.0.0 release scope". The 3.0.1 polish list lives in that
+entry.
 
 ### Build 20 YO Moments, Voice read v2, Reels retention and moderation candidate
 

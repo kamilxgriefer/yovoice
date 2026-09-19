@@ -215,3 +215,108 @@ phase 1 must not start until a visual verification step produces and looks
 at them. The channel-row frames should be taken on this round's tree, since
 they are the ones the review predicted would show the measure and overflow
 defects.
+
+## 3.0.0 tonight — parallel phases 1–7, integration and release
+
+**Why tonight.** The owner wanted the new graphics in testers' hands the same
+evening and everything else as 3.0.1. The phase-0 plan (one phase at a time,
+full matrix per phase) was narrowed by
+`docs/briefs/2026-09-19-slim-3.0.0-tonight.md` (branch `slim/brief`): a MUST
+list and a DEFER list per phase, presentation only, no catalog edits, no docs
+edits in phase branches.
+
+**How it ran.** Seven branches from `43cc2201` (phase 0 on `origin/main`),
+each in its own worktree: p1 Start and p2 Serwery on the Mac, p3 Czaty, p4 YO
+Moments, p5 Profil, p6 Więcej and p7 Logowanie on a Windows PC. Each phase ran
+`flutter analyze`, its targeted tests plus every test importing a changed
+file, and one frame set (390 and 1440, Dark and Pearl, pl, populated; p1 and
+p2 also 768), then pushed `slim/pN` and the tag `slim-pN-ready`. The phase-1
+implementer had been stopped mid-way when the plan switched to parallel
+worktrees; its edits were carried over unchanged as `ded38cd5` and finished
+in `15351a4f`.
+
+| Phase | Branch tip | Merge | Frames (`yovoice-evidence/2026-09-19/`) |
+| --- | --- | --- | --- |
+| p1 Start | `15351a4f` | `d539bb39` | `slim-1-start-frames/after/` |
+| p2 Serwery | `fee9addd` | `db839134` | `slim-2-servers-frames/after/` |
+| p3 Czaty | `cef92248` | `2e46fe44` | `slim-p3-frames/after/` (PC) |
+| p4 YO Moments | `050663ce` | `5b70cb02` | `slim-p4-frames/after/` (PC) |
+| p5 Profil | `596e49d2` | `cf593577` | `slim-p5-frames/after/` (PC) |
+| p6 Więcej | `7ec2caaf` | `73f76ba1` | `slim-p6-frames/after/` (PC) |
+| p7 Logowanie | `89353aa0` | `19c15947` | `slim-p7-frames/after/` (PC) |
+
+**Integration (Mac).** The seven branches merged in order into `main`. A
+review round over the integrated tree found two defects, fixed in `9b18fdda`
+with new tests (`servers_inline_rail_test`, `profile_own_stats_test`):
+
+- the Servers tab did not pass `onOpenServer` to its inline workspace, so a
+  rail tap replaced the root route and disposed `MainShell`;
+- the own profile's Serwery counter read the achievement counter
+  `communityCount`; it now counts the live `watchMyServers()` list shown on
+  the same page, and the Moments counter is left out until a live count
+  exists (`momentCount` never decreases).
+
+On `9b18fdda`: `flutter analyze` clean; the full `flutter test` suite in two
+halves, green (odd half +2745, even half +2574, 0 failed). No test assertion,
+finder or rhythm number was edited to go green.
+
+**Release.** `chore(release): YO Voice 3.0.0+34, the Slim redesign` sets
+`version: 3.0.0+34` and writes ADR-209 "3.0.0 release scope", the Roadmap
+entry, the changed UI rules and this section. `main` was pushed; CI on that
+commit runs "Deploy YO Voice to Firebase Hosting" (verify job only; nothing
+was dispatched or deployed from this session) and "Flutter web browser
+smoke". Store uploads and the web deploy are owner steps.
+
+**UNVERIFIED.** The PC frame sets live on the PC and were not looked at again
+on the Mac; tonight's lighter mode has no 200 % text frame set for every
+phase and no en control frame for every phase; the phase-0 per-primitive
+after-frames were never produced (the primitives were seen only as mounted in
+the phase frames); no two-device check.
+
+## Release notes 3.0.0
+
+### English
+
+YO Voice 3.0.0 is a new look for the whole app. One calmer design, in Dark and
+in Pearl.
+
+- **Start**: the YO Voice logo in the greeting, your friends' Moments as a
+  story rail, a "Live now" row showing channels that are live right now and
+  since when, and your servers as a compact list.
+- **Servers**: a compact server list, and a server rail next to the channels
+  so you can switch servers without leaving the workspace (on phones, in the
+  Channels sheet).
+- **Chats**: slimmer conversation list with who is active, cleaner bubbles and
+  date separators, and a lighter message bar.
+- **YO Moments**: Voice and Yeels stay two separate formats, each with its own
+  filters; slimmer headers, full-screen Yeels with the actions on the right.
+- **Profile**: a new header with your stats and clear actions, on your own
+  profile and your friends'.
+- **Sign-in**: a calmer sign-in, sign-up and password reset.
+
+Coming in 3.0.1: a reworked desktop Start, message grouping in chats, profile
+tabs for Voice, Yeels and Servers, more of Settings in the new design, and
+updated button labels in every language.
+
+### Polski
+
+YO Voice 3.0.0 to nowy wygląd całej aplikacji. Jeden spokojniejszy design, w
+motywie Ciemnym i Perłowym.
+
+- **Start**: logo YO Voice przy powitaniu, Momenty znajomych jako pasek
+  historii, sekcja „Teraz na żywo” z kanałami, które trwają teraz, i godziną
+  startu, oraz Twoje serwery jako zwarta lista.
+- **Serwery**: zwarta lista serwerów i pasek serwerów obok kanałów, żeby
+  przełączać serwery bez wychodzenia z widoku (na telefonie w arkuszu Kanały).
+- **Czaty**: smuklejsza lista rozmów z tym, kto jest aktywny, czytelniejsze
+  dymki i separatory dat oraz lżejszy pasek wiadomości.
+- **YO Moments**: Głos i Yeels zostają dwoma osobnymi formatami, każdy z
+  własnymi filtrami; smuklejsze nagłówki, Yeels na cały ekran z akcjami po
+  prawej.
+- **Profil**: nowy nagłówek z Twoimi statystykami i jasnymi akcjami, na Twoim
+  profilu i u znajomych.
+- **Logowanie**: spokojniejsze logowanie, rejestracja i reset hasła.
+
+W 3.0.1: przebudowany Start na komputerze, grupowanie wiadomości w czatach,
+zakładki Głos, Yeels i Serwery na profilu, więcej Ustawień w nowym wyglądzie
+oraz nowe etykiety przycisków we wszystkich językach.

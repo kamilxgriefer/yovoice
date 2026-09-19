@@ -13753,6 +13753,135 @@ that names the release says 3.0.0: no "2.1", no "Build 34", no code names.
 Nothing was deployed or published in phase 0, and phase 0 was not pushed by
 the family steps.
 
+### 3.0.0 release scope
+
+Released to testers on 2026-09-19 as `version: 3.0.0+34` (the release commit
+`chore(release): YO Voice 3.0.0+34, the Slim redesign`). Phase 0 is the base
+(`43cc2201`); phases 1–7 were built in parallel on `slim/p1`…`slim/p7` and
+merged into `main` in order:
+
+| Phase | Branch tip (`slim-pN-ready`) | Merge into `main` |
+| --- | --- | --- |
+| p1 Start | `15351a4f` | `d539bb39` |
+| p2 Serwery | `fee9addd` | `db839134` |
+| p3 Czaty | `cef92248` | `2e46fe44` |
+| p4 YO Moments | `050663ce` | `5b70cb02` |
+| p5 Profil | `596e49d2` | `cf593577` |
+| p6 Więcej | `7ec2caaf` | `73f76ba1` |
+| p7 Logowanie | `89353aa0` | `19c15947` |
+
+The integration review round `9b18fdda` fixed two findings: the Servers tab now
+hands `onOpenServer` to its inline workspace (a rail tap had replaced the root
+route and disposed `MainShell`), and the own profile's Serwery counter counts
+the live `watchMyServers()` list instead of the achievement counter, with the
+Moments counter left out until a live count exists.
+
+**MUST, shipped in 3.0.0.**
+
+- p1 Start: logo mark in the greeting row (`HomeBrandLockup` on phone/tablet;
+  desktop keeps it in the rail).
+- p1 Start: Moments rail story ring (`MomentStoryTile.ringGradient` for an
+  unheard chain).
+- p1 Start: "Teraz na żywo" 16:9 cards (`HomeLiveNowSection`) with `YoBadge`
+  live and a `YoMetricPill` showing the real start time; a bounded
+  `watchChannels` listener on at most 3 servers; no fake counts.
+- p1 Start: servers as a compact 56 px `YoServerTile` list; flattened continue
+  card.
+- p1 Start: every section header is `HomeSectionHeader`; data-less greeting
+  hero card removed (key kept).
+- p2 Serwery: directory as a compact flat 64–68 px list, two columns on wide;
+  slim title row.
+- p2 Serwery: workspace server rail with `YoServerRailItem` on tablet/desktop
+  and in the phone "Kanały" sheet (new optional
+  `ServerWorkspaceScreen.onOpenServer`).
+- p2 Serwery: channel column header flattened into one row; inline initial
+  tiles moved to `YoServerTile`; slim headers.
+- p3 Czaty: 22 px slim title row, 68 px conversation rows, active-people rail
+  and avatars on `PeopleStatus` + `AvailabilityDot`, "WIADOMOŚCI" group label,
+  unread badge kept.
+- p3 Czaty: conversation slim header (44 px targets, 79 px phone header),
+  bubble 18 px radius with 4 px tail, flat reaction pill, hairline date
+  separator, 48 px slim composer (visual only; `TextField` / `TapRegion` /
+  `PopScope` byte-identical); 3 inline hexes migrated.
+- p4 YO Moments: one 48 px `YoMomentsHeader` row on wide; slimmer
+  `YoMomentsFormatSwitch`; unoutlined filter chips; flat `YoMomentsLocalPanel`
+  with a solid create bar.
+- p4 YO Moments: `ImmersiveFeedChrome.onCanvas` (additive) with theme-aware
+  phone Głos chrome; edge-to-edge Yeels with scrim, right action column, 2 px
+  progress above the dock; quiet moment-detail chips.
+- p5 Profil: shared `ProfileStatsRow` / `ProfileActionBar` in
+  `profile_header.dart`; own profile stats from real fields, followers only
+  when `canExposeCreatorAudience`; primary + secondary CTA + icon sheet.
+- p5 Profil: friend profile with the same header pieces (Znajomi, audience
+  gated), Follow/Message + "..." sheet; card-in-card flattened; inline hexes
+  removed.
+- p6 Więcej: `HomeSectionHeader` on More / Friends / Add friends /
+  notification preferences; Settings rows 64 px with tonal leading;
+  single-layer Friends rows with `AvailabilityDot`; flattened 12 px cards; one
+  accent per screen; 22 px w800 titles; 8 inline hexes removed.
+- p7 Logowanie: single-layer backgrounds (no waves or 3-layer gradients;
+  splash untouched); no card-in-card; flat primary mode rail with
+  `authBorderStrong` and a 2 px `authFocus` ring.
+- p7 Logowanie: solid `FilledButton` primary without glow; 52 px fields with
+  `authBorderStrong` and 2 px focus; 48 px `OutlinedButton` providers; flat
+  desktop brand panel with faint arcs; calmer forgot / verify / TOTP; all
+  inline hexes migrated.
+- p7 Logowanie: `AppImmersiveColors` roles `authFocus`, `authLink`,
+  `authBrandPanel` added, with equality asserts in `app_theme_test.dart` and
+  registration in `semantic_color_source_guard_test.dart`.
+
+**Deferred to 3.0.1.**
+
+- p1: rework of the desktop Start layout beyond restyling (tall "Tu i teraz"
+  card, recent-chats backdrop tiles, column balance).
+- p1: live rail for more than the first 3 servers; deep link straight into the
+  live channel (the callback only carries the `Server` today).
+- p2: fourth "members" column on wide; restructured members sheet.
+- p3: grouping consecutive messages by author (needs list logic across the
+  reversed builder with interleaved outbox entries).
+- p3: any change to send / receive / outbox / typing / read logic (untouched);
+  New message sheet restyle (not in tonight's MUST list).
+- p4: on wide (≥ 600) Yeels, author / caption / actions on the media scrim
+  instead of the board-08 footer bar (the footer geometry is pinned by
+  `reel_footer_bar_test`, `reels_stage_redesign_test` and
+  `reel_stage_frame_geometry_test`).
+- p4: sound label "Oryginalny dźwięk · {autor}" when `backingAudio == null`
+  (needs new copy; catalogs frozen).
+- p4: thinner phone `ImmersiveFeedChrome` insets (blocked by the
+  measured-height geometry).
+- p5: Głos / Yeels / Serwery tabs with the 3-column grid on the own profile.
+- p5: disabled "Wkrótce" tabs on the friend profile.
+- p6: Settings sub-screens (appearance, language, device sessions, downloaded
+  audio, privacy, 2FA, delete account) beyond the main Settings list.
+- p6: "1 dni temu" should read "1 dzień temu"
+  (`AppLocalizations.relativeCompactTime`, localization catalog).
+- p6: Settings title x = 6 px at the root-tab form, pinned by
+  `settings_header_text_scale_test`.
+- p7: catalog label changes ("Sign in" / "Sign up" / "or with email" / "Send
+  reset link" for 41 locales); primary buttons and divider still read in
+  capitals.
+- p7: `auth-footer-switch` link; extension of `auth_responsive_screenshot.dart`
+  / `totp_challenge_screenshot.dart`; ADR/docs entries (the integration writes
+  these).
+
+**How tonight ran.** The owner asked for the new graphics in testers' hands
+the same evening and everything else as 3.0.1, so the full brief was narrowed
+by `docs/briefs/2026-09-19-slim-3.0.0-tonight.md` (branch `slim/brief`).
+Phases ran in parallel worktrees: p1 and p2 on the Mac, p3–p7 on a Windows
+PC, each from `43cc2201`, each tagged `slim-pN-ready` when green. One Mac
+session integrated all seven, ran a review round and the release. Verification
+was the brief's lighter mode: per phase `flutter analyze`, the targeted tests
+plus every test importing a changed file, and one frame set (390 and 1440,
+Dark and Pearl, pl, populated) looked at per screen; on the integrated tree
+`flutter analyze` and the full `flutter test` suite (two halves) were green.
+No test assertion, finder or rhythm number was edited to go green; the only
+test edits are the two new `AppImmersiveColors` equality expects and the role
+registration above. No localization catalog, Firestore rule, schema, Function,
+`pubspec.yaml` (outside the release commit), floating dock or `MainShell`
+navigation-model change is in 3.0.0. The phase-0 after-frame gate recorded
+above was superseded by tonight's per-phase frame sets; phase-0 primitives
+were looked at as mounted in the phase frames, not in isolation.
+
 ### Reasoning
 
 A marker drawn eleven ways cannot be restyled once, cannot be tested once and
