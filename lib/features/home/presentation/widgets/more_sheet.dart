@@ -21,7 +21,7 @@ import 'package:yovoice/features/settings/presentation/screens/settings_screen.d
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/screens/staff_center_screen.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
-import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
@@ -106,6 +106,9 @@ Future<MoreDestination?> showMoreSheet(
   SubscriptionEntitlements entitlements = SubscriptionEntitlements.free,
   StaffCapabilityService? capabilityService,
   String? currentUid,
+  // Forwarded to [MoreSheet.profileService]; capture harnesses and tests
+  // only. Production passes nothing and the sheet keeps its default.
+  @visibleForTesting ProfileService? profileService,
 }) async {
   assert(debugCheckHasMediaQuery(context));
   assert(debugCheckHasMaterialLocalizations(context));
@@ -117,6 +120,7 @@ Future<MoreDestination?> showMoreSheet(
       entitlements: entitlements,
       capabilityService: capabilityService,
       currentUid: currentUid,
+      profileService: profileService,
     ),
     capturedThemes: InheritedTheme.capture(
       from: context,
@@ -297,8 +301,10 @@ Future<MoreDestination?> showDesktopMoreMenu(
     // around the panel on the dark Home surface; a translucent one
     // reads as depth instead.
     shadowColor: palette.shadow.withValues(alpha: .24),
+    // Slim: radius 12 and a tonal glyph (container pair), so the popover
+    // adds no second violet accent next to the rail's selected item.
     shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(12),
       side: BorderSide(color: palette.border),
     ),
     constraints: const BoxConstraints(minWidth: 264, maxWidth: 300),
@@ -315,9 +321,9 @@ Future<MoreDestination?> showDesktopMoreMenu(
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: colors.primaryContainer,
-                  borderRadius: BorderRadius.circular(11),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, size: 18, color: colors.primary),
+                child: Icon(icon, size: 22, color: colors.onPrimaryContainer),
               ),
               const SizedBox(width: 11),
               Expanded(
@@ -337,9 +343,12 @@ Future<MoreDestination?> showDesktopMoreMenu(
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
+                      // Explicit w500: the menu item's inherited label
+                      // weight made the secondary line as heavy as the title.
                       style: TextStyle(
                         color: palette.textSecondary,
                         fontSize: 11,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ],
@@ -549,11 +558,11 @@ class _MoreSheetState extends State<MoreSheet> {
           ),
         ],
       ),
+      // Slim: the floating sheet is one flat surface. The page scenery that
+      // used to be repeated inside it (`YoAtmosphereArt`) stays on the canvas
+      // behind the sheet, where the brief keeps decoration.
       child: Stack(
         children: [
-          const Positioned.fill(
-            child: YoAtmosphereArt(section: YoPageSection.more),
-          ),
           Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -585,12 +594,13 @@ class _MoreSheetState extends State<MoreSheet> {
                                 _AvailabilityRow(
                                   profileService: widget.profileService,
                                 ),
+                                // The sheet's one headline: 20 px w800.
                                 Text(
                                   copy.more,
                                   style: TextStyle(
                                     color: palette.textPrimary,
-                                    fontSize: 21,
-                                    fontWeight: FontWeight.w900,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w800,
                                   ),
                                 ),
                               ],
@@ -781,30 +791,15 @@ class _MoreSheetState extends State<MoreSheet> {
     final uid = _currentUid;
     final copy = AppLocalizations.of(context);
     return [
-      const SizedBox(height: 12),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Text(
-              copy.text('Staff', 'Zespół'),
-              style: TextStyle(
-                color: context.appPalette.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w900,
-                letterSpacing: .3,
-              ),
-            ),
-            // The signed-in account's own authoritative badges — same
-            // shared components and repository as every other surface.
-            if (uid.isNotEmpty) UserIdentityBadges(uid: uid),
-          ],
-        ),
+      // The staff section's heading is THE section heading (ADR-209): its
+      // 24 / 16 rhythm replaces the private 12 + label + 8 spacing, and the
+      // account's badges ride the trailer slot, centred on the title.
+      HomeSectionHeader(
+        title: copy.text('Staff', 'Zespół'),
+        // The signed-in account's own authoritative badges — same
+        // shared components and repository as every other surface.
+        trailing: uid.isNotEmpty ? UserIdentityBadges(uid: uid) : null,
       ),
-      const SizedBox(height: 8),
       for (var index = 0; index < entries.length; index++) ...[
         if (index > 0) const SizedBox(height: 8),
         _WideMoreTile(
@@ -884,20 +879,26 @@ class _MoreTile extends StatelessWidget {
       label: semanticLabel,
       onTap: open,
       excludeSemantics: true,
+      // Slim tile: one flat layer (1 px `palette.border`, radius 12) with a
+      // tonal 22 px glyph — the sheet carries no violet accent of its own.
       child: Material(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         child: InkWell(
           onTap: open,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
           child: Container(
             // The launcher's compact density, as a floor rather than a fixed
             // height: short labels keep the 62dp row the grid always drew and
             // a comfortable 44px+ touch target, longer ones grow the row.
             constraints: const BoxConstraints(minHeight: 62),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            // 6 + 32 + 8 (was 8 + 34 + 8): four more pixels for the label,
+            // so "Powiadomienia" stays one word on a 390 px phone. The
+            // column-count estimate above still subtracts the old 58, which
+            // keeps every grid/fallback branch decision exactly as it was.
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(color: palette.border),
             ),
             child: Stack(
@@ -905,13 +906,17 @@ class _MoreTile extends StatelessWidget {
                 Row(
                   children: [
                     Container(
-                      width: 34,
-                      height: 34,
+                      width: 32,
+                      height: 32,
                       decoration: BoxDecoration(
                         color: colors.primaryContainer,
-                        borderRadius: BorderRadius.circular(11),
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                      child: Icon(icon, color: colors.primary, size: 20),
+                      child: Icon(
+                        icon,
+                        color: colors.onPrimaryContainer,
+                        size: 22,
+                      ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -932,7 +937,7 @@ class _MoreTile extends StatelessWidget {
                             style: TextStyle(
                               color: palette.textPrimary,
                               fontSize: 14,
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
                           const SizedBox(height: 1),
@@ -994,7 +999,11 @@ class _WideMoreTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final accent = accentColor ?? colors.primary;
+    // Ordinary rows are tonal (container pair); staff rows keep their tier's
+    // role colour, which is identity, not a decorative accent.
+    final accent = accentColor ?? colors.onPrimaryContainer;
+    final glyphSurface =
+        accentColor?.withValues(alpha: .18) ?? colors.primaryContainer;
     final lockColor = palette.warningForeground;
     final copy = AppLocalizations.of(context);
     final semanticLabel = [
@@ -1013,15 +1022,15 @@ class _WideMoreTile extends StatelessWidget {
       excludeSemantics: true,
       child: Material(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(17),
+        borderRadius: BorderRadius.circular(12),
         child: InkWell(
           onTap: open,
-          borderRadius: BorderRadius.circular(17),
+          borderRadius: BorderRadius.circular(12),
           child: Container(
             constraints: const BoxConstraints(minHeight: 58),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(17),
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: accentColor?.withValues(alpha: .5) ?? palette.border,
               ),
@@ -1032,12 +1041,10 @@ class _WideMoreTile extends StatelessWidget {
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: (accentColor ?? colors.primary).withValues(
-                      alpha: .18,
-                    ),
-                    borderRadius: BorderRadius.circular(12),
+                    color: glyphSurface,
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(icon, color: accent, size: 21),
+                  child: Icon(icon, color: accent, size: 22),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -1049,7 +1056,7 @@ class _WideMoreTile extends StatelessWidget {
                         label,
                         style: TextStyle(
                           color: palette.textPrimary,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                       const SizedBox(height: 2),

@@ -39,8 +39,14 @@ class _MessagePrivacySettingsTileState
             : snapshot.hasData
             ? _localizedOptionLabel(copy, snapshot.data!)
             : copy.text('Loading…', 'Wczytywanie…');
+        // Slim row geometry shared with the Settings rows around it: 64 px
+        // floor, 40 px tonal leading box with a 22 px glyph, text at 68 px.
         return ListTile(
           key: const ValueKey('message-privacy-settings-tile'),
+          minTileHeight: 64,
+          contentPadding: const EdgeInsetsDirectional.symmetric(horizontal: 16),
+          minLeadingWidth: 40,
+          horizontalTitleGap: 12,
           onTap: snapshot.hasData
               ? () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
@@ -49,8 +55,8 @@ class _MessagePrivacySettingsTileState
                 )
               : null,
           leading: Container(
-            width: 38,
-            height: 38,
+            width: 40,
+            height: 40,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: colors.primaryContainer,
@@ -59,26 +65,26 @@ class _MessagePrivacySettingsTileState
             child: Icon(
               Icons.forum_outlined,
               color: colors.onPrimaryContainer,
-              size: 20,
+              size: 22,
             ),
           ),
           title: Text(
             copy.text('Who can message you', 'Kto może do Ciebie pisać'),
             style: TextStyle(
               color: palette.textPrimary,
-              fontWeight: FontWeight.w700,
-              fontSize: 14.5,
+              fontWeight: FontWeight.w600,
+              fontSize: 15,
             ),
           ),
           subtitle: Text(
             subtitle,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: palette.textSecondary, fontSize: 12),
+            style: TextStyle(color: palette.textSecondary, fontSize: 12.5),
           ),
           trailing: Icon(
             Icons.chevron_right_rounded,
-            color: palette.textSecondary,
+            color: palette.textTertiary,
           ),
         );
       },

@@ -33,6 +33,7 @@ import 'package:yovoice/features/settings/presentation/screens/premium_messaging
 import 'package:yovoice/features/settings/presentation/screens/downloaded_audio_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/delete_account_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/device_sessions_screen.dart';
+import 'package:yovoice/features/settings/data/services/message_privacy_service.dart';
 import 'package:yovoice/features/settings/presentation/screens/two_factor_authentication_screen.dart';
 import 'package:yovoice/features/settings/presentation/widgets/appearance_language_settings_section.dart';
 import 'package:yovoice/features/settings/presentation/widgets/message_privacy_settings_tile.dart';
@@ -52,8 +53,23 @@ class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     this.isRootTab = false,
     this.onReplayGuidedOnboarding,
+    @visibleForTesting this.profileService,
+    @visibleForTesting this.authService,
+    @visibleForTesting this.friendService,
+    @visibleForTesting this.entitlementService,
+    @visibleForTesting this.showcaseConsentService,
+    @visibleForTesting this.messagePrivacyService,
     super.key,
   });
+
+  /// Constructor seams for capture harnesses and tests. Production passes
+  /// none of them and every service keeps its default Firebase instance.
+  final ProfileService? profileService;
+  final AuthService? authService;
+  final FriendService? friendService;
+  final EntitlementService? entitlementService;
+  final PublicShowcaseConsentService? showcaseConsentService;
+  final MessagePrivacyService? messagePrivacyService;
 
   /// True when this screen IS the shell's current content (a desktop
   /// content slot) rather than a pushed route — the same flag
@@ -70,11 +86,13 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _profileService = ProfileService();
-  final _authService = AuthService();
-  final _friendService = FriendService();
-  final _entitlementService = EntitlementService();
-  final _showcaseConsentService = PublicShowcaseConsentService();
+  late final _profileService = widget.profileService ?? ProfileService();
+  late final _authService = widget.authService ?? AuthService();
+  late final _friendService = widget.friendService ?? FriendService();
+  late final _entitlementService =
+      widget.entitlementService ?? EntitlementService();
+  late final _showcaseConsentService =
+      widget.showcaseConsentService ?? PublicShowcaseConsentService();
 
   PackageInfo? _packageInfo;
   final Map<Permission, PermissionStatus> _permissionStatus = {};
@@ -437,7 +455,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final emailVerified = _authService.currentUser?.emailVerified ?? false;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(18, 6, 18, 48),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 48),
       children: [
         // Identity editing lives on the Profile screen (its Edit button),
         // not in Settings — Settings is configuration, Profile is content.
@@ -448,7 +466,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             MaterialPageRoute<void>(builder: (_) => const ProfileScreen()),
           ),
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         _GroupLabel(copy.text('Account', 'Konto')),
         _SettingsGroup(
@@ -481,7 +499,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         const _GroupLabel('YO Voice Premium'),
         StreamBuilder<SubscriptionEntitlements>(
@@ -567,7 +585,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             );
           },
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         _GroupLabel(copy.text('Privacy', 'Prywatność')),
         _SettingsGroup(
@@ -669,7 +687,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 );
               },
             ),
-            const MessagePrivacySettingsTile(),
+            MessagePrivacySettingsTile(service: widget.messagePrivacyService),
             _SettingsTile(
               icon: Icons.visibility_off_rounded,
               title: copy.text(
@@ -688,7 +706,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         _GroupLabel(copy.text('Security', 'Bezpieczeństwo')),
         _SettingsGroup(
@@ -764,7 +782,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         _GroupLabel(copy.text('Notifications', 'Powiadomienia')),
         _SettingsGroup(
@@ -834,7 +852,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         const AppearanceLanguageSettingsSection(),
 
@@ -862,7 +880,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         _GroupLabel(copy.text('Storage', 'Pamięć')),
         _SettingsGroup(
@@ -902,7 +920,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         _GroupLabel(copy.text('Permissions', 'Uprawnienia')),
         _SettingsGroup(
@@ -933,7 +951,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         _GroupLabel(copy.text('Help', 'Pomoc')),
         _SettingsGroup(
@@ -965,7 +983,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         _GroupLabel(copy.text('About', 'O aplikacji')),
         _SettingsGroup(
@@ -985,7 +1003,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         _GroupLabel(copy.text('Legal', 'Informacje prawne')),
         _SettingsGroup(
@@ -1002,7 +1020,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         _GroupLabel(
           copy.text('Danger zone', 'Strefa niebezpieczna'),
@@ -1267,6 +1285,9 @@ class _ProfileHeroCard extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final expanded = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    // Slim (phase 6): one flat layer — 1 px `palette.border`, radius 12, a
+    // 48 px avatar and no decorative gradient ring around it.
+    const radius = BorderRadius.all(Radius.circular(12));
     return Semantics(
       button: true,
       label: copy.text(
@@ -1277,14 +1298,14 @@ class _ProfileHeroCard extends StatelessWidget {
       excludeSemantics: true,
       child: Material(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: radius,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: radius,
           child: Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
+              borderRadius: radius,
               border: Border.all(color: palette.border),
             ),
             child: Row(
@@ -1292,27 +1313,18 @@ class _ProfileHeroCard extends StatelessWidget {
                   ? CrossAxisAlignment.start
                   : CrossAxisAlignment.center,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(3),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: [colors.primary, colors.secondary],
-                    ),
-                  ),
-                  // `photoUrl` is null on every server-projected profile, so
-                  // this hero could only ever paint the initial. The uid
-                  // resolves through the viewer-authorized grant instead.
-                  child: UserAvatar(
-                    key: const ValueKey('settings-profile-hero-avatar'),
-                    radius: 30,
-                    userId: profile.uid,
-                    mediaRevision: profile.profileUpdatedAt,
-                    displayName: profile.displayName,
-                    backgroundColor: colors.primary,
-                  ),
+                // `photoUrl` is null on every server-projected profile, so
+                // this hero could only ever paint the initial. The uid
+                // resolves through the viewer-authorized grant instead.
+                UserAvatar(
+                  key: const ValueKey('settings-profile-hero-avatar'),
+                  radius: 24,
+                  userId: profile.uid,
+                  mediaRevision: profile.profileUpdatedAt,
+                  displayName: profile.displayName,
+                  backgroundColor: colors.primary,
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1325,11 +1337,11 @@ class _ProfileHeroCard extends StatelessWidget {
                             : TextOverflow.ellipsis,
                         style: TextStyle(
                           color: palette.textPrimary,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 2),
                       Text(
                         copy.text(
                           'Edit profile details and photos',
@@ -1372,6 +1384,8 @@ class _GroupLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    // A group label, not a section heading (ADR-209, section-header
+    // family): the brief's 11 px w700 uppercase with .08em tracking.
     return Semantics(
       header: true,
       child: Padding(
@@ -1382,15 +1396,24 @@ class _GroupLabel extends StatelessWidget {
             color: danger
                 ? Theme.of(context).colorScheme.error
                 : palette.textSecondary,
-            fontSize: 11.5,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 1,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 11 * .08,
           ),
         ),
       ),
     );
   }
 }
+
+/// Where a Settings row's text starts: the tile's 16 px start padding, the
+/// 40 px leading box and the 12 px title gap. The group's dividers are
+/// indented to exactly this edge (Slim: dividers indented to the text).
+const double _settingsRowTextInset =
+    _settingsRowPadding + _settingsLeadingBox + _settingsTitleGap;
+const double _settingsRowPadding = 16;
+const double _settingsLeadingBox = 40;
+const double _settingsTitleGap = 12;
 
 class _SettingsGroup extends StatelessWidget {
   const _SettingsGroup({required this.children, this.danger = false});
@@ -1401,22 +1424,26 @@ class _SettingsGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    return Container(
-      decoration: BoxDecoration(
-        color: palette.surfaceMuted,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
+    // One flat layer: 1 px border, radius 12, no shadow. A Material rather
+    // than a decorated Container, so the rows' ink (splash, hover, focus)
+    // paints on the group instead of underneath its fill.
+    return Material(
+      color: palette.surfaceMuted,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
           color: danger ? colors.error.withValues(alpha: .45) : palette.border,
         ),
       ),
+      clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
           for (var index = 0; index < children.length; index++) ...[
             if (index > 0)
               Divider(
                 height: 1,
-                indent: 56,
-                endIndent: 16,
+                thickness: 1,
+                indent: _settingsRowTextInset,
                 color: palette.border,
               ),
             children[index],
@@ -1448,7 +1475,13 @@ class _SettingsTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final iconColor = danger ? colors.error : colors.primary;
+    // One accent per screen: the row glyph is tonal (the container pair the
+    // message-privacy row already used), not a saturated violet on a violet
+    // wash. Danger rows keep the error ink.
+    final iconColor = danger ? colors.error : colors.onPrimaryContainer;
+    final iconSurface = danger
+        ? colors.error.withValues(alpha: .14)
+        : colors.primaryContainer;
     final titleColor = danger ? colors.error : palette.textPrimary;
     final textScale = MediaQuery.textScalerOf(context).scale(1);
     final expanded = textScale >= 1.6;
@@ -1465,25 +1498,32 @@ class _SettingsTile extends StatelessWidget {
             subtitle!,
             maxLines: expanded ? null : 3,
             overflow: expanded ? TextOverflow.visible : TextOverflow.ellipsis,
-            style: TextStyle(color: palette.textSecondary, fontSize: 12),
+            style: TextStyle(color: palette.textSecondary, fontSize: 12.5),
           );
 
     return MergeSemantics(
       child: ListTile(
+        // Slim rows: 64 px floor (56–68 band), 40 px leading box with a
+        // 22 px glyph, text edge at [_settingsRowTextInset].
         minTileHeight: 64,
+        contentPadding: const EdgeInsetsDirectional.symmetric(
+          horizontal: _settingsRowPadding,
+        ),
+        minLeadingWidth: _settingsLeadingBox,
+        horizontalTitleGap: _settingsTitleGap,
         titleAlignment: expanded
             ? ListTileTitleAlignment.top
             : ListTileTitleAlignment.center,
         onTap: onTap,
         leading: Container(
-          width: 38,
-          height: 38,
+          width: _settingsLeadingBox,
+          height: _settingsLeadingBox,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: iconColor.withValues(alpha: .14),
+            color: iconSurface,
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(icon, color: iconColor, size: 20),
+          child: Icon(icon, color: iconColor, size: 22),
         ),
         title: Text(
           title,
@@ -1491,8 +1531,8 @@ class _SettingsTile extends StatelessWidget {
           overflow: expanded ? TextOverflow.visible : TextOverflow.ellipsis,
           style: TextStyle(
             color: titleColor,
-            fontWeight: FontWeight.w700,
-            fontSize: 14.5,
+            fontWeight: FontWeight.w600,
+            fontSize: 15,
           ),
         ),
         subtitle: !stackTrailing
@@ -1544,8 +1584,8 @@ class _VerifiedChip extends StatelessWidget {
             : copy.text('UNVERIFIED', 'NIEZWERYFIKOWANO'),
         style: TextStyle(
           color: foreground,
-          fontSize: 9.5,
-          fontWeight: FontWeight.w900,
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
           letterSpacing: .4,
         ),
       ),
@@ -1662,10 +1702,12 @@ class SettingsHeaderBar extends StatelessWidget {
       child: Row(
         children: [
           if (showBackButton) ...[
+            // Slim title row (≤ 56 px): a 44 px Back target and a 22 px
+            // w800 title, the screen's one headline.
             YoIconButton(
               icon: Icons.arrow_back_ios_new_rounded,
               iconSize: 18,
-              size: 40,
+              size: 44,
               backgroundColor: palette.surface,
               borderColor: palette.border,
               onPressed: onBack,
@@ -1679,9 +1721,9 @@ class SettingsHeaderBar extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: palette.textPrimary,
-                fontSize: 26,
-                fontWeight: FontWeight.w900,
-                letterSpacing: -0.5,
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.3,
               ),
             ),
           ),

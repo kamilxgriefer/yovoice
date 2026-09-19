@@ -8,6 +8,7 @@ import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/friends/presentation/widgets/friend_suggestion_card.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 
 /// "People you may know" — friends of the signed-in user's friends.
 ///
@@ -85,23 +86,16 @@ class FriendSuggestionsSection extends StatelessWidget {
   }
 
   Widget _frame(BuildContext context, {required Widget child}) {
-    final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // THE section heading (ADR-209): 24 above the ink, 16 below, a
+        // real `Semantics(header: true)` title that wraps and never elides.
         Padding(
-          padding: const EdgeInsets.fromLTRB(_horizontalGutter, 0, 12, 10),
-          child: Semantics(
-            header: true,
-            child: Text(
-              copy.text('People you may know', 'Może ich znasz'),
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: 15,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
+          padding: const EdgeInsets.symmetric(horizontal: _horizontalGutter),
+          child: HomeSectionHeader(
+            title: copy.text('People you may know', 'Może ich znasz'),
           ),
         ),
         child,
@@ -183,7 +177,7 @@ class FriendSuggestionsSection extends StatelessWidget {
                       padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
                       decoration: BoxDecoration(
                         color: palette.surface,
-                        borderRadius: BorderRadius.circular(19),
+                        borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: palette.border),
                       ),
                       child: Column(
@@ -266,7 +260,7 @@ class FriendSuggestionsSection extends StatelessWidget {
           foregroundColor: colors.onPrimary,
           padding: const EdgeInsets.symmetric(horizontal: 18),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(13),
+            borderRadius: BorderRadius.circular(12),
           ),
         ),
         child: Text(
@@ -284,7 +278,7 @@ class FriendSuggestionsSection extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(19),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: palette.border),
       ),
       child: Row(

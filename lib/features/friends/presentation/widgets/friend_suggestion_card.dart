@@ -87,11 +87,13 @@ class FriendSuggestionCard extends StatelessWidget {
     final button = FilledButton.icon(
       onPressed: isProcessing || _isComplete ? null : onPressed,
       style: FilledButton.styleFrom(
+        // Tonal, not the screen's violet: the page's one accent is its own
+        // primary CTA (Slim: one accent per screen).
         backgroundColor: _isFriend
             ? palette.successSurface
             : _isSent
             ? palette.warningSurface
-            : colors.primary,
+            : colors.primaryContainer,
         disabledBackgroundColor: _isFriend
             ? palette.successSurface
             : _isSent
@@ -101,14 +103,14 @@ class FriendSuggestionCard extends StatelessWidget {
             ? palette.successForeground
             : _isSent
             ? palette.warningForeground
-            : colors.onPrimary,
+            : colors.onPrimaryContainer,
         disabledForegroundColor: _isFriend
             ? palette.successForeground
             : _isSent
             ? palette.warningForeground
             : palette.textTertiary,
         padding: const EdgeInsets.symmetric(horizontal: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       icon: isProcessing
           ? SizedBox(
@@ -152,15 +154,15 @@ class FriendSuggestionCard extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     final identity = Row(
       children: [
+        // Slim: a 2 px neutral ring replaces the decorative violet gradient
+        // (and its two inline hexes); the geometry is unchanged.
         Container(
           width: 52,
           height: 52,
           padding: const EdgeInsets.all(2),
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             shape: BoxShape.circle,
-            gradient: LinearGradient(
-              colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
-            ),
+            color: palette.border,
           ),
           child: ProfilePhotoButton(
             userId: suggestion.uid,
@@ -196,7 +198,7 @@ class FriendSuggestionCard extends StatelessWidget {
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontSize: 15,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                   UserIdentityBadges(uid: suggestion.uid),
@@ -222,7 +224,7 @@ class FriendSuggestionCard extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(19),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: palette.border),
       ),
       child: LayoutBuilder(
@@ -260,7 +262,7 @@ class FriendSuggestionCard extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
       decoration: BoxDecoration(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(19),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: palette.border),
       ),
       child: Column(
@@ -271,11 +273,9 @@ class FriendSuggestionCard extends StatelessWidget {
               width: 60,
               height: 60,
               padding: const EdgeInsets.all(2),
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
-                ),
+                color: palette.border,
               ),
               child: ProfilePhotoButton(
                 userId: suggestion.uid,
@@ -306,7 +306,7 @@ class FriendSuggestionCard extends StatelessWidget {
               color: palette.textPrimary,
               fontSize: 14,
               height: 1.2,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 6),

@@ -355,7 +355,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 10, 18, 10),
+      // Without a Back button the title starts on the list's 18 px gutter.
+      padding: EdgeInsets.fromLTRB(widget.isRootTab ? 18 : 10, 10, 18, 10),
       child: Row(
         children: [
           if (!widget.isRootTab) ...[
@@ -374,13 +375,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Slim title: the screen's one headline, 22 px w800.
                 Text(
                   copy.notifications,
                   style: TextStyle(
                     color: palette.textPrimary,
-                    fontSize: 23,
+                    fontSize: 22,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
+                    letterSpacing: -0.3,
                   ),
                 ),
                 const SizedBox(height: 3),
@@ -588,11 +590,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           padding: const EdgeInsets.fromLTRB(2, 6, 2, 8),
                           child: Text(
                             entry.key,
+                            // Group label (Slim): 11 px w700 with tracking.
                             style: TextStyle(
                               color: palette.textSecondary,
                               fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.4,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 11 * .08,
                             ),
                           ),
                         ),
@@ -695,6 +698,12 @@ class _ActivityHeader extends StatelessWidget {
                     'Mark all read',
                     'Oznacz wszystkie jako przeczytane',
                   ),
+                  // Beside the heading the action may take two lines, so a
+                  // long locale wraps the ACTION instead of breaking the
+                  // heading mid-word ("Aktywn / ość" on a 390 px phone).
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
                   style: TextStyle(
                     color: colors.primary,
                     fontSize: 12,
@@ -720,17 +729,22 @@ class _ActivityHeader extends StatelessWidget {
         // Otherwise pill and button ride the heading's trailer slot, which
         // centres them on the title's ink and keeps the box at
         // section + ink + title whatever the button's 48 px target adds.
+        // The trailer is capped at half the row so the title always keeps
+        // the other half; the button's label wraps inside its share.
         return HomeSectionHeader(
           title: title,
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              pill,
-              if (markAllButton != null) ...[
-                const SizedBox(width: 8),
-                markAllButton,
+          trailing: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: constraints.maxWidth / 2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                pill,
+                if (markAllButton != null) ...[
+                  const SizedBox(width: 8),
+                  Flexible(child: markAllButton),
+                ],
               ],
-            ],
+            ),
           ),
         );
       },
@@ -771,15 +785,15 @@ class _FriendRequestCard extends StatelessWidget {
       children: [
         // The avatar alone, not the row: the name shares its column with
         // the request line, and the trailing Accept/Decline pair must keep
-        // every pixel of its own targets. The disc is already 50 px, so
-        // nothing about this card reflows.
+        // every pixel of its own targets. The disc is 44 px inside a 48 px
+        // target, so nothing about this card reflows.
         AccessibleTapRegion(
           key: ValueKey('notification-request-profile-${request.senderId}'),
           onTap: onOpenProfile,
           semanticLabel: openLabel,
           tooltip: openLabel,
           circular: true,
-          minimumSize: const Size(50, 50),
+          minimumSize: const Size(_Avatar.diameter + 4, _Avatar.diameter + 4),
           child: ExcludeSemantics(
             child: _Avatar(
               userId: request.senderId,
@@ -802,7 +816,7 @@ class _FriendRequestCard extends StatelessWidget {
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontSize: 14,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                   UserIdentityBadges(uid: request.senderId),
@@ -855,11 +869,13 @@ class _FriendRequestCard extends StatelessWidget {
             ],
           );
 
+    // A card because it groups its own actions; Slim flattens it to one
+    // layer (1 px border, radius 12) with the 56–68 px row padding.
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: _notificationCardPadding,
       decoration: BoxDecoration(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(_notificationCardRadius),
         border: Border.all(color: palette.border),
       ),
       child: LayoutBuilder(
@@ -913,16 +929,17 @@ class _UnreadMessageCard extends StatelessWidget {
         ? copy.text('New message', 'Nowa wiadomość')
         : localizedMessageTombstone(conversation.lastMessage.trim(), copy);
 
+    const radius = BorderRadius.all(Radius.circular(_notificationCardRadius));
     return Material(
       color: palette.surface,
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: radius,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: radius,
         child: Container(
-          padding: const EdgeInsets.all(14),
+          padding: _notificationCardPadding,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: radius,
             border: Border.all(color: palette.border),
           ),
           child: Row(
@@ -942,7 +959,7 @@ class _UnreadMessageCard extends StatelessWidget {
                       style: TextStyle(
                         color: palette.textPrimary,
                         fontSize: 14,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -1306,23 +1323,25 @@ class _NotificationCard extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 20),
           decoration: BoxDecoration(
             color: colors.errorContainer,
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(_notificationCardRadius),
           ),
           child: Icon(
             Icons.delete_outline_rounded,
             color: colors.onErrorContainer,
           ),
         ),
+        // One flat layer (radius 12, 1 px border). The unread border keeps
+        // its tint: it carries the unread state together with the dot.
         child: Material(
           color: palette.surface,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(_notificationCardRadius),
           child: InkWell(
             onTap: onTap,
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(_notificationCardRadius),
             child: Container(
-              padding: const EdgeInsets.all(14),
+              padding: _notificationCardPadding,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(_notificationCardRadius),
                 border: Border.all(
                   color: notification.isRead
                       ? palette.border
@@ -1383,20 +1402,18 @@ class _Avatar extends StatelessWidget {
   final String name;
   final String photoUrl;
 
+  /// Slim avatar: 44 px (40–48 band), no decorative gradient ring.
+  static const double diameter = 44;
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Container(
-      width: 50,
-      height: 50,
-      padding: const EdgeInsets.all(2),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: LinearGradient(colors: [colors.primary, colors.secondary]),
-      ),
+    return SizedBox(
+      width: diameter,
+      height: diameter,
       child: ClipOval(
         child: UserAvatar(
-          radius: 23,
+          radius: diameter / 2,
           userId: userId,
           photoUrl: photoUrl,
           displayName: name,
@@ -1406,6 +1423,14 @@ class _Avatar extends StatelessWidget {
     );
   }
 }
+
+/// Slim card geometry shared by the inbox's three card kinds: radius 12 and
+/// a 12 / 10 px inset, so a row with a 48 px action target lands at 68 px.
+const double _notificationCardRadius = 12;
+const EdgeInsets _notificationCardPadding = EdgeInsets.symmetric(
+  horizontal: 12,
+  vertical: 10,
+);
 
 /// Shown when an AUXILIARY section could not load. The activity feed
 /// itself is fine and stays on screen — this says which part is missing
