@@ -18,93 +18,15 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
-import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
-import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
-/// An author avatar wearing the Moments seen/unseen ring.
-///
-/// THE RING IS THE STATE, exactly as on [MomentStoryTile]: a brand
-/// gradient means this account has not heard the Moment yet, a flat quiet
-/// line plus a dimmed avatar means it has. The stops come from
-/// [MomentStoryTile.ringColors], so the two surfaces cannot drift apart.
-/// Unknown viewed state renders as UNSEEN (fail open) because that is what
-/// the caller passes when the `momentViews` listener has not emitted.
-class MomentSeenAvatar extends StatelessWidget {
-  const MomentSeenAvatar({
-    required this.seen,
-    required this.diameter,
-    this.userId,
-    this.photoUrl,
-    this.displayName,
-    super.key,
-  });
-
-  final bool seen;
-  final double diameter;
-  final String? userId;
-  final String? photoUrl;
-  final String? displayName;
-
-  static const double ringWidth = 2;
-  static const double ringInset = 1.5;
-
-  /// The heard/unheard phrase a surface appends to its own semantic label
-  /// — word for word the one [MomentStoryTile] appends, so a screen reader
-  /// hears one vocabulary across the whole feature.
-  static String stateLabel(BuildContext context, {required bool seen}) {
-    final copy = AppLocalizations.of(context);
-    return seen
-        ? copy.text('already heard', 'odsłuchane')
-        : copy.text('not heard yet', 'nieodsłuchane');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return Container(
-      width: diameter,
-      height: diameter,
-      padding: const EdgeInsets.all(ringWidth),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        // One gradient in both states so the geometry cannot shift when a
-        // Moment flips from unheard to heard; only the stops change.
-        gradient: seen
-            ? LinearGradient(
-                colors: MomentStoryTile.ringColors(context, seen: true),
-              )
-            : AppGradients.primary,
-      ),
-      child: Container(
-        padding: const EdgeInsets.all(ringInset),
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: palette.surfaceSunken,
-        ),
-        child: Opacity(
-          opacity: seen ? .62 : 1,
-          // The initial inside an avatar is a GRAPHIC sized off the disc,
-          // never copy: at 200 % text it grows past the circle and is
-          // clipped mid-glyph. The labels around it scale normally.
-          child: MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: TextScaler.noScaling),
-            child: UserAvatar(
-              radius: (diameter - (ringWidth + ringInset) * 2) / 2,
-              userId: userId,
-              photoUrl: photoUrl,
-              displayName: displayName,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
+/// The seen/unseen disc lives beside its colour definition in
+/// `moment_story_tile.dart`; it is re-exported here so the Discover surface's
+/// imports and tests keep resolving `MomentSeenAvatar` from this library.
+export 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart'
+    show MomentSeenAvatar;
 
 /// The round transport control. [playing] is the caller's REAL playback
 /// state — the wide detail panel's player — so a Moment being played shows

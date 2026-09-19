@@ -944,15 +944,14 @@ class _FriendStory extends StatelessWidget {
                 children: [
                   Container(
                     padding: const EdgeInsets.all(2),
-                    decoration: const BoxDecoration(
+                    // A quiet hairline, never a story gradient: this rail
+                    // carries no Moments state, so a brand ring here would
+                    // falsely read as "unheard" (ADR-209, story-tile row).
+                    // Phase 3 restyles the rail around PeopleStatus; the
+                    // geometry (2 px band, radius-27 avatar) is unchanged.
+                    decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [
-                          Color(0xFFFF416C),
-                          Color(0xFFB42DFF),
-                          Color(0xFF5D00D7),
-                        ],
-                      ),
+                      color: palette.border,
                     ),
                     child: UserAvatar(
                       radius: 27,

@@ -12895,6 +12895,7 @@ already exists (no `YoLiveBadge`, no `YoStoryRingAvatar`, no `YoPresenceDot`).
 | Obecność (dot) | `AvailabilityDot` — `lib/shared/widgets/profile/availability_dot.dart` (moved out of `availability_picker.dart`; colour = `PeopleStatus.foreground`, the ring's ink, so ring and dot share one source) | 10 sites in 8 files: `_PresenceDot`'s disc (`shared/widgets/profile/profile_preview_sheet.dart`), `YoAvatar.isOnline` (`shared/widgets/avatars/yo_avatar.dart`), the own-availability dot in `HomeGreetingHeader` (`home/…/shared/home_greeting_header.dart`), the presence dot in `HomeFriendTile` (`home/…/shared/home_friend_tile.dart`), the friend row (`friends/…/friends_screen.dart`), `_FriendStory`, `_ConversationAvatarState` and `_FriendTile` (`messages/…/messages_screen.dart`), the member tile (`clubs/…/club_overview_screen.dart`), the online dot of `MomentStoryTile` (`moments/…/moment_story_tile.dart`) |
 | Waveform (bars) | `YoWaveform` — `lib/shared/widgets/waveform/yo_waveform.dart`; the progress-driven Moment players through its named subclass `StoryWaveform` in the same file, re-exported by `moments/…/moment_story_viewer.dart` so every existing import resolves | `HomeStaticWaveform` (`home/…/shared/home_static_waveform.dart`, file removed with its last caller `home/…/shared/home_here_now_hero.dart`), `_MiniWaveform` (`home/…/screens/home_screen.dart`), `_Waveform` (`moments/…/widgets/moment_card.dart`), `StoryWaveform` + `_TiledWaveformPainter` (`moments/…/widgets/moment_story_viewer.dart`; its five call sites — the story stage, `moments/…/screens/moment_detail_screen.dart`, `moments/…/widgets/moments_feed_view.dart` ×2, `moments/…/widgets/voice_reply_mini_player.dart` — keep constructing `StoryWaveform`), `_Waveform` (`servers/…/widgets/server_podcast_stage.dart`), the inline 24-bar row in `_VoiceMessageContent` (`messages/…/widgets/message_bubble.dart`) |
 | Nagłówek sekcji | `HomeSectionHeader` — `lib/shared/widgets/layout/home_section_header.dart` (moved from `home/presentation/widgets/shared/`, class name and `HomeSectionHeaderScale` kept because `test/home_rhythm_test.dart` pins them by type; grew `leading`, `subtitle`, `trailing` and `seeAllVocabulary`, every default reproducing the Home render byte for byte) | `_SectionHeader` + `_SectionLabel` (`home/…/desktop/voice_trending_card.dart`: "Live rooms" with its "See all rooms" action, "Most liked Moments"), `_SectionHeader` (`notifications/…/notifications_screen.dart`: Friend requests, Unread messages, and Activity through `_ActivityHeader`, which keeps its stacking rule and the `notifications-mark-all-read` button), `_SectionHeader` (`achievements/…/achievements_screen.dart`: one per category, key `awards-section-<id>`), `_SectionHeader` (`discover/…/discover_screen.dart`: Search results, Featured, Trending, Rising; the 36 px icon box survives as the trailer `_SectionIcon`) |
+| Kafelek stories (pierścień odsłuchania) | `MomentStoryTile` — `lib/features/moments/presentation/widgets/moment_story_tile.dart`, constructor and statics unchanged; the ring stops are `MomentStoryTile.ringColors` and the new `ringGradient` (unheard `[AppColors.primary, AppColors.secondary]` at `AppGradients.primary`'s angle, heard `palette.border` twice — the same angle in both states, so only the stops change), and every shape paints them: the disc `MomentSeenAvatar` (moved into the same file beside its colour definition, re-exported by `moment_discover_tiles.dart` so no import moved; grew `ringWidth` / `ringInset` (feed 2 / 1.5, tile 2.5 / 2), `ringKey` on the painted `Container`, `mediaRevision`, `fallbackIcon`), the tile's own `_ring` through it, and the `MomentAuthorCapsule` border. The ring is the listened state from `MomentViewsService` through `MomentViewedIds` (fail open), never presence — ADR-155, which the brief and the old file comment mis-cited as ADR-147 | the tile's private `_ring` and the discover copy of `MomentSeenAvatar` (both hardcoded `AppGradients.primary` for unheard, so the unheard stop lived in three places and `ringColors(seen: false)` fed only the capsule), the capsule's plain `LinearGradient(colors: stops)` (no angle), `_StoryBubble` + the `_voiceStories` rail (`home/…/screens/home_screen.dart`: always-on 3 px gradient, raw `NetworkImage`, no seen state, no semantics → `MomentViewedIds` + `buildMomentChains` + `MomentStoryTile`), and the story-look gradient of `_FriendStory` (`messages/…/messages_screen.dart`: three inline hexes `0xFFFF416C` / `0xFFB42DFF` / `0xFF5D00D7` around every friend bubble → a 2 px `palette.border` band, because that rail carries no Moments state) |
 
 The live variant's spec (from the brief's Twitch section): `AppColors.live`
 fill, `AppColors.onLive` copy, `AppTypography.labelSmall` (10 px, height 1.2)
@@ -13210,6 +13211,120 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   `creator_studio_screen` `_SectionLabel`, `create_room_screen`
   `_SectionLabel`). Group labels are the brief's "11 px w700 uppercase"
   rule, a different state.
+
+### Consciously NOT built, NOT simplified (story-tile family)
+
+- **The brief's colour change is not implemented; the unheard source is
+  unified instead.** The brief says "change only the ring colours:
+  `AppColors.voice` for unseen, `palette.border` for seen". `palette.border`
+  for seen was already the case on every surface. `AppColors.voice` for
+  unseen is a contract change, not a colour swap: `test/moment_story_tile_test.dart`
+  pins the unheard ring as `[AppColors.primary, AppColors.secondary]` in four
+  places, `test/moments_discover_layout_test.dart` pins that the unheard ring
+  is a two-stop gradient of *different* colours, and
+  `test/moment_author_capsules_test.dart` compares the capsule border to
+  `ringColors`. Per Nietykalne #4 no assertion was edited, so the unheard
+  ring stays the brand gradient. What was actually wrong — the unheard stop
+  hardcoded as `AppGradients.primary` in the tile's `_ring`, in the discover
+  `MomentSeenAvatar` and in `_StoryBubble`, with `ringColors(seen: false)`
+  reaching only the capsule — is fixed: every ring shape now paints
+  `MomentStoryTile.ringGradient`. If the owner still wants a flat `voice`
+  ring, that is one line in `ringColors` plus an explicit rewrite of those
+  three test contracts, recorded as its own decision, and `AppColors.voice`
+  (used today only by the untouchable dock and the rooms mini-player) would
+  need a Pearl contrast check first.
+- No `YoStoryRingAvatar`. The disc primitive is the `MomentSeenAvatar` that
+  already existed; it moved from `moment_discover_tiles.dart` to sit beside
+  `ringColors`, and the discover library re-exports it (`export … show
+  MomentSeenAvatar`) so the feed card, the discover tiles and
+  `test/moments_discover_layout_test.dart` resolve it from the same import
+  as before. Its former `static const ringWidth / ringInset` became
+  instance parameters with the same defaults (`defaultRingWidth` /
+  `defaultRingInset`); nothing read the statics. The new
+  `test/moment_seen_avatar_test.dart` pins `ringGradient`'s stops and angle
+  in both themes, the `ringKey` → gradient-`Container` contract, the tile's
+  2.5 / 2 hand-down, the capsule's angle and the re-export being the same
+  class; no existing assertion changed.
+- The keyed ring stays a `Container` whose `BoxDecoration` carries a
+  `LinearGradient`: `moment_story_tile_test._ringColors` reads
+  `(decoration as BoxDecoration).gradient!.colors` under
+  `MomentStoryTile.ringKey`, so the tile hands the key to the shared disc
+  as `ringKey` (placed on the painted container), not as the widget key,
+  and the ring is neither a `Border.all` nor a painter.
+- `ringGradient` copies `AppGradients.primary`'s `begin` / `end` and uses
+  them in BOTH states. The capsule border previously drew a plain
+  `LinearGradient(colors: stops)` (Flutter's default left→right); it now
+  shares the disc's top-left→bottom-right angle. For the heard state both
+  stops are `palette.border`, so nothing visible changes there; for the
+  unheard capsule the gradient's angle changes from horizontal to diagonal —
+  the one visible normalisation on a live surface, and the point: one
+  gradient, not two.
+- `MomentAuthorCapsule` keeps its pill (48 tall, `AppRadius.md`, 2 / 1 px
+  border, avatar 32, static non-cyan bars): it is the third *shape* of the
+  same state, not a duplicate to collapse into the disc.
+- `HomeFriendTile._disc` + `_ContentBadge`
+  (`home/…/shared/home_friend_tile.dart`) are a sibling, not a duplicate,
+  and are untouched. They draw the same fact (an unheard, playable,
+  unexpired friend chain from the same `viewedIds` that `MomentViewedIds`
+  supplies at `mobile_home.dart` / `desktop_home.dart`) as a 2 px
+  `join.ring` (`AppColors.accent` cyan on Dark, `scheme.primary` on Pearl)
+  around a *presence* tile — deliberately not the brand gradient and
+  deliberately not `PeopleStatusAvatar` (the file's own doc). This is the
+  only story-state ring reachable on Home today.
+- Premise correction for ADR-155 and the tile's old file comment ("every
+  Moments rail draws this widget"): at Build 33 `MomentStoryTile` is
+  mounted on no production surface. `MobileMomentsStrip` is mounted only
+  inside `DesktopMomentsStrip`, which nothing in `lib/` mounts
+  (`desktop_home.dart` uses `HomePeopleStrip`), and the feed mounts
+  `MomentAuthorCapsuleStrip`, not `MomentStoryStrip` (test-only,
+  `moments-chain-<author>`). The live story-state rings are
+  `MomentSeenAvatar` (feed card, `moment-row-chain-<id>`),
+  `MomentAuthorCapsule` (feed strip, `moments-capsule-<author>`) and
+  `HomeFriendTile` (Home). Phase 1's "rail Momentów jak stories" must
+  reconcile this with `test/desktop_home_test.dart` (`MomentStoryTile`
+  findsNothing on desktop Home, three places) and
+  `test/desktop_home_here_now_layout_test.dart` (`DesktopMomentsStrip`
+  findsNothing) *before* mounting the tile on Home — an ADR decision, not a
+  test edit — and `test/moment_author_capsules_test.dart` pins that
+  `MomentStoryStrip` / `MomentStoryTile` never return to the feed.
+- The legacy `HomeScreen` (`home/…/screens/home_screen.dart`) is not
+  reachable from `MainShell` (which mounts `MobileHome` / `DesktopHome`)
+  and is covered only by the localization source guard; "never delete
+  functionality" forbids removing it, so its rail was migrated rather than
+  left as a fourth drawing. `_voiceStories` now wraps the rail in
+  `MomentViewedIds`, groups through `buildMomentChains` and draws
+  `MomentStoryTile` per author; the own tile keeps its behaviour (disc tap
+  records when there is no own Moment and plays the newest own Moment
+  otherwise, the `+` always records, the profile stream still wins the
+  avatar over `FirebaseAuth.currentUser.photoURL`), keeps its "YO Moments"
+  product-mark label, and gains a real seen state, a chain-count badge, a
+  44 pt `+` target (the legacy in-disc `+` glyph for "no own Moment yet"
+  becomes the tile's `+` badge over the own avatar, the same action), the
+  cached `UserAvatar` with `mediaRevision` instead of a raw `NetworkImage`,
+  and semantics through `copy`. The guard's raw-string
+  count for the file stays at 3 (the label is a `name:` argument and the
+  semantic labels cross the localization boundary). Visible normalisation
+  on that dormant screen: 82-wide bubble / 3 px ring / radius-30 avatar →
+  the tile's 60 pt disc (56 below 360 px) with a 2.5 px band, 12 px between
+  tiles, rail height from `MomentStoryTile.heightFor` instead of a fixed
+  122.
+- `_FriendStory` (`messages/…/messages_screen.dart`) is not a Moments ring
+  and stays in the Chats screen with its keys (`messages-add-friend` /
+  `messages-new-message`), widths (76 / 108), `AccessibleTapRegion`,
+  semantics, label and `AvailabilityDot`; only its band changed, from a
+  three-inline-hex story gradient painted unconditionally around every
+  friend and action bubble (a second story language that read as "unheard",
+  and a Nietykalne #3 violation) to a 2 px `palette.border` band with
+  identical geometry. Phase 3 (Chats rail with `PeopleStatus`) owns the
+  rail's final form; the other inline hexes in that file (the composer's
+  `0xFFB82FFF` / `0xFF6D19E7` pair) belong to that pass, not this family.
+- Out of family, left alone: `_RecordMomentTile`'s mic disc
+  (`mobile_home_sections.dart`) borrows the tile's `discFor` / `widthFor` /
+  `heightFor` statics but is a record affordance, not a story ring; the
+  `PeopleStatusAvatar` rings are presence; `_AddMomentBadge` and
+  `_CountBadge` keep their own `AppGradients.primary` / scheme gradient —
+  they are marks on the disc, not the ring, and no test reads them as
+  ring stops.
 
 ### Reasoning
 

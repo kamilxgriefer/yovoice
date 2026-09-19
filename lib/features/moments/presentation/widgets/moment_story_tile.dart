@@ -18,11 +18,14 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// The ONE compact Voice Moments story tile.
 ///
-/// Every Moments rail draws this widget — the Moments feed's chain strip,
-/// mobile Home and desktop Home — so the seen/unseen language cannot drift
-/// between them again. Before this widget each surface carried its own
-/// disc, ring, badge and label geometry, and the three rings meant three
-/// different things.
+/// Every Moments rail that draws a story tile draws this widget — the Home
+/// Moments strips (mobile and desktop) and the legacy Home screen — so the
+/// seen/unseen language cannot drift between them again. The feed's card
+/// and its author-capsule strip draw the same ring through
+/// [MomentSeenAvatar] and [MomentAuthorCapsule], whose stops come from
+/// [ringColors] / [ringGradient] below: one definition, three shapes.
+/// Before this widget each surface carried its own disc, ring, badge and
+/// label geometry, and the three rings meant three different things.
 ///
 /// THE RING IS THE STATE. A brand gradient means this account has not
 /// heard everything in the chain yet; a flat, low-contrast line plus a
@@ -35,8 +38,8 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 ///
 /// The Moments ring is deliberately its own language, separate from the
 /// thin availability/presence rings in `lib/shared/widgets/profile/`
-/// (ADR-147): those describe a person right now, this one describes
-/// unheard content.
+/// (ADR-155, restated by ADR-209): those describe a person right now, this
+/// one describes unheard content.
 class MomentStoryTile extends StatelessWidget {
   const MomentStoryTile({
     required this.name,
@@ -190,6 +193,22 @@ class MomentStoryTile extends StatelessWidget {
     return [quiet, quiet];
   }
 
+  /// [ringColors] as the gradient every ring shape paints — the disc
+  /// ([MomentSeenAvatar]), the capsule border ([MomentAuthorCapsule]) and
+  /// this tile's own disc. It keeps `AppGradients.primary`'s angle so the
+  /// unheard ring is exactly the brand gradient, and the SAME angle in both
+  /// states so nothing but the stops changes when a chain flips to heard.
+  /// Nobody reaches for `AppGradients.primary` directly for a ring: that
+  /// was how the unheard stop came to live in three places.
+  static LinearGradient ringGradient(
+    BuildContext context, {
+    required bool seen,
+  }) => LinearGradient(
+    begin: AppGradients.primary.begin,
+    end: AppGradients.primary.end,
+    colors: ringColors(context, seen: seen),
+  );
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
@@ -333,23 +352,102 @@ class MomentStoryTile extends StatelessWidget {
     );
   }
 
-  Widget _ring(BuildContext context, double disc) {
+  /// The tile's disc is the shared [MomentSeenAvatar], one size up in ring
+  /// and inset so it reads at 60 pt; [ringKey] lands on the painted ring
+  /// container, where the widget tests read the gradient.
+  Widget _ring(BuildContext context, double disc) => MomentSeenAvatar(
+    ringKey: ringKey,
+    seen: seen,
+    diameter: disc,
+    ringWidth: _ringWidth,
+    ringInset: _ringInset,
+    userId: userId,
+    photoUrl: photoUrl,
+    mediaRevision: mediaRevision,
+    displayName: displayName,
+    fallbackIcon: fallbackIcon,
+  );
+}
+
+/// An author avatar wearing the Moments seen/unseen ring — the ONE painted
+/// disc behind [MomentStoryTile] and the feed's card row.
+///
+/// THE RING IS THE STATE, exactly as on [MomentStoryTile]: a brand
+/// gradient means this account has not heard the Moment yet, a flat quiet
+/// line plus a dimmed avatar means it has. The stops are
+/// [MomentStoryTile.ringGradient], so no surface can drift. Unknown viewed
+/// state renders as UNSEEN (fail open) because that is what the caller
+/// passes when the `momentViews` listener has not emitted.
+///
+/// [ringWidth] / [ringInset] default to the feed's 2 / 1.5; the story tile
+/// passes 2.5 / 2 for its larger disc. The keyed widget is the ring
+/// `Container` whose `BoxDecoration` carries the gradient — a test reads
+/// it from there, so the ring never becomes a border or a painter.
+class MomentSeenAvatar extends StatelessWidget {
+  const MomentSeenAvatar({
+    required this.seen,
+    required this.diameter,
+    this.ringWidth = defaultRingWidth,
+    this.ringInset = defaultRingInset,
+    this.ringKey,
+    this.userId,
+    this.photoUrl,
+    this.mediaRevision,
+    this.displayName,
+    this.fallbackIcon,
+    super.key,
+  });
+
+  final bool seen;
+  final double diameter;
+
+  /// The gradient band's thickness.
+  final double ringWidth;
+
+  /// The surface-coloured gap between the band and the avatar.
+  final double ringInset;
+
+  /// Placed on the painted ring container, not on this widget, so
+  /// `find.byKey` lands on the `Container` that owns the gradient.
+  final Key? ringKey;
+
+  final String? userId;
+  final String? photoUrl;
+  final Object? mediaRevision;
+  final String? displayName;
+  final IconData? fallbackIcon;
+
+  /// The feed row's band and gap — what the discover tiles drew before the
+  /// disc was shared.
+  static const double defaultRingWidth = 2;
+  static const double defaultRingInset = 1.5;
+
+  /// The heard/unheard phrase a surface appends to its own semantic label
+  /// — word for word the one [MomentStoryTile] appends, so a screen reader
+  /// hears one vocabulary across the whole feature.
+  static String stateLabel(BuildContext context, {required bool seen}) {
+    final copy = AppLocalizations.of(context);
+    return seen
+        ? copy.text('already heard', 'odsłuchane')
+        : copy.text('not heard yet', 'nieodsłuchane');
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final palette = context.appPalette;
     return Container(
       key: ringKey,
-      width: disc,
-      height: disc,
-      padding: const EdgeInsets.all(_ringWidth),
+      width: diameter,
+      height: diameter,
+      padding: EdgeInsets.all(ringWidth),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         // One gradient in both states so the geometry cannot shift when a
-        // tile flips from unheard to heard; only the stops change.
-        gradient: seen
-            ? LinearGradient(colors: ringColors(context, seen: true))
-            : AppGradients.primary,
+        // Moment flips from unheard to heard; only the stops change.
+        gradient: MomentStoryTile.ringGradient(context, seen: seen),
       ),
       child: Container(
-        padding: const EdgeInsets.all(_ringInset),
+        padding: EdgeInsets.all(ringInset),
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: palette.surfaceSunken,
@@ -357,15 +455,14 @@ class MomentStoryTile extends StatelessWidget {
         child: Opacity(
           opacity: seen ? .62 : 1,
           // The initial inside an avatar is a GRAPHIC sized off the disc,
-          // not copy: at 200 % text it grew past the circle and was
-          // clipped mid-glyph. The name under the tile and the semantic
-          // label both scale normally, so nothing readable is lost.
+          // never copy: at 200 % text it grows past the circle and is
+          // clipped mid-glyph. The labels around it scale normally.
           child: MediaQuery(
             data: MediaQuery.of(
               context,
             ).copyWith(textScaler: TextScaler.noScaling),
             child: UserAvatar(
-              radius: (disc - (_ringWidth + _ringInset) * 2) / 2,
+              radius: (diameter - (ringWidth + ringInset) * 2) / 2,
               userId: userId,
               photoUrl: photoUrl,
               mediaRevision: mediaRevision,
@@ -609,7 +706,6 @@ class MomentAuthorCapsule extends StatelessWidget {
         ? copy.text('already heard', 'odsłuchane')
         : copy.text('not heard yet', 'nieodsłuchane');
     final borderWidth = seen ? heardBorderWidth : unheardBorderWidth;
-    final stops = MomentStoryTile.ringColors(context, seen: seen);
     return Semantics(
       button: true,
       label: '$semanticLabel, $state',
@@ -621,7 +717,7 @@ class MomentAuthorCapsule extends StatelessWidget {
           key: borderKey,
           decoration: BoxDecoration(
             borderRadius: AppRadius.md,
-            gradient: LinearGradient(colors: stops),
+            gradient: MomentStoryTile.ringGradient(context, seen: seen),
           ),
           child: Padding(
             padding: EdgeInsets.all(borderWidth),

@@ -8,8 +8,8 @@ import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
-import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -19,8 +19,10 @@ import 'package:yovoice/features/home/presentation/widgets/shared/discover_clubs
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
@@ -602,6 +604,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// The story rail, drawn with the one [MomentStoryTile] so its ring means
+  /// what every other Moments ring means: unheard content, from this
+  /// account's own `momentViews` through [MomentViewedIds] (fail open).
+  /// The legacy bubble painted the brand gradient around every author
+  /// unconditionally, so the ring meant nothing.
   Widget _voiceStories() {
     return StreamBuilder<List<VoiceMoment>>(
       stream: _moments,
@@ -609,58 +616,95 @@ class _HomeScreenState extends State<HomeScreen> {
         final currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
         final allMoments = snapshot.data ?? const <VoiceMoment>[];
 
-        VoiceMoment? myLatestMoment;
-        final unique = <String, VoiceMoment>{};
-        for (final moment in allMoments) {
-          if (moment.authorId == currentUserId) {
-            myLatestMoment ??= moment;
+        // One chain per author, newest author first; inside a chain the
+        // newest Moment is last — the one this rail has always opened.
+        MomentChain? mineChain;
+        final others = <MomentChain>[];
+        for (final chain in buildMomentChains(allMoments)) {
+          if (chain.authorId == currentUserId) {
+            mineChain ??= chain;
             continue;
           }
-          unique.putIfAbsent(moment.authorId, () => moment);
+          others.add(chain);
         }
+        final mine = mineChain;
+        final myLatestMoment = mine?.moments.last;
+        final stories = others.take(12).toList(growable: false);
 
-        final stories = unique.values.take(12).toList(growable: false);
-
-        return SizedBox(
-          height: 122,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
-            children: [
-              // Reads the shared profile stream rather than
-              // FirebaseAuth.currentUser.photoURL, which is a separate,
-              // non-reactive store that never updates after an avatar
-              // change. The moment's own authorPhotoUrl still wins when
-              // present — it is a snapshot of how the moment was posted.
-              StreamBuilder<UserProfile>(
-                stream: _profile,
-                builder: (context, profileSnapshot) => _StoryBubble(
-                  label: 'YO Moments',
-                  photoUrl:
-                      myLatestMoment?.authorPhotoUrl ??
-                      profileSnapshot.data?.photoUrl,
-                  isAdd: myLatestMoment == null,
-                  showAddBadge: myLatestMoment != null,
-                  onTap: () {
-                    final moment = myLatestMoment;
-                    if (moment == null) {
-                      _recordMoment();
-                    } else {
-                      _showMomentPlayer(moment);
-                    }
-                  },
-                  onAddTap: () => _recordMoment(),
-                ),
+        return MomentViewedIds(
+          builder: (context, viewedIds) {
+            final copy = AppLocalizations.of(context);
+            return SizedBox(
+              height: MomentStoryTile.heightFor(context) + 18 + 8,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
+                children: [
+                  // Reads the shared profile stream rather than
+                  // FirebaseAuth.currentUser.photoURL, which is a separate,
+                  // non-reactive store that never updates after an avatar
+                  // change. The moment's own authorPhotoUrl still wins when
+                  // present — it is a snapshot of how the moment was posted.
+                  StreamBuilder<UserProfile>(
+                    stream: _profile,
+                    builder: (context, profileSnapshot) {
+                      final profile = profileSnapshot.data;
+                      return MomentStoryTile(
+                        // The product mark this rail has always carried.
+                        name: 'YO Moments',
+                        // An empty own chain is a quiet ring with the `+`,
+                        // never an "unheard" claim about nothing.
+                        seen: mine == null || !mine.hasUnviewed(viewedIds),
+                        semanticLabel: myLatestMoment == null
+                            ? copy.text(
+                                'Record your first Voice Moment',
+                                'Nagraj swój pierwszy Voice Moment',
+                              )
+                            : copy.text(
+                                'Play your Voice Moment',
+                                'Odtwórz swój Voice Moment',
+                              ),
+                        userId: currentUserId.isEmpty ? null : currentUserId,
+                        photoUrl:
+                            myLatestMoment?.authorPhotoUrl ?? profile?.photoUrl,
+                        mediaRevision: profile?.profileUpdatedAt,
+                        displayName: profile?.displayName,
+                        fallbackIcon: Icons.person_rounded,
+                        count: mine?.length,
+                        showAdd: true,
+                        onTap: () {
+                          final moment = myLatestMoment;
+                          if (moment == null) {
+                            _recordMoment();
+                          } else {
+                            _showMomentPlayer(moment);
+                          }
+                        },
+                        onAddTap: () => _recordMoment(),
+                      );
+                    },
+                  ),
+                  for (final chain in stories) ...[
+                    const SizedBox(width: AppRhythm.item),
+                    MomentStoryTile(
+                      name: chain.authorName,
+                      seen: !chain.hasUnviewed(viewedIds),
+                      semanticLabel: copy.template(
+                        'Play Voice Moment from {name}',
+                        'Odtwórz Voice Moment użytkownika {name}',
+                        values: {'name': chain.authorName},
+                      ),
+                      userId: chain.authorId,
+                      photoUrl: chain.authorPhotoUrl,
+                      displayName: chain.authorName,
+                      count: chain.length,
+                      onTap: () => _showMomentPlayer(chain.moments.last),
+                    ),
+                  ],
+                ],
               ),
-              ...stories.map(
-                (moment) => _StoryBubble(
-                  label: moment.authorName,
-                  photoUrl: moment.authorPhotoUrl,
-                  onTap: () => _showMomentPlayer(moment),
-                ),
-              ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -941,101 +985,6 @@ class _HomeScreenState extends State<HomeScreen> {
         maxWidth: 720,
       ),
       builder: (_) => _MomentPlayerSheet(moment: moment),
-    );
-  }
-}
-
-class _StoryBubble extends StatelessWidget {
-  const _StoryBubble({
-    required this.label,
-    required this.onTap,
-    this.photoUrl,
-    this.isAdd = false,
-    this.showAddBadge = false,
-    this.onAddTap,
-  });
-
-  final String label;
-  final String? photoUrl;
-  final bool isAdd;
-  final bool showAddBadge;
-  final VoidCallback onTap;
-  final VoidCallback? onAddTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return SizedBox(
-      width: 82,
-      child: Column(
-        children: [
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              InkWell(
-                onTap: onTap,
-                customBorder: const CircleBorder(),
-                child: Container(
-                  padding: const EdgeInsets.all(3),
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: AppGradients.primary,
-                  ),
-                  child: CircleAvatar(
-                    radius: 30,
-                    backgroundColor: palette.surfaceRaised,
-                    backgroundImage: photoUrl?.isNotEmpty == true
-                        ? NetworkImage(photoUrl!)
-                        : null,
-                    child: isAdd
-                        ? Icon(
-                            Icons.add_rounded,
-                            color: palette.interactiveForeground,
-                            size: 30,
-                          )
-                        : photoUrl?.isNotEmpty == true
-                        ? null
-                        : Icon(
-                            Icons.graphic_eq_rounded,
-                            color: palette.interactiveForeground,
-                          ),
-                  ),
-                ),
-              ),
-              if (showAddBadge)
-                Positioned(
-                  right: -1,
-                  bottom: -1,
-                  child: InkWell(
-                    onTap: onAddTap,
-                    customBorder: const CircleBorder(),
-                    child: Container(
-                      width: 25,
-                      height: 25,
-                      decoration: BoxDecoration(
-                        color: AppColors.secondary,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: palette.background, width: 3),
-                      ),
-                      child: const Icon(
-                        Icons.add_rounded,
-                        color: Colors.white,
-                        size: 16,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 7),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: palette.textSecondary, fontSize: 11),
-          ),
-        ],
-      ),
     );
   }
 }

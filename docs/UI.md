@@ -397,6 +397,49 @@ rules a screen author needs.
   `test/home_section_header_slots_test.dart` (the three slots and the
   vocabulary), `test/desktop_shell_test.dart` (Voice Trending renders
   "See all rooms", never a second "View all").
+- **Story ring = `MomentStoryTile` / `MomentSeenAvatar` / `MomentAuthorCapsule`**
+  (all in `lib/features/moments/presentation/widgets/moment_story_tile.dart`;
+  `moment_discover_tiles.dart` re-exports `MomentSeenAvatar`). THE RING IS
+  THE LISTENED STATE — this account's own `users/{uid}/momentViews` through
+  `MomentViewsService`, resolved once per rail by `MomentViewedIds` (pass
+  `viewedIds` through when the surface already owns the set; unknown state
+  renders as unheard, fail open) — and never presence: a person's
+  availability is `PeopleStatusAvatar` / `AvailabilityDot`, and Home's
+  friend tile draws "new content" as its own cyan `join.ring` on a presence
+  tile, on purpose (ADR-155, ADR-209). The stops come from
+  `MomentStoryTile.ringColors(context, seen:)` and are painted through
+  `MomentStoryTile.ringGradient(context, seen:)` — unheard is the brand
+  gradient (`AppColors.primary` → `AppColors.secondary` at
+  `AppGradients.primary`'s angle), heard is `palette.border` twice at the
+  same angle, with the avatar dimmed to .62 and the name in
+  `textSecondary` — and nowhere else: never `AppGradients.primary` directly
+  around an avatar, never a `Border.all`, never a painter, never a
+  story-look gradient on a rail that carries no Moments state (a rail with
+  nothing to say wears a 2 px `palette.border` band, as the Chats rail
+  does). Three shapes, one state: `MomentSeenAvatar(seen:, diameter:)` is
+  the disc (feed card 48 / 56 pt at the 2 / 1.5 defaults; the tile passes
+  2.5 / 2 for its 60 pt disc, 56 below 360 px; `ringKey` lands on the
+  painted `Container` whose `BoxDecoration` carries the gradient, which is
+  where a test reads it); `MomentStoryTile` is the disc plus name, optional
+  caption / identity badge / online dot, the real chain-count badge and the
+  `+` with its own 44 pt record target (constructor and `discFor` /
+  `widthFor` / `heightFor` statics frozen); `MomentAuthorCapsule` is the
+  feed strip's 48 pt pill whose border is the ring (2 px unheard, 1 px
+  heard) with static, never-cyan bars. The caller owns chain building
+  (`buildMomentChains`), the keys (`home-your-moment`, `home-moment-<id>`,
+  `home-record-moment`, `moments-capsule-<author>`, `moment-row-chain-<id>`),
+  the `copy` semantic label (the primitive appends "not heard yet" /
+  "already heard" itself; `MomentSeenAvatar.stateLabel` gives the same
+  words to a caller that wraps the disc in its own tap region) and the tap
+  callbacks. Contracts: `test/moment_story_tile_test.dart` (stops in both
+  themes, opacity, labels, disc sizes, 44 pt targets, fail-open),
+  `test/moment_author_capsules_test.dart` (border stops == `ringColors`,
+  bars static and `AppColors.primary` @ .32), `test/moments_discover_layout_test.dart`
+  (`seen` per row, unheard is a two-stop gradient of distinct colours),
+  `test/moment_seen_avatar_test.dart` (`ringGradient`'s stops and angle in
+  both themes, the `ringKey` contract, the tile's 2.5 / 2 hand-down, the
+  capsule's angle, the re-export), `test/desktop_home_test.dart` (no
+  `MomentStoryTile` on desktop Home today).
 
 ## Semantic colour ownership
 
