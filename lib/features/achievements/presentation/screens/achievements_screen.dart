@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/shared/widgets/identity/decorated_user_avatar.dart';
 import 'package:yovoice/shared/widgets/identity/identity_name.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
@@ -507,16 +510,27 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
               if (items.isEmpty) return const [];
               return [
                 SliverToBoxAdapter(
-                  child: _SectionHeader(
-                    key: ValueKey('awards-section-$id'),
-                    icon: icon,
-                    title: title,
-                    count: items.length,
-                    gutter: gutter,
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: gutter),
+                    // The shared heading owns the vertical rhythm (24
+                    // above its ink, 16 below), so the grid below starts
+                    // with no top padding of its own. Inside this
+                    // immersive-dark route `context.appPalette` resolves to
+                    // the Dark palette in either app theme.
+                    child: HomeSectionHeader(
+                      key: ValueKey('awards-section-$id'),
+                      leading: Icon(
+                        icon,
+                        size: 16,
+                        color: context.appPalette.textSecondary,
+                      ),
+                      title: title,
+                      trailing: _CountPill(count: items.length),
+                    ),
                   ),
                 ),
                 SliverPadding(
-                  padding: EdgeInsets.fromLTRB(gutter, 4, gutter, 10),
+                  padding: EdgeInsets.fromLTRB(gutter, 0, gutter, 10),
                   sliver: SliverGrid(
                     gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
                       maxCrossAxisExtent: compact ? 380 : (isWide ? 560 : 520),
@@ -1427,60 +1441,30 @@ class _RecentUnlocks extends StatelessWidget {
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.icon,
-    required this.title,
-    required this.count,
-    required this.gutter,
-    super.key,
-  });
+/// The category count, mounted as a section heading's trailer: an outlined
+/// pill in palette roles (`surface` / `border` / `textSecondary`), which on
+/// this immersive-dark route always resolve to the Dark palette.
+class _CountPill extends StatelessWidget {
+  const _CountPill({required this.count});
 
-  final IconData icon;
-  final String title;
   final int count;
-  final double gutter;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(gutter, 14, gutter, 6),
-      child: Semantics(
-        header: true,
-        child: Row(
-          children: [
-            Icon(icon, size: 16, color: const Color(0xFFC7BBD1)),
-            const SizedBox(width: 7),
-            Flexible(
-              child: Text(
-                title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: _ink,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: const Color(0xFF17101F),
-                borderRadius: BorderRadius.circular(99),
-                border: Border.all(color: _panelBorder),
-              ),
-              child: Text(
-                '$count',
-                style: const TextStyle(
-                  color: Color(0xFFC7BBD1),
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ],
+    final palette = context.appPalette;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: AppRadius.pill,
+        border: Border.all(color: palette.border),
+      ),
+      child: Text(
+        '$count',
+        style: TextStyle(
+          color: palette.textSecondary,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w800,
         ),
       ),
     );

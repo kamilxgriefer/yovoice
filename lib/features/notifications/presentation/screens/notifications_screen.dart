@@ -19,6 +19,7 @@ import 'package:yovoice/features/notifications/data/models/app_notification.dart
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
@@ -516,22 +517,27 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 }
 
                 return ListView(
-                  padding: const EdgeInsets.fromLTRB(18, 10, 18, 32),
+                  // The section headings own the vertical rhythm
+                  // (AppRhythm.section above their ink, AppRhythm.title
+                  // below), so the list adds no air of its own above the
+                  // first heading, after a heading, or between sections;
+                  // card gaps sit only BETWEEN cards.
+                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 32),
                   children: [
                     if (auxiliaryFailed) ...[
+                      const SizedBox(height: 10),
                       const _DegradedNotice(),
-                      const SizedBox(height: 12),
                     ],
                     if (requests.isNotEmpty) ...[
-                      _SectionHeader(
+                      HomeSectionHeader(
                         title: copy.text(
                           'Friend requests',
                           'Zaproszenia do znajomych',
                         ),
-                        count: requests.length,
+                        trailing: _CountPill(count: requests.length),
                       ),
-                      const SizedBox(height: 10),
-                      for (final request in requests) ...[
+                      for (final (index, request) in requests.indexed) ...[
+                        if (index > 0) const SizedBox(height: 10),
                         _FriendRequestCard(
                           request: request,
                           isProcessing: _processingRequestIds.contains(
@@ -542,42 +548,40 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           onOpenProfile: () =>
                               unawaited(_previewRequester(request)),
                         ),
-                        const SizedBox(height: 10),
                       ],
                     ],
                     if (unreadConversations.isNotEmpty) ...[
-                      if (requests.isNotEmpty) const SizedBox(height: 14),
-                      _SectionHeader(
+                      HomeSectionHeader(
                         title: copy.text(
                           'Unread messages',
                           'Nieprzeczytane wiadomości',
                         ),
-                        count: unreadConversations.fold<int>(
-                          0,
-                          (sum, conversation) =>
-                              sum + conversation.unreadCountFor(_currentUserId),
+                        trailing: _CountPill(
+                          count: unreadConversations.fold<int>(
+                            0,
+                            (sum, conversation) =>
+                                sum +
+                                conversation.unreadCountFor(_currentUserId),
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 10),
-                      for (final conversation in unreadConversations) ...[
+                      for (final (index, conversation)
+                          in unreadConversations.indexed) ...[
+                        if (index > 0) const SizedBox(height: 10),
                         _UnreadMessageCard(
                           conversation: conversation,
                           currentUserId: _currentUserId,
                           onTap: () => _openConversation(conversation),
                         ),
-                        const SizedBox(height: 10),
                       ],
                     ],
                     if (notifications.isNotEmpty) ...[
-                      if (requests.isNotEmpty || unreadConversations.isNotEmpty)
-                        const SizedBox(height: 14),
                       _ActivityHeader(
                         count: unreadNotificationCount,
                         onMarkAllRead: unreadNotificationCount > 0
                             ? _markAllNotificationsRead
                             : null,
                       ),
-                      const SizedBox(height: 10),
                       for (final entry in groupedNotifications.entries) ...[
                         Padding(
                           padding: const EdgeInsets.fromLTRB(2, 6, 2, 8),
@@ -657,44 +661,32 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, required this.count});
+/// The inbox's count pill, mounted as a section heading's trailer. Filled
+/// primary, `onPrimary` copy, clamped at "99+" — the badge this screen has
+/// always drawn; only the heading around it became the shared
+/// [HomeSectionHeader].
+class _CountPill extends StatelessWidget {
+  const _CountPill({required this.count});
 
-  final String title;
   final int count;
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            title,
-            style: TextStyle(
-              color: palette.textPrimary,
-              fontSize: 17,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: colors.primary,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        count > 99 ? '99+' : '$count',
+        style: TextStyle(
+          color: colors.onPrimary,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
         ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-          decoration: BoxDecoration(
-            color: colors.primary,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            count > 99 ? '99+' : '$count',
-            style: TextStyle(
-              color: colors.onPrimary,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -731,30 +723,36 @@ class _ActivityHeader extends StatelessWidget {
                   ),
                 ),
               );
+        final title = copy.text('Activity', 'Aktywność');
+        final pill = _CountPill(count: count);
 
+        // A narrow phone at large text puts the action under the heading,
+        // as it always has; the heading's own 16 px bottom step is the gap.
         if (shouldStack) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _SectionHeader(
-                title: copy.text('Activity', 'Aktywność'),
-                count: count,
-              ),
+              HomeSectionHeader(title: title, trailing: pill),
               ?markAllButton,
             ],
           );
         }
 
-        return Row(
-          children: [
-            Expanded(
-              child: _SectionHeader(
-                title: copy.text('Activity', 'Aktywność'),
-                count: count,
-              ),
-            ),
-            ?markAllButton,
-          ],
+        // Otherwise pill and button ride the heading's trailer slot, which
+        // centres them on the title's ink and keeps the box at
+        // section + ink + title whatever the button's 48 px target adds.
+        return HomeSectionHeader(
+          title: title,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              pill,
+              if (markAllButton != null) ...[
+                const SizedBox(width: 8),
+                markAllButton,
+              ],
+            ],
+          ),
         );
       },
     );

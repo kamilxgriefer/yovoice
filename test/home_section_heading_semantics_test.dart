@@ -9,7 +9,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_section_header.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 
 Future<void> _expectHeading(
   WidgetTester tester,

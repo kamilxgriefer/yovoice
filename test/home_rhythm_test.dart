@@ -24,7 +24,7 @@ import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.da
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_section_header.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';

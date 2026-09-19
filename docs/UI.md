@@ -69,7 +69,7 @@ box.** Spacing lives BETWEEN boxes, never inside a hit target, so the number
 in the source is the number the reader sees. A control that must reserve a
 44 px target around smaller ink subtracts that air from the gap it declares
 rather than adding it — see `HomeSectionHeader`
-(`lib/features/home/presentation/widgets/shared/home_section_header.dart`),
+(`lib/shared/widgets/layout/home_section_header.dart`),
 whose layout box is exactly `section + title-ink + title` whether or not it
 carries a "View all" and however the title wraps. Watch for the two usual
 sources of invisible air: `MaterialTapTargetSize.padded` inflates a 44 px
@@ -370,6 +370,33 @@ rules a screen author needs.
   `yovoice-evidence/2026-09-19/slim-0-waveform-frames/after/` by the visual
   verification step (pending at the implementation commit; see
   `docs/Sessions/2026-09-19-slim-redesign.md`).
+- **Section heading = `HomeSectionHeader(title:)`**
+  (`lib/shared/widgets/layout/home_section_header.dart`; Home-era name kept,
+  it is the heading for every scrolling page). Its layout box is exactly
+  `AppRhythm.section` (24) + title ink + `AppRhythm.title` (16) — with or
+  without a "View all", with a trailer, with a subtitle, however the title
+  wraps, at any text scale, in any locale — so a caller removes every
+  vertical `Padding` / `SizedBox` around it and keeps only the horizontal
+  gutter; the list above it adds no top air of its own and card gaps sit
+  only *between* cards. Slots: `onSeeAll` + `seeAllLabel` (+ `seeAllKey`)
+  for the way through to the full list, 44 × 44 target shrink-wrapped,
+  stacking under the title only when the page's widest action would cost
+  more than a third of the row — outside Home pass `seeAllVocabulary`, the
+  labels that page carries, so every heading on it arranges identically;
+  `trailing` for a mark that is not an action (a count pill, a category icon
+  box), centred on the title ink and exclusive with `onSeeAll`; `leading`
+  for a 16–18 px glyph on the title line; `subtitle` for one `textSecondary`
+  line that is part of the heading ink; `live` for the 6 px `AppColors.live`
+  dot; `scale` compact (17 px) on phones and in the desktop secondary column,
+  expanded (19 px) for desktop page headings. Never add a scale value, a
+  `topGap` or a private copy; count pills stay with their screen until
+  `YoMetricPill` exists. The title is the heading's semantics name (header
+  flag); leading, trailing and subtitle are not merged into it. Contracts:
+  `test/home_rhythm_test.dart` (the frozen 24 / ink / 16 and stacking
+  verdicts), `test/home_section_heading_semantics_test.dart`,
+  `test/home_section_header_slots_test.dart` (the three slots and the
+  vocabulary), `test/desktop_shell_test.dart` (Voice Trending renders
+  "See all rooms", never a second "View all").
 
 ## Semantic colour ownership
 

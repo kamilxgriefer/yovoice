@@ -9,7 +9,7 @@ import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_add_affordance.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_section_header.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
@@ -174,7 +175,10 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 14),
+          // The section headings own the card's vertical rhythm from here
+          // (24 above their ink, 16 below), so no spacer sits between the
+          // card title and the first heading or between a heading and its
+          // rows.
           StreamBuilder<List<VoiceRoom>>(
             stream: _rooms?.watchLivePublicRooms(),
             builder: (context, snapshot) {
@@ -188,18 +192,23 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
               final waiting =
                   snapshot.connectionState == ConnectionState.waiting &&
                   !snapshot.hasData;
+              // Each section points at the destination that actually holds
+              // more of ITS content, so this heading's action names rooms —
+              // never the neutral "View all", which is the card footer's
+              // word for Moments.
+              final seeAllRooms = copy.text(
+                'See all rooms',
+                'Zobacz wszystkie pokoje',
+              );
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _SectionHeader(
-                    label: copy.text('Live rooms', 'Pokoje na żywo'),
-                    actionLabel: copy.text(
-                      'See all rooms',
-                      'Zobacz wszystkie pokoje',
-                    ),
-                    onAction: widget.onSeeAllRooms,
+                  HomeSectionHeader(
+                    title: copy.text('Live rooms', 'Pokoje na żywo'),
+                    seeAllLabel: seeAllRooms,
+                    seeAllVocabulary: {seeAllRooms},
+                    onSeeAll: widget.onSeeAllRooms,
                   ),
-                  const SizedBox(height: 8),
                   if (waiting)
                     const _RowPlaceholder(count: 2)
                   else if (snapshot.hasError)
@@ -222,7 +231,6 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
                         room: room,
                         onTap: () => widget.onOpenRoom(room),
                       ),
-                  const SizedBox(height: 14),
                 ],
               );
             },
@@ -230,10 +238,12 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
           // A REAL Moments section. Without it, "View all → Moments"
           // would sit under a list of rooms, which is the mislabel this
           // change exists to remove, only inverted.
-          _SectionLabel(
-            copy.text('Most liked Moments', 'Najbardziej lubiane Momenty'),
+          HomeSectionHeader(
+            title: copy.text(
+              'Most liked Moments',
+              'Najbardziej lubiane Momenty',
+            ),
           ),
-          const SizedBox(height: 8),
           FutureBuilder<List<VoiceMoment>>(
             future: _topMoments,
             builder: (context, snapshot) {
@@ -318,65 +328,6 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return Text(
-      text,
-      style: TextStyle(
-        color: palette.textPrimary,
-        fontSize: 13.5,
-        fontWeight: FontWeight.w700,
-      ),
-    );
-  }
-}
-
-/// A section heading with its own link, so each section points at the
-/// destination that actually holds more of ITS content.
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.label,
-    required this.actionLabel,
-    required this.onAction,
-  });
-
-  final String label;
-  final String actionLabel;
-  final VoidCallback onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Row(
-      children: [
-        Expanded(child: _SectionLabel(label)),
-        TextButton(
-          onPressed: onAction,
-          style: TextButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            minimumSize: Size.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-          child: Text(
-            actionLabel,
-            style: TextStyle(
-              color: colors.primary,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

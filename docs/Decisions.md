@@ -12894,6 +12894,7 @@ already exists (no `YoLiveBadge`, no `YoStoryRingAvatar`, no `YoPresenceDot`).
 | NA ŻYWO | `YoBadge(variant: YoBadgeVariant.live)` — `lib/shared/widgets/badges/yo_badge.dart`; on server surfaces through its keyed alias `ServerLivePill` (`servers/presentation/widgets/server_channel_scene.dart`) | `_MiniLivePill` and the `_MobileRoomCard` inline pill (`home/…/mobile/mobile_home_sections.dart`), `_LivePill` (`home/…/desktop/voice_trending_card.dart`), the inline pill in `home/…/live_now_hero.dart`, the live branch of `_StatusBadge` (`home/…/shared/home_room_board.dart`), `_LiveBadge` (`discover/…/hero_live_room.dart`), `_SmallLiveBadge` ×2 (`discover/…/discover_screen.dart`), `_LivePill` (`rooms/…/room_card.dart`), the inline pill in `CreatorStudioRoomsList` (`creator/…/creator_studio_screen.dart`), `ServerLivePill`'s own body and `_LiveDot` (`servers/…/server_panel.dart`) |
 | Obecność (dot) | `AvailabilityDot` — `lib/shared/widgets/profile/availability_dot.dart` (moved out of `availability_picker.dart`; colour = `PeopleStatus.foreground`, the ring's ink, so ring and dot share one source) | 10 sites in 8 files: `_PresenceDot`'s disc (`shared/widgets/profile/profile_preview_sheet.dart`), `YoAvatar.isOnline` (`shared/widgets/avatars/yo_avatar.dart`), the own-availability dot in `HomeGreetingHeader` (`home/…/shared/home_greeting_header.dart`), the presence dot in `HomeFriendTile` (`home/…/shared/home_friend_tile.dart`), the friend row (`friends/…/friends_screen.dart`), `_FriendStory`, `_ConversationAvatarState` and `_FriendTile` (`messages/…/messages_screen.dart`), the member tile (`clubs/…/club_overview_screen.dart`), the online dot of `MomentStoryTile` (`moments/…/moment_story_tile.dart`) |
 | Waveform (bars) | `YoWaveform` — `lib/shared/widgets/waveform/yo_waveform.dart`; the progress-driven Moment players through its named subclass `StoryWaveform` in the same file, re-exported by `moments/…/moment_story_viewer.dart` so every existing import resolves | `HomeStaticWaveform` (`home/…/shared/home_static_waveform.dart`, file removed with its last caller `home/…/shared/home_here_now_hero.dart`), `_MiniWaveform` (`home/…/screens/home_screen.dart`), `_Waveform` (`moments/…/widgets/moment_card.dart`), `StoryWaveform` + `_TiledWaveformPainter` (`moments/…/widgets/moment_story_viewer.dart`; its five call sites — the story stage, `moments/…/screens/moment_detail_screen.dart`, `moments/…/widgets/moments_feed_view.dart` ×2, `moments/…/widgets/voice_reply_mini_player.dart` — keep constructing `StoryWaveform`), `_Waveform` (`servers/…/widgets/server_podcast_stage.dart`), the inline 24-bar row in `_VoiceMessageContent` (`messages/…/widgets/message_bubble.dart`) |
+| Nagłówek sekcji | `HomeSectionHeader` — `lib/shared/widgets/layout/home_section_header.dart` (moved from `home/presentation/widgets/shared/`, class name and `HomeSectionHeaderScale` kept because `test/home_rhythm_test.dart` pins them by type; grew `leading`, `subtitle`, `trailing` and `seeAllVocabulary`, every default reproducing the Home render byte for byte) | `_SectionHeader` + `_SectionLabel` (`home/…/desktop/voice_trending_card.dart`: "Live rooms" with its "See all rooms" action, "Most liked Moments"), `_SectionHeader` (`notifications/…/notifications_screen.dart`: Friend requests, Unread messages, and Activity through `_ActivityHeader`, which keeps its stacking rule and the `notifications-mark-all-read` button), `_SectionHeader` (`achievements/…/achievements_screen.dart`: one per category, key `awards-section-<id>`), `_SectionHeader` (`discover/…/discover_screen.dart`: Search results, Featured, Trending, Rising; the 36 px icon box survives as the trailer `_SectionIcon`) |
 
 The live variant's spec (from the brief's Twitch section): `AppColors.live`
 fill, `AppColors.onLive` copy, `AppTypography.labelSmall` (10 px, height 1.2)
@@ -13131,6 +13132,84 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   seek `GestureDetector`s, `ExcludeSemantics` wrappers in callers, the
   `ConstrainedBox(48–126)` and `direct-voice-<id>` target around the bubble's
   bars, the hero's `PositionedDirectional` geometry — all kept in the callers.
+
+### Consciously NOT built, NOT simplified (section-header family)
+
+- No new heading and no rename. `HomeSectionHeader` moved to
+  `lib/shared/widgets/layout/` under its Home-era name: `test/home_rhythm_test.dart`
+  identifies headings with `widget is HomeSectionHeader`, iterates
+  `HomeSectionHeaderScale.values` and reads `titleInkHeight`, and
+  `test/desktop_home_here_now_layout_test.dart` asserts exact scale values per
+  title, so the enum gained no value and the ramp (17 / 19 px, height 1.3)
+  did not move. The ten imports (six in `lib/`, four in `test/`) were
+  rewritten; the brief's `test/.screenshots/home_rhythm_capture.dart` does
+  not exist — the arrangement capture is a dart-define inside
+  `home_rhythm_test.dart` itself — so there was no fifth import to update.
+- The slots keep the arithmetic. `trailing` is laid out as the render
+  object's second child, the slot the "View all" already owned: centred on
+  the title ink, never stacking, never growing the box (a 36 px icon box and
+  a 48 px control leave the box at `section + ink + title`, pinned by
+  `test/home_section_header_slots_test.dart`). `subtitle` lives inside the
+  title child, so it is heading ink and owns the 16 px bottom step;
+  `leading` is boxed to one title line so it adds no ink. `trailing` and
+  `onSeeAll` assert-exclude each other rather than sharing the slot.
+  `Semantics(header: true)` still wraps only the title, so a heading's name
+  is its title and the subtitle is a sibling node.
+- `seeAllVocabulary` exists because the stacking verdict is measured against
+  the widest "View all" the *page* can carry (Build 33, ca0ba6fe), and that
+  set was Home's. Null keeps Home's set, so `home_rhythm_test`'s
+  arrangement-uniformity loop is untouched; `VoiceTrendingCard` passes
+  `{'See all rooms' / 'Zobacz wszystkie pokoje'}` and renders that label,
+  never the neutral "View all" — `test/desktop_shell_test.dart` counts
+  `find.text('View all')` exactly once inside the card, for the footer link
+  with its expiry-recovery `FocusNode`, which stays as it was.
+- Visible rhythm normalisations (no golden pins any of them; the
+  primitive's 24 / 16 replaces each screen's private numbers, and every
+  spacer that duplicated a step was removed rather than a `topGap` parameter
+  added): Voice Trending 14 / 8 / 14 → 24 / 16, its section titles
+  13.5 w700 → 17 w800 (the card title's size; the card is not a page, so
+  hierarchy there is by placement, and its action gained the 44 px target it
+  lacked); the inbox list's top padding 10 → 0, the 10 after every heading
+  and the 14 between sections dropped, card gaps now only *between* cards;
+  Awards 14 / 6 + grid top 4 → 24 / 16 + 0, title 15 → 17 px and
+  `maxLines: 2` + ellipsis → wraps to three lines (a heading never elides);
+  Discover 28–32 / 14 → 24 / 16, title 21 w900 → 17 w800 with a 12.5 w500
+  subtitle.
+- Six inline hexes left with the privates and none arrived. Awards: the icon
+  `0xFFC7BBD1` → `palette.textSecondary`, the pill `0xFF17101F` /
+  `_panelBorder` / `0xFFC7BBD1` → `surface` / `border` / `textSecondary`
+  (the route is a `YoImmersiveDarkSurface`, so `context.appPalette` resolves
+  to Dark in either app theme and the title reads `textPrimary` `0xFFF8F5FC`
+  instead of `Colors.white`). Discover's three seeds `0xFFFFB84D` /
+  `0xFFFF5C75` / `0xFF57D9A3` → `AppColors.warning` / `live` / `success`
+  through the unchanged `DiscoverCategoryVisuals.fromSeed`. The other 55 hex
+  literals in `achievements_screen.dart` belong to the phase-6 screen pass.
+- Two private `_CountPill`s survive on purpose (inbox: filled
+  `primary` / `onPrimary`, "99+" clamp; Awards: outlined palette pill, no
+  clamp — each exactly what its screen drew). They are the brief's
+  truly-new `YoMetricPill` in waiting; building a shared pill here would
+  pre-empt that primitive's spec, and a third source of truth is avoided by
+  routing both through it when it lands.
+- `_ActivityHeader` keeps its `LayoutBuilder` and the stacking rule
+  (`maxWidth < 360 && scaled 14 px >= 21`): stacked, the "Mark all read"
+  button sits under the heading and the heading's own 16 px step is the
+  gap; otherwise pill and button ride the trailer slot together. The
+  `notifications-mark-all-read` key stays on the `TextButton`.
+- Discover is a retired surface (`CLAUDE.md`; only tests mount it) and was
+  migrated last and minimally, so that no private of this family survives
+  as a second source of truth; nothing user-visible changed there.
+- Out of family, left alone and not to be mistaken for surviving
+  duplicates: the 11–12 px uppercase group labels (`settings_screen`
+  `_GroupLabel`, `appearance_language_settings_section` `_SectionLabel`,
+  `edit_profile_screen` `_SectionLabel`, `desktop_sidebar` `_SectionLabel`,
+  `messages_screen` `_NewMessageSectionLabel`, the inbox's date-group
+  `Text`, `yo_emoji_picker` `_SectionHeader`, `yo_gif_picker`
+  `_GifSectionHeader`) and the title-plus-subtitle screen headings
+  (`creator_analytics_screen` `_SectionHeading`, `create_club_screen`
+  `_SectionTitle`, `staff_section_shared` `StaffSectionHeader`,
+  `creator_studio_screen` `_SectionLabel`, `create_room_screen`
+  `_SectionLabel`). Group labels are the brief's "11 px w700 uppercase"
+  rule, a different state.
 
 ### Reasoning
 

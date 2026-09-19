@@ -18,7 +18,7 @@ import 'package:yovoice/features/home/presentation/widgets/shared/home_greeting_
 import 'package:yovoice/features/home/presentation/widgets/shared/home_overview_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_people_strip.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_record_moment_card.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_section_header.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_server_overview.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';

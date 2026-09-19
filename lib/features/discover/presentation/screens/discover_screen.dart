@@ -4,9 +4,11 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/discover/presentation/discover_category_identity.dart';
 import 'package:yovoice/features/discover/presentation/discover_localized_copy.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/features/discover/presentation/widgets/hero_live_room.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -468,12 +470,16 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     return [
       SliverToBoxAdapter(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 28, 18, 14),
-          child: _SectionHeader(
+          // Horizontal gutter only: the shared heading owns its own
+          // vertical rhythm (24 above the ink, 16 below).
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          child: HomeSectionHeader(
             title: copy.text('Search results', 'Wyniki wyszukiwania'),
             subtitle: localizedLiveRoomCount(copy, rooms.length),
-            icon: Icons.search_rounded,
-            accent: Theme.of(context).colorScheme.primary,
+            trailing: _SectionIcon(
+              icon: Icons.search_rounded,
+              accent: Theme.of(context).colorScheme.primary,
+            ),
           ),
         ),
       ),
@@ -517,15 +523,20 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       widgets.add(
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 31, 18, 14),
-            child: _SectionHeader(
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            child: HomeSectionHeader(
               title: copy.text('Featured', 'Polecane'),
               subtitle: copy.text(
                 'Rooms selected for you',
                 'Pokoje wybrane dla Ciebie',
               ),
-              icon: Icons.auto_awesome_rounded,
-              accent: const Color(0xFFFFB84D),
+              // Palette roles seed the three category boxes (no inline
+              // hex): warm gold for what was picked, the live red for what
+              // is busiest now, the success green for what is growing.
+              trailing: const _SectionIcon(
+                icon: Icons.auto_awesome_rounded,
+                accent: AppColors.warning,
+              ),
             ),
           ),
         ),
@@ -545,15 +556,17 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       widgets.add(
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 32, 18, 14),
-            child: _SectionHeader(
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            child: HomeSectionHeader(
               title: copy.text('Trending', 'Popularne'),
               subtitle: copy.text(
                 'The busiest conversations right now',
                 'Najbardziej oblegane rozmowy w tej chwili',
               ),
-              icon: Icons.local_fire_department_rounded,
-              accent: const Color(0xFFFF5C75),
+              trailing: const _SectionIcon(
+                icon: Icons.local_fire_department_rounded,
+                accent: AppColors.live,
+              ),
             ),
           ),
         ),
@@ -584,15 +597,17 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       widgets.add(
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 32, 18, 14),
-            child: _SectionHeader(
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            child: HomeSectionHeader(
               title: copy.text('Rising', 'Na fali'),
               subtitle: copy.text(
                 'Fresh rooms gaining momentum',
                 'Nowe pokoje, które nabierają tempa',
               ),
-              icon: Icons.trending_up_rounded,
-              accent: const Color(0xFF57D9A3),
+              trailing: const _SectionIcon(
+                icon: Icons.trending_up_rounded,
+                accent: AppColors.success,
+              ),
             ),
           ),
         ),
@@ -915,65 +930,30 @@ class _CategorySelector extends StatelessWidget {
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.accent,
-  });
+/// The 36 px category icon box that trails a Discover section heading,
+/// tinted through [DiscoverCategoryVisuals] from an [AppColors] seed. The
+/// heading itself is the shared [HomeSectionHeader].
+class _SectionIcon extends StatelessWidget {
+  const _SectionIcon({required this.icon, required this.accent});
 
-  final String title;
-  final String subtitle;
   final IconData icon;
   final Color accent;
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
     final visuals = DiscoverCategoryVisuals.fromSeed(
       accent,
       Theme.of(context).brightness,
     );
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 21,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -0.25,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  color: palette.textSecondary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: visuals.surface,
-            borderRadius: BorderRadius.circular(13),
-            border: Border.all(color: visuals.border),
-          ),
-          child: Icon(icon, color: visuals.onSurface, size: 20),
-        ),
-      ],
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        color: visuals.surface,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: visuals.border),
+      ),
+      child: Icon(icon, color: visuals.onSurface, size: 20),
     );
   }
 }

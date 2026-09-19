@@ -13,7 +13,7 @@ import 'package:yovoice/features/home/presentation/widgets/shared/home_here_now_
     show homeActivitySummary;
 import 'package:yovoice/features/home/presentation/widgets/shared/home_participant_stack.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_roster_cache.dart';
-import 'package:yovoice/features/home/presentation/widgets/shared/home_section_header.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 

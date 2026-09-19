@@ -13,7 +13,10 @@ import 'package:yovoice/core/theme/app_spacing.dart';
 /// (19 px). Only the type ramp changes — the rhythm is identical.
 enum HomeSectionHeaderScale { compact, expanded }
 
-/// THE section heading for Home, on every platform.
+/// THE section heading — born on Home, now the one heading for every
+/// scrolling page (Slim redesign, phase 0: one state = one primitive). The
+/// class keeps its Home-era name because `test/home_rhythm_test.dart` pins
+/// the contract by type.
 ///
 /// Why this exists as its own component: a heading's LAYOUT box used to
 /// differ from its INK box by however much air its 44 px "View all" target
@@ -36,18 +39,47 @@ enum HomeSectionHeaderScale { compact, expanded }
 /// — is centred on the title and therefore reaches INTO the declared gaps
 /// rather than growing the box. Its own vertical air is subtracted, not
 /// added, so the number the eye sees is the number the source declares.
+///
+/// Three optional slots let other screens mount the same heading without a
+/// private copy, and none of them changes the box arithmetic: [leading]
+/// (a small glyph before the title), [subtitle] (one secondary line under
+/// it, part of the title ink) and [trailing] (a non-action trailer — a count
+/// pill, an icon box — laid out exactly where the "View all" would be, so it
+/// too is centred on the title and never grows the box).
 class HomeSectionHeader extends StatelessWidget {
   const HomeSectionHeader({
     required this.title,
+    this.subtitle,
+    this.leading,
+    this.trailing,
     this.live = false,
     this.onSeeAll,
     this.seeAllKey,
     this.seeAllLabel,
+    this.seeAllVocabulary,
     this.scale = HomeSectionHeaderScale.compact,
     super.key,
-  });
+  }) : assert(
+         onSeeAll == null || trailing == null,
+         'A heading carries either a "View all" action or a trailing '
+         'widget; both would compete for the same slot.',
+       );
 
   final String title;
+
+  /// One secondary line under the title (`textSecondary`, w500). It belongs
+  /// to the title's ink, so the box is still `section + ink + title`.
+  final String? subtitle;
+
+  /// A small glyph before the title — an `Icon` of 16–18 px. Centred on the
+  /// title's line; it brings no padding of its own.
+  final Widget? leading;
+
+  /// A trailer that is NOT the "View all" action: a count pill, a category
+  /// icon box. It takes the action's slot — centred on the title's ink,
+  /// never stacking under it — and is therefore mutually exclusive with
+  /// [onSeeAll].
+  final Widget? trailing;
 
   /// A 6 px live dot after the title. Presentation only — it never claims
   /// anything the caller has not already verified.
@@ -66,6 +98,14 @@ class HomeSectionHeader extends StatelessWidget {
   /// hardcoded label is wrong on at least one Home section. Null keeps the
   /// neutral default every other caller already uses.
   final String? seeAllLabel;
+
+  /// The widest "View all" labels the PAGE can carry — the set the stacking
+  /// verdict is answered against, so every heading on one page arranges
+  /// itself identically (see [_arrangementActionWidth]). Null keeps Home's
+  /// own vocabulary (`homeSeeAll`, `homeSeeAllPeople`, the neutral label);
+  /// a non-Home page passes its own. The label this heading renders is
+  /// always part of the set.
+  final Iterable<String>? seeAllVocabulary;
 
   final HomeSectionHeaderScale scale;
 
@@ -165,9 +205,20 @@ class HomeSectionHeader extends StatelessWidget {
     // the line. The rhythm is 24 / 16 in either arrangement.
     final mayStack = scaler.scale(1) >= 1.6;
 
+    final leading = this.leading;
     final titleRow = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (leading != null) ...[
+          // Boxed to one title line so the glyph is centred on the words
+          // and adds no ink above or below them; the Row centres that box
+          // on the title exactly as it centres the live dot.
+          SizedBox(
+            height: scaler.scale(_titleSize) * _titleLineHeight,
+            child: Center(child: leading),
+          ),
+          const SizedBox(width: AppRhythm.tight),
+        ],
         Flexible(
           // A section title must be a HEADING to assistive technology, not
           // just large text: without this, VoiceOver's Headings rotor and
@@ -208,16 +259,46 @@ class HomeSectionHeader extends StatelessWidget {
       ],
     );
 
+    final subtitle = this.subtitle;
+    // The subtitle is part of the heading's ink: the render object sees one
+    // "title" child whose height is title + hairline + subtitle, so the
+    // 24 / ink / 16 arithmetic is untouched and a trailer is centred on the
+    // whole lockup.
+    final Widget titleBlock = subtitle == null
+        ? titleRow
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              titleRow,
+              const SizedBox(height: AppRhythm.hairline),
+              Text(
+                subtitle,
+                maxLines: 3,
+                overflow: TextOverflow.visible,
+                style: TextStyle(
+                  color: palette.textSecondary,
+                  fontSize: _labelSize,
+                  height: _titleLineHeight,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          );
+
     final onSeeAll = this.onSeeAll;
     if (onSeeAll == null) {
+      final trailing = this.trailing;
       return _SectionHeaderLayout(
         topGap: AppRhythm.section,
         bottomGap: AppRhythm.title,
         actionGap: AppRhythm.tight,
         actionInkInset: 0,
+        // A trailer never stacks: it is a mark beside the words, not a way
+        // through, so at enlarged text the title wraps beside it instead.
         mayStack: false,
         arrangementActionWidth: 0,
-        children: [titleRow],
+        children: [titleBlock, ?trailing],
       );
     }
 
@@ -276,20 +357,27 @@ class HomeSectionHeader extends StatelessWidget {
       ),
     );
 
+    // Deliberately the whole vocabulary and not `seeAllLabel`: a heading
+    // may not decide the page's arrangement from its own wording. Home's
+    // set is the default; another page passes its own, and the label this
+    // heading renders is always in it.
+    final pageVocabulary = seeAllVocabulary;
+    final vocabulary = pageVocabulary == null
+        ? <String>{copy.homeSeeAll, copy.homeSeeAllPeople, neutralSeeAll}
+        : <String>{...pageVocabulary, seeAllLabel ?? neutralSeeAll};
+
     return _SectionHeaderLayout(
       topGap: AppRhythm.section,
       bottomGap: AppRhythm.title,
       actionGap: AppRhythm.tight,
       actionInkInset: (actionBox - actionInk) / 2,
       mayStack: mayStack,
-      // Deliberately the whole vocabulary and not `seeAllLabel`: a heading
-      // may not decide the page's arrangement from its own wording.
-      arrangementActionWidth: _arrangementActionWidth(context, scaler, {
-        copy.homeSeeAll,
-        copy.homeSeeAllPeople,
-        neutralSeeAll,
-      }),
-      children: [titleRow, viewAll],
+      arrangementActionWidth: _arrangementActionWidth(
+        context,
+        scaler,
+        vocabulary,
+      ),
+      children: [titleBlock, viewAll],
     );
   }
 }
