@@ -14,6 +14,18 @@ someone decide what to pick up next.
 
 ---
 
+## Next build after 3.0.0 — Yeels drag-to-seek — in source on `nb/yeels-scrub` — 2026-09-19
+
+**Status: Done in source, not yet on `main`.** Task 1 of the next-build split
+(`docs/briefs/2026-09-19-next-build-decisions.md` on `nb/brief`). Commits
+`38f29ebc` (coordinator scrub session), `14b8b9ce` (drag band on both Yeel
+stages, hairline fill fix), `953ccea2` (Voice story player finger-seek).
+Decision: [ADR-210](Decisions.md). App only: no backend, rules, schema,
+Function, pubspec or catalog change. Frames:
+`yovoice-evidence/2026-09-19/next-build/yeels-scrub/` (390 / 1440, Dark and
+Pearl). Deferred: on-device seek-latency measurement and arena feel (iPhone,
+Android, Chrome), `MomentDetailPanel` drag-seek.
+
 ## YO Voice 3.0.0 (34) — the Slim redesign — released to testers — 2026-09-19
 
 **Status: Done for 3.0.0.** `main` carries `version: 3.0.0+34` in the release
