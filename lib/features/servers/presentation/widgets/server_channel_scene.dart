@@ -611,6 +611,44 @@ class ServerSessionHeld extends StatelessWidget {
   );
 }
 
+/// The word a join control uses for this channel in this state.
+///
+/// One switch for every surface that offers the join — the scene's
+/// [ServerJoinAction] and the channel row in `ServerPanel` — so a stage the
+/// viewer may not start is silent in both. Null means no join is offered: a
+/// listener cannot begin a stage generation (`startSession` needs moderator
+/// power there), so no control is drawn to fail.
+String? serverJoinLabel(
+  AppLocalizations copy,
+  ServerChannel channel, {
+  required bool live,
+  ServerMemberRole? role,
+}) {
+  // A video stage is watched as well as heard — `mediaConfiguration()` gives
+  // board 02's `Scena LIVE` `broadcast/video` and the grant a camera source —
+  // so its join says so. The podcast's audio stage keeps `Słuchaj`.
+  final watch = channel.mediaMode == ServerMediaMode.video;
+  return switch (channel.kind) {
+    ServerChannelKind.stage =>
+      live
+          ? (watch ? copy.serverWatch : copy.serverListen)
+          : (role?.canModerate ?? false)
+          ? copy.serverGoLive
+          : null,
+    ServerChannelKind.meeting =>
+      live ? copy.serverJoinMeeting : copy.serverStartMeeting,
+    _ => copy.serverJoinConversation,
+  };
+}
+
+/// The glyph beside [serverJoinLabel].
+IconData serverJoinIcon(ServerChannel channel, {required bool live}) =>
+    channel.kind == ServerChannelKind.stage && live
+    ? (channel.mediaMode == ServerMediaMode.video
+          ? Icons.live_tv_rounded
+          : Icons.headphones_rounded)
+    : Icons.mic_none_rounded;
+
 class ServerJoinAction extends StatelessWidget {
   const ServerJoinAction({
     required this.channel,
@@ -636,21 +674,7 @@ class ServerJoinAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    // A video stage is watched as well as heard — `mediaConfiguration()` gives
-    // board 02's `Scena LIVE` `broadcast/video` and the grant a camera source
-    // — so its join says so. The podcast's audio stage keeps `Słuchaj`.
-    final watch = channel.mediaMode == ServerMediaMode.video;
-    final String? label = switch (channel.kind) {
-      ServerChannelKind.stage =>
-        live
-            ? (watch ? copy.serverWatch : copy.serverListen)
-            : (role?.canModerate ?? false)
-            ? copy.serverGoLive
-            : null,
-      ServerChannelKind.meeting =>
-        live ? copy.serverJoinMeeting : copy.serverStartMeeting,
-      _ => copy.serverJoinConversation,
-    };
+    final label = serverJoinLabel(copy, channel, live: live, role: role);
     if (label == null) {
       // A listener cannot start a stage generation (`startSession` needs
       // moderator power there), so no button is drawn to fail.
@@ -669,12 +693,7 @@ class ServerJoinAction extends StatelessWidget {
         minimumSize: fullWidth ? const Size.fromHeight(56) : const Size(48, 48),
         textStyle: fullWidth ? AppTypography.titleSmall : null,
       ).copyWith(side: serverFocusRing(colors.onCta)),
-      icon: Icon(
-        channel.kind == ServerChannelKind.stage && live
-            ? (watch ? Icons.live_tv_rounded : Icons.headphones_rounded)
-            : Icons.mic_none_rounded,
-        size: 18,
-      ),
+      icon: Icon(serverJoinIcon(channel, live: live), size: 18),
       label: Text(label),
     );
   }

@@ -821,6 +821,11 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                       connectedChannelId: _session.isActive
                           ? _session.channel?.id
                           : null,
+                      session: _session,
+                      onJoin: (channel) {
+                        _select(channel);
+                        _session.join(server, channel);
+                      },
                       onHome: _hasHomeBoard(server) ? _selectHome : null,
                       homeSelected: home,
                     ),
@@ -1534,6 +1539,11 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
               connectedChannelId: _session.isActive
                   ? _session.channel?.id
                   : null,
+              session: _session,
+              // The sheet closes onto the channel it joins, so the join runs
+              // on the screen's own controller, not the sheet's context.
+              onJoin: (channel) =>
+                  Navigator.of(sheetContext).pop(_JoinRequest(channel)),
             );
           },
         ),
@@ -1543,6 +1553,9 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     switch (picked) {
       case ServerChannel channel:
         _select(channel);
+      case _JoinRequest request:
+        _select(request.channel);
+        await _session.join(server, request.channel);
       case _SheetAction.invite:
         invite?.call();
       case _SheetAction.add:
@@ -1560,6 +1573,12 @@ enum _SheetAction { invite, add }
 class _ManageRequest {
   const _ManageRequest(this.channels);
   final List<ServerChannel> channels;
+}
+
+/// A `Dołącz` pressed on a channel row inside the phone sheet.
+class _JoinRequest {
+  const _JoinRequest(this.channel);
+  final ServerChannel channel;
 }
 
 /// Header + optional intro + optional local tabs + the scene, with the

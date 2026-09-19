@@ -11,6 +11,7 @@ import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/rows/yo_channel_row.dart';
 
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
@@ -21,6 +22,7 @@ import '../../data/services/server_service.dart';
 import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
+import 'server_panel.dart';
 
 enum ServerManagementOutcome { left, deleted }
 
@@ -418,13 +420,19 @@ class _ServerManagementSheetState extends State<_ServerManagementSheet> {
       separatorBuilder: (_, _) => Divider(color: palette.border, height: 1),
       itemBuilder: (context, index) {
         final channel = channels[index];
-        return ListTile(
-          key: ValueKey('server-management-channel-${channel.id}'),
-          minTileHeight: 56,
-          leading: Icon(serverChannelManagementIcon(channel.kind)),
-          title: Text(channel.name),
+        final restricted = channel.access == ServerChannelAccess.restricted;
+        return YoChannelRow(
+          tileKey: ValueKey('server-management-channel-${channel.id}'),
+          minHeight: 56,
+          // The panel's glyph map, so a channel wears the same face wherever
+          // it is listed; the lock is the restricted state, as on the panel.
+          icon: restricted
+              ? Icons.lock_outline
+              : serverChannelIcon(channel.kind),
+          iconSemanticLabel: restricted ? copy.serverChannelRestricted : null,
+          label: channel.name,
           subtitle: Text(
-            channel.access == ServerChannelAccess.restricted
+            restricted
                 ? copy.serverChannelRestricted
                 : copy.serverEveryoneInServer,
           ),
@@ -537,9 +545,9 @@ class _ServerManagementSheetState extends State<_ServerManagementSheet> {
                     radius: 20,
                     userId: member.id,
                     displayName: member.displayName,
-                    backgroundColor: ServerIdentity.of(server.type)
-                        .resolve(Theme.of(context).brightness)
-                        .iconSurface,
+                    backgroundColor: ServerIdentity.of(
+                      server.type,
+                    ).resolve(Theme.of(context).brightness).iconSurface,
                   ),
                 ),
               ),
@@ -964,21 +972,4 @@ String _memberActionLabel(
   _MemberAction.unban => copy.serverUnbanMember,
   _MemberAction.remove => copy.serverRemoveMember,
   _MemberAction.transfer => copy.serverTransferOwnership,
-};
-
-IconData serverChannelManagementIcon(ServerChannelKind kind) => switch (kind) {
-  ServerChannelKind.voice => Icons.graphic_eq_rounded,
-  ServerChannelKind.stage => Icons.sensors_rounded,
-  ServerChannelKind.events ||
-  ServerChannelKind.calendar => Icons.calendar_month_outlined,
-  ServerChannelKind.announcements => Icons.campaign_outlined,
-  ServerChannelKind.rules => Icons.gavel_outlined,
-  ServerChannelKind.questions => Icons.question_answer_outlined,
-  ServerChannelKind.episodes => Icons.podcasts_outlined,
-  ServerChannelKind.memories => Icons.auto_awesome_outlined,
-  ServerChannelKind.list => Icons.checklist_rounded,
-  ServerChannelKind.meeting => Icons.video_call_outlined,
-  ServerChannelKind.whiteboard => Icons.draw_outlined,
-  ServerChannelKind.files => Icons.folder_outlined,
-  ServerChannelKind.text => Icons.tag_rounded,
 };

@@ -3,12 +3,14 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/shared/widgets/rows/yo_channel_row.dart';
 
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
 import '../../data/models/server_invite_authority.dart';
 import '../../data/models/server_member_role.dart';
 import '../../data/models/server_type.dart';
+import '../../data/services/server_session_controller.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
 import 'server_channel_scene.dart';
@@ -38,6 +40,8 @@ class ServerPanel extends StatefulWidget {
     this.onManage,
     this.onBack,
     this.connectedChannelId,
+    this.session,
+    this.onJoin,
     this.onHome,
     this.homeSelected = false,
     super.key,
@@ -63,6 +67,18 @@ class ServerPanel extends StatefulWidget {
 
   /// The media channel the person is currently in, if any.
   final String? connectedChannelId;
+
+  /// The host's live session, read for one thing only: the roster of the
+  /// channel named by [connectedChannelId]. ADR-177 keeps every other face
+  /// off this list — `rooms/{roomId}`, `participants` and `channelSessions`
+  /// are closed to the client, so nothing pre-join could be true. Null (the
+  /// phone sheet's own stream, the screenshot harness) simply draws no faces.
+  final ServerSessionController? session;
+
+  /// Joins a media channel straight from its row, through the host's existing
+  /// join path — the same `session.join(server, channel)` the channel scene's
+  /// `server-join` calls. Null leaves the row select-only.
+  final ValueChanged<ServerChannel>? onJoin;
 
   /// Present only where the template has a home board (the family board's
   /// `Rodzinny pulpit`). It is a view of the server, never a channel, so it
@@ -313,21 +329,32 @@ class _ServerPanelState extends State<ServerPanel> {
             if (entry.key == homeGroup)
               Padding(
                 padding: const EdgeInsets.only(bottom: 2),
-                child: _HomeTile(
+                child: YoChannelRow(
+                  // The home board selects a view, not a channel, so it
+                  // carries no live marker and no channel key.
+                  tileKey: const ValueKey('server-home-board'),
                   label: copy.serverFamilyHome,
+                  icon: Icons.home_outlined,
+                  // Its label is a sentence, not a channel name.
+                  labelMaxLines: 2,
                   selected: widget.homeSelected,
-                  colors: colors,
+                  selectedForeground: colors.selectedForeground,
+                  selectedWash: colors.selectedWash,
                   onTap: onHome!,
                 ),
               ),
             for (final channel in entry.value)
               Padding(
                 padding: const EdgeInsets.only(bottom: 2),
-                child: _ChannelTile(
+                child: _PanelChannelRow(
+                  server: server,
                   channel: channel,
                   selected: channel.id == widget.selectedId,
                   connected: channel.id == widget.connectedChannelId,
                   colors: colors,
+                  role: widget.role,
+                  session: widget.session,
+                  onJoin: widget.onJoin,
                   onTap: () => widget.onSelected(channel),
                 ),
               ),
@@ -417,40 +444,6 @@ class _SearchField extends StatelessWidget {
   }
 }
 
-/// The template's home board row. It selects a view, not a channel, so it
-/// carries no live marker and no channel key.
-class _HomeTile extends StatelessWidget {
-  const _HomeTile({
-    required this.label,
-    required this.selected,
-    required this.colors,
-    required this.onTap,
-  });
-  final String label;
-  final bool selected;
-  final ServerIdentityVisuals colors;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => ListTile(
-    key: const ValueKey('server-home-board'),
-    selected: selected,
-    selectedColor: colors.selectedForeground,
-    selectedTileColor: colors.selectedWash,
-    minTileHeight: 48,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-    shape: const RoundedRectangleBorder(borderRadius: AppRadius.md),
-    leading: const Icon(Icons.home_outlined, size: 21),
-    title: Text(
-      label,
-      style: AppTypography.bodyMedium,
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-    ),
-    onTap: onTap,
-  );
-}
-
 /// The cover slot. `avatarUrl` and `bannerUrl` are written `null` and no V1
 /// upload reservation exists, so this is the identity tile the directory
 /// already uses — never a placeholder photograph.
@@ -527,64 +520,122 @@ class _Cover extends StatelessWidget {
   );
 }
 
-class _ChannelTile extends StatelessWidget {
-  const _ChannelTile({
+/// One channel row of the panel.
+///
+/// The drawing is the shared [YoChannelRow] / [YoVoiceChannelRow]; what stays
+/// here is everything that belongs to a server: the contract key, the glyph
+/// map, the lock for a restricted channel, the identity wash, the liveness
+/// copy and clock, the join gate and the mapping of the provider's roster.
+///
+/// A media row reads the roster only for the channel this person is connected
+/// to, and only then: it listens to the session for that one row, so a
+/// speaking tick repaints a single tile instead of the whole list.
+class _PanelChannelRow extends StatelessWidget {
+  const _PanelChannelRow({
+    required this.server,
     required this.channel,
     required this.selected,
     required this.connected,
     required this.colors,
     required this.onTap,
+    this.role,
+    this.session,
+    this.onJoin,
   });
+  final Server server;
   final ServerChannel channel;
   final bool selected;
   final bool connected;
   final ServerIdentityVisuals colors;
   final VoidCallback onTap;
+  final ServerMemberRole? role;
+
+  /// Present only where the host holds a session; the roster is read from it
+  /// for the connected row alone (ADR-177).
+  final ServerSessionController? session;
+  final ValueChanged<ServerChannel>? onJoin;
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final palette = context.appPalette;
     final restricted = channel.access == ServerChannelAccess.restricted;
-    return ListTile(
-      key: ValueKey('server-channel-${channel.id}'),
-      selected: selected,
-      selectedColor: colors.selectedForeground,
-      selectedTileColor: colors.selectedWash,
-      minTileHeight: 48,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-      shape: const RoundedRectangleBorder(borderRadius: AppRadius.md),
-      leading: Icon(
-        restricted ? Icons.lock_outline : serverChannelIcon(channel.kind),
-        size: 21,
-        semanticLabel: restricted ? copy.serverChannelRestricted : null,
-      ),
-      title: Text(
-        channel.name,
-        style: AppTypography.bodyMedium,
-        // One line, elided. The trailing live badge takes its intrinsic width
-        // first, so with two lines a nine-letter name broke across them —
-        // `Spotkani` / `a`, `Sce` / `na`, `St` / `u…` — which is a channel
-        // nobody can name from the list. The full name is on the channel
-        // header the row opens.
-        maxLines: 1,
-        softWrap: false,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: connected
-          ? Icon(
-              Icons.graphic_eq_rounded,
-              size: 18,
-              color: palette.audioAccent,
-              semanticLabel: copy.serverConnected,
-            )
-          : channel.liveness.isLive
+    final icon = restricted
+        ? Icons.lock_outline
+        : serverChannelIcon(channel.kind);
+    final iconLabel = restricted ? copy.serverChannelRestricted : null;
+    if (!channel.kind.isMedia) {
+      return YoChannelRow(
+        tileKey: ValueKey('server-channel-${channel.id}'),
+        label: channel.name,
+        icon: icon,
+        iconSemanticLabel: iconLabel,
+        selected: selected,
+        selectedForeground: colors.selectedForeground,
+        selectedWash: colors.selectedWash,
+        onTap: onTap,
+      );
+    }
+
+    final live = channel.liveness.isLive;
+    // A held server reaches no provider, a restricted channel is not this
+    // person's to open and the channel you are already in has nothing to
+    // join; a stage nobody may start has no label, and so no control.
+    final joinLabel = onJoin == null || server.isHeld || restricted || connected
+        ? null
+        : serverJoinLabel(copy, channel, live: live, role: role);
+    YoVoiceChannelRow row(List<YoVoiceRowParticipant> people) =>
+        YoVoiceChannelRow(
+          tileKey: ValueKey('server-channel-${channel.id}'),
+          label: channel.name,
+          icon: icon,
+          iconSemanticLabel: iconLabel,
+          selected: selected,
+          selectedForeground: colors.selectedForeground,
+          selectedWash: colors.selectedWash,
           // The same key as the header's pill: one finder addresses every
           // live marker in the shell, so "nothing claims liveness" can be
           // asserted once instead of per surface.
-          ? ServerLivePill(label: copy.serverLivePill)
-          : null,
-      onTap: onTap,
+          liveBadge: live ? ServerLivePill(label: copy.serverLivePill) : null,
+          liveSince: live && channel.liveness.startedAt != null
+              ? copy.serverLiveSinceShort(
+                  serverLiveClock(context, channel.liveness.startedAt!),
+                )
+              : null,
+          connected: connected,
+          connectedLabel: copy.serverConnected,
+          avatarBackground: colors.iconSurface,
+          participants: people,
+          onJoin: joinLabel == null ? null : () => onJoin!(channel),
+          joinLabel: joinLabel,
+          joinIcon: serverJoinIcon(channel, live: live),
+          // Never `server-join`: the scene's single full-size CTA is counted
+          // by that key, and this row is one more way to the same call.
+          joinKey: ValueKey('server-channel-join-${channel.id}'),
+          onTap: onTap,
+        );
+
+    final controller = session;
+    if (!connected || controller == null) {
+      return row(const <YoVoiceRowParticipant>[]);
+    }
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) => row(<YoVoiceRowParticipant>[
+        for (final person in controller.participants)
+          YoVoiceRowParticipant(
+            userId: person.identity,
+            displayName: person.isLocal ? copy.serverYou : person.name,
+            isSpeaking: person.isSpeaking,
+            isMicrophoneEnabled: person.isMicrophoneEnabled,
+            semanticLabel: <String>[
+              person.isLocal ? copy.serverYou : person.name,
+              if (person.isSpeaking)
+                copy.serverSpeaking
+              else if (!person.isMicrophoneEnabled)
+                copy.serverMicrophoneOff,
+            ].join(', '),
+          ),
+      ]),
     );
   }
 }

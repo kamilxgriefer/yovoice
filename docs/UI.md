@@ -478,6 +478,45 @@ rules a screen author needs.
   reaction pill stays below the clock at 320–1440 px / 200 %),
   `test/moments_semantics_activation_test.dart` (the thread row is activated
   through `SemanticsAction.tap`), `test/voice_reply_mini_player_test.dart`.
+- **Channel row = `YoChannelRow` / `YoVoiceChannelRow`**
+  (`lib/shared/widgets/rows/yo_channel_row.dart`). A `ListTile`: 48 px floor,
+  12 px content padding, `AppRadius.md`, 21 px glyph, the name in
+  `bodyMedium` on one unwrapped line that elides (`labelMaxLines: 2` only for
+  a label that is a sentence, the family home board). The caller owns the key
+  and passes it as `tileKey`, so it lands on the `ListTile` that
+  `test/server_workspace_test.dart` reads by type; the row draws no `Material`,
+  so the selected wash composites over the list's own surface (the AA check in
+  that test). The caller also owns the glyph (`serverChannelIcon(kind)`, or
+  `Icons.lock_outline` with `copy.serverChannelRestricted` as
+  `iconSemanticLabel`), the identity ink and wash, every string and the tap —
+  which selects, never joins. Media channels mount `YoVoiceChannelRow`, which
+  before joining draws **only what the channel document carries** (ADR-177):
+  the `liveBadge` the caller builds (`ServerLivePill`, so `server-live-pill`
+  stays one key per marker), the clock `od 19:40`
+  (`copy.serverLiveSinceShort(serverLiveClock(...))`) and, once in, the
+  `audioAccent` connection glyph. It never prints the quiet copy and never a
+  face or a count before joining — `participants` is ignored unless
+  `connected`. For the connected channel alone the caller maps
+  `ServerSessionController.participants` to `YoVoiceRowParticipant` (with the
+  localized `name, mówi` / `name, Mikrofon wyłączony` label) inside a
+  `ListenableBuilder` scoped to that row: up to four 22 px avatars, a 2 px
+  `AppColors.success` ring while speaking, a crossed microphone when muted, a
+  real `+n` for the rest. `onJoin` adds a 44 px icon control (label as tooltip
+  and semantics, glyph from `serverJoinIcon`, label from `serverJoinLabel` —
+  the same switch as the scene's `server-join`) under its own
+  `server-channel-join-<id>` key; it is null on a held server, a restricted
+  channel, the channel you are in and a stage you may not start, and it steps
+  aside below 240 px of row or above 1.5× text so the name keeps its measure.
+  Not this widget: the create-server seed preview (a template preview, not a
+  channel) and the retired clubs row. Contracts: `test/yo_channel_row_test.dart`
+  (key on the `ListTile`, selection pass-through, no own `Material`, the lock's
+  label, silence when idle, one marker when live, no face before joining,
+  ring / mic / `+n` when connected, the join key, target, select-only tap and
+  the width / text-scale floor), `test/server_workspace_test.dart` (selected
+  contrast; held roots: one inert `server-join`, no marker, no names),
+  `test/server_shell_test.dart` (exactly one marker for one live channel, no
+  quiet copy on a live row), `test/server_independent_qa_test.dart` (tapping
+  every row reaches no provider).
 
 ## Semantic colour ownership
 

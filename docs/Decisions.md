@@ -12965,6 +12965,7 @@ already exists (no `YoLiveBadge`, no `YoStoryRingAvatar`, no `YoPresenceDot`).
 | Nagłówek sekcji | `HomeSectionHeader` — `lib/shared/widgets/layout/home_section_header.dart` (moved from `home/presentation/widgets/shared/`, class name and `HomeSectionHeaderScale` kept because `test/home_rhythm_test.dart` pins them by type; grew `leading`, `subtitle`, `trailing` and `seeAllVocabulary`, every default reproducing the Home render byte for byte) | `_SectionHeader` + `_SectionLabel` (`home/…/desktop/voice_trending_card.dart`: "Live rooms" with its "See all rooms" action, "Most liked Moments"), `_SectionHeader` (`notifications/…/notifications_screen.dart`: Friend requests, Unread messages, and Activity through `_ActivityHeader`, which keeps its stacking rule and the `notifications-mark-all-read` button), `_SectionHeader` (`achievements/…/achievements_screen.dart`: one per category, key `awards-section-<id>`), `_SectionHeader` (`discover/…/discover_screen.dart`: Search results, Featured, Trending, Rising; the 36 px icon box survives as the trailer `_SectionIcon`) |
 | Kafelek stories (pierścień odsłuchania) | `MomentStoryTile` — `lib/features/moments/presentation/widgets/moment_story_tile.dart`, constructor and statics unchanged; the ring stops are `MomentStoryTile.ringColors` and the new `ringGradient` (unheard `[AppColors.primary, AppColors.secondary]` at `AppGradients.primary`'s angle, heard `palette.border` twice — the same angle in both states, so only the stops change), and every shape paints them: the disc `MomentSeenAvatar` (moved into the same file beside its colour definition, re-exported by `moment_discover_tiles.dart` so no import moved; grew `ringWidth` / `ringInset` (feed 2 / 1.5, tile 2.5 / 2), `ringKey` on the painted `Container`, `mediaRevision`, `fallbackIcon`), the tile's own `_ring` through it, and the `MomentAuthorCapsule` border. The ring is the listened state from `MomentViewsService` through `MomentViewedIds` (fail open), never presence — ADR-155, which the brief and the old file comment mis-cited as ADR-147 | the tile's private `_ring` and the discover copy of `MomentSeenAvatar` (both hardcoded `AppGradients.primary` for unheard, so the unheard stop lived in three places and `ringColors(seen: false)` fed only the capsule), the capsule's plain `LinearGradient(colors: stops)` (no angle), `_StoryBubble` + the `_voiceStories` rail (`home/…/screens/home_screen.dart`: always-on 3 px gradient, raw `NetworkImage`, no seen state, no semantics → `MomentViewedIds` + `buildMomentChains` + `MomentStoryTile`), and the story-look gradient of `_FriendStory` (`messages/…/messages_screen.dart`: three inline hexes `0xFFFF416C` / `0xFFB42DFF` / `0xFF5D00D7` around every friend bubble → a 2 px `palette.border` band, because that rail carries no Moments state) |
 | Inline player głosowy (play + waveform + czas) | `VoicePlayerRow` — `lib/shared/widgets/voice/voice_player_row.dart`, with `VoicePlayerRowStatus`, `VoicePlayerRowStyle` (`.contained` for a thread row, `.inline` for a chat bubble) and the one `formatVoiceClock`. Presentation only: the caller keeps its `AudioPlayer`, its factory seam, the media grant, the arbitration tokens, the retry and snackbar paths, the `ValueKey`, the localized label and the mapping of its own state to a `status` | the whole `build()` of `_VoiceMessageContent` (`messages/…/widgets/message_bubble.dart`: the 44 px icon box, the bounded `YoWaveform`, the raw 11 px clock) and of `VoiceReplyMiniPlayer` (`moments/…/widgets/voice_reply_mini_player.dart`: `build()` + `_disc()` + the private `_clock`, whose `m:ss` was a second copy of the bubble's) |
+| Wiersz kanału | `YoChannelRow` / `YoVoiceChannelRow` (+ the `YoVoiceRowParticipant` value object) — `lib/shared/widgets/rows/yo_channel_row.dart`; the key reaches the `ListTile` through `tileKey`, and the row draws no `Material` of its own so the list's surface stays what the selected wash composites over | `_ChannelTile` and `_HomeTile` (`servers/…/widgets/server_panel.dart`, replaced by `_PanelChannelRow` and a direct `YoChannelRow` — the panel keeps the grouping, the search, the `server-channel-<id>` / `server-home-board` keys, the glyph map, the lock, the liveness copy and the identity wash), the management-sheet channel `ListTile` (`servers/…/widgets/server_management_sheet.dart`, whose second glyph map `serverChannelManagementIcon` — disagreeing with `serverChannelIcon` on 9 of 13 kinds — was retired with it), and the join switch itself: `ServerJoinAction`'s label and icon became `serverJoinLabel` / `serverJoinIcon` (`servers/…/widgets/server_channel_scene.dart`) so the scene CTA and the row's `Dołącz` cannot drift apart |
 
 The live variant's spec (from the brief's Twitch section): `AppColors.live`
 fill, `AppColors.onLive` copy, `AppTypography.labelSmall` (10 px, height 1.2)
@@ -13062,6 +13063,33 @@ Rules the phase-0 primitives follow, and every later phase inherits:
   accessibility sweep mounts `variant.name` = `'live'`. The brief's "uppercase"
   is therefore a property of the copy callers pass, not a transform inside the
   widget.
+
+The channel row's spec: a `ListTile` with `minTileHeight` 48 (a floor, not a
+height — a subtitle grows it into the brief's 56–68 band), 12 px content
+padding, `AppRadius.md`, a 21 px glyph and a name in `AppTypography.bodyMedium`
+on one unwrapped line that elides (two lines, wrapping, only on the home board,
+whose label is a sentence). `YoVoiceChannelRow` adds the liveness contract of
+ADR-177 and nothing else: **before joining the row draws only what the channel
+document carries** — the marker the caller builds (`liveBadge`, so
+`ServerLivePill` keeps the counted `server-live-pill` key attached exactly once
+and a row never mints a second one), the clock line `od 19:40`
+(`copy.serverLiveSinceShort` over `serverLiveClock`, the short form because the
+marker on the same line already names the state) and the connection glyph. It
+never prints the quiet copy: an idle channel says nothing rather than announcing
+silence, which is what `test/server_shell_test.dart` asserts while a live
+sibling is selected. `participants` are ignored unless `connected` is true, so
+no face can reach a pre-join row even if a caller hands one in; when connected
+they come from `ServerSessionController.participants` through
+`ListenableBuilder` scoped to that one row, drawn as up to four 22 px avatars
+with a 2 px `AppColors.success` speaking ring (the brief's Discord section),
+`palette.border` at 1 px otherwise, a crossed microphone for
+`!isMicrophoneEnabled`, and a real `+n` for the rest. Joining is a separate
+44 px control under its own `server-channel-join-<id>` key — never `server-join`,
+which counts the scene's single full-size CTA — and the row's own tap stays
+select-only, which `test/server_independent_qa_test.dart` walks every row to
+prove. The control steps aside below 240 px of row width or above 1.5× text,
+where a marker and a button together would leave the channel name two letters;
+the scene's CTA is one tap away and never hides.
 
 ### Legal hygiene
 
@@ -13395,6 +13423,52 @@ marker is YO Voice's own `AppColors.live` and the words are our copy.
   they are marks on the disc, not the ring, and no test reads them as
   ring stops.
 
+### Consciously NOT built, NOT simplified (channel-rows family)
+
+- The brief's makieta of a voice row with avatars and a head count **before**
+  joining is not built and will not be: `rooms/{roomId}`, `participants` and
+  `channelSessions` are closed to the client (ADR-177), so every face there
+  would be invented. The primitive enforces it rather than trusting callers —
+  `participants` is dropped unless `connected`.
+- The speaking ring is `AppColors.success`, as the brief names it twice, and
+  the servers shell's other speaking marks (`ServerParticipantTile`, the
+  connected glyph, the family lounge border, the community and meeting stages)
+  stay `palette.audioAccent`. That is deliberately two inks for one word and it
+  is a debt, not a decision to repeat: phase 2 (Serwery) converges them with
+  rendered evidence from the stage, which this phase does not produce. The
+  connected marker in the row itself kept `audioAccent` so the row and the dock
+  above it still agree.
+- The seed preview rows in `create_server_screen.dart` (18 px glyph, tight
+  rhythm, non-interactive, inside a card) are a *template preview*, not a
+  channel a person can open, and were left alone: forcing them into a 48 px
+  `ListTile` would redraw the creation flow, which is not this family's
+  boundary. The clubs `_ChannelTile` (`clubs/…/club_overview_screen.dart`) is
+  a `ClubChannel` row on a route retired from active routing
+  (`test/server_surface_cutover_test.dart`); it is not deleted ("never remove
+  functionality") and not migrated, so the phase-0 commit stays inside the
+  servers feature.
+- `serverChannelIcon` stays exported from `server_panel.dart`: 23 call sites
+  in eleven other files of the servers feature import it from there, and the
+  family's job was to remove the *second* map, not to move the first.
+- Visible normalisations in the management sheet, none of them pinned by a
+  test: its rows now wear the panel's glyphs (9 of 13 kinds change), the lock
+  for a restricted channel, `AppTypography.bodyMedium`, 12 px content padding
+  instead of Material's 16 and a rounded splash. The `server-management-channel-<id>`
+  key, the 56 px floor, the access subtitle, the `PopupMenuButton` and every
+  action are untouched.
+- `minTileHeight` stays 48 although "Smuklej" asks for 56–68: raising it now
+  would move the phone sheet at 320 px / 200 % (`server_independent_qa_layout_test`)
+  and every server frame captured so far. Phase 2 raises it with evidence.
+- The row-level `Dołącz` is an icon control with the join label as tooltip and
+  semantics, not a worded button. A worded one is what the makieta draws, but
+  at 320 px / 200 % text `Dołącz do rozmowy` beside the name and the marker
+  leaves neither readable; the word itself is never lost, because the channel
+  scene's `server-join` still spells it.
+- Nothing was removed from `ServerPanel`: `connectedChannelId` survives beside
+  the new `session`, and `session` / `onJoin` are optional, so
+  `test/server_invite_affordance_screenshot.dart` still constructs the panel as
+  it did.
+
 ### Reasoning
 
 A marker that is drawn eleven ways cannot be restyled once, cannot be tested
@@ -13409,6 +13483,10 @@ contract in one place.
 
 - Every NA ŻYWO on a normal surface is the same pill in Dark and Pearl and
   goes still under Reduce Motion; restyling it again is a one-file change.
+- Every channel row in the product — panel, home board, management sheet — is
+  one widget, so "what a voice row may claim before you join" is enforced in
+  one place instead of being re-argued per surface, and phase 2 can raise the
+  row's height or restyle its selection once.
 - Later phases add rows to the table above (stories tile, waveform, section
   header, channel rows) rather than new ADRs, and record their own
   "consciously not built" items under this heading; the presence dot's row

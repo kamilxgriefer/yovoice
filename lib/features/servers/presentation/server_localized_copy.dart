@@ -603,6 +603,11 @@ extension ServerLocalizedCopy on AppLocalizations {
     'Na żywo od {time}',
     values: {'time': time},
   );
+
+  /// The same fact under a channel row, where the `NA ŻYWO` marker on the
+  /// same line already says what state it is: the row prints only the clock.
+  String serverLiveSinceShort(String time) =>
+      template('since {time}', 'od {time}', values: {'time': time});
   String serverQuiet(ServerChannelKind kind) => switch (kind) {
     ServerChannelKind.stage => text(
       'The stage is not live',
