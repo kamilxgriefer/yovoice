@@ -731,6 +731,10 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
   /// reflow").
   final GlobalKey _mediaKey = GlobalKey();
 
+  /// Wraps the visible progress hairline on whichever stage is mounted, so
+  /// the scrub band maps a finger onto the bar's real extent.
+  final GlobalKey _progressTrackKey = GlobalKey();
+
   Widget _buildMedia(
     BuildContext context, {
     required EdgeInsets overlaySafeInsets,
@@ -920,6 +924,8 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                             showAudioToggle: widget.reel.backingAudio != null,
                             position: _playback.position,
                             timeline: _playback.timelineDuration,
+                            scrub: _playback,
+                            trackKey: _progressTrackKey,
                             friendService: widget.friendService,
                             friendRelationshipStore:
                                 widget.friendRelationshipStore,
@@ -1081,6 +1087,8 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                                     child: _StageFrameControls(
                                       position: _playback.position,
                                       total: _playback.timelineDuration,
+                                      scrub: _playback,
+                                      trackKey: _progressTrackKey,
                                       showProgressTimes:
                                           widget.reel.media.kind ==
                                           ReelMediaKind.video,
@@ -1371,6 +1379,8 @@ class _StageFrameControls extends StatelessWidget {
   const _StageFrameControls({
     required this.position,
     required this.total,
+    required this.scrub,
+    required this.trackKey,
     required this.showProgressTimes,
     this.soundToggle,
     this.soundChip,
@@ -1378,6 +1388,8 @@ class _StageFrameControls extends StatelessWidget {
 
   final ValueListenable<Duration> position;
   final Duration total;
+  final ReelScrubTarget scrub;
+  final GlobalKey trackKey;
   final bool showProgressTimes;
 
   /// Built with the frame's own answer to "is there room for the words".
@@ -1411,6 +1423,8 @@ class _StageFrameControls extends StatelessWidget {
     required Widget? chip,
   }) {
     return Stack(
+      // The scrub band's time label may rise above this block at large text.
+      clipBehavior: Clip.none,
       children: <Widget>[
         // A sibling behind the controls, never their parent: a decorated box
         // hit-tests as opaque over its whole area and would swallow the tap
@@ -1438,19 +1452,50 @@ class _StageFrameControls extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               if (toggle != null || chip != null) ...<Widget>[
-                Wrap(
-                  spacing: AppRhythm.tight,
-                  runSpacing: AppRhythm.tight,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: <Widget>[?toggle, ?chip],
+                _ScrubChromeFade(
+                  scrubbing: scrub.isScrubbing,
+                  child: Wrap(
+                    spacing: AppRhythm.tight,
+                    runSpacing: AppRhythm.tight,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: <Widget>[?toggle, ?chip],
+                  ),
                 ),
                 const SizedBox(height: AppRhythm.title),
               ],
               if (showProgressTimes)
-                ReelProgressRow(position: position, total: total)
+                ReelProgressRow(
+                  position: position,
+                  total: total,
+                  announce: !scrub.canSeek,
+                  barKey: trackKey,
+                )
               else
-                ReelProgressBar(position: position, total: total),
+                KeyedSubtree(
+                  key: trackKey,
+                  child: ReelProgressBar(
+                    position: position,
+                    total: total,
+                    announce: !scrub.canSeek,
+                  ),
+                ),
             ],
+          ),
+        ),
+        // An overlay, not a row: the Column above keeps its measured height,
+        // so the frame geometry every stage test pins does not move.
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: _frameScrubBandHeight,
+          child: ReelProgressScrubber(
+            key: const ValueKey<String>('reel-progress-scrub'),
+            target: scrub,
+            position: position,
+            total: total,
+            trackKey: trackKey,
+            showTimeLabel: !showProgressTimes,
           ),
         ),
       ],
@@ -2405,7 +2450,12 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
           Center(
             child: IgnorePointer(
               child: AnimatedOpacity(
-                opacity: controller.value.isPlaying ? 0 : 1,
+                // Hidden under a finger on the timeline too: the viewer is
+                // looking for a frame, not asking to play.
+                opacity:
+                    controller.value.isPlaying || widget.playback.isScrubbing
+                    ? 0
+                    : 1,
                 duration: AppMotion.resolve(context, AppMotion.quick),
                 child: const Icon(
                   Icons.play_circle_fill_rounded,
@@ -2635,6 +2685,8 @@ class _OverlayFooter extends StatelessWidget {
     required this.showAudioToggle,
     required this.position,
     required this.timeline,
+    required this.scrub,
+    required this.trackKey,
     required this.likePending,
     required this.commentsOpen,
     required this.onOpenAuthor,
@@ -2661,6 +2713,11 @@ class _OverlayFooter extends StatelessWidget {
   final bool showAudioToggle;
   final ValueListenable<Duration> position;
   final Duration timeline;
+
+  /// What a finger on the timeline drives, and the key that wraps the
+  /// visible hairline so the finger maps onto its real extent.
+  final ReelScrubTarget scrub;
+  final GlobalKey trackKey;
   final FriendService? friendService;
   final ReelFriendRelationshipStore? friendRelationshipStore;
   final String? viewerUid;
@@ -2819,7 +2876,14 @@ class _OverlayFooter extends StatelessWidget {
             start: 0,
             end: 0,
             bottom: 0,
-            child: ReelProgressBar(position: position, total: timeline),
+            child: KeyedSubtree(
+              key: trackKey,
+              child: ReelProgressBar(
+                position: position,
+                total: timeline,
+                announce: !scrub.canSeek,
+              ),
+            ),
           ),
           if (topControl != null)
             PositionedDirectional(
@@ -2829,7 +2893,10 @@ class _OverlayFooter extends StatelessWidget {
                 constraints: BoxConstraints(
                   maxWidth: math.max(48, math.min(240, geometry.width - 32)),
                 ),
-                child: topControl,
+                child: _ScrubChromeFade(
+                  scrubbing: scrub.isScrubbing,
+                  child: topControl,
+                ),
               ),
             ),
           if (geometry.showInformation)
@@ -2839,7 +2906,10 @@ class _OverlayFooter extends StatelessWidget {
               bottom: AppRhythm.item,
               child: KeyedSubtree(
                 key: const ValueKey<String>('reel-identity-block'),
-                child: information,
+                child: _ScrubChromeFade(
+                  scrubbing: scrub.isScrubbing,
+                  child: information,
+                ),
               ),
             ),
           if (geometry.horizontalActions)
@@ -2849,7 +2919,10 @@ class _OverlayFooter extends StatelessWidget {
               bottom: AppRhythm.tight,
               child: KeyedSubtree(
                 key: const ValueKey<String>('reel-action-rail'),
-                child: actions,
+                child: _ScrubChromeFade(
+                  scrubbing: scrub.isScrubbing,
+                  child: actions,
+                ),
               ),
             )
           else
@@ -2862,11 +2935,61 @@ class _OverlayFooter extends StatelessWidget {
                 // text can make that wider than the reserved trailing safe
                 // zone. Keep the visual rail exactly one 48 px column; the
                 // exact total remains in each action's semantic label.
-                child: SizedBox(width: 48, child: actions),
+                child: _ScrubChromeFade(
+                  scrubbing: scrub.isScrubbing,
+                  child: SizedBox(width: 48, child: actions),
+                ),
               ),
             ),
+          // Last, so it is first to see a pointer — but translucent and
+          // drag-only, so every tap inside it still reaches the controls
+          // above and the playback surface below (ADR-210). The visible bar
+          // above keeps its 2 px and its place.
+          PositionedDirectional(
+            start: 0,
+            end: 0,
+            bottom: 0,
+            height: _immersiveScrubBandHeight,
+            child: ReelProgressScrubber(
+              key: const ValueKey<String>('reel-progress-scrub'),
+              target: scrub,
+              position: position,
+              total: timeline,
+              trackKey: trackKey,
+              respectSystemGestureInsets: true,
+            ),
+          ),
         ],
       ),
+    );
+  }
+}
+
+/// Height of the drag band over the phone stage's hairline. It stays inside
+/// the footer scrim (at least 48 px), so the clear-media band is unchanged.
+const double _immersiveScrubBandHeight = 40;
+
+/// Height of the drag band on the card stage: the frame's 16 px bottom
+/// padding, the 2 px bar and 30 px above it.
+const double _frameScrubBandHeight = 48;
+
+/// Overlay chrome steps back while a finger scrubs the timeline, so the
+/// previewed frame is visible (ADR-210). Under Reduce Motion nothing fades:
+/// the chrome simply stays.
+class _ScrubChromeFade extends StatelessWidget {
+  const _ScrubChromeFade({required this.scrubbing, required this.child});
+
+  final bool scrubbing;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final hidden = scrubbing && !MediaQuery.disableAnimationsOf(context);
+    return AnimatedOpacity(
+      opacity: hidden ? 0 : 1,
+      duration: AppMotion.quick,
+      curve: AppMotion.standardCurve,
+      child: IgnorePointer(ignoring: hidden, child: child),
     );
   }
 }
