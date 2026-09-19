@@ -373,22 +373,24 @@ class _ProfileContent extends StatelessWidget {
     );
   }
 
-  /// Stats from the owner's own `users/{uid}` document only. Followers and
-  /// following stay behind the one fail-closed creator-audience gate, as the
-  /// former `_SocialStats` panel did.
+  /// Stats from real, current data only. Servers is the live
+  /// `watchMyServers()` list this page already renders below (never the
+  /// achievement engine's `communityCount`, which only ever grows and misses
+  /// joins older than the engine), and it is left out while that list is
+  /// still loading rather than shown as a made-up 0. Moments stays out until
+  /// there is a live count: `momentCount` is the same kind of never-falling
+  /// achievement counter and would keep counting deleted or expired Moments.
+  /// Followers and following stay behind the one fail-closed
+  /// creator-audience gate, as the former `_SocialStats` panel did.
   List<ProfileStat> _stats(BuildContext context) {
     final copy = AppLocalizations.of(context);
     return [
-      ProfileStat(
-        value: profile.communityCount,
-        label: copy.navigationServers,
-        keyName: 'servers',
-      ),
-      ProfileStat(
-        value: profile.momentCount,
-        label: copy.text('Moments', 'Momenty'),
-        keyName: 'moments',
-      ),
+      if (!serversLoading)
+        ProfileStat(
+          value: servers.length,
+          label: copy.navigationServers,
+          keyName: 'servers',
+        ),
       ProfileStat(
         value: profile.friendCount,
         label: copy.friends,

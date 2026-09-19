@@ -155,6 +155,12 @@ class _ServersScreenState extends State<ServersScreen> {
                     connector: widget.connector,
                     isVisible: widget.isVisible,
                     onBack: () => setState(() => _inlineServerId = null),
+                    // The workspace's server rail switches servers IN this
+                    // slot. Without this callback it falls back to
+                    // `pushReplacement` on the root navigator, which would
+                    // replace the route that holds the whole app shell.
+                    onOpenServer: (server) =>
+                        setState(() => _inlineServerId = server.id),
                   ),
               ],
             );
