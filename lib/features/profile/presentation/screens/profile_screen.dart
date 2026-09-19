@@ -14,6 +14,7 @@ import 'package:yovoice/features/achievements/presentation/screens/achievements_
 import 'package:yovoice/features/achievements/presentation/widgets/title_badge.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
@@ -21,11 +22,15 @@ import 'package:yovoice/features/profile/presentation/widgets/profile_header.dar
 import 'package:yovoice/features/profile/presentation/widgets/profile_journey_card.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
+import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
+import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/creator/presentation/widgets/creator_pinned_moment_card.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_pinned_moment_screen.dart';
+import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/navigation/yo_server_rail_item.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -218,51 +223,111 @@ class _ProfileScreenState extends State<ProfileScreen> {
               );
             }
             final servers = serversSnapshot.data ?? const <Server>[];
-            return Scaffold(
-              backgroundColor: context.appPalette.background,
-              body: YoPageBackground(
-                child: ResponsiveContentFrame(
-                  width: ResponsiveContentWidth.feed,
-                  child: _ProfileContent(
-                    profile: profile,
-                    servers: servers,
-                    serversLoading:
-                        serversSnapshot.connectionState ==
-                        ConnectionState.waiting,
-                    onEdit: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => EditProfileScreen(profile: profile),
-                        ),
-                      );
-                    },
-                    onAchievements: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => AchievementsScreen(profile: profile),
-                        ),
-                      );
-                    },
-                    onOpenServer: (server) {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) =>
-                              ServerWorkspaceScreen(serverId: server.id),
-                        ),
-                      );
-                    },
-                    showSuperAdminActivation: _isOwnerAccount,
-                    isActivatingSuperAdmin: _isActivatingSuperAdmin,
-                    currentRole: _currentRole,
-                    onActivateSuperAdmin: _activateSuperAdmin,
-                    onLogout: _authService.signOut,
+            return ProfileScreenView(
+              profile: profile,
+              servers: servers,
+              serversLoading:
+                  serversSnapshot.connectionState == ConnectionState.waiting,
+              onEdit: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => EditProfileScreen(profile: profile),
                   ),
-                ),
-              ),
+                );
+              },
+              onAchievements: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => AchievementsScreen(profile: profile),
+                  ),
+                );
+              },
+              onOpenServer: (server) {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ServerWorkspaceScreen(serverId: server.id),
+                  ),
+                );
+              },
+              showSuperAdminActivation: _isOwnerAccount,
+              isActivatingSuperAdmin: _isActivatingSuperAdmin,
+              currentRole: _currentRole,
+              onActivateSuperAdmin: _activateSuperAdmin,
+              onLogout: _authService.signOut,
             );
           },
         );
       },
+    );
+  }
+}
+
+/// The own profile's page once its data has arrived: canvas, content frame
+/// and every block, in reading order.
+///
+/// Public for the same reason as [ProfileHeader]: the Slim capture harness
+/// (`test/slim_profile_capture.dart`) renders THIS widget with fixture data
+/// instead of a hand-mirrored copy. The optional services are test / preview
+/// seams; production leaves them null and every widget resolves its own.
+class ProfileScreenView extends StatelessWidget {
+  const ProfileScreenView({
+    required this.profile,
+    required this.servers,
+    required this.serversLoading,
+    required this.onEdit,
+    required this.onAchievements,
+    required this.onOpenServer,
+    required this.showSuperAdminActivation,
+    required this.isActivatingSuperAdmin,
+    required this.currentRole,
+    required this.onActivateSuperAdmin,
+    required this.onLogout,
+    this.identityRepository,
+    this.mediaService,
+    this.creatorPinnedPostService,
+    super.key,
+  });
+
+  final UserProfile profile;
+  final List<Server> servers;
+  final bool serversLoading;
+  final VoidCallback onEdit;
+  final VoidCallback onAchievements;
+  final ValueChanged<Server> onOpenServer;
+  final bool showSuperAdminActivation;
+  final bool isActivatingSuperAdmin;
+  final String currentRole;
+  final Future<void> Function() onActivateSuperAdmin;
+  final Future<void> Function() onLogout;
+  final PublicIdentityRepository? identityRepository;
+  final ProfileMediaService? mediaService;
+  final CreatorPinnedPostService? creatorPinnedPostService;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: context.appPalette.background,
+      body: YoPageBackground(
+        child: ResponsiveContentFrame(
+          width: ResponsiveContentWidth.feed,
+          child: _ProfileContent(
+            profile: profile,
+            servers: servers,
+            serversLoading: serversLoading,
+            onEdit: onEdit,
+            onAchievements: onAchievements,
+            onOpenServer: onOpenServer,
+            showSuperAdminActivation: showSuperAdminActivation,
+            isActivatingSuperAdmin: isActivatingSuperAdmin,
+            currentRole: currentRole,
+            onActivateSuperAdmin: onActivateSuperAdmin,
+            onLogout: onLogout,
+            identityRepository: identityRepository,
+            mediaService: mediaService,
+            creatorPinnedPostService: creatorPinnedPostService,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -280,6 +345,9 @@ class _ProfileContent extends StatelessWidget {
     required this.currentRole,
     required this.onActivateSuperAdmin,
     required this.onLogout,
+    this.identityRepository,
+    this.mediaService,
+    this.creatorPinnedPostService,
   });
 
   final UserProfile profile;
@@ -293,6 +361,161 @@ class _ProfileContent extends StatelessWidget {
   final String currentRole;
   final Future<void> Function() onActivateSuperAdmin;
   final Future<void> Function() onLogout;
+  final PublicIdentityRepository? identityRepository;
+  final ProfileMediaService? mediaService;
+  final CreatorPinnedPostService? creatorPinnedPostService;
+
+  void _openFollowList(BuildContext context, FollowListType type) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => FollowListScreen(userId: profile.uid, type: type),
+      ),
+    );
+  }
+
+  /// Stats from the owner's own `users/{uid}` document only. Followers and
+  /// following stay behind the one fail-closed creator-audience gate, as the
+  /// former `_SocialStats` panel did.
+  List<ProfileStat> _stats(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    return [
+      ProfileStat(
+        value: profile.communityCount,
+        label: copy.navigationServers,
+        keyName: 'servers',
+      ),
+      ProfileStat(
+        value: profile.momentCount,
+        label: copy.text('Moments', 'Momenty'),
+        keyName: 'moments',
+      ),
+      ProfileStat(
+        value: profile.friendCount,
+        label: copy.friends,
+        keyName: 'friends',
+      ),
+      if (profile.canExposeCreatorAudience) ...[
+        ProfileStat(
+          value: profile.followerCount,
+          label: copy.text('Followers', 'Obserwujący'),
+          keyName: 'followers',
+          onTap: () => _openFollowList(context, FollowListType.followers),
+        ),
+        ProfileStat(
+          value: profile.followingCount,
+          label: copy.text('Following', 'Obserwowani'),
+          keyName: 'following',
+          onTap: () => _openFollowList(context, FollowListType.following),
+        ),
+      ],
+    ];
+  }
+
+  Widget _actions(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(ProfileActionBar.radius),
+    );
+    const minimumSize = Size(0, ProfileActionBar.buttonHeight);
+    const padding = EdgeInsets.symmetric(horizontal: 12);
+    return ProfileActionBar(
+      key: const ValueKey('profile-actions'),
+      primary: FilledButton(
+        key: const ValueKey('profile-edit-button'),
+        onPressed: onEdit,
+        style: FilledButton.styleFrom(
+          minimumSize: minimumSize,
+          padding: padding,
+          shape: shape,
+        ),
+        child: Text(
+          copy.text('Edit profile', 'Edytuj profil'),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+      ),
+      secondary: OutlinedButton(
+        key: const ValueKey('profile-awards-button'),
+        onPressed: onAchievements,
+        style: OutlinedButton.styleFrom(
+          minimumSize: minimumSize,
+          padding: padding,
+          shape: shape,
+          foregroundColor: palette.textPrimary,
+          side: BorderSide(color: palette.borderStrong),
+        ),
+        child: Text(
+          copy.text('Awards', 'Nagrody'),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+      ),
+      icon: ProfileActionIconButton(
+        key: const ValueKey('profile-more-button'),
+        icon: Icons.more_horiz_rounded,
+        tooltip: copy.more,
+        onPressed: () => _showAccountSheet(context),
+      ),
+    );
+  }
+
+  /// The icon action: the account actions in a bottom sheet (contextual
+  /// actions live in sheets, not dialogs). The same options stay listed in
+  /// the account section at the foot of the page.
+  Future<void> _showAccountSheet(BuildContext context) async {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      backgroundColor: palette.surfaceRaised,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const ValueKey('profile-more-edit'),
+              leading: Icon(Icons.edit_outlined, color: palette.textPrimary),
+              title: Text(
+                copy.text('Edit profile', 'Edytuj profil'),
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              onTap: () => Navigator.pop(sheetContext, 'edit'),
+            ),
+            ListTile(
+              key: const ValueKey('profile-more-logout'),
+              leading: Icon(Icons.logout_rounded, color: colors.error),
+              title: Text(
+                copy.text('Log out', 'Wyloguj się'),
+                style: TextStyle(
+                  color: colors.error,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              onTap: () => Navigator.pop(sheetContext, 'logout'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (!context.mounted) return;
+    switch (choice) {
+      case 'edit':
+        onEdit();
+      case 'logout':
+        await _confirmLogout(context, onLogout);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -307,45 +530,33 @@ class _ProfileContent extends StatelessWidget {
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(
-          child: ProfileHeader(profile: profile, title: title, onEdit: onEdit),
+          child: ProfileHeader(
+            profile: profile,
+            title: title,
+            onEdit: onEdit,
+            identityRepository: identityRepository,
+            mediaService: mediaService,
+            stats: _stats(context),
+            actions: _actions(context),
+          ),
         ),
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 124),
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 124),
           sliver: SliverList.list(
             children: [
-              _SocialStats(
-                profile: profile,
-                showCreatorAudience: profile.canExposeCreatorAudience,
-                onFollowers: () => Navigator.of(context).push<void>(
-                  MaterialPageRoute<void>(
-                    builder: (_) => FollowListScreen(
-                      userId: profile.uid,
-                      type: FollowListType.followers,
-                    ),
-                  ),
-                ),
-                onFollowing: () => Navigator.of(context).push<void>(
-                  MaterialPageRoute<void>(
-                    builder: (_) => FollowListScreen(
-                      userId: profile.uid,
-                      type: FollowListType.following,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
               ProfileVoiceIdentityCard(profile: profile),
               if (profile.accountType != AccountType.personal)
                 CreatorPinnedMomentCard(
                   creatorId: profile.uid,
-                  outerPadding: const EdgeInsets.only(top: 14),
+                  service: creatorPinnedPostService,
+                  outerPadding: const EdgeInsets.only(top: 12),
                   onOpen: (moment) => Navigator.of(context).push<void>(
                     MaterialPageRoute<void>(
                       builder: (_) => CreatorPinnedMomentScreen(moment: moment),
                     ),
                   ),
                 ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               ProfileJourneyCard(
                 communitiesCount: servers.length,
                 messageCount: profile.messageCount,
@@ -354,20 +565,20 @@ class _ProfileContent extends StatelessWidget {
                     .where((server) => server.ownerId == profile.uid)
                     .length,
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               _ServersCard(
                 servers: servers,
                 currentUid: profile.uid,
                 isLoading: serversLoading,
                 onOpen: onOpenServer,
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               _AchievementsCard(
                 profile: profile,
                 unlocked: unlocked,
                 onTap: onAchievements,
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               _AccountCard(
                 onEdit: onEdit,
                 showSuperAdminActivation: showSuperAdminActivation,
@@ -384,102 +595,36 @@ class _ProfileContent extends StatelessWidget {
   }
 }
 
-class _SocialStats extends StatelessWidget {
-  const _SocialStats({
-    required this.profile,
-    required this.showCreatorAudience,
-    required this.onFollowers,
-    required this.onFollowing,
-  });
-
-  final UserProfile profile;
-  final bool showCreatorAudience;
-  final VoidCallback onFollowers;
-  final VoidCallback onFollowing;
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    return _Panel(
-      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 8),
-      child: Row(
-        children: [
-          _Stat(value: profile.friendCount, label: copy.friends),
-          if (showCreatorAudience) ...[
-            const _Divider(),
-            _Stat(
-              value: profile.followerCount,
-              label: copy.text('Followers', 'Obserwujący'),
-              onTap: onFollowers,
-            ),
-            const _Divider(),
-            _Stat(
-              value: profile.followingCount,
-              label: copy.text('Following', 'Obserwowani'),
-              onTap: onFollowing,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _Stat extends StatelessWidget {
-  const _Stat({required this.value, required this.label, this.onTap});
-  final int value;
-  final String label;
-  final VoidCallback? onTap;
-
-  /// Compact display for large counts (1.8K / 1.2M) — board screen 5.
-  static String compact(int value) {
-    String fmt(double v) {
-      final d = (v * 10).truncate() / 10;
-      return d == d.truncateToDouble() ? '${d.truncate()}' : '$d';
-    }
-
-    if (value >= 1000000) return '${fmt(value / 1000000)}M';
-    if (value >= 1000) return '${fmt(value / 1000)}K';
-    return '$value';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    return Expanded(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Column(
-            children: [
-              Text(
-                compact(value),
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                label,
-                style: TextStyle(color: palette.textSecondary, fontSize: 13),
-              ),
-            ],
-          ),
+/// The one log-out confirmation, shared by the account section and the
+/// header's account sheet so both paths ask the same question.
+Future<void> _confirmLogout(
+  BuildContext context,
+  Future<void> Function() onLogout,
+) async {
+  final copy = AppLocalizations.of(context);
+  final shouldLogout = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(copy.text('Log out?', 'Wylogować się?')),
+      content: Text(
+        copy.text(
+          'You will need to sign in again to use YO Voice.',
+          'Aby ponownie korzystać z YO Voice, trzeba będzie się zalogować.',
         ),
       ),
-    );
-  }
-}
-
-class _Divider extends StatelessWidget {
-  const _Divider();
-  @override
-  Widget build(BuildContext context) =>
-      Container(width: 1, height: 34, color: context.appPalette.border);
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: Text(copy.text('Cancel', 'Anuluj')),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: Text(copy.text('Log out', 'Wyloguj się')),
+        ),
+      ],
+    ),
+  );
+  if (shouldLogout == true) await onLogout();
 }
 
 /// The complete Voice identity card rendered on the member's profile.
@@ -633,17 +778,21 @@ class _ServersCard extends StatelessWidget {
               style: TextStyle(color: palette.textSecondary, height: 1.4),
             )
           else
+            // One layer: the servers ride the section as flat faces (the
+            // shared `YoServerTile` squircle + name + real member count), not
+            // as bordered cards inside the bordered section.
             SizedBox(
-              height: 124,
+              height: _CommunityTile.extent(context),
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 children: [
                   ...servers.map(
                     (server) => Padding(
-                      padding: const EdgeInsets.only(right: 10),
+                      padding: const EdgeInsetsDirectional.only(end: 8),
                       child: _CommunityTile(
                         name: server.name,
-                        imageUrl: null,
+                        initial: server.initial,
+                        type: server.type,
                         subtitle:
                             '${_memberCount(copy, server.memberCount)}'
                             '${server.ownerId == currentUid ? copy.text(' · Owner', ' · Właściciel') : ''}',
@@ -668,7 +817,8 @@ class _ServersCard extends StatelessWidget {
 class _CommunityTile extends StatelessWidget {
   const _CommunityTile({
     required this.name,
-    required this.imageUrl,
+    required this.initial,
+    required this.type,
     required this.subtitle,
     required this.badge,
     required this.onTap,
@@ -676,96 +826,104 @@ class _CommunityTile extends StatelessWidget {
   });
 
   final String name;
-  final String? imageUrl;
+  final String initial;
+  final ServerType type;
   final String subtitle;
+
+  /// "SERVER" — voiced with the name instead of drawn as a pill: the
+  /// section heading already says these are servers.
   final String badge;
   final VoidCallback onTap;
 
-  /// Marks a club the member OWNS (board screen 5's crown) — driven by
-  /// the club's real ownerId, never a guess.
+  /// Marks a server the member OWNS (board screen 5's crown) — driven by
+  /// the server's real ownerId, never a guess.
   final bool isOwner;
+
+  static const double _face = 52;
+  static const double _width = 104;
+
+  /// The rail's height: the face, then a name line and a two-line meta at
+  /// the ambient text scale, so enlarged text grows the rail, never clips it.
+  static double extent(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    return 8 +
+        _face +
+        8 +
+        scaler.scale(13) * 1.3 +
+        scaler.scale(11) * 1.3 * 2 +
+        12;
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    final hasImage = imageUrl?.trim().isNotEmpty == true;
-    return InkWell(
-      borderRadius: BorderRadius.circular(18),
-      onTap: onTap,
-      child: Container(
-        width: 154,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: palette.surfaceRaised,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: palette.border),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    return Semantics(
+      button: true,
+      label: '$name, $badge, $subtitle',
+      excludeSemantics: true,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: SizedBox(
+          width: _width,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
+            child: Column(
               children: [
-                CircleAvatar(
-                  radius: 20,
-                  backgroundColor: colors.primary,
-                  backgroundImage: hasImage ? NetworkImage(imageUrl!) : null,
-                  child: hasImage
-                      ? null
-                      : Text(
-                          name.isEmpty ? '?' : name[0].toUpperCase(),
-                          style: TextStyle(
-                            color: colors.onPrimary,
-                            fontWeight: FontWeight.w900,
+                SizedBox.square(
+                  dimension: _face,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      YoServerTile(initial: initial, type: type, size: _face),
+                      if (isOwner)
+                        PositionedDirectional(
+                          end: -4,
+                          top: -4,
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              color: palette.surface,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: palette.border),
+                            ),
+                            child: const Icon(
+                              Icons.workspace_premium_rounded,
+                              size: 13,
+                              color: AppColors.vipGold,
+                            ),
                           ),
                         ),
+                    ],
+                  ),
                 ),
-                const Spacer(),
-                if (isOwner)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 5),
-                    child: Icon(
-                      Icons.workspace_premium_rounded,
-                      size: 15,
-                      color: AppColors.vipGold,
-                    ),
+                const SizedBox(height: 8),
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 13,
+                    height: 1.3,
+                    fontWeight: FontWeight.w700,
                   ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 7,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: colors.primaryContainer,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                  child: Text(
-                    badge,
-                    style: TextStyle(
-                      color: colors.onPrimaryContainer,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w900,
-                    ),
+                ),
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: palette.textTertiary,
+                    fontSize: 11,
+                    height: 1.3,
                   ),
                 ),
               ],
             ),
-            const Spacer(),
-            Text(
-              name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              subtitle,
-              style: TextStyle(color: palette.textSecondary, fontSize: 11),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -795,59 +953,56 @@ class _AchievementsCard extends StatelessWidget {
             0.0,
             1.0,
           );
-    return InkWell(
-      borderRadius: BorderRadius.circular(22),
+    return _Panel(
       onTap: onTap,
-      child: _Panel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _Header(
-              icon: Icons.workspace_premium_rounded,
-              title: copy.text('Titles & achievements', 'Tytuły i osiągnięcia'),
-              action: copy.text(
-                '${unlocked.length} unlocked',
-                '${unlocked.length} odblokowanych',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Header(
+            icon: Icons.workspace_premium_rounded,
+            title: copy.text('Titles & achievements', 'Tytuły i osiągnięcia'),
+            action: copy.text(
+              '${unlocked.length} unlocked',
+              '${unlocked.length} odblokowanych',
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (unlocked.isNotEmpty)
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: unlocked
+                  .take(4)
+                  .map((item) => TitleBadge(achievement: item, compact: true))
+                  .toList(),
+            )
+          else if (next != null) ...[
+            Text(
+              copy.text('Next: ${next.title}', 'Następny: ${next.title}'),
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontWeight: FontWeight.w800,
               ),
             ),
-            const SizedBox(height: 14),
-            if (unlocked.isNotEmpty)
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: unlocked
-                    .take(4)
-                    .map((item) => TitleBadge(achievement: item, compact: true))
-                    .toList(),
-              )
-            else if (next != null) ...[
-              Text(
-                copy.text('Next: ${next.title}', 'Następny: ${next.title}'),
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontWeight: FontWeight.w800,
-                ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(99),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 8,
+                backgroundColor: palette.surfaceSunken,
               ),
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(99),
-                child: LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 8,
-                  backgroundColor: palette.surfaceSunken,
-                ),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              copy.text(
+                '${profile.achievementStats[next.metric] ?? 0} / ${next.threshold} • ${next.description}',
+                '${profile.achievementStats[next.metric] ?? 0} / ${next.threshold} • Postęp do następnego osiągnięcia',
               ),
-              const SizedBox(height: 7),
-              Text(
-                copy.text(
-                  '${profile.achievementStats[next.metric] ?? 0} / ${next.threshold} • ${next.description}',
-                  '${profile.achievementStats[next.metric] ?? 0} / ${next.threshold} • Postęp do następnego osiągnięcia',
-                ),
-                style: TextStyle(color: palette.textSecondary, fontSize: 12),
-              ),
-            ],
+              style: TextStyle(color: palette.textSecondary, fontSize: 12),
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -896,31 +1051,7 @@ class _AccountCard extends StatelessWidget {
             title: copy.text('Log out', 'Wyloguj się'),
             destructive: true,
             showDivider: false,
-            onTap: () async {
-              final shouldLogout = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: Text(copy.text('Log out?', 'Wylogować się?')),
-                  content: Text(
-                    copy.text(
-                      'You will need to sign in again to use YO Voice.',
-                      'Aby ponownie korzystać z YO Voice, trzeba będzie się zalogować.',
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: Text(copy.text('Cancel', 'Anuluj')),
-                    ),
-                    FilledButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: Text(copy.text('Log out', 'Wyloguj się')),
-                    ),
-                  ],
-                ),
-              );
-              if (shouldLogout == true) await onLogout();
-            },
+            onTap: () => _confirmLogout(context, onLogout),
           ),
         ],
       ),
@@ -950,18 +1081,17 @@ class _SuperAdminOption extends StatelessWidget {
       children: [
         ListTile(
           onTap: isActivated || isLoading ? null : onTap,
+          // Flat tonal tile: no decorative gradient on a list row.
           leading: Container(
             width: 38,
             height: 38,
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [colors.primary, colors.secondary],
-              ),
+              color: colors.primaryContainer,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               Icons.admin_panel_settings_rounded,
-              color: colors.onPrimary,
+              color: colors.onPrimaryContainer,
               size: 22,
             ),
           ),
@@ -971,7 +1101,7 @@ class _SuperAdminOption extends StatelessWidget {
                 : copy.text('Activate SuperAdmin', 'Aktywuj SuperAdmin'),
             style: TextStyle(
               color: palette.textPrimary,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
             ),
           ),
           subtitle: Text(
@@ -1004,22 +1134,39 @@ class _SuperAdminOption extends StatelessWidget {
   }
 }
 
+/// One flat profile section: a single layer with a 1 px `palette.border`
+/// hairline and the Slim card radius (12), no gradient and no shadow.
+///
+/// It is a [Material] (not a coloured box) so the ink of the rows and taps
+/// inside it — the account list, a server face, the whole awards panel —
+/// paints on the section itself instead of underneath its fill.
 class _Panel extends StatelessWidget {
-  const _Panel({required this.child, this.padding = const EdgeInsets.all(18)});
+  const _Panel({
+    required this.child,
+    this.padding = const EdgeInsets.all(16),
+    this.onTap,
+  });
   final Widget child;
   final EdgeInsets padding;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    return Container(
-      padding: padding,
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: palette.border),
+    final body = Padding(padding: padding, child: child);
+    return Material(
+      color: palette.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: palette.border),
       ),
-      child: child,
+      child: onTap == null
+          ? body
+          : InkWell(
+              onTap: onTap,
+              child: SizedBox(width: double.infinity, child: body),
+            ),
     );
   }
 }
@@ -1033,18 +1180,17 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     return Row(
       children: [
-        Icon(icon, color: colors.primary),
+        Icon(icon, color: palette.interactiveForeground, size: 20),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
             title,
             style: TextStyle(
               color: palette.textPrimary,
-              fontSize: 19,
-              fontWeight: FontWeight.w900,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ),
@@ -1052,8 +1198,9 @@ class _Header extends StatelessWidget {
           Text(
             action!,
             style: TextStyle(
-              color: colors.primary,
-              fontWeight: FontWeight.w800,
+              color: palette.textSecondary,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
             ),
           ),
       ],

@@ -4,6 +4,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/creator/data/models/creator_pinned_post.dart';
 import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -12,9 +13,10 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
 
-const _pinAccent = Color(0xFFB932FF);
-const _pinSurface = Color(0xFF17101F);
-const _pinMuted = Color(0xFFA99DB3);
+// Slim redesign (phase 5): the card's three inline hexes (accent 0xFFB932FF,
+// surface 0xFF17101F, muted 0xFFA99DB3) and its dark gradient became palette
+// roles, so the pin reads as one flat profile section in Dark and in Pearl.
+// Accent: `interactiveForeground`; surface: `surface`; muted: `textSecondary`.
 
 /// Reusable public-profile surface for a Creator's one pinned Voice Moment.
 /// It renders nothing when the exact-id read is missing, malformed, expired,
@@ -121,17 +123,14 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
           return const SizedBox.shrink();
         }
         final moment = value.moment;
+        final palette = context.appPalette;
         final content = Container(
           width: double.infinity,
-          padding: EdgeInsets.all(widget.compact ? 14 : 18),
+          padding: EdgeInsets.all(widget.compact ? 12 : 16),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF25102F), _pinSurface],
-            ),
-            borderRadius: BorderRadius.circular(widget.compact ? 16 : 20),
-            border: Border.all(color: const Color(0xFF62317B)),
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: palette.border),
           ),
           child: Row(
             children: [
@@ -151,11 +150,11 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
                         'PINNED VOICE MOMENT',
                         'PRZYPIĘTY VOICE MOMENT',
                       ),
-                      style: const TextStyle(
-                        color: _pinAccent,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1,
+                      style: TextStyle(
+                        color: palette.interactiveForeground,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: .88,
                       ),
                     ),
                     const SizedBox(height: 5),
@@ -165,10 +164,10 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
                           : moment.caption,
                       maxLines: widget.compact ? 1 : 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: palette.textPrimary,
                         fontSize: 14,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w700,
                         height: 1.25,
                       ),
                     ),
@@ -220,7 +219,7 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
                     onPressed: () => _openDetails(moment),
                     style: IconButton.styleFrom(
                       minimumSize: const Size(48, 48),
-                      foregroundColor: _pinMuted,
+                      foregroundColor: palette.textSecondary,
                     ),
                     icon: const Icon(Icons.chevron_right_rounded),
                   ),
@@ -344,6 +343,7 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
+    final accent = context.appPalette.interactiveForeground;
     return Semantics(
       button: true,
       enabled: !_changingPlayback,
@@ -367,9 +367,9 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
         onPressed: _changingPlayback ? null : _togglePlayback,
         style: IconButton.styleFrom(
           minimumSize: const Size(48, 48),
-          backgroundColor: _pinAccent.withValues(alpha: .14),
-          foregroundColor: _pinAccent,
-          side: BorderSide(color: _pinAccent.withValues(alpha: .5)),
+          backgroundColor: accent.withValues(alpha: .14),
+          foregroundColor: accent,
+          side: BorderSide(color: accent.withValues(alpha: .5)),
         ),
         icon: _changingPlayback
             ? const SizedBox.square(
@@ -395,18 +395,19 @@ class _MomentMeta extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final muted = context.appPalette.textSecondary;
     return Semantics(
       label: semanticLabel,
       excludeSemantics: true,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 13, color: _pinMuted),
+          Icon(icon, size: 13, color: muted),
           const SizedBox(width: 4),
           Text(
             label,
-            style: const TextStyle(
-              color: _pinMuted,
+            style: TextStyle(
+              color: muted,
               fontSize: 11,
               fontWeight: FontWeight.w600,
             ),

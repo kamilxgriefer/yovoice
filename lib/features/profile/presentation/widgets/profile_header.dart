@@ -9,6 +9,7 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -35,6 +36,14 @@ import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 /// regression shipped precisely because the harness mirrored this layout
 /// instead of importing it: the real screen collapsed while the mirror
 /// looked plausible.
+///
+/// Slim redesign (phase 5): the header can also carry the profile's stats
+/// row ([stats], drawn by [ProfileStatsRow]) and its action bar ([actions],
+/// usually a [ProfileActionBar]). Both are optional so every existing host —
+/// the layout tests, the crop editor's geometry, the dev preview — keeps the
+/// compact header it measures. When [actions] is supplied it owns Edit, so
+/// the toolbar drops its own Edit icon rather than offering the same action
+/// twice.
 class ProfileHeader extends StatelessWidget {
   const ProfileHeader({
     required this.profile,
@@ -42,12 +51,21 @@ class ProfileHeader extends StatelessWidget {
     this.title,
     this.identityRepository,
     this.mediaService,
+    this.stats,
+    this.actions,
     super.key,
   });
 
   final UserProfile profile;
   final AchievementDefinition? title;
   final VoidCallback onEdit;
+
+  /// Real counters only, in reading order. Null draws no stats row.
+  final List<ProfileStat>? stats;
+
+  /// The profile's primary / secondary / icon actions. Null keeps the
+  /// toolbar's Edit icon as the header's only action.
+  final Widget? actions;
 
   /// Test/preview seam. Production resolves through the shared singleton.
   final PublicIdentityRepository? identityRepository;
@@ -118,6 +136,33 @@ class ProfileHeader extends StatelessWidget {
                   ringPadding: ringPadding,
                   isWide: isWide,
                 ),
+                if (stats != null || actions != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(gutter, 12, gutter, 0),
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      // On wide canvases the counters and buttons keep a
+                      // readable measure instead of stretching to 1040 px.
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 640),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (stats != null)
+                              ProfileStatsRow(
+                                containerKey: const ValueKey(
+                                  'profile-header-stats',
+                                ),
+                                stats: stats!,
+                              ),
+                            if (stats != null && actions != null)
+                              const SizedBox(height: 12),
+                            ?actions,
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 const SizedBox(height: 8),
               ],
             ),
@@ -172,18 +217,23 @@ class ProfileHeader extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: palette.textPrimary,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w900,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ),
-            IconButton.filled(
-              onPressed: onEdit,
-              tooltip: copy.text('Edit profile', 'Edytuj profil'),
-              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-              style: IconButton.styleFrom(backgroundColor: colors.primary),
-              icon: Icon(Icons.edit_rounded, color: colors.onPrimary),
-            ),
+            // The action bar, when present, carries Edit as the primary CTA.
+            if (actions == null)
+              IconButton.filled(
+                onPressed: onEdit,
+                tooltip: copy.text('Edit profile', 'Edytuj profil'),
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                style: IconButton.styleFrom(backgroundColor: colors.primary),
+                icon: Icon(Icons.edit_rounded, color: colors.onPrimary),
+              )
+            else
+              // Keeps the toolbar row at its 44 px target height.
+              const SizedBox(height: 44),
           ],
         ),
       ),
@@ -230,7 +280,7 @@ class ProfileHeader extends StatelessWidget {
             mediaRevision: profile.profileUpdatedAt,
             mediaService: mediaService,
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(22),
+              borderRadius: BorderRadius.circular(12),
               child: ProfileBanner(
                 userId: profile.uid,
                 bannerUrl: profile.bannerUrl,
@@ -281,7 +331,7 @@ class ProfileHeader extends StatelessWidget {
               displayName: profile.displayName,
               mediaRevision: profile.profileUpdatedAt,
               mediaService: mediaService,
-              // The ring, not the disc: the gradient border is part of the
+              // The ring, not the disc: the cut-out ring is part of the
               // avatar, and a smaller minimum would clip the ripple inside it.
               minimumSize: Size(
                 (avatarRadius + ringPadding) * 2,
@@ -290,11 +340,13 @@ class ProfileHeader extends StatelessWidget {
               child: Container(
                 key: const Key('profile-header-avatar'),
                 padding: EdgeInsets.all(ringPadding),
+                // Slim: a flat canvas-coloured cut-out with a 1 px hairline
+                // separates the avatar from the banner. The ring stays free
+                // of decorative gradients (it is not a Moment ring).
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [colors.primary, colors.secondary],
-                  ),
+                  color: palette.background,
+                  border: Border.all(color: palette.border),
                 ),
                 child: UserAvatar(
                   radius: avatarRadius,
@@ -324,15 +376,8 @@ class ProfileHeader extends StatelessWidget {
                     padding: const EdgeInsets.fromLTRB(10, 6, 10, 7),
                     decoration: BoxDecoration(
                       color: palette.surfaceRaised.withValues(alpha: .94),
-                      borderRadius: BorderRadius.circular(13),
+                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: palette.border),
-                      boxShadow: [
-                        BoxShadow(
-                          color: palette.shadow.withValues(alpha: .16),
-                          blurRadius: 14,
-                          offset: const Offset(0, 5),
-                        ),
-                      ],
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -348,7 +393,7 @@ class ProfileHeader extends StatelessWidget {
                               color: palette.textPrimary,
                               fontSize: nameSize,
                               height: 1.02,
-                              fontWeight: FontWeight.w900,
+                              fontWeight: FontWeight.w800,
                               letterSpacing: -.35,
                             ),
                           ),
@@ -454,6 +499,271 @@ class ProfileHeader extends StatelessWidget {
                 ),
         ),
       ],
+    );
+  }
+}
+
+/// One counter in a profile's stats row. [value] is always a real field the
+/// caller already holds (`users/{uid}` on the own profile, the public
+/// projection on someone else's); the row never invents or estimates one.
+class ProfileStat {
+  const ProfileStat({
+    required this.value,
+    required this.label,
+    required this.keyName,
+    this.keyPrefix = 'profile-stat',
+    this.onTap,
+  });
+
+  final int value;
+  final String label;
+
+  /// Suffix of the stat's key: `<keyPrefix>-<keyName>`.
+  final String keyName;
+  final String keyPrefix;
+
+  /// Null renders a plain labelled counter; otherwise the counter is a 44 px+
+  /// tappable region (followers / following lists).
+  final VoidCallback? onTap;
+
+  Key get key => ValueKey('$keyPrefix-$keyName');
+}
+
+/// The profile's stats row, shared by the own profile and someone else's
+/// profile (Slim redesign, phase 5): one flat 1 px `palette.border` band,
+/// radius 12, counters side by side. It stacks into one counter per line
+/// once a counter's cell would drop below [minCellWidth] or body text reaches
+/// 21 px (≈150 % text), so labels are never squeezed and every tappable
+/// counter keeps a 44 px target.
+class ProfileStatsRow extends StatelessWidget {
+  const ProfileStatsRow({required this.stats, this.containerKey, super.key});
+
+  final List<ProfileStat> stats;
+
+  /// Rides the decorated band itself, so a finder can read its decoration.
+  final Key? containerKey;
+
+  /// The narrowest counter cell the row accepts before it stacks.
+  static const double minCellWidth = 64;
+
+  /// Compact display for large counts (1.8K / 1.2M) — board screen 5.
+  static String compact(int value) {
+    String fmt(double v) {
+      final d = (v * 10).truncate() / 10;
+      return d == d.truncateToDouble() ? '${d.truncate()}' : '$d';
+    }
+
+    if (value >= 1000000) return '${fmt(value / 1000000)}M';
+    if (value >= 1000) return '${fmt(value / 1000)}K';
+    return '$value';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final palette = context.appPalette;
+        final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
+        // Side by side while every counter keeps a readable cell; one per
+        // line once a cell would drop below [minCellWidth] or text is large.
+        final cellWidth = constraints.maxWidth / stats.length.clamp(1, 99);
+        final shouldStack = cellWidth < minCellWidth || scaledBodySize >= 21;
+        final cells = [for (final stat in stats) _ProfileStatCell(stat: stat)];
+        return Container(
+          key: containerKey,
+          padding: EdgeInsets.symmetric(vertical: shouldStack ? 4 : 6),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: palette.border),
+          ),
+          child: shouldStack
+              ? Column(
+                  children: [
+                    for (var index = 0; index < cells.length; index++) ...[
+                      cells[index],
+                      if (index < cells.length - 1)
+                        Divider(
+                          height: 1,
+                          indent: 16,
+                          endIndent: 16,
+                          color: palette.border,
+                        ),
+                    ],
+                  ],
+                )
+              : Row(
+                  children: [for (final cell in cells) Expanded(child: cell)],
+                ),
+        );
+      },
+    );
+  }
+}
+
+class _ProfileStatCell extends StatelessWidget {
+  const _ProfileStatCell({required this.stat});
+
+  final ProfileStat stat;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final content = ExcludeSemantics(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 48),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  ProfileStatsRow.compact(stat.value),
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 17,
+                    height: 1.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                // A long single word ("Obserwujący") shrinks a little on a
+                // five-counter phone row instead of clipping.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    stat.label,
+                    maxLines: 1,
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 12,
+                      height: 1.3,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    final semanticLabel = '${stat.label}: ${stat.value}';
+    final onTap = stat.onTap;
+    if (onTap == null) {
+      return Semantics(key: stat.key, label: semanticLabel, child: content);
+    }
+    return AccessibleTapRegion(
+      key: stat.key,
+      onTap: onTap,
+      semanticLabel: semanticLabel,
+      borderRadius: 12,
+      child: content,
+    );
+  }
+}
+
+/// The profile's action bar: exactly one primary CTA, an optional secondary
+/// CTA and an optional icon action, in that order (Slim redesign, phase 5).
+///
+/// The caller builds the buttons (keys, callbacks, busy states and copy stay
+/// with the screen that owns them); this widget owns only the arrangement.
+/// Below [stackBelowWidth] or at ≈150 % text the primary and secondary stack
+/// full-width, the icon rides beside the last one, and nothing truncates.
+class ProfileActionBar extends StatelessWidget {
+  const ProfileActionBar({
+    required this.primary,
+    this.secondary,
+    this.icon,
+    super.key,
+  });
+
+  final Widget primary;
+  final Widget? secondary;
+  final Widget? icon;
+
+  /// The shared minimum height of every profile CTA (a 44 px target).
+  static const double buttonHeight = 44;
+
+  /// Radius shared by the CTAs: the Slim card / input radius.
+  static const double radius = 12;
+
+  /// Below this width two labelled CTAs and the icon no longer fit on one
+  /// line without truncating Polish labels, so they stack.
+  static const double stackBelowWidth = 340;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
+        final shouldStack =
+            constraints.maxWidth < stackBelowWidth || scaledBodySize >= 21;
+        final secondary = this.secondary;
+        final icon = this.icon;
+        Widget lastLine(Widget button) {
+          if (icon == null) return button;
+          return Row(
+            children: [
+              Expanded(child: button),
+              const SizedBox(width: 8),
+              icon,
+            ],
+          );
+        }
+
+        if (secondary == null) return lastLine(primary);
+        if (shouldStack) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [primary, const SizedBox(height: 8), lastLine(secondary)],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: primary),
+            const SizedBox(width: 8),
+            Expanded(child: secondary),
+            if (icon != null) ...[const SizedBox(width: 8), icon],
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// The icon action of a [ProfileActionBar]: a 44 px outlined square.
+class ProfileActionIconButton extends StatelessWidget {
+  const ProfileActionIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+    super.key,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return IconButton(
+      onPressed: onPressed,
+      tooltip: tooltip,
+      constraints: const BoxConstraints(
+        minWidth: ProfileActionBar.buttonHeight,
+        minHeight: ProfileActionBar.buttonHeight,
+      ),
+      style: IconButton.styleFrom(
+        foregroundColor: palette.textPrimary,
+        side: BorderSide(color: palette.borderStrong),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ProfileActionBar.radius),
+        ),
+      ),
+      icon: Icon(icon, size: 22),
     );
   }
 }
