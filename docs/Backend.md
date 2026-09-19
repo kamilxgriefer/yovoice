@@ -119,6 +119,42 @@ social triggers are gone, reports aggregate counts, preserves genuine legacy
 rows with a live pointer-less source, and converges source-less or upgraded-
 source duplicates that a transient event-time cleanup could have missed.
 
+### Comments, @mentions, Server event reminders and role promotions (ADR-212, source only, NOT deployed)
+
+Five notification types were added on 2026-09-19 and none of them is deployed
+yet:
+
+- `onMomentCommentCreated` / `onReelCommentCreated`
+  (`functions/notifications/engagement.js`) — Firestore triggers on
+  `voiceMoments/{id}/comments/{id}` and `reels/{id}/comments/{id}`. One trigger
+  covers the text and the voice path of each surface, because both callables
+  commit the same comment document. The parent's author gets one
+  `momentComment` / `reelComment` row; everybody the comment's server-only
+  mention record names (minus the commenter and the author) gets one
+  `commentMention` row, charged against a per-actor hourly budget.
+  `onMomentCommentDeleted` / `onReelCommentDeleted` retire those rows using the
+  delivery ledger, which is the only record of which recipient and document id
+  a comment produced.
+- `sendServerEventRemindersSchedule` (`functions/notifications/server_events.js`)
+  — every five minutes, one `collectionGroup("events")` query over the next
+  fifteen minutes, then the opted-in responses per event. The notification id
+  carries the event revision. Requires the COLLECTION_GROUP index on
+  `events (reminderOptInEnabled, status, startsAt)`; the emulator never
+  enforces index requirements, so `functions/test/server_event_reminders.test.js`
+  asserts the declaration AND runs the real cross-parent query (ADR-007).
+- `createServerRolePromotionNotifier`
+  (`functions/notifications/server_roles.js`) — injected into the membership
+  service by `servers/registration.js` and called right after
+  `setServerMemberRoleV1` / `transferServerOwnershipV1` commit. Promotions and
+  ownership only; a demotion, removal or ban is silent by design.
+
+`notificationSourceIsCurrent` now **denies by default**: the five new types
+have real validators (`functions/notifications/engagement_source.js`), the
+legacy types keep their historical paths through an explicit allow-list, and an
+unregistered type is refused instead of pushing unrevalidated. `buildPushMessage`
+carries an optional `data.targetSubId` (the comment, the channel); the
+lock-screen body stays generic and no comment text ever enters a payload.
+
 ## Friends
 
 > **The ADR-114 friend/follow lifecycle below is DEPLOYED (2026-08-25).**

@@ -13941,3 +13941,107 @@ than a primitive built on a premise that a test or the schema contradicts.
   - the dead Home chains and `MomentStoryTile`'s missing mount (phase 1,
     Roadmap 0n);
   - the two failing screenshot-harness fixtures (`docs/Bugs.md`).
+
+
+## ADR-212: A comment notifies the author, a mention is validated against the mentioned person's audience, and a reminder finally gets sent
+
+**Date:** 2026-09-19
+
+### Context
+
+The notification surface covered friendships, follows, Server invitations,
+direct messages and calls. The three loops the product is actually built on
+did not notify at all: a comment (text or voice) on your Voice Moment or your
+Yeel, an `@Name` typed into one of those comments, and the "remind me" a
+Family or Podcast member taps on a Server event — `respondToServerEventV1`
+stored the intent and counted it transactionally, and
+`docs/Servers.md` said out loud that nothing delivered it. A Moment lives 24
+hours by default, so an author who only discovers a comment by reopening the
+Moment usually discovers it after the conversation is over. Server roles
+changed silently as well.
+
+Two properties of the existing pipeline shaped the design. First,
+`onNotificationCreated` skips any type with no `PUSH_TITLES` entry and, until
+this change, revalidated only a known list of types: every other type fell
+through to `return true`, so a new type would have pushed with NO source
+recheck. Second, an installed client maps an unknown type to `system`, which
+renders as a plain, non-tappable row.
+
+### Decision
+
+- Comments produce notifications from a **Firestore trigger on the comment
+  subcollection** (`voiceMoments/{id}/comments/{id}`, `reels/{id}/comments/{id}`),
+  not from a change to the four comment callables. One create trigger covers
+  the text and the voice path of each surface, and the matching delete trigger
+  retires the rows when the comment is deleted — by its author, by the Yeel's
+  author, or by a parent's deletion cascade.
+- Only the **parent's author** is notified about a comment in this build, never
+  the commenter and never other participants of the thread.
+- `@mentions` are sent by the composer as an OPTIONAL `mentionUserIds` input on
+  the four comment callables, capped at five, deduplicated and stripped of the
+  caller. The callable stores the list in a **server-only
+  `commentMentions/{kind}_{parentId}_{commentId}` document written in the same
+  transaction as the comment** — not as a field on the comment, because a Voice
+  Moment comment is readable by the Moment's audience and every comment reader
+  validates an exact key set. Eligibility (audience, blocks, account state) is
+  decided by the notification writer and again at push time, never by the
+  callable, and an ineligible id is dropped silently so the response cannot be
+  used to probe who blocked whom. The list participates in the idempotency
+  input hash only when present, so an installed client's request, hash and
+  stored comment are byte for byte what they were.
+- Server event reminders are a **5-minute scheduled worker** running one
+  `collectionGroup("events")` query over a 15-minute horizon, with a new
+  COLLECTION_GROUP composite index. The notification id carries the event's
+  revision, so rescheduling re-arms the reminder and a redelivery is a no-op;
+  cancelling removes the event from the query and fails the source validator.
+- Server roles notify on **promotion and ownership transfer only**. A demotion,
+  removal or ban is silent: an admin who can cycle a role would otherwise have
+  a repeatable way to push at somebody. The write happens immediately after the
+  membership transaction commits, through an injected notifier, because the
+  canonical writer needs eight reads and Firestore forbids a read after a
+  write.
+- The push boundary now **denies by default**: `notificationSourceIsCurrent`
+  routes the five new types to real validators, keeps every legacy type on its
+  historical path through an explicit allow-list, and refuses anything else.
+- Preferences gain one "Moments & Yeels" group with a single "Comments and
+  mentions" switch covering `momentComment`, `reelComment` and
+  `commentMention`, plus "Server events" and "Your server role" under Servers.
+  One switch writes every key it covers in one update; the push boundary still
+  reads one key per type.
+- Push payloads gain an optional `targetSubId` (the comment, the channel).
+  The lock-screen body stays the generic "Tap to open YO Voice" and a comment's
+  words never enter a notification, a push or a `targetLabel`.
+
+### Reasoning
+
+Deriving the row from the committed comment means the notification cannot
+drift from what was actually written, and leaves four transactional,
+idempotency-ledgered callables untouched. Keeping the mention list beside the
+comment rather than in it avoids both a leak (to every reader of the thread)
+and an outage (an exact-key validator refusing a comment with an extra field).
+Validating a mention against the MENTIONED person's audience is what stops a
+mention from announcing the existence of a friends-only Moment to somebody who
+cannot open it — the one genuinely new disclosure risk in this slice.
+Deny-by-default at the push boundary converts "somebody forgot to add a
+validator" from a silent unchecked push into no push at all.
+
+### Consequences
+
+- New Firestore collection `commentMentions` (server-only, explicit deny in
+  `firestore.rules`), new optional notification fields `targetSubId` and
+  `sourcePath`, and a new COLLECTION_GROUP index on `events`. All additive.
+- Five new exported Functions: `onMomentCommentCreated`,
+  `onMomentCommentDeleted`, `onReelCommentCreated`, `onReelCommentDeleted`,
+  `sendServerEventRemindersSchedule`.
+- Deploy order matters: Functions (titles, sound map, validators) before any
+  writer, and the index before the scheduler. A row of an unknown type is
+  skipped as `unknown-type`, so an app shipped first simply sees nothing.
+- Installed clients (Build 34 and older) render the five new types as plain,
+  non-tappable `system` rows until they update. Accepted by the owner.
+- Preferences still gate PUSH only; the bell row is written either way, which
+  is the existing behaviour of every toggle.
+- Not in this slice: like/follow aggregation (needs an update-in-place row, a
+  `sortAt` field and an index), Server channel mentions, the friend-is-live
+  fan-out, DM reactions, and an @-picker in the Yeel comment composer (the
+  callables accept `mentionUserIds` for Yeels already; only the Moment
+  composer sends one).

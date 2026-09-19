@@ -810,6 +810,36 @@ remains on the signed-out screen cannot prove ownership and the old account may
 still receive push until the next identity binding re-attempts invalidation;
 that narrow interval is logged explicitly rather than hidden.
 
+### Comment mentions and the new notification types (2026-09-19, ADR-212, source only, NOT deployed)
+
+Who a comment `@`-mentions is stored in `commentMentions/{kind}_{parentId}_{commentId}`,
+written by the comment callable in the same transaction as the comment and
+denied to every client in both directions. It is deliberately NOT a field on
+the comment: a Voice Moment comment is readable by the Moment's audience, so a
+mention list stored there would publish to every reader of the thread, and
+every comment reader validates an exact key set that an additive field would
+fail.
+
+A mention is a HINT from the composer, never a claim. The callable proves only
+that the list is well formed (opaque uids, caller removed, deduplicated, at
+most five). Whether a listed person may be told is decided twice by the server:
+inside the notification writer's transaction and again inside the push claim
+transaction. The mentioned person must pass the parent's OWN audience check —
+this is what stops a mention from announcing the existence of a friends-only
+Moment to somebody who cannot open it — plus both block directions and active
+account state. An ineligible id is dropped silently, so the response cannot be
+used to probe who has blocked whom. Fan-out is charged against a per-actor
+hourly budget.
+
+`notificationSourceIsCurrent` now denies by default. Before this change a type
+with no validator branch fell through to `return true` and pushed with no
+revalidation at all; the legacy types keep their historical paths through an
+explicit allow-list, and anything unregistered is refused. Server event
+reminders recheck membership and the channel ACL (including restricted-channel
+grants) per recipient at write time and at push time; role promotions recheck
+the exact membership authorization revision, so a promotion that was undone
+never rings. Demotions, removals and bans deliberately notify nobody.
+
 ## Room and club membership authority (hardened 2026-08-16)
 
 Room deletion has two deliberately separate authorities. A room owner uses

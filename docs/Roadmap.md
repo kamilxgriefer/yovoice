@@ -14,6 +14,34 @@ someone decide what to pick up next.
 
 ---
 
+## Missing notifications, slice 1 — source only, NOT deployed — 2026-09-19
+
+**Status: Done in source on `nb/notifications` (tag `nb-notifications-ready`);
+nothing deployed.** The first slice of the notification gap analysis in
+`yovoice-evidence/2026-09-19/next-build-notifications-investigation.json`:
+
+- comments (text and voice) on your Voice Moment and on your Yeel notify the
+  author, and are retired when the comment is deleted;
+- `@mentions` inside those comments notify the mentioned person, validated
+  server-side against THEIR audience and both block directions, capped at five
+  per comment and rate-budgeted per actor;
+- Server event reminders are finally delivered (Family calendar, Podcast
+  program), five minutes apart over a fifteen-minute horizon;
+- a Server role promotion and an ownership transfer tell the member.
+
+Shared groundwork in the same change: a source validator per new type with
+deny-by-default for anything unregistered, `PUSH_TITLES` and sound mapping,
+an optional `targetSubId` in the push payload, the client enum, router
+destinations, icons, copy in 41 locales, and a "Moments & Yeels" preference
+group. See ADR-212 for the reasoning and the deploy order.
+
+Deferred to the next slices: like/follow aggregation (needs an update-in-place
+row plus a `sortAt` index), Server channel mentions and per-server levels, the
+"a friend is live in a server you share" fan-out, DM reactions, and an
+@-picker in the Yeel comment composer.
+
+---
+
 ## YO Voice 3.0.0 (34) — the Slim redesign — released to testers — 2026-09-19
 
 **Status: Done for 3.0.0.** `main` carries `version: 3.0.0+34` in the release

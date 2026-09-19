@@ -838,8 +838,14 @@ through two years ahead, last at most seven days and carry a validated IANA
 timezone. `going`, `maybe` and `declined` counts change in the same transaction
 as the member's response. Family and Podcast members may additionally set the
 exact optional boolean `reminderRequested`; its count changes atomically with
-the response. This stores reminder intent only. A delivery/scheduling worker is
-a separate integration and is not claimed by this contract.
+the response. Since 2026-09-19 (ADR-212) that intent is DELIVERED:
+`sendServerEventRemindersSchedule` runs every five minutes, finds scheduled
+reminder-capable events starting within fifteen minutes through one
+`collectionGroup("events")` query (COLLECTION_GROUP index on
+`reminderOptInEnabled, status, startsAt`), and writes one
+`serverEventReminder` notification per opted-in member whose membership and
+channel ACL still hold. The notification id carries the event revision, so a
+reschedule re-arms the reminder and a cancelled event sends nothing.
 
 Firestore clients may read events and response rows only through the parent
 channel ACL; every client write is closed and all mutations go through the four
