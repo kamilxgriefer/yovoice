@@ -16,6 +16,12 @@ import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart'
 /// rule (no amplitude = static, no ticker, no randomness), the exact box
 /// contract and the StoryWaveform alias are pinned here once.
 void main() {
+  // Finders are scoped to the widget's own subtree: the harness's MaterialApp
+  // adds a CustomPaint of its own (the debug Banner) and the route's
+  // ModalBarrier an ExcludeSemantics, neither of which is the code under test.
+  Finder inWave(Type type) =>
+      find.descendant(of: find.byType(YoWaveform), matching: find.byType(type));
+
   Future<void> pump(
     WidgetTester tester,
     Widget child, {
@@ -45,7 +51,7 @@ void main() {
       ),
     );
     expect(tester.getSize(find.byType(YoWaveform)), const Size(240, 32));
-    expect(find.byType(CustomPaint), findsOneWidget);
+    expect(inWave(CustomPaint), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -69,8 +75,8 @@ void main() {
     );
     // The painter box stays 30 x 14 (five bars at pitch 6), centred; the
     // parent's 300 px never turns into fifty bars.
-    expect(tester.getSize(find.byType(CustomPaint)), const Size(30, 14));
-    final box = tester.getRect(find.byType(CustomPaint));
+    expect(tester.getSize(inWave(CustomPaint)), const Size(30, 14));
+    final box = tester.getRect(inWave(CustomPaint));
     final host = tester.getRect(find.byType(YoWaveform));
     expect(box.center.dx, closeTo(host.center.dx, .01));
   });
@@ -89,7 +95,7 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
     expect(tester.binding.hasScheduledFrame, isFalse);
     expect(tester.binding.transientCallbackCount, 0);
-    expect(find.byType(ExcludeSemantics), findsOneWidget);
+    expect(inWave(ExcludeSemantics), findsOneWidget);
     expect(
       tester.getSemantics(find.byType(YoWaveform)).getSemanticsData().label,
       isEmpty,
@@ -109,7 +115,10 @@ void main() {
         barWidth: 3,
       ),
     );
-    expect(find.byKey(const ValueKey('server-podcast-waveform')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('server-podcast-waveform')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('RTL and progress at 0, .4 and 1 render without exception', (
@@ -151,26 +160,32 @@ void main() {
     expect(YoWaveform.bars.every((value) => value > 0 && value <= 1), isTrue);
   });
 
-  testWidgets('StoryWaveform is the primitive with the Moment player defaults', (
-    tester,
-  ) async {
-    await pump(
-      tester,
-      SizedBox(width: 240, child: StoryWaveform(progress: .4)),
-      theme: AppTheme.lightTheme,
-    );
-    final wave = tester.widget<StoryWaveform>(find.byType(StoryWaveform));
-    expect(wave, isA<YoWaveform>());
-    expect(find.byType(YoWaveform), findsOneWidget);
-    expect(wave.progress, .4);
-    expect(wave.height, 44);
-    expect(wave.barWidth, isNull);
-    expect(wave.barGap, 3);
-    expect(wave.barRadius, 2);
-    expect(wave.playedColor, AppColors.secondary);
-    expect(wave.color, StoryWaveform.unplayedColor());
-    expect(StoryWaveform.unplayedColor(), AppColors.primary.withValues(alpha: .32));
-    expect(StoryWaveform.bars, same(YoWaveform.bars));
-    expect(tester.getSize(find.byType(StoryWaveform)), const Size(240, 44));
-  });
+  testWidgets(
+    'StoryWaveform is the primitive with the Moment player defaults',
+    (tester) async {
+      await pump(
+        tester,
+        SizedBox(width: 240, child: StoryWaveform(progress: .4)),
+        theme: AppTheme.lightTheme,
+      );
+      final wave = tester.widget<StoryWaveform>(find.byType(StoryWaveform));
+      expect(wave, isA<YoWaveform>());
+      // byType matches the exact runtimeType, so the subclass is found by
+      // subtype: exactly one YoWaveform-or-subclass, no wrapper, no nesting.
+      expect(find.bySubtype<YoWaveform>(), findsOneWidget);
+      expect(wave.progress, .4);
+      expect(wave.height, 44);
+      expect(wave.barWidth, isNull);
+      expect(wave.barGap, 3);
+      expect(wave.barRadius, 2);
+      expect(wave.playedColor, AppColors.secondary);
+      expect(wave.color, StoryWaveform.unplayedColor());
+      expect(
+        StoryWaveform.unplayedColor(),
+        AppColors.primary.withValues(alpha: .32),
+      );
+      expect(StoryWaveform.bars, same(YoWaveform.bars));
+      expect(tester.getSize(find.byType(StoryWaveform)), const Size(240, 44));
+    },
+  );
 }

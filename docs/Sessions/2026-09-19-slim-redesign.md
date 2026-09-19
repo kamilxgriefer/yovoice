@@ -20,6 +20,21 @@ Not migrated on purpose: `_WaveformBadge` / `_ContentBadge` (glyph badges),
 `RoomEnergyWave`, `_LevelMeter`, `VoiceCore` (real amplitude). Details and
 every visible normalisation: ADR-209, "waveform family".
 
+**Code verification (finisher, after the implementation commit).** `flutter
+analyze` clean. One bounded `flutter test --concurrency=2` over the family's
+44 targeted files plus `yo_waveform_test.dart`,
+`direct_media_fullscreen_viewer_test.dart`,
+`direct_video_audio_playback_test.dart`, `home_record_moment_card_test.dart`
+and `room_link_message_card_test.dart` (49 files): 791 passed, 4 failed, all
+four in the new `test/yo_waveform_test.dart` and all four harness bugs in that
+new file, not widget defects: three whole-tree finders also matched the
+harness `MaterialApp`'s debug `Banner` (a `CustomPaint`) and the route's
+`ModalBarrier` (an `ExcludeSemantics`), and `find.byType(YoWaveform)` can
+never match the `StoryWaveform` subclass (`byType` is exact `runtimeType`).
+Fix: the finders are scoped to the `YoWaveform` subtree and the subclass
+assertion uses `find.bySubtype<YoWaveform>()`; no expected value changed. The
+file then passes 7/7; no `lib/` change was needed.
+
 **Frames.** `yovoice-evidence/2026-09-19/slim-0-waveform-frames/{before,after}/`.
 `before/` holds the Build 33 run of the existing harnesses
 (`test/desktop_screenshot.dart`, `test/moments_discovery_screenshot.dart`,
