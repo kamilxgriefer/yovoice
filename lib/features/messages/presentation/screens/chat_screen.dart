@@ -1799,7 +1799,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         // one dismissal iOS users reach for first.
                         keyboardDismissBehavior:
                             ScrollViewKeyboardDismissBehavior.onDrag,
-                        padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
                         itemCount:
                             queuedMedia.length +
                             queuedMessages.length +
@@ -2037,7 +2037,7 @@ class _ChatHeader extends StatelessWidget {
         );
         return Container(
           key: const ValueKey('chat-header'),
-          padding: const EdgeInsets.fromLTRB(7, 8, 8, 8),
+          padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
           decoration: BoxDecoration(
             color: palette.navigationSurface.withValues(alpha: .96),
             border: Border(bottom: BorderSide(color: palette.border)),
@@ -2047,14 +2047,23 @@ class _ChatHeader extends StatelessWidget {
               // Four action targets must not reduce the person's identity to
               // a few letters. The stream stays above this responsive layout
               // so resizing never re-subscribes to a single-use presence stream.
-              final reflowActions =
-                  constraints.maxWidth < 460 ||
-                  (constraints.maxWidth < 640 &&
-                      MediaQuery.textScalerOf(context).scale(14) > 20);
+              //
+              // Slim title row (ADR-209): 44 px targets and a row of at most
+              // 56 px. On a phone the role badge and presence move to one
+              // quiet line under the name while the call actions stay in the
+              // title row; only a very narrow or large-text header also
+              // gives the actions their own row, as before.
+              final largeText =
+                  constraints.maxWidth < 640 &&
+                  MediaQuery.textScalerOf(context).scale(14) > 20;
+              final reflowActions = constraints.maxWidth < 460 || largeText;
+              final actionsOwnRow =
+                  largeText || constraints.maxWidth < _actionsInlineMinWidth;
               final children = <Widget>[
                 IconButton(
                   onPressed: onBack,
                   tooltip: copy.text('Back to chats', 'Wróć do czatów'),
+                  style: _actionStyle,
                   icon: Icon(
                     Icons.arrow_back_ios_new_rounded,
                     color: palette.textPrimary,
@@ -2071,7 +2080,7 @@ class _ChatHeader extends StatelessWidget {
                     ),
                     child: InkWell(
                       onTap: onProfileTap,
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(12),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 2),
                         child: Row(
@@ -2082,9 +2091,9 @@ class _ChatHeader extends StatelessWidget {
                               url: photoUrl,
                               mediaRevision: mediaRevision,
                               profileMediaService: profileMediaService,
-                              radius: 20,
+                              radius: _avatarRadius,
                             ),
-                            const SizedBox(width: 11),
+                            const SizedBox(width: _avatarGap),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2101,7 +2110,7 @@ class _ChatHeader extends StatelessWidget {
                                         style: TextStyle(
                                           color: palette.textPrimary,
                                           fontSize: 15,
-                                          fontWeight: FontWeight.w900,
+                                          fontWeight: FontWeight.w800,
                                         ),
                                       ),
                                       if (!reflowActions)
@@ -2123,6 +2132,7 @@ class _ChatHeader extends StatelessWidget {
                 ),
                 IconButton(
                   onPressed: callBusy ? null : onCall,
+                  style: _actionStyle,
                   tooltip: callBusy
                       ? copy.text(
                           'Starting voice call',
@@ -2144,6 +2154,7 @@ class _ChatHeader extends StatelessWidget {
                 ),
                 IconButton(
                   onPressed: callBusy ? null : onVideoCall,
+                  style: _actionStyle,
                   tooltip: callBusy
                       ? copy.text('Starting call', 'Rozpoczynanie połączenia')
                       : copy.text(
@@ -2167,6 +2178,7 @@ class _ChatHeader extends StatelessWidget {
                 else
                   PopupMenuButton<String>(
                     tooltip: copy.text('Conversation options', 'Opcje rozmowy'),
+                    style: _actionStyle,
                     color: palette.surfaceRaised,
                     icon: Icon(
                       Icons.more_horiz_rounded,
@@ -2279,19 +2291,31 @@ class _ChatHeader extends StatelessWidget {
                   Row(
                     children: [
                       ...children.take(2),
-                      if (!reflowActions) ...children.skip(2),
+                      if (!actionsOwnRow) ...children.skip(2),
                     ],
                   ),
                   if (reflowActions)
-                    Wrap(
-                      spacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        UserIdentityBadges(uid: userId),
-                        presenceStatus,
-                      ],
+                    Padding(
+                      // Under the name, not under Back: the metadata line
+                      // belongs to the identity it describes.
+                      padding: EdgeInsetsDirectional.only(
+                        start: actionsOwnRow ? 0 : _metadataIndent,
+                        bottom: 2,
+                      ),
+                      child: Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 2,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            UserIdentityBadges(uid: userId),
+                            presenceStatus,
+                          ],
+                        ),
+                      ),
                     ),
-                  if (reflowActions)
+                  if (actionsOwnRow)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: children.skip(2).toList(),
@@ -2304,6 +2328,29 @@ class _ChatHeader extends StatelessWidget {
       },
     );
   }
+
+  /// Every header action is a 44 px target: the Slim minimum, pinned on
+  /// every platform (no compact desktop density, no 48 px padded hit box
+  /// that would push the title row past 56 px).
+  static final ButtonStyle _actionStyle = IconButton.styleFrom(
+    fixedSize: const Size.square(44),
+    minimumSize: const Size.square(44),
+    padding: EdgeInsets.zero,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    visualDensity: VisualDensity.standard,
+  );
+
+  /// 40 px: inside the 40–48 avatar band, and the radius the chat-route
+  /// tests locate the header avatar by.
+  static const double _avatarRadius = 20;
+  static const double _avatarGap = 10;
+
+  /// Back (44) plus the avatar and its gap: the name's leading edge.
+  static const double _metadataIndent = 44 + _avatarRadius * 2 + _avatarGap;
+
+  /// Below this width the name would be left a few letters beside Back and
+  /// three call actions, so the actions keep their own row as before.
+  static const double _actionsInlineMinWidth = 340;
 
   static Color _presenceColor(ChatPresence? presence, AppPalette palette) {
     final status = PeopleStatus.fromPresence(
@@ -2356,8 +2403,10 @@ class _ArchiveBusyControl extends StatelessWidget {
         child: Tooltip(
           message: label,
           excludeFromSemantics: true,
+          // The same 44 px slot as the options button it stands in for, so the
+          // slim title row does not grow while the archive is in flight.
           child: SizedBox.square(
-            dimension: 48,
+            dimension: 44,
             child: Center(
               child: reduceMotion
                   ? Icon(
@@ -2496,14 +2545,39 @@ class _DateDivider extends StatelessWidget {
         ? copy.yesterday
         : copy.calendarDate(date);
 
+    // Slim date separator: a 1 px hairline either side of the day, the day
+    // itself as quiet 11 px meta. The label may take two lines at a large
+    // text size rather than push the hairlines off the row.
+    final rule = Expanded(
+      child: Divider(height: 1, thickness: 1, color: palette.border),
+    );
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: palette.textSecondary,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(
+          children: [
+            rule,
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: (constraints.maxWidth - 48).clamp(0, double.infinity),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+            rule,
+          ],
         ),
       ),
     );
@@ -2604,8 +2678,8 @@ class _TypingDotState extends State<_TypingDot>
       child: Container(
         width: 6,
         height: 6,
-        decoration: const BoxDecoration(
-          color: Color(0xFFC35CFF),
+        decoration: BoxDecoration(
+          color: context.appPalette.focus,
           shape: BoxShape.circle,
         ),
       ),
@@ -2626,7 +2700,7 @@ class _ReplyPreview extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+      padding: const EdgeInsets.fromLTRB(14, 6, 4, 6),
       decoration: BoxDecoration(
         color: palette.surfaceRaised,
         border: Border(top: BorderSide(color: palette.border)),
@@ -2635,15 +2709,15 @@ class _ReplyPreview extends StatelessWidget {
         children: [
           Container(
             width: 3,
-            height: 37,
+            height: 34,
             decoration: BoxDecoration(
-              color: const Color(0xFFC05AFF),
+              color: palette.focus,
               borderRadius: BorderRadius.circular(20),
             ),
           ),
-          const SizedBox(width: 11),
-          const Icon(Icons.reply_rounded, color: Color(0xFFC05AFF), size: 20),
-          const SizedBox(width: 9),
+          const SizedBox(width: 10),
+          Icon(Icons.reply_rounded, color: palette.focus, size: 20),
+          const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3241,13 +3315,18 @@ class _Composer extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
 
+    // Slim composer (ADR-209): one 48 px row — a 48 px tonal media button
+    // and a 48 px field (radius 12, 1 px outline, 2 px focus edge drawn on
+    // top so focus never moves the text). Visual only: the field, its
+    // formatter, onTapOutside, the tap region and Back handling above are
+    // exactly as they were.
     return Container(
       key: const ValueKey('chat-composer'),
       padding: EdgeInsets.fromLTRB(
-        10,
-        9,
-        10,
-        10 + MediaQuery.paddingOf(context).bottom,
+        8,
+        6,
+        8,
+        6 + MediaQuery.paddingOf(context).bottom,
       ),
       decoration: BoxDecoration(
         color: palette.navigationSurface,
@@ -3264,6 +3343,14 @@ class _Composer extends StatelessWidget {
             style: IconButton.styleFrom(
               backgroundColor: palette.surfaceMuted,
               foregroundColor: palette.textPrimary,
+              fixedSize: const Size.square(_composerHeight),
+              minimumSize: const Size.square(_composerHeight),
+              padding: EdgeInsets.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.standard,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             icon: sendingMedia
                 ? SizedBox(
@@ -3274,15 +3361,32 @@ class _Composer extends StatelessWidget {
                       color: colors.primary,
                     ),
                   )
-                : const Icon(Icons.camera_alt_outlined),
+                : const Icon(Icons.camera_alt_outlined, size: 22),
           ),
-          const SizedBox(width: 7),
+          const SizedBox(width: 6),
           Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: palette.surfaceRaised,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: palette.borderStrong),
+            child: ListenableBuilder(
+              listenable: focusNode,
+              builder: (context, field) => Container(
+                constraints: const BoxConstraints(minHeight: _composerHeight),
+                decoration: BoxDecoration(
+                  color: palette.surfaceRaised,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: palette.borderStrong),
+                ),
+                // Always present (transparent when unfocused): toggling the
+                // decoration on and off would change the tree above the
+                // TextField and cost it its state and focus.
+                foregroundDecoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: focusNode.hasFocus
+                        ? palette.focus
+                        : Colors.transparent,
+                    width: 2,
+                  ),
+                ),
+                child: field,
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -3311,12 +3415,23 @@ class _Composer extends StatelessWidget {
                         // row and read as broken. Ellipsize instead.
                         hintMaxLines: 1,
                         hintStyle: TextStyle(color: palette.textTertiary),
+                        // The container above owns the one outline and the
+                        // focus edge; the theme's field outline would draw
+                        // a second box inside it.
+                        filled: false,
+                        // Dense, so the field is its line plus the padding
+                        // below (46 px inside the 1 px outline), not the
+                        // 48 px default floor plus the outline.
+                        isDense: true,
                         border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        disabledBorder: InputBorder.none,
                         contentPadding: const EdgeInsets.fromLTRB(
-                          15,
-                          12,
-                          8,
-                          12,
+                          14,
+                          11,
+                          6,
+                          11,
                         ),
                       ),
                       onSubmitted: (_) => onSend(),
@@ -3325,10 +3440,17 @@ class _Composer extends StatelessWidget {
                       onTap: emojiPickerOpen ? onToggleEmoji : null,
                     ),
                   ),
-                  YoEmojiComposerButton(
-                    open: emojiPickerOpen,
-                    onPressed: onToggleEmoji,
-                    color: palette.textTertiary,
+                  // A tight slot: the shared button would otherwise pad its
+                  // hit box to 48 px on touch platforms and push the field
+                  // past 48 px. 46 px stays above the 44 px minimum.
+                  SizedBox.square(
+                    dimension: _fieldActionSize,
+                    child: YoEmojiComposerButton(
+                      open: emojiPickerOpen,
+                      onPressed: onToggleEmoji,
+                      color: palette.textTertiary,
+                      size: _fieldActionSize,
+                    ),
                   ),
                   ValueListenableBuilder<TextEditingValue>(
                     valueListenable: controller,
@@ -3349,6 +3471,7 @@ class _Composer extends StatelessWidget {
                             ? IconButton(
                                 key: const ValueKey('saving'),
                                 onPressed: null,
+                                style: _fieldActionStyle,
                                 tooltip: copy.text(
                                   'Saving message',
                                   'Zapisywanie wiadomości',
@@ -3366,6 +3489,7 @@ class _Composer extends StatelessWidget {
                             ? IconButton(
                                 key: const ValueKey('send'),
                                 onPressed: onSend,
+                                style: _fieldActionStyle,
                                 tooltip: copy.text('Send', 'Wyślij'),
                                 icon: Icon(
                                   Icons.send_rounded,
@@ -3375,6 +3499,7 @@ class _Composer extends StatelessWidget {
                             : IconButton(
                                 key: const ValueKey('voice'),
                                 onPressed: sendingMedia ? null : onVoice,
+                                style: _fieldActionStyle,
                                 tooltip: copy.text(
                                   'Record voice message',
                                   'Nagraj wiadomość głosową',
@@ -3395,6 +3520,22 @@ class _Composer extends StatelessWidget {
       ),
     );
   }
+
+  /// The composer row's height at 1.0 text: the media button and the
+  /// field (its 1 px outline included) are both exactly this tall.
+  static const double _composerHeight = 48;
+
+  /// The actions inside the field fill it edge to edge (48 minus the 1 px
+  /// outline top and bottom) and stay above the 44 px target minimum.
+  static const double _fieldActionSize = _composerHeight - 2;
+
+  static final ButtonStyle _fieldActionStyle = IconButton.styleFrom(
+    fixedSize: const Size.square(_fieldActionSize),
+    minimumSize: const Size.square(_fieldActionSize),
+    padding: EdgeInsets.zero,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    visualDensity: VisualDensity.standard,
+  );
 }
 
 class _ConversationHistoryErrorBanner extends StatelessWidget {
@@ -3960,7 +4101,8 @@ class _Avatar extends StatelessWidget {
     return UserAvatar(
       radius: radius,
       userId: userId,
-      backgroundColor: const Color(0xFF7B25E8),
+      // The brand violet by name instead of a near-identical inline hex.
+      backgroundColor: AppColors.primary,
       photoUrl: url,
       mediaRevision: mediaRevision,
       mediaService: profileMediaService,

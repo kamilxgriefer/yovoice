@@ -515,13 +515,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
                     ),
                     SliverToBoxAdapter(
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 13),
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
                         child: _SearchField(controller: _searchController),
                       ),
                     ),
                     SliverToBoxAdapter(
                       child: Padding(
-                        padding: const EdgeInsets.only(bottom: 9),
+                        padding: const EdgeInsets.only(bottom: 4),
                         child: _FriendsRow(
                           friends: friends,
                           onFriendSelected: _startChat,
@@ -601,50 +601,73 @@ class _MessagesScreenState extends State<MessagesScreen> {
                         );
                       }
 
-                      return ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(14, 4, 14, 118),
-                        itemCount: conversations.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 4),
-                        itemBuilder: (context, index) {
-                          final conversation = conversations[index];
-                          final muted = conversation.isMutedFor(currentUserId);
-                          final otherUserId = conversation.otherUserId(
-                            currentUserId,
-                          );
-                          final liveFriend = friendsById[otherUserId];
+                      // One scroll view: the group label rides with the rows it
+                      // names, and the rows stay lazy. The label exists only
+                      // when there is a row under it (a section title is a
+                      // promise about content).
+                      return CustomScrollView(
+                        slivers: [
+                          SliverToBoxAdapter(
+                            child: _ConversationsGroupLabel(
+                              label: AppLocalizations.of(
+                                context,
+                              ).text('Messages', 'Wiadomości'),
+                            ),
+                          ),
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(8, 0, 8, 118),
+                            sliver: SliverList.separated(
+                              itemCount: conversations.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 2),
+                              itemBuilder: (context, index) {
+                                final conversation = conversations[index];
+                                final muted = conversation.isMutedFor(
+                                  currentUserId,
+                                );
+                                final otherUserId = conversation.otherUserId(
+                                  currentUserId,
+                                );
+                                final liveFriend = friendsById[otherUserId];
 
-                          return _ConversationTile(
-                            conversation: conversation,
-                            currentUserId: currentUserId,
-                            liveFriend: liveFriend,
-                            muted: muted,
-                            preferenceBusy: _preferenceUpdatesInFlight.contains(
-                              conversation.id,
+                                return _ConversationTile(
+                                  conversation: conversation,
+                                  currentUserId: currentUserId,
+                                  liveFriend: liveFriend,
+                                  muted: muted,
+                                  preferenceBusy: _preferenceUpdatesInFlight
+                                      .contains(conversation.id),
+                                  service: _messageService,
+                                  onTap: () => _openConversation(
+                                    conversation,
+                                    liveFriend: liveFriend,
+                                  ),
+                                  onOpenProfile: () => showProfilePreview(
+                                    context,
+                                    userId: otherUserId,
+                                    displayName:
+                                        liveFriend?.displayName ??
+                                        conversation.displayNameFor(
+                                          otherUserId,
+                                        ),
+                                    photoUrl: liveFriend?.photoUrl ?? '',
+                                    firestore: widget.firestore,
+                                    auth: _auth,
+                                    messageService: _messageService,
+                                  ),
+                                  onArchive: () =>
+                                      _archiveConversation(conversation),
+                                  onUnarchive: () =>
+                                      _unarchiveConversation(conversation),
+                                  onToggleMute: () =>
+                                      _toggleMute(conversation, muted),
+                                  onDelete: () =>
+                                      _deleteConversation(conversation),
+                                );
+                              },
                             ),
-                            service: _messageService,
-                            onTap: () => _openConversation(
-                              conversation,
-                              liveFriend: liveFriend,
-                            ),
-                            onOpenProfile: () => showProfilePreview(
-                              context,
-                              userId: otherUserId,
-                              displayName:
-                                  liveFriend?.displayName ??
-                                  conversation.displayNameFor(otherUserId),
-                              photoUrl: liveFriend?.photoUrl ?? '',
-                              firestore: widget.firestore,
-                              auth: _auth,
-                              messageService: _messageService,
-                            ),
-                            onArchive: () => _archiveConversation(conversation),
-                            onUnarchive: () =>
-                                _unarchiveConversation(conversation),
-                            onToggleMute: () =>
-                                _toggleMute(conversation, muted),
-                            onDelete: () => _deleteConversation(conversation),
-                          );
-                        },
+                          ),
+                        ],
                       );
                     },
                   ),
@@ -686,8 +709,11 @@ class _MessagesHeader extends StatelessWidget {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
 
+    // Slim title row (ADR-209): a 22 px w800 title on the left, two 44 px
+    // actions on the right, no card behind it, and the row itself stays
+    // within 56 px at 1.0 text.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+      padding: const EdgeInsets.fromLTRB(16, 6, 12, 6),
       child: Row(
         children: [
           Expanded(
@@ -700,12 +726,13 @@ class _MessagesHeader extends StatelessWidget {
                       : copy.text('Chats', 'Czaty'),
                   style: TextStyle(
                     color: palette.textPrimary,
-                    fontSize: 30,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -.9,
+                    fontSize: 22,
+                    height: 1.15,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -.4,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Text(
                   showArchived
                       ? copy.text(
@@ -716,7 +743,11 @@ class _MessagesHeader extends StatelessWidget {
                           'Private conversations with your friends.',
                           'Prywatne rozmowy ze znajomymi.',
                         ),
-                  style: TextStyle(color: palette.textSecondary, fontSize: 13),
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 12.5,
+                    height: 1.3,
+                  ),
                 ),
               ],
             ),
@@ -731,7 +762,7 @@ class _MessagesHeader extends StatelessWidget {
                   ),
             onTap: onToggleArchived,
           ),
-          const SizedBox(width: 9),
+          const SizedBox(width: 4),
           _HeaderButton(
             icon: Icons.edit_square,
             tooltip: copy.text(
@@ -765,28 +796,27 @@ class _HeaderButton extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
 
+    // 44 px targets. Only the primary action (New message) carries the
+    // screen's one accent; the other is a bare icon with no card behind it.
     return Tooltip(
       message: tooltip,
       excludeFromSemantics: true,
       child: AccessibleTapRegion(
         semanticLabel: tooltip,
         onTap: onTap,
-        borderRadius: 15,
+        borderRadius: 12,
         child: Container(
-          width: 46,
-          height: 46,
+          width: 44,
+          height: 44,
           decoration: BoxDecoration(
-            color: highlighted ? colors.primary : palette.surfaceRaised,
-            borderRadius: BorderRadius.circular(15),
-            border: highlighted
-                ? null
-                : Border.all(color: palette.borderStrong),
+            color: highlighted ? colors.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
           ),
           child: ExcludeSemantics(
             child: Icon(
               icon,
               color: highlighted ? colors.onPrimary : palette.textPrimary,
-              size: 21,
+              size: 22,
             ),
           ),
         ),
@@ -828,17 +858,17 @@ class _SearchField extends StatelessWidget {
         ),
         filled: true,
         fillColor: palette.surfaceRaised,
-        contentPadding: const EdgeInsets.symmetric(vertical: 13),
+        contentPadding: const EdgeInsets.symmetric(vertical: 12),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(17),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: palette.border),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(17),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: palette.border),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(17),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: palette.focus, width: 2),
         ),
       ),
@@ -869,7 +899,7 @@ class _FriendsRow extends StatelessWidget {
       height: height,
       child: ListView(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 18),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
         children: [
           _FriendStory(
             key: const ValueKey('messages-add-friend'),
@@ -927,6 +957,15 @@ class _FriendStory extends StatelessWidget {
     final user = friend;
     final hasPhoto = user?.photoUrl?.trim().isNotEmpty == true;
     final palette = context.appPalette;
+    // The one presence mapping (ADR-150): offline wins, `away` reads as be
+    // right back, `busy` as do not disturb. Only a real friend carries it;
+    // the two action tiles have no presence at all.
+    final status = user == null
+        ? null
+        : PeopleStatus.fromPresence(
+            isOnline: user.isOnline,
+            availability: user.availability,
+          );
 
     return AccessibleTapRegion(
       onTap: onTap,
@@ -944,11 +983,11 @@ class _FriendStory extends StatelessWidget {
                 children: [
                   Container(
                     padding: const EdgeInsets.all(2),
-                    // A quiet hairline, never a story gradient: this rail
-                    // carries no Moments state, so a brand ring here would
-                    // falsely read as "unheard" (ADR-209, story-tile row).
-                    // Phase 3 restyles the rail around PeopleStatus; the
-                    // geometry (2 px band, radius-27 avatar) is unchanged.
+                    // A quiet hairline, never a story gradient and never a
+                    // status ring: this rail carries no Moments state, and
+                    // presence is already the dot below. One presence mark
+                    // per avatar (ADR-209, presence dot); the geometry
+                    // (2 px band, radius-27 avatar) is unchanged.
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: palette.border,
@@ -962,12 +1001,12 @@ class _FriendStory extends StatelessWidget {
                       fallbackIcon: icon,
                     ),
                   ),
-                  if (user?.isOnline == true)
+                  if (status != null && status != PeopleStatus.away)
                     Positioned(
                       right: 2,
                       bottom: 2,
                       child: AvailabilityDot(
-                        status: PeopleStatus.online,
+                        status: status,
                         size: 15,
                         borderColor: palette.background,
                         borderWidth: 3,
@@ -975,13 +1014,17 @@ class _FriendStory extends StatelessWidget {
                     ),
                 ],
               ),
-              const SizedBox(height: 7),
+              const SizedBox(height: 6),
               Text(
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: palette.textSecondary, fontSize: 11),
+                style: TextStyle(
+                  color: palette.textSecondary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ],
           ),
@@ -1048,7 +1091,13 @@ class _ConversationTile extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
     final isUnread = unread > 0;
-    final radius = BorderRadius.circular(18);
+    // One flat row, radius 12, a 1 px hairline only where the unread wash
+    // needs an edge. At 1.0 text the row is exactly 68 px: the 58 px avatar
+    // plus 5 px above and below. The unread hairline insets the child by
+    // its own width, so that row gives the pixel back and both rows keep the
+    // same height and the same avatar column.
+    final radius = BorderRadius.circular(12);
+    final edge = isUnread ? 1.0 : 0.0;
 
     return AnimatedContainer(
       key: ValueKey('conversation-row-${conversation.id}'),
@@ -1057,9 +1106,7 @@ class _ConversationTile extends StatelessWidget {
       decoration: BoxDecoration(
         color: isUnread ? colors.primaryContainer : Colors.transparent,
         borderRadius: radius,
-        border: isUnread
-            ? Border.all(color: colors.primary.withValues(alpha: .42))
-            : null,
+        border: isUnread ? Border.all(color: palette.border) : null,
       ),
       child: Material(
         color: Colors.transparent,
@@ -1070,7 +1117,10 @@ class _ConversationTile extends StatelessWidget {
           onLongPress: preferenceBusy ? null : () => _showActions(context),
           borderRadius: radius,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            padding: EdgeInsets.symmetric(
+              horizontal: 8 - edge,
+              vertical: (enlargedText ? 10 : 5) - edge,
+            ),
             child: enlargedText
                 ? Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1115,12 +1165,18 @@ class _ConversationTile extends StatelessWidget {
                                     size: 18,
                                   ),
                                 if (isUnread)
-                                  _UnreadBadge(
-                                    key: ValueKey(
-                                      'conversation-unread-badge-${conversation.id}',
+                                  // A Wrap hands its children the full run
+                                  // width, and the badge's centring box
+                                  // would fill it — a counter the width of
+                                  // the row. Size it to its own content.
+                                  IntrinsicWidth(
+                                    child: _UnreadBadge(
+                                      key: ValueKey(
+                                        'conversation-unread-badge-${conversation.id}',
+                                      ),
+                                      count: unread,
+                                      enlarged: true,
                                     ),
-                                    count: unread,
-                                    enlarged: true,
                                   ),
                               ],
                             ),
@@ -1138,8 +1194,8 @@ class _ConversationTile extends StatelessWidget {
                           color: palette.textPrimary,
                           fontSize: 15,
                           fontWeight: unread > 0
-                              ? FontWeight.w900
-                              : FontWeight.w700,
+                              ? FontWeight.w800
+                              : FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 5),
@@ -1169,7 +1225,7 @@ class _ConversationTile extends StatelessWidget {
                         service: service,
                         onOpenProfile: onOpenProfile,
                       ),
-                      const SizedBox(width: 13),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1185,8 +1241,8 @@ class _ConversationTile extends StatelessWidget {
                                       color: palette.textPrimary,
                                       fontSize: 15,
                                       fontWeight: unread > 0
-                                          ? FontWeight.w900
-                                          : FontWeight.w700,
+                                          ? FontWeight.w800
+                                          : FontWeight.w600,
                                     ),
                                   ),
                                 ),
@@ -1203,13 +1259,13 @@ class _ConversationTile extends StatelessWidget {
                                         : palette.textTertiary,
                                     fontSize: 11,
                                     fontWeight: unread > 0
-                                        ? FontWeight.w800
+                                        ? FontWeight.w700
                                         : FontWeight.w500,
                                   ),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 5),
+                            const SizedBox(height: 4),
                             Row(
                               children: [
                                 Expanded(
@@ -1223,7 +1279,7 @@ class _ConversationTile extends StatelessWidget {
                                           : palette.textSecondary,
                                       fontSize: 13,
                                       fontWeight: unread > 0
-                                          ? FontWeight.w700
+                                          ? FontWeight.w600
                                           : FontWeight.w400,
                                     ),
                                   ),
@@ -1385,6 +1441,43 @@ class _ConversationTile extends StatelessWidget {
   }
 }
 
+/// The "WIADOMOŚCI" group label above the conversation rows: the Slim group
+/// label (11 px, w700, uppercase, .08em tracking) drawn from the existing
+/// `Messages` / `Wiadomości` copy. The capitals are presentation only, so a
+/// screen reader hears the word as a heading, not letter by letter.
+class _ConversationsGroupLabel extends StatelessWidget {
+  const _ConversationsGroupLabel({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+
+    return Padding(
+      key: const ValueKey('messages-group-label'),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+      child: Semantics(
+        header: true,
+        label: label,
+        child: ExcludeSemantics(
+          child: Text(
+            label.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: palette.textSecondary,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 11 * .08,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _UnreadBadge extends StatelessWidget {
   const _UnreadBadge({required this.count, this.enlarged = false, super.key});
 
@@ -1477,6 +1570,12 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
       stream: _presence,
       builder: (context, snapshot) {
         final online = snapshot.data?.isOnline ?? false;
+        // The dot draws the same PeopleStatus the chat header prints, so a
+        // "do not disturb" friend is not shown as plainly online here.
+        final status = PeopleStatus.fromPresence(
+          isOnline: online,
+          availability: snapshot.data?.availability,
+        );
         final palette = context.appPalette;
         final copy = AppLocalizations.of(context);
 
@@ -1520,12 +1619,12 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
                   mediaRevision: widget.mediaRevision,
                   displayName: name,
                 ),
-                if (online)
+                if (status != PeopleStatus.away)
                   Positioned(
                     right: 1,
                     bottom: 1,
                     child: AvailabilityDot(
-                      status: PeopleStatus.online,
+                      status: status,
                       size: 16,
                       borderColor: palette.background,
                       borderWidth: 3,
@@ -2309,31 +2408,31 @@ class _EmptyMessages extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Flat tonal tile instead of a decorative two-hex gradient
+                // (Slim: no gradients on cards, palette roles only).
                 Container(
-                  width: 78,
-                  height: 78,
+                  width: 64,
+                  height: 64,
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFFB82FFF), Color(0xFF6D19E7)],
-                    ),
-                    borderRadius: BorderRadius.circular(26),
+                    color: colors.primaryContainer,
+                    borderRadius: BorderRadius.circular(16),
                   ),
                   child: Icon(
                     archived
                         ? Icons.archive_outlined
                         : Icons.chat_bubble_outline_rounded,
-                    color: Colors.white,
-                    size: 36,
+                    color: colors.onPrimaryContainer,
+                    size: 30,
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
                 Text(
                   title,
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: palette.textPrimary,
-                    fontSize: 21,
-                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 8),
