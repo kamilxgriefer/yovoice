@@ -143,6 +143,7 @@ Future<void> showProfilePreview(
               followService: resolvedDestination.followService,
               socialGraphService: resolvedDestination.socialGraphService,
               profileMediaService: resolvedDestination.profileMediaService,
+              isFriend: resolvedDestination.isFriend,
             ),
           ),
         );
@@ -184,6 +185,7 @@ class _FullProfileDestination extends _ProfilePreviewDestination {
     required this.followService,
     required this.socialGraphService,
     required this.profileMediaService,
+    required this.isFriend,
   });
 
   final FriendUser friend;
@@ -195,6 +197,11 @@ class _FullProfileDestination extends _ProfilePreviewDestination {
   final FollowService followService;
   final SocialGraphService socialGraphService;
   final ProfileMediaService? profileMediaService;
+
+  /// The relationship this sheet had resolved when "View full profile" was
+  /// tapped, so the full profile never offers a non-friend friend-only
+  /// actions.
+  final bool isFriend;
 }
 
 class ProfilePreviewSheet extends StatefulWidget {
@@ -384,6 +391,7 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
         followService: _follows,
         socialGraphService: _socialGraph,
         profileMediaService: widget.profileMediaService,
+        isFriend: _relationship == FriendRelationshipStatus.friends,
       ),
     );
   }
