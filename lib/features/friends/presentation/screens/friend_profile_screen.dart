@@ -21,10 +21,10 @@ import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
-import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
@@ -371,44 +371,30 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                       slivers: [
                         SliverToBoxAdapter(child: _header()),
                         SliverPadding(
-                          padding: const EdgeInsets.fromLTRB(20, 18, 20, 40),
+                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
                           sliver: SliverList.list(
                             children: [
+                              // Slim header (phase 5): banner, then the
+                              // identity row (avatar + name + handle +
+                              // presence), the stats row and the action bar
+                              // — the same pieces, in the same order, as the
+                              // own profile's ProfileHeader. The banner stays
+                              // fully above the avatar here.
                               _banner(profile),
-                              const SizedBox(height: 14),
-                              _avatar(profile),
-                              const SizedBox(height: 16),
-                              Text(
-                                profile?.displayName ??
-                                    widget.friend.displayName,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: palette.textPrimary,
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              if ((profile?.username ?? '').isNotEmpty)
-                                Text(
-                                  '@${profile!.username.replaceAll(' ', '').toLowerCase()}',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: palette.textSecondary,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                              const SizedBox(height: 8),
-                              Center(
+                              const SizedBox(height: 12),
+                              _identity(profile),
+                              const SizedBox(height: 10),
+                              Align(
+                                alignment: AlignmentDirectional.centerStart,
                                 child: UserIdentityBadges(
                                   uid: widget.friend.id,
                                   variant: IdentityBadgeVariant.full,
                                 ),
                               ),
-                              const SizedBox(height: 12),
-                              Center(child: _status()),
                               if ((profile?.bio ?? '').trim().isNotEmpty) ...[
-                                const SizedBox(height: 18),
-                                Center(
+                                const SizedBox(height: 10),
+                                Align(
+                                  alignment: AlignmentDirectional.centerStart,
                                   child: ConstrainedBox(
                                     key: const ValueKey(
                                       'friend-profile-bio-frame',
@@ -418,7 +404,6 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                                     ),
                                     child: Text(
                                       profile!.bio,
-                                      textAlign: TextAlign.center,
                                       style: TextStyle(
                                         color: palette.textSecondary,
                                         height: 1.45,
@@ -427,35 +412,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                                   ),
                                 ),
                               ],
-                              const SizedBox(height: 22),
-                              _socialStats(profile),
                               const SizedBox(height: 14),
-                              _mutualFriends(),
-                              const SizedBox(height: 18),
-                              _profileActions(
-                                isFollowing,
-                                creatorAudienceVisible:
-                                    profile?.canExposeCreatorAudience == true,
-                              ),
-                              if (profile != null &&
-                                  profile.accountType != AccountType.personal)
-                                CreatorPinnedMomentCard(
-                                  creatorId: widget.friend.id,
-                                  service: widget.creatorPinnedPostService,
-                                  outerPadding: const EdgeInsets.only(top: 14),
-                                  onOpen: (moment) =>
-                                      Navigator.of(context).push<void>(
-                                        MaterialPageRoute<void>(
-                                          builder: (_) =>
-                                              CreatorPinnedMomentScreen(
-                                                moment: moment,
-                                              ),
-                                        ),
-                                      ),
-                                ),
-                              const SizedBox(height: 14),
-                              _voiceIdentity(profile),
-                              const SizedBox(height: 26),
+                              _profileBody(profile, isFollowing),
+                              const SizedBox(height: 20),
                               TextButton.icon(
                                 onPressed: _removingFriend
                                     ? null
@@ -542,10 +501,12 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           Expanded(
             child: Text(
               copy.text('Profile', 'Profil'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: palette.textPrimary,
-                fontSize: 22,
-                fontWeight: FontWeight.w900,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ),
@@ -580,7 +541,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             width: double.infinity,
             height: height,
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(22),
+              borderRadius: BorderRadius.circular(12),
               child: ProfileBanner(
                 userId: widget.friend.id,
                 mediaRevision: revision,
@@ -593,36 +554,153 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     );
   }
 
-  Widget _avatar(UserProfile? profile) {
+  Widget _avatar(UserProfile? profile, {required double radius}) {
     final name = profile?.displayName ?? widget.friend.displayName;
     final revision =
         profile?.profileUpdatedAt ?? widget.friend.profileUpdatedAt;
-    return Center(
-      child: ProfilePhotoButton(
-        userId: widget.friend.id,
-        displayName: name,
-        mediaRevision: revision,
-        mediaService: _profileMediaService,
-        minimumSize: const Size(124, 124),
-        child: Container(
-          padding: const EdgeInsets.all(4),
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: LinearGradient(
-              colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
-            ),
-          ),
-          child: UserAvatar(
-            radius: 58,
-            userId: widget.friend.id,
-            mediaRevision: revision,
-            mediaService: _profileMediaService,
-            displayName: name,
-            backgroundColor: context.appPalette.surfaceSunken,
-            premium: profile?.premiumIdentity ?? widget.friend.premiumIdentity,
-          ),
+    const ring = 3.0;
+    final extent = (radius + ring) * 2;
+    return ProfilePhotoButton(
+      userId: widget.friend.id,
+      displayName: name,
+      mediaRevision: revision,
+      mediaService: _profileMediaService,
+      minimumSize: Size(extent, extent),
+      // Slim: a flat hairline ring from the palette (the former violet →
+      // magenta hex gradient was decoration, not state).
+      child: Container(
+        padding: const EdgeInsets.all(ring),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: context.appPalette.background,
+          border: Border.all(color: context.appPalette.border),
+        ),
+        child: UserAvatar(
+          radius: radius,
+          userId: widget.friend.id,
+          mediaRevision: revision,
+          mediaService: _profileMediaService,
+          displayName: name,
+          backgroundColor: context.appPalette.surfaceSunken,
+          premium: profile?.premiumIdentity ?? widget.friend.premiumIdentity,
         ),
       ),
+    );
+  }
+
+  /// Stats, actions, mutual friends, the pinned Moment and the Voice identity
+  /// as ONE group: the profile's social block reads (and scrolls, and is
+  /// announced) as a unit, the way the own profile groups them under its
+  /// header.
+  Widget _profileBody(UserProfile? profile, bool isFollowing) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // The same readable measure as the own profile header's counters
+        // and buttons.
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 640),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _socialStats(profile),
+                const SizedBox(height: 12),
+                _profileActions(
+                  isFollowing,
+                  creatorAudienceVisible:
+                      profile?.canExposeCreatorAudience == true,
+                ),
+              ],
+            ),
+          ),
+        ),
+        _mutualFriends(),
+        if (profile != null && profile.accountType != AccountType.personal)
+          CreatorPinnedMomentCard(
+            creatorId: widget.friend.id,
+            service: widget.creatorPinnedPostService,
+            outerPadding: const EdgeInsets.only(top: 12),
+            onOpen: (moment) => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => CreatorPinnedMomentScreen(moment: moment),
+              ),
+            ),
+          ),
+        const SizedBox(height: 12),
+        _voiceIdentity(profile),
+      ],
+    );
+  }
+
+  /// Avatar beside name, handle and presence — the own profile header's
+  /// identity row, read from the public projection instead.
+  Widget _identity(UserProfile? profile) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final palette = context.appPalette;
+        final isWide = constraints.maxWidth >= 700;
+        final radius = switch (constraints.maxWidth) {
+          < 360 => 34.0,
+          < 700 => 40.0,
+          _ => 46.0,
+        };
+        final username = profile?.username ?? '';
+        // At large text the name gets the full measure under the avatar
+        // instead of a narrow column beside it.
+        final stack = MediaQuery.textScalerOf(context).scale(14) >= 21;
+        final details = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Semantics(
+              header: true,
+              child: Text(
+                profile?.displayName ?? widget.friend.displayName,
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontSize: isWide ? 26 : 22,
+                  height: 1.15,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -.3,
+                ),
+              ),
+            ),
+            if (username.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(
+                '@${profile!.username.replaceAll(' ', '').toLowerCase()}',
+                style: TextStyle(
+                  color: palette.textSecondary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            _status(),
+          ],
+        );
+        if (stack) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _avatar(profile, radius: radius),
+              const SizedBox(height: 12),
+              details,
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _avatar(profile, radius: radius),
+            const SizedBox(width: 14),
+            Expanded(child: details),
+          ],
+        );
+      },
     );
   }
 
@@ -630,39 +708,86 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     bool isFollowing, {
     required bool creatorAudienceVisible,
   }) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
-        final shouldStack = constraints.maxWidth < 360 || scaledBodySize >= 21;
-        // A hidden audience cannot gain new followers. Existing followers
-        // keep the Unfollow action so opting out never traps a relationship.
-        final showFollowAction = creatorAudienceVisible || isFollowing;
-        if (shouldStack) {
-          return Column(
-            children: [
-              if (showFollowAction) ...[
-                SizedBox(
-                  width: double.infinity,
-                  child: _followButton(isFollowing),
-                ),
-                const SizedBox(height: 10),
-              ],
-              SizedBox(width: double.infinity, child: _messageButton()),
-            ],
-          );
-        }
-
-        return Row(
-          children: [
-            if (showFollowAction) ...[
-              Expanded(child: _followButton(isFollowing)),
-              const SizedBox(width: 10),
-            ],
-            Expanded(child: _messageButton()),
-          ],
-        );
-      },
+    // A hidden audience cannot gain new followers. Existing followers
+    // keep the Unfollow action so opting out never traps a relationship.
+    final showFollowAction = creatorAudienceVisible || isFollowing;
+    final copy = AppLocalizations.of(context);
+    return ProfileActionBar(
+      key: const ValueKey('friend-profile-actions'),
+      primary: showFollowAction
+          ? _followButton(isFollowing)
+          : _messageButton(primary: true),
+      secondary: showFollowAction ? _messageButton(primary: false) : null,
+      icon: ProfileActionIconButton(
+        key: const ValueKey('friend-profile-more-button'),
+        icon: Icons.more_horiz_rounded,
+        tooltip: copy.more,
+        onPressed: _showMoreSheet,
+      ),
     );
+  }
+
+  /// The icon action: Remove friend and Block user in a bottom sheet
+  /// (contextual actions live in sheets, not dialogs). The same two actions
+  /// stay listed at the foot of the profile, and both paths run the same
+  /// confirmation.
+  Future<void> _showMoreSheet() async {
+    final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      backgroundColor: palette.surfaceRaised,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const ValueKey('friend-profile-more-remove'),
+              enabled: !_removingFriend,
+              leading: Icon(
+                Icons.person_remove_outlined,
+                color: palette.dangerForeground,
+              ),
+              title: Text(
+                copy.text('Remove friend', 'Usuń ze znajomych'),
+                style: TextStyle(
+                  color: palette.dangerForeground,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              onTap: () => Navigator.pop(sheetContext, 'remove'),
+            ),
+            ListTile(
+              key: const ValueKey('friend-profile-more-block'),
+              enabled: !_blocking,
+              leading: Icon(
+                Icons.block_rounded,
+                color: palette.dangerForeground,
+              ),
+              title: Text(
+                copy.text('Block user', 'Zablokuj użytkownika'),
+                style: TextStyle(
+                  color: palette.dangerForeground,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              onTap: () => Navigator.pop(sheetContext, 'block'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (choice) {
+      case 'remove':
+        await _confirmRemoveFriend();
+      case 'block':
+        await _confirmBlock();
+    }
   }
 
   Widget _status() {
@@ -699,102 +824,39 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     );
   }
 
-  Widget _socialStats(UserProfile? profile) => LayoutBuilder(
-    builder: (context, constraints) {
-      final palette = context.appPalette;
-      final copy = AppLocalizations.of(context);
-      final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
-      final shouldStack = constraints.maxWidth < 360 || scaledBodySize >= 21;
-      final showCreatorAudience = profile?.canExposeCreatorAudience == true;
-      final stats = [
-        _stat(
-          profile?.friendCount ?? 0,
-          copy.text('Friends', 'Znajomi'),
-          null,
+  /// The public projection (`publicProfiles/{uid}`) carries only
+  /// `friendCount`, `followerCount` and `followingCount`, so this row never
+  /// shows Servers or Moments; followers / following stay behind the
+  /// server-written `creatorAudienceVisible` gate.
+  Widget _socialStats(UserProfile? profile) {
+    final copy = AppLocalizations.of(context);
+    final showCreatorAudience = profile?.canExposeCreatorAudience == true;
+    return ProfileStatsRow(
+      containerKey: const ValueKey('friend-profile-stats'),
+      stats: [
+        ProfileStat(
+          value: profile?.friendCount ?? 0,
+          label: copy.text('Friends', 'Znajomi'),
+          keyPrefix: 'friend-profile-stat',
           keyName: 'friends',
         ),
         if (showCreatorAudience) ...[
-          _stat(
-            profile?.followerCount ?? 0,
-            copy.text('Followers', 'Obserwujący'),
-            () => _openList(FollowListType.followers),
+          ProfileStat(
+            value: profile?.followerCount ?? 0,
+            label: copy.text('Followers', 'Obserwujący'),
+            keyPrefix: 'friend-profile-stat',
             keyName: 'followers',
+            onTap: () => _openList(FollowListType.followers),
           ),
-          _stat(
-            profile?.followingCount ?? 0,
-            copy.text('Following', 'Obserwowani'),
-            () => _openList(FollowListType.following),
+          ProfileStat(
+            value: profile?.followingCount ?? 0,
+            label: copy.text('Following', 'Obserwowani'),
+            keyPrefix: 'friend-profile-stat',
             keyName: 'following',
+            onTap: () => _openList(FollowListType.following),
           ),
         ],
-      ];
-
-      return Container(
-        key: const ValueKey('friend-profile-stats'),
-        padding: EdgeInsets.symmetric(vertical: shouldStack ? 8 : 17),
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: palette.border),
-        ),
-        child: shouldStack
-            ? Column(
-                children: [
-                  for (var index = 0; index < stats.length; index++) ...[
-                    stats[index],
-                    if (index < stats.length - 1)
-                      Divider(height: 1, color: palette.border),
-                  ],
-                ],
-              )
-            : Row(children: [for (final stat in stats) Expanded(child: stat)]),
-      );
-    },
-  );
-
-  Widget _stat(
-    int value,
-    String label,
-    VoidCallback? onTap, {
-    required String keyName,
-  }) {
-    final content = ExcludeSemantics(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 52),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '$value',
-                style: TextStyle(
-                  color: context.appPalette.textPrimary,
-                  fontSize: 21,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              Text(
-                label,
-                style: TextStyle(
-                  color: context.appPalette.textSecondary,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    final key = ValueKey('friend-profile-stat-$keyName');
-    if (onTap == null) {
-      return Semantics(key: key, label: '$label: $value', child: content);
-    }
-    return AccessibleTapRegion(
-      key: key,
-      onTap: onTap,
-      semanticLabel: '$label: $value',
-      borderRadius: 12,
-      child: content,
+      ],
     );
   }
 
@@ -810,10 +872,11 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         }
 
         return Container(
+          margin: const EdgeInsets.only(top: 12),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
             color: palette.surface,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(color: palette.border),
           ),
           child: Row(
@@ -862,7 +925,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
     return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 52),
+      constraints: const BoxConstraints(
+        minHeight: ProfileActionBar.buttonHeight,
+      ),
       child: FilledButton.icon(
         key: const ValueKey('friend-profile-follow-button'),
         onPressed: _changingFollow ? null : () => _toggleFollow(isFollowing),
@@ -875,8 +940,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
               : colors.onPrimary,
           disabledBackgroundColor: palette.surfaceMuted,
           disabledForegroundColor: palette.textTertiary,
+          minimumSize: const Size(0, ProfileActionBar.buttonHeight),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(ProfileActionBar.radius),
           ),
         ),
         icon: _changingFollow
@@ -889,45 +956,77 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                 isFollowing
                     ? Icons.check_rounded
                     : Icons.person_add_alt_1_rounded,
+                size: 18,
               ),
         label: Text(
           isFollowing
               ? copy.text('Following', 'Obserwujesz')
               : copy.text('Follow', 'Obserwuj'),
-          style: const TextStyle(fontWeight: FontWeight.w800),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
     );
   }
 
-  Widget _messageButton() {
+  /// Message is the primary CTA when Follow is not offered (an ordinary
+  /// profile), and the outlined secondary one beside Follow otherwise.
+  Widget _messageButton({required bool primary}) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(ProfileActionBar.radius),
+    );
+    const minimumSize = Size(0, ProfileActionBar.buttonHeight);
+    const padding = EdgeInsets.symmetric(horizontal: 12);
+    final icon = _openingChat
+        ? const SizedBox(
+            width: 17,
+            height: 17,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : const Icon(Icons.chat_bubble_outline_rounded, size: 18);
+    final label = Text(
+      copy.text('Message', 'Wiadomość'),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontWeight: FontWeight.w700),
+    );
+    const key = ValueKey('friend-profile-message-button');
+    final onPressed = _openingChat ? null : _openChat;
     return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 52),
-      child: OutlinedButton.icon(
-        key: const ValueKey('friend-profile-message-button'),
-        onPressed: _openingChat ? null : _openChat,
-        style: OutlinedButton.styleFrom(
-          foregroundColor: palette.textPrimary,
-          disabledForegroundColor: palette.textTertiary,
-          side: BorderSide(color: palette.borderStrong),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-        icon: _openingChat
-            ? const SizedBox(
-                width: 17,
-                height: 17,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Icons.chat_bubble_outline_rounded),
-        label: Text(
-          copy.text('Message', 'Wiadomość'),
-          style: const TextStyle(fontWeight: FontWeight.w800),
-        ),
+      constraints: const BoxConstraints(
+        minHeight: ProfileActionBar.buttonHeight,
       ),
+      child: primary
+          ? FilledButton.icon(
+              key: key,
+              onPressed: onPressed,
+              style: FilledButton.styleFrom(
+                disabledBackgroundColor: palette.surfaceMuted,
+                disabledForegroundColor: palette.textTertiary,
+                minimumSize: minimumSize,
+                padding: padding,
+                shape: shape,
+              ),
+              icon: icon,
+              label: label,
+            )
+          : OutlinedButton.icon(
+              key: key,
+              onPressed: onPressed,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: palette.textPrimary,
+                disabledForegroundColor: palette.textTertiary,
+                side: BorderSide(color: palette.borderStrong),
+                minimumSize: minimumSize,
+                padding: padding,
+                shape: shape,
+              ),
+              icon: icon,
+              label: label,
+            ),
     );
   }
 
@@ -942,10 +1041,11 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     }.toList();
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
+      // Slim: one flat layer, 1 px hairline, the card radius 12.
       decoration: BoxDecoration(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: palette.border),
       ),
       child: Column(
@@ -956,15 +1056,16 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
               Icon(
                 Icons.language_rounded,
                 color: palette.interactiveForeground,
+                size: 20,
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   copy.text('Voice identity', 'Tożsamość głosowa'),
                   style: TextStyle(
                     color: palette.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ),

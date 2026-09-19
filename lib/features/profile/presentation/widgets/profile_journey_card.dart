@@ -26,7 +26,6 @@ class ProfileJourneyCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final items = <_JourneyItem>[
       _JourneyItem(
         icon: Icons.hub_rounded,
@@ -58,10 +57,11 @@ class ProfileJourneyCard extends StatelessWidget {
       width: double.infinity,
       child: Container(
         key: const ValueKey('profile-journey-card'),
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(16),
+        // Slim: one flat layer, 1 px hairline, the card radius 12.
         decoration: BoxDecoration(
           color: palette.surface,
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: palette.border),
         ),
         child: Column(
@@ -69,7 +69,11 @@ class ProfileJourneyCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.auto_awesome_rounded, color: colors.primary),
+                Icon(
+                  Icons.auto_awesome_rounded,
+                  color: palette.interactiveForeground,
+                  size: 20,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -80,7 +84,7 @@ class ProfileJourneyCard extends StatelessWidget {
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontSize: 16,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
@@ -117,7 +121,6 @@ class _JourneyRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     return Semantics(
       container: true,
       excludeSemantics: true,
@@ -132,7 +135,11 @@ class _JourneyRow extends StatelessWidget {
             children: [
               SizedBox(
                 width: 24,
-                child: Icon(item.icon, color: colors.primary, size: 20),
+                child: Icon(
+                  item.icon,
+                  color: palette.interactiveForeground,
+                  size: 20,
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -155,7 +162,7 @@ class _JourneyRow extends StatelessWidget {
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 16,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ],
