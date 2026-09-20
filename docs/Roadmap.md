@@ -14,56 +14,191 @@ someone decide what to pick up next.
 
 ---
 
-## Next build after 3.0.0 — Yeels drag-to-seek — in source on `nb/yeels-scrub` — 2026-09-19
+## Next build after 3.0.0 — seven branches on `nb/integrate` — source only, NOTHING DEPLOYED — 2026-09-20
 
-**Status: Done in source, not yet on `main`.** Task 1 of the next-build split
-(`docs/briefs/2026-09-19-next-build-decisions.md` on `nb/brief`). Commits
-`38f29ebc` (coordinator scrub session), `14b8b9ce` (drag band on both Yeel
-stages, hairline fill fix), `953ccea2` (Voice story player finger-seek).
-Decision: [ADR-210](Decisions.md). App only: no backend, rules, schema,
-Function, pubspec or catalog change. Frames:
-`yovoice-evidence/2026-09-19/next-build/yeels-scrub/` (390 / 1440, Dark and
-Pearl). Deferred: on-device seek-latency measurement and arena feel (iPhone,
-Android, Chrome), `MomentDetailPanel` drag-seek.
+**Status: done in source, integrated on `nb/integrate` (based on `main`
+`f71a2ae2`, YO Voice 3.0.0+34, the Slim redesign already with testers).
+Nothing is on `main`, nothing is deployed, nothing is with testers.** Seven
+branches were built in parallel across the Mac and the Windows PC and merged
+in this order: `nb/yeels-scrub`, `nb/friend-actions`, `nb/confirm-upload`,
+`nb/server-delete`, `nb/giphy`, `nb/server-live`, `nb/notifications`. The
+split into tasks, and the decisions taken before any branch started, are in
+`docs/briefs/2026-09-19-next-build-decisions.md` on `nb/brief`. Five
+decisions came out of the work itself — ADR-210, ADR-211, ADR-212, ADR-213, ADR-214 —
+plus one amendment to ADR-180 that deliberately has no number of its own.
+The single deploy order for all of it, what stays OFF and the owner-only
+steps are in [DEPLOYMENT.md](DEPLOYMENT.md#next-build-after-300--one-deploy-order-for-the-whole-build-source-only-nothing-deployed);
+the run log is in [Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md).
 
-## Next build after 3.0.0 — confirm before upload (T4) — source on `nb/confirm-upload` — 2026-09-19
+**Backend surface this build adds:** one Firestore composite (the
+COLLECTION_GROUP index on `events`), one Rules block (`commentMentions`,
+server-only), six new Function exports, three additive server-written fields
+on `events`, one additive server-written field on `channelSessions`, and one
+additive optional field on notification rows. No rename, no removal, no
+migration.
 
-**Status: Done in source, not released.** One review surface for media picked
-from a library ([ADR-211](Decisions.md#adr-211-one-confirm-before-send-primitive-for-picked-media)):
-direct-message Photo library and Video library, and Company team files, now
-show what was picked, with size and length, before anything is queued or
-uploaded; over-limit files are blocked in the review with a re-pick. Camera
-paths unchanged. App only: no backend, rules, schema, Function or catalog
-change. Deferred by decision: captions (backend has no field), multi-select,
-the camera through the review. Frames:
-`yovoice-evidence/2026-09-19/next-build/confirm-upload/`. Device check
-(iOS Simulator, web) outstanding.
+### What each branch delivered
 
-## Missing notifications, slice 1 — source only, NOT deployed — 2026-09-19
+- **Yeels drag-to-seek — `nb/yeels-scrub` ([ADR-210](Decisions.md#adr-210-a-finger-on-the-yeel-timeline-is-a-scrub-session-and-the-band-that-takes-it-is-translucent-and-drag-only)).**
+  Task 1 of the next-build split. Commits `38f29ebc` (coordinator scrub
+  session), `14b8b9ce` (drag band on both Yeel stages, hairline fill fix),
+  `953ccea2` (Voice story player finger-seek), `99a7817f` (review round).
+  A finger on the Yeel timeline now
+  seeks, on both stages, with an adjustable slider node (±5 s, arrow keys,
+  mouse click) so a screen-reader or keyboard user can move through a Yeel at
+  all; the Voice story player waveform takes a finger too. App only: no
+  backend, rules, schema, Function, pubspec or catalog change. Frames:
+  `yovoice-evidence/2026-09-19/next-build/yeels-scrub/` (390 / 1440, Dark and
+  Pearl). **Deferred:** on-device seek-latency measurement and arena feel
+  (iPhone, Android, Chrome), and `MomentDetailPanel` drag-seek.
 
-**Status: Done in source on `nb/notifications` (tag `nb-notifications-ready`);
-nothing deployed.** The first slice of the notification gap analysis in
-`yovoice-evidence/2026-09-19/next-build-notifications-investigation.json`:
+- **Friend-profile quick actions — `nb/friend-actions`** (no ADR; it
+  introduces no new architectural rule). Commits `caff9e71` (shared
+  `launchDirectCall`, additive `ChatLaunchAction` on `ChatScreen`),
+  `d440798f` (the quick-action row and the Więcej sheet), `b51f0d78`
+  (full-width Follow bar, frame harness), `b6963647` (review round).
+  Zadzwoń — the screen's one violet accent — Wideo, Wiadomość and Więcej sit
+  under the bio at every width through the new `ProfileQuickActions`
+  primitive: 64 px tiles on phones, a 2 × 2 grid below 300 px, one row per
+  action at ~150 % text and above, a 44 px toolbar from 560 px. Follow moves
+  above the row, tonal, and rides at the end of the identity row on wide
+  bands. Calls go through the shared launcher and open the DM first, so the
+  backend's friendship, block, restriction and message-privacy checks all
+  apply; the chat header and the profile now run one flow. A relationship
+  gate disables calls for non-friends with a visible reason, replaces the row
+  with the blocked line for people the viewer blocked, and hides Remove
+  friend where it does not apply. Więcej adds Wyślij wiadomość głosową,
+  Zaproś na serwer (the new `InvitePersonToServerSheet` over
+  `watchMyServers`/`watchMyRole`, `canInviteToServer`,
+  `createServerInviteV1`) and Zgłoś użytkownika. The review round fixed a
+  permanent "Connecting…" spinner left by a launcher refusal, and stopped the
+  invite sheet reading every `failed-precondition` as "already a member".
+  **No backend change.** Tests: `friend_profile_quick_actions_test.dart`,
+  `invite_person_to_server_sheet_test.dart`, `chat_launch_action_test.dart`.
+  Frames: `yovoice-evidence/2026-09-19/next-build/friend-actions/` (friend,
+  non-friend and blocked variants). **Deferred:** live presence on the
+  profile (still the route snapshot); a Chats-stream fallback for friends
+  whose message privacy blocks opening the DM from the profile; a stable
+  `details.reason` for the backend membership refusal (a backend change).
 
-- comments (text and voice) on your Voice Moment and on your Yeel notify the
-  author, and are retired when the comment is deleted;
-- `@mentions` inside those comments notify the mentioned person, validated
-  server-side against THEIR audience and both block directions, capped at five
-  per comment and rate-budgeted per actor;
-- Server event reminders are finally delivered (Family calendar, Podcast
-  program), five minutes apart over a fifteen-minute horizon;
-- a Server role promotion and an ownership transfer tell the member.
+- **Confirm before upload — `nb/confirm-upload` ([ADR-211](Decisions.md#adr-211-one-confirm-before-send-primitive-for-picked-media)).**
+  Commits `a4515e92`, `6ba7d22a`, `3fb1097a` (review round). One review
+  surface for media picked from a library: direct-message Photo library and
+  Video library, and Company team files, now show what was picked, with size
+  and length, before anything is queued or uploaded; an over-limit file is
+  blocked in the review with the reason and "Choose another" instead of being
+  refused by a snackbar after the enqueue. Camera paths unchanged. App only:
+  no backend, rules, schema, Function or catalog change. Frames:
+  `yovoice-evidence/2026-09-19/next-build/confirm-upload/`. **Deferred by
+  decision:** captions (the backend has no field), multi-select, and the
+  camera through the review. **Device check (iOS Simulator, web)
+  outstanding.**
 
-Shared groundwork in the same change: a source validator per new type with
-deny-by-default for anything unregistered, `PUSH_TITLES` and sound mapping,
-an optional `targetSubId` in the push payload, the client enum, router
-destinations, icons, copy in 41 locales, and a "Moments & Yeels" preference
-group. See ADR-212 for the reasoning and the deploy order.
+- **Delete or leave a server — `nb/server-delete`** (no ADR; client-only use
+  of deployed backend authority). Commit `7dce2e3c`. Kamil: "brakuje opcji
+  usuwania serwerów". The backend was already deployed; the client had buried
+  the only delete button under the Overview form of the management sheet,
+  behind an unlabelled `...`. Now the servers-list row has a `...` button,
+  long press and secondary click opening "Usuń serwer" (owner, from the
+  `users/{uid}/clubs` mirror role) or "Opuść serwer"; the wide panel shows a
+  labelled settings entry; the sheet keeps leave/delete in a separate danger
+  zone; the owner types the server name to confirm; legacy (schema-less)
+  roots route to `deleteClubSelf` instead of `deleteServerV1`, which refuses
+  them; and a live channel turns the confirmation into "Zakończ rozmowy i
+  usuń". **Members are not notified in this build.** Widget coverage:
+  `test/server_delete_flow_test.dart`; frames:
+  `yovoice-evidence/2026-09-19/server-delete-frames/`. **Still UNVERIFIED on
+  a device against the deployed backend.**
 
-Deferred to the next slices: like/follow aggregation (needs an update-in-place
-row plus a `sortAt` index), Server channel mentions and per-server levels, the
-"a friend is live in a server you share" fan-out, DM reactions, and an
-@-picker in the Yeel comment composer.
+- **GIPHY GIFs, option B — client search, server resolve-by-id —
+  `nb/giphy` ([ADR-213](Decisions.md#adr-213-giphy-is-searched-by-the-client-and-resolved-by-the-server-at-send-time-option-b))**
+  (**NOT DEPLOYED; STAYS OFF THROUGH THIS BUILD'S DEPLOY; OWNER STEPS
+  PENDING**). Commits `0e681bc1`, `5ce945eb`, `4064cda1`. The app searches
+  GIPHY directly with `rating=g` pinned and a compile-time key
+  (`YOVOICE_GIPHY_API_KEY`; none means Originals only), shows GIPHY beside the
+  Originals under the official "Powered By GIPHY" mark, and sends GIPHY Action
+  Register pingbacks gated on **Load GIFs automatically**. The server gains a
+  source-gated `resolveGif` authority (`GIPHY_API_KEY` secret,
+  rating/denylist/block checks, own hourly budget) and every send path now
+  accepts an allow-set of both providers, which removes the split-revision
+  hazard that would have stranded every YO Voice Original on a provider flip.
+  Settings discloses what GIPHY receives, in every locale. **Because
+  `GIPHY_SEND_RESOLVE_ENABLED = false` and `getGifCatalog` therefore answers
+  `resolvableProviders: []`, the picker behaves exactly like today's
+  Originals-only picker — in every build, with or without a client key.**
+  Waiting on: the GIPHY production key, the official mark files, the
+  `GIPHY_API_KEY` secret, the privacy-policy update, the source flip and one
+  separate deploy wave
+  ([DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-213)).
+
+- **Empty server channel sessions end themselves — `nb/server-live`**
+  (an amendment to [ADR-180](Decisions.md#adr-180-a-v1-generation-whose-host-vanished-is-bounded-by-a-scheduled-sweep-that-stages-it-for-end-through-the-existing-end-writer-and-worker-never-by-a-second-state-machine),
+  **not** a new ADR; built on the Windows PC). Commits `131bb29c`,
+  `4cf98996`, `49e5e57b`, `12e4c44b`. A server channel kept showing LIVE for
+  5–15 minutes after everybody left, and a projection whose anchor was not
+  live never expired at all. Now a session ends one 60 s backend-observed
+  reconnect grace after the last departure, through the last-leave callable
+  `releaseServerChannelSessionIfEmptyV1`, the provider's signed
+  `room_finished`, or the tightened five-minute sweep — all three through the
+  existing end writer and worker. The same sweep repairs drifted projections,
+  and a dry-run-first repair script
+  (`functions/scripts/repair_stale_server_channel_liveness.js`) cleans up the
+  badges already stuck in production. One additive server-only field
+  (`channelSessions.emptyObservation`), no Rules change, no index change.
+  Source complete; **the Functions deploy, the LiveKit webhook confirmation
+  and the provider drill are outstanding**, and so is the one-off repair run.
+
+- **Missing notifications, slice 1 — `nb/notifications` (tag
+  `nb-notifications-ready`), [ADR-212](Decisions.md#adr-212-a-comment-notifies-the-author-a-mention-is-validated-against-the-mentioned-persons-audience-and-a-reminder-finally-gets-sent)
+  and [ADR-214](Decisions.md#adr-214-a-notification-that-repeats-on-demand-is-a-channel-not-a-notice--reminders-page-re-arm-on-the-schedule-and-refuse-two-ways).**
+  Commits `cb00dfca`, `77f310b4`, `99599946`, `f0ea2867` (review round). The
+  first slice of the notification gap analysis in
+  `yovoice-evidence/2026-09-19/next-build-notifications-investigation.json`:
+
+  - comments (text and voice) on your Voice Moment and on your Yeel notify
+    the author, and are retired when the comment is deleted;
+  - `@mentions` inside those comments notify the mentioned person, validated
+    server-side against THEIR audience and both block directions, capped at
+    five per comment and rate-budgeted per actor;
+  - Server event reminders are finally delivered (Family calendar, Podcast
+    program), five minutes apart over a fifteen-minute horizon;
+  - a Server role promotion and an ownership transfer tell the member.
+
+  Shared groundwork in the same change: a source validator per new type with
+  deny-by-default for anything unregistered, `PUSH_TITLES` and sound mapping,
+  an optional `targetSubId` in the push payload, the client enum, router
+  destinations, icons, copy in 41 locales, and a "Moments & Yeels" preference
+  group.
+
+  **ADR-214, the hardening round**, fixed four defects a pre-merge review
+  found in source that was never deployed: the reminder query is now paged
+  with a cursor under a 240 s wall-clock budget instead of a silent
+  `limit(100)` cliff; a delivered event is stamped so a cosmetic edit cannot
+  re-send a reminder every five minutes; a promotion notice is charged to a
+  per-actor-per-recipient-per-role budget so a demote/re-promote loop
+  announces once; and the push boundary's two refusals are separated, so an
+  unregistered type skips the push instead of deleting the recipient's bell
+  row. Details in [Bugs.md](Bugs.md) and [TESTING.md](TESTING.md).
+
+  **Deferred to the next slices:** like/follow aggregation (needs an
+  update-in-place row plus a `sortAt` index), Server channel mentions and
+  per-server levels, the "a friend is live in a server you share" fan-out, DM
+  reactions, and an @-picker in the Yeel comment composer.
+
+### What is verified, and what is not
+
+Verified on this tree: `flutter analyze` clean; the Flutter suite run as two
+halves; the Functions suite after the integration fix commit `bd549032`;
+`firestore.rules`, `storage.rules` and `firestore.indexes.json` reviewed
+against what the branches claim. Exact counts and commands:
+[Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md).
+
+**Not verified, for the whole build:** nothing was run on a real device or a
+simulator in the integration session, nothing is deployed, no production data
+was read, and no provider (LiveKit, GIPHY) was contacted. The LiveKit webhook
+was registered on 2026-09-19 but **no delivery has been read back**, so
+acceptance of its signature is UNVERIFIED and both voice-time accounting and
+the provider-driven end of an empty channel remain unproven in production.
 
 ---
 
@@ -231,7 +366,7 @@ on that revision.
   `updateTime` after the start, the five callables answering 401, exactly nine
   of 245 functions touched, and an empty `severity>=ERROR` window. Storage
   rules were **not** deployed. Details:
-  [DEPLOYMENT.md](DEPLOYMENT.md#build-32-release-round--backend-deployed-ios-with-testers-web-and-play-pending-2026-09-19).
+  [DEPLOYMENT.md](DEPLOYMENT.md#build-32-release-round--backend-deployed-ios-web-and-play-with-testers-2026-09-19).
 - **Released to iOS testers.** Build 32 is `VALID` on App Store Connect,
   `betaReviewState APPROVED`, in the internal *and* external groups with
   `autoNotifyEnabled true`, tester notes stored and read back byte-exact. The
@@ -570,7 +705,9 @@ their separate production-deployment gates.
   Losing host authority, a ban or voice enforcement deletes the input, except
   Auth account deletion (OPEN, see [Bugs.md](Bugs.md)). The
   client adds an OBS button beside Share screen and a setup sheet with a masked
-  key, copy and reveal. The activation package now pins 54 base exports.
+  key, copy and reveal. The activation package pinned 54 base exports at that
+  landing; the ADR-180 amendment of 2026-09-19 moved it to 55 base / 62 total
+  / 56 callables.
 - **Live whiteboard ink — source 2026-09-16 (ADR-193)** (**NOT DEPLOYED; NO
   TWO-DEVICE MEETING TESTED**), landed in `50522b2d`. In a Company meeting,
   other members' in-progress strokes appear over bounded LiveKit data packets
@@ -589,18 +726,10 @@ their separate production-deployment gates.
   `63507816`. Visiting Activity clears its unread rows and banner, and
   **Mark all read** drains inboxes larger than 400 rows.
 
-- **GIPHY GIFs, option B — client search, server resolve-by-id — source on
-  branch `nb/giphy` 2026-09-19 (ADR-213)** (**NOT DEPLOYED; OWNER STEPS
-  PENDING**): the app searches GIPHY directly with `rating=g` pinned and a
-  compile-time key (`YOVOICE_GIPHY_API_KEY`; none means Originals only), shows
-  GIPHY beside the Originals under the official "Powered By GIPHY" mark, and
-  sends GIPHY Action Register pingbacks gated on **Load GIFs automatically**.
-  The server gains a source-gated `resolveGif` authority (GIPHY_API_KEY secret,
-  rating/denylist/block checks, own hourly budget) and every send path now
-  accepts an allow-set of both providers. Settings discloses what GIPHY
-  receives, in every locale. Waiting on: the GIPHY production key, the official
-  mark files, the `GIPHY_API_KEY` secret, the privacy-policy update, the source
-  flip and one deploy wave ([DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-213)).
+- **GIPHY GIFs, option B (ADR-213)** — source on `nb/giphy`, merged into the
+  next build. Not repeated here: the full entry is in
+  [Next build after 3.0.0](#next-build-after-300--seven-branches-on-nbintegrate--source-only-nothing-deployed--2026-09-20)
+  above, because it ships with that build and not with this one.
 
 - **GIFs in the composer — production-original catalog complete in source
   2026-09-13 (ADR-172/173)** (**BUILD 27 CANDIDATE; BACKEND DEPLOYMENT STILL
@@ -2881,7 +3010,7 @@ different and much smaller problem.
   strands the legacy thread's history. `migrateDirectIntegrityConversation`
   adopts in place at the existing id, preserving history — so the
   migration must run *before* the affected users next open those chats.
-- **Dependencies**: Sequenced behind [item 0a](#0a-run-the-public-profile-backfill-32-accounts-currently-invisible).
+- **Dependencies**: Sequenced behind [item 0a](#0a-run-the-public-profile-backfill-verified-consistent-2026-08-18).
   `migrateDirectIntegrityConversation` calls `canonicalPublicProfile` to
   fill `participantNames`/`participantPhotoUrls`; running it while 32
   accounts still have no `publicProfiles` document would bake placeholder
@@ -2993,24 +3122,34 @@ regression test pinning the contract.
 - **Priority**: Medium — a product decision first, not an engineering one.
   Nothing is broken today; a capability simply doesn't exist.
 
-### 0h. Wire the LiveKit webhook — `voiceMinutes` has no writer
+### 0h. Confirm the LiveKit webhook is accepted — `voiceMinutes` still has no writer
 
-- **Status**: Not started. The code exists and is unreachable.
+- **Status**: Half done, and **the other half is UNVERIFIED.** *(Corrected
+  2026-09-19: an earlier version of this item said the function "is never
+  exported from `functions/index.js`, so it has never been deployed". That
+  was wrong — it is exported and has been deployed since 2026-09-07.)*
 - **Description**: `receiveLiveKitAchievementWebhook`
-  (`functions/achievements/livekit_http.js`) is never exported from
-  `functions/index.js`, so it has never been deployed. It is the sole
-  producer of `voiceSeconds`, from which `voiceMinutes` is derived —
-  meaning Creator Studio's "Voice time" tile and the entire voice
-  achievement category are permanently zero for every account, presented
-  as real measurements.
-- **Priority**: Medium-High. It also unblocks
-  `publishPublicStatsSchedule`, whose current data source
-  (`activeVoiceSessions.expiresAt`, a never-renewed token TTL) is known
-  wrong; LiveKit emits `participant_left` /
+  (`functions/achievements/livekit_http.js`) is the sole producer of
+  `voiceSeconds`, from which `voiceMinutes` is derived. The function is
+  deployed; what was missing was the provider side. The URL was registered
+  in the LiveKit Cloud dashboard on **2026-09-19**, but **no delivery has
+  been read back** — `firebase functions:log` returned only deployment audit
+  entries — so acceptance of its HMAC signature is unproven and
+  `voiceMinutes` is still zero for every account. Creator Studio's "Voice
+  time" tile and the whole voice achievement category must not be read as
+  measurements until a real delivery is observed.
+- **What closes it**: after the next-build Functions deploy, join and leave a
+  real Server voice channel from a device and read
+  `firebase functions:log --only receiveLiveKitAchievementWebhook`. See
+  [DEPLOYMENT.md](DEPLOYMENT.md#steps-only-kamil-can-do), owner step 7.
+- **Priority**: Medium-High, and it now also gates the provider-driven end of
+  an empty server channel session (the ADR-180 amendment's `room_finished`
+  path). It still unblocks `publishPublicStatsSchedule`, whose current data
+  source (`activeVoiceSessions.expiresAt`, a never-renewed token TTL) is
+  known wrong; LiveKit emits `participant_left` /
   `participant_connection_aborted` even on a crash.
-- **Future considerations**: An HTTP webhook is a new public surface —
-  signature verification and App Check posture need deciding before it
-  ships.
+- **Future considerations**: the first real delivery also starts voice-time
+  accounting, which has never run — watch for unexpected achievement volume.
 
 ### 0c. Username uniqueness is not enforced
 

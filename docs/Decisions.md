@@ -3679,7 +3679,7 @@ diagnose precisely because nothing looks wrong.
   undeployed behind three preconditions, and
   `receiveLiveKitAchievementWebhook` is unexported. Neither should be
   swept into the next blanket `--only functions` deploy without reading
-  [DEPLOYMENT.md](DEPLOYMENT.md#deliberately-held-back-publishpublicstatsschedule).
+  [DEPLOYMENT.md](DEPLOYMENT.md#released-2026-08-20-publishpublicstatsschedule).
 - `npm run deploy` inside `functions/` is a full `--only functions` deploy
   with no `--project` pin, and now deploys 111 functions. PROJECT_STRUCTURE.md
   described it as a single-function convenience script until this date.
@@ -3884,7 +3884,7 @@ be picked, and only one of them would be checked against the server.
   `validateMoment()` requires exactly **20** and fails `data-loss` on a
   mismatch. Latent only because Stage B is deployed. It needs a deliberate
   decision — delete it or write the canonical shape —
-  [Roadmap 0j](Roadmap.md#0j-decide-the-fate-of-_publishrecordedmomentlegacy).
+  [Roadmap 0j](Roadmap.md#0j-decide-the-fate-of-_publishrecordedmomentlegacy-done).
 - **UNVERIFIED**: Safari, Firefox's panel in a real Firefox, real
   microphone capture, and an end-to-end publish into production Storage
   and Firestore. Chromium 148's MIME negotiation was checked directly;
@@ -10834,7 +10834,7 @@ emulator creates indexes on demand, so this query passes every local suite and
 would fail only in production with `FAILED_PRECONDITION`, on the client's first
 real channel list — the same failure mode that kept Premium expiry silently
 broken. It is recorded as a third named activation precondition in
-[Servers.md](Servers.md); [ADR-176](#adr-176-servers-v1-registers-behind-one-exact-environment-gate-dispatches-its-outbox-read-only-and-still-has-no-activation-writer)
+[Servers.md](Servers.md); [ADR-176](#adr-176-servers-v1-exports-are-static-and-activation-is-a-server-owned-runtime-decision)
 named two, and that entry's count is superseded here rather than rewritten.
 
 ## ADR-178: V1 invitations are written by `createServerInviteV1` and revoked by a status transition, refuse held servers entirely, and are discovered through a private pointer in the `serverChannelRefs` posture
@@ -10990,6 +10990,137 @@ in the emulator, so they are recorded as activation precondition 4 in
 place, never an eviction. Twenty-one V1 exports; the registration and QA
 suites pin the new schedule's options. Nothing is deployed and
 `YOVOICE_SERVERS_V1` stays absent.
+
+### Amendment — 2026-09-19: an empty generation ends one reconnect grace after the backend observed it empty, never on a client's word
+
+*(An amendment to this entry, not a new decision; it has no number of its own.
+Source on `nb/server-live`, merged into the next build after 3.0.0+34. NOT
+deployed.)*
+
+**Context.** ADR-180 bounded a generation whose host vanished, and it did that
+job: the sweep needs every token to have expired plus one grace period before
+it will act, which is what made a single occupancy reading safe. But "bounded
+in about fifteen minutes" is also what a member sees — a channel that says
+LIVE with nobody in it — and `CLAUDE.md` forbids exactly that kind of
+false-but-number-free signal. Two further gaps were measured while
+investigating it: leaving a channel told the backend nothing at all, and a
+projection left `isLive: true` while its anchor was not live was outside every
+sweep's candidate query (`rooms.isLive == true`), so it never expired.
+
+**Decision.** The session ends when the last participant leaves, after a short
+reconnect grace (`EMPTY_GENERATION_GRACE_MS = 60_000`), and the whole grace is
+observed and timed by the backend.
+
+`functions/servers/session_staleness.js` records an `emptyObservation`
+`{schemaVersion, source, observedAtMillis, maxTokenExpiresAtMillis}` on the
+private `channelSessions/{sessionId}` document — a server-clock instant plus
+the token bound it was taken at. It is written only when the provider reports
+nobody else in the generation's `srv_` room and no `tokenRecipients`
+`lastIssuedAt` falls inside `ADMISSION_WINDOW_MS = 30_000`. The generation is
+staged for end only when, at least one grace later, the room is **still**
+empty (nobody at all, not even the caller) and no token was issued since the
+observation. A rejoin inside the grace mints a token, which moves
+`maxTokenExpiresAtMillis` and therefore supersedes the observation, so nothing
+ends; a departure after a rejoin records a fresh observation and the grace
+starts again. Somebody present clears the observation.
+
+Three paths feed that one engine, and all three end a generation through the
+**same** writer and worker every authorized end uses —
+`stageConvergenceSessionEnd` plus the `sessionEnd` outbox job the existing
+dispatcher drains (shared `stageEmptyGeneration`, identity
+`digest("server.session.empty.v1", binding)`, so a generation is staged at
+most once):
+
+1. **The new callable `releaseServerChannelSessionIfEmptyV1`** (ledger kind
+   `server.session.release.v1`), which a client calls after it has left. Its
+   authority is an active member with `joinVoice` on the channel **and** a
+   `tokenRecipients` record of this exact generation, so a member who never
+   joined can neither probe nor end somebody else's session. The provider is
+   read once, outside any transaction, with the caller's own identity excluded
+   (a clean disconnect may not have reached LiveKit yet). It answers
+   `ended | pending | occupied | changed | unknown`, never errors on an
+   occupied room, and on `pending` reports how much of the grace is left so a
+   live client can ask once more instead of waiting for the next sweep.
+2. **The provider's `room_finished`**, consumed by the already-verified
+   `receiveLiveKitAchievementWebhook` for `srv_` names and gated on
+   `workersEnabled`. It is isolated from voice-time accounting in both
+   directions: it runs after the achievement close whatever that close did,
+   and nothing it does or throws can change the HTTP answer LiveKit receives.
+   The provider's own timestamp may only widen the admission window; it can
+   never shorten the grace.
+3. **`sweepStaleServerChannelSessionsSchedule`**, which completes an elapsed
+   observation, never cuts a running grace short, and keeps ADR-180's
+   token-expiry rule unchanged as the fallback for a generation nobody
+   observed emptying. The same sweep now also repairs projection drift: it
+   pages `clubs where serverSchemaVersion == 1`, reads each server's
+   `channels where liveness.isLive == true`, and writes only two provably dead
+   shapes — no generation claims the channel (the exact fence
+   `session_control.js` applies on a late terminal ACK, projection only), or
+   the pointer names an ending/ended/failed/missing session while the anchor
+   is idle (pointer and projection cleared, `revision + 1`, like every end
+   writer). A live-looking generation whose anchor is idle and whose badge is
+   older than `MAX_UNPROVEN_LIVE_AGE_MS` (24 h) has its badge reset only after
+   the provider reports its room empty. Everything else is counted
+   (`driftUnresolved`) and never written.
+
+**Reasoning.** A grace is the difference between "the room is empty" and "the
+conversation is over": a dropped connection, a tunnel, a phone call are all
+the same twenty seconds, and ending on the first empty reading would make
+rejoining impossible in exactly the moments people need it. But a grace can
+only be measured by a clock nobody can lie about, so the observation is a
+server-written field on a document no client can read or write, and every
+decision re-reads it inside the staging transaction along with the whole
+reciprocal graph. Storing the token bound with the observation is what makes
+a rejoin self-evident: `maxTokenExpiresAtMillis` moves on every issuance, so
+an observation that no longer matches it describes a generation that has been
+joined since, and no separate presence state machine is needed. Reusing the
+existing end writer keeps the recipient revocation ledger, the terminal
+DeleteRoom and every fence reviewed under ADR-174/176/177 applying unchanged;
+this amendment still only decides *when*.
+
+The one new field is additive and private. No Rules change is required
+(`channelSessions` is denied to clients, `noClientChannelLiveness` keeps them
+out of the projection), and no new index: `tokenRecipients.lastIssuedAt`,
+`channels.liveness.isLive` and `clubs.serverSchemaVersion` ordered by document
+id are all automatic single-field indexes. A collection-group scan for drifted
+projections was deliberately avoided for that reason.
+
+**Consequences.**
+
+- A badge now clears about one grace after the last person leaves when the
+  leaving client is alive to ask (the callable and its single re-check), about
+  one grace plus one sweep cadence when only the provider webhook saw it, and
+  on ADR-180's original bound when neither did (an old client with the webhook
+  unregistered). The 15-minute figure in ADR-180's Consequences stands only
+  for that last case.
+- **Accepted eviction trade-off.** Somebody whose token was issued more than
+  `ADMISSION_WINDOW_MS` ago and who has still not connected — a very slow
+  network, an app suspended between token and connect — can have the
+  generation ended under them by a release or a `room_finished` for the
+  otherwise empty room. They are revoked by the end worker like everybody
+  else and must start a new session; they are never left with a live token
+  against a dead generation. The 30 s recent-issuance window and the
+  `maxTokenExpiresAtMillis` compare-and-set are the mitigations, and the
+  window is deliberately not longer: a window long enough to cover every
+  pathological connect would keep an empty badge alive for exactly as long.
+- Every uncertainty still fails towards honesty debt rather than eviction: a
+  provider error is `unknown` and writes nothing, an answer that cannot prove
+  who is in the room counts as occupied, a malformed observation is treated as
+  absent, and a projection the classifier cannot prove dead is counted and
+  left alone.
+- The ADR-180 token rule, kept as the fallback, can still end a generation
+  less than a grace after its last departure, but only when no release call
+  and no webhook observed the emptiness and no token was issued for at least
+  a token TTL plus a grace (about 10 minutes). Closing that last gap needs
+  the webhook registered, which is an operator action, not a code change.
+- One extra callable: **62 Servers V1 exports** (55 base plus the seven
+  Podcast-recording names), and 56 registered callables. The documented
+  54-callable table in [Servers.md](Servers.md) is unchanged: like
+  `createServerBroadcastIngressV1`, the release signal lives in its own
+  registration table. Its options match the other provider-touching
+  callables — LiveKit secrets bound, 120 s timeout, `minInstances: 0`, App
+  Check as source-configured — and it passes the same runtime activation gate.
+- Nothing is deployed and `appConfig/serversV1` is unchanged.
 
 ## ADR-181: Session participation is three callables over the participant document token issuance already writes, every authority change revokes the bearer through the existing convergence worker, and clients read only their own document and the raised-hand queue
 
@@ -14238,9 +14369,11 @@ validator" from a silent unchecked push into no push at all.
 
 ## ADR-213: GIPHY is searched by the client and resolved by the server at send time (option B)
 
-*(Numbered 210 on branch `nb/giphy` as the next free number after ADR-209. If
-another branch takes 210 first it may be renumbered at merge; code comments
-that cite "ADR-213" then mean this entry.)*
+*(Written as ADR-210 on branch `nb/giphy`, the next free number after ADR-209,
+and renumbered to 213 at the next-build merge in `9b941f14` because three
+branches had each taken 210. Every code comment, anchor and deployment heading
+was moved with it: this entry is ADR-213 everywhere now, and nothing still
+cites 210 for GIPHY.)*
 
 **Context (2026-09-19).** ADR-172 designed GIPHY as a server-proxied surface:
 `searchGifs` would call GIPHY with a Secret Manager key and return metadata.

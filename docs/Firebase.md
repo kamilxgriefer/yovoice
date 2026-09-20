@@ -221,13 +221,21 @@ Notable fields:
   [ADR-010](Decisions.md#adr-010-real-per-achievement-unlock-timestamps).
 - **`voiceMinutes`** on `users/{userId}` — **written by nothing.** It is
   seeded to `0` by `ProfileService` and is only ever derived from
-  `voiceSeconds` inside `functions/achievements/model.js`, but the sole
+  `voiceSeconds` inside `functions/achievements/model.js`, and the sole
   producer of `voiceSeconds` is `receiveLiveKitAchievementWebhook` in
-  `functions/achievements/livekit_http.js`, which is **not exported from
-  `functions/index.js`** and therefore not deployed. Consequence:
-  Creator Studio's "Voice time" tile and the entire voice achievement
-  category are permanently zero for every account. Do not read this field
-  as a metric until the webhook is wired. See [Bugs.md](Bugs.md#achievements).
+  `functions/achievements/livekit_http.js`. Consequence: Creator Studio's
+  "Voice time" tile and the entire voice achievement category are zero for
+  every account. Do not read this field as a metric until the webhook is
+  confirmed to be receiving events. See [Bugs.md](Bugs.md#achievements).
+
+  *(Corrected 2026-09-19: `receiveLiveKitAchievementWebhook` **is** exported
+  from `functions/index.js` and deployed — the earlier wording here said it
+  was not. `voiceMinutes` is still zero for a different reason: the webhook
+  URL was registered in LiveKit Cloud on 2026-09-19 but no delivery has been
+  read back, so the function may still be receiving no events. Confirming a
+  real delivery (see [DEPLOYMENT.md](DEPLOYMENT.md)) is what starts both
+  voice-time accounting and the provider-driven end of an empty channel
+  session.)*
 - **`memberCount`** on `rooms/{roomId}` — may **overcount**, by design
   since `952d8e4`. A client that deletes its `roomMembers` row without
   pairing the room write leaves the counter high. It can never undercount

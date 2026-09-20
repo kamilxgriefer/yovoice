@@ -291,6 +291,56 @@ change that enables those names requires its own secret review, provider canary
 and deployment approval. See [ADR-176](Decisions.md#adr-176-servers-v1-exports-are-static-and-activation-is-a-server-owned-runtime-decision)
 and the [phased runbook](DEPLOYMENT.md#servers-v1-static-registration-and-runtime-activation).
 
+### Ending an empty server channel session (ADR-180 amendment, source only, NOT deployed)
+
+A channel that says LIVE with nobody in it is a false claim about people, so
+the fix had to end generations sooner without ever ending one somebody is in.
+What holds:
+
+- **The reconnect grace is a backend clock.** The decision reads an
+  `emptyObservation` the backend wrote on the private
+  `channelSessions/{sessionId}` document, never a timestamp, duration or
+  "I left" claim from a client. The new callable's only inputs are the exact
+  four ids of `sessionInput`; its answer to a client is a closed set of
+  outcome words.
+- **Who may signal a leave.** `releaseServerChannelSessionIfEmptyV1` requires
+  an active, verified, unrestricted account that is a member with `joinVoice`
+  on that channel **and** holds a `tokenRecipients` document for that exact
+  generation. A member who never joined cannot use it to probe whether a room
+  is empty or to end a conversation they were never in, and a session id from
+  another channel does not bind. Every refusal is the same
+  `permission-denied`.
+- **A release can only ever end an empty room.** The provider is read outside
+  the transaction (excluding the caller, whose clean disconnect LiveKit may
+  not have processed); completion additionally requires nobody at all in the
+  room and no token issued since the observation, and the staging transaction
+  re-proves the whole reciprocal graph and compares
+  `maxTokenExpiresAtMillis`. A provider error is `unknown` and writes nothing.
+  Acting on a generation the caller does not name, or on a newer one, is not
+  expressible.
+- **Cost is bounded.** Each release charges a dedicated actor-only budget
+  (12 per uid per minute) before any target read, and costs at most one
+  `ListParticipants`. The budget is separate from the token budget so leaving
+  can never starve a rejoin.
+- **The webhook boundary is unchanged.** `room_finished` still authenticates
+  by HMAC over the exact raw body inside its freshness window; the lifecycle
+  hook trusts nothing else from the event, is gated on
+  `appConfig/serversV1.workersEnabled`, and cannot change the HTTP answer —
+  so a lifecycle fault can never drop voice-time accounting, and a failed
+  accounting close can never keep a finished room LIVE.
+- **Drift repair writes only provably dead projections**, in a transaction
+  that re-reads channel, anchor and session, and never clears a projection
+  that names a live generation — the same fence `session_control.js` applies
+  on a late terminal ACK. The one-off repair script is dry run by default,
+  holds no provider credential, and is idempotent.
+- **Schema and Rules.** One additive, server-only field on a document no
+  client can read (`channelSessions` stays `if false`), no Rules change, no
+  new index, and no new client-writable surface. Clients still learn liveness
+  only from the channel's own `liveness` projection.
+- **Accepted trade-off, stated plainly:** a token holder who has not
+  connected for more than 30 s can be ended under, and must start a new
+  session. See the [ADR-180 amendment](Decisions.md#amendment--2026-09-19-an-empty-generation-ends-one-reconnect-grace-after-the-backend-observed-it-empty-never-on-a-clients-word).
+
 ### Community OBS ingress, screen sources and the meeting data plane (ADR-192/193, source only, NOT deployed)
 
 - **The Stream Key is a bearer credential.** Anyone holding it can publish
@@ -911,7 +961,7 @@ ordering on Home never advances from non-host conversation. See
 
 Everything in this section is **fixed in source and not deployed**. Until
 the rules deploy in
-[DEPLOYMENT.md](DEPLOYMENT.md#pending-release-the-2026-08-1920-reachability-wave),
+[DEPLOYMENT.md](DEPLOYMENT.md#released-2026-08-20-the-reachability-wave),
 production still runs the pre-`b3c27fd` ruleset.
 
 **Room chat was the largest unguarded client write surface in the product.**

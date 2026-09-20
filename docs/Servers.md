@@ -13,7 +13,8 @@ The original implementation task did not authorize production deployment,
 production data migration, publishing or store submission. A subsequent owner
 instruction on **2026-09-10 conditionally authorizes a new Apple/Android tester
 build only after all requested work and required verification are complete**;
-see [the release authorization](Roadmap.md#conditional-tester-release-authorization--2026-09-10).
+see [the release authorization](Roadmap.md) (recorded there at the time; that
+heading has since been folded into the later release rounds).
 This does not authorize activation of incomplete held features or waive the
 other original approval gates, including production data migration. The source
 audit below was performed locally before implementation. No production data
@@ -212,10 +213,17 @@ Runtime authority still requires the exact `status: active` / activation
 `active` pair; unknown or mismatched pairs do not receive legacy fallback.
 
 Registration and use are separate boundaries. The reviewed source statically
-registers the 54 base Server exports so Firebase can discover them without an
-environment variable (49 callables including `createServerBroadcastIngressV1`,
-two dispatcher exports and three maintenance sweeps, from `99b5916b`). A deployed callable still cannot reach this creation
-mode until the server-owned runtime gate below admits its authenticated UID.
+registers the base Server exports so Firebase can discover them without an
+environment variable. From `99b5916b` that was **54 base exports** (49
+callables including `createServerBroadcastIngressV1`, two dispatcher exports
+and three maintenance sweeps); the ADR-180 amendment added exactly one
+callable, `releaseServerChannelSessionIfEmptyV1`, so the reviewed manifest is
+now **55 base exports / 50 base callables**, and 62 total / 56 callables with
+the seven Podcast-recording names. Those are the numbers
+`tool/servers_activation_package.js` hard-pins, recomputed from the merged
+`functions/servers/registration.js`. A deployed callable still cannot reach
+this creation mode until the server-owned runtime gate below admits its
+authenticated UID.
 No production deploy or activation is implied by source registration.
 
 ### Runtime deployment and activation boundary
@@ -348,28 +356,41 @@ number from token issuance. Archiving or deleting a channel, and the
 ownership-transfer convergence path, retire the projection in the same
 transaction that clears `activeSessionId`.
 
-`isLive` means "a generation is open", not "people are here", and a
-generation whose starter vanished without calling
-`endServerChannelSessionV1` is bounded by `sweepStaleServerChannelSessionsSchedule`
-(`functions/servers/session_staleness.js`, ADR-180), every five minutes like
-the legacy `sweepStrandedLiveRoomsSchedule` that deliberately skips versioned
-anchors. It stages such a generation for end through the **same** writer and
-worker every authorized end uses — `stageConvergenceSessionEnd` plus the
-`sessionEnd` outbox job the existing dispatcher drains — so there is no
-second state machine. It decides only *when*, from two facts that must both
-hold: every token the generation ever issued expired at least one grace
-period (one token TTL, 300 s) ago, measured by `maxTokenExpiresAtMillis` or
-by `startedAt` when no token was ever issued; and the provider reports the
-generation's `srv_` room absent or holding zero participants. Token expiry
-alone is deliberately not enough — a LiveKit JWT is checked at connect time
-and an established connection outlives it — but it does prove nobody new can
-arrive, which is what makes the occupancy reading safe to act on. The
-staging transaction re-proves the whole reciprocal graph and re-reads
+`isLive` means "a generation is open", not "people are here". A generation
+is now closed from three directions, all of them server-authoritative and
+all of them ending it through the **same** writer and worker every
+authorized end uses (`stageConvergenceSessionEnd` plus the `sessionEnd`
+outbox job the existing dispatcher drains): the leaving client's
+`releaseServerChannelSessionIfEmptyV1`, the provider's signed `room_finished`
+for the generation's `srv_` room, and
+`sweepStaleServerChannelSessionsSchedule` every five minutes — the last one
+running like the legacy `sweepStrandedLiveRoomsSchedule` that deliberately
+skips versioned anchors. Each of them records or completes one
+empty-generation grace (`EMPTY_GENERATION_GRACE_MS`, 60 s, ADR-180
+amendment): a server-clock `emptyObservation` on the private session
+document, taken only when the provider reports nobody else in the room and no
+token was issued in the last 30 s, and honoured only if the room is still
+empty a full grace later with no token issued since. A rejoin mints a token,
+which moves `maxTokenExpiresAtMillis` and supersedes the observation, so the
+generation survives; a later departure starts a fresh grace. A generation
+nobody observed emptying keeps ADR-180's original bound — every token expired
+at least one grace period (one token TTL, 300 s) ago, measured by
+`maxTokenExpiresAtMillis` or by `startedAt` when no token was ever issued,
+and the provider reports the room empty or gone. Token expiry alone is
+deliberately not enough — a LiveKit JWT is checked at connect time and an
+established connection outlives it — but it does prove nobody new can arrive,
+which is what makes the occupancy reading safe to act on. Every staging
+transaction re-proves the whole reciprocal graph and re-reads
 `maxTokenExpiresAtMillis`; a token minted after the occupancy reading moves
 the bound and the commit is refused as `changed`. A provider error is an
-unknown, and an unknown never ends a generation. The scan is the legacy
-sweep's bare `rooms.isLive == true` query on the automatic single-field
-index, so no new composite index is introduced.
+unknown, and an unknown never ends a generation. The same sweep repairs a
+public projection that no live generation backs (a pointer-less badge, or one
+naming an ending/ended/failed/missing session while the anchor is idle);
+anything it cannot prove dead is counted in `driftUnresolved` and never
+written. The anchor scan is still the legacy sweep's bare
+`rooms.isLive == true` query, the drift scan is a bounded per-server
+`channels where liveness.isLive == true`, and `tokenRecipients.lastIssuedAt`
+is a single-field index, so no composite index is introduced.
 
 **Session participation (ADR-181).** `rooms/{roomId}/participants/{uid}`
 is the participant's authorization state for one generation — binding,
@@ -532,6 +553,14 @@ target is versioned. A new callable facade must not leave a permissive old
 callable that can bypass it.
 
 ### Community OBS ingress callable (ADR-192)
+
+Two callables sit outside the frozen 54-name table above on purpose and are
+registered from their own tables in `functions/servers/registration.js`:
+`createServerBroadcastIngressV1` (OBS ingress) and
+`releaseServerChannelSessionIfEmptyV1` (the last-leave signal of the
+empty-generation grace, ADR-180 amendment). Both bind the LiveKit secrets and
+pass the same runtime activation gate. Registered callables: 56; Servers V1
+exports: 62 (55 without Podcast recording).
 
 `createServerBroadcastIngressV1` is registered beside the frozen 54-name table
 above (`COMMUNITY_BROADCAST_CALLABLE_METHODS` in
@@ -1458,6 +1487,22 @@ negative probes in DEPLOYMENT.md pass.
    provider observation for the current provider configuration; repeat it if
    that configuration changes. It does not replace the production export,
    index, Rules or runtime-gate read-backs above.
+
+   **The same drill now has to observe three more provider facts** (ADR-180
+   amendment), because the release path and `room_finished` act sooner than
+   the token-expiry rule did:
+   1. whether `ListParticipants` still lists a participant who has just
+      disconnected cleanly, and for how long (the release callable excludes
+      the caller for exactly this reason, and never ends a generation the
+      provider still reports anybody in);
+   2. how long after the last departure `room_finished` actually arrives (the
+      LiveKit default departure timeout is 20 s; the grace is 60 s, so a
+      `room_finished` normally records the observation and a later pass ends
+      the generation);
+   3. whether an OBS ingress participant of a Community broadcast and an
+      Egress recorder appear in `ListParticipants` — they must, or a broadcast
+      with a stepped-away host would be ended while it is still publishing.
+      Record what was observed.
 
 The final handoff must state what actually works for each template, where to
 open the app and visual comparisons, test categories/results, migration

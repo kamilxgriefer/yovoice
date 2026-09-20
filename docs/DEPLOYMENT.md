@@ -4,6 +4,270 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## Next build after 3.0.0 — one deploy order for the whole build (source only, NOTHING DEPLOYED)
+
+Source: `nb/integrate`, based on `main` `f71a2ae2` (YO Voice 3.0.0+34). It
+merges seven branches — `nb/yeels-scrub`, `nb/friend-actions`,
+`nb/confirm-upload`, `nb/server-delete`, `nb/giphy`, `nb/server-live` and
+`nb/notifications`. **Merging this source deploys nothing.** Production still
+runs the 3.0.0+34 backend, and every claim below is about what a deploy would
+do, not about something observed in production.
+
+This is the *only* deploy order for this build. The per-branch runbooks the
+branches carried (GIPHY activation, the empty-channel liveness fix) are folded
+into it; where an older section of this file still describes a per-branch
+order, this one wins.
+
+Two prerequisites learned on 2026-09-16 apply to every Functions step below
+and are not repeated: run `npm ci` in the deploy worktree's `functions/`
+first, and `export FUNCTIONS_DISCOVERY_TIMEOUT=120` before every deploy. See
+[Deploy prerequisites learned on 2026-09-16](#deploy-prerequisites-learned-on-2026-09-16).
+
+### 1. Firestore indexes — first, and READY before anything schedules
+
+The build adds exactly one composite: a **COLLECTION_GROUP** index on `events`
+(`reminderOptInEnabled` ASC, `status` ASC, `startsAt` ASC), which
+`sendServerEventRemindersSchedule` queries across every Server
+(ADR-212/ADR-214). The emulator creates indexes on demand, so nothing local
+can fail on its absence — **in production every reminder run fails with
+`FAILED_PRECONDITION` until this index reports READY**, which is why it goes
+first and why the scheduler must not be deployed before the read-back.
+
+```bash
+firebase deploy --only firestore:indexes --project yovoice-ec54a
+firebase firestore:indexes --project yovoice-ec54a --json
+gcloud firestore indexes composite list --project=yovoice-ec54a \
+  --format="table(name,queryScope,fields,state)"
+```
+
+Read back, before step 3b:
+
+- the CLI list contains the `events` COLLECTION_GROUP composite above;
+- `gcloud` (or Firestore → Indexes in the Console) reports that index
+  **READY**, not `CREATING`. An index build is asynchronous and this is the
+  only place its state is visible; the Firebase CLI prints the declared set,
+  not the build state;
+- the managed TTL field override on `notificationDeliveryEvents.expiresAt`
+  is still present and still `ttl:true`. The reminder worker writes its
+  per-recipient delivery ledger there, and an index deploy is the operation
+  that has previously disturbed managed TTL.
+
+No `--force`. Nothing else in `firestore.indexes.json` changed in this build
+(48 composites, 13 field overrides).
+
+### 2. Firestore Rules — after the index, before the Functions
+
+One additive change: an explicit `match /commentMentions/{mentionId} { allow
+read, write: if false; }` block, the server-only record of who a Voice Moment
+or Yeel comment `@`-mentions (ADR-212). `storage.rules` is byte-identical to
+3.0.0+34 and must **not** be deployed.
+
+```bash
+firebase deploy --only firestore:rules --project yovoice-ec54a
+```
+
+Read the deployed ruleset back — see
+[Reading the deployed ruleset](#reading-the-deployed-ruleset-the-verification-standard) —
+and confirm the `commentMentions` block is present and that no other rule
+moved.
+
+### 3. Cloud Functions — the push boundary before any writer
+
+ADR-212 makes the order load-bearing: the push boundary carries the titles,
+the sound map and the new source validators, and it now **denies by default**.
+If a writer ships first, its rows reach a boundary that does not know the type
+and are skipped as `unregistered-type` — with ADR-214's fix the row survives,
+but no push is sent. If the boundary ships first, nothing is lost: there are
+no rows of the new types yet.
+
+**3a. The boundary, alone.**
+
+```bash
+firebase deploy --only functions:onNotificationCreated --project yovoice-ec54a
+firebase functions:list --project yovoice-ec54a
+```
+
+Confirm one new ACTIVE revision in `europe-west1` and keep the prior revision
+name for rollback.
+
+**3b. Everything else, after 3a and after the index reads READY.**
+
+`functions/notifications/canonical.js` is shared by every notification
+producer, so a narrow selector would leave producers running against an older
+copy of the shared writer. Deploy the whole surface:
+
+```bash
+firebase deploy --only functions --project yovoice-ec54a
+firebase functions:list --project yovoice-ec54a
+```
+
+Expect **creations**, not updates, for the six new exports:
+`onMomentCommentCreated`, `onMomentCommentDeleted`, `onReelCommentCreated`,
+`onReelCommentDeleted`, `sendServerEventRemindersSchedule` (ADR-212) and
+`releaseServerChannelSessionIfEmptyV1` (ADR-180 amendment). The last one binds
+`LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`, which already exist in Secret
+Manager. `appConfig/serversV1` needs no change: the new callable uses the
+existing `callableAccess` cohort and the sweep and webhook use the existing
+`workersEnabled`.
+
+If a narrower plan is genuinely wanted, the minimum that must move together
+is the four comment callables that now accept `mentionUserIds`
+(`createMomentComment`, `finalizeVoiceCommentDraft`, `createReelComment`,
+`finalizeReelVoiceCommentDraft`), the six new exports above, the Servers
+callables the role notice and the event budget touch
+(`setServerMemberRoleV1`, `transferServerOwnershipV1`, `createServerEventV1`),
+the session surface (`startServerChannelSessionV1`,
+`endServerChannelSessionV1`, `createServerChannelTokenV1`,
+`sweepStaleServerChannelSessionsSchedule`),
+`receiveLiveKitAchievementWebhook`, and the GIF allow-set path
+(`getGifCatalog`, `sendDirectMessage`, `sendRoomMessage`, `sendClubMessage`).
+
+Read back after 3b:
+
+- all six new names ACTIVE in `europe-west1`;
+- `secretEnvironmentVariables` on `releaseServerChannelSessionIfEmptyV1`
+  contains the two LiveKit secrets and **no** `GIPHY_API_KEY` appears
+  anywhere;
+- the next `sendServerEventRemindersSchedule` run logs no
+  `FAILED_PRECONDITION` and reports its paging counters
+  (`pages`, `hasMore`, `budgetExhausted`);
+- the next `sweepStaleServerChannelSessionsSchedule` line carries the new
+  counters (`stagedEmpty`, `graceRunning`, `driftRepaired`,
+  `driftUnresolved`, `driftTruncated`).
+
+### 4. The app
+
+Only after 1–3 are read back. The client half of this build is
+`ServerSessionController.leave()`'s release signal, the media review, the Yeel
+scrubber, the friend-profile quick actions, the server delete/leave entries,
+the new notification types in the router and the "Moments & Yeels" preference
+group. Every already-installed client is covered by the webhook and the sweep
+without the release signal, and renders the five new notification types as
+plain, non-tappable `system` rows until it updates — accepted by the owner
+(ADR-212).
+
+Build the client **without** `--dart-define=YOVOICE_GIPHY_API_KEY`. A build
+that carries a key still shows Originals only, because `getGifCatalog`
+answers `resolvableProviders: []` while the resolver is gated off — but
+shipping the key before GIPHY is live has no purpose and puts an extractable
+credential in a store binary.
+
+### What stays OFF after this deploy — say it plainly
+
+- **GIPHY's `resolveGif` is source-gated off.** `GIPHY_SEND_RESOLVE_ENABLED =
+  false` in `functions/index.js`, so the resolver is not exported, no
+  `GIPHY_API_KEY` secret is declared, and `getGifCatalog` answers
+  `resolvableProviders: []`. The GIF picker behaves **exactly** like today's
+  Originals-only picker, in every build, with or without a client key.
+  Turning it on is a reviewed source change (flip the constant, add
+  `resolveGif` to the pinned export list in
+  `functions/test/cold_start_module_graph.test.js`, update
+  `functions/test/optional_secret_discovery.test.js`) **plus** the
+  `GIPHY_API_KEY` secret existing first — and then its own deploy wave. It is
+  not part of this build's deploy. The dual-provider allow-set on the send
+  paths ships now and is inert until a GIPHY record exists.
+- **App Check stays telemetry-only.** `YOVOICE_ENFORCE_GIF_APP_CHECK`,
+  `YOVOICE_ENFORCE_REELS_APP_CHECK` and `YOVOICE_ENFORCE_STAGE_B_APP_CHECK`
+  are unset, which `strictBooleanEnvironment` reads as `false`. Attestation is
+  not healthy on any platform (Android tokens fail to decode, iOS lacks the
+  App Attest entitlement, web has no reCAPTCHA site key), so enforcing now
+  would refuse most real traffic. Enforcement is a later, separate redeploy
+  after the console shows verified traffic per platform.
+- **Podcast recording / Egress** stays source-disabled, as before.
+- **`appConfig/serversV1`** is not touched by this build.
+
+### Rollback
+
+Functions roll back by redeploying the pinned prior revisions named in the
+`functions:list` output taken before step 3a. Rules roll back from the version
+history. The new index can be left in place — it is additive and costs one
+composite. If the reminder scheduler misbehaves, the smallest safe stop is to
+redeploy `sendServerEventRemindersSchedule` from the prior source; there is no
+runtime kill switch for it, which is worth knowing before step 3b.
+
+### Steps only Kamil can do
+
+These are not in the deploy order above because nothing in the repository can
+perform them. Nothing in this list is a precondition for steps 1–4 unless it
+says so.
+
+1. **GIPHY developer account and API app** at developers.giphy.com. Apply for
+   a production key ("Upgrade to Production") with picker screenshots that
+   show the official mark. Ask GIPHY in the same application to confirm the
+   server-side `GET /v1/gifs/{id}` lookup at send time (ADR-213, option B).
+2. **The official "Powered By GIPHY" artwork**, unmodified, placed at
+   `assets/images/giphy_powered_by_on_light.png` and
+   `assets/images/giphy_powered_by_on_dark.png`. The repo does not draw or
+   approximate it; until the files exist the picker renders GIPHY's wording as
+   plain text, so attribution is never missing.
+3. **The `GIPHY_API_KEY` secret**, once the production key exists. Paste it at
+   the hidden prompt, never as an argument, and approve the IAM grant the CLI
+   offers:
+   `firebase functions:secrets:set GIPHY_API_KEY --project yovoice-ec54a`
+4. **The client build define.** `--dart-define=YOVOICE_GIPHY_API_KEY=<client
+   key>` from the CI secret store, never committed — and only for the build
+   that ships *after* GIPHY goes live.
+5. **The privacy disclosure.** The privacy policy and the yovoice.app privacy
+   page must say what Settings already says in 41 locales: GIPHY receives the
+   IP address and device information of anyone who loads a GIPHY GIF,
+   recipients included, and "Load GIFs automatically" turns automatic loading
+   and GIPHY analytics off. The `yovoice-website` branch `privacy/giphy`
+   carries that copy and **must not be published until GIPHY is actually
+   live** — publishing it first would describe data sharing that is not
+   happening.
+6. **App Check console steps**, in this order and none of them from the repo:
+   enable the Play Integrity API for the Android app, add the App Attest
+   entitlement to the iOS app in the Apple Developer portal and register it,
+   and create a reCAPTCHA Enterprise site key for web. Only when the App Check
+   console shows verified traffic on all three does enforcing become a
+   separate, later redeploy.
+7. **Confirm the LiveKit webhook is actually accepted.** The URL
+   `https://europe-west1-yovoice-ec54a.cloudfunctions.net/receiveLiveKitAchievementWebhook`
+   was registered in the LiveKit Cloud dashboard on **2026-09-19**, signed
+   with the same `LIVEKIT_API_KEY` the function already binds. Acceptance of
+   that signature is **UNVERIFIED**: `firebase functions:log` returned only
+   deployment audit entries, no delivery. After step 3b, join a real Server
+   voice channel from a device, leave it, and then read:
+   `firebase functions:log --only receiveLiveKitAchievementWebhook --project yovoice-ec54a`
+   A `room_finished` for a `srv_` room logs
+   `livekit server lifecycle handled room_finished` with an outcome of
+   `pending`, `ended`, `occupied`, `not-live` or `unbound`. The same delivery
+   also starts voice-time accounting, which has never run — watch for
+   unexpected achievement volume. Until a delivery is read back, treat
+   `voiceMinutes` and the provider-driven end of an empty channel as not
+   working.
+8. **Repair the existing stale server LIVE badges.** Needs operator
+   Application Default Credentials; the script holds no provider credential
+   and is idempotent. Dry run first:
+   ```bash
+   node functions/scripts/repair_stale_server_channel_liveness.js --project yovoice-ec54a
+   ```
+   It writes nothing and prints one line per live projection, classified
+   `ok-live`, `ok-idle`, `reset-null-session`, `reset-terminal-session`,
+   `unresolved` or `changed`. Review the classifications, then:
+   ```bash
+   node functions/scripts/repair_stale_server_channel_liveness.js --project yovoice-ec54a --apply
+   ```
+   and finally the dry run again, which must report `writes: 0` and no
+   `reset-*` lines. `unresolved` lines are deliberately left to the sweep and
+   to review; they are not a script failure. A 24-hour-old unprovable
+   projection has its badge reset by the sweep but keeps its private
+   `activeSessionId`, and such a channel cannot start a new session until an
+   operator repairs it by hand.
+9. **The provider drill** (Servers activation precondition 4 in
+   [Servers.md](Servers.md)). Against real LiveKit Cloud, observe and record:
+   whether `ListParticipants` still lists a cleanly disconnected participant
+   and for how long; how long after the last departure `room_finished`
+   arrives; and whether an OBS ingress participant and an Egress recorder
+   appear in `ListParticipants`. Every local suite proves these paths against
+   a stub adapter only.
+10. **The Firestore TTL policy on `notificationDeliveryEvents.expiresAt`.**
+    It is declared in `firestore.indexes.json` and was enabled in production
+    on 2026-08-28 (the direct-chat reliability round); the owner step is to confirm it still reads back
+    `ttl:true` after step 1, because the reminder worker's per-recipient
+    delivery ledger is written there and would otherwise grow without bound.
+11. **Store and web release**, as always separate from all of the above.
+
 ## Build 33 release round — web deployed, iOS with testers, Play upload outstanding (2026-09-19)
 
 Source for everything below: `main` at
@@ -4393,6 +4657,14 @@ curl -s https://app.yovoice.app/main.dart.js | wc -c   # fingerprint the client
 | `publishPublicStatsSchedule` | **Deployed 2026-08-20** | present in `functions:list` as a v2 scheduled function in `europe-west1`; `publicStats/live` verified against independent `count()` aggregates |
 | `receiveLiveKitAchievementWebhook` | **Not deployed, and not deployable** | exists in `functions/achievements/livekit_http.js`, never exported from `functions/index.js` |
 
+*(Corrected 2026-09-19: `receiveLiveKitAchievementWebhook` **is** exported
+from `functions/index.js` and has been deployed since 2026-09-07. What the
+row above describes is the Build-19-era state. What is still missing is the
+provider side: the URL was registered in the LiveKit Cloud project on
+2026-09-19, but no delivery has been read back, so acceptance of its
+signature is UNVERIFIED. See the next-build deploy order at the top of this
+file.)*
+
 **The index deploy fixed a live defect.** `entitlements(isPremium,
 currentPeriodEnd)` backs the scheduled `expirePremiumIdentity` query at
 `functions/premium/entitlements.js:163`. It had never been deployed, so
@@ -4491,11 +4763,14 @@ number is not published:
    without it reports ghosts forever. What it would publish today is an
    honest lower bound, not a measurement.
 
-The real fix is the same unexported webhook that would repair
+The real fix is the same webhook that would repair
 `voiceMinutes`: `receiveLiveKitAchievementWebhook` in
 `functions/achievements/livekit_http.js`, whose sessions are closed by
 LiveKit's own `participant_left` / `participant_connection_aborted`
-events, which the SFU emits on a crash.
+events, which the SFU emits on a crash. *(Corrected 2026-09-19: that function
+is exported and deployed; "unexported" describes the state when this section
+was written. The missing half is the provider registration, whose deliveries
+have not yet been observed.)*
 
 ### RELEASED 2026-08-23: the fixed desktop rail and the timezone world-map card
 
@@ -5900,6 +6175,13 @@ while YO Voice Originals is selected.
 
 ## GIPHY activation — option B (ADR-213)
 
+> This section is the GIPHY-specific detail: the source flip, the exact
+> activation deploy wave, the canary and the rollback. It is **not** part of
+> the next build's deploy order — GIPHY stays off through that deploy. The
+> owner prerequisites below are also listed, consolidated with every other
+> owner step of this build, under
+> [Steps only Kamil can do](#steps-only-kamil-can-do).
+
 **Nothing here is deployed by merging the source.** The committed source keeps
 `GIPHY_SEND_RESOLVE_ENABLED = false` in `functions/index.js`, so `resolveGif`
 is not exported, no `GIPHY_API_KEY` is declared, and `getGifCatalog` answers
@@ -5978,7 +6260,12 @@ The base manifest is source-static because Firebase discovers exports before
 loading `functions/.env`: 49 callables, two dispatcher exports and three
 maintenance sweeps, **54 exports total** from `99b5916b`, which added
 `createServerBroadcastIngressV1` (packages generated from earlier commits pin
-48 callables and 53 exports). `YOVOICE_SERVERS_V1` is obsolete and
+48 callables and 53 exports). *(Superseded in source 2026-09-19 by the ADR-180
+amendment, which added exactly one callable,
+`releaseServerChannelSessionIfEmptyV1`: the reviewed manifest
+`tool/servers_activation_package.js` pins is now 55 base exports / 50 base
+callables, and 62 total exports / 56 callables with the seven
+Podcast-recording names. Not deployed.)* `YOVOICE_SERVERS_V1` is obsolete and
 cannot add, remove or enable them. The seven Podcast recording/Egress exports
 remain source-disabled, their credential is not declared, and their provider
 services are not constructed. Podcast recording is a separate release.

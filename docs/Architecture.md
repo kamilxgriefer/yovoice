@@ -259,7 +259,7 @@ check, or the check reads as if something else guarantees it. See
 [ADR-088](Decisions.md#adr-088-entering-a-room-performs-the-liveness-transition-through-one-ordered-coordinator-that-mirrors-the-deployed-rule)
 and [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
 This is **source state, not production state** — see
-[DEPLOYMENT.md](DEPLOYMENT.md#pending-release-the-2026-08-1920-reachability-wave).
+[DEPLOYMENT.md](DEPLOYMENT.md#released-2026-08-20-the-reachability-wave).
 
 The pattern to notice: **step 2 is a plain client-direct write** (the
 default per ADR-013), while **step 3–4 is a Cloud Function** specifically

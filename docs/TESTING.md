@@ -7,7 +7,7 @@ exist; know which one you're relying on before trusting it.
 ## ADR-214 notification review round — 2026-09-20 (source only, NOT deployed)
 
 Four defects found by a pre-merge review of `nb/notifications`
-([Bugs.md](Bugs.md), [ADR-214](Decisions.md#adr-214)). New coverage, all of it
+([Bugs.md](Bugs.md), [ADR-214](Decisions.md#adr-214-a-notification-that-repeats-on-demand-is-a-channel-not-a-notice--reminders-page-re-arm-on-the-schedule-and-refuse-two-ways)). New coverage, all of it
 added beside the existing cases rather than by changing an assertion:
 
 | Suite | New cases | What they prove |

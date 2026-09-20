@@ -86,7 +86,7 @@ LiveKit room deletion/revocation and active-session cleanup.
 > production `onNotificationCreated` deliberately remains on
 > `yovoice_activity_v2` until a new native build creates v3 and passes the
 > physical acceptance matrix in
-> [DEPLOYMENT.md](DEPLOYMENT.md#partial-release-2026-08-27-velvet-prism-product-sound).
+> [DEPLOYMENT.md](DEPLOYMENT.md#released-2026-08-27-velvet-prism-product-sound).
 
 `onNotificationCreated` (`functions/notifications/push.js`) — a Firestore
 `onDocumentCreated` trigger on `users/{userId}/notifications/{id}`. The

@@ -5,7 +5,19 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
-## FIXED IN SOURCE — the Yeel hairline never drew its played part (2026-09-19, next build, `nb/yeels-scrub`)
+## Next build after 3.0.0 — fixed in source on `nb/integrate`, NOT DEPLOYED
+
+Everything under this heading was found and fixed while building the next
+build after 3.0.0+34, across seven branches merged onto `nb/integrate`.
+**None of it is on `main`, none of it is deployed and none of it is with
+testers**, so every one of these defects is still live for every user until
+that build ships. Deploy order and owner steps:
+[DEPLOYMENT.md](DEPLOYMENT.md#next-build-after-300--one-deploy-order-for-the-whole-build-source-only-nothing-deployed).
+Run log: [Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md).
+Where an entry below says UNVERIFIED, it has not been looked at on a device
+or a simulator — nothing in this build was.
+
+### FIXED IN SOURCE — the Yeel hairline never drew its played part (2026-09-19, next build, `nb/yeels-scrub`)
 
 `ReelProgressBar` (`lib/features/reels/presentation/widgets/reel_progress_row.dart`)
 drew the played part as a childless `ColoredBox` in a `FractionallySizedBox`
@@ -16,7 +28,7 @@ any progress. The existing tests measured only the fill's width. Fixed with
 `heightFactor: 1`; `test/reel_progress_scrubber_test.dart` now pins the
 fill's height (ADR-210).
 
-## FIXED IN SOURCE — Yeels had no way to seek, for anyone (2026-09-19, next build, `nb/yeels-scrub`)
+### FIXED IN SOURCE — Yeels had no way to seek, for anyone (2026-09-19, next build, `nb/yeels-scrub`)
 
 The Yeel timeline was display-only: no drag, no click, and a label/value
 semantics node with no increase/decrease, so a screen-reader or keyboard user
@@ -27,7 +39,48 @@ on both stages, plus finger-seek on the Voice story player waveform (ADR-210).
 **Still UNVERIFIED on devices:** seek latency and frame-preview smoothness,
 and the arena feel of a diagonal flick from the bottom edge.
 
-## FIXED IN SOURCE — a library video over 60 s was refused only after it was queued, and library media sent without a look (2026-09-19, next build T4)
+### FIXED IN SOURCE — a friend's profile could not call, message or invite, and one refusal spun forever (2026-09-19, next build, `nb/friend-actions`)
+
+A friend's profile had no way to act on the person it was showing: no call, no
+video call, no message, no voice message, no invite to a server, no report —
+the only affordance was Follow. Calling somebody therefore meant finding the
+chat first, and `ChatScreen._startDirectCall` was the only implementation of
+the call launch flow, so nothing else could reuse it. Fixed client-only by
+`ProfileQuickActions` (Zadzwoń, Wideo, Wiadomość, Więcej at every width) over
+the shared `launchDirectCall`, which runs the same voice-session check,
+permissions-first await, conversation open, `startDirectCall` and exception
+mapping for both the chat header and the profile; the chat's timing is
+unchanged because it still passes its known conversation synchronously. Calls
+open the DM first, so the backend's friendship, block, restriction and
+message-privacy checks all apply, and a relationship gate disables calls for
+non-friends with a visible reason, shows the blocked line for people the
+viewer blocked, and hides Remove friend where it does not apply.
+
+Two defects were then found by a pre-merge review of the same branch, both on
+source that was never deployed:
+
+1. **A refusal before "busy" left a permanent spinner.** The tapped Call or
+   Video tile recorded its Connecting state before the shared launcher had
+   reported busy, so a launcher refusal — a live voice session, for instance
+   — left the tile spinning with a "Connecting…" live region that never
+   cleared. Fixed by recording that state only on a real busy report.
+2. **Every `failed-precondition` from the invite sheet read as "Already on
+   this server".** The Servers activation gate, and the inviter's
+   email-verification guard, were both reported to the user as membership, and
+   the row was marked non-retryable. Fixed by routing `details.reason` to the
+   shared availability copy and the verification copy, and marking the row as
+   already-a-member only on the backend's actual membership message. Every
+   other refusal stays retryable.
+
+Coverage: `test/friend_profile_quick_actions_test.dart`,
+`test/invite_person_to_server_sheet_test.dart`,
+`test/chat_launch_action_test.dart`. Frames:
+`yovoice-evidence/2026-09-19/next-build/friend-actions/` (friend, non-friend,
+blocked). **Still UNVERIFIED on a device**, and a stable `details.reason` for
+the membership refusal needs a backend change that was deliberately left out
+of scope — the client matches the backend's message text for now.
+
+### FIXED IN SOURCE — a library video over 60 s was refused only after it was queued, and library media sent without a look (2026-09-19, next build, `nb/confirm-upload`)
 
 `ImagePicker.pickVideo(maxDuration: 60 s)` limits only camera recording, so a
 longer (or over-64 MB) video from the library was accepted by the picker and
@@ -37,7 +90,7 @@ picker returned. Fixed by the media review (ADR-211): the file is shown first,
 and a video over the limit is blocked in the review with the reason and
 "Choose another". The service and backend checks are unchanged.
 
-## FIXED IN SOURCE — deleting a server was buried, failed for legacy roots and blamed permissions for a live call (2026-09-19)
+### FIXED IN SOURCE — deleting a server was buried, failed for legacy roots and blamed permissions for a live call (2026-09-19, next build, `nb/server-delete`)
 
 Kamil: "brakuje opcji usuwania serwerów". The backend (`deleteServerV1`,
 `deleteClubSelf`, `endServerChannelSessionV1`, the `serverDelete` cleanup) was
@@ -59,20 +112,49 @@ the conversation. Members are not notified in this build. Widget coverage:
 `yovoice-evidence/2026-09-19/server-delete-frames/`. Still UNVERIFIED on a
 device against the deployed backend.
 
-## FIXED IN SOURCE — the voice message bubble drew a different waveform per message from its duration (2026-09-19, Slim phase 0)
+### FIXED IN SOURCE — a server channel kept showing LIVE after everyone left (2026-09-19, next build, `nb/server-live`)
 
-Found by the phase-0 inventory for the waveform family. `_VoiceMessageContent`
-(`lib/features/messages/presentation/widgets/message_bubble.dart`) drew its 24
-bars from `7 + ((index * 13 + duration) % 22)`: every message got its own
-"waveform" although no amplitude is recorded anywhere — a fabricated shape
-presented as the message's audio. Six other bar waveforms across Home, Moments
-and Servers each drew their own silhouette. Fixed by the one primitive
-`YoWaveform` (`lib/shared/widgets/waveform/yo_waveform.dart`, ADR-209,
-waveform family): a fixed silhouette, still unless the caller holds the
-player's real position. Every caller kept its state machine, gate, key and
-target; the normalisations are listed in the ADR.
+Leaving a channel only disconnected the provider link — `ServerSessionController.leave()`
+told the backend nothing at all — so a generation was retired only by an
+explicit host end, a convergence event, or the ADR-180 stale sweep, which
+waits for every token the generation issued to expire plus one grace period
+and then runs on a five-minute cadence. The badge therefore survived the
+conversation by roughly 5 to 15 minutes. Worse, a channel whose public
+`liveness.isLive` was still true while its anchor room was not live was
+outside every sweep's candidate query (`rooms.isLive == true`), so nothing
+ever enumerated it and it stayed LIVE indefinitely. Both the channel rows and
+the Start screen's "Teraz na żywo" cards read that one projection, so one
+server-side fix covers both surfaces.
 
-## FIXED IN SOURCE — four repeat/drop defects in the ADR-212 notification slice (2026-09-20, review round)
+**Fixed in source (ADR-180 amendment), not deployed:** a 60 s reconnect grace
+observed and timed by the backend on the private session document, completed
+by the new `releaseServerChannelSessionIfEmptyV1` the leaving client calls, by
+the provider's signed `room_finished`, and by the tightened sweep — all three
+through the existing end writer and worker. The same sweep now also repairs
+drifted projections, and anything it cannot prove dead is counted in
+`driftUnresolved` and left alone.
+
+Needs, before this is actually fixed for anybody: the Functions deploy, a
+confirmed LiveKit webhook delivery (registered 2026-09-19, **acceptance
+UNVERIFIED**), and a one-off dry-run-then-`--apply` of
+`functions/scripts/repair_stale_server_channel_liveness.js` for the badges
+already stuck in production. The provider drill (Servers activation
+precondition 4) is also outstanding: every local suite proves these paths
+against a stub adapter, so the real timings — how long a cleanly disconnected
+participant stays listed, when `room_finished` arrives, whether an OBS ingress
+participant is listed — are unobserved.
+
+### OPEN — a 24-hour-old unprovable LIVE projection leaves its channel unable to start a new session (2026-09-19, next build, `nb/server-live`)
+
+Deliberate, and the consequence of the drift repair refusing to guess. A
+channel whose badge is older than `MAX_UNPROVEN_LIVE_AGE_MS` (24 h) and whose
+anchor is idle has its badge reset once the provider reports the room empty,
+but its private graph is left alone — an `activeSessionId` still names a
+session the classifier could not prove dead. Such a channel cannot start a new
+session until an operator repairs it by hand. The repair script reports it as
+`unresolved`; that is a review item, not a script failure.
+
+### FIXED IN SOURCE — four repeat/drop defects in the ADR-212 notification slice (2026-09-20, next build, `nb/notifications` review round)
 
 Found by a pre-merge review of `nb/notifications`, all four on source that was
 never deployed. Fixed on the same branch; ADR-214 has the reasoning.
@@ -109,6 +191,19 @@ Also in that round: the reminder worker reads the per-recipient delivery
 ledger before the ACL read and the eight-read transaction (roughly fifteen
 reads per opted-in member per run became one for anyone already decided), and
 the previously silent 500-response truncation is now a cursor.
+
+## FIXED IN SOURCE — the voice message bubble drew a different waveform per message from its duration (2026-09-19, Slim phase 0)
+
+Found by the phase-0 inventory for the waveform family. `_VoiceMessageContent`
+(`lib/features/messages/presentation/widgets/message_bubble.dart`) drew its 24
+bars from `7 + ((index * 13 + duration) % 22)`: every message got its own
+"waveform" although no amplitude is recorded anywhere — a fabricated shape
+presented as the message's audio. Six other bar waveforms across Home, Moments
+and Servers each drew their own silhouette. Fixed by the one primitive
+`YoWaveform` (`lib/shared/widgets/waveform/yo_waveform.dart`, ADR-209,
+waveform family): a fixed silhouette, still unless the caller holds the
+player's real position. Every caller kept its state machine, gate, key and
+target; the normalisations are listed in the ADR.
 
 ## OPEN — two screenshot harnesses fail on a fixture stream before any frame (2026-09-19)
 
@@ -4348,7 +4443,6 @@ permission flags).
   `deletionInProgress` does not block deletion). Home no longer renders
   mid-deletion rooms as startable.
 
-
 - **FIXED IN SOURCE 2026-08-17, NOT YET DEPLOYED — a `not-found` from any
   messaging callable disabled the entire server-side guard set, and a
   failed conversation open wrote a thread the backend can never touch
@@ -4727,7 +4821,7 @@ permission flags).
   `clubs.clubId` exemption and would offer to delete it. Note this callable
   has no caller in `lib/` — the browser it serves is in the website or
   unbuilt — so the user-visible impact is confined to whoever calls it.
-  [ADR-101](Decisions.md#adr-101-the-admin-centers-active-room-filter-reads-status-the-way-the-rules-do--and-the-filter-it-replaced-never-ran-at-all).
+  [ADR-104](Decisions.md#adr-104-the-admin-centers-active-room-filter-reads-status-the-way-the-rules-do--and-the-filter-it-replaced-never-ran-at-all).
 
 - **OPEN, found 2026-08-21 — three layers disagree about what an absent club
   `status` means, and one of them invents a value.** Unlike rooms, the club
@@ -4843,7 +4937,6 @@ permission flags).
   disconnect, chat withdrawal — in the shape of
   `removeRoomParticipantSelf`. Do not restore the rule. Full reasoning:
   [ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row).
-
 
 - **FIXED — Staff Center user lookup could not find existing users.**
   `users.username` is stored AS TYPED (seeded verbatim from the display
@@ -5253,7 +5346,6 @@ permission flags).
   tile is now the target and both rails open the playing sheet; mobile's own
   bubble opened the recorder even when a Moment existed and the strip was
   hidden entirely when nobody else had posted.
-
 
 - **FIXED IN SOURCE 2026-08-20, NOT DEPLOYED AND NOT ROUND-TRIPPED — voice
   had never worked in ANY Community room or lounge.** Reported as "opening a
@@ -5963,7 +6055,7 @@ permission flags).
   deployed and nothing reaches the path today. It needs a deliberate
   decision — delete it, or write the canonical shape — not continued
   coexistence. Tracked as
-  [Roadmap 0j](Roadmap.md#0j-decide-the-fate-of-_publishrecordedmomentlegacy).
+  [Roadmap 0j](Roadmap.md#0j-decide-the-fate-of-_publishrecordedmomentlegacy-done).
 
 - **`RoomScreen` (`lib/features/rooms/presentation/screens/room_screen.dart`,
   ~1,164 lines) and `PodcastRoomScreen`
@@ -6041,7 +6133,7 @@ permission flags).
   complete. Exemption backported; the full live config was diffed against
   the file and now matches exactly. The emulator does not enforce
   single-field exemptions, so no test could see any of this. See
-  [ADR-096](Decisions.md#adr-096-firestoreindexesjson-mirrors-the-deployed-index-state-exactly--a-console-created-exemption-is-backported-to-the-repo-the-day-it-is-found).
+  [ADR-106](Decisions.md#adr-106-firestoreindexesjson-mirrors-the-deployed-index-state-exactly--a-console-created-exemption-is-backported-to-the-repo-the-day-it-is-found).
 - **OPEN — App Store/Google Play Premium checkout is not operational.** The
   entitlement model, admin grant and access gates exist, but no IAP client or
   store receipt-verification adapter is configured; `verifyPurchase`
@@ -6085,7 +6177,7 @@ permission flags).
   renewed and never cleaned up on a crash, so counting by freshness
   reports zero for a full room while counting without it reports ghosts
   forever. Do not sweep it into a blanket `--only functions` deploy. See
-  [DEPLOYMENT.md](DEPLOYMENT.md#deliberately-held-back-publishpublicstatsschedule).
+  [DEPLOYMENT.md](DEPLOYMENT.md#released-2026-08-20-publishpublicstatsschedule).
 - **Fixed: `flutter build apk` failed outright** (missing core library
   desugaring for `flutter_local_notifications`, then a follow-on AAPT2
   drawable-resource error). See
