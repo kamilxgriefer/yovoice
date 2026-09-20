@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -13,6 +12,7 @@ import 'package:yovoice/features/clubs/data/models/club_chat_authority.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
+import 'package:yovoice/features/clubs/data/services/club_media_upload_source.dart';
 import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
 import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
 import 'package:yovoice/features/media/data/services/gif_transport.dart';
@@ -403,18 +403,21 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
       _showMessage(failure);
       return;
     }
-    final bytes = await image.readAsBytes();
+    // Measured, not read. `XFile.length()` is a file stat on io and the Blob's
+    // own size on web; reading the pick just to count its bytes is what used to
+    // put a whole photo — and, below, a whole 64 MiB video — in the heap.
+    final length = await image.length();
     if (!mounted) return;
     // The same bounds the reservation and Storage rules enforce; refusing
     // here keeps a doomed upload off the wire.
-    if (bytes.lengthInBytes < 128 || bytes.lengthInBytes > 8 * 1024 * 1024) {
+    if (length < 128 || length > 8 * 1024 * 1024) {
       _showMessage(failure);
       return;
     }
     await _sendMedia(
       type: 'image',
       contentType: contentType,
-      bytes: bytes,
+      source: ClubMediaUploadSource.pickedFile(image, length: length),
       failure: failure,
     );
   }
@@ -448,19 +451,19 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
       return;
     }
     final durationSeconds = (duration.inMilliseconds + 999) ~/ 1000;
-    final bytes = await video.readAsBytes();
+    final length = await video.length();
     if (!mounted) return;
     if (durationSeconds < 1 ||
         durationSeconds > 60 ||
-        bytes.lengthInBytes < 1024 ||
-        bytes.lengthInBytes > 64 * 1024 * 1024) {
+        length < 1024 ||
+        length > 64 * 1024 * 1024) {
       _showMessage(failure);
       return;
     }
     await _sendMedia(
       type: 'video',
       contentType: contentType,
-      bytes: bytes,
+      source: ClubMediaUploadSource.pickedFile(video, length: length),
       durationSeconds: durationSeconds,
       failure: failure,
     );
@@ -469,7 +472,7 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
   Future<void> _sendMedia({
     required String type,
     required String contentType,
-    required Uint8List bytes,
+    required ClubMediaUploadSource source,
     required String failure,
     int? durationSeconds,
   }) async {
@@ -483,7 +486,7 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
         channelId: widget.channel.id,
         type: type,
         contentType: contentType,
-        bytes: bytes,
+        source: source,
         durationSeconds: durationSeconds,
         onProgress: (progress) {
           if (mounted) setState(() => _mediaProgress = progress.clamp(0, 1));
