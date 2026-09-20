@@ -1,8 +1,11 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +16,11 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
+import 'package:yovoice/features/clubs/data/services/club_media_upload_source.dart';
+// The browser implementation, reached directly: the conditional import picks
+// the io one under `flutter test`, and the web path still has to be proven.
+import 'package:yovoice/features/clubs/data/services/club_media_upload_source_web.dart'
+    as web_source;
 import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
 import 'package:yovoice/features/servers/data/models/server_channel.dart';
@@ -21,6 +29,41 @@ import 'package:yovoice/features/servers/presentation/widgets/server_text_channe
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 import 'support/fake_gif_transport.dart';
+
+/// A pick that cannot be read into memory at all, and knows its own size.
+///
+/// Every byte-shaped read throws, so any code path that still needs the whole
+/// photo or video resident fails loudly instead of quietly costing the heap it
+/// used to cost. It also lets a 64 MiB bound be exercised without allocating
+/// 64 MiB.
+class _UnreadableXFile extends XFile {
+  _UnreadableXFile(super.path, {required int declaredLength, super.mimeType})
+    : _declaredLength = declaredLength;
+
+  final int _declaredLength;
+
+  @override
+  Future<int> length() async => _declaredLength;
+
+  @override
+  Future<Uint8List> readAsBytes() =>
+      throw StateError('the pick must not be read into memory');
+
+  @override
+  Stream<Uint8List> openRead([int? start, int? end]) =>
+      throw StateError('the pick must not be read into memory');
+}
+
+/// A real file on disk, because `putFile` streams a real file.
+Future<File> _tempFile(String name, int length) async {
+  final directory = await Directory.systemTemp.createTemp('yo_server_media');
+  addTearDown(() async {
+    if (await directory.exists()) await directory.delete(recursive: true);
+  });
+  final file = File('${directory.path}${Platform.pathSeparator}$name');
+  await file.writeAsBytes(Uint8List(length), flush: true);
+  return file;
+}
 
 /// Photos and videos in a server text channel: the attach affordance, the
 /// reserve -> upload -> finalize pipeline, the grant-backed bubbles and the
@@ -102,6 +145,7 @@ void main() {
     List<String> unavailable = const <String>[],
     Future<void> Function()? beforeUpload,
     Future<Map<Object?, Object?>> Function(Map<String, Object?>)? moderation,
+    MockFirebaseStorage? uploadInto,
   }) => ClubChatService(
     firestore: db,
     auth: auth,
@@ -174,18 +218,30 @@ void main() {
     mediaUploader:
         ({
           required String storagePath,
-          required Uint8List bytes,
+          required ClubMediaUploadSource source,
           required String contentType,
           required Map<String, String> customMetadata,
           void Function(double progress)? onProgress,
         }) async {
           uploads.add({
             'storagePath': storagePath,
-            'size': bytes.lengthInBytes,
+            // What the reservation declares, measured without reading the pick.
+            'size': source.length,
             'contentType': contentType,
             'metadata': customMetadata,
           });
           onProgress?.call(0.5);
+          if (uploadInto != null) {
+            // The real platform source against a fake Storage: this is where
+            // `putFile` versus `putData` is actually decided.
+            await source.start(
+              uploadInto.ref(storagePath),
+              SettableMetadata(
+                contentType: contentType,
+                customMetadata: customMetadata,
+              ),
+            );
+          }
           if (beforeUpload != null) await beforeUpload();
           return '301';
         },
@@ -245,6 +301,37 @@ void main() {
           ),
         ),
       ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  /// Picks one item through the sheet and waits for the whole send to finish.
+  Future<void> sendPick(
+    WidgetTester tester, {
+    ClubChatService? chatService,
+    XFile? photo,
+    XFile? video,
+    Duration videoDuration = const Duration(seconds: 7),
+  }) async {
+    calls.clear();
+    uploads.clear();
+    await pump(
+      tester,
+      chatService ?? service(),
+      photo: photo,
+      video: video,
+      videoDuration: videoDuration,
+    );
+    // A snackbar left by an earlier attempt in the same test sits over the
+    // composer and would take the tap meant for the attach button.
+    tester
+        .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
+        .clearSnackBars();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('server-attach')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.text(photo != null ? 'Photo library' : 'Video library'),
     );
     await tester.pumpAndSettle();
   }
@@ -392,6 +479,204 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'a pick whose bytes cannot be read is still sent, measured not read',
+    (tester) async {
+      // Every byte-shaped read on this pick throws. A send that still
+      // completes is the proof that the scene no longer holds the photo — or a
+      // 64 MiB video — in the heap just to measure it.
+      final photo = _UnreadableXFile(
+        'holiday.jpg',
+        declaredLength: 4096,
+        mimeType: 'image/jpeg',
+      );
+
+      await sendPick(tester, photo: photo);
+
+      expect(tester.takeException(), isNull);
+      expect(calls.map((call) => call.$1), [
+        'reserveServerChannelMessageMediaV1',
+        'finalizeServerChannelMessageMediaV1',
+      ]);
+      expect(calls.first.$2['size'], 4096);
+      expect(uploads.single['size'], 4096);
+      expect(
+        find.text('Your photo could not be sent. Try again.'),
+        findsNothing,
+      );
+    },
+  );
+
+  test(
+    'the service uploads from the picked file, never from its bytes',
+    () async {
+      final storage = MockFirebaseStorage();
+      final file = await _tempFile('holiday.jpg', 4096);
+      // Real bytes on disk, unreadable through the picker handle: the only way
+      // this upload can succeed is by streaming the file itself.
+      final photo = _UnreadableXFile(
+        file.path,
+        declaredLength: 4096,
+        mimeType: 'image/jpeg',
+      );
+
+      final messageId = await service(uploadInto: storage)
+          .sendServerMediaMessage(
+            serverId: 'club',
+            channelId: 'general',
+            type: 'image',
+            contentType: 'image/jpeg',
+            source: ClubMediaUploadSource.pickedFile(photo, length: 4096),
+          );
+
+      expect(messageId, mediaId);
+      expect(calls.first.$2['size'], 4096);
+      expect(
+        storage.storedDataMap.get(mediaPath),
+        isA<File>(),
+        reason:
+            'putFile streams from the picked path; putData would need the '
+            'whole pick resident again.',
+      );
+    },
+  );
+
+  test('the web path still hands Storage the bytes', () async {
+    final storage = MockFirebaseStorage();
+    final picked = XFile.fromData(
+      Uint8List.fromList(List<int>.filled(4096, 7)),
+      name: 'holiday.jpg',
+      mimeType: 'image/jpeg',
+    );
+
+    final source = web_source.createClubMediaUploadSource(picked, length: 4096);
+    await source.start(
+      storage.ref(mediaPath),
+      SettableMetadata(contentType: 'image/jpeg'),
+    );
+
+    expect(source.length, 4096);
+    final stored = storage.storedDataMap.get(mediaPath);
+    expect(
+      stored,
+      isA<Uint8List>(),
+      reason:
+          'A browser pick is a Blob, not a file: putData stays the browser '
+          'transport and the byte caps bound it.',
+    );
+    expect(stored as Uint8List, hasLength(4096));
+  });
+
+  test(
+    'the io source streams the file and refuses one that moved or vanished',
+    () async {
+      final storage = MockFirebaseStorage();
+      final file = await _tempFile('clip.mp4', 8192);
+      final metadata = SettableMetadata(contentType: 'video/mp4');
+      final source = ClubMediaUploadSource.pickedFile(
+        XFile(file.path),
+        length: 8192,
+      );
+
+      await source.start(storage.ref(videoPath), metadata);
+      expect(storage.storedDataMap.get(videoPath), isA<File>());
+
+      // The reservation already declared 8192 bytes, so a file that is no
+      // longer that long could only be refused at finalize.
+      await file.writeAsBytes(Uint8List(4096), flush: true);
+      await expectLater(
+        source.start(storage.ref(videoPath), metadata),
+        throwsStateError,
+      );
+
+      // The picker's temporary file evicted between pick and send: the one new
+      // failure mode of streaming instead of copying into memory.
+      await file.delete();
+      await expectLater(
+        source.start(storage.ref(videoPath), metadata),
+        throwsStateError,
+      );
+    },
+  );
+
+  testWidgets(
+    'the size bounds are unchanged and decided from the declared length',
+    (tester) async {
+      XFile pick(String kind, int length) => _UnreadableXFile(
+        kind == 'image' ? 'pick.jpg' : 'pick.mp4',
+        declaredLength: length,
+        mimeType: kind == 'image' ? 'image/jpeg' : 'video/mp4',
+      );
+      Future<void> attempt(String kind, int length) => sendPick(
+        tester,
+        photo: kind == 'image' ? pick(kind, length) : null,
+        video: kind == 'image' ? null : pick(kind, length),
+      );
+
+      // Exactly the numbers the reservation and `storage.rules` enforce:
+      // 128 B .. 8 MiB for a photo, 1 KiB .. 64 MiB for a video. Nothing here
+      // widens or narrows what may be sent — and none of it is read, so the
+      // 64 MiB edge costs no heap.
+      await attempt('image', 127);
+      expect(calls, isEmpty);
+      await attempt('image', 128);
+      expect(calls.first.$2['size'], 128);
+      await attempt('image', 8 * 1024 * 1024);
+      expect(calls.first.$2['size'], 8 * 1024 * 1024);
+      await attempt('image', 8 * 1024 * 1024 + 1);
+      expect(calls, isEmpty);
+
+      await attempt('video', 1023);
+      expect(calls, isEmpty);
+      await attempt('video', 1024);
+      expect(calls.first.$2['size'], 1024);
+      await attempt('video', 64 * 1024 * 1024);
+      expect(calls.first.$2['size'], 64 * 1024 * 1024);
+      await attempt('video', 64 * 1024 * 1024 + 1);
+      expect(calls, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('the 60-second video cap is unchanged', (tester) async {
+    final video = _UnreadableXFile(
+      'clip.mp4',
+      declaredLength: 4096,
+      mimeType: 'video/mp4',
+    );
+
+    await sendPick(
+      tester,
+      video: video,
+      videoDuration: const Duration(seconds: 61),
+    );
+    expect(calls, isEmpty);
+    expect(
+      find.text(
+        'Your video could not be sent. Choose a video up to 60 seconds and '
+        'try again.',
+      ),
+      findsOneWidget,
+    );
+
+    await sendPick(
+      tester,
+      video: video,
+      videoDuration: const Duration(milliseconds: 500),
+    );
+    expect(calls.first.$2['durationSeconds'], 1);
+
+    await sendPick(
+      tester,
+      video: video,
+      videoDuration: const Duration(seconds: 60),
+    );
+    expect(calls.first.$2['durationSeconds'], 60);
+
+    await sendPick(tester, video: video, videoDuration: Duration.zero);
+    expect(calls, isEmpty);
+  });
 
   testWidgets(
     'a failed upload says so and shows the sending row while it runs',

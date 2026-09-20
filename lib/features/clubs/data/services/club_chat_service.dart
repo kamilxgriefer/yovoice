@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -10,6 +9,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:yovoice/features/clubs/data/models/club_chat_authority.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
+import 'package:yovoice/features/clubs/data/services/club_media_upload_source.dart';
 
 /// One short-lived read grant for a server channel photo or video, as
 /// `getServerChannelMessageMediaAccessV1` issues it: a generation-bound V4 URL
@@ -36,12 +36,16 @@ class ServerMediaGrant {
   bool get isVideo => type == 'video';
 }
 
-/// Uploads the reserved object and answers with its Storage generation. The
-/// production implementation is Firebase Storage `putData`; tests inject one.
+/// Uploads the reserved object and answers with its Storage generation.
+///
+/// The production implementation hands the pick to Firebase Storage through
+/// [ClubMediaUploadSource] — `putFile` on io, `putData` in a browser — and
+/// never holds a whole photo or video itself; tests inject one, which is why
+/// the seam carries the source rather than bytes.
 typedef ServerMediaUploader =
     Future<String> Function({
       required String storagePath,
-      required Uint8List bytes,
+      required ClubMediaUploadSource source,
       required String contentType,
       required Map<String, String> customMetadata,
       void Function(double progress)? onProgress,
@@ -285,12 +289,17 @@ class ClubChatService {
   /// that reservation is live. A retry reuses the same reservation (the same
   /// `requestId`), so a lost response can never leave a second object or a
   /// second message. Returns the message id the channel will show.
+  ///
+  /// [source] is the pick itself, not its bytes: on io the upload streams from
+  /// the picked file, so a 64 MiB video never becomes a 64 MiB buffer (plus the
+  /// copy `putData` makes of it) in the Dart heap. `source.length` is what the
+  /// reservation declares and what the committed object is checked against.
   Future<String> sendServerMediaMessage({
     required String serverId,
     required String channelId,
     required String type,
     required String contentType,
-    required Uint8List bytes,
+    required ClubMediaUploadSource source,
     int? durationSeconds,
     void Function(double progress)? onProgress,
   }) async {
@@ -305,7 +314,7 @@ class ClubChatService {
           'channelId': channelId,
           'type': type,
           'contentType': contentType,
-          'size': bytes.lengthInBytes,
+          'size': source.length,
           'durationSeconds': durationSeconds,
           'requestId': reserveRequestId,
         });
@@ -333,7 +342,7 @@ class ClubChatService {
     }
     final generation = await (_mediaUploaderOverride ?? _uploadWithStorage)(
       storagePath: storagePath,
-      bytes: bytes,
+      source: source,
       contentType: contentType,
       customMetadata: customMetadata,
       onProgress: onProgress,
@@ -363,7 +372,7 @@ class ClubChatService {
 
   Future<String> _uploadWithStorage({
     required String storagePath,
-    required Uint8List bytes,
+    required ClubMediaUploadSource source,
     required String contentType,
     required Map<String, String> customMetadata,
     void Function(double progress)? onProgress,
@@ -375,8 +384,13 @@ class ClubChatService {
       contentType: contentType,
       customMetadata: customMetadata,
     );
+    // Started outside the recovery below on purpose. A source that refuses
+    // before any byte moves — the picked file is gone, or it is no longer the
+    // length the reservation declared — has provably committed nothing, so
+    // asking Storage about an object that cannot exist would only replace an
+    // honest local reason with "the upload did not complete".
+    final task = await source.start(reference, settable);
     try {
-      final task = reference.putData(bytes, settable);
       final progress = task.snapshotEvents.listen(
         (snapshot) {
           if (snapshot.totalBytes > 0) {
@@ -403,7 +417,7 @@ class ClubChatService {
     final generation = stored.generation;
     if (generation == null ||
         generation.isEmpty ||
-        stored.size != bytes.lengthInBytes) {
+        stored.size != source.length) {
       throw StateError('The upload did not complete. Try again.');
     }
     return generation;
