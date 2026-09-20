@@ -16,6 +16,13 @@ import 'package:yovoice/features/clubs/data/services/club_media_upload_source.da
 import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
 import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
 import 'package:yovoice/features/media/data/services/gif_transport.dart';
+// The byte and duration bounds only. `storage.rules` pins the
+// `server_message_media/…` bounds to the direct-message ones ("Bounds are the
+// direct-message ones: image jpeg/png/webp 128 B-8 MiB, video mp4/quicktime/
+// webm 1 KiB-64 MiB, 1-60 s"), so both surfaces read the same constants and
+// this scene's backstop can never drift from the review it presents.
+import 'package:yovoice/features/messages/data/services/message_service.dart'
+    show directImageMaxBytes, directVideoMaxBytes, directVideoMaxSeconds;
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart'
     show
         DirectMessageMediaPickAction,
@@ -31,6 +38,7 @@ import 'package:yovoice/shared/widgets/inputs/yo_gif_send_status.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_text_field.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
+import 'package:yovoice/shared/widgets/media/yo_media_send_review.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -63,6 +71,7 @@ class ServerTextChannelScene extends StatefulWidget {
     this.photoPicker,
     this.videoPicker,
     this.videoInspector,
+    this.videoPreviewControllerFactory,
     this.mediaImageBuilder,
     super.key,
   });
@@ -95,6 +104,10 @@ class ServerTextChannelScene extends StatefulWidget {
   final DirectMessagePhotoPicker? photoPicker;
   final DirectMessageVideoPicker? videoPicker;
   final DirectMessageVideoInspector? videoInspector;
+
+  /// Test seam for the confirm-before-send review's own preview player;
+  /// production lets the review build the platform one.
+  final YoMediaPreviewControllerFactory? videoPreviewControllerFactory;
   final Widget Function(BuildContext context, Uri url)? mediaImageBuilder;
 
   @override
@@ -409,17 +422,40 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
     final length = await image.length();
     if (!mounted) return;
     // The same bounds the reservation and Storage rules enforce; refusing
-    // here keeps a doomed upload off the wire.
-    if (length < 128 || length > 8 * 1024 * 1024) {
+    // here keeps a doomed upload off the wire. This stays the backstop: the
+    // review below is presentation and never the only thing holding a limit.
+    if (length < 128 || length > directImageMaxBytes) {
       _showMessage(failure);
       return;
     }
-    await _sendMedia(
+    final gallery = source == ImageSource.gallery;
+    Future<void> send() => _sendMedia(
       type: 'image',
       contentType: contentType,
+      // Built per attempt: a retry from the review streams the file again
+      // rather than reusing a spent handle.
       source: ClubMediaUploadSource.pickedFile(image, length: length),
       failure: failure,
+      rethrowFailure: gallery,
     );
+    // A camera capture was already seen when it was taken and goes straight
+    // through, exactly as before; a library pick is confirmed first (ADR-211).
+    if (!gallery) return send();
+    final decision = await _reviewLibraryPick(
+      YoPickedMedia(
+        file: image,
+        kind: YoPickedMediaKind.image,
+        sizeBytes: length,
+        displayName: image.name,
+        contentType: contentType,
+      ),
+      title: copy.text('Send this photo?', 'Wysłać to zdjęcie?'),
+      failure: failure,
+      onSend: (_) => send(),
+    );
+    if (decision?.choice == YoMediaSendChoice.chooseAnother && mounted) {
+      return _sendPickedPhoto(ImageSource.gallery);
+    }
   }
 
   Future<void> _sendPickedVideo(ImageSource source) async {
@@ -453,19 +489,90 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
     final durationSeconds = (duration.inMilliseconds + 999) ~/ 1000;
     final length = await video.length();
     if (!mounted) return;
+    // The backstop, unchanged and still ahead of the review.
     if (durationSeconds < 1 ||
-        durationSeconds > 60 ||
+        durationSeconds > directVideoMaxSeconds ||
         length < 1024 ||
-        length > 64 * 1024 * 1024) {
+        length > directVideoMaxBytes) {
       _showMessage(failure);
       return;
     }
-    await _sendMedia(
+    final gallery = source == ImageSource.gallery;
+    Future<void> send(Duration clip) => _sendMedia(
       type: 'video',
       contentType: contentType,
       source: ClubMediaUploadSource.pickedFile(video, length: length),
-      durationSeconds: durationSeconds,
+      durationSeconds: (clip.inMilliseconds + 999) ~/ 1000,
       failure: failure,
+      rethrowFailure: gallery,
+    );
+    if (!gallery) return send(duration);
+    final decision = await _reviewLibraryPick(
+      YoPickedMedia(
+        file: video,
+        kind: YoPickedMediaKind.video,
+        sizeBytes: length,
+        displayName: video.name,
+        contentType: contentType,
+        duration: duration,
+      ),
+      title: copy.text('Send this video?', 'Wysłać ten film?'),
+      failure: failure,
+      // The review's own preview player is the last word on how long the clip
+      // is and hands back what it measured; the reservation declares that,
+      // and the review refuses Send before it if it is over the cap.
+      onSend: (item) => send(item.duration ?? duration),
+    );
+    if (decision?.choice == YoMediaSendChoice.chooseAnother && mounted) {
+      return _sendPickedVideo(ImageSource.gallery);
+    }
+  }
+
+  /// Exactly what `reserveServerChannelMessageMediaV1` and `storage.rules`
+  /// enforce for this channel's objects, so the review can never offer to send
+  /// something the reservation would refuse — or refuse something it allows.
+  static const _reviewLimits = YoMediaSendLimits(
+    maxImageBytes: directImageMaxBytes,
+    maxVideoBytes: directVideoMaxBytes,
+    maxVideoDuration: Duration(seconds: directVideoMaxSeconds),
+    // A clip is declared in whole seconds, rounded up, and the floor is one:
+    // anything longer than nothing clears it. The review's own default of a
+    // full second would refuse a half-second clip this channel accepts today.
+    minVideoDuration: Duration(milliseconds: 1),
+  );
+
+  /// The one confirm-before-send surface for a library pick (ADR-211).
+  ///
+  /// Presentation only: [onSend] is this scene's own `_sendMedia`, run from
+  /// the Send action while the sheet is still open, so the upload starts on
+  /// confirm and a failure comes back into the sheet with Send still armed.
+  Future<YoMediaSendDecision?> _reviewLibraryPick(
+    YoPickedMedia item, {
+    required String title,
+    required String failure,
+    required YoMediaSendHandler onSend,
+  }) {
+    final copy = AppLocalizations.of(context);
+    return showYoMediaSendReview(
+      context,
+      item: item,
+      limits: _reviewLimits,
+      title: title,
+      sendLabel: copy.serverSend,
+      destinationLabel: copy.template(
+        'To #{channel}',
+        'Do: #{channel}',
+        values: <String, Object>{'channel': widget.channel.name},
+      ),
+      onSend: onSend,
+      describeSendError: (error) =>
+          serverActionFailureCopy(error, copy, fallback: failure),
+      // The direct chat's revocation contract: a different account closes the
+      // review, so nothing is ever uploaded into it.
+      closeWhen: _service.accountChanges().where(
+        (user) => user?.uid.trim() != widget.currentUserId,
+      ),
+      videoControllerFactory: widget.videoPreviewControllerFactory,
     );
   }
 
@@ -475,6 +582,9 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
     required ClubMediaUploadSource source,
     required String failure,
     int? durationSeconds,
+    // The review shows a failure itself, inline and with Send still armed, so
+    // it needs the throw; every other caller gets the snackbar it always got.
+    bool rethrowFailure = false,
   }) async {
     setState(() {
       _sendingMedia = true;
@@ -493,6 +603,7 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
         },
       );
     } catch (error) {
+      if (rethrowFailure) rethrow;
       if (!mounted) return;
       _showMessage(
         serverActionFailureCopy(

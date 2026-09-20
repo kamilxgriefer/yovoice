@@ -143,6 +143,13 @@ class ClubChatService {
     return user;
   }
 
+  /// The signed-in account, for a surface that has to close itself when the
+  /// account changes mid-flow (the confirm-before-send media review's
+  /// `closeWhen`). It reads the one `FirebaseAuth` this service already sends
+  /// with, so the surface can never watch a different account than the one a
+  /// send would use.
+  Stream<User?> accountChanges() => _auth.userChanges();
+
   CollectionReference<Map<String, dynamic>> _messages({
     required String clubId,
     required String channelId,

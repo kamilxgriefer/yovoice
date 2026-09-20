@@ -11,6 +11,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:video_player/video_player.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
@@ -27,6 +28,7 @@ import 'package:yovoice/features/servers/data/models/server_channel.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/presentation/widgets/server_text_channel_scene.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/media/yo_media_send_review.dart';
 
 import 'support/fake_gif_transport.dart';
 
@@ -254,6 +256,7 @@ void main() {
     XFile? photo,
     XFile? video,
     Duration videoDuration = const Duration(seconds: 7),
+    YoMediaPreviewControllerFactory? videoPreview,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -294,6 +297,7 @@ void main() {
             photoPicker: (_) async => photo,
             videoPicker: (_) async => video,
             videoInspector: (_) async => videoDuration,
+            videoPreviewControllerFactory: videoPreview,
             mediaImageBuilder: (context, url) => ColoredBox(
               key: ValueKey('server-media-image-$url'),
               color: const Color(0xFF123456),
@@ -302,6 +306,16 @@ void main() {
         ),
       ),
     );
+    await tester.pumpAndSettle();
+  }
+
+  /// Confirms the confirm-before-send review a library pick now opens
+  /// (ADR-211). A pick the backstop refused never gets that far, so the tap is
+  /// conditional — the review's presence is asserted where it is the subject.
+  Future<void> confirmReview(WidgetTester tester) async {
+    final send = find.byKey(const ValueKey('yo-media-review-send'));
+    if (send.evaluate().isEmpty) return;
+    await tester.tap(send);
     await tester.pumpAndSettle();
   }
 
@@ -334,6 +348,7 @@ void main() {
       find.text(photo != null ? 'Photo library' : 'Video library'),
     );
     await tester.pumpAndSettle();
+    await confirmReview(tester);
   }
 
   test('a media descriptor parses only when it is exactly right', () {
@@ -419,6 +434,7 @@ void main() {
       expect(find.byKey(const ValueKey('server-media-picker')), findsOneWidget);
       await tester.tap(find.text('Photo library'));
       await tester.pumpAndSettle();
+      await confirmReview(tester);
       expect(calls.map((call) => call.$1), [
         'reserveServerChannelMessageMediaV1',
         'finalizeServerChannelMessageMediaV1',
@@ -456,6 +472,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Video library'));
       await tester.pumpAndSettle();
+      await confirmReview(tester);
       expect(calls.first.$2['type'], 'video');
       expect(calls.first.$2['durationSeconds'], 7);
 
@@ -678,6 +695,248 @@ void main() {
     expect(calls, isEmpty);
   });
 
+  // ------------------------------------------- confirm before it is uploaded
+
+  /// Opens the media sheet and takes one of its four entries.
+  Future<void> attach(WidgetTester tester, String entry) async {
+    await tester.tap(find.byKey(const ValueKey('server-attach')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(entry));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('a library photo is reviewed and uploads only after Send', (
+    tester,
+  ) async {
+    final photo = _UnreadableXFile(
+      'holiday.jpg',
+      declaredLength: 4096,
+      mimeType: 'image/jpeg',
+    );
+    await pump(tester, service(), photo: photo);
+    await attach(tester, 'Photo library');
+
+    expect(find.byKey(const ValueKey('yo-media-review')), findsOneWidget);
+    expect(find.text('Send this photo?'), findsWidgets);
+    // The review names the channel the media is going to.
+    expect(find.text('To #General'), findsOneWidget);
+    expect(find.text('4 KB'), findsOneWidget);
+    // Nothing is reserved, uploaded or finalized while the review is open.
+    expect(calls, isEmpty);
+    expect(uploads, isEmpty);
+
+    await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('yo-media-review')), findsNothing);
+    expect(calls.map((call) => call.$1), [
+      'reserveServerChannelMessageMediaV1',
+      'finalizeServerChannelMessageMediaV1',
+    ]);
+    expect(calls.first.$2['size'], 4096);
+    expect(uploads, hasLength(1));
+    // The preview could not read this pick, and the send happened anyway: the
+    // review shows what it can, it never becomes a reason to read the bytes.
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('cancelling the review uploads nothing', (tester) async {
+    final video = _UnreadableXFile(
+      'clip.mp4',
+      declaredLength: 8192,
+      mimeType: 'video/mp4',
+    );
+    await pump(
+      tester,
+      service(),
+      video: video,
+      videoPreview: (_) => _FakePreviewController(const Duration(seconds: 7)),
+    );
+    await attach(tester, 'Video library');
+    expect(find.byKey(const ValueKey('yo-media-review')), findsOneWidget);
+    expect(find.text('Send this video?'), findsWidgets);
+
+    await tester.tap(find.byKey(const ValueKey('yo-media-review-cancel')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('yo-media-review')), findsNothing);
+    expect(calls, isEmpty);
+    expect(uploads, isEmpty);
+    // A cancel is not a failure: nothing is said, nothing is queued.
+    expect(
+      find.text(
+        'Your video could not be sent. Choose a video up to 60 seconds and '
+        'try again.',
+      ),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('server-media-upload')), findsNothing);
+  });
+
+  testWidgets('a camera capture shows no review and uploads directly', (
+    tester,
+  ) async {
+    final photo = _UnreadableXFile(
+      'shot.jpg',
+      declaredLength: 4096,
+      mimeType: 'image/jpeg',
+    );
+    await pump(tester, service(), photo: photo);
+    await attach(tester, 'Take photo');
+
+    expect(find.byKey(const ValueKey('yo-media-review')), findsNothing);
+    expect(calls.map((call) => call.$1), [
+      'reserveServerChannelMessageMediaV1',
+      'finalizeServerChannelMessageMediaV1',
+    ]);
+
+    calls.clear();
+    uploads.clear();
+    final video = _UnreadableXFile(
+      'shot.mp4',
+      declaredLength: 8192,
+      mimeType: 'video/mp4',
+    );
+    await pump(tester, service(), video: video);
+    await attach(tester, 'Record video');
+
+    expect(find.byKey(const ValueKey('yo-media-review')), findsNothing);
+    expect(calls.first.$1, 'reserveServerChannelMessageMediaV1');
+    expect(calls.first.$2['durationSeconds'], 7);
+    expect(uploads, hasLength(1));
+  });
+
+  testWidgets(
+    'a clip the review measures over the cap is refused there, not mid-send',
+    (tester) async {
+      final video = _UnreadableXFile(
+        'long.mp4',
+        declaredLength: 8192,
+        mimeType: 'video/mp4',
+      );
+      // The cheap probe under-reported; the review's own player is the one
+      // that sees the real 90 seconds, and it sees them before Send can run.
+      await pump(
+        tester,
+        service(),
+        video: video,
+        videoPreview: (_) => _FakePreviewController(const Duration(seconds: 90)),
+      );
+      await attach(tester, 'Video library');
+
+      expect(
+        find.text('This video is 1:30. Videos can be up to 60 seconds.'),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<ElevatedButton>(
+              find.descendant(
+                of: find.byKey(const ValueKey('yo-media-review-send')),
+                matching: find.byType(ElevatedButton),
+              ),
+            )
+            .onPressed,
+        isNull,
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('yo-media-review-send')),
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+      expect(calls, isEmpty);
+      expect(uploads, isEmpty);
+      expect(find.byKey(const ValueKey('yo-media-review')), findsOneWidget);
+    },
+  );
+
+  testWidgets('a failed upload stays in the review with Send still armed', (
+    tester,
+  ) async {
+    final photo = _UnreadableXFile(
+      'holiday.jpg',
+      declaredLength: 4096,
+      mimeType: 'image/jpeg',
+    );
+    await pump(tester, service(failWith: StateError('nope')), photo: photo);
+    await attach(tester, 'Photo library');
+    await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('yo-media-review')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('yo-media-review-send-error')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Your photo could not be sent. Try again.'),
+      findsOneWidget,
+    );
+
+    // Still armed: a second Send is a second real attempt.
+    await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
+    await tester.pumpAndSettle();
+    expect(
+      calls.where((call) => call.$1 == 'reserveServerChannelMessageMediaV1'),
+      hasLength(2),
+    );
+  });
+
+  testWidgets('the review adapts: a sheet on a phone, a dialog on desktop', (
+    tester,
+  ) async {
+    final photo = _UnreadableXFile(
+      'holiday.jpg',
+      declaredLength: 4096,
+      mimeType: 'image/jpeg',
+    );
+    for (final (width, isDialog) in const [
+      (390.0, false),
+      (900.0, false),
+      (1440.0, true),
+    ]) {
+      await pump(tester, service(), size: Size(width, 900), photo: photo);
+      await attach(tester, 'Photo library');
+      expect(
+        find.byType(Dialog),
+        isDialog ? findsOneWidget : findsNothing,
+        reason: 'at $width',
+      );
+      expect(
+        find.byType(BottomSheet),
+        isDialog ? findsNothing : findsOneWidget,
+        reason: 'at $width',
+      );
+      expect(find.text('To #General'), findsOneWidget, reason: 'at $width');
+      await tester.tap(find.byKey(const ValueKey('yo-media-review-cancel')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: 'at $width');
+    }
+    expect(calls, isEmpty);
+  });
+
+  testWidgets('a different account closes the review and sends nothing', (
+    tester,
+  ) async {
+    final photo = _UnreadableXFile(
+      'holiday.jpg',
+      declaredLength: 4096,
+      mimeType: 'image/jpeg',
+    );
+    await pump(tester, service(), photo: photo);
+    await attach(tester, 'Photo library');
+    expect(find.byKey(const ValueKey('yo-media-review')), findsOneWidget);
+
+    auth.mockUser = MockUser(uid: 'someone-else', isEmailVerified: true);
+    await auth.signInWithCredential(null);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('yo-media-review')), findsNothing);
+    expect(calls, isEmpty);
+    expect(uploads, isEmpty);
+  });
+
   testWidgets(
     'a failed upload says so and shows the sending row while it runs',
     (tester) async {
@@ -691,6 +950,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Photo library'));
       await tester.pumpAndSettle();
+      await confirmReview(tester);
       expect(
         find.text('Your photo could not be sent. Try again.'),
         findsOneWidget,
@@ -885,4 +1145,58 @@ void main() {
       }
     },
   );
+}
+
+/// A preview player for the review that reports a duration without a platform
+/// (and without reading the pick), so the clip the review measures can differ
+/// from the one the cheap probe reported.
+class _FakePreviewController implements VideoPlayerController {
+  _FakePreviewController(Duration duration)
+    : _state = ValueNotifier(VideoPlayerValue(duration: duration));
+
+  final ValueNotifier<VideoPlayerValue> _state;
+  bool disposed = false;
+
+  @override
+  VideoPlayerValue get value => _state.value;
+
+  @override
+  set value(VideoPlayerValue value) => _state.value = value;
+
+  @override
+  int get playerId => VideoPlayerController.kUninitializedPlayerId;
+
+  @override
+  Future<void> initialize() async {
+    value = value.copyWith(isInitialized: true, size: const Size(1920, 1080));
+  }
+
+  @override
+  Future<void> play() async => value = value.copyWith(isPlaying: true);
+
+  @override
+  Future<void> pause() async {
+    if (disposed) return;
+    value = value.copyWith(isPlaying: false);
+  }
+
+  @override
+  Future<void> seekTo(Duration position) async =>
+      value = value.copyWith(position: position);
+
+  @override
+  Future<void> setVolume(double volume) async =>
+      value = value.copyWith(volume: volume);
+
+  @override
+  void addListener(VoidCallback listener) => _state.addListener(listener);
+
+  @override
+  void removeListener(VoidCallback listener) => _state.removeListener(listener);
+
+  @override
+  Future<void> dispose() async => disposed = true;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

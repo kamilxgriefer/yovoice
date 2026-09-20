@@ -261,9 +261,13 @@ class _YoMediaSendReviewState extends State<YoMediaSendReview> {
     _closeSubscription = widget.closeWhen?.listen((_) => _closeForSignal());
     if (_item.kind == YoPickedMediaKind.image && !_tooLarge) {
       final bytes = _item.bytes;
+      // `Future.sync`, never a bare call: a picked file whose read fails
+      // synchronously (a handle that streams rather than materializes, an
+      // evicted temporary) must surface as the broken-preview card, not as an
+      // exception out of `initState` that takes the whole review down.
       _imageBytes = bytes != null
           ? Future<Uint8List>.value(bytes)
-          : _item.file.readAsBytes();
+          : Future<Uint8List>.sync(_item.file.readAsBytes);
     }
     if (_item.kind == YoPickedMediaKind.video && !_tooLarge) {
       _probing = true;
