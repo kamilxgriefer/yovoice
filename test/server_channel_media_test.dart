@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -148,10 +149,14 @@ void main() {
     Future<void> Function()? beforeUpload,
     Future<Map<Object?, Object?>> Function(Map<String, Object?>)? moderation,
     MockFirebaseStorage? uploadInto,
+    // A constant by default, so every existing expectation keeps reading the
+    // one id it always read; a counting factory is how a test proves an id was
+    // reused rather than minted again.
+    String Function()? requestIdFactory,
   }) => ClubChatService(
     firestore: db,
     auth: auth,
-    requestIdFactory: () => 'media-request-1',
+    requestIdFactory: requestIdFactory ?? () => 'media-request-1',
     moderationInvoker:
         moderation ??
         (_) async => <Object?, Object?>{
@@ -881,7 +886,174 @@ void main() {
       calls.where((call) => call.$1 == 'reserveServerChannelMessageMediaV1'),
       hasLength(2),
     );
+    // Nothing was reserved here — the reserve call itself is what failed — so
+    // the replay carries the first attempt's own id and the ledger, not the
+    // client, decides it is the same operation.
+    expect(
+      calls
+          .where((call) => call.$1 == 'reserveServerChannelMessageMediaV1')
+          .map((call) => call.$2['requestId']),
+      ['media-request-1', 'media-request-1'],
+    );
   });
+
+  testWidgets(
+    'a retry after a failed upload replays the reservation it already holds',
+    (tester) async {
+      // The repro the lease punishes: the reservation was granted, the upload
+      // dropped. A second press that reserved again would be refused with
+      // `resource-exhausted` for the lease's 15 minutes — in every channel of
+      // every server, not just this one.
+      final photo = _UnreadableXFile(
+        'holiday.jpg',
+        declaredLength: 4096,
+        mimeType: 'image/jpeg',
+      );
+      var minted = 0;
+      var failuresLeft = 1;
+      await pump(
+        tester,
+        service(
+          requestIdFactory: () => 'media-request-${++minted}',
+          beforeUpload: () async {
+            if (failuresLeft-- > 0) throw StateError('the upload dropped');
+          },
+        ),
+        photo: photo,
+      );
+      await attach(tester, 'Photo library');
+      await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('yo-media-review')), findsOneWidget);
+      expect(
+        find.text('Your photo could not be sent. Try again.'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
+      await tester.pumpAndSettle();
+
+      // One reservation for one pick, however many times Send is pressed, and
+      // the bytes go up again because the object never committed.
+      expect(calls.map((call) => call.$1), [
+        'reserveServerChannelMessageMediaV1',
+        'finalizeServerChannelMessageMediaV1',
+      ]);
+      expect(uploads, hasLength(2));
+      expect(calls.first.$2['requestId'], 'media-request-1');
+      expect(calls.last.$2['requestId'], 'media-request-2');
+      expect(calls.last.$2['messageId'], mediaId);
+      // The send went through, so the review closed.
+      expect(find.byKey(const ValueKey('yo-media-review')), findsNothing);
+      expect(minted, 2);
+    },
+  );
+
+  test(
+    'an attempt whose object committed finalizes it instead of uploading again',
+    () async {
+      // The other half of the same contract: a finalize that fails after a
+      // committed object must not cost a second upload of a 64 MiB video, and
+      // must finalize under the id it already used.
+      var minted = 0;
+      var uploadCount = 0;
+      var finalizeFailuresLeft = 1;
+      final chat = ClubChatService(
+        firestore: db,
+        auth: auth,
+        requestIdFactory: () => 'attempt-request-${++minted}',
+        serverMessageInvoker: (name, request) async {
+          calls.add((name, request));
+          if (name == 'finalizeServerChannelMessageMediaV1' &&
+              finalizeFailuresLeft-- > 0) {
+            throw FirebaseFunctionsException(
+              code: 'permission-denied',
+              message: 'nope',
+            );
+          }
+          if (name != 'reserveServerChannelMessageMediaV1') {
+            return <Object?, Object?>{'ok': true};
+          }
+          return <Object?, Object?>{
+            'messageId': mediaId,
+            'media': {
+              'storagePath': mediaPath,
+              'uploadMetadata': {'yovoiceMessageId': mediaId},
+            },
+          };
+        },
+        mediaUploader:
+            ({
+              required String storagePath,
+              required ClubMediaUploadSource source,
+              required String contentType,
+              required Map<String, String> customMetadata,
+              void Function(double progress)? onProgress,
+            }) async {
+              uploadCount += 1;
+              return '301';
+            },
+      );
+      final attempt = chat.newServerMediaSendAttempt(
+        serverId: 'club',
+        channelId: 'general',
+        type: 'image',
+        contentType: 'image/jpeg',
+        size: 4096,
+      );
+      final source = ClubMediaUploadSource.pickedFile(
+        _UnreadableXFile(
+          'holiday.jpg',
+          declaredLength: 4096,
+          mimeType: 'image/jpeg',
+        ),
+        length: 4096,
+      );
+
+      await expectLater(
+        chat.sendServerMediaAttempt(attempt, source: source),
+        throwsA(isA<FirebaseFunctionsException>()),
+      );
+      expect(await chat.sendServerMediaAttempt(attempt, source: source), mediaId);
+
+      expect(uploadCount, 1);
+      expect(
+        calls.map((call) => call.$1),
+        containsAllInOrder([
+          'reserveServerChannelMessageMediaV1',
+          'finalizeServerChannelMessageMediaV1',
+          'finalizeServerChannelMessageMediaV1',
+        ]),
+      );
+      expect(
+        calls.where((call) => call.$1 == 'reserveServerChannelMessageMediaV1'),
+        hasLength(1),
+      );
+      expect(
+        calls
+            .where((call) => call.$1 == 'finalizeServerChannelMessageMediaV1')
+            .map((call) => call.$2['requestId']),
+        ['attempt-request-2', 'attempt-request-2'],
+      );
+      // A pick that no longer matches what the reservation declared never
+      // reaches Storage at all.
+      expect(
+        () => chat.sendServerMediaAttempt(
+          attempt,
+          source: ClubMediaUploadSource.pickedFile(
+            _UnreadableXFile(
+              'holiday.jpg',
+              declaredLength: 2048,
+              mimeType: 'image/jpeg',
+            ),
+            length: 2048,
+          ),
+        ),
+        throwsStateError,
+      );
+    },
+  );
 
   testWidgets('the review adapts: a sheet on a phone, a dialog on desktop', (
     tester,

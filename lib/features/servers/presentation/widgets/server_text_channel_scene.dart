@@ -429,9 +429,19 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
       return;
     }
     final gallery = source == ImageSource.gallery;
+    // One attempt per pick, not per press: the review keeps Send armed after a
+    // failure, and a second reservation would be refused for as long as the
+    // first lease lives. Reusing it makes the retry a replay.
+    ServerMediaSendAttempt? attempt;
     Future<void> send() => _sendMedia(
-      type: 'image',
-      contentType: contentType,
+      attempt:
+          attempt ??= _service.newServerMediaSendAttempt(
+            serverId: widget.server.id,
+            channelId: widget.channel.id,
+            type: 'image',
+            contentType: contentType,
+            size: length,
+          ),
       // Built per attempt: a retry from the review streams the file again
       // rather than reusing a spent handle.
       source: ClubMediaUploadSource.pickedFile(image, length: length),
@@ -498,11 +508,21 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
       return;
     }
     final gallery = source == ImageSource.gallery;
+    // Minted on the first press and then reused, exactly as for a photo: the
+    // clip the reservation declared is the one the first attempt measured, and
+    // a retry replays that reservation instead of asking for a second lease.
+    ServerMediaSendAttempt? attempt;
     Future<void> send(Duration clip) => _sendMedia(
-      type: 'video',
-      contentType: contentType,
+      attempt:
+          attempt ??= _service.newServerMediaSendAttempt(
+            serverId: widget.server.id,
+            channelId: widget.channel.id,
+            type: 'video',
+            contentType: contentType,
+            size: length,
+            durationSeconds: (clip.inMilliseconds + 999) ~/ 1000,
+          ),
       source: ClubMediaUploadSource.pickedFile(video, length: length),
-      durationSeconds: (clip.inMilliseconds + 999) ~/ 1000,
       failure: failure,
       rethrowFailure: gallery,
     );
@@ -577,11 +597,9 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
   }
 
   Future<void> _sendMedia({
-    required String type,
-    required String contentType,
+    required ServerMediaSendAttempt attempt,
     required ClubMediaUploadSource source,
     required String failure,
-    int? durationSeconds,
     // The review shows a failure itself, inline and with Send still armed, so
     // it needs the throw; every other caller gets the snackbar it always got.
     bool rethrowFailure = false,
@@ -591,13 +609,9 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
       _mediaProgress = null;
     });
     try {
-      await _service.sendServerMediaMessage(
-        serverId: widget.server.id,
-        channelId: widget.channel.id,
-        type: type,
-        contentType: contentType,
+      await _service.sendServerMediaAttempt(
+        attempt,
         source: source,
-        durationSeconds: durationSeconds,
         onProgress: (progress) {
           if (mounted) setState(() => _mediaProgress = progress.clamp(0, 1));
         },

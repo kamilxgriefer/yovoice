@@ -51,6 +51,71 @@ typedef ServerMediaUploader =
       void Function(double progress)? onProgress,
     });
 
+/// One intended channel photo or video send, held across every press of Send
+/// for the same pick.
+///
+/// WHY THIS EXISTS. `reserveServerChannelMessageMediaV1` gives one member one
+/// live upload lease at a time, for 15 minutes, and short-circuits only a
+/// replay of the same `requestId`. A client that minted a new id per press
+/// therefore turned a single failed upload into a quarter of an hour in which
+/// no photo or video could be sent to any channel of any server — the retry the
+/// ADR-211 review offers included. Carrying the reservation identity (and, once
+/// they exist, the reservation and the committed generation) makes the second
+/// press a replay of the first attempt rather than a second reservation, which
+/// is what `ServerCompanyFileUploadAttempt` already does for Company Files.
+///
+/// Deliberately not the pick itself: the upload source is built fresh per
+/// attempt so a retry streams the file again instead of reusing a spent handle.
+/// [size] is the pick's measured length and is what the reservation declared,
+/// so a source that no longer matches it is refused before anything is sent.
+class ServerMediaSendAttempt {
+  ServerMediaSendAttempt({
+    required this.serverId,
+    required this.channelId,
+    required this.type,
+    required this.contentType,
+    required this.size,
+    required this.reserveRequestId,
+    required this.finalizeRequestId,
+    this.durationSeconds,
+  });
+
+  final String serverId;
+  final String channelId;
+  final String type;
+  final String contentType;
+  final int size;
+  final int? durationSeconds;
+  final String reserveRequestId;
+  final String finalizeRequestId;
+
+  String? _messageId;
+  String? _storagePath;
+  Map<String, String>? _uploadMetadata;
+
+  /// The reserved message id, once the reservation has been granted.
+  String? get messageId => _messageId;
+
+  /// The exact object the reservation named. Never chosen by the client.
+  String? get storagePath => _storagePath;
+
+  /// The metadata `storage.rules` matches the upload against.
+  Map<String, String>? get uploadMetadata => _uploadMetadata;
+
+  /// The committed object's generation, once the upload has been seen through.
+  String? generation;
+
+  void rememberReservation({
+    required String messageId,
+    required String storagePath,
+    required Map<String, String> uploadMetadata,
+  }) {
+    _messageId = messageId;
+    _storagePath = storagePath;
+    _uploadMetadata = Map<String, String>.unmodifiable(uploadMetadata);
+  }
+}
+
 class _ServerMediaGrantBatch {
   _ServerMediaGrantBatch(this.serverId, this.channelId);
 
@@ -288,6 +353,40 @@ class ClubChatService {
 
   // ------------------------------------------------- channel photos/videos
 
+  /// Starts one intended channel photo or video send, with the request
+  /// identities that make every later attempt of it a replay.
+  ///
+  /// Hold the returned attempt for as long as the person can press Send again
+  /// for the same pick — the ADR-211 review keeps Send armed after a failure —
+  /// and hand the same object back to [sendServerMediaAttempt]. A fresh
+  /// attempt per press would mint a fresh `requestId`, which
+  /// `reserveServerChannelMessageMediaV1` reads as a *second* upload and
+  /// refuses with `resource-exhausted` while the first lease is live, so the
+  /// retry the person is looking at would be locked out for the lease's 15
+  /// minutes. This is the same shape `ServerCompanyFileUploadAttempt` has.
+  ServerMediaSendAttempt newServerMediaSendAttempt({
+    required String serverId,
+    required String channelId,
+    required String type,
+    required String contentType,
+    required int size,
+    int? durationSeconds,
+  }) {
+    if (type != 'image' && type != 'video') {
+      throw ArgumentError.value(type, 'type', 'Unsupported media type.');
+    }
+    return ServerMediaSendAttempt(
+      serverId: serverId,
+      channelId: channelId,
+      type: type,
+      contentType: contentType,
+      size: size,
+      durationSeconds: durationSeconds,
+      reserveRequestId: _requestIdFactory(),
+      finalizeRequestId: _requestIdFactory(),
+    );
+  }
+
   /// Sends one photo or video to a Servers V1 text channel:
   /// reserve -> upload the exact reserved object -> finalize.
   ///
@@ -299,67 +398,80 @@ class ClubChatService {
   ///
   /// [source] is the pick itself, not its bytes: on io the upload streams from
   /// the picked file, so a 64 MiB video never becomes a 64 MiB buffer (plus the
-  /// copy `putData` makes of it) in the Dart heap. `source.length` is what the
-  /// reservation declares and what the committed object is checked against.
-  Future<String> sendServerMediaMessage({
-    required String serverId,
-    required String channelId,
-    required String type,
-    required String contentType,
+  /// copy `putData` makes of it) in the Dart heap. [ServerMediaSendAttempt.size]
+  /// is what the reservation declares and what the committed object is checked
+  /// against, so a source of a different length is refused here rather than at
+  /// finalize.
+  ///
+  /// Every step it completes is remembered on [attempt]: a second call after a
+  /// failure replays the reservation it already holds, re-uploads only if the
+  /// object never committed, and finalizes under the id it already used.
+  Future<String> sendServerMediaAttempt(
+    ServerMediaSendAttempt attempt, {
     required ClubMediaUploadSource source,
-    int? durationSeconds,
     void Function(double progress)? onProgress,
   }) async {
     final user = _user;
-    if (type != 'image' && type != 'video') {
-      throw ArgumentError.value(type, 'type', 'Unsupported media type.');
+    if (source.length != attempt.size) {
+      throw StateError('The selected media changed after it was chosen.');
     }
-    final reserveRequestId = _requestIdFactory();
-    final reserved =
-        await _callServerMessage('reserveServerChannelMessageMediaV1', {
-          'serverId': serverId,
-          'channelId': channelId,
-          'type': type,
-          'contentType': contentType,
-          'size': source.length,
-          'durationSeconds': durationSeconds,
-          'requestId': reserveRequestId,
-        });
-    final messageId = reserved['messageId'];
-    final media = reserved['media'];
-    if (messageId is! String || messageId.isEmpty || media is! Map) {
-      throw StateError('The upload could not be prepared. Try again.');
+    if (attempt.messageId == null) {
+      final reserved =
+          await _callServerMessage('reserveServerChannelMessageMediaV1', {
+            'serverId': attempt.serverId,
+            'channelId': attempt.channelId,
+            'type': attempt.type,
+            'contentType': attempt.contentType,
+            'size': attempt.size,
+            'durationSeconds': attempt.durationSeconds,
+            'requestId': attempt.reserveRequestId,
+          });
+      final messageId = reserved['messageId'];
+      final media = reserved['media'];
+      if (messageId is! String || messageId.isEmpty || media is! Map) {
+        throw StateError('The upload could not be prepared. Try again.');
+      }
+      final storagePath = media['storagePath'];
+      final metadata = media['uploadMetadata'];
+      final expected =
+          'server_message_media/${attempt.serverId}/${attempt.channelId}/'
+          '${user.uid}/$messageId.';
+      if (storagePath is! String ||
+          !storagePath.startsWith(expected) ||
+          metadata is! Map) {
+        throw StateError('The upload could not be prepared. Try again.');
+      }
+      final customMetadata = <String, String>{
+        for (final entry in metadata.entries)
+          if (entry.key is String && entry.value is String)
+            entry.key as String: entry.value as String,
+      };
+      if (customMetadata.length != metadata.length) {
+        throw StateError('The upload could not be prepared. Try again.');
+      }
+      attempt.rememberReservation(
+        messageId: messageId,
+        storagePath: storagePath,
+        uploadMetadata: customMetadata,
+      );
     }
-    final storagePath = media['storagePath'];
-    final metadata = media['uploadMetadata'];
-    final expected =
-        'server_message_media/$serverId/$channelId/${user.uid}/$messageId.';
-    if (storagePath is! String ||
-        !storagePath.startsWith(expected) ||
-        metadata is! Map) {
-      throw StateError('The upload could not be prepared. Try again.');
-    }
-    final customMetadata = <String, String>{
-      for (final entry in metadata.entries)
-        if (entry.key is String && entry.value is String)
-          entry.key as String: entry.value as String,
-    };
-    if (customMetadata.length != metadata.length) {
-      throw StateError('The upload could not be prepared. Try again.');
-    }
-    final generation = await (_mediaUploaderOverride ?? _uploadWithStorage)(
-      storagePath: storagePath,
-      source: source,
-      contentType: contentType,
-      customMetadata: customMetadata,
-      onProgress: onProgress,
-    );
+    final messageId = attempt.messageId!;
+    final generation =
+        attempt.generation ??
+        await (_mediaUploaderOverride ?? _uploadWithStorage)(
+          storagePath: attempt.storagePath!,
+          source: source,
+          contentType: attempt.contentType,
+          customMetadata: attempt.uploadMetadata!,
+          onProgress: onProgress,
+        );
+    attempt.generation = generation;
     final finalize = <String, Object?>{
-      'serverId': serverId,
-      'channelId': channelId,
+      'serverId': attempt.serverId,
+      'channelId': attempt.channelId,
       'messageId': messageId,
       'objectGeneration': generation,
-      'requestId': _requestIdFactory(),
+      'requestId': attempt.finalizeRequestId,
     };
     try {
       await _callServerMessage('finalizeServerChannelMessageMediaV1', finalize);
@@ -375,6 +487,34 @@ class ClubChatService {
       await _callServerMessage('finalizeServerChannelMessageMediaV1', finalize);
     }
     return messageId;
+  }
+
+  /// One-shot convenience over [sendServerMediaAttempt] for a send that cannot
+  /// be retried in place — a camera capture, which is re-taken rather than
+  /// re-sent. A surface that keeps Send armed after a failure must mint the
+  /// attempt itself with [newServerMediaSendAttempt] and hold it across
+  /// presses; see [ServerMediaSendAttempt].
+  Future<String> sendServerMediaMessage({
+    required String serverId,
+    required String channelId,
+    required String type,
+    required String contentType,
+    required ClubMediaUploadSource source,
+    int? durationSeconds,
+    void Function(double progress)? onProgress,
+  }) {
+    return sendServerMediaAttempt(
+      newServerMediaSendAttempt(
+        serverId: serverId,
+        channelId: channelId,
+        type: type,
+        contentType: contentType,
+        size: source.length,
+        durationSeconds: durationSeconds,
+      ),
+      source: source,
+      onProgress: onProgress,
+    );
   }
 
   Future<String> _uploadWithStorage({

@@ -192,6 +192,42 @@ ledger before the ACL read and the eight-read transaction (roughly fifteen
 reads per opted-in member per run became one for anyone already decided), and
 the previously silent 500-response truncation is now a cursor.
 
+### FIXED IN SOURCE — a failed channel photo locked out every photo and video for fifteen minutes (2026-09-20, next build, `nb/integrate` final review round)
+
+Found by the final pre-merge review of the integration branch, on the seam
+where the ADR-211 review sheet meets the server channel media pipeline —
+source that was never deployed.
+
+`ClubChatService.sendServerMediaMessage` minted a fresh `reserveRequestId` at
+the top of every call. `reserveServerChannelMessageMediaV1` gives one member
+one live upload lease at a time and short-circuits only a replay of the *same*
+`requestId` (`functions/servers/message_media.js:303`, `:322`), against a lease
+written with a fifteen-minute TTL. So the second attempt was read as a second
+upload and refused with `resource-exhausted` — rendered to the person as
+"We're a little overloaded right now — please try again shortly."
+
+That is exactly the press the review invites: the sheet correctly stays open
+with Send still armed after a failed upload, and the io source's own recovery
+note said "picking the same photo again is the whole recovery"
+(`club_media_upload_source_io.dart`) — which the lease was refusing. Repro:
+pick a library photo, press Send, lose the upload (offline mid-transfer, or
+the picker's temp file evicted), press Send again. Refused, in every channel
+of every server, until the lease expired.
+
+Fixed on the client only — the lease is the deliberate one-upload-at-a-time
+control and was not relaxed. `ServerMediaSendAttempt` now holds the reserve and
+finalize request ids, and caches the reservation and the committed generation
+as they are earned; `sendServerMediaAttempt` replays whatever the attempt
+already has. The scene mints one attempt per *pick* rather than per press, so a
+retry re-uploads the bytes (the object never committed) under the reservation
+it already holds, and a finalize failure after a committed object costs no
+second upload of a 64 MiB video. Same shape as
+`ServerCompanyFileUploadAttempt`. `sendServerMediaMessage` stays as the
+one-shot wrapper for a camera capture, which is re-taken rather than re-sent.
+
+Not fixed, and not a defect: a *different* pick while a lease is live is still
+refused. That is the backend limit doing its job.
+
 ## FIXED IN SOURCE — the voice message bubble drew a different waveform per message from its duration (2026-09-19, Slim phase 0)
 
 Found by the phase-0 inventory for the waveform family. `_VoiceMessageContent`
