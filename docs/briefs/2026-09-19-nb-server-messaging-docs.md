@@ -375,9 +375,10 @@ manifest or of `tool/servers_activation_package.js`'s phase plan.
   its three Storage cases initialize a project id the Storage emulator's
   cross-service reads cannot see. Pre-existing; the new suite avoids it by
   using the emulator project, as `storage.test.js` does.
-- Web uploads read the whole file into memory (`putData`) rather than
-  streaming; images are ≤8 MiB and videos ≤64 MiB, the DM store is
-  platform-split and could be reused later.
+- Web uploads read the whole pick into memory (`putData`) rather than
+  streaming; images are ≤8 MiB and videos ≤64 MiB, which bounds it. On io this
+  was fixed after the gate below — see §11, the channel upload is now
+  platform-split exactly as the DM store is.
 - A signed grant lasts 90 s, so a video that buffers slowly may need a retry;
   the poster re-requests a fresh grant on every play.
 
@@ -410,3 +411,71 @@ manifest or of `tool/servers_activation_package.js`'s phase plan.
 - `npm --prefix functions run test:smoke`: **exit 0** (all three binding
   smokes).
 - `git status`: clean; nothing pushed, nothing tagged.
+
+## 11. Channel uploads are platform-split (memory defect, 2026-09-20)
+
+**The defect.** Sending a channel photo or video put the whole pick through the
+Dart heap twice: the scene called `XFile.readAsBytes()` only to measure it
+(`server_text_channel_scene.dart`, `_sendPickedPhoto`/`_sendPickedVideo`) and
+`ClubChatService` handed that buffer to `reference.putData`, which copies it
+again on the way out. A 64 MiB video therefore had a ~128 MiB transient peak —
+an out-of-memory kill on a mid-range Android phone. Direct messages never had
+this: their payload store is platform-split and uploads with `putFile`
+(`direct_attachment_payload_store_io.dart:112`), keeping `putData` for the web
+path only.
+
+**The split.** `lib/features/clubs/data/services/club_media_upload_source.dart`
+is the new seam, with the same conditional-import shape as the DM store:
+
+| implementation | chosen by | how the bytes reach Storage |
+| --- | --- | --- |
+| `club_media_upload_source_io.dart` | `dart.library.io` | `putFile(File(pick.path), metadata)` — the plugin streams the file; only the handle and the length are retained |
+| `club_media_upload_source_web.dart` | `dart.library.js_interop` | `putData(await pick.readAsBytes(), metadata)`, delegating to the stub's byte transport |
+| `club_media_upload_source_stub.dart` | default | that byte transport |
+
+The scene now measures with `XFile.length()` (a file stat on io, the Blob's own
+size on web) and hands the `XFile` to the source.
+`ClubChatService.sendServerMediaMessage` takes the source instead of a
+`Uint8List` and still owns everything else — reservation, progress listener,
+committed generation, lost-acknowledgement recovery — so the two platforms
+differ in exactly one call. The injectable `mediaUploader` seam survives; it now
+carries the source, whose `length` is what the reservation declares.
+
+**What did NOT change.** What may be sent, and the backend contract. Image
+128 B .. 8 MiB, video 1 KiB .. 64 MiB and the 60-second cap are still decided in
+`_sendPickedPhoto`/`_sendPickedVideo` with the same failure copy; the reservation
+still declares the size and finalize still checks the committed object against
+it; no device path reaches a callable or the upload metadata. No `functions/**`,
+`firestore.rules`, `storage.rules` or `firestore-tests/**` file was touched, so
+no backend suite is implicated by this change.
+
+**What it means for the integrating session.**
+- **Web is unchanged.** Same `putData`, same bytes, same caps.
+- **On io the bytes are read at send time, from the picked path.** The file must
+  still exist and still be the declared length. If the OS evicted the picker's
+  temporary file, or it changed size, the source refuses locally (a `StateError`
+  the scene maps to the existing "could not be sent" copy) and the reservation
+  is left unused — no object, no message, no retry loop. Before this change an
+  evicted file was invisible, because the bytes had already been copied at pick
+  time; this is the one new failure mode, and it is the same one Reels accepted
+  in `reel_upload_transport_io.dart`.
+- **An upstream review/confirm sheet (Task 4) is compatible** as long as it
+  holds the same `XFile` and neither moves, deletes nor rewrites the file, and
+  the send still happens while the pick is on disk. Previewing is safe: io reads
+  the same path, web the same Blob. Anything that consumes or rewrites the pick
+  (a resized copy, a move into app storage, a cleanup after preview) must hand
+  the send the NEW `XFile` — a sheet that deletes the original after previewing
+  it would turn a working send into the "no longer on this device" refusal.
+- Tests: `test/server_channel_media_test.dart` covers the io path with a pick
+  whose `readAsBytes()`/`openRead()` throw (it still sends, which is the proof
+  the bytes are gone), the web transport's `putData` reached directly through
+  `club_media_upload_source_web.dart`, the io refusals (moved / evicted file),
+  and the full size and duration bounds — the 64 MiB edge without allocating
+  64 MiB, since nothing reads the pick. One case writes a real temporary file
+  under `Directory.systemTemp` because `putFile` streams a real file.
+- Gate for this change: `flutter analyze` **No issues found!**;
+  `server_channel_media_test.dart` **17/17** (6 new, no assertion edited) and
+  the other **41** suites that import a changed Dart file **674/674**
+  (14 direct importers 317, 27 transitive 357); no emulator suite re-run,
+  because no backend file is touched. `git status` clean, nothing pushed or
+  tagged.
