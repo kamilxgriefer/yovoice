@@ -689,7 +689,7 @@ exports.receiveLiveKitAchievementWebhook = receiveLiveKitAchievementWebhook;
 | Servers V1 — static registration, runtime activation
 |--------------------------------------------------------------------------
 | Firebase discovers exports before it loads functions/.env, so an environment
-| variable cannot safely decide which function names exist. The base fifty-three
+| variable cannot safely decide which function names exist. The base fifty-five
 | Servers exports are always discoverable and can therefore be deployed by the
 | reviewed phase selectors. Every callable then reads the server-owned
 | appConfig/serversV1 document and fails closed until an operator enables its

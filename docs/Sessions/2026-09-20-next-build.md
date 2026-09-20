@@ -82,16 +82,33 @@ integration commits followed the merges rather than the branches:
 | `storage.rules` vs. the base | **byte-identical** |
 | Every markdown anchor link in the repository | re-resolved after the ADR renumbering; the ones that did not resolve were fixed in this commit |
 
-Reported by the integration session, **not re-run here**: the merged Functions
-suite is **2442 / 2442 across 179 files**. That suite takes about fifteen
-minutes and no single command in this session may run longer than eight, so it
-was not repeated; it is recorded as inherited evidence, not as something this
-session observed. The Functions suite also needs the storage bucket in the
-environment — without
+The merged Functions suite is **2480 / 2480 across 182 test files, 140 suites,
+0 failures**, observed on `6a473b27` in four slices of
+`ls functions/test/*.test.js | sort | awk 'NR%4==n%4'` (599 + 497 + 600 + 784),
+each slice under its own fresh Auth + Firestore emulators. It moved from the
+2442 / 179 that an earlier pass inherited because the server channel messaging
+merge added `server_message_media`, `server_message_media_admin_delete` and
+`server_message_reactions`; no existing test changed. Every slice is one
+command, because the whole suite takes about fifteen minutes and no single
+command in this session may run longer than eight. The Functions suite also
+needs the storage bucket in the environment — without
 `FIREBASE_CONFIG='{"projectId":"yovoice-ec54a","storageBucket":"yovoice-ec54a.firebasestorage.app"}'`,
 `social_graph_security`, `report_audit`, `server_legacy_boundary` and
 `servers_legacy_club_anchor_guard` fail with "Bucket name not specified or
 invalid" on *any* tree, including the untouched base.
+
+The hand-resolved export map in
+`functions/test/cold_start_module_graph.test.js` was re-derived independently:
+requiring the merged `functions/index.js` in a fresh child process with the
+deployed environment yields **261** names, and they are identical to the pinned
+list name for name, with no additions or omissions on either side.
+`tool/servers_activation_package.js` still pins the reviewed
+**62-total / 56-callable / 7-Podcast / 55-base** manifest, recomputed from the
+merged `functions/servers/registration.js` and confirmed by its own
+`node --test tool/test/servers_activation_package.test.js` at **12 / 12**. The
+seven server channel messaging exports are deliberately outside
+`SERVERS_V1_EXPORT_NAMES`, which is why none of those four numbers moved for
+them.
 
 No test assertion, finder or pinned number was edited to make anything go
 green in this session. The only numbers that moved are the Servers V1 export

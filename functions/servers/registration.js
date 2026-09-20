@@ -234,13 +234,18 @@ const SERVERS_V1_EXPORT_NAMES = Object.freeze([
 
 // Server channel messaging parity with direct messages (reactions, photos and
 // videos). A SEPARATE extension, deliberately outside ALL_SERVER_CALLABLE_METHODS
-// and SERVERS_V1_EXPORT_NAMES: the reviewed 61-total / 55-callable / 54-base
+// and SERVERS_V1_EXPORT_NAMES: the reviewed 62-total / 56-callable / 55-base
 // manifest is pinned by the activation-package tool
 // (tool/servers_activation_package.js) and by the registration and cold-start
 // suites, and docs/Servers.md mirrors the frozen 54-entry table. These exports
 // are built by createServerMessageFunctions below, behind the same runtime
 // activation gate, with the same callable options and Auth binding, and are
 // deployed by their own explicit selector.
+// The three numbers above are 62/56/55 and not the 61/55/54 this extension was
+// written against: the ADR-180 amendment landed in the same build and added
+// `releaseServerChannelSessionIfEmptyV1` to the frozen manifest. Recomputed
+// from the merged registration below, not relaxed — these seven exports are
+// still outside it, which is why none of those numbers moved for them.
 const SERVER_MESSAGE_CALLABLE_METHODS = Object.freeze({
   setServerChannelMessageReactionV1: "messageReactions",
   reserveServerChannelMessageMediaV1: "messageMedia",
