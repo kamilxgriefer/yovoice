@@ -90,13 +90,14 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 254 names.
+// Every export of functions/index.js, sorted. 261 names.
 // 2026-09-19 (ADR-212): onMomentCommentCreated/Deleted,
 // onReelCommentCreated/Deleted and sendServerEventRemindersSchedule join the
 // map — the comment-notification triggers and the Server event reminder
 // worker. 2026-09-19 (ADR-180 amendment): releaseServerChannelSessionIfEmptyV1
-// joins it too. Extending this list is the deliberate review step the header
-// describes, not a drive-by edit.
+// joins it too. 2026-09-19: the Server channel media and reaction callables
+// join it as well. Extending this list is the deliberate review step the
+// header describes, not a drive-by edit.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
@@ -142,6 +143,7 @@ const EXPORT_NAMES = Object.freeze([
   "deleteReel",
   "deleteReelComment",
   "deleteRoomSelf",
+  "deleteServerChannelMessageV1",
   "deleteServerChannelV1",
   "deleteServerCompanyFileV1",
   "deleteServerFamilyCheckInV1",
@@ -161,6 +163,7 @@ const EXPORT_NAMES = Object.freeze([
   "expirePremiumIdentity",
   "expirePublishedReelsSchedule",
   "expireRoomCoverUploadReservationsSchedule",
+  "expireServerChannelMessageMediaReservations",
   "expireVoiceMomentsSchedule",
   "finalizeClubMedia",
   "finalizeDirectMessageAttachment",
@@ -170,6 +173,7 @@ const EXPORT_NAMES = Object.freeze([
   "finalizeReelDraftV2",
   "finalizeReelVoiceCommentDraft",
   "finalizeRoomCoverUpload",
+  "finalizeServerChannelMessageMediaV1",
   "finalizeServerCompanyFileV1",
   "finalizeServerFamilyMemoryV1",
   "finalizeVoiceCommentDraft",
@@ -190,6 +194,7 @@ const EXPORT_NAMES = Object.freeze([
   "getReelMediaAccessV2",
   "getReelViewV2",
   "getRoomCoverMediaAccess",
+  "getServerChannelMessageMediaAccessV1",
   "getServerCompanyFileAccessV1",
   "getServerFamilyMemoryMediaAccessV1",
   "getStaffOverview",
@@ -261,6 +266,7 @@ const EXPORT_NAMES = Object.freeze([
   "processPendingContentCleanupSchedule",
   "processPendingReelCleanupSchedule",
   "processPendingServerControlOutboxSchedule",
+  "processServerChannelMessageMediaDeletionJobs",
   "publishPublicShowcaseSchedule",
   "publishPublicStatsSchedule",
   "receiveLiveKitAchievementWebhook",
@@ -282,6 +288,7 @@ const EXPORT_NAMES = Object.freeze([
   "reserveReelDraftV2",
   "reserveReelVoiceCommentDraft",
   "reserveRoomCoverUpload",
+  "reserveServerChannelMessageMediaV1",
   "reserveServerCompanyFileV1",
   "reserveServerFamilyMemoryV1",
   "reserveVoiceCommentDraft",
@@ -325,6 +332,7 @@ const EXPORT_NAMES = Object.freeze([
   "setRoomStatusSelf",
   "setRoomVisibilitySelf",
   "setServerChannelAccessV1",
+  "setServerChannelMessageReactionV1",
   "setServerMemberBanV1",
   "setServerMemberRoleV1",
   "setServerPodcastQuestionOnAirV1",
@@ -403,6 +411,9 @@ const COLD_START_SERVERS_MODULES = Object.freeze([
   "servers/invites.js",
   "servers/management.js",
   "servers/memberships.js",
+  "servers/message_media.js",
+  "servers/message_media_contract.js",
+  "servers/message_reactions.js",
   "servers/operations.js",
   "servers/podcast_episodes.js",
   "servers/podcast_questions.js",

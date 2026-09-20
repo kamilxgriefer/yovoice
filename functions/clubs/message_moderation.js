@@ -6,6 +6,11 @@ const { requireAuthentication } = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
 const { assertServerChannelAccessIfVersioned } = require("../utils/server_access");
 const {
+  DELETION_JOBS: SERVER_MESSAGE_MEDIA_DELETION_JOBS,
+  canonicalServerMessageMedia,
+  objectDeletionJob,
+} = require("../servers/message_media_contract");
+const {
   CLUB_ACTION_RATE_LIMITS,
   consumeClubActionAttempt,
 } = require("./quota");
@@ -194,9 +199,37 @@ const moderateClubMessage = onCall(
         );
       }
 
+      // A Servers V1 photo/video message also loses its private object: a
+      // durable, generation-guarded deletion job is written in the SAME
+      // transaction as the redaction and drained by
+      // processServerChannelMessageMediaDeletionJobs. The path and generation
+      // come from the validated descriptor, re-derived from this message's own
+      // identity; a malformed descriptor still redacts and is left to the
+      // channel/server content sweep and the account-deletion index.
+      let mediaJob = null;
+      if (Object.hasOwn(messageData, "media")) {
+        let media = null;
+        try {
+          media = canonicalServerMessageMedia(messageData, {
+            serverId: clubId, channelId, messageId,
+          });
+        } catch (_) {
+          media = null;
+        }
+        if (media) {
+          mediaJob = objectDeletionJob({
+            serverId: clubId, channelId, messageId, media, reason: "moderator", now,
+          });
+        }
+      }
       transaction.update(messageRef, {
         content: "",
         gif: FieldValue.delete(),
+        // Media and reactions are content too; a redacted message keeps
+        // neither the object reference nor who reacted to it.
+        media: FieldValue.delete(),
+        mediaUrl: FieldValue.delete(),
+        reactions: FieldValue.delete(),
         isDeleted: true,
         editedAt: now,
         deletedBy: auth.uid,
@@ -204,6 +237,12 @@ const moderateClubMessage = onCall(
         deletedAt: now,
         moderationRemoved: true,
       });
+      if (mediaJob) {
+        transaction.set(
+          db.collection(SERVER_MESSAGE_MEDIA_DELETION_JOBS).doc(mediaJob.jobId),
+          mediaJob.document,
+        );
+      }
       transaction.create(auditRef, {
         actorId: auth.uid,
         actorEmail: auth.token?.email ?? null,

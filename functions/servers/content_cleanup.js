@@ -20,6 +20,10 @@ const {
 } = require("./podcast_episodes");
 const { mirrorIsVersionedForAnchor } = require("./rtc_binding");
 const { assertSessionBinding } = require("./session_contract");
+const {
+  DELETION_JOBS: SERVER_MESSAGE_MEDIA_DELETION_JOBS,
+  prefixDeletionJob: serverMessageMediaPrefixJob,
+} = require("./message_media_contract");
 
 const CONTENT_CLEANUP_VERSION = 1;
 const CHANNEL_PHASES = Object.freeze([
@@ -179,6 +183,22 @@ function complete({ transaction, reference, job, Timestamp, clock, processed = 0
     updatedAt: now,
   });
   return cleanupResult({ complete: true, processed });
+}
+
+/**
+ * Channel photo/video bytes live under
+ * server_message_media/{serverId}/{channelId}/{ownerUid}/. Their Storage
+ * sweep is a durable, generation-guarded prefix job drained by
+ * processServerChannelMessageMediaDeletionJobs (message_media.js), written in
+ * the SAME transaction that finishes the message documents (channel) or the
+ * channel walk (server, a catch-all over the whole server prefix). The
+ * reviewed CHANNEL_PHASES / SERVER_PHASES sequences are unchanged and no
+ * Storage adapter is needed inside this Firestore-only page. `set` keeps a
+ * retried transaction idempotent.
+ */
+function enqueueServerMessageMediaSweep(db, transaction, { serverId, channelId = null, reason, now }) {
+  const job = serverMessageMediaPrefixJob({ serverId, channelId, reason, now });
+  transaction.set(db.doc(`${SERVER_MESSAGE_MEDIA_DELETION_JOBS}/${job.jobId}`), job.document);
 }
 
 function nextPhase(phases, phase) {
@@ -361,7 +381,16 @@ function createServerContentCleanupService({
     if (phase === "messages") {
       const page = await firstPage(transaction, channelReference.collection("messages"), FieldPathClass, job.pageSize);
       page.docs.forEach((document) => transaction.delete(document.ref));
-      return page.empty ? advance() : checkpoint({ transaction, reference, job, Timestamp, clock, processed: page.size });
+      if (!page.empty) {
+        return checkpoint({ transaction, reference, job, Timestamp, clock, processed: page.size });
+      }
+      enqueueServerMessageMediaSweep(db, transaction, {
+        serverId: job.serverId,
+        channelId: channelReference.id,
+        reason: serverDeleting ? "serverDelete" : "channelDelete",
+        now: Timestamp.fromMillis(clock()),
+      });
+      return advance();
     }
 
     if (phase === "events") {
@@ -1470,8 +1499,16 @@ function createServerContentCleanupService({
       if (job.contentCleanupPhase === "channels") {
         if (job.contentCleanupChannelId === null) {
           const page = await firstPage(transaction, rootReference.collection("channels"), FieldPathClass, 1);
-          if (page.empty) return checkpoint({ transaction, reference, job, Timestamp, clock,
-            patch: { contentCleanupPhase: "orphanRooms" } });
+          if (page.empty) {
+            // Every channel is gone: sweep the whole server prefix once more,
+            // which also reaches objects of channels deleted long ago.
+            enqueueServerMessageMediaSweep(db, transaction, {
+              serverId: job.serverId, channelId: null, reason: "serverDelete",
+              now: Timestamp.fromMillis(clock()),
+            });
+            return checkpoint({ transaction, reference, job, Timestamp, clock,
+              patch: { contentCleanupPhase: "orphanRooms" } });
+          }
           const channel = canonicalCleanupChannel(page.docs[0], job, { serverDeleting: true });
           if (channel.deletionOperationId && channel.deletionOperationId !== job.operationId) {
             const owner = await transaction.get(db.doc(`serverControlOutbox/${channel.deletionOperationId}`));

@@ -499,6 +499,110 @@ service firebase.storage {
       allow update, delete: if false;
     }
 
+    // Photo and video messages in Servers V1 text channels. The upload
+    // capability is ONE live, server-issued reservation
+    // (serverMessageMediaUploadReservations/{messageId}, written only by
+    // reserveServerChannelMessageMediaV1 after the channel's write check); the
+    // path alone grants nothing. The reservation is the second and last
+    // cross-service document (the first is the account-status read), so these
+    // rules cannot evaluate the channel ACL: a viewer never reads bytes here.
+    // Published media is served only by getServerChannelMessageMediaAccessV1,
+    // which re-runs the channel ACL and returns 90-second generation-bound V4
+    // URLs. Bounds are the direct-message ones: image jpeg/png/webp
+    // 128 B-8 MiB, video mp4/quicktime/webm 1 KiB-64 MiB, 1-60 s.
+    match /server_message_media/{serverId}/{channelId}/{userId}/{fileName} {
+      function reservationPath(metadata) {
+        return /databases/(default)/documents/serverMessageMediaUploadReservations/$(metadata.get('yovoiceMessageId', ''));
+      }
+
+      function exactMetadata(metadata) {
+        let messageId = metadata.get('yovoiceMessageId', '');
+        return metadata.keys().hasOnly([
+              'yovoiceServerId', 'yovoiceChannelId', 'yovoiceOwnerUid',
+              'yovoiceMessageId', 'yovoiceMessagePath', 'yovoiceMediaType'
+            ]) &&
+            metadata.get('yovoiceServerId', '') == serverId &&
+            metadata.get('yovoiceChannelId', '') == channelId &&
+            metadata.get('yovoiceOwnerUid', '') == userId &&
+            messageId.matches('cm_[a-f0-9]{40}') &&
+            metadata.get('yovoiceMessagePath', '') ==
+              'clubs/' + serverId + '/channels/' + channelId + '/messages/' + messageId &&
+            metadata.get('yovoiceMediaType', '') in ['image', 'video'];
+      }
+
+      function boundedMedia(size, contentType, metadata) {
+        let messageId = metadata.get('yovoiceMessageId', '');
+        let type = metadata.get('yovoiceMediaType', '');
+        return (
+              type == 'image' && size >= 128 && size <= 8 * 1024 * 1024 &&
+              (
+                (fileName == messageId + '.jpg' && contentType == 'image/jpeg') ||
+                (fileName == messageId + '.png' && contentType == 'image/png') ||
+                (fileName == messageId + '.webp' && contentType == 'image/webp')
+              )
+            ) || (
+              type == 'video' && size >= 1024 && size <= 64 * 1024 * 1024 &&
+              (
+                (fileName == messageId + '.mp4' && contentType == 'video/mp4') ||
+                (fileName == messageId + '.mov' && contentType == 'video/quicktime') ||
+                (fileName == messageId + '.webm' && contentType == 'video/webm')
+              )
+            );
+      }
+
+      function liveReservation(metadata, size, contentType) {
+        let path = reservationPath(metadata);
+        let reservation = firestore.get(path).data;
+        return firestore.exists(path) &&
+            reservation.keys().hasOnly([
+              'schemaVersion', 'kind', 'serverId', 'channelId', 'messageId',
+              'ownerId', 'requestId', 'type', 'contentType', 'size',
+              'durationSeconds', 'storagePath', 'status', 'createdAt', 'expiresAt'
+            ]) &&
+            reservation.schemaVersion == 1 &&
+            reservation.kind == 'serverChannelMessageMedia' &&
+            reservation.serverId == serverId &&
+            reservation.channelId == channelId &&
+            reservation.messageId == metadata.get('yovoiceMessageId', '') &&
+            reservation.ownerId == userId &&
+            reservation.storagePath ==
+              'server_message_media/' + serverId + '/' + channelId + '/' + userId + '/' + fileName &&
+            reservation.contentType == contentType &&
+            reservation.size == size &&
+            reservation.type == metadata.get('yovoiceMediaType', '') &&
+            (
+              (reservation.type == 'image' && reservation.durationSeconds == null) ||
+              (
+                reservation.type == 'video' &&
+                reservation.durationSeconds is int &&
+                reservation.durationSeconds >= 1 &&
+                reservation.durationSeconds <= 60
+              )
+            ) &&
+            reservation.status == 'uploading' &&
+            reservation.expiresAt is timestamp &&
+            reservation.expiresAt > request.time;
+      }
+
+      function exactReservedMedia(size, contentType, metadata) {
+        return exactMetadata(metadata) &&
+            boundedMedia(size, contentType, metadata) &&
+            liveReservation(metadata, size, contentType);
+      }
+
+      // Upload recovery only: the uploader, while their reservation is live.
+      allow get: if isActiveUser(userId) && resource != null &&
+          exactReservedMedia(resource.size, resource.contentType, resource.metadata);
+      allow list: if false;
+      allow create: if resource == null && isVerified() && isActiveUser(userId) &&
+          exactReservedMedia(
+            request.resource.size,
+            request.resource.contentType,
+            request.resource.metadata
+          );
+      allow update, delete: if false;
+    }
+
     // Podcast Egress writes directly through its dedicated, least-privilege
     // GCS service account. Firebase clients never upload or read these MP3s;
     // playback is a short-lived, generation-bound signed URL issued only

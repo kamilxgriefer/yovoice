@@ -4942,6 +4942,35 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Photo and video messages in Servers V1 text channels. A reservation is
+    // the Storage upload capability for exactly one object (storage.rules
+    // `server_message_media`), so no client may read it, forge it or extend
+    // it; the lease, the daily byte budget, the durable deletion jobs and the
+    // per-object owner index (the handle account deletion uses) are likewise
+    // Admin-SDK-only. Default-deny already covers them; these are stated out
+    // loud so a later wildcard cannot silently widen them. The message
+    // documents themselves stay under the unchanged channel rule above:
+    // readable through the channel ACL, never client-writable on a V1 server.
+    match /serverMessageMediaUploadReservations/{messageId} {
+      allow read, write: if false;
+    }
+
+    match /serverMessageMediaUploadLeases/{userId} {
+      allow read, write: if false;
+    }
+
+    match /serverMessageMediaUploadBudgets/{budgetId} {
+      allow read, write: if false;
+    }
+
+    match /serverMessageMediaDeletionJobs/{jobId} {
+      allow read, write: if false;
+    }
+
+    match /serverMessageMediaObjects/{messageId} {
+      allow read, write: if false;
+    }
+
     // Remote LiveKit Egress jobs contain provider identifiers and private
     // object paths. They are leased and reconciled exclusively by Admin SDK
     // workers; no client may observe or mutate the queue.
