@@ -97,7 +97,7 @@ flutter:
     - assets/images/atmospheres/
     - assets/gifs/yovoice/
     - assets/icons/
-    - assets/audio/ui/v5/
+    - assets/audio/ui/v6/
 
   fonts:
     - family: Inter

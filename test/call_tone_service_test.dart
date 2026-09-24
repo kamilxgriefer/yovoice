@@ -12,8 +12,8 @@ void main() {
   });
 
   test('call tones use the versioned looping assets', () {
-    expect(CallTone.incoming.assetPath, 'audio/ui/v5/call_incoming_loop.wav');
-    expect(CallTone.outgoing.assetPath, 'audio/ui/v5/call_outgoing_loop.wav');
+    expect(CallTone.incoming.assetPath, 'audio/ui/v6/call_incoming_loop.wav');
+    expect(CallTone.outgoing.assetPath, 'audio/ui/v6/call_outgoing_loop.wav');
     expect(CallTone.values.map((tone) => tone.volume), everyElement(1.0));
   });
 

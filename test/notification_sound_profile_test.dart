@@ -7,7 +7,7 @@ import 'package:yovoice/features/notifications/data/models/app_notification.dart
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 
 void main() {
-  test('every notification type owns an explicit Prism Halo profile', () {
+  test('every notification type selects its semantic sound profile', () {
     const expected = <NotificationType, NotificationSoundProfile>{
       NotificationType.directMessage: NotificationSoundProfile.message,
       NotificationType.mention: NotificationSoundProfile.message,
@@ -38,7 +38,7 @@ void main() {
     }
   });
 
-  test('native sound profiles use fresh immutable Android channels', () {
+  test('native sound profiles use distinct immutable Android channels', () {
     expect(
       NotificationSoundProfile.values
           .map((profile) => profile.androidChannelId)
@@ -101,7 +101,7 @@ void main() {
     for (final entry in masters.entries) {
       final profile = entry.key;
       final master = File(
-        'assets/audio/ui/v5/${entry.value}',
+        'assets/audio/ui/v6/${entry.value}',
       ).readAsBytesSync();
       expect(
         File(

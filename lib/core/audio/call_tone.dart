@@ -7,5 +7,5 @@ enum CallTone {
   final String fileName;
   final double volume;
 
-  String get assetPath => 'audio/ui/v5/$fileName';
+  String get assetPath => 'audio/ui/v6/$fileName';
 }

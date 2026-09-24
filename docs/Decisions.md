@@ -9307,6 +9307,12 @@ release context, not the asset family to select for Build 27. Physical-device
 loudness, audio focus and interruption behavior remain release acceptance
 checks rather than properties inferred from asset generation.
 
+**Velvet Mallet amendment (2026-09-24).** **Velvet Mallet v6** supersedes
+Prism Halo v5 as the current generated product-sound family (same generator,
+18 names, loudness targets and native file names/channel ids; new
+`assets/audio/ui/v6/` path). See
+[ADR-210](#adr-210-velvet-mallet-product-sound-pack-v6-replaces-prism-halo-v5).
+
 ## ADR-149: Direct manipulation on the Reel canvas, a shared keyboard Done bar, list-level Remove friend / Unarchive, and a shorter mute busy window
 
 **Context.** Tester round 2 (2026-09-06): Reel text/link overlays could not
@@ -13941,3 +13947,343 @@ than a primitive built on a premise that a test or the schema contradicts.
   - the dead Home chains and `MomentStoryTile`'s missing mount (phase 1,
     Roadmap 0n);
   - the two failing screenshot-harness fixtures (`docs/Bugs.md`).
+
+## ADR-210: "Velvet Mallet" product-sound pack v6 replaces "Prism Halo" v5
+
+**Date:** 2026-09-24 · **Status:** accepted in source on branch
+`claude/confident-franklin-bu0wax` (not merged to `main`; no build, store
+upload, Hosting or backend deploy) · **Supersedes:** the Build 27 amendment of
+[ADR-148](#adr-148-soft-bells-ui-sound-pack-v4-replaces-velvet-prism-v3) as the
+current product-sound family
+
+### Context
+
+Prism Halo v5 was the generated family behind all 18 product-sound files
+(17 `UiSound` cues plus the outgoing call loop) and the six native push copies.
+
+On 2026-09-24 the owner compared v5 with two candidate packs, A and B. Asked
+during the 2026-09-24 sound review which pack to ship, the owner answered
+"B - Velvet Mallet".
+That choice was made by listening to the first Velvet Mallet render
+(revision 1). In the same review the owner rejected the proposed login music
+as cheesy. That proposal never entered this repository and is not part of
+this decision.
+
+**Presence measure.** Every presence figure in this ADR uses one measure:
+the mono mix `(L + R) / 2` through an 8th-order Butterworth band-pass at
+800 Hz–6 kHz (scipy `butter(N=4, btype='bandpass')`, applied with
+`sosfilt`), then the loudest 400 ms of its mean square, in dB. The band is
+roughly what a phone speaker reproduces. "More present" below always means
+"by that measure", at the same RMS.
+
+An independent check of revision 1 found two measurable weaknesses:
+
+- **Phone speakers.** By that measure, 15 of 18 cues were 1.1–7.2 dB less
+  present than v5. The pack's A4 and D5 fundamentals sit below the band.
+- **Microphone pair.** Muted and unmuted were near mirror images:
+  spectrogram similarity 0.82, envelope correlation 0.93 and spectral
+  centroids of 552 and 573 Hz.
+
+The first fix round addressed both. A second review of that render then
+found five further problems:
+
+- **Calls sounded like messages.** Both call loops opened with the exact
+  message-notification gesture, the bare YO. For about 0.65 s an incoming
+  call could not be told from a direct message. The opening similarity
+  (defined in decision 5) was 0.996 for the incoming loop and 0.969 for the
+  outgoing loop.
+- **Sparse ring.** The incoming ring was audible for only 1.59 s of each
+  3.2 s cycle (within 50 dB of its loudest 20 ms). v5 was audible for 2.95 s
+  of 3.303 s.
+- **Weak mute.** By the presence measure, microphone_muted was 7.9 dB weaker
+  than microphone_unmuted. In the band it shrank to a short tick.
+- **Stereo lean.** The width blend was a comb on the right channel only.
+  Every cue leaned left by +0.08 to +1.81 dB.
+- **Dither comment.** The comment overstated what the half-amplitude
+  triangular dither does.
+
+"Revision 2" below means both fix rounds together. It is what the generator
+now writes.
+
+### Decision
+
+1. **Source.** `tool/generate_ui_sounds.py` stays the only authoring source.
+   - The first fix round was ported byte-identically from the reviewed
+     candidate generator. The second round changed the generator in this
+     repository.
+   - The CLI, `--check`, `_targets()` and the repo-relative paths are
+     unchanged. The retired-asset cleanup now also removes the emptied
+     version directory.
+   - `ASSET_PACK_VERSION = "v6"`, so the assets live under the new
+     cache-safe `assets/audio/ui/v6/` path (ADR-116), and the generator
+     deletes the v5 files.
+   - `pubspec.yaml`, `UiSound.assetPath` and `CallTone.assetPath` point at
+     v6. CI's existing `--check` step covers the new pack unchanged.
+   - `--check` produces identical bytes on Python 3.10, 3.11, 3.12 and 3.13,
+     and the generator still uses only the standard library.
+2. **Design.** Every cue is a felt mallet on a muted wooden bar, built with
+   modal synthesis: bar modes at 2.76×, 3.99× and 5.40×, a felt contact
+   filter and a short, dark room.
+   - Every pitch is from D major pentatonic.
+   - The "YO" motif is A4 short, then D5 long, closing like a sung "o". It
+     is the whole message notification and the seed of every other
+     notification and call cue.
+   - `notification.wav` is the only cue that is the bare YO and nothing else.
+   - There is no voice layer, no bells, no detune or chorus and no reward
+     flourish.
+
+   The module docstring holds the full design language.
+3. **Phone-speaker presence (first round).**
+   - Low notes are doubled by a soft octave mallet that plays only its
+     fundamental. That adds presence at 0.9–1.8 kHz and nothing near the top.
+   - The long "o" is re-voiced so that its octave rings with that mallet.
+   - A 3 ms felt contact at 1.5–2.8 kHz sits 20–28 dB under each cue's peak.
+   - The participant cues move up a third, to B5/D6.
+   - The alert pulses are 165 ms apart instead of 170 ms.
+
+   The table gives revision 2 minus v5 as of `f71a2ae`, re-measured on the
+   delivered WAVs with the presence measure above.
+   - By that measure, 17 of 18 cues are at least as present as v5. The
+     outgoing ringback is at parity: −0.01 dB (−22.46 against −22.45 dBFS).
+   - The thinnest margins are call_ended (+0.02 dB) and participant_joined
+     (+0.06 dB).
+   - Whole-file mean band power runs from −0.27 to +10.22 dB against v5. It
+     is slightly below v5 in six cues: room_left −0.27, room_created −0.18,
+     notification_social −0.17, notification −0.13, room_joined −0.09 and
+     participant_joined −0.06 dB.
+
+   | Cue | v6 − v5 (dB) | Cue | v6 − v5 (dB) |
+   |---|---:|---|---:|
+   | room_created | +0.63 | notification_alert | +0.16 |
+   | room_joined | +0.52 | call_connected | +0.16 |
+   | room_left | +0.19 | call_ended | +0.02 |
+   | participant_joined | +0.06 | call_declined | +0.48 |
+   | participant_left | +1.10 | call_failed | +0.42 |
+   | microphone_muted | +10.22 | call_busy | +0.20 |
+   | microphone_unmuted | +2.09 | call_incoming_loop | +0.46 |
+   | notification | +0.13 | call_outgoing_loop | −0.01 |
+   | notification_social | +0.11 | notification_achievement | +0.33 |
+
+   **Punchier attacks.** At the same RMS the attacks are punchier than v5's.
+   - The loudest 100 ms of K-weighted (BS.1770) power is higher in every cue,
+     by +0.06 to +2.35 dB.
+   - The crest factor (sample peak over RMS) is higher by +0.15 to +4.07 dB
+     in 17 cues. The exception is the incoming loop, at −1.19 dB, because its
+     energy is now spread over three rings.
+   - Over 400 ms windows the K-weighted power is between −1.14 dB (incoming
+     loop) and +0.81 dB of v5.
+
+   So v6 can sound more forward than v5 on its attacks even though the
+   average level matches. That is part of what the listening check must
+   judge.
+4. **Microphone legibility.**
+   - **Muted** is one low, dry D4 thock struck on a bar damped at its end
+     (`WOOD_THOCK`). Its pitch starts three semitones sharp, at F4 (349 Hz),
+     and relaxes onto 294 Hz with an 18 ms time constant: within a third of
+     a semitone by 40 ms. The measured instantaneous frequency is 351 Hz at
+     2 ms, 299 Hz at 40 ms and 293–295 Hz from 60 ms. Its 2.76× bar mode
+     falls with it from 964 to 811 Hz, where a phone speaker hears the fall.
+   - **Unmuted** is unchanged: two brighter taps, A4 then D5, 56 ms apart.
+
+   The second fix round raised muted's in-band presence:
+
+   | Measure | Muted | Unmuted | Muted before this round |
+   |---|---:|---:|---:|
+   | Presence, dBFS | −38.51 | −36.67 | −44.05 (7.9 dB below unmuted) |
+   | Band-limited centroid (Welch of the band-passed mono) | 879 Hz | 1,170 Hz | — |
+   | Full-band centroid | 415 Hz | 719 Hz | — |
+   | Band envelope within 10 dB of its peak (first-to-last span) | 31 ms | 75 ms | 17 ms |
+
+   - Muted is now 1.84 dB weaker than unmuted. In v5 the gap was 9.97 dB.
+   - Muted stays a single, falling event that is clearly darker than
+     unmuted.
+   - The log-spectrogram similarity of the pair (2048-point frames, the
+     full-band variant of the measure in decision 5) is 0.61 and their envelope
+     correlation is 0.52. Revision 1 scored 0.82 and 0.93; v5 scores 0.79
+     and 0.85.
+   - Both cues stay at −27.0 dBFS RMS and 8,800 frames (0.183 s), the same
+     as v5.
+5. **Calls knock before they speak.** Every ring of both call loops opens
+   with short, soft wooden knocks on D5, then plays the YO 130 ms after the
+   first knock. The knocks carry an octave mallet, so a phone speaker
+   reproduces them.
+   - **Incoming.** Each ring has two knocks, 65 ms apart. The knocks' peak
+     in the band is 7.9 dB under the YO's.
+   - **Outgoing ringback.** Each ring has one knock, 9.8 dB under the YO in
+     the band.
+
+   The first 130 ms of a call therefore differ from a message in pitch
+   (D5/D6 against A4/A5) and in rhythm.
+
+   The generator enforces this with an assertion placed next to the
+   designed-tail assertions:
+   `_assert_call_opening_is_not_a_message`.
+   - **Opening similarity.** It computes the cosine similarity of the
+     log-magnitude spectrograms of the first 250 ms of each loop and the
+     message notification. The spectrograms use 2048-point periodic Hann
+     frames with a 256-frame hop, each floored 60 dB under its own peak.
+     On the same input, the stdlib FFT matches numpy to six decimals.
+   - **Threshold.** The similarity must stay below 0.65. The notification
+     variants share the motif's first note and must still be told apart
+     from a message; they score 0.73–0.77. The v5 call loops scored 0.48
+     and 0.58 against the v5 message sound. So 0.65 keeps a call further
+     from a message than any notification variant is, in the v5 call
+     family's range.
+
+   | Opening similarity to `notification` | Revision 2 | First fix round | v5 |
+   |---|---:|---:|---:|
+   | call_incoming_loop | 0.594 | 0.996 | 0.479 |
+   | call_outgoing_loop | 0.556 | 0.969 | 0.578 |
+
+   The same spectrogram taken after the presence band-pass gives 0.536 and
+   0.499.
+
+   - **Two openings stay similar on purpose.** call_connected still opens
+     with the YO (0.990). It only plays in the call screen when a call
+     connects, and it moves to its F#5/A5 answer at 0.28 s. The incoming and
+     outgoing openings are 0.92 alike because they are one family: the
+     ringback is the sound of the other phone ringing.
+6. **A fuller incoming ring.** The incoming loop now rings three times,
+   0.6 s apart, with the middle ring slightly softer. It then rests for about
+   a second.
+   - The ring is audible for 2.27 s of each 3.2 s cycle (within 50 dB of its
+     loudest 20 ms), or 2.10 s within 40 dB. That leaves 0.93 s of calm at
+     the −50 dB measure and 1.10 s at the −40 dB measure. Before this round
+     the ring was audible for 1.59 s; v5 was audible for 2.95 s of 3.303 s.
+   - Its last 250 ms peak at −90.3 dBFS, so the loop stays seamless.
+   - The outgoing ringback still rings every 1.6 s, evenly across the seam.
+   - `incomingCallNativeSoundWindow` stays at 3.6 s. The native one-shot
+     still plays the whole 3.200 s file, and the window tracks the file's
+     length, not its audible part.
+7. **Symmetric stereo.** The width is now mid/side.
+   - The mid is the signal itself. The side is 0.06 × (x[n − 44] − x[n]):
+     two taps 0.92 ms apart, placed evenly around the mid's sample.
+   - Because the side is antisymmetric about the mid, both channels carry
+     exactly the same energy. The L/R difference is under 0.0001 dB in every
+     cue, against +0.08 to +1.81 dB before.
+   - The side sits 19.3–30.4 dB under the mid, and mono loses at most
+     0.05 dB.
+   - **Cost.** In the cues this round did not otherwise touch, presence fell
+     by up to 0.53 dB (typically about 0.3 dB). The old comb in the mono sum
+     had tilted energy into 0.8–1.5 kHz, so part of the first round's
+     presence gain was a side effect of the lean.
+8. **Dither.** The comment now describes the dither correctly: it is
+   triangular at half the textbook amplitude (±0.5 LSB peak, one LSB wide),
+   so it only partly decorrelates the quantisation error in the quietest
+   tails. Its behaviour is unchanged.
+9. **Unchanged contract.**
+   - Format: the same 18 names, 48 kHz PCM16 stereo, and at least 64 exact
+     terminal zero frames.
+   - Levels: exactly the v5 RMS targets. Peaks stay at or below −3 dBFS; the
+     highest is −3.77 dBFS, sample and 4× true peak, in notification_alert.
+     STFT power above 7 kHz (1024-point Hann frames) stays at least 90 dB
+     below that of a full-scale sine.
+   - Length: UI cues run 0.18–1.08 s. Both loops are exactly 3.200 s
+     (153,600 frames, 614,444 bytes) and seamless. The frame counts are the
+     same as in the first fix round.
+   - `MAX_CALL_BYTES` now equals the app test's 700 KB loop bound.
+   - Playback: every `volume` stays 1.0, and the cooldowns, per-channel
+     serialisation and completion timeouts are unchanged.
+   - Bundle: v6 totals 3,673,112 bytes, against v5's 3,671,064.
+10. **Native push sounds keep every file name and channel id.** Only their
+    bytes change, and the generator writes them from the rendered cues.
+    - Files: `yovoice_notification`, `yovoice_message_v1`,
+      `yovoice_social_v1`, `yovoice_achievement_v1`, `yovoice_alert_v1` and
+      `yovoice_call_v2`, in `android/app/src/main/res/raw` and `ios/Runner`.
+    - Channels: `yovoice_messages_v1`, `yovoice_social_v1`,
+      `yovoice_achievements_v1`, `yovoice_alerts_v1` and `yovoice_calls_v2`.
+    - Nothing changes in Cloud Functions code, Firestore/Storage rules or
+      anything else that needs a backend deploy. The only Functions-tree
+      edit is a test title.
+
+### Reasoning
+
+- **Why the family and the fixes.** The owner chose the family. The fixes
+  answer the reviews with numbers instead of taste. At equal RMS, presence
+  on a phone depends on where the energy sits. The octave energy therefore
+  goes into the band a phone speaker can reproduce, not into bright upper
+  partials.
+- **Microphone pair.** A control's two states must be told apart without
+  looking at the screen: one falling, dark event against two rising, bright
+  ones. That difference also has to survive a phone speaker, so muted's body
+  now lives in the band too.
+- **Call openings.** A call is the one cue that must be recognised from a
+  locked phone's speaker, so it may not share the message's opening.
+  - **Knocks.** They keep the motif inside every ring, tie the call family
+    together and read as "someone is at the door", on the motif's own home
+    note.
+  - **Rejected alternatives.**
+    - A low D4 pickup measured almost as distinct in full band (0.56), but it
+      sat 20 dB under the YO in the phone band, so a phone would not play it.
+    - A roll on the motif's A4 stayed too close to the message (0.70).
+    - A sustained low bed would have taken RMS away from the band.
+- **Stereo.** The antisymmetric side is the smallest change that removes the
+  lean exactly instead of approximately. It keeps the 0.9 ms decorrelation
+  character and leaves mono playback untouched.
+- **iOS** selects the bundled WAV by the name in the APNs payload at delivery
+  time, so the new bytes should apply with the build that bundles them. Like
+  Android, this is UNVERIFIED until a device confirms it.
+- **Android** is different. flutter_local_notifications 22.2.0 creates each
+  channel with `RawResourceAndroidNotificationSound`, which stores the URI
+  `android.resource://<package>/raw/<name>` (`retrieveSoundResourceUri`). That
+  URI names the resource, not its bytes, so after the app update the existing
+  channel should resolve to the updated resource without a new channel id.
+- **Keeping the ids** avoids a coordinated Flutter + Functions + manifest
+  cutover and a Functions deploy. It also avoids the window ADR-116 had to
+  stage, in which a fresh install meets an old payload.
+- **A departure from habit.** This breaks with the "fresh id per remaster"
+  habit of ADR-076, ADR-116 and Build 27. ADR-116 recorded that an existing
+  channel "could not receive replacement bytes reliably". This reasoning is
+  therefore a hypothesis until a real device confirms it.
+
+### Consequences
+
+- **Android release check (UNVERIFIED, no device was available):**
+  1. Upgrade a real Android device that already created the v5 channels.
+  2. Deliver one backgrounded push per channel: message, social, achievement,
+     alert and call.
+  3. Confirm each plays the v6 sound, and repeat on at least one OEM skin (for
+     example Samsung One UI).
+
+  If any channel plays the old sound, or nothing, the fix is new raw resource
+  names and new channel ids, changed together in Flutter,
+  `functions/notifications/push_payload.js` and `AndroidManifest.xml`. That
+  is a coordinated release that needs a Functions deploy.
+- **iOS check (UNVERIFIED):** confirm on a device that a push plays the new
+  bundled bytes after the new build is installed. If it plays the old sound,
+  the fix is a new bundled file name (plus its `project.pbxproj` entry) and
+  the matching `iosSound` in `functions/notifications/push_payload.js`, which
+  also needs a Functions deploy.
+- **Listening acceptance is open.** The owner has **not** auditioned
+  revision 2: neither the first fix round nor this one. The owner's choice of
+  pack B was made by listening to revision 1. Every figure above is measured.
+  - Before a release build, the owner must listen on a phone speaker and on
+    headphones.
+  - The earlier acceptance matrix still applies: active LiveKit, Bluetooth,
+    the iOS silent switch and Android DND.
+- **Accepted trade-offs:**
+  - The outgoing ringback is at presence parity with v5 (−0.01 dB).
+    participant_joined (+0.06 dB) and call_ended (+0.02 dB) clear v5 only
+    narrowly.
+  - Six cues are 0.06–0.27 dB under v5 in whole-file mean band power.
+  - Brightness moved: full-band centroids sit within −11% to +23% of v5's.
+  - The incoming loop has a lower crest factor and 400 ms K-weighted power
+    than v5 (−1.19 dB and −1.14 dB); the outgoing ringback's 400 ms
+    K-weighted power is also about 0.4 dB lower. Both belong on the
+    listening checklist.
+  - DC on the two microphone cues is −75 dBFS, which is inaudible.
+- **Tests:**
+  - `test/ui_sound_service_test.dart` pins the v6 frame counts, which this
+    round did not change; the RMS targets and byte bounds are unchanged too.
+  - `test/call_tone_service_test.dart` and
+    `test/notification_sound_profile_test.dart` pin the v6 paths.
+  - The stale "Prism Halo" test titles are renamed. In
+    `test/notification_sound_profile_test.dart` and
+    `functions/test/push_payload.test.js` the title is now "every
+    notification type selects its semantic sound profile". The channel test
+    now says "distinct" instead of "fresh", because v6 kept the ids.
+  - `incomingCallNativeSoundWindow` (3.6 s) still exceeds the 3.200 s
+    incoming master. It stays below the 5 s call-channel completion timeout,
+    and every other cue is under the 2 s timeout.
+- **Web:** the Hosting build serves the new `audio/ui/v6/` path on its next
+  deploy. No deploy was made here.

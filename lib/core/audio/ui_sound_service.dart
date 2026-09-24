@@ -145,7 +145,7 @@ typedef UiSoundClock = DateTime Function();
 
 /// Bounds a missing platform completion event without cutting off a valid cue.
 ///
-/// Incoming-call fallback uses the 3.303 s ringing master as a one-shot cue,
+/// Incoming-call fallback uses the 3.200 s ringing master as a one-shot cue,
 /// while every other UI sound is shorter than two seconds. Keeping the longer
 /// watchdog on the call channel avoids weakening failure recovery elsewhere.
 Duration uiSoundCompletionTimeout(UiSoundChannel channel) => switch (channel) {
