@@ -16,6 +16,14 @@ someone decide what to pick up next.
 
 ## YO Voice 3.0.0 (34) — the Slim redesign — released to testers — 2026-09-19
 
+**Web live 2026-09-24.** `main @ 32c9dd9` (3.0.0+34 plus the Velvet Mallet v6
+sound pack, ADR-210) was deployed to Firebase Hosting by the owner-approved
+`workflow_dispatch` run
+[36038221140](https://github.com/kamilxgriefer/yovoice/actions/runs/36038221140)
+(`deploy_hosting: true`; verify job and deploy job green). Not read back from
+this container: the egress proxy blocks app.yovoice.app, so the served
+`build_number` still needs an owner check in a browser.
+
 **Status: Done for 3.0.0.** `main` carries `version: 3.0.0+34` in the release
 commit `176ec120` (`chore(release): YO Voice 3.0.0+34, the Slim redesign`). Scope, per-phase
 MUST list and the 3.0.1 deferrals:
