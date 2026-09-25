@@ -15,6 +15,7 @@ import '../models/server_member.dart';
 import '../models/server_podcast_episode.dart';
 import '../models/server_podcast_question.dart';
 import '../models/server_session.dart';
+import '../models/server_session_hand.dart';
 import '../models/server_type.dart';
 import '../models/server_whiteboard.dart';
 import 'server_creation_request_store.dart';
@@ -145,6 +146,45 @@ abstract interface class ServerRepository {
     required String sessionId,
     required String participantId,
     required bool muted,
+    required String requestId,
+  });
+}
+
+/// Request to speak (ADR "request to speak end to end").
+///
+/// Kept apart from [ServerRepository] for the same reason
+/// [ServerManagementRepository] is: an integration that only provides the
+/// directory and session contract does not have to pretend it can read a
+/// generation's hands. A session whose repository does not implement this
+/// simply has no queue and falls back to the hand receipt alone.
+abstract interface class ServerSessionHandsRepository {
+  /// The raised hands of the live generation, oldest first — exactly the
+  /// query `canListServerSessionHands` admits: the four equalities and no
+  /// `orderBy`. Only the session host and moderate-capable roles may run it;
+  /// for anybody else, and once the generation ends, the stream settles on an
+  /// empty list instead of an error.
+  Stream<List<ServerSessionHand>> watchSessionHands({
+    required String roomId,
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+  });
+
+  /// The caller's own participant document in the live generation
+  /// (`canReadOwnServerSessionParticipant`). Null while it does not exist,
+  /// once the generation ends, and when the read is denied.
+  Stream<ServerSessionParticipantState?> watchOwnSessionParticipant({
+    required String roomId,
+    required String sessionId,
+  });
+
+  /// Declines somebody else's raised hand (`answerServerSessionHandV1`).
+  /// Approval is a promotion: [ServerRepository.setSessionParticipantRole].
+  Future<ServerSessionHandAnswerResult> declineSessionHand({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String participantId,
     required String requestId,
   });
 }
@@ -345,6 +385,7 @@ typedef ServerCallable =
 class ServerService
     implements
         ServerRepository,
+        ServerSessionHandsRepository,
         ServerManagementRepository,
         ServerEventsRepository,
         ServerPodcastEpisodeRepository,
@@ -706,6 +747,104 @@ class ServerService
         ) ||
         result.requestedMuted != muted) {
       throw const FormatException('Mismatched participant mute receipt.');
+    }
+    return result;
+  }
+
+  @override
+  Stream<List<ServerSessionHand>> watchSessionHands({
+    required String roomId,
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+  }) {
+    _requireId(roomId);
+    _requireId(serverId);
+    _requireId(channelId);
+    _requireId(sessionId);
+    // Exactly the four bare equalities the rule reads, and no orderBy: an
+    // orderBy would need a composite index that is not committed. Sorting
+    // happens here instead.
+    return _dropDenied<List<ServerSessionHand>>(
+      _firestore
+          .collection('rooms')
+          .doc(roomId)
+          .collection('participants')
+          .where('serverId', isEqualTo: serverId)
+          .where('channelId', isEqualTo: channelId)
+          .where('sessionId', isEqualTo: sessionId)
+          .where('isHandRaised', isEqualTo: true)
+          .snapshots()
+          .map((snapshot) {
+            final hands = <ServerSessionHand>[
+              for (final document in snapshot.docs)
+                ?ServerSessionHand.fromDocument(
+                  document.id,
+                  document.data(),
+                  sessionId: sessionId,
+                ),
+            ]..sort(ServerSessionHand.oldestFirst);
+            return List<ServerSessionHand>.unmodifiable(hands);
+          }),
+    ).map((value) => value ?? const <ServerSessionHand>[]);
+  }
+
+  @override
+  Stream<ServerSessionParticipantState?> watchOwnSessionParticipant({
+    required String roomId,
+    required String sessionId,
+  }) {
+    _requireId(roomId);
+    _requireId(sessionId);
+    final uid = currentUserId;
+    if (uid.isEmpty) return Stream.value(null);
+    return _dropDenied<ServerSessionParticipantState>(
+      _firestore
+          .collection('rooms')
+          .doc(roomId)
+          .collection('participants')
+          .doc(uid)
+          .snapshots()
+          .map((snapshot) {
+            final data = snapshot.data();
+            if (!snapshot.exists || data == null) return null;
+            return ServerSessionParticipantState.fromDocument(
+              data,
+              userId: uid,
+              sessionId: sessionId,
+            );
+          }),
+    );
+  }
+
+  @override
+  Future<ServerSessionHandAnswerResult> declineSessionHand({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String participantId,
+    required String requestId,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    _requireId(sessionId);
+    _requireId(participantId);
+    final result = ServerSessionHandAnswerResult.fromMap(
+      await _invoke('answerServerSessionHandV1', {
+        'serverId': serverId,
+        'channelId': channelId,
+        'sessionId': sessionId,
+        'participantId': participantId,
+        'decision': 'declined',
+        'requestId': requestId,
+      }),
+    );
+    if (result.serverId != serverId ||
+        result.channelId != channelId ||
+        result.sessionId != sessionId ||
+        result.participantId != participantId ||
+        result.decision != ServerHandDecision.declined) {
+      throw const FormatException('Mismatched hand answer receipt.');
     }
     return result;
   }

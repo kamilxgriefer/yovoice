@@ -105,10 +105,15 @@ class ServerSessionConnection {
 /// `setServerSessionHandV1`'s receipt.
 ///
 /// A raised hand is a request, not authority: the callable writes
-/// `isHandRaised` on the participant document and bumps nothing, and that
-/// document is not client-readable (contract gap G3). So this receipt is the
-/// only honest source for "your request is in" — the UI reflects the answer
-/// to its own call and never guesses at a queue it cannot see.
+/// `isHandRaised` on the participant document and bumps nothing. That document
+/// IS client-readable since ADR-181 (the old "contract gap G3" premise is
+/// gone): its subject point-reads their own live-generation copy, and the
+/// session host and moderate-capable roles list only the raised hands of the
+/// live generation (`firestore.rules` canReadOwnServerSessionParticipant /
+/// canListServerSessionHands). So this receipt is only the immediate answer to
+/// the person's own press; the lasting state — pending, approved, declined,
+/// lowered — comes from [ServerSessionParticipantState], and the hosts' queue
+/// from [ServerSessionHand] (`server_session_hand.dart`).
 @immutable
 class ServerSessionHandResult {
   const ServerSessionHandResult({

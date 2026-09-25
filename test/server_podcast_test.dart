@@ -729,9 +729,14 @@ void main() {
       'requestId': 'request-2',
       'raised': true,
     });
-    // The only state shown is the receipt of its own call: the participant
-    // document is not readable, so nothing here guesses at a queue.
-    expect(find.text('Prowadzący widzą Twoją prośbę.'), findsOneWidget);
+    // Deliberately updated (request to speak): the old line claimed the hosts
+    // could see the request while no host surface read it. The copy now says
+    // only what is true on every build — the request is recorded and waits.
+    // With no own-document snapshot in this fake, the receipt is the state.
+    expect(
+      find.text('Prośba wysłana. Czekasz na decyzję prowadzącego.'),
+      findsOneWidget,
+    );
     expect(find.text('Anuluj prośbę o głos'), findsOneWidget);
   });
 

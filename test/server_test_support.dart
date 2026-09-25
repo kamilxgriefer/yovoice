@@ -21,6 +21,7 @@ import 'package:yovoice/features/servers/data/models/server_list_item.dart';
 import 'package:yovoice/features/servers/data/models/server_podcast_episode.dart';
 import 'package:yovoice/features/servers/data/models/server_podcast_question.dart';
 import 'package:yovoice/features/servers/data/models/server_session.dart';
+import 'package:yovoice/features/servers/data/models/server_session_hand.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/models/server_whiteboard.dart';
 import 'package:yovoice/features/servers/data/services/server_media_connector.dart';
@@ -57,6 +58,7 @@ ServerPodcastEpisodeReceipt _podcastReceipt({
 class TestServerRepository
     implements
         ServerRepository,
+        ServerSessionHandsRepository,
         ServerManagementRepository,
         ServerEventsRepository,
         ServerPodcastEpisodeRepository,
@@ -353,6 +355,68 @@ class TestServerRepository
           cleanupPending: true,
           requestedMuted: muted,
         ),
+  );
+
+  /// The raised-hand queue the host's or a moderator's session reads. A
+  /// test drives it through [sessionHandsStream] (a controller it owns) or
+  /// sets [sessionHands] for a one-shot answer.
+  List<ServerSessionHand> sessionHands = const [];
+  Stream<List<ServerSessionHand>>? sessionHandsStream;
+
+  /// Every queue subscription, as `{roomId, serverId, channelId, sessionId}`.
+  final handQueueReads = <Map<String, String>>[];
+
+  @override
+  Stream<List<ServerSessionHand>> watchSessionHands({
+    required String roomId,
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+  }) {
+    handQueueReads.add({
+      'roomId': roomId,
+      'serverId': serverId,
+      'channelId': channelId,
+      'sessionId': sessionId,
+    });
+    return sessionHandsStream ?? Stream.value(sessionHands);
+  }
+
+  /// This person's own participant document; absent (null) unless a test
+  /// supplies one.
+  Stream<ServerSessionParticipantState?>? ownParticipantStream;
+
+  @override
+  Stream<ServerSessionParticipantState?> watchOwnSessionParticipant({
+    required String roomId,
+    required String sessionId,
+  }) => ownParticipantStream ?? Stream.value(null);
+
+  @override
+  Future<ServerSessionHandAnswerResult> declineSessionHand({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String participantId,
+    required String requestId,
+  }) => _answer(
+    'answerServerSessionHandV1',
+    {
+      'serverId': serverId,
+      'channelId': channelId,
+      'sessionId': sessionId,
+      'participantId': participantId,
+      'decision': 'declined',
+      'requestId': requestId,
+    },
+    () => ServerSessionHandAnswerResult(
+      serverId: serverId,
+      channelId: channelId,
+      sessionId: sessionId,
+      participantId: participantId,
+      decision: ServerHandDecision.declined,
+      changed: true,
+    ),
   );
 
   @override
@@ -1347,6 +1411,18 @@ class FakeServerMediaLink extends ServerMediaLink {
   /// when that happens.
   Object? failMicrophoneWith;
   Object? failDeafenWith;
+
+  /// What [drop] reported, as the provider would.
+  ServerMediaDisconnectReason? droppedBecause;
+
+  @override
+  ServerMediaDisconnectReason? get disconnectReason => droppedBecause;
+
+  /// The provider ends the link on its own, saying why.
+  void drop(ServerMediaDisconnectReason reason) {
+    droppedBecause = reason;
+    report(ServerMediaLinkState.disconnected);
+  }
 
   @override
   ServerMediaLinkState get state => _state;

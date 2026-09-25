@@ -1,12 +1,15 @@
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:yovoice/core/audio/realtime_audio_session_registry.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 
 import '../models/server.dart';
 import '../models/server_channel.dart';
+import '../models/server_member_role.dart';
 import '../models/server_session.dart';
+import '../models/server_session_hand.dart';
 import '../models/server_type.dart';
 import '../models/server_whiteboard.dart';
 import 'server_media_connector.dart';
@@ -40,6 +43,31 @@ class ServerSessionDisconnected implements Exception {
   const ServerSessionDisconnected();
 }
 
+/// Why a connected person is being moved onto a new media token in the same
+/// generation (ADR-181: every role or mute change revokes the token it no
+/// longer matches, and the person re-mints under the new grant).
+///
+/// While one is in progress the phase is [ServerSessionPhase.reconnecting]:
+/// the device claim, the keep-alive and the realtime-audio lease are all kept,
+/// nothing is released to the backend, and the surface names what is actually
+/// happening instead of "the connection was lost".
+enum ServerSessionReauthorization {
+  /// Listener → guest: a host approved the request to speak.
+  promoted,
+
+  /// Guest → listener.
+  demoted,
+
+  /// A host or moderator mute took the publish grant away.
+  muted,
+
+  /// That mute was released.
+  unmuted,
+
+  /// The provider removed this person and the reason is not (yet) known.
+  changed,
+}
+
 /// One person's participation in one media channel of one server.
 ///
 /// The join is explicit and goes through the reviewed path only:
@@ -57,7 +85,10 @@ class ServerSessionController extends ChangeNotifier
     ServerVoiceDevice? device,
     Listenable? otherVoiceOwner,
     RealtimeAudioSessionRegistry? realtimeAudioSessions,
+    List<Duration>? reauthorizationBackoff,
   }) : _otherVoiceOwnerOverride = otherVoiceOwner,
+       _reauthorizationBackoff =
+           reauthorizationBackoff ?? defaultReauthorizationBackoff,
        _repository = repository,
        _connector = connector ?? const LiveKitServerMediaConnector(),
        _anotherVoiceSessionActive =
@@ -70,6 +101,21 @@ class ServerSessionController extends ChangeNotifier
   final ServerRepository _repository;
   final ServerMediaConnector _connector;
   final bool Function() _anotherVoiceSessionActive;
+
+  /// The waits before each re-mint attempt after an authority change. The
+  /// first covers the revocation barrier the backend sets (at least two
+  /// seconds after the change, `session_control.js`); the rest back off while
+  /// the token call still answers `failed-precondition` ("still being
+  /// revoked"). About twelve seconds in all, then the surface says the
+  /// connection was lost and offers the retry it always did.
+  final List<Duration> _reauthorizationBackoff;
+  static const defaultReauthorizationBackoff = <Duration>[
+    Duration(milliseconds: 1500),
+    Duration(seconds: 1),
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 4),
+  ];
 
   /// The speaker route and the Android keep-alive service. Neither is owned by
   /// this slice; both have to be asked for, per session, or a conversation
@@ -137,6 +183,29 @@ class ServerSessionController extends ChangeNotifier
   Object? _privacyError;
   int _epoch = 0;
   bool _disposed = false;
+
+  // --------------------------------------------------------- request to speak
+
+  /// The subscriptions a joined generation owns: this person's own participant
+  /// document, their server role (who may answer hands) and, for the session
+  /// host and moderators, the raised-hand queue. All three end with the
+  /// generation, on leave, on a terminal failure and on dispose.
+  StreamSubscription<ServerSessionParticipantState?>? _ownSubscription;
+  StreamSubscription<ServerMemberRole?>? _roleSubscription;
+  StreamSubscription<List<ServerSessionHand>>? _handsSubscription;
+  String? _participationSessionId;
+  ServerSessionParticipantState? _ownParticipant;
+  int _ownParticipantVersion = 0;
+
+  /// The own document as it stood when the current media token was issued
+  /// (same `tokenAuthorityFingerprint`). A later revision under the same
+  /// fingerprint is an authority change the token no longer matches.
+  ServerSessionParticipantState? _authorityBaseline;
+  bool _canModerate = false;
+  List<ServerSessionHand> _queuedHands = const [];
+  final Set<String> _answeringHands = <String>{};
+  Object? _handAnswerError;
+  ServerSessionReauthorization? _reauthorization;
 
   /// The reviewed callable path this session was joined through. Surfaces
   /// that act on the *generation* (board 02's `Poproś o głos`) reach it from
@@ -213,6 +282,47 @@ class ServerSessionController extends ChangeNotifier
   bool get endBusy => _endBusy;
   Object? get endError => _endError;
 
+  /// Non-null while this person is being moved onto a new token in the same
+  /// generation after a role or mute change (phase [ServerSessionPhase.reconnecting]).
+  ServerSessionReauthorization? get reauthorization => _reauthorization;
+
+  /// This person's own participant document in the joined generation, or null
+  /// before it arrives, outside a generation and when the repository has no
+  /// such read.
+  ServerSessionParticipantState? get ownParticipant => _ownParticipant;
+
+  /// Increments with every own-document snapshot, so a surface holding an
+  /// older callable receipt can tell which of the two is newer.
+  int get ownParticipantVersion => _ownParticipantVersion;
+
+  /// True when this person may answer raised hands in the joined generation:
+  /// its host, or a member whose server role carries `moderate`. The callables
+  /// re-prove it; this only decides what is drawn.
+  bool get canAnswerHands =>
+      _repository is ServerSessionHandsRepository &&
+      _participationSessionId != null &&
+      (isSessionHost || _canModerate);
+
+  /// The raised hands waiting for an answer, oldest first, limited to people
+  /// the provider still reports in the generation — somebody who left is
+  /// never offered, whatever the queue document still says.
+  List<ServerSessionHand> get raisedHands {
+    if (!canAnswerHands || _queuedHands.isEmpty) return const [];
+    final present = <String>{
+      for (final person in participants)
+        if (!person.isLocal) person.identity,
+    };
+    return [
+      for (final hand in _queuedHands)
+        if (present.contains(hand.userId)) hand,
+    ];
+  }
+
+  /// Whether an answer for [userId] is on its way.
+  bool isAnsweringHand(String userId) => _answeringHands.contains(userId);
+
+  /// The last answer that did not go through, cleared by the next one.
+  Object? get handAnswerError => _handAnswerError;
   bool isIn(String channelId) => isActive && _channel?.id == channelId;
 
   @override
@@ -326,6 +436,7 @@ class ServerSessionController extends ChangeNotifier
         );
         if (!_current(epoch)) return;
         _connection = connection;
+        _startParticipation(server, target, connection);
         _set(ServerSessionPhase.connecting);
         final link = await _connector.connect(
           serverUrl: connection.serverUrl,
@@ -345,6 +456,7 @@ class ServerSessionController extends ChangeNotifier
         _onLinkChanged();
       } catch (error) {
         if (!_current(epoch)) return;
+        _stopParticipation();
         _error = error;
         _set(ServerSessionPhase.failed);
       }
@@ -367,6 +479,7 @@ class ServerSessionController extends ChangeNotifier
       case ServerMediaLinkState.connected:
         _whiteboardDataPlane?.resume();
         if (!_onConnected()) return;
+        if (_reauthorization != null) _onReauthorized();
         _set(ServerSessionPhase.connected);
       case ServerMediaLinkState.reconnecting:
         _whiteboardDataPlane?.suspend();
@@ -376,9 +489,18 @@ class ServerSessionController extends ChangeNotifier
         _set(ServerSessionPhase.connecting);
       case ServerMediaLinkState.disconnected:
         if (_phase == ServerSessionPhase.leaving) return;
+        // A revocation of this person's token (a role or mute change, ADR-181)
+        // is not a lost connection: the generation is still live, and the
+        // person re-mints under the new grant.
+        final reauthorization = _reauthorizationFor(link.disconnectReason);
+        if (reauthorization != null) {
+          unawaited(_reauthorize(reauthorization));
+          return;
+        }
         // The provider ended the link (host ended the session, network
-        // gone, token revoked). Release it and say so.
+        // gone). Release it and say so.
         _epoch++;
+        _stopParticipation();
         _releaseDevice();
         link.removeListener(_onLinkChanged);
         _link = null;
@@ -585,6 +707,21 @@ class ServerSessionController extends ChangeNotifier
     final server = _server;
     final channel = _channel;
     final connection = _connection;
+    // A request to speak belongs to being here. Leaving takes it back, so no
+    // host is offered somebody who has gone (the provider's departure event
+    // lowers it too when this signal never arrives).
+    final handUp =
+        releaseGeneration && (_ownParticipant?.isHandRaised ?? false);
+    _stopParticipation();
+    if (handUp && server != null && channel != null && connection != null) {
+      unawaited(
+        _lowerOwnHand(
+          serverId: server.id,
+          channelId: channel.id,
+          sessionId: connection.sessionId,
+        ),
+      );
+    }
     _releaseDevice();
     _epoch++;
     final link = _link;
@@ -676,6 +813,7 @@ class ServerSessionController extends ChangeNotifier
   void dismiss() {
     if (!_isTerminal) return;
     _epoch++;
+    _stopParticipation();
     _error = null;
     _cameraError = null;
     _screenShareError = null;
@@ -686,6 +824,401 @@ class ServerSessionController extends ChangeNotifier
     _connection = null;
     _set(ServerSessionPhase.idle);
     _releaseRealtimeAudioIfIdle();
+  }
+
+  // ------------------------------------------------------- request to speak
+
+  void _startParticipation(
+    Server server,
+    ServerChannel channel,
+    ServerSessionConnection connection,
+  ) {
+    final repository = _repository;
+    if (repository is! ServerSessionHandsRepository) return;
+    if (_participationSessionId == connection.sessionId) return;
+    _stopParticipation(notify: false);
+    final hands = repository as ServerSessionHandsRepository;
+    _participationSessionId = connection.sessionId;
+    try {
+      _ownSubscription = hands
+          .watchOwnSessionParticipant(
+            roomId: connection.roomId,
+            sessionId: connection.sessionId,
+          )
+          .listen(_onOwnParticipant, onError: (Object _) {});
+    } on Object {
+      // No own-document read: the stage keeps the hand receipt alone.
+    }
+    try {
+      _roleSubscription = _repository.watchMyRole(server.id).listen((role) {
+        final canModerate = role?.canModerate ?? false;
+        if (canModerate == _canModerate) return;
+        _canModerate = canModerate;
+        _syncHandsSubscription();
+        if (!_disposed) notifyListeners();
+      }, onError: (Object _) {});
+    } on Object {
+      // Without a readable role only the session host answers hands.
+    }
+    _syncHandsSubscription();
+  }
+
+  /// The queue is read only by somebody who may answer it — the rules refuse
+  /// anybody else, so asking would only produce a denied listener.
+  void _syncHandsSubscription() {
+    final repository = _repository;
+    final connection = _connection;
+    final wanted =
+        repository is ServerSessionHandsRepository &&
+        connection != null &&
+        _participationSessionId == connection.sessionId &&
+        (connection.sessionRole == 'host' || _canModerate);
+    if (!wanted) {
+      final subscription = _handsSubscription;
+      _handsSubscription = null;
+      if (subscription != null) unawaited(subscription.cancel());
+      _queuedHands = const [];
+      return;
+    }
+    if (_handsSubscription != null) return;
+    final server = _server;
+    final channel = _channel;
+    if (server == null || channel == null) return;
+    try {
+      _handsSubscription = (repository as ServerSessionHandsRepository)
+          .watchSessionHands(
+            roomId: connection.roomId,
+            serverId: server.id,
+            channelId: channel.id,
+            sessionId: connection.sessionId,
+          )
+          .listen(
+            (hands) {
+              if (_disposed) return;
+              _queuedHands = hands;
+              notifyListeners();
+            },
+            onError: (Object _) {
+              // A closed or unreadable queue is an empty one; the generation's
+              // own lifecycle says why.
+              if (_disposed) return;
+              _queuedHands = const [];
+              notifyListeners();
+            },
+          );
+    } on Object {
+      _queuedHands = const [];
+    }
+  }
+
+  void _stopParticipation({bool notify = true}) {
+    final subscriptions = [
+      _ownSubscription,
+      _roleSubscription,
+      _handsSubscription,
+    ];
+    _ownSubscription = null;
+    _roleSubscription = null;
+    _handsSubscription = null;
+    for (final subscription in subscriptions) {
+      if (subscription != null) unawaited(subscription.cancel());
+    }
+    final hadState =
+        _participationSessionId != null ||
+        _ownParticipant != null ||
+        _queuedHands.isNotEmpty ||
+        _reauthorization != null;
+    _participationSessionId = null;
+    _ownParticipant = null;
+    _authorityBaseline = null;
+    _canModerate = false;
+    _queuedHands = const [];
+    _answeringHands.clear();
+    _handAnswerError = null;
+    _reauthorization = null;
+    if (notify && hadState && !_disposed) notifyListeners();
+  }
+
+  void _onOwnParticipant(ServerSessionParticipantState? state) {
+    if (_disposed) return;
+    _ownParticipant = state;
+    _ownParticipantVersion++;
+    final baseline = _authorityBaseline;
+    if (state != null &&
+        (baseline == null ||
+            state.tokenFingerprint != baseline.tokenFingerprint)) {
+      // A token was issued under this authority (or this is the first read):
+      // everything is measured from here.
+      _authorityBaseline = state;
+    } else if (state != null &&
+        state.authorizationRevision > baseline!.authorizationRevision &&
+        _reauthorization == null &&
+        _link != null &&
+        isLive) {
+      // The role or a mute changed under the token this device holds. The
+      // backend is revoking it; move onto a new one now rather than wait to
+      // be removed.
+      _authorityBaseline = state;
+      unawaited(_reauthorize(_reasonBetween(baseline, state)));
+      return;
+    }
+    notifyListeners();
+  }
+
+  static ServerSessionReauthorization _reasonBetween(
+    ServerSessionParticipantState before,
+    ServerSessionParticipantState after,
+  ) {
+    if (before.role != 'guest' && after.role == 'guest') {
+      return ServerSessionReauthorization.promoted;
+    }
+    if (before.role == 'guest' && after.role == 'listener') {
+      return ServerSessionReauthorization.demoted;
+    }
+    final wasMuted = before.hostMuted || before.serverMuted;
+    final isMuted = after.hostMuted || after.serverMuted;
+    if (!wasMuted && isMuted) return ServerSessionReauthorization.muted;
+    if (wasMuted && !isMuted) return ServerSessionReauthorization.unmuted;
+    return ServerSessionReauthorization.changed;
+  }
+
+  /// Whether a provider disconnect is a revocation to re-mint through, and
+  /// what to call it. A removal by the provider is one; so is any disconnect
+  /// after the own document already showed an authority change.
+  ServerSessionReauthorization? _reauthorizationFor(
+    ServerMediaDisconnectReason? reason,
+  ) {
+    if (_connection == null || _server == null || _channel == null) {
+      return null;
+    }
+    final baseline = _authorityBaseline;
+    final own = _ownParticipant;
+    final changed =
+        baseline != null &&
+        own != null &&
+        own.tokenFingerprint == baseline.tokenFingerprint &&
+        own.authorizationRevision > baseline.authorizationRevision;
+    if (changed) return _reasonBetween(baseline, own);
+    // Ending a generation also removes everybody from the provider room
+    // before deleting it, and closes the own-document read at once. A removal
+    // while that document is still readable is therefore a change to this
+    // person, not the end of the conversation.
+    if (reason == ServerMediaDisconnectReason.participantRemoved &&
+        own != null) {
+      return ServerSessionReauthorization.changed;
+    }
+    return null;
+  }
+
+  /// Moves this person onto a new token in the same generation.
+  ///
+  /// Nothing here goes through [leave]: the device claim, the keep-alive, the
+  /// realtime-audio lease and the participation subscriptions all stay, no
+  /// release signal is sent and no recheck is armed. The old link is torn
+  /// down, a token is requested with a new request id after the revocation
+  /// barrier, retried while the backend still answers "being revoked", and
+  /// the new link connects with every capture off — a promotion grants
+  /// permission, never a live microphone.
+  Future<void> _reauthorize(ServerSessionReauthorization reason) async {
+    final server = _server;
+    final channel = _channel;
+    final previous = _connection;
+    if (_disposed || server == null || channel == null || previous == null) {
+      return;
+    }
+    final epoch = ++_epoch;
+    _reauthorization = reason;
+    final link = _link;
+    _link = null;
+    _detachWhiteboardDataPlane();
+    if (link != null) {
+      link.removeListener(_onLinkChanged);
+      unawaited(_cleanupLink(link));
+    }
+    _set(ServerSessionPhase.reconnecting);
+    _pendingJoinOperations++;
+    try {
+      for (final wait in _reauthorizationBackoff) {
+        await Future<void>.delayed(wait);
+        if (!_current(epoch)) return;
+        // The generation ended meanwhile: its own-document read closed. There
+        // is nothing to re-join.
+        if (_repository is ServerSessionHandsRepository &&
+            _ownParticipant == null) {
+          break;
+        }
+        try {
+          final connection = await _repository.createChannelToken(
+            serverId: server.id,
+            channelId: channel.id,
+            sessionId: previous.sessionId,
+            requestId: _repository.newRequestId(),
+          );
+          if (!_current(epoch)) return;
+          if (connection.sessionId != previous.sessionId) {
+            throw const FormatException('A different generation answered.');
+          }
+          _connection = connection;
+          final next = await _connector.connect(
+            serverUrl: connection.serverUrl,
+            token: connection.participantToken,
+          );
+          if (!_current(epoch)) {
+            await _cleanupLink(next);
+            return;
+          }
+          _link = next..addListener(_onLinkChanged);
+          _attachWhiteboardDataPlane(
+            link: next,
+            server: server,
+            channel: channel,
+            connection: connection,
+          );
+          _syncHandsSubscription();
+          _onLinkChanged();
+          return;
+        } catch (error) {
+          if (!_current(epoch)) return;
+          if (!_retriesReauthorization(error)) break;
+        }
+      }
+      if (!_current(epoch)) return;
+      // Out of patience or refused outright (removed from the server, the
+      // generation ended): exactly the outcome a lost link always had, with
+      // the retry the surface already offers.
+      _epoch++;
+      _stopParticipation(notify: false);
+      _releaseDevice();
+      _error = const ServerSessionDisconnected();
+      _set(ServerSessionPhase.failed);
+    } finally {
+      _pendingJoinOperations--;
+      _releaseRealtimeAudioIfIdle();
+    }
+  }
+
+  /// "Still being revoked" and transient transport answers are worth another
+  /// try; a refusal is not.
+  static bool _retriesReauthorization(Object error) {
+    if (error is FirebaseFunctionsException) {
+      return const {
+        'failed-precondition',
+        'aborted',
+        'unavailable',
+        'deadline-exceeded',
+        'internal',
+      }.contains(error.code);
+    }
+    return error is! FormatException && error is! ArgumentError;
+  }
+
+  /// The new link is up. The provider re-applies the process-global speaker
+  /// preference on connect, so it is asserted again, and the keep-alive is
+  /// told the new publish grant (a promoted guest needs the microphone type).
+  void _onReauthorized() {
+    _reauthorization = null;
+    unawaited(_device.preferSpeakerOutput());
+    unawaited(
+      _device.startKeepAlive(
+        title: _server?.name.trim().isNotEmpty ?? false
+            ? _server!.name.trim()
+            : 'YO Voice',
+        body: _channel?.name ?? '',
+        canPublish: canPublish,
+      ),
+    );
+  }
+
+  Future<void> _lowerOwnHand({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+  }) async {
+    try {
+      await _repository.setSessionHand(
+        serverId: serverId,
+        channelId: channelId,
+        sessionId: sessionId,
+        raised: false,
+        requestId: _repository.newRequestId(),
+      );
+    } catch (error) {
+      // Best effort: the provider's departure event lowers it as well.
+      debugPrint(
+        'A raised hand was not lowered on leave: ${error.runtimeType}',
+      );
+    }
+  }
+
+  /// Approves a raised hand: the reviewed promotion, which also records the
+  /// answer on the person's own document. The person's device re-mints onto
+  /// the stage by itself.
+  Future<void> approveHand(ServerSessionHand hand) => _answerHand(
+    hand,
+    (server, channel, connection) => _repository.setSessionParticipantRole(
+      serverId: server.id,
+      channelId: channel.id,
+      sessionId: connection.sessionId,
+      participantId: hand.userId,
+      role: 'guest',
+      requestId: _repository.newRequestId(),
+    ),
+  );
+
+  /// Declines a raised hand (`answerServerSessionHandV1`). Nothing about the
+  /// person's access changes; their own document says the request was
+  /// declined.
+  Future<void> declineHand(ServerSessionHand hand) {
+    final repository = _repository;
+    if (repository is! ServerSessionHandsRepository) return Future.value();
+    return _answerHand(
+      hand,
+      (server, channel, connection) =>
+          (repository as ServerSessionHandsRepository).declineSessionHand(
+            serverId: server.id,
+            channelId: channel.id,
+            sessionId: connection.sessionId,
+            participantId: hand.userId,
+            requestId: _repository.newRequestId(),
+          ),
+    );
+  }
+
+  Future<void> _answerHand(
+    ServerSessionHand hand,
+    Future<Object?> Function(
+      Server server,
+      ServerChannel channel,
+      ServerSessionConnection connection,
+    )
+    send,
+  ) async {
+    final server = _server;
+    final channel = _channel;
+    final connection = _connection;
+    if (_disposed ||
+        !canAnswerHands ||
+        server == null ||
+        channel == null ||
+        connection == null ||
+        _answeringHands.contains(hand.userId)) {
+      return;
+    }
+    final sessionId = connection.sessionId;
+    _answeringHands.add(hand.userId);
+    _handAnswerError = null;
+    notifyListeners();
+    try {
+      await send(server, channel, connection);
+    } catch (error) {
+      if (_disposed || _participationSessionId != sessionId) return;
+      _handAnswerError = error;
+    } finally {
+      if (!_disposed && _participationSessionId == sessionId) {
+        _answeringHands.remove(hand.userId);
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> _cleanupLink(ServerMediaLink link) async {
@@ -787,6 +1320,7 @@ class ServerSessionController extends ChangeNotifier
     if (_disposed) return;
     _disposed = true;
     _cancelReleaseRecheck();
+    _stopParticipation(notify: false);
     _releaseDevice();
     _epoch++;
     final link = _link;

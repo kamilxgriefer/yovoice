@@ -511,14 +511,22 @@ void main() {
     expect(raise.$2['sessionId'], 'gen-7');
     expect(raise.$2['raised'], isTrue);
     expect(raise.$2['requestId'], isNotEmpty);
-    expect(find.text('Prowadzący widzą Twoją prośbę.'), findsOneWidget);
+    // Deliberately updated (request to speak): the old line claimed the hosts
+    // could see the request while no host surface read it.
+    expect(
+      find.text('Prośba wysłana. Czekasz na decyzję prowadzącego.'),
+      findsOneWidget,
+    );
 
     // The same control takes the request back.
     await tester.tap(hand);
     await tester.pumpAndSettle();
     expect(repository.calls.last.$2['raised'], isFalse);
     expect(find.text('Poproś o głos'), findsOneWidget);
-    expect(find.text('Prowadzący widzą Twoją prośbę.'), findsNothing);
+    expect(
+      find.text('Prośba wysłana. Czekasz na decyzję prowadzącego.'),
+      findsNothing,
+    );
   });
 
   testWidgets('a refused hand is one sentence and never the raw code', (
@@ -549,7 +557,10 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('not-found'), findsNothing);
-    expect(find.text('Prowadzący widzą Twoją prośbę.'), findsNothing);
+    expect(
+      find.text('Prośba wysłana. Czekasz na decyzję prowadzącego.'),
+      findsNothing,
+    );
   });
 
   testWidgets('the generation host is never offered the stage queue', (
