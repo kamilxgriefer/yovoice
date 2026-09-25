@@ -20,6 +20,7 @@ import {
   pickBaselineTag,
   readInputs,
   summarizeCheckRun,
+  trustedSuiteIds,
 } from '../release/preflight.mjs';
 
 const SHA_A = 'a'.repeat(40);
@@ -174,6 +175,54 @@ describe('summarizeCheckRun', () => {
   });
 });
 
+describe('trustedSuiteIds', () => {
+  const workflowRun = (suite, overrides = {}) => ({
+    id: suite,
+    event: 'push',
+    head_branch: 'main',
+    head_sha: SHA_A,
+    check_suite_id: suite,
+    ...overrides,
+  });
+  const runs = [
+    workflowRun(1),
+    workflowRun(2, { event: 'workflow_dispatch' }),
+    workflowRun(3, { event: 'pull_request' }),
+    workflowRun(4, { event: 'pull_request', head_branch: 'feature' }),
+    workflowRun(5, { head_branch: 'feature' }),
+    workflowRun(6, { head_sha: SHA_B }),
+    workflowRun(7, { check_suite_id: null }),
+  ];
+
+  test('keeps only runs on main, on exactly the SHA, for the given events', () => {
+    assert.deepEqual([...trustedSuiteIds(runs, { sha: SHA_A, events: ['push', 'workflow_dispatch'] })].sort(), [1, 2]);
+    assert.deepEqual([...trustedSuiteIds(runs, { sha: SHA_A, events: ['workflow_dispatch'] })], [2]);
+    assert.equal(trustedSuiteIds(undefined, { sha: SHA_A, events: ['push'] }).size, 0);
+  });
+
+  test('a pull_request run whose head branch is called main still does not count', () => {
+    const forkMain = [workflowRun(8, { event: 'pull_request', head_branch: 'main' })];
+    assert.equal(trustedSuiteIds(forkMain, { sha: SHA_A, events: ['push', 'workflow_dispatch'] }).size, 0);
+  });
+
+  test('summarizeCheckRun counts only check runs in trusted suites when given them', () => {
+    const checkRun = (id, suite, conclusion) => ({
+      id,
+      name: 'verify_and_build',
+      status: 'completed',
+      conclusion,
+      app: { slug: 'github-actions' },
+      check_suite: { id: suite },
+    });
+    // A newer green pull_request run must not turn a red push run green.
+    const checkRuns = [checkRun(10, 1, 'failure'), checkRun(11, 3, 'success')];
+    const trusted = trustedSuiteIds(runs, { sha: SHA_A, events: ['push', 'workflow_dispatch'] });
+    assert.equal(summarizeCheckRun(checkRuns, 'verify_and_build', trusted).state, 'failed');
+    assert.equal(summarizeCheckRun([checkRun(11, 3, 'success')], 'verify_and_build', trusted).state, 'missing');
+    assert.equal(summarizeCheckRun([checkRun(12, 2, 'success')], 'verify_and_build', trusted).state, 'success');
+  });
+});
+
 describe('decide', () => {
   const green = [
     { name: 'verify_and_build', state: 'success' },
@@ -290,16 +339,44 @@ describe('main against a throwaway repository', () => {
     rmSync(repo, { recursive: true, force: true });
   });
 
-  function fakeGitHub({ ci = 'success', web = 'success' } = {}) {
+  // Check suite 100 is the push run on main, 200 the Hosting dispatch on main,
+  // 300 a pull_request run on the same head SHA (it tests a merge commit).
+  // ciEvent moves the CI check runs into another run's suite.
+  function fakeGitHub({ ci = 'success', web = 'success', ciEvent = 'push' } = {}) {
     const calls = [];
+    const suiteFor = { push: 100, workflow_dispatch: 200, pull_request: 300 };
     const fetchImpl = async (url, options) => {
       calls.push({ url, options });
-      const name = new URL(url).searchParams.get('check_name');
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith('/actions/runs')) {
+        const sha = parsed.searchParams.get('head_sha');
+        const workflowRuns = Object.entries(suiteFor).map(([event, suite]) => ({
+          id: suite,
+          event,
+          head_branch: 'main',
+          head_sha: sha,
+          check_suite_id: suite,
+        }));
+        const body = JSON.stringify({ total_count: workflowRuns.length, workflow_runs: workflowRuns });
+        return { status: 200, ok: true, text: async () => body };
+      }
+      const name = parsed.searchParams.get('check_name');
       const conclusion = name === 'deploy_hosting' ? web : ci;
+      const suite = name === 'deploy_hosting' ? suiteFor.workflow_dispatch : suiteFor[ciEvent];
       const runs =
         conclusion === 'missing'
           ? []
-          : [{ id: 1, name, status: 'completed', conclusion, app: { slug: 'github-actions' }, html_url: null }];
+          : [
+              {
+                id: 1,
+                name,
+                status: 'completed',
+                conclusion,
+                app: { slug: 'github-actions' },
+                check_suite: { id: suite },
+                html_url: null,
+              },
+            ];
       const body = JSON.stringify({ check_runs: runs });
       return { status: 200, ok: true, text: async () => body };
     };
@@ -331,9 +408,15 @@ describe('main against a throwaway repository', () => {
   test('sends the token only to the GitHub API', async () => {
     const github = fakeGitHub();
     await run({ RELEASE_REF: shas.clientOnly, RELEASE_DRY_RUN: 'false' }, github);
-    assert.equal(github.calls.length, 3);
+    // One workflow-runs read (to learn which check suites are trusted) plus
+    // one check-runs read per gate.
+    assert.equal(github.calls.length, 4);
     for (const call of github.calls) {
-      assert.ok(call.url.startsWith('https://api.github.com/repos/owner/repo/commits/'), call.url);
+      assert.ok(
+        call.url.startsWith('https://api.github.com/repos/owner/repo/commits/') ||
+          call.url.startsWith(`https://api.github.com/repos/owner/repo/actions/runs?head_sha=${shas.clientOnly}&`),
+        call.url,
+      );
       assert.equal(call.options.headers.Authorization, 'Bearer test-token');
     }
   });
@@ -399,6 +482,14 @@ describe('main against a throwaway repository', () => {
     const warnings = [];
     await run({ RELEASE_REF: shas.backend }, fakeGitHub({ ci: 'missing', web: 'missing' }), warnings);
     assert.equal(warnings.length, 4);
+  });
+
+  test('green CI from a pull_request run does not satisfy a real release; a dispatch run on main does', async () => {
+    await assert.rejects(
+      run({ RELEASE_REF: shas.clientOnly, RELEASE_DRY_RUN: 'false' }, fakeGitHub({ ciEvent: 'pull_request' })),
+      /CI check "verify_and_build" is missing/u,
+    );
+    await run({ RELEASE_REF: shas.clientOnly, RELEASE_DRY_RUN: 'false' }, fakeGitHub({ ciEvent: 'workflow_dispatch' }));
   });
 
   test('fails closed with no baseline at all', async () => {

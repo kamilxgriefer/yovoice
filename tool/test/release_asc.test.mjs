@@ -5,6 +5,9 @@
 
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, verify } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, test } from 'node:test';
 
 import {
@@ -12,7 +15,9 @@ import {
   ASC_TOKEN_LIFETIME_SECONDS,
   assertBuildFree,
   buildsUrl,
+  main,
   makeAscToken,
+  timeoutVerdict,
   waitValid,
 } from '../release/asc.mjs';
 
@@ -139,10 +144,87 @@ describe('waitValid', () => {
     assert.equal(result.attempts, 6);
   });
 
+  test('a timeout remembers whether the build was ever visible', async () => {
+    const processing = await waitValid(
+      options(ascServer([builds(), builds(['b1', '36', 'PROCESSING'])]), clock(), { timeoutMs: 3 * 60_000 }),
+    );
+    assert.equal(processing.state, 'TIMEOUT');
+    assert.equal(processing.seen, true);
+    assert.equal(processing.id, 'b1');
+
+    const never = await waitValid(options(ascServer([builds(['b0', '35', 'VALID'])]), clock(), { timeoutMs: 3 * 60_000 }));
+    assert.equal(never.state, 'TIMEOUT');
+    assert.equal(never.lastSeen, 'NOT_VISIBLE_YET');
+    assert.equal(never.seen, false);
+    assert.equal(never.id, null);
+  });
+
   test('ignores builds with another number in the answer', async () => {
     const server = ascServer([builds(['b0', '35', 'VALID']), builds(['b1', '36', 'VALID'])]);
     const result = await waitValid(options(server, clock()));
     assert.equal(result.id, 'b1');
     assert.equal(result.attempts, 2);
+  });
+});
+
+describe('timeoutVerdict', () => {
+  const context = { buildNumber: '36', timeoutMinutes: 45 };
+
+  test('VALID is neither a warning nor a failure', () => {
+    assert.deepEqual(timeoutVerdict({ state: 'VALID', id: 'b1', attempts: 3 }, context), { fail: false, message: null });
+  });
+
+  test('a build seen processing at the deadline only warns: it is uploaded and its number is consumed', () => {
+    const verdict = timeoutVerdict({ state: 'TIMEOUT', lastSeen: 'PROCESSING', id: 'b1', attempts: 46, seen: true }, context);
+    assert.equal(verdict.fail, false);
+    assert.match(verdict.message, /not VALID within 45 min \(last seen PROCESSING\)/u);
+  });
+
+  test('a build that never appeared fails the step, so the release is not tagged', () => {
+    const verdict = timeoutVerdict(
+      { state: 'TIMEOUT', lastSeen: 'NOT_VISIBLE_YET', id: null, attempts: 46, seen: false },
+      context,
+    );
+    assert.equal(verdict.fail, true);
+    assert.match(verdict.message, /never appeared in App Store Connect/u);
+    assert.match(verdict.message, /not tagged/u);
+    assert.match(verdict.message, /never re-upload blindly/u);
+  });
+});
+
+describe('wait-valid command', () => {
+  test('fails the step when the build never appeared, after writing the summary', async () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), 'yovoice-asc-test-'));
+    const savedSummary = process.env.GITHUB_STEP_SUMMARY;
+    process.env.GITHUB_STEP_SUMMARY = path.join(scratch, 'summary.md');
+    try {
+      const keyFile = path.join(scratch, 'AuthKey_ABCDE12345.p8');
+      writeFileSync(keyFile, PRIVATE_PEM);
+      const server = ascServer([builds()]);
+      // An interval longer than the budget: exactly one poll, then the deadline.
+      await assert.rejects(
+        main(
+          [
+            'wait-valid',
+            '--key-file', keyFile,
+            '--key-id', 'ABCDE12345',
+            '--issuer-id', ISSUER,
+            '--app-id', '6801898909',
+            '--build-number', '36',
+            '--version-name', '3.0.0',
+            '--timeout-minutes', '1',
+            '--interval-seconds', '120',
+          ],
+          { fetchImpl: server.fetchImpl },
+        ),
+        /never appeared in App Store Connect/u,
+      );
+      assert.equal(server.calls.length, 1);
+      assert.match(readFileSync(process.env.GITHUB_STEP_SUMMARY, 'utf8'), /NEVER SEEN in App Store Connect/u);
+    } finally {
+      if (savedSummary === undefined) delete process.env.GITHUB_STEP_SUMMARY;
+      else process.env.GITHUB_STEP_SUMMARY = savedSummary;
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });

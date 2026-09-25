@@ -110,6 +110,9 @@ jobs:
     permissions:
       contents: read
       checks: read
+      # Workflow runs on ref: only check runs from push or dispatch runs on
+      # main count toward the CI and Hosting gates (tool/release/preflight.mjs).
+      actions: read
     outputs:
       sha: ${{ steps.gates.outputs.sha }}
       build_name: ${{ steps.gates.outputs.build_name }}
@@ -214,6 +217,25 @@ jobs:
           ln -s "${RUNNER_TEMP}/throwaway.jks" app/android/app/yovoice-upload-keystore.jks
           echo "YOVOICE_UPLOAD_KEY_PASSWORD=${password}" >> "${GITHUB_ENV}"
 
+      # The Crashlytics Gradle plugin uploads the R8 mapping file of a minified
+      # release build to the live Firebase project. A dry run ships nothing, so
+      # this runner-only init script (no android/ edit) disables every
+      # uploadCrashlyticsMappingFile* task and records which ones it saw. The
+      # real Android job does not get it: real releases keep their mappings.
+      - name: Keep the dry run from uploading a Crashlytics mapping file
+        run: |
+          init_dir="${GRADLE_USER_HOME:-${HOME}/.gradle}/init.d"
+          mkdir -p "${init_dir}"
+          cat > "${init_dir}/yovoice-dry-run-no-crashlytics-upload.gradle" <<'GRADLE'
+          def marker = new File(System.getenv('RUNNER_TEMP'), 'crashlytics-upload-disabled.txt')
+          allprojects {
+            tasks.matching { it.name.startsWith('uploadCrashlyticsMappingFile') }.configureEach { task ->
+              task.enabled = false
+              marker.append("${task.path}\n")
+            }
+          }
+          GRADLE
+
       - name: Build the release App Bundle (no --dart-define)
         working-directory: app
         env:
@@ -251,6 +273,13 @@ jobs:
             --expect-version-name "${BUILD_NAME}"
           sha256="$(sha256sum "${aab}" | cut -d ' ' -f 1)"
           size="$(stat -c %s "${aab}")"
+          marker="${RUNNER_TEMP}/crashlytics-upload-disabled.txt"
+          if [ -s "${marker}" ]; then
+            crashlytics="disabled ($(sort -u "${marker}" | paste -sd ' ' -))"
+          else
+            crashlytics="no upload task was configured in this build (check the log if the plugin changed)"
+            echo "::warning::No uploadCrashlyticsMappingFile task was seen. If the Crashlytics plugin renamed it, the dry run may have uploaded a mapping file to Firebase."
+          fi
           {
             echo "### Android dry run"
             echo ""
@@ -260,12 +289,15 @@ jobs:
             echo "| Signed with | a throwaway key generated on the runner (not the upload key, not uploadable) |"
             echo "| AAB sha256 / size | \`${sha256}\` / ${size} B |"
             echo "| Uploaded | no (dry run; no artifact either) |"
+            echo "| Crashlytics mapping upload | ${crashlytics} |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Remove the throwaway key
         if: always()
         run: |
           rm -f app/android/app/yovoice-upload-keystore.jks "${RUNNER_TEMP}/throwaway.jks" "${RUNNER_TEMP}/aab-manifest.pb"
+          rm -f "${GRADLE_USER_HOME:-${HOME}/.gradle}/init.d/yovoice-dry-run-no-crashlytics-upload.gradle" \
+            "${RUNNER_TEMP}/crashlytics-upload-disabled.txt"
           if [ -x app/android/gradlew ]; then (cd app/android && ./gradlew --stop >/dev/null 2>&1) || true; fi
 
   ios_dry_run:

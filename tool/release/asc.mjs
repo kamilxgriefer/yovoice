@@ -11,9 +11,12 @@
 // assert-build-free refuses when the build number already exists in App Store
 // Connect under any version: numbers are never reusable, and a blind re-upload
 // ends in "Redundant Binary Upload" (docs/DEPLOYMENT.md).
-// wait-valid polls until processing is VALID, fails on INVALID or FAILED, and
-// warns (without failing) when the budget runs out, because by then the binary
-// is uploaded and the build number is consumed either way.
+// wait-valid polls until processing is VALID and fails on INVALID or FAILED.
+// When the budget runs out it only warns if App Store Connect showed the build
+// at least once (it is processing, the number is consumed, a re-upload would
+// be refused). If the build never appeared at all, nothing proves the upload
+// reached Apple, so the step fails: the record job then does not tag the
+// commit as released, and the operator checks App Store Connect by hand.
 //
 // External TestFlight distribution (What to Test, the external group, beta
 // review) is deliberately NOT done here; it stays the documented manual step.
@@ -97,19 +100,50 @@ export async function waitValid({
 }) {
   const deadline = now() + timeoutMs;
   let attempt = 0;
+  let seen = false;
+  let seenId = null;
   for (;;) {
     attempt += 1;
     const builds = await findBuilds({ fetchImpl, tokenFactory, appId, buildNumber, versionName });
     const build = builds.find((entry) => entry.version === String(buildNumber));
+    if (build) {
+      seen = true;
+      seenId = build.id;
+    }
     const state = build?.processingState ?? 'NOT_VISIBLE_YET';
     log(`Poll ${attempt}: build ${buildNumber} ${state}`);
     if (state === 'VALID') return { state, id: build.id, attempts: attempt };
     if (state === 'INVALID' || state === 'FAILED') {
       throw new ReleaseError(`App Store Connect processing ended ${state} for build ${buildNumber} (${build.id})`);
     }
-    if (now() + intervalMs > deadline) return { state: 'TIMEOUT', lastSeen: state, id: build?.id ?? null, attempts: attempt };
+    if (now() + intervalMs > deadline) {
+      return { state: 'TIMEOUT', lastSeen: state, id: build?.id ?? seenId, attempts: attempt, seen };
+    }
     await pause(intervalMs);
   }
+}
+
+// What a finished wait means for the job. A timeout is only a warning when
+// App Store Connect showed the build at least once; a build that never
+// appeared fails the step so the release is not tagged.
+export function timeoutVerdict(result, { buildNumber, timeoutMinutes }) {
+  if (result.state !== 'TIMEOUT') return { fail: false, message: null };
+  if (result.seen) {
+    return {
+      fail: false,
+      message:
+        `Build ${buildNumber} was uploaded but processing was not VALID within ${timeoutMinutes} min ` +
+        `(last seen ${result.lastSeen}). Check TestFlight; do not re-upload.`,
+    };
+  }
+  return {
+    fail: true,
+    message:
+      `Build ${buildNumber} never appeared in App Store Connect within ${timeoutMinutes} min, although altool ` +
+      'reported success. Nothing proves the binary reached Apple, so this release is not tagged. Look for the ' +
+      'build in App Store Connect (TestFlight, and the email Apple sends on a processing failure) before doing ' +
+      'anything else, and never re-upload blindly: a duplicate upload ends in Redundant Binary Upload.',
+  };
 }
 
 export async function main(argv, { fetchImpl = globalThis.fetch } = {}) {
@@ -142,12 +176,8 @@ export async function main(argv, { fetchImpl = globalThis.fetch } = {}) {
       intervalMs: intervalSeconds * 1000,
       log,
     });
-    if (result.state === 'TIMEOUT') {
-      warn(
-        `Build ${buildNumber} was uploaded but processing was not VALID within ${timeoutMinutes} min ` +
-          `(last seen ${result.lastSeen}). Check TestFlight; do not re-upload.`,
-      );
-    }
+    const verdict = timeoutVerdict(result, { buildNumber, timeoutMinutes });
+    if (verdict.message && !verdict.fail) warn(verdict.message);
     appendSummary(
       [
         '### App Store Connect',
@@ -155,11 +185,18 @@ export async function main(argv, { fetchImpl = globalThis.fetch } = {}) {
         '| | |',
         '| --- | --- |',
         `| Build | ${versionName} (${buildNumber}) |`,
-        `| Processing | ${result.state === 'TIMEOUT' ? `not confirmed (last seen ${result.lastSeen})` : result.state} |`,
+        `| Processing | ${
+          result.state !== 'TIMEOUT'
+            ? result.state
+            : result.seen
+              ? `not confirmed (last seen ${result.lastSeen})`
+              : '**NEVER SEEN in App Store Connect: step failed, release not tagged**'
+        } |`,
         `| ASC build id | ${result.id ?? 'unknown'} |`,
         '| External TestFlight group | not touched: manual step (docs/RELEASE_CI.md) |',
       ].join('\n'),
     );
+    if (verdict.fail) throw new ReleaseError(verdict.message);
     return;
   }
   throw new ReleaseError('Usage: asc.mjs assert-build-free|wait-valid ...');

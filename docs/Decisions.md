@@ -15173,8 +15173,10 @@ first design found real flaws:
 1. `.github/workflows/store-release.yml` has a `workflow_dispatch` trigger
    only. It is **dry run by default**. The dry-run jobs use no environment and
    reference no secret. Android signs with a key generated on the runner,
-   because `build.gradle.kts` refuses to configure without one. iOS builds
-   with `--no-codesign`.
+   because `build.gradle.kts` refuses to configure without one, and a
+   runner-only Gradle init script switches off the Crashlytics mapping-file
+   upload so a dry run writes nothing to Firebase. iOS builds with
+   `--no-codesign`.
 2. The real Android and iOS jobs run only from `main`, behind one protected
    environment, `store-release` (required reviewer Kamil, branches `main`).
    Both wait at the same moment, so **one review approves the release**.
@@ -15183,9 +15185,11 @@ first design found real flaws:
 3. A no-secret **preflight** refuses a real release unless:
    - `ref` is on `main`;
    - `build_number` equals the pubspec `+N`;
-   - `verify_and_build` and the Playwright smoke are green on exactly `ref`;
-   - a `deploy_hosting` job succeeded on exactly `ref` (web and store ship one
-     SHA), unless `web_confirmed`;
+   - `verify_and_build` and the Playwright smoke are green on exactly `ref`,
+     counting only push or dispatch workflow runs on `main` (a
+     `pull_request` run tests a merge commit, so it never counts);
+   - a `deploy_hosting` job succeeded on exactly `ref` in a dispatch run on
+     `main` (web and store ship one SHA), unless `web_confirmed`;
    - nothing under `functions/`, `firestore.rules`, `firestore.indexes.json`
      or `storage.rules` changed since the last store release, unless
      `backend_confirmed`.
@@ -15199,7 +15203,9 @@ first design found real flaws:
      versionCode; one upload, never retried; Play's reported versionCode and
      SHA-256 must match; commit; read back.
    - iOS: App Store Connect API check that the build number is free; **one**
-     `altool` upload with no retry; poll until `VALID`.
+     `altool` upload with no retry; poll until `VALID`. If the build never
+     appears in App Store Connect within 45 minutes the job fails, so the
+     release is not tagged; a build seen but still processing only warns.
 5. Hygiene rules for the public repository:
    - inputs pass through `env:` only;
    - no cache is read or written;

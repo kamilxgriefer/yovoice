@@ -13,13 +13,16 @@
 //
 // Release-order gates (hard failures on a real run, warnings on a dry run):
 //   - CI: `verify_and_build` and `Playwright against release web build`
-//     concluded success on exactly `ref`;
+//     concluded success on exactly `ref`, counted only from workflow runs on
+//     main started by a push or a dispatch (a pull_request run attaches its
+//     check runs to the head SHA but tests a merge commit, so it never counts);
 //   - backend: functions/, firestore.rules, firestore.indexes.json and
 //     storage.rules are unchanged since the last store release, unless
 //     backend_confirmed is true (docs/DEPLOYMENT.md, "4. The app — only after
 //     1-3 are read back");
-//   - web: a `deploy_hosting` job concluded success on exactly `ref`, unless
-//     web_confirmed is true, so Hosting and the stores ship the same SHA;
+//   - web: a `deploy_hosting` job concluded success on exactly `ref` in a
+//     workflow_dispatch run on main, unless web_confirmed is true, so Hosting
+//     and the stores ship the same SHA;
 //   - the build number has not already been tagged for a different SHA.
 //
 // The baseline for the backend gate is `since_ref` when given, otherwise the
@@ -68,6 +71,11 @@ export const CI_CHECK_NAMES = Object.freeze([
   'Playwright against release web build',
 ]);
 export const WEB_DEPLOY_CHECK_NAME = 'deploy_hosting';
+// Workflow-run events whose check runs may satisfy a gate. Both CI workflows
+// also run on pull_request, which tests refs/pull/N/merge, not the head SHA.
+export const CI_TRUSTED_EVENTS = Object.freeze(['push', 'workflow_dispatch']);
+export const WEB_DEPLOY_TRUSTED_EVENTS = Object.freeze(['workflow_dispatch']);
+export const MAIN_BRANCH = 'main';
 export const STORE_TAG_PREFIX = 'store-build-';
 export const MAIN_REF = 'refs/heads/main';
 export const MAIN_REMOTE_REF = 'refs/remotes/origin/main';
@@ -151,11 +159,33 @@ export function pickBaselineTag(tags, buildNumber, isAncestorOfRef) {
   return null;
 }
 
+// Check suites of the workflow runs that tested exactly `sha` on main for one
+// of `events`. Workflow runs come from GET /repos/{o}/{r}/actions/runs.
+export function trustedSuiteIds(workflowRuns, { sha, events }) {
+  return new Set(
+    (workflowRuns ?? [])
+      .filter(
+        (run) =>
+          run?.head_sha === sha &&
+          run?.head_branch === MAIN_BRANCH &&
+          events.includes(run?.event) &&
+          run?.check_suite_id !== undefined &&
+          run?.check_suite_id !== null,
+      )
+      .map((run) => run.check_suite_id),
+  );
+}
+
 // Picks the newest run of `name` created by GitHub Actions itself, so a
 // check run another app happens to name the same cannot satisfy the gate.
-export function summarizeCheckRun(checkRuns, name) {
+// With `suiteIds`, only check runs in those check suites count (see
+// trustedSuiteIds); the release gates always pass it.
+export function summarizeCheckRun(checkRuns, name, suiteIds = null) {
   const matching = (checkRuns ?? []).filter(
-    (run) => run?.name === name && run?.app?.slug === 'github-actions',
+    (run) =>
+      run?.name === name &&
+      run?.app?.slug === 'github-actions' &&
+      (suiteIds === null || suiteIds.has(run?.check_suite?.id)),
   );
   if (matching.length === 0) {
     return { name, state: 'missing', conclusion: null, url: null };
@@ -176,8 +206,8 @@ export function decide({ dryRun, ci, backend, web, tagConflict }) {
     if (check.state !== 'success') {
       gate(
         `CI check "${check.name}" is ${check.state}${check.conclusion ? ` (${check.conclusion})` : ''} on this SHA. ` +
-          'Only a SHA whose own push run finished green can ship; a run cancelled by a newer push never turns green, ' +
-          'so release the newer SHA instead.',
+          'Only a SHA whose own push (or dispatch) run on main finished green can ship; pull_request runs do not ' +
+          'count, and a run cancelled by a newer push never turns green, so release the newer SHA instead.',
       );
     }
   }
@@ -244,21 +274,34 @@ function listStoreTags() {
     });
 }
 
-async function fetchCheckRuns(fetchImpl, { apiUrl, repository, token, sha, name }) {
+function githubHeaders(token) {
+  return {
+    Accept: 'application/vnd.github+json',
+    Authorization: `Bearer ${token}`,
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+}
+
+// Every workflow run on `sha`. More than 100 runs on one commit would only
+// hide trusted runs, which makes the gates refuse (fail closed).
+async function fetchWorkflowRuns(fetchImpl, { apiUrl, repository, token, sha }) {
+  const url = `${apiUrl}/repos/${repository}/actions/runs?head_sha=${sha}&per_page=100`;
+  const result = await requestJson(fetchImpl, url, { headers: githubHeaders(token) });
+  if (!result.ok) {
+    throw new ReleaseError(`Could not read workflow runs for ${sha}: ${apiErrorMessage(result)}`);
+  }
+  return result.json?.workflow_runs ?? [];
+}
+
+async function fetchCheckRuns(fetchImpl, { apiUrl, repository, token, sha, name, suiteIds }) {
   const url =
     `${apiUrl}/repos/${repository}/commits/${sha}/check-runs` +
     `?check_name=${encodeURIComponent(name)}&filter=all&per_page=100`;
-  const result = await requestJson(fetchImpl, url, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${token}`,
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
-  });
+  const result = await requestJson(fetchImpl, url, { headers: githubHeaders(token) });
   if (!result.ok) {
     throw new ReleaseError(`Could not read check runs for "${name}": ${apiErrorMessage(result)}`);
   }
-  return summarizeCheckRun(result.json?.check_runs, name);
+  return summarizeCheckRun(result.json?.check_runs, name, suiteIds);
 }
 
 function fence(lines) {
@@ -341,9 +384,12 @@ export async function main(_argv, { env = process.env, fetchImpl = globalThis.fe
       ? git(['diff', '--stat', baseline.sha, toolingSha, '--', ...RELEASE_TOOLING_PATHS]).split('\n').filter(Boolean)
       : [];
 
+  const workflowRuns = await fetchWorkflowRuns(fetchImpl, { apiUrl, repository, token, sha: inputs.ref });
+  const ciSuites = trustedSuiteIds(workflowRuns, { sha: inputs.ref, events: CI_TRUSTED_EVENTS });
+  const webSuites = trustedSuiteIds(workflowRuns, { sha: inputs.ref, events: WEB_DEPLOY_TRUSTED_EVENTS });
   const ci = [];
   for (const name of CI_CHECK_NAMES) {
-    ci.push(await fetchCheckRuns(fetchImpl, { apiUrl, repository, token, sha: inputs.ref, name }));
+    ci.push(await fetchCheckRuns(fetchImpl, { apiUrl, repository, token, sha: inputs.ref, name, suiteIds: ciSuites }));
   }
   const webRun = await fetchCheckRuns(fetchImpl, {
     apiUrl,
@@ -351,6 +397,7 @@ export async function main(_argv, { env = process.env, fetchImpl = globalThis.fe
     token,
     sha: inputs.ref,
     name: WEB_DEPLOY_CHECK_NAME,
+    suiteIds: webSuites,
   });
 
   const { failures, warnings } = decide({
@@ -376,8 +423,11 @@ export async function main(_argv, { env = process.env, fetchImpl = globalThis.fe
       `| Play track / status | internal / ${inputs.playReleaseStatus} |`,
       `| Backend baseline | ${baseline ? baseline.label : 'none'} |`,
       `| Backend files changed | ${baseline ? changedBackend.length : 'unknown'}${inputs.backendConfirmed ? ' (backend_confirmed=true)' : ''} |`,
-      ...ci.map((check) => `| CI: ${check.name} | ${check.state}${check.url ? ` ([run](${check.url}))` : ''} |`),
-      `| Web: deploy_hosting on this SHA | ${webRun.state}${inputs.webConfirmed ? ' (web_confirmed=true)' : ''} |`,
+      ...ci.map(
+        (check) =>
+          `| CI: ${check.name} (push or dispatch on main) | ${check.state}${check.url ? ` ([run](${check.url}))` : ''} |`,
+      ),
+      `| Web: deploy_hosting on this SHA (dispatch on main) | ${webRun.state}${inputs.webConfirmed ? ' (web_confirmed=true)' : ''} |`,
       `| Tag for this build number | ${sameNumberTag ? `${sameNumberTag.name} -> ${sameNumberTag.sha.slice(0, 12)}` : 'none yet'} |`,
       '',
       failures.length ? `### Refused\n\n${failures.map((line) => `- ${line}`).join('\n')}` : '',

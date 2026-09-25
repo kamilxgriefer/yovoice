@@ -28,7 +28,7 @@ builds come from a manually dispatched, reviewer-gated workflow".
 | Uploads the AAB to the Play **internal** track, as `draft` or `completed` | Touch production or any other Play track |
 | Uploads the IPA once with `altool` and polls App Store Connect until `VALID` | Attach the build to the external TestFlight group, write "What to Test" or submit for beta review |
 | Tags the released commit `store-build-<N>` | Hand testers the Play opt-in link, or e-mail anyone |
-| Offers a **dry run** (the default) that builds with no secret at all and uploads nothing | Retry an upload |
+| Offers a **dry run** (the default) that builds with no secret at all and uploads nothing (a runner-only Gradle init script also switches off the Crashlytics mapping-file upload) | Retry an upload |
 
 ## How one release flows
 
@@ -94,7 +94,7 @@ Every input reaches the scripts through `env:`. None is interpolated into a
 | `ref` | (required) | Full 40-character lowercase SHA of a commit already on `main` |
 | `build_number` | (required) | Must equal the `+N` in `pubspec.yaml` at `ref`; build names are read from the pubspec |
 | `platforms` | `both` | `both`, `android` or `ios` |
-| `dry_run` | `true` | `true`: throwaway key or `--no-codesign`, no secret, no upload |
+| `dry_run` | `true` | `true`: throwaway key or `--no-codesign`, no secret, no upload (not even the Crashlytics mapping file) |
 | `play_release_status` | `draft` | `draft` (uploaded, not rolled out) or `completed` (rolled out to internal testers) |
 | `backend_confirmed` | `false` | You deployed and read back the backend changes since the last store release |
 | `web_confirmed` | `false` | Hosting was deployed from this SHA outside `deploy_hosting`, or the skew is deliberate |
@@ -118,14 +118,19 @@ dry run:
 
 - **CI green on exactly `ref`:** the newest `verify_and_build` and
   `Playwright against release web build` check runs, created by GitHub
-  Actions, concluded `success`. Only the head SHA of a push gets runs. A run
-  cancelled by a newer push (both workflows cancel in progress per ref) never
-  turns green, so release the newer SHA.
+  Actions, concluded `success`. Only check runs from a workflow run on `main`
+  started by a `push` or a `workflow_dispatch` on exactly `ref` count.
+  Preflight reads the workflow runs for `ref` (`actions: read`) and keeps only
+  those check suites. Both CI workflows also run on `pull_request`, which
+  attaches check runs to the PR head SHA but tests `refs/pull/N/merge`, so a
+  pull-request run can never turn a red push result green. Only the head SHA
+  of a push gets runs. A run cancelled by a newer push (both workflows cancel
+  in progress per ref) never turns green, so release the newer SHA.
 - **Backend:** no change under the four backend paths since the baseline, or
   `backend_confirmed=true`. A missing baseline refuses (fail closed). An empty
   baseline would make the diff compare nothing and pass silently.
-- **Web:** a successful `deploy_hosting` job on exactly `ref`, or
-  `web_confirmed=true`.
+- **Web:** a successful `deploy_hosting` job on exactly `ref`, in a
+  `workflow_dispatch` run on `main`, or `web_confirmed=true`.
 - **Build number:** no `store-build-<N>` tag on a different commit.
 
 Preflight also runs the tooling's own unit tests (`node --test
@@ -177,8 +182,14 @@ After the build:
 
 Then `asc.mjs assert-build-free` runs, followed by **one** `xcrun altool
 --upload-app`, never retried. Last, `asc.mjs wait-valid` polls for 45
-minutes at most. `INVALID` or `FAILED` fails the job. A timeout only warns,
-because the number is consumed either way.
+minutes at most. `INVALID` or `FAILED` fails the job. At the deadline it
+depends on whether App Store Connect ever showed the build:
+
+- **seen at least once** (for example still `PROCESSING`): a warning only. The
+  binary is with Apple and the number is consumed either way;
+- **never seen**: the job **fails**. `altool` said success, but nothing proves
+  the binary reached Apple, so the `record` job does not tag the commit. Check
+  App Store Connect by hand (see the failure table).
 
 ### After a successful real run
 
@@ -430,7 +441,8 @@ check:
 | Android failed before "committed" | Nothing reached Play, and the edit was deleted. Fix, then re-run. Whether a failed upload inside a deleted edit consumes the versionCode is UNVERIFIED; if Play later refuses `N`, bump to `N+1` |
 | Android failed after "committed" | Look in Play Console. The release is probably there, and only the read-back failed |
 | `altool` failed | The binary may or may not have reached Apple. Look for build `N` in App Store Connect first. A re-run is refused by `assert-build-free` once the build is visible. **Never** force a second upload ("Redundant Binary Upload") |
-| Processing timed out (warning) | The upload succeeded. Watch TestFlight. Do not re-upload |
+| Processing timed out (warning) | The build was seen in App Store Connect, so the upload succeeded. Watch TestFlight. Do not re-upload |
+| Build never appeared in App Store Connect (iOS failed) | `altool` reported success but build `N` was never visible within 45 min, so nothing was tagged. Look for build `N` in App Store Connect → TestFlight and for an Apple e-mail about a processing problem. If it shows up and processes, the release happened: tag it by hand (`git tag store-build-<N> <ref> && git push origin store-build-<N>`) once every requested platform is in its store. If it never shows up, the number may still be consumed: re-cut as `N+1`. **Never** re-run the iOS job with the same `N` while you are unsure |
 | One platform succeeded, the other failed | Nothing is tagged. Re-run with `platforms=` the failed one and the same `N`. The succeeded store refuses a duplicate anyway |
 | Bad Android build | Internal track: roll back to the previous release, or halt it. `draft`: do not roll it out. versionCodes are never reusable, so re-cut as `N+1` |
 | Bad iOS build | Remove it from the external group, or expire it (DEPLOYMENT.md, Build 33 rollback table). Re-cut as `N+1` |
@@ -467,6 +479,10 @@ Verified in the repository:
   cache or artifact, no secret in the dry-run jobs, every secret documented
   here.
 - The manifest decoder reads the retained bundles 33 and 34 correctly.
+- The dry run's Gradle init script disables a task named
+  `uploadCrashlyticsMappingFileRelease` and records it, while the task still
+  runs without the script. Checked with Gradle 9.3.1 on a stand-in project,
+  not with the real Crashlytics plugin.
 
 **UNVERIFIED until the first runs:**
 
@@ -474,6 +490,11 @@ Verified in the repository:
 - that CocoaPods 1.17.0 installs over the image's version;
 - the first Linux Gradle release build (NDK provisioning, memory under
   `-Xmx8G` on a 16 GB runner, the Crashlytics plugin);
+- that the Crashlytics plugin names its mapping upload
+  `uploadCrashlyticsMappingFile<Variant>`. The dry-run summary row
+  "Crashlytics mapping upload" names the tasks it switched off; a warning and
+  "no upload task was configured" mean the name changed or the build is not
+  minified, so check the Gradle log;
 - run times: roughly 15-25 min for Android and 30-45 min for iOS plus up to
   45 min of processing, all estimates;
 - that one review approves both waiting jobs, which is how GitHub documents
