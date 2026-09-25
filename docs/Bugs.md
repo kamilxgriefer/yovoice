@@ -30,9 +30,16 @@ before cutting off. Fixed by a 2 s measured grace with the stored duration
 clamped to the limit (DM voice/video, server channel video, Family Memory),
 the camera-capped clip declared as 60, and a countdown, haptic and
 announcement in the last ten seconds with the take kept ready to send
-(ADR-XXX). **Functions must be deployed first; that alone fixes released
-builds.** UNVERIFIED on devices: the real measured overage per platform, and
-that a pre-deploy "Nie wysłano" card delivers on Retry.
+(ADR-XXX). **Functions must be deployed first; that alone fixes voice notes
+and Family Memory notes that hit the cap on released builds.** A full-length
+camera video on released 3.0.0 is still refused on the client before upload
+(`ceil(60.0x) = 61`) and needs the next app build. Still open: a library video
+measuring 60.0x s (for example a full 1:00 clip from the system camera app) is
+blocked as too long in the ADR-212 review (`yo_media_send_review.dart`
+`_tooLong` keeps the strict `ceil ≤ 60`); moving it to
+`directCappedTakeSeconds` is a follow-up for Kamil's decision (3.0.1).
+UNVERIFIED on devices: the real measured overage per platform, and that a
+pre-deploy "Nie wysłano" card delivers on Retry.
 
 ### FIXED IN SOURCE — the Yeel hairline never drew its played part (2026-09-19, next build, `nb/yeels-scrub`)
 
