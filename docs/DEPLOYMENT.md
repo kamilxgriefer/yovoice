@@ -7,16 +7,19 @@ deployables described in
 ## Next build after 3.0.0 — one deploy order for the whole build (source only, NOTHING DEPLOYED)
 
 Source: `nb/integrate`, based on `main` `f71a2ae2` (YO Voice 3.0.0+34). It
-merges seven branches — `nb/yeels-scrub`, `nb/friend-actions`,
-`nb/confirm-upload`, `nb/server-delete`, `nb/giphy`, `nb/server-live` and
-`nb/notifications`. **Merging this source deploys nothing.** Production still
-runs the 3.0.0+34 backend, and every claim below is about what a deploy would
-do, not about something observed in production.
+merges eight branches — `nb/yeels-scrub`, `nb/friend-actions`,
+`nb/confirm-upload`, `nb/server-delete`, `nb/giphy`, `nb/server-live`,
+`nb/notifications` and `nb/server-messaging` (server channel emoji, reactions,
+photos and videos, ADR-216) — and main's 3.0.0+35 (the Velvet Mallet sound
+pack, ADR-210, a client-only change with no step in this order). **Merging
+this source deploys nothing.** Production still runs the 3.0.0+34 backend, and
+every claim below is about what a deploy would do, not about something
+observed in production.
 
 This is the *only* deploy order for this build. The per-branch runbooks the
-branches carried (GIPHY activation, the empty-channel liveness fix) are folded
-into it; where an older section of this file still describes a per-branch
-order, this one wins.
+branches carried (GIPHY activation, the empty-channel liveness fix, section 7
+of the server channel messaging brief) are folded into it; where an older
+section of this file still describes a per-branch order, this one wins.
 
 Two prerequisites learned on 2026-09-16 apply to every Functions step below
 and are not repeated: run `npm ci` in the deploy worktree's `functions/`
@@ -57,10 +60,21 @@ No `--force`. Nothing else in `firestore.indexes.json` changed in this build
 
 ### 2. Firestore Rules — after the index, before the Functions
 
-One additive change: an explicit `match /commentMentions/{mentionId} { allow
-read, write: if false; }` block, the server-only record of who a Voice Moment
-or Yeel comment `@`-mentions (ADR-213). `storage.rules` is byte-identical to
-3.0.0+34 and must **not** be deployed.
+Six additive blocks, each `allow read, write: if false;` — Admin-SDK-only
+documents that no client, staff included, may read or write:
+
+- `match /commentMentions/{mentionId}`, the server-only record of who a Voice
+  Moment or Yeel comment `@`-mentions (ADR-213);
+- the five server channel media collections (ADR-216):
+  `serverMessageMediaUploadReservations/{messageId}`,
+  `serverMessageMediaUploadLeases/{userId}`,
+  `serverMessageMediaUploadBudgets/{budgetId}`,
+  `serverMessageMediaDeletionJobs/{jobId}` and
+  `serverMessageMediaObjects/{messageId}`.
+
+Default-deny already covers all six, so this deploy is hygiene and an explicit
+record rather than a blocker; it goes here because nothing about it can break
+a writer.
 
 ```bash
 firebase deploy --only firestore:rules --project yovoice-ec54a
@@ -68,8 +82,68 @@ firebase deploy --only firestore:rules --project yovoice-ec54a
 
 Read the deployed ruleset back — see
 [Reading the deployed ruleset](#reading-the-deployed-ruleset-the-verification-standard) —
-and confirm the `commentMentions` block is present and that no other rule
-moved.
+diff it against `firestore.rules`, and confirm the six blocks above are
+present and that no other rule moved.
+
+**Precondition for step 3b, checked here: the runtime service account can
+sign V4 URLs.** `getServerChannelMessageMediaAccessV1` issues 90-second
+generation-bound V4 read URLs through `signBlob`, so the Functions runtime
+service account needs `iam.serviceAccounts.signBlob` on itself (normally
+`roles/iam.serviceAccountTokenCreator`) — the same grant `getServerCompanyFileAccessV1` and the Voice Moment
+private-media plan
+([VOICE_MOMENT_PRIVATE_MEDIA.md](VOICE_MOMENT_PRIVATE_MEDIA.md)) depend on.
+**Treat it as missing until read back:** the
+[2026-09-01 audit](SECURITY_AUDIT_2026-09-01.md) found that the runtime
+service account could *not* call `signBlob`, and nothing in this repository
+records the grant since. Read the runtime identity from the function
+(`serviceAccountEmail` in `gcloud functions describe
+getServerCompanyFileAccessV1 --region=europe-west1 --project=yovoice-ec54a`),
+then its policy:
+
+```bash
+gcloud iam service-accounts get-iam-policy <runtime-service-account> \
+  --project=yovoice-ec54a --format=json
+```
+
+and confirm a `roles/iam.serviceAccountTokenCreator` binding that includes the
+account itself. Without it every media read fails `failed-precondition`:
+uploads succeed and the bubbles never load. Granting it is an IAM change and
+therefore an owner step (Steps only Kamil can do, item 12), not something
+this runbook does.
+
+### 2b. Storage rules — the upload path before any function that issues a reservation
+
+`storage.rules` is **not** byte-identical to 3.0.0+34 any more: it gains one
+block, `match /server_message_media/{serverId}/{channelId}/{userId}/{fileName}`
+(ADR-216). A create is allowed only for a verified, active uploader with a
+live, server-issued reservation
+(`serverMessageMediaUploadReservations/{messageId}`) and exact metadata —
+image jpeg/png/webp 128 B–8 MiB, video mp4/quicktime/webm 1 KiB–64 MiB and
+1–60 s; get is uploader-only while reserved; list, update and delete are
+never allowed. Viewers never read bytes through the rules; reads are the V4
+grants from step 2's precondition.
+
+This is the first Storage Rules deploy since 2026-09-14, and it must land
+**before** step 3b deploys `reserveServerChannelMessageMediaV1`. Without the
+block the path has no rule, so default-deny refuses every upload *after* a
+reservation was granted — and each refusal holds that member's one-upload
+lease for up to 15 minutes. The block reads the reservation document
+cross-service, exactly as the existing Storage rules already do for the
+account-status read. That cross-service read depends on the Firebase Storage
+service agent holding `roles/firebaserules.firestoreServiceAgent`; run the
+check in [Storage rules (manual)](#storage-rules-manual) before this deploy —
+an empty result there fails every Firestore-backed Storage rule closed, this
+one included.
+
+```bash
+firebase deploy --only storage --project yovoice-ec54a
+```
+
+Read the deployed ruleset back — see
+[Reading the deployed ruleset](#reading-the-deployed-ruleset-the-verification-standard) —
+and diff it twice: against `storage.rules` on this revision (no difference
+at all), and against `git show f71a2ae2:storage.rules` (the
+`server_message_media` block and nothing else).
 
 ### 3. Cloud Functions — the push boundary before any writer
 
@@ -101,19 +175,43 @@ firebase deploy --only functions --project yovoice-ec54a
 firebase functions:list --project yovoice-ec54a
 ```
 
-Expect **creations**, not updates, for the six new exports:
-`onMomentCommentCreated`, `onMomentCommentDeleted`, `onReelCommentCreated`,
-`onReelCommentDeleted`, `sendServerEventRemindersSchedule` (ADR-213) and
-`releaseServerChannelSessionIfEmptyV1` (ADR-180 amendment). The last one binds
-`LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`, which already exist in Secret
-Manager. `appConfig/serversV1` needs no change: the new callable uses the
-existing `callableAccess` cohort and the sweep and webhook use the existing
-`workersEnabled`.
+3b runs only after steps 2 and 2b are read back and the step 2 signBlob
+precondition holds.
+
+Expect **creations**, not updates, for thirteen new exports:
+
+- six from the notification and liveness branches:
+  `onMomentCommentCreated`, `onMomentCommentDeleted`, `onReelCommentCreated`,
+  `onReelCommentDeleted`, `sendServerEventRemindersSchedule` (ADR-213) and
+  `releaseServerChannelSessionIfEmptyV1` (ADR-180 amendment). The last one
+  binds `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`, which already exist in
+  Secret Manager;
+- seven from `nb/server-messaging` (ADR-216, `SERVER_MESSAGE_EXPORT_NAMES` in
+  `functions/servers/registration.js`): the callables
+  `setServerChannelMessageReactionV1`, `reserveServerChannelMessageMediaV1`,
+  `finalizeServerChannelMessageMediaV1`,
+  `getServerChannelMessageMediaAccessV1` and `deleteServerChannelMessageV1`,
+  and the schedules `expireServerChannelMessageMediaReservations` and
+  `processServerChannelMessageMediaDeletionJobs`.
+
+Expect **updates** with a behaviour change, from the same branch, on
+`moderateClubMessage` (a removed media message queues its object for
+deletion), `onServerControlOutboxCreated` and
+`processPendingServerControlOutboxSchedule` (channel and server deletion
+write durable media prefix sweep jobs), and `onAccountDeletionOutboxCreated`
+and `processAccountDeletionOutboxSchedule` (account deletion now sweeps the
+author's `server_message_media` objects through `serverMessageMediaObjects`).
+
+`appConfig/serversV1` needs no change: the new callables — the release
+callable and the five message callables — use the existing `callableAccess`
+cohort, and the sweeps, the webhook and the two media schedules use the
+existing `workersEnabled`.
 
 If a narrower plan is genuinely wanted, the minimum that must move together
 is the four comment callables that now accept `mentionUserIds`
 (`createMomentComment`, `finalizeVoiceCommentDraft`, `createReelComment`,
-`finalizeReelVoiceCommentDraft`), the six new exports above, the Servers
+`finalizeReelVoiceCommentDraft`), the thirteen new exports above, the five
+changed moderation, outbox and account-deletion functions named with them, the Servers
 callables the role notice and the event budget touch
 (`setServerMemberRoleV1`, `transferServerOwnershipV1`, `createServerEventV1`),
 the session surface (`startServerChannelSessionV1`,
@@ -124,10 +222,14 @@ the session surface (`startServerChannelSessionV1`,
 
 Read back after 3b:
 
-- all six new names ACTIVE in `europe-west1`;
+- all thirteen new names ACTIVE in `europe-west1`, and a new revision on each
+  of the five changed functions above;
 - `secretEnvironmentVariables` on `releaseServerChannelSessionIfEmptyV1`
   contains the two LiveKit secrets and **no** `GIPHY_API_KEY` appears
   anywhere;
+- the first `expireServerChannelMessageMediaReservations` and
+  `processServerChannelMessageMediaDeletionJobs` runs complete without an
+  error (both drain empty collections on the first run);
 - the next `sendServerEventRemindersSchedule` run logs no
   `FAILED_PRECONDITION` and reports its paging counters
   (`pages`, `hasMore`, `budgetExhausted`);
@@ -140,11 +242,24 @@ Read back after 3b:
 Only after 1–3 are read back. The client half of this build is
 `ServerSessionController.leave()`'s release signal, the media review, the Yeel
 scrubber, the friend-profile quick actions, the server delete/leave entries,
-the new notification types in the router and the "Moments & Yeels" preference
-group. Every already-installed client is covered by the webhook and the sweep
+the new notification types in the router, the "Moments & Yeels" preference
+group, and server channel emoji, reactions, photos and videos (the actions
+sheet, the reaction pill, the attach flow through ADR-212's review, and
+io uploads streamed from disk). Every already-installed client is covered by the webhook and the sweep
 without the release signal, and renders the five new notification types as
 plain, non-tappable `system` rows until it updates — accepted by the owner
-(ADR-213).
+(ADR-213). Installed clients also ignore `reactions` on server channel
+messages and render a media message as its server-written 'Photo' or 'Video'
+line (ADR-216). A client shipped **before** step 3b would see every attach
+and reaction refused; the UI maps that to "This part of YO Voice is still
+being prepared", never a raw error — which is why the app goes last.
+
+Smoke after the release, in a test server: react in a text channel and in an
+announcements channel as an ordinary member (both must work) and as a guest
+(must fail); send a photo and a 5-second video; reopen the thread on a second
+account to prove the grant path; retract your own media message and confirm
+the object is gone; have a moderator remove another member's media message
+and confirm the deletion job drains within one sweep.
 
 Build the client **without** `--dart-define=YOVOICE_GIPHY_API_KEY`. A build
 that carries a key still shows Originals only, because `getGifCatalog`
@@ -180,7 +295,9 @@ credential in a store binary.
 
 Functions roll back by redeploying the pinned prior revisions named in the
 `functions:list` output taken before step 3a. Rules roll back from the version
-history. The new index can be left in place — it is additive and costs one
+history — Firestore and Storage separately; rolling Storage back before the
+Functions would reproduce the upload failure step 2b exists to prevent, so
+roll back the media Functions first. The new index can be left in place — it is additive and costs one
 composite. If the reminder scheduler misbehaves, the smallest safe stop is to
 redeploy `sendServerEventRemindersSchedule` from the prior source; there is no
 runtime kill switch for it, which is worth knowing before step 3b.
@@ -266,7 +383,16 @@ says so.
     on 2026-08-28 (the direct-chat reliability round); the owner step is to confirm it still reads back
     `ttl:true` after step 1, because the reminder worker's per-recipient
     delivery ledger is written there and would otherwise grow without bound.
-11. **Store and web release**, as always separate from all of the above.
+11. **The website `/delete-account` copy** (`yovoice-website`, manual),
+    only once step 3b is read back: remove server channel photos and videos
+    from the "what deleting your account does not do" list — account deletion
+    sweeps them now (ADR-216). The other four prefixes stay listed. Changing
+    it before the deploy would promise a deletion production does not yet
+    perform.
+12. **The signBlob grant**, only if step 2's read-back does not show it:
+    grant `roles/iam.serviceAccountTokenCreator` on the Functions runtime
+    service account to itself. It is a precondition for step 3b.
+13. **Store and web release**, as always separate from all of the above.
 
 ## Build 33 release round — web deployed, iOS with testers, Play upload outstanding (2026-09-19)
 

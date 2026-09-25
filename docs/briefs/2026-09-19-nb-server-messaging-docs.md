@@ -270,6 +270,13 @@ manifest or of `tool/servers_activation_package.js`'s phase plan.
 
 ## 7. Deploy order and manual steps (for Kamil)
 
+> **Superseded (2026-09-25).** Do not deploy from this section. The one deploy
+> order for the whole next build is in
+> [DEPLOYMENT.md](../DEPLOYMENT.md#next-build-after-300--one-deploy-order-for-the-whole-build-source-only-nothing-deployed),
+> and it puts Storage Rules (step 2b) **before** the Functions that issue
+> reservations, as ADR-216 requires — the order below has them second, which
+> would refuse every upload after a reservation was granted.
+
 1. **Functions first** — the six new exports plus the two changed ones:
    ```
    firebase deploy --only functions:setServerChannelMessageReactionV1,\

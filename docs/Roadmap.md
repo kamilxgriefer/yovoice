@@ -14,28 +14,36 @@ someone decide what to pick up next.
 
 ---
 
-## Next build after 3.0.0 — seven branches on `nb/integrate` — source only, NOTHING DEPLOYED — 2026-09-20
+## Next build after 3.0.0 — eight branches on `nb/integrate` — source only, NOTHING DEPLOYED — 2026-09-20
 
 **Status: done in source, integrated on `nb/integrate` (based on `main`
 `f71a2ae2`, YO Voice 3.0.0+34, the Slim redesign already with testers).
-Nothing is on `main`, nothing is deployed, nothing is with testers.** Seven
+Nothing is on `main`, nothing is deployed, nothing is with testers.** Eight
 branches were built in parallel across the Mac and the Windows PC and merged
 in this order: `nb/yeels-scrub`, `nb/friend-actions`, `nb/confirm-upload`,
-`nb/server-delete`, `nb/giphy`, `nb/server-live`, `nb/notifications`. The
+`nb/server-delete`, `nb/giphy`, `nb/server-live`, `nb/notifications`,
+`nb/server-messaging`; `main`'s 3.0.0+35 (the Velvet Mallet sound pack,
+ADR-210) was merged in afterwards. The
 split into tasks, and the decisions taken before any branch started, are in
-`docs/briefs/2026-09-19-next-build-decisions.md` on `nb/brief`. Five
-decisions came out of the work itself — ADR-211, ADR-212, ADR-213, ADR-214, ADR-215 —
-plus one amendment to ADR-180 that deliberately has no number of its own.
+`docs/briefs/2026-09-19-next-build-decisions.md` on `nb/brief`. Six
+decisions came out of the work itself — ADR-211, ADR-212, ADR-213, ADR-214,
+ADR-215, ADR-216 — plus one amendment to ADR-180 that deliberately has no
+number of its own.
 The single deploy order for all of it, what stays OFF and the owner-only
 steps are in [DEPLOYMENT.md](DEPLOYMENT.md#next-build-after-300--one-deploy-order-for-the-whole-build-source-only-nothing-deployed);
 the run log is in [Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md).
 
 **Backend surface this build adds:** one Firestore composite (the
-COLLECTION_GROUP index on `events`), one Rules block (`commentMentions`,
-server-only), six new Function exports, three additive server-written fields
-on `events`, one additive server-written field on `channelSessions`, and one
-additive optional field on notification rows. No rename, no removal, no
-migration.
+COLLECTION_GROUP index on `events`); six Firestore Rules blocks, all
+server-only (`commentMentions` and the five server channel media
+collections); one Storage Rules block (`server_message_media`, the first
+Storage Rules deploy since 2026-09-14); thirteen new Function exports plus
+behaviour changes in the club-message moderation, Servers control-outbox and
+account-deletion functions; three additive server-written fields on
+`events`, one additive server-written field on `channelSessions`, one
+additive optional field on notification rows, and additive `reactions` and
+`media` fields (plus the `image`/`video` values of the existing `type`) on
+server channel messages. No rename, no removal, no migration.
 
 ### What each branch delivered
 
@@ -184,6 +192,38 @@ migration.
   update-in-place row plus a `sortAt` index), Server channel mentions and
   per-server levels, the "a friend is live in a server you share" fan-out, DM
   reactions, and an @-picker in the Yeel comment composer.
+
+- **Emoji, reactions, photos and videos in server channels —
+  `nb/server-messaging` ([ADR-216](Decisions.md#adr-216-server-channel-reactions-and-media-are-admin-sdk-only-and-the-react-permission-is-derived-in-the-callable-never-stored-in-a-channel-grant)).**
+  **NOT DEPLOYED.** Commits `dc1e7c40` (reactions, DM style), `e5d873fc`
+  (emoji input kept while membership loads), `03f6eff1` (the
+  reservation-bound Storage path), `4dc6cde9` (the Functions), `a0c668fa`
+  (send and view in the app), merged at `0fbe42d0`; then `e69b1013` (io
+  uploads streamed from disk with `putFile`, web keeps `putData`),
+  `6a473b27` (a library pick goes through ADR-212's review first) and
+  `77264f18` (a failed media send can be retried under the same reservation
+  instead of being refused for fifteen minutes). Server text channels get the
+  DM reaction vocabulary — one reaction per person, toggled from the actions
+  sheet, shown as the DM summary pill — including in announcements and rules
+  channels a member cannot post in; guests react nowhere. Photos and videos
+  follow Company Files: a server-issued reservation, a finalize that probes
+  the bytes, 90-second V4 read grants that re-run the channel ACL, and
+  durable deletion jobs for retraction, moderation, channel and server
+  deletion and account deletion. Authors can retract their own V1 messages
+  for the first time (`deleteServerChannelMessageV1`). Seven new exports
+  outside the frozen Servers V1 manifest, five Admin-only collections, one
+  Storage Rules block. **Deploy order matters:** Storage Rules before the
+  Functions that issue reservations, and the runtime service account's
+  `signBlob` grant read back first
+  ([DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-path-before-any-function-that-issues-a-reservation)).
+  The website's `/delete-account` copy changes only after the Functions are
+  live. **Deferred:** hover-revealed reactions and a side-sheet actions menu
+  on wide screens (the adaptive modal is used at every width, opened by
+  right-click and the keyboard on desktop), server-side video posters, and a
+  reactions subcollection with counters for very busy announcements (the map
+  caps at 500 reactors). **UNVERIFIED visually:** the pill, the actions sheet,
+  the attach flow and the media bubbles are proven by widget tests at 390 /
+  768 / 1440 px, not on a device or simulator.
 
 ### What is verified, and what is not
 
@@ -810,7 +850,7 @@ their separate production-deployment gates.
 
 - **GIPHY GIFs, option B (ADR-214)** — source on `nb/giphy`, merged into the
   next build. Not repeated here: the full entry is in
-  [Next build after 3.0.0](#next-build-after-300--seven-branches-on-nbintegrate--source-only-nothing-deployed--2026-09-20)
+  [Next build after 3.0.0](#next-build-after-300--eight-branches-on-nbintegrate--source-only-nothing-deployed--2026-09-20)
   above, because it ships with that build and not with this one.
 
 - **GIFs in the composer — production-original catalog complete in source

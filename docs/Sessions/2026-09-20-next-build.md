@@ -1,4 +1,4 @@
-# The next build after 3.0.0 — seven branches, one integration — 2026-09-20
+# The next build after 3.0.0 — eight branches, one integration — 2026-09-20
 
 Base: `main` `f71a2ae2` (YO Voice 3.0.0+34, the Slim redesign, already with
 testers on both stores). Integration branch: `nb/integrate`, in the worktree
@@ -22,11 +22,15 @@ the product account is in [Roadmap.md](../Roadmap.md); the defects are in
 | "zatwierdzam wszystko, opcja b" (GIFs) | GIPHY searched by the client with `rating=g` pinned, resolved by the server at send time by id, the official Powered By GIPHY mark, Action Register pingbacks gated on "Load GIFs automatically", and a dual-provider allow-set on every send path so Originals can never be stranded by a provider flip. **The whole server half is source-gated off.** | `nb/giphy` | ADR-214 |
 | "a channel still says LIVE with nobody in it" | A session now ends one 60 s backend-observed reconnect grace after the last person leaves, through three paths into the one existing end writer: the leaving client's new `releaseServerChannelSessionIfEmptyV1`, the provider's signed `room_finished`, and the tightened five-minute sweep, which also repairs projections no live generation backs. Plus a dry-run-first repair script for the badges already stuck in production. | `nb/server-live` (Windows PC) | **an amendment to ADR-180, deliberately not a new number** |
 | "notifications are missing" | Comments on your Voice Moment and your Yeel notify you; `@mentions` inside them notify the mentioned person, validated against *their* audience; Server event reminders are finally delivered; a role promotion and an ownership transfer tell the member. Deny-by-default at the push boundary, a "Moments & Yeels" preference group, and copy in 41 locales. | `nb/notifications` | ADR-213, and ADR-215 for the hardening round |
+| Server channels should do what DMs do (next-build Task 2a) | Emoji in the channel composer; one reaction per person in the DM vocabulary, toggled from the actions sheet, in announcements and rules channels too, never for guests; photos and videos through a server-issued reservation, a byte-probing finalize, 90-second V4 read grants and durable deletion jobs; authors can retract their own messages. io uploads stream from disk; a library pick goes through the ADR-212 review first. | `nb/server-messaging` | ADR-216 |
 
 The decisions as they finally stand: **ADR-211** Yeels drag-to-seek,
 **ADR-212** confirm before upload, **ADR-213** the notification slice,
-**ADR-214** GIPHY option B, **ADR-215** the notification hardening round, plus
-the **ADR-180 amendment** for empty server channel sessions. Three branches
+**ADR-214** GIPHY option B, **ADR-215** the notification hardening round,
+**ADR-216** server channel reactions and media, plus the **ADR-180
+amendment** for empty server channel sessions. When `main` took ADR-210 for
+the Velvet Mallet sound pack (3.0.0+35), `2d1bfdef` moved every record this
+branch introduced up by one, and `985dceee` merged 3.0.0+35 in. Three branches
 had each independently written "ADR-211"; `9b941f14` renumbered them and moved
 every anchor, deployment heading and code comment with them. The GIPHY entry's
 own note about that collision has been settled in this session — nothing cites
@@ -43,7 +47,12 @@ brief (`docs/briefs/2026-09-19-nb-server-live-docs.md`) holding every line the
 protected documents needed rather than as edits to those documents — the two
 machines cannot merge prose safely at the same time. This session folded that
 brief into `Decisions.md`, `SECURITY.md`, `Servers.md`, `DEPLOYMENT.md`,
-`Firebase.md`, `Bugs.md` and `Roadmap.md` and deleted it.
+`Firebase.md`, `Bugs.md` and `Roadmap.md` and deleted it. The eighth branch,
+`nb/server-messaging`, was also built on the Windows PC and arrived the same
+way, as `docs/briefs/2026-09-19-nb-server-messaging-docs.md`; its deploy
+order (section 7 of that brief) is folded into DEPLOYMENT.md — with Storage
+Rules moved *before* the Functions that issue reservations, as ADR-216
+requires, where the brief had them second.
 
 The Windows machine also produced the only cross-platform noise worth
 recording: seven Functions cases fail there on *any* tree, `origin/main`
@@ -53,7 +62,9 @@ CLI whose `status` came back `null` under load. Those are the environment, not
 the branch.
 
 Merge order was `nb/yeels-scrub`, `nb/friend-actions`, `nb/confirm-upload`,
-`nb/server-delete`, `nb/giphy`, `nb/server-live`, `nb/notifications`. Two
+`nb/server-delete`, `nb/giphy`, `nb/server-live`, `nb/notifications`, then
+`nb/server-messaging` (`0fbe42d0`) and its upload platform split
+(`e69b1013`). Two
 integration commits followed the merges rather than the branches:
 
 - `bd549032` — `tool/servers_activation_package.js` hard-pins the reviewed
@@ -78,8 +89,8 @@ integration commits followed the merges rather than the branches:
 | Flutter suite total | **5467 tests across 435 test files, 0 failures** |
 | Servers V1 registration counts, recomputed with Node against the merged `registration.js` | 62 total exports, 56 callables, 6 non-callable exports, 7 Podcast-recording names → **55 base exports / 50 base callables**, which is exactly what `tool/servers_activation_package.js` pins |
 | `firestore.indexes.json` vs. the base | **one** addition: the COLLECTION_GROUP composite on `events (reminderOptInEnabled, status, startsAt)`. 48 composites, 13 field overrides, TTL on `notificationDeliveryEvents.expiresAt` still declared |
-| `firestore.rules` vs. the base | **one** addition: `match /commentMentions/{mentionId} { allow read, write: if false; }` |
-| `storage.rules` vs. the base | **byte-identical** |
+| `firestore.rules` vs. the base | **six** additions, each `allow read, write: if false;`: `commentMentions/{mentionId}` and the five server channel media collections (`serverMessageMediaUploadReservations`, `…UploadLeases`, `…UploadBudgets`, `serverMessageMediaDeletionJobs`, `serverMessageMediaObjects`). Corrected on 2026-09-25: this row first said "one", written before `nb/server-messaging` was counted |
+| `storage.rules` vs. the base | **one** addition: `match /server_message_media/{serverId}/{channelId}/{userId}/{fileName}` (+104 lines, ADR-216), so this build has a Storage Rules deploy step. Corrected on 2026-09-25: this row first said "byte-identical", which was false once `nb/server-messaging` merged |
 | Every markdown anchor link in the repository | re-resolved after the ADR renumbering; the ones that did not resolve were fixed in this commit |
 
 The merged Functions suite is **2480 / 2480 across 182 test files, 140 suites,
@@ -188,6 +199,11 @@ e-mails carry none.
 > or handed ownership of one, now tells you. You can turn all of this on or
 > off under "Moments & Yeels" and "Servers" in your notification settings.
 >
+> **React, and share photos and videos, in server channels.** Tap and hold a
+> message in a server text channel to react with an emoji — announcements
+> too. You can send photos and short videos (up to a minute) there, see them
+> before they go, and delete your own messages.
+>
 > **The LIVE badge tells the truth.** A voice channel stops showing LIVE about
 > a minute after the last person leaves, instead of hanging on for up to
 > a quarter of an hour.
@@ -220,6 +236,11 @@ e-mails carry none.
 > wyłączysz w ustawieniach powiadomień, w sekcjach "Momenty i Yeels" oraz
 > "Serwery" (przełączniki "Komentarze i oznaczenia", "Wydarzenia na
 > serwerach" i "Twoja rola na serwerze").
+>
+> **Reakcje, zdjęcia i filmy na kanałach serwera.** Przytrzymaj wiadomość na
+> kanale tekstowym serwera, żeby zareagować emoji — także w ogłoszeniach.
+> Możesz tam też wysyłać zdjęcia i krótkie filmy (do minuty), zobaczyć je
+> przed wysłaniem i usuwać własne wiadomości.
 >
 > **Plakietka NA ŻYWO mówi prawdę.** Kanał głosowy przestaje pokazywać NA
 > ŻYWO mniej więcej minutę po wyjściu ostatniej osoby, zamiast trzymać ją
