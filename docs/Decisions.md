@@ -14238,9 +14238,58 @@ picked from a library**. No feature grows a private copy.
   canonical in place").
 
 Adopted by: direct messages → Photo library and Video library; Company team
-files. **Not** adopted, by decision: the camera (`Take photo`, `Record video`)
-keeps the OS Use/Retake step; surfaces that already confirm (above) and the
-retired Clubs/Rooms screens are untouched.
+files; **server text channels → Photo library and Video library** (amended
+2026-09-20, see below). **Not** adopted, by decision: the camera (`Take
+photo`, `Record video`) keeps the OS Use/Retake step; surfaces that already
+confirm (above) and the retired Clubs/Rooms screens are untouched.
+
+### Amendment, 2026-09-20 — the review's second surface: server channels
+
+`6a473b27`, on `nb/integrate`. ADR-215 gave server text channels photo and
+video messages, and its branch deliberately shipped **no** confirm step so
+that a second implementation would never have to be deleted at integration
+(ADR-215, deviation 7). That reservation is now spent, and this ADR's own
+Consequence — "Task 2's server-channel photos and videos must open this
+review from their first commit" — is met by adoption rather than by a copy.
+
+- **A library pick opens this review.** `_reviewLibraryPick` in
+  `lib/features/servers/presentation/widgets/server_text_channel_scene.dart`
+  opens `showYoMediaSendReview` for `ImageSource.gallery` on both the photo
+  and the video path, with the channel name as the destination label.
+- **A camera capture deliberately bypasses it.** `_sendPickedPhoto` /
+  `_sendPickedVideo` branch on `source == ImageSource.gallery` and a
+  non-gallery pick goes straight to `_sendMedia`. The shot was already seen
+  when it was taken, and this ADR leaves camera paths alone everywhere.
+- **The bounds are the direct-message ones, because `storage.rules` says
+  so.** `_reviewLimits` is built from `directImageMaxBytes`,
+  `directVideoMaxBytes` and `directVideoMaxSeconds` — the same constants the
+  DM review reads — because the `server_message_media` match block declares
+  exactly those bounds (image jpeg/png/webp 128 B–8 MiB, video
+  mp4/quicktime/webm 1 KiB–64 MiB, 1–60 s) and
+  `reserveServerChannelMessageMediaV1` enforces them again. The review can
+  therefore neither offer to send something the reservation would refuse nor
+  refuse something it allows. One deliberate difference:
+  `minVideoDuration` is 1 ms rather than the review's default full second,
+  because a clip is declared in whole seconds rounded up with a floor of one,
+  so a half-second clip this channel accepts today must not be blocked.
+- **Presentation only, as everywhere else.** `onSend` is the scene's own
+  `_sendMedia` — the single reserve/upload/finalize path — run while the
+  sheet is open, so a failure returns into the sheet with Send armed
+  (`rethrowFailure: gallery`). `closeWhen` is the same account-switch
+  contract the chat passes. The pre-existing byte and duration checks stay
+  ahead of the review as the backstop; nothing was moved into it.
+- **Nothing reads the pick into memory.** The bound is still measured with
+  `XFile.length()` and the upload still streams from disk on io (ADR-215,
+  decision 5). The review previews the same `XFile` and neither moves,
+  rewrites nor deletes it, which is the compatibility condition the upload
+  split named.
+- **Retry cost.** Keeping Send armed after a failure exposed a lease defect
+  on this surface: a second press minted a fresh `reserveRequestId` and was
+  read as a second upload, refused `resource-exhausted` for up to fifteen
+  minutes. Fixed on the client in `77264f18` — `ServerMediaSendAttempt` is
+  minted once per pick and replays the reservation and committed generation
+  it already holds. The one-upload-at-a-time lease is the deliberate control
+  and was not relaxed. See [Bugs.md](Bugs.md).
 
 ### Reasoning
 
@@ -14256,7 +14305,9 @@ idempotency (ADR-204, ADR-205) are unchanged.
   caption field (`finalizeDirectMessageAttachment` takes ids only); a caption
   or multi-select needs its own decision and, for captions, backend work.
 - Task 2's server-channel photos and videos must open this review from their
-  first commit.
+  first commit. **Met at `6a473b27`** rather than at the branch's first
+  commit — see the amendment above for why the order was reversed and what
+  the adoption cost.
 - Company files still read and type-check the whole selection before the
   review (`_pickCompanyFile`), so an over-25 MB file still surfaces as the
   board error rather than in the review. The review enforces the same limit
@@ -14597,3 +14648,153 @@ degradation the ADR-212 text already claimed.
   opt-ins. Deliberately not done here: paging removes the harm, the creation
   budget removes the cheap volume, and `remindableEvent` already refuses a
   zero-opt-in event before it reads a single response.
+
+## ADR-215: Server channel reactions and media are Admin-SDK-only, and the "react" permission is derived in the callable, never stored in a channel grant
+
+**Date:** 2026-09-19 · **Status:** accepted (source on `nb/server-messaging`,
+merged into `nb/integrate` at `0fbe42d0`; the upload platform split at
+`e69b1013`, the ADR-211 review on this surface at `6a473b27`, the retry-lease
+fix at `77264f18`) · **NOT DEPLOYED**
+
+### Context
+
+Server text channels reuse the legacy club message store
+(`clubs/{s}/channels/{c}/messages`), which was built text- and GIF-only: no
+reaction field, no media, no callable, and no context action on the tile. DMs
+have had one-reaction-per-person and private photo/video for two builds. The
+obvious way to add "may react" to a V1 channel is a new capability key in
+`capabilitiesFor` (`functions/servers/authority.js`).
+
+### Decision
+
+1. Reactions are a `reactions` map (uid → emoji) on the message, written only
+   by `setServerChannelMessageReactionV1`, with the fixed DM vocabulary
+   imported from `direct_integrity.js`. The `react` permission is **derived
+   inside the callable** from the channel's `read` capability plus role,
+   profile, mute and verification — `capabilitiesFor` is untouched.
+2. Photos and videos follow Company Files exactly: a reservation-bound
+   Storage path, a finalize that probes the bytes and revokes the download
+   token, batched 90-second generation-bound V4 read grants issued by a
+   callable that re-runs the channel ACL, and durable generation-guarded
+   deletion jobs. The message keeps a `content: 'Photo'|'Video'` fallback so
+   installed clients render a readable line.
+3. A new author-only `deleteServerChannelMessageV1` gives V1 authors the
+   retraction the rules never allowed them.
+4. The five new callables and two schedules are registered through a
+   **separate extension table** in `functions/servers/registration.js`
+   (`SERVER_MESSAGE_CALLABLE_METHODS`, built by
+   `createServerMessageFunctions`), outside `ALL_SERVER_CALLABLE_METHODS` and
+   `SERVERS_V1_EXPORT_NAMES`.
+5. The bytes reach Storage through a **platform-split upload source**
+   (`lib/features/clubs/data/services/club_media_upload_source*.dart`): io
+   streams the picked file with `putFile`, web keeps `putData`. The scene
+   measures the pick with `XFile.length()` and never reads it into the heap.
+6. A library pick goes through **ADR-211's `YoMediaSendReview`** before any
+   byte leaves the device; a camera capture deliberately does not.
+
+### Reasoning
+
+`grantMatches` compares a stored `accessGrants` document to `capabilitiesFor`
+with an **exact key count**, so adding `react` would have invalidated every
+stored grant and silently removed read access to every restricted channel
+until a sweep rewrote them — a lockout, in exchange for a permission the
+callable can derive for free. Keeping the messages rule untouched means
+neither feature widens a client predicate: Storage rules can authorize an
+upload against a reservation (two cross-service documents) but cannot evaluate
+a V1 channel ACL, which is why reads are a callable grant.
+
+The separate registration table exists because the reviewed Servers manifest
+is pinned by `tool/servers_activation_package.js`, the registration suites and
+the frozen table in `docs/Servers.md`; spreading seven new names into it would
+have rewritten those numbers and the activation package's phase plan for a
+feature that deploys on its own selector anyway. (The manifest reads
+**62 total / 56 callable / 55 base** on this tree. It moved from 61/55/54
+because the ADR-180 amendment added `releaseServerChannelSessionIfEmptyV1` in
+the same build, recomputed from the merged `registration.js` in `cd30afea` —
+not because of these seven, which sit outside it.)
+
+Streaming from disk on io is not an optimization. `putData` copies the buffer
+on the way out, so a 64 MiB video had a ~128 MiB transient peak — an
+out-of-memory kill on a mid-range Android phone. Direct messages were already
+split this way (`direct_attachment_payload_store_io.dart`); this surface now
+matches, and web is unchanged because a Blob has no path to stream from.
+
+### Consequences
+
+- Members can react in announcements and rules channels they cannot post in;
+  guests can react nowhere.
+- The reaction map is capped at 500 reactors per message; a busy announcement
+  contends on one document. The upgrade path (a `reactions/{uid}`
+  subcollection with counters) is a schema change and needs its own ADR.
+- Media reads cost one callable per ≤20 visible bubbles, cached until shortly
+  before the grant expires; a minted URL stays valid for up to 90 s after
+  access is lost.
+- Account deletion gains a fifth Admin-only collection
+  (`serverMessageMediaObjects`) purely so an author's objects can be found
+  under other people's servers. `server_message_media` is therefore **swept**,
+  and the cross-container gap list in [Bugs.md](Bugs.md) shrinks to four.
+- The Servers export surface is now 55 base + 1 broadcast + 1 last-leave
+  release + 7 message-parity names, deployed by two selectors instead of one.
+- **On io the bytes are read at send time, from the picked path.** If the OS
+  evicted the picker's temporary file, or it changed size, the source refuses
+  locally and the reservation is left unused — no object, no message, no retry
+  loop. This is the one new failure mode of the split, and it is the same one
+  Reels accepted in `reel_upload_transport_io.dart`. Anything upstream that
+  consumes or rewrites the pick (a resized copy, a move into app storage, a
+  cleanup after preview) must hand the send the NEW `XFile`.
+- `storage.rules` is no longer byte-identical to 3.0.0+34, so this build has a
+  Storage Rules deploy step for the first time since 2026-09-14. It must land
+  **before** the Functions that issue reservations — see
+  [DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-path-before-any-function-that-issues-a-reservation).
+
+### Deviations from the investigation's design, with reasons
+
+1. **Registration**: a separate extension table and builder instead of
+   spreading into `ALL_SERVER_CALLABLE_METHODS`, for the manifest reason
+   above. Behaviour (activation gate, Auth binding, options, error mapping) is
+   identical.
+2. **Legacy clubs are refused `permission-denied`, not `failed-precondition`.**
+   `readServerAccess` already denies a legacy, missing or private target with
+   one indistinguishable shape, and keeping that avoids an existence oracle
+   for legacy club ids.
+3. **Content cleanup gains no inline Storage phase.** Channel and server
+   deletion write durable prefix sweep jobs instead, drained by the new
+   schedule, so `CHANNEL_PHASES`/`SERVER_PHASES` and every existing
+   cleanup-runtime constructor stay untouched — at the cost of bytes surviving
+   for at most one 10-minute sweep after the documents are gone.
+4. **Account deletion sweeps** rather than only documenting the gap. Because
+   the uid is the fourth path segment, this needed the fifth Admin-only
+   collection.
+5. **Reaction chips are the DM summary pill, not tappable count chips.**
+   Toggling happens in the actions sheet, where the viewer's current reaction
+   is marked. `MessageReactionSummaryPill`/`MessageReactionPickerRow` live in
+   `lib/shared/widgets/interactions/message_reactions.dart` with
+   caller-supplied copy (ADR-209); the DM files were left untouched so their
+   suites did not have to be re-baselined.
+6. **The access grant does not re-harden object metadata** the way
+   `getServerCompanyFileAccessV1` does; finalize already revoked the token
+   generation-guarded, and the grant path verifies the metadata binding before
+   signing.
+7. **The confirm sheet was deliberately absent at branch time** — the branch
+   sent immediately, exactly as DMs did, so there would only ever be one
+   confirm implementation. That reservation is now spent: `6a473b27` adopts
+   ADR-211's shared review on this surface instead of growing a second one.
+
+### Residual, stated rather than hidden
+
+- An issued V4 URL remains a bearer capability for at most 90 seconds after a
+  ban, a leave or a removal — the same residual the private-media section
+  already accepts.
+- `adminDeleteMessage` leaves the now-unreferenced `media` descriptor on its
+  tombstone (path and generation only; the object is deleted).
+- Reaction writes are a transaction on the message document, so a very popular
+  announcement can see retries.
+- Five new collections (`serverMessageMediaUploadReservations`, `…Leases`,
+  `…Budgets`, `serverMessageMediaDeletionJobs`, `serverMessageMediaObjects`)
+  are `allow read, write: if false` for every client, staff included.
+- **UNVERIFIED visually.** No simulator or device run: the reaction pill, the
+  actions sheet, the attach button, the sending row, the review sheet on this
+  surface and the media bubbles are proven by widget tests at 390 / 768 /
+  1440 px, not by looking at them.
+- **No server-side video thumbnails.** A video poster is a placeholder with
+  the duration; DMs have none either, so this is parity, not a regression.
