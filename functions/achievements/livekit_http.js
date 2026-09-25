@@ -846,8 +846,12 @@ function rawBodyByteLength(rawBody) {
  * answer LiveKit receives. `outcome` is a closed set of server constants.
  */
 async function runServerLifecycle(serverLifecycle, webhook) {
-  if (serverLifecycle === null || webhook?.type !== "room_finished" ||
-      !isServerRtcNamespace(webhook.roomName)) return;
+  if (serverLifecycle === null || !isServerRtcNamespace(webhook?.roomName)) return;
+  if (["participant_left", "participant_connection_aborted"].includes(webhook?.type)) {
+    await runServerParticipantLeft(serverLifecycle, webhook);
+    return;
+  }
+  if (webhook?.type !== "room_finished") return;
   try {
     const result = await serverLifecycle.onRoomFinished({
       livekitRoomName: webhook.roomName,
@@ -859,6 +863,33 @@ async function runServerLifecycle(serverLifecycle, webhook) {
     });
   } catch (error) {
     logger.warn("livekit server lifecycle could not handle room_finished", {
+      eventType: webhook.type,
+      errorName: error?.name ?? null,
+      errorCode: typeof error?.code === "string" || Number.isSafeInteger(error?.code) ? error.code : null,
+    });
+  }
+}
+
+/**
+ * The raised-hand half of a participant departure from a `srv_` generation:
+ * a hand the person left behind is lowered (session_staleness.js
+ * lowerDepartedHand). Optional on the hook, isolated exactly like the
+ * `room_finished` half — nothing it does or throws changes the HTTP answer.
+ */
+async function runServerParticipantLeft(serverLifecycle, webhook) {
+  if (typeof serverLifecycle?.onParticipantLeft !== "function") return;
+  try {
+    const result = await serverLifecycle.onParticipantLeft({
+      livekitRoomName: webhook.roomName,
+      participantIdentity: webhook.participantIdentity,
+      leftAtMs: webhook.createdAtMs,
+    });
+    logger.info("livekit server lifecycle handled a departure", {
+      eventType: webhook.type,
+      outcome: typeof result?.outcome === "string" ? result.outcome : null,
+    });
+  } catch (error) {
+    logger.warn("livekit server lifecycle could not handle a departure", {
       eventType: webhook.type,
       errorName: error?.name ?? null,
       errorCode: typeof error?.code === "string" || Number.isSafeInteger(error?.code) ? error.code : null,
@@ -881,6 +912,10 @@ function createLiveKitAchievementWebhookHandler({
   }
   if (serverLifecycle !== null && typeof serverLifecycle?.onRoomFinished !== "function") {
     throw new TypeError("A server lifecycle hook must handle room_finished.");
+  }
+  if (serverLifecycle !== null && serverLifecycle?.onParticipantLeft !== undefined &&
+      typeof serverLifecycle.onParticipantLeft !== "function") {
+    throw new TypeError("A server lifecycle departure hook must be a function.");
   }
   return async function liveKitAchievementWebhook(request, response) {
     if (request?.method !== "POST") {
@@ -1024,6 +1059,18 @@ function createServerChannelLifecycle({
       }
       if (enabled !== true) return { outcome: "workers-paused" };
       return staleness.stageFinishedProviderRoom({ livekitRoomName, finishedAtMs });
+    },
+    async onParticipantLeft({ livekitRoomName, participantIdentity, leftAtMs }) {
+      const { activation, staleness } = build();
+      let enabled = false;
+      try {
+        enabled = await activation.workersEnabled();
+      } catch {
+        // Paused is the fail-closed answer; the host's queue already hides a
+        // requester the provider no longer reports.
+      }
+      if (enabled !== true) return { outcome: "workers-paused" };
+      return staleness.lowerDepartedHand({ livekitRoomName, participantIdentity, leftAtMs });
     },
   });
 }

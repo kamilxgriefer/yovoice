@@ -269,6 +269,20 @@ const SERVER_MESSAGE_EXPORT_NAMES = Object.freeze([
   ...SERVER_MESSAGE_SCHEDULE_EXPORTS,
 ]);
 
+// Request to speak (ADR "request to speak end to end"): the host's or a
+// moderator's decline of a raised hand. A SEPARATE extension exactly like the
+// message-parity one above, for the same reason: the reviewed 62/56/55
+// manifest, its activation-package phase plan and docs/Servers.md's frozen
+// 54-entry table stay unchanged. It is built by
+// createServerSessionHandFunctions below over the same participation service
+// the base runtime uses, behind the same activation gate and callable options.
+// It never reaches the media provider (a hand is not authority), so it binds
+// no secret.
+const SESSION_HAND_CALLABLE_METHODS = Object.freeze({
+  answerServerSessionHandV1: "participation",
+});
+const SESSION_HAND_EXPORT_NAMES = Object.freeze(Object.keys(SESSION_HAND_CALLABLE_METHODS));
+
 // Outbox job kinds and the reviewed worker that owns each of them. The three
 // workers validate their own job shape under their own transaction; this
 // table only decides which of them is asked.
@@ -1163,6 +1177,64 @@ function createServerMessageFunctions({
   return Object.freeze(exportsMap);
 }
 
+/**
+ * The participation service alone over one Firestore handle, for the
+ * request-to-speak extension. Performs no I/O and loads no provider SDK.
+ */
+function createServerSessionHandRuntime({
+  db = null,
+  Timestamp: TimestampClass = Timestamp,
+  clock = Date.now,
+} = {}) {
+  if (typeof clock !== "function") throw new TypeError("clock must be a function.");
+  const database = db ?? getFirestore();
+  return Object.freeze({
+    db: database,
+    clock,
+    participation: createServerSessionParticipationService({ db: database, Timestamp: TimestampClass, clock }),
+  });
+}
+
+/**
+ * Builds the request-to-speak export map (SESSION_HAND_EXPORT_NAMES) with the
+ * same Auth binding, activation gate, error mapping and callable options as
+ * the base participation callables.
+ */
+function createServerSessionHandFunctions({
+  runtime = null,
+  registrars = defaultRegistrars(),
+  enforceAppCheck = false,
+  activationGate = null,
+  log = logger,
+} = {}) {
+  if (typeof registrars?.onCall !== "function") {
+    throw new TypeError("Missing Cloud Functions registrar: onCall.");
+  }
+  const resolved = runtime ?? createServerSessionHandRuntime();
+  const activation = activationGate ?? createServersV1ActivationGate({ db: resolved.db, log });
+  if (typeof activation?.requireCallable !== "function" || typeof activation?.workersEnabled !== "function") {
+    throw new TypeError("A Servers V1 runtime activation gate is required.");
+  }
+  const callableOptions = {
+    region: REGION,
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    maxInstances: 50,
+    minInstances: 0,
+    enforceAppCheck: enforceAppCheck === true,
+    consumeAppCheckToken: enforceAppCheck === true,
+  };
+  const exportsMap = {};
+  for (const [name, serviceName] of Object.entries(SESSION_HAND_CALLABLE_METHODS)) {
+    const method = resolved?.[serviceName]?.[name];
+    if (typeof method !== "function") {
+      throw new TypeError(`Missing Servers V1 method ${serviceName}.${name}.`);
+    }
+    exportsMap[name] = registrars.onCall({ ...callableOptions }, callableHandler(name, method, activation, log));
+  }
+  return Object.freeze(exportsMap);
+}
+
 module.exports = {
   ALL_SERVER_CALLABLE_METHODS,
   ACTIVATION_ACCESS,
@@ -1187,12 +1259,16 @@ module.exports = {
   SERVER_MESSAGE_MEDIA_CALLABLES,
   SERVER_MESSAGE_SCHEDULE_EXPORTS,
   SERVERS_V1_EXPORT_NAMES,
+  SESSION_HAND_CALLABLE_METHODS,
+  SESSION_HAND_EXPORT_NAMES,
   SESSION_LIFECYCLE_CALLABLE_METHODS,
   SWEEP_EXPORTS,
   authBoundRequest,
   canonicalActivationConfig,
   createServerMessageFunctions,
   createServerMessageRuntime,
+  createServerSessionHandFunctions,
+  createServerSessionHandRuntime,
   createServersV1ActivationGate,
   createServersV1Dispatcher,
   createServersV1Functions,

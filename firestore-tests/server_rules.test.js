@@ -1808,6 +1808,50 @@ async function main() {
         [`clubs/${ACTIVE}/channels/${SALON}/accessGrants/${MEMBER}`]: null,
         [`clubs/${ACTIVE}/channels/${SALON}/accessGrants/${LISTENER}`]: null });
     });
+    await check("a hand decision (request to speak) is readable only by its subject, never widens the queue and is never client-written", async () => {
+      const DECLINED = "server-declined";
+      const APPROVED = "server-approved";
+      await seed({
+        [`users/${DECLINED}`]: { displayName: DECLINED, banned: false, disabled: false },
+        [`users/${APPROVED}`]: { displayName: APPROVED, banned: false, disabled: false },
+        [`clubs/${ACTIVE}/members/${DECLINED}`]: member(DECLINED, "member"),
+        [`clubs/${ACTIVE}/members/${APPROVED}`]: member(APPROVED, "member"),
+        [own(DECLINED)]: participant(DECLINED, "listener", { isHandRaised: false, handRaisedAt: null,
+          handDecision: "declined", handDecidedAt: new Date(3), handDecidedById: ADMIN }),
+        [own(APPROVED)]: participant(APPROVED, "guest", { authorizationRevision: 2, isHandRaised: false,
+          handRaisedAt: null, handDecision: "approved", handDecidedAt: new Date(4), handDecidedById: MEMBER }),
+      });
+      // The subject reads the answer on their own live-generation document.
+      const declined = await assertSucceeds(read(DECLINED, own(DECLINED)));
+      assert.equal(declined.data().handDecision, "declined");
+      assert.equal(declined.data().isHandRaised, false);
+      const approved = await assertSucceeds(read(APPROVED, own(APPROVED)));
+      assert.equal(approved.data().handDecision, "approved");
+      assert.equal(approved.data().role, "guest");
+      // Nobody else point-reads an answered document, and the host's queue
+      // still names only the hand that is up.
+      for (const uid of [OWNER, MEMBER, ADMIN, LISTENER]) {
+        await assertFails(read(uid, own(DECLINED)));
+        await assertFails(read(uid, own(APPROVED)));
+      }
+      for (const uid of [MEMBER, OWNER, ADMIN]) {
+        assert.deepEqual((await assertSucceeds(hands(uid))).docs.map((item) => item.id), [LISTENER]);
+      }
+      // An answer is callable-only: the subject cannot clear, forge or
+      // re-raise it, and nobody else can write one.
+      await assertFails(updateDoc(doc(db(DECLINED), own(DECLINED)), { handDecision: null }));
+      await assertFails(updateDoc(doc(db(DECLINED), own(DECLINED)), { isHandRaised: true, handDecision: null,
+        updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(doc(db(MEMBER), own(LISTENER)), { isHandRaised: false, handDecision: "declined",
+        handDecidedAt: serverTimestamp(), handDecidedById: MEMBER }));
+      await assertFails(updateDoc(doc(db(ADMIN), own(LISTENER)), { handDecision: "approved" }));
+      // An ended generation closes the answer too.
+      await seed({ [`clubs/${ACTIVE}/channels/${SALON}`]: salon({ activeSessionId: null, liveness: idle() }),
+        [`rooms/${ANCHOR}`]: anchor({ isLive: false, voiceSessionId: null, livekitRoomName: null, serverSessionCleanupId: GENERATION }) });
+      await assertFails(read(DECLINED, own(DECLINED)));
+      await seed({ [`clubs/${ACTIVE}/channels/${SALON}`]: salon(), [`rooms/${ANCHOR}`]: anchor(),
+        [own(DECLINED)]: null, [own(APPROVED)]: null });
+    });
     await check("no client writes a V1 participation document: hand, role, mutes and revision are callable-only", async () => {
       for (const [uid, role] of [[LISTENER, "listener"], [MEMBER, "host"], [ADMIN, "guest"], [OWNER, "listener"]]) {
         const reference = doc(db(uid), own(uid));

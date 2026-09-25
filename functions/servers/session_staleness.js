@@ -374,6 +374,71 @@ function createServerSessionStalenessService({
     return { outcome: settled.outcome };
   }
 
+  /**
+   * The provider half of a stale raised hand: LiveKit says `participantIdentity`
+   * left (or its connection aborted) a `srv_` generation at `leftAtMs`. A hand
+   * that person raised before leaving is lowered with `handDecision:
+   * "lowered"`, so the host's queue never offers somebody who is not there
+   * and the person reads why their request ended.
+   *
+   * Nothing is lowered while the provider still lists the identity (a
+   * reconnect under a new participant SID, or a second device), when the
+   * provider cannot say, for a hand raised after the departure instant, or
+   * for any other generation. A hand is a request, not authority: no
+   * revision moves and nothing is revoked. Replays converge on "unchanged".
+   */
+  async function lowerDepartedHand({ livekitRoomName, participantIdentity, leftAtMs }) {
+    if (!isServerRtcRoomName(livekitRoomName) || typeof participantIdentity !== "string" ||
+        participantIdentity.length === 0 || participantIdentity.length > 128 || participantIdentity.includes("/") ||
+        !Number.isSafeInteger(leftAtMs) || leftAtMs <= 0) {
+      return { outcome: "skipped" };
+    }
+    livekit.assertSupported();
+    const binding = await resolveRtcBindingForLiveKitRoom({ db, livekitRoomName });
+    if (binding.bound !== true) return { outcome: "unbound" };
+    if (binding.status !== "live") return { outcome: "not-live" };
+    const anchor = { serverId: binding.serverId, channelId: binding.channelId, roomId: binding.roomId,
+      sessionId: binding.sessionId };
+    const reference = db.doc(`rooms/${anchor.roomId}/participants/${participantIdentity}`);
+    const raisedBefore = (value) => value?.serverSchemaVersion === 1 && value.serverId === anchor.serverId &&
+      value.channelId === anchor.channelId && value.roomId === anchor.roomId &&
+      value.sessionId === anchor.sessionId && value.userId === participantIdentity &&
+      value.isHandRaised === true && (timestampMillis(value.handRaisedAt) ?? Number.MAX_SAFE_INTEGER) <= leftAtMs;
+    const first = await reference.get();
+    if (!first.exists || !raisedBefore(first.data())) return { outcome: "unchanged" };
+    let occupancy;
+    try {
+      occupancy = await livekit.roomOccupancy({ ...anchor, livekitRoomName: binding.livekitRoomName });
+    } catch {
+      return { outcome: "unknown" };
+    }
+    const verdict = occupancyVerdict(occupancy, participantIdentity);
+    if (!verdict.known) return { outcome: "unknown" };
+    if (!verdict.empty) {
+      // An empty room is an answer by itself; an occupied one is an answer
+      // only when every listed identity can be compared with this one.
+      const identities = occupancy.participantIdentities;
+      if (!Array.isArray(identities) || identities.length !== occupancy.participantCount ||
+          identities.some((identity) => typeof identity !== "string" || identity.length === 0)) {
+        return { outcome: "unknown" };
+      }
+      if (identities.includes(participantIdentity)) return { outcome: "present" };
+    }
+    return db.runTransaction(async (transaction) => {
+      const sessionReference = db.doc(
+        `clubs/${anchor.serverId}/channels/${anchor.channelId}/channelSessions/${anchor.sessionId}`);
+      const [snapshot, sessionSnapshot] = await transactionGetAll(transaction, reference, sessionReference);
+      if (sessionSnapshot.data()?.status !== "live") return { outcome: "not-live" };
+      if (!snapshot.exists || !raisedBefore(snapshot.data())) return { outcome: "unchanged" };
+      const now = Timestamp.fromMillis(checkedNow());
+      transaction.update(reference, {
+        isHandRaised: false, handRaisedAt: null,
+        handDecision: "lowered", handDecidedAt: now, handDecidedById: null, updatedAt: now,
+      });
+      return { outcome: "lowered" };
+    });
+  }
+
   async function readProjection(transaction, serverId, channelId) {
     const channelReference = db.doc(`clubs/${serverId}/channels/${channelId}`);
     const channelSnapshot = await transaction.get(channelReference);
@@ -563,7 +628,7 @@ function createServerSessionStalenessService({
   }
 
   return {
-    classifyChannelProjection, forEachVersionedServer, liveProjectionIds, recentAdmission,
+    classifyChannelProjection, forEachVersionedServer, liveProjectionIds, lowerDepartedHand, recentAdmission,
     repairChannelProjection, settleEmptyGeneration, settleEmptyGenerationWithin, stageEmptyGeneration,
     stageFinishedProviderRoom, stageStaleServerChannelSessions,
   };
