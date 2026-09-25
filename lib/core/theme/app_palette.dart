@@ -235,8 +235,9 @@ class AppPalette extends ThemeExtension<AppPalette> {
   /// A specular top hairline on a lit surface.
   Color get specular => AppColors.white.withValues(alpha: isDark ? .22 : .70);
 
-  /// Unplayed waveform bars, at rest and while playing.
-  Color get waveUnplayed => textPrimary.withValues(alpha: isDark ? .28 : .22);
+  /// Unplayed waveform bars, at rest and while playing. Dark is .22 (not
+  /// .28) so the saturated variant-B played sweep keeps ≥ 3:1 against it.
+  Color get waveUnplayed => textPrimary.withValues(alpha: .22);
 
   /// The Chats / Friends canvas radial, promoted unchanged (pixel-identical
   /// to the recipe those two screens paint inline today).
