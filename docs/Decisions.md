@@ -15144,3 +15144,70 @@ matches, and web is unchanged because a Blob has no path to stream from.
   1440 px, not by looking at them.
 - **No server-side video thumbnails.** A video poster is a placeholder with
   the duration; DMs have none either, so this is parity, not a regression.
+
+## ADR-XXX: The profile banner is the header's full-bleed background, softened by a blurred copy of itself
+
+*(Number assigned by the integrator.)*
+
+### Context
+
+Kamil: "tło w profilu użytkownika powinno być na cały górny panel, nie w
+takim prostokącie, z ewentualnym blurem na dole". ADR-209 phase 5 had turned
+the old 300–320 px banner into a 104–168 px inset, rounded card below a
+separate toolbar row on both profile screens, so the banner read as a
+rectangle. Diagnosis and verdict:
+`yovoice-evidence/2026-09-25/diagnosis-profile-banner.md`,
+`verdict-profile-banner.md`.
+
+### Decision
+
+- One shared primitive, `lib/shared/widgets/profile/profile_hero_backdrop.dart`:
+  `ProfileHeroGeometry` (every size), `ProfileHeroLayout` (backdrop, floating
+  toolbar, identity on the text line, footer) and `ProfileHeroBackdrop` (the
+  drawing). `ProfileHeader` and `FriendProfileScreen` both use it; the
+  edit-profile preview renders it at the phone geometry.
+- The backdrop spans the whole host from y = 0. Height `T + 56 + band`
+  (124 / 156 / 176 by width), capped at the width's 16:9 — phones show the
+  whole banner and nothing is cut at the sides — and at 45% of a short
+  viewport; past 1440 it grows with the width so the visible share stays
+  ~28.6%, which is also the crop editor's "always visible" guide
+  (`ProfileHeader.bannerSafeBandFraction`, re-derived from 23.4%).
+- The blur Kamil asked for is a blurred copy of the same image provider
+  (`ImageFiltered`, image-cache hit, no second fetch) masked in over the
+  bottom melt, inside one `RepaintBoundary`. Never a `BackdropFilter`.
+  High contrast drops it. The whole stack alpha-melts into the page canvas.
+- The photo's scrim, blur and sized light status-bar region are built by a
+  new `ProfileMediaImage.imageLayerBuilder`, so they exist only while the
+  photo is on screen and fade in with it (instantly under Reduce Motion,
+  which now also applies to every profile image's 180 ms fade). The no-photo
+  base (pending, absent, failed) is the Dark fallback gradient or a Pearl
+  palette wash, so a Pearl profile never flashes a dark slab first.
+- The visible "Profil" toolbar title is gone from over the photo; a
+  `namesRoute` container still names the page.
+- `ResponsiveContentWidth.fullBleed` is added only for scroll views whose
+  first sliver is such a hero; readable slivers use
+  `ProfileMeasuredSliverPadding`.
+
+### Reasoning
+
+ADR-209's objection was imagery without data at desktop sizes. The banner is
+user content, and it now carries the header (toolbar, avatar, name) instead
+of sitting beside it, while readable content keeps its 1040 / 880 measure —
+desktop is not a stretched phone layout. The earlier rejections of blur
+(room board, chat cards) were about `BackdropFilter` save layers per card and
+about blur owning text contrast; here there is one hero, the blur is on the
+image itself, and contrast is owned by the melt (text only below the 10%
+line).
+
+### Consequences
+
+- The friend screen's `SafeArea` keeps only the bottom inset; landscape
+  insets are applied to the content column instead.
+- Test pins re-based deliberately: `image_crop_screen_test` (safe-band
+  derivation) and `friend_profile_responsive_test` (frame width; banner
+  above the avatar; 768 == 1440 band height).
+- UNVERIFIED: the frame cost of the blurred copy on a low-end Android
+  device and on web CanvasKit (Impeller has no raster cache, so the masked
+  layers are re-composited while scrolling); the iOS bounce feel; how old
+  banners cropped for the 23% strip look now. Frames:
+  `yovoice-evidence/2026-09-25/profile-banner/` (flutter test renders).

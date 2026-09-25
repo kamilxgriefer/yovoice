@@ -619,6 +619,30 @@ Everything above still holds.
   (`profile_header.dart`) on own and friend profiles: stats from real fields
   only, audience counts only when the audience is visible, one primary + one
   secondary CTA + an icon sheet.
+- **Profile hero (full-bleed banner).** On the own and the friend profile
+  the banner is the background of the whole header: edge to edge, from
+  y = 0 under the status bar, spanning the route (beside the desktop sidebar
+  it fills the content column). One shared primitive owns it —
+  `ProfileHeroGeometry` / `ProfileHeroLayout` / `ProfileHeroBackdrop` in
+  `lib/shared/widgets/profile/profile_hero_backdrop.dart`. Height
+  `T + 56 + band` (band 124 / 156 / 176 below 600 / below 1100 / above),
+  never narrower than 16:9 (a phone shows the whole banner, `Alignment.center`
+  crops only top and bottom elsewhere), at most 45% of a short viewport,
+  growing with the width past 1440. The toolbar floats over a `scrim` top
+  gradient with raised 44 px controls and no visible title (the display name
+  is the headline; a `namesRoute` node still names the page). The identity
+  row starts on the text line, where the photo has melted to ≤ 10%; the melt
+  is an alpha mask, so it dissolves into any canvas. The bottom soft focus is
+  a blurred copy of the same image (`ImageFiltered`, never `BackdropFilter`)
+  inside one `RepaintBoundary`, off under high contrast. No banner, pending
+  or failed: Dark keeps `kProfileBannerFallbackGradient`, Pearl a light
+  palette wash; the photo, its scrim, blur and light status-bar region fade
+  in together (no fade under Reduce Motion). The banner scrolls away 1:1 (no
+  parallax); an iOS bounce stretches it upward instead of opening a canvas
+  strip. The edit-profile preview is the phone hero in miniature. Readable
+  content keeps its measure through `ProfileMeasuredSliverPadding`
+  (`ResponsiveContentWidth.fullBleed` exists only for such hero scroll
+  views).
 - **Sign-in chain.** One background layer (`AuthBackdrop`, no waves), no
   form card, a flat primary mode rail, a solid `FilledButton` primary, 52 px
   fields with `authBorderStrong` and a 2 px `authFocus` edge, 48 px
