@@ -77,3 +77,6 @@ test/.screenshots/
 
 # Local scratch space. Measurement probes that docs cite live in tool/perfprobe/.
 /tmp/
+
+# Build output under android/ is generated; never track it (1001 files were committed by mistake in 57390db1).
+/android/build/
