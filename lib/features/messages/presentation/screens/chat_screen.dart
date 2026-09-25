@@ -13,6 +13,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
 
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/models/direct_call.dart';
@@ -48,6 +49,7 @@ import 'package:yovoice/shared/widgets/inputs/yo_composer_panel.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/media/yo_media_send_review.dart';
+import 'package:yovoice/shared/widgets/media/yo_recording_countdown.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
@@ -58,6 +60,11 @@ typedef DirectMessageVoiceRecorderPresenter =
     Future<void> Function(
       Future<void> Function(RecordedAudio audio, int durationSeconds) onSend,
     );
+
+/// Builds the recorder the voice message sheet drives. Production leaves it
+/// null and records from the microphone; tests pass a recorder over a fake
+/// backend and clock so the 60 s auto-stop is deterministic.
+typedef DirectMessageVoiceRecorderFactory = VoiceMomentRecorder Function();
 
 /// What a freshly pushed chat does once, right after its first frame.
 ///
@@ -94,6 +101,7 @@ class ChatScreen extends StatefulWidget {
     this.videoInspector,
     this.videoPreviewControllerFactory,
     this.voiceRecorderPresenter,
+    this.voiceRecorderFactory,
     this.profilePreviewAction,
     this.gifService,
     this.gifMessageInvoker,
@@ -135,6 +143,10 @@ class ChatScreen extends StatefulWidget {
   /// Production leaves this null and plays the picked file on the platform.
   final YoMediaPreviewControllerFactory? videoPreviewControllerFactory;
   final DirectMessageVoiceRecorderPresenter? voiceRecorderPresenter;
+
+  /// The recorder behind the live voice message sheet; see
+  /// [DirectMessageVoiceRecorderFactory].
+  final DirectMessageVoiceRecorderFactory? voiceRecorderFactory;
 
   /// Deterministic seam for navigation regression tests. Production leaves
   /// this null and opens the canonical profile preview.
@@ -1556,7 +1568,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ? await picker(source)
           : await ImagePicker().pickVideo(
               source: source,
-              maxDuration: const Duration(seconds: 60),
+              maxDuration: const Duration(seconds: directVideoMaxSeconds),
             );
       if (video == null || !_ownsMediaInteraction(ownerId)) return;
       if (source == ImageSource.gallery) {
@@ -1567,7 +1579,9 @@ class _ChatScreenState extends State<ChatScreen> {
       final duration =
           await (widget.videoInspector ?? inspectPickedDirectVideo)(video);
       if (!_ownsMediaInteraction(ownerId)) return;
-      final durationSeconds = (duration.inMilliseconds + 999) ~/ 1000;
+      // The camera itself stopped this clip at 60 s, and a full-length
+      // recording measures a little over that: declare it as the cap.
+      final durationSeconds = directCappedTakeSeconds(duration);
       if (!_ownsMediaInteraction(ownerId)) return;
       await _service.enqueueVideoMessage(
         conversationId: widget.conversationId,
@@ -1725,6 +1739,7 @@ class _ChatScreenState extends State<ChatScreen> {
             // app-private storage and the manifest is persisted, the message
             // cannot be lost, and the queued card owns the network work.
             onSend: enqueue,
+            recorderFactory: widget.voiceRecorderFactory,
           );
         },
       );
@@ -3669,9 +3684,13 @@ class _ConversationHistoryErrorBanner extends StatelessWidget {
 }
 
 class _VoiceMessageRecorderSheet extends StatefulWidget {
-  const _VoiceMessageRecorderSheet({required this.onSend});
+  const _VoiceMessageRecorderSheet({
+    required this.onSend,
+    this.recorderFactory,
+  });
 
   final Future<void> Function(RecordedAudio audio, int durationSeconds) onSend;
+  final DirectMessageVoiceRecorderFactory? recorderFactory;
 
   @override
   State<_VoiceMessageRecorderSheet> createState() =>
@@ -3680,14 +3699,28 @@ class _VoiceMessageRecorderSheet extends StatefulWidget {
 
 class _VoiceMessageRecorderSheetState
     extends State<_VoiceMessageRecorderSheet> {
-  final VoiceMomentRecorder _recorder = VoiceMomentRecorder();
+  /// The product cap. The sheet stops itself here and keeps the take; the
+  /// server accepts the slightly longer file a capped take always produces.
+  static const Duration _cap = Duration(seconds: directVoiceMaxSeconds);
+
+  late final VoiceMomentRecorder _recorder =
+      widget.recorderFactory?.call() ?? VoiceMomentRecorder();
+  final RecordingLimitCues _limitCues = RecordingLimitCues();
   Timer? _timer;
+  Duration _elapsed = Duration.zero;
   RecordedAudio? _audio;
   AudioPlayer? _previewPlayer;
   StreamSubscription<PlayerState>? _previewStateSubscription;
   PlayerState _previewState = PlayerState.stopped;
   int _durationSeconds = 0;
   bool _recording = false;
+
+  /// Set while [_finishRecording] awaits the recorder, so a Stop tap landing
+  /// in the same moment as the automatic stop cannot stop it twice.
+  bool _stopping = false;
+
+  /// The take was ended by the 1:00 cap rather than by the person.
+  bool _stoppedAtCap = false;
   bool _publishing = false;
   String? _error;
 
@@ -3702,7 +3735,7 @@ class _VoiceMessageRecorderSheetState
   }
 
   Future<void> _toggleRecording() async {
-    if (_publishing) return;
+    if (_publishing || _stopping) return;
     if (_recording) {
       await _finishRecording();
       return;
@@ -3714,18 +3747,26 @@ class _VoiceMessageRecorderSheetState
     try {
       await _recorder.start();
       if (!mounted) return;
+      _limitCues.reset();
       setState(() {
         _recording = true;
         _durationSeconds = 0;
+        _elapsed = Duration.zero;
+        _stoppedAtCap = false;
         _error = null;
       });
       _timer = Timer.periodic(const Duration(milliseconds: 250), (_) {
-        if (!mounted) return;
-        final elapsed = _recorder.elapsed.inSeconds.clamp(0, 60);
-        setState(() => _durationSeconds = elapsed);
-        if (_recorder.elapsed >= const Duration(seconds: 60)) {
-          unawaited(_finishRecording());
+        if (!mounted || !_recording || _stopping) return;
+        final elapsed = _recorder.elapsed;
+        setState(() {
+          _elapsed = elapsed;
+          _durationSeconds = elapsed.inSeconds.clamp(0, directVoiceMaxSeconds);
+        });
+        if (elapsed >= _cap) {
+          unawaited(_finishRecording(atCap: true));
+          return;
         }
+        _limitCues.onTick(context, elapsed, _cap);
       });
     } on VoiceRecordingException catch (error) {
       if (mounted) {
@@ -3745,8 +3786,12 @@ class _VoiceMessageRecorderSheetState
     }
   }
 
-  Future<void> _finishRecording() async {
-    if (!_recording) return;
+  /// Ends the take and keeps it ready to send. [atCap] marks the automatic
+  /// stop at 1:00: the take is still kept, never discarded, and the person is
+  /// told why the recording ended.
+  Future<void> _finishRecording({bool atCap = false}) async {
+    if (!_recording || _stopping) return;
+    _stopping = true;
     _timer?.cancel();
     _durationSeconds = _recorder.durationSeconds;
     try {
@@ -3758,8 +3803,18 @@ class _VoiceMessageRecorderSheetState
       setState(() {
         _recording = false;
         _audio = audio;
+        _stoppedAtCap = atCap;
         _error = null;
       });
+      if (atCap) {
+        _limitCues.onAutomaticStop(
+          context,
+          AppLocalizations.of(context).text(
+            'Recording stopped at the 1:00 limit. Your voice message is ready to send.',
+            'Nagrywanie zatrzymało się na limicie 1:00. Wiadomość głosowa jest gotowa do wysłania.',
+          ),
+        );
+      }
     } on VoiceRecordingException catch (error) {
       if (mounted) {
         setState(() {
@@ -3767,6 +3822,8 @@ class _VoiceMessageRecorderSheetState
           _error = [error.message, error.action].whereType<String>().join(' ');
         });
       }
+    } finally {
+      _stopping = false;
     }
   }
 
@@ -3926,6 +3983,23 @@ class _VoiceMessageRecorderSheetState
                   fontFeatures: [FontFeature.tabularFigures()],
                 ),
               ),
+              if (_recording) ...[
+                const SizedBox(height: AppRhythm.tight),
+                YoRecordingCountdown(
+                  secondsLeft: recordingSecondsLeft(_elapsed, _cap),
+                ),
+              ] else if (hasTake && _stoppedAtCap) ...[
+                const SizedBox(height: AppRhythm.tight),
+                Text(
+                  copy.text(
+                    'Stopped at the 1:00 limit. Your message is ready to send.',
+                    'Zatrzymano na limicie 1:00. Wiadomość jest gotowa do wysłania.',
+                  ),
+                  key: const ValueKey('voice-message-stopped-at-limit'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: palette.textSecondary),
+                ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 14),
                 Semantics(

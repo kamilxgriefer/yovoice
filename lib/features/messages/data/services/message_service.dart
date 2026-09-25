@@ -245,7 +245,37 @@ class _DirectAttachmentReservation {
 /// media review (ADR-212) reads these so it can never disagree with them.
 const int directImageMaxBytes = 8 * 1024 * 1024;
 const int directVideoMaxBytes = 64 * 1024 * 1024;
-const int directVideoMaxSeconds = 60;
+
+/// The one product limit for a direct voice or video message (and a server
+/// channel video), `DIRECT_MEDIA_MAX_SECONDS` in `direct_integrity.js`.
+/// Every declared and stored duration stays inside 1..this.
+const int directMediaMaxSeconds = 60;
+const int directVideoMaxSeconds = directMediaMaxSeconds;
+const int directVoiceMaxSeconds = directMediaMaxSeconds;
+
+/// How far a take's *measured* length may run past [directMediaMaxSeconds]
+/// and still be a full-length take: `DIRECT_MEDIA_DURATION_GRACE_MS` in
+/// `direct_integrity.js`. A recorder or camera that stops itself at the cap
+/// always produces a file slightly longer than the cap (capture starts before
+/// the stopwatch and ends after it), and the server accepts that and stores
+/// the cap.
+const int directMediaDurationGraceMs = 2000;
+
+/// The whole seconds to declare for a take its recorder or camera capped at
+/// [directMediaMaxSeconds]: the measured length rounded up, except that a
+/// take running past the cap by no more than [directMediaDurationGraceMs] is
+/// declared as the cap itself. Anything longer keeps its real length, so the
+/// 1..60 checks downstream still refuse it.
+int directCappedTakeSeconds(Duration measured) {
+  final milliseconds = measured.inMilliseconds;
+  final seconds = (milliseconds + 999) ~/ 1000;
+  if (seconds > directMediaMaxSeconds &&
+      milliseconds <=
+          directMediaMaxSeconds * 1000 + directMediaDurationGraceMs) {
+    return directMediaMaxSeconds;
+  }
+  return seconds;
+}
 
 class MessageService {
   static const int _maxReadReceiptPagesPerPass = 100;
@@ -1853,7 +1883,7 @@ class MessageService {
   }) async {
     final problem = validateRecordedAudio(audio);
     if (problem != null) throw problem;
-    if (durationSeconds < 1 || durationSeconds > 60) {
+    if (durationSeconds < 1 || durationSeconds > directVoiceMaxSeconds) {
       throw StateError('Voice messages must be between 1 and 60 seconds.');
     }
     final capture = _captureAttachmentQueueOwner();

@@ -22,7 +22,11 @@ import 'package:yovoice/features/media/data/services/gif_transport.dart';
 // webm 1 KiB-64 MiB, 1-60 s"), so both surfaces read the same constants and
 // this scene's backstop can never drift from the review it presents.
 import 'package:yovoice/features/messages/data/services/message_service.dart'
-    show directImageMaxBytes, directVideoMaxBytes, directVideoMaxSeconds;
+    show
+        directCappedTakeSeconds,
+        directImageMaxBytes,
+        directVideoMaxBytes,
+        directVideoMaxSeconds;
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart'
     show
         DirectMessageMediaPickAction,
@@ -479,9 +483,10 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
         ? await picker(source)
         : await ImagePicker().pickVideo(
             source: source,
-            maxDuration: const Duration(seconds: 60),
+            maxDuration: const Duration(seconds: directVideoMaxSeconds),
           );
     if (video == null || !mounted) return;
+    final gallery = source == ImageSource.gallery;
     final contentType = _videoContentType(video);
     if (contentType == null) {
       _showMessage(failure);
@@ -496,7 +501,12 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
       _showMessage(failure);
       return;
     }
-    final durationSeconds = (duration.inMilliseconds + 999) ~/ 1000;
+    // A camera clip was stopped at 60 s by the camera itself, and a
+    // full-length recording measures a little over that: it declares the cap.
+    // A library clip is measured as it is and must fit on its own.
+    final durationSeconds = gallery
+        ? (duration.inMilliseconds + 999) ~/ 1000
+        : directCappedTakeSeconds(duration);
     final length = await video.length();
     if (!mounted) return;
     // The backstop, unchanged and still ahead of the review.
@@ -507,7 +517,6 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
       _showMessage(failure);
       return;
     }
-    final gallery = source == ImageSource.gallery;
     // Minted on the first press and then reused, exactly as for a photo: the
     // clip the reservation declared is the one the first attempt measured, and
     // a retry replays that reservation instead of asking for a second lease.
@@ -520,7 +529,9 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
             type: 'video',
             contentType: contentType,
             size: length,
-            durationSeconds: (clip.inMilliseconds + 999) ~/ 1000,
+            durationSeconds: gallery
+                ? (clip.inMilliseconds + 999) ~/ 1000
+                : directCappedTakeSeconds(clip),
           ),
       source: ClubMediaUploadSource.pickedFile(video, length: length),
       failure: failure,
