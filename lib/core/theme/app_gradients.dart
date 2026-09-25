@@ -33,9 +33,11 @@ class AppGradients {
   /// played part still holds ≥ 3:1 against `waveUnplayed` at BOTH ends on a
   /// block (R13, WCAG 1.4.11):
   ///
-  /// * Dark — the primary halfway to white (#BD97FB) into
-  ///   `interactiveForeground` (#D986FF). The raw logo pair measured only
-  ///   1.24 / 1.72:1 there, so played and unplayed differed by hue alone.
+  /// * Dark — the logo violet 40 % toward white (#B082FA) into the logo
+  ///   magenta 32 % toward white (#D46BFF), so it still reads as the logo's
+  ///   violet → magenta rather than a pastel lavender. It holds ≥ 3.14:1
+  ///   against the Dark `waveUnplayed` (.22). The raw logo pair measured
+  ///   only 1.24 / 1.72:1, so played and unplayed differed by hue alone.
   /// * Pearl — the `primaryAction` pair (#6F1FD1 → #A117D8); the raw
   ///   #C026FF end fell to 2.65:1 on white.
   ///
@@ -45,8 +47,8 @@ class AppGradients {
       LinearGradient(
         colors: palette.isDark
             ? [
-                Color.lerp(scheme.primary, AppColors.white, .50)!,
-                palette.interactiveForeground,
+                Color.lerp(scheme.primary, AppColors.white, .40)!,
+                Color.lerp(AppColors.secondary, AppColors.white, .32)!,
               ]
             : [scheme.primary, scheme.secondary],
       );

@@ -158,7 +158,7 @@ void main() {
       expect(dark.liveGlow, AppColors.live.withValues(alpha: .34));
       expect(pearl.liveGlow, AppColors.live.withValues(alpha: .18));
       expect(dark.specular, AppColors.white.withValues(alpha: .22));
-      expect(dark.waveUnplayed, dark.textPrimary.withValues(alpha: .28));
+      expect(dark.waveUnplayed, dark.textPrimary.withValues(alpha: .22));
       expect(pearl.waveUnplayed, pearl.textPrimary.withValues(alpha: .22));
     });
 
@@ -204,8 +204,8 @@ void main() {
           }
         }
       }
-      // Pearl is the primaryAction pair; Dark lifts the primary halfway to
-      // white into the interactive lavender.
+      // Pearl is the primaryAction pair; Dark lifts the logo violet and the
+      // logo magenta toward white, keeping the violet → magenta read.
       expect(
         AppGradients.voicePlayed(AppTheme.lightTheme.colorScheme, pearl).colors,
         AppGradients.primaryAction(AppTheme.lightTheme.colorScheme).colors,
@@ -214,7 +214,13 @@ void main() {
         AppGradients.voicePlayed(AppTheme.darkTheme.colorScheme, dark)
             .colors
             .first,
-        0xFFBD97FB,
+        0xFFB082FA,
+      );
+      _expectHex(
+        AppGradients.voicePlayed(AppTheme.darkTheme.colorScheme, dark)
+            .colors
+            .last,
+        0xFFD46BFF,
       );
     });
 
