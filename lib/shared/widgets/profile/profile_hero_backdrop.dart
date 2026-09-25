@@ -26,7 +26,9 @@ import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
 /// Height, for a backdrop `W` wide under a status bar `T` tall:
 ///
 /// * ideal: `T + toolbarExtent + band`, with the band chosen by the
-///   backdrop's own width (124 below 600, 156 below 1100, 176 above);
+///   backdrop's own width (124 below 600, 156 below 1100, 176 above); past
+///   [wideReferenceWidth] the height grows with the width, so a 2560 desktop
+///   keeps the same share of the photo as a 1440 one instead of a sliver;
 /// * never narrower than the stored 16:9 — the height is capped at
 ///   `W × 9 / 16`, so a phone shows the WHOLE banner (edge to edge, nothing
 ///   cropped at the sides) and wider tiers crop only top and bottom, around
@@ -49,9 +51,10 @@ class ProfileHeroGeometry {
   /// Resolves the hero for a host [width] wide (the content column the route
   /// actually gets — beside the desktop sidebar, never the window).
   ///
-  /// [windowWidth] only decides whether the backdrop, capped at
-  /// [maxBackdropWidth], has page canvas beside it and therefore needs its
-  /// side melt; [viewportHeight] caps a landscape phone.
+  /// The backdrop always spans the whole host. [windowWidth] only decides
+  /// whether a host that capped the column (the desktop shell's 1440pt
+  /// workbench frame on a very wide window) left page canvas beside it, which
+  /// earns a side melt; [viewportHeight] caps a landscape phone.
   factory ProfileHeroGeometry.resolve({
     required double width,
     double topInset = 0,
@@ -59,13 +62,14 @@ class ProfileHeroGeometry {
     double? windowWidth,
   }) {
     final safeWidth = width.isFinite ? math.max(0.0, width) : 0.0;
-    final backdropWidth = math.min(safeWidth, maxBackdropWidth);
+    final backdropWidth = safeWidth;
     final (band, fade) = switch (backdropWidth) {
       < mediumBreakpoint => (narrowBand, narrowFade),
       < wideBreakpoint => (mediumBand, mediumFade),
       _ => (wideBand, wideFade),
     };
-    final ideal = topInset + toolbarExtent + band;
+    final growth = math.max(1.0, backdropWidth / wideReferenceWidth);
+    final ideal = topInset + (toolbarExtent + band) * growth;
     var cap = backdropWidth / ProfileImageRules.banner.aspectRatio;
     if (viewportHeight != null &&
         viewportHeight.isFinite &&
@@ -76,7 +80,7 @@ class ProfileHeroGeometry {
         topInset + toolbarExtent + minimumClearBand + fade * textFadeShare;
     final height = math.max(floor, math.min(ideal, cap));
     final sideFade =
-        backdropWidth >= maxBackdropWidth &&
+        backdropWidth >= wideReferenceWidth &&
             windowWidth != null &&
             windowWidth > backdropWidth + .5
         ? sideFadeExtent
@@ -115,9 +119,10 @@ class ProfileHeroGeometry {
   /// Toolbar row: 6 px air, a 44 px target row, 6 px air.
   static const double toolbarExtent = 56;
 
-  /// The hero never grows wider than the workbench measure; past it the
-  /// photo is centred and melts into the canvas at both sides.
-  static final double maxBackdropWidth =
+  /// The widest width at which the wide tier keeps its fixed height; wider
+  /// heroes scale their height with the width (same visible share of the
+  /// photo). Also the desktop shell's widest content column.
+  static final double wideReferenceWidth =
       ResponsiveContentWidth.workbench.maxWidth;
 
   static const double mediumBreakpoint = 600;
@@ -162,8 +167,8 @@ class ProfileHeroGeometry {
   /// Height of the bottom melt into the page canvas.
   final double fade;
 
-  /// Width of the left/right melt; 0 unless the backdrop is capped and has
-  /// canvas beside it.
+  /// Width of the left/right melt; 0 unless the host capped the column and
+  /// left canvas beside it.
   final double sideFade;
 
   /// The first y at which text may stand: the photo is at most 10% opaque
@@ -174,15 +179,16 @@ class ProfileHeroGeometry {
   /// legible over a bright photo.
   double get topScrimExtent => math.min(height, topInset + topScrimReach);
 
-  /// The hero's height at its widest presentation (desktop, no status bar).
+  /// The hero's height at [wideReferenceWidth] on a desktop (no status bar).
   static double get widestHeight => toolbarExtent + wideBand;
 
   /// Share of the stored 16:9 banner's height that is on screen at the
-  /// widest presentation — and therefore at every width, since narrower
-  /// heroes show more of the height and phones show all of it.
+  /// widest ratio — reached at [wideReferenceWidth] and kept beyond it,
+  /// since wider heroes grow in proportion — and therefore at every width:
+  /// narrower heroes show more of the height and phones show all of it.
   static double get alwaysVisibleFraction =>
       ProfileImageRules.banner.aspectRatio /
-      (maxBackdropWidth / widestHeight);
+      (wideReferenceWidth / widestHeight);
 
   @override
   bool operator ==(Object other) =>
@@ -398,7 +404,8 @@ class _StretchingBackdropSlot extends StatelessWidget {
 ///    * a sized light status-bar region, only while the photo is on screen;
 /// 3. an alpha melt: the whole stack dissolves into whatever page canvas is
 ///    underneath over the bottom [ProfileHeroGeometry.fade] (and the sides
-///    when capped), so there is no seam against a tinted canvas.
+///    when a host capped the column), so there is no seam against a tinted
+///    canvas.
 ///
 /// All of it sits in one [RepaintBoundary]: scrolling moves the recorded
 /// layer instead of repainting the photo, its blur or its masks.

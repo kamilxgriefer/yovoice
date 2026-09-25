@@ -317,12 +317,12 @@ void main() {
       final background = tester.getRect(
         find.byKey(const ValueKey('friend-profile-background')),
       );
-      // The scroll view spans the hero's own 1440pt cap (the banner is the
-      // header's full-bleed background); the readable column inside it keeps
-      // the 880pt list measure. Before the hero, the scroll view itself was
-      // the 880pt column.
-      final expectedWidth = size.width > 1440 ? 1440.0 : size.width;
-      final expectedLeft = (size.width - expectedWidth) / 2;
+      // The scroll view spans the whole route (the banner is the header's
+      // full-bleed background); the readable column inside it keeps the
+      // 880pt list measure. Before the hero, the scroll view itself was the
+      // 880pt column.
+      final expectedWidth = size.width;
+      const expectedLeft = 0.0;
       final columnWidth = size.width > 880 ? 880.0 : size.width;
       final columnLeft = (size.width - columnWidth) / 2;
 
@@ -669,8 +669,8 @@ void main() {
 
       // Re-based when the banner became the header's full-bleed background:
       // it used to be an inset card that had to end above the avatar, capped
-      // by the 880px measure. Now it starts at y = 0, runs edge to edge up to
-      // the 1440pt cap, and the avatar stands in its bottom melt.
+      // by the 880px measure. Now it starts at y = 0, runs edge to edge, and
+      // the avatar stands in its bottom melt.
       final band = tester.getRect(find.byType(ProfileBannerButton));
       final avatar = tester.getRect(find.byType(ProfilePhotoButton));
       final geometry = ProfileHeroGeometry.resolve(
@@ -679,12 +679,8 @@ void main() {
         windowWidth: size.width,
       );
       expect(band.top, 0, reason: '$size hero starts at the top edge');
-      expect(
-        band.width,
-        size.width > 1440 ? 1440 : size.width,
-        reason: '$size hero is full bleed',
-      );
-      expect(band.left, (size.width - band.width) / 2);
+      expect(band.width, size.width, reason: '$size hero is full bleed');
+      expect(band.left, 0);
       expect(band.height, closeTo(geometry.height, .01));
       expect(
         avatar.top,

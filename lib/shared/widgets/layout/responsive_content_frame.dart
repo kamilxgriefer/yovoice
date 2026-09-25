@@ -11,7 +11,12 @@ enum ResponsiveContentWidth {
   list(880),
   feed(1040),
   dashboard(1200),
-  workbench(1440);
+  workbench(1440),
+
+  /// No cap: ONLY for a scroll view whose first sliver is a full-bleed hero
+  /// (the profile banner). Every readable sliver inside it must apply its own
+  /// measure, e.g. `ProfileMeasuredSliverPadding`.
+  fullBleed(double.infinity);
 
   const ResponsiveContentWidth(this.maxWidth);
 

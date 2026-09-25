@@ -88,9 +88,9 @@ class ProfileHeader extends StatelessWidget {
   ///
   /// The hero draws the 16:9 source with `BoxFit.cover` and
   /// `Alignment.center`. Phones show all of it (the hero is never narrower
-  /// than 16:9); wider heroes crop top and bottom, down to ~29% at the
-  /// 1440pt cap. Derived in [ProfileHeroGeometry] from the stored ratio, the
-  /// widest backdrop and its height, so a redesign that changes any of them
+  /// than 16:9); wider heroes crop top and bottom, down to ~29% from 1440pt
+  /// up. Derived in [ProfileHeroGeometry] from the stored ratio, the wide
+  /// reference width and its height, so a redesign that changes any of them
   /// moves the crop editor's guide with it.
   static final double bannerSafeBandFraction =
       ProfileHeroGeometry.alwaysVisibleFraction;
@@ -216,6 +216,7 @@ class ProfileHeader extends StatelessWidget {
         // page's one headline. Screen readers still hear the page named.
         Expanded(
           child: Semantics(
+            container: true,
             namesRoute: true,
             label: copy.profile,
             child: const SizedBox(height: 44),

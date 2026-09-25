@@ -54,8 +54,8 @@ class ProfileImageRules {
   /// The profile hero (`ProfileHeroGeometry`) paints the banner as the
   /// header's full-bleed background with `BoxFit.cover` and
   /// `Alignment.center`. Its height is capped at the width's 16:9, so a phone
-  /// shows the whole stored image; wider heroes run up to about 6.2:1 at the
-  /// 1440pt cap, where only the middle ~29% of the height survives. Storing
+  /// shows the whole stored image; wider heroes run up to about 6.2:1 from
+  /// 1440pt up, where only the middle ~29% of the height survives. Storing
   /// the 16:9 superset is the point: the hero can change in a redesign
   /// without asking anyone to re-upload their banner.
   ///

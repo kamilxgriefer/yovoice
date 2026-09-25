@@ -597,15 +597,15 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                 // The banner is the header's full-bleed background: it runs
                 // under the status bar and edge to edge (landscape insets
                 // included), so only the bottom inset stays a SafeArea and
-                // the scroll view spans the hero's own 1440pt cap. Readable
-                // content keeps the 880pt list measure through the hero and
-                // the measured padding below.
+                // the scroll view spans the whole route. Readable content
+                // keeps the 880pt list measure through the hero and the
+                // measured padding below.
                 child: SafeArea(
                   top: false,
                   left: false,
                   right: false,
                   child: ResponsiveContentFrame(
-                    width: ResponsiveContentWidth.workbench,
+                    width: ResponsiveContentWidth.fullBleed,
                     alignment: ResponsiveContentAlignment.topCenter,
                     child: CustomScrollView(
                       key: const ValueKey('friend-profile-content-frame'),
@@ -768,6 +768,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             // page's headline — but the page is still announced as a profile.
             Expanded(
               child: Semantics(
+                container: true,
                 namesRoute: true,
                 label: copy.text('Profile', 'Profil'),
                 child: const SizedBox(height: 44),

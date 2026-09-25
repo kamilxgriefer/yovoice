@@ -774,7 +774,7 @@ class _RoomCoverSafeAreaOverlay extends StatelessWidget {
 /// The stored banner is 16:9, and the profile hero paints it full bleed
 /// with `BoxFit.cover` and `Alignment.center`. A phone shows all of it (the
 /// hero is never narrower than 16:9, so nothing is cut at the sides); wider
-/// heroes are wider than 16:9 — about 6.2:1 at the 1440pt cap — and crop the
+/// heroes are wider than 16:9 — about 6.2:1 from 1440pt up — and crop the
 /// top and bottom symmetrically. Only the centre strip therefore survives
 /// every width, and without this guide the user composes a 16:9 picture
 /// whose top and bottom are silently discarded on a desktop.

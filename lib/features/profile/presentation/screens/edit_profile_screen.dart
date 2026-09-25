@@ -10,6 +10,7 @@ import 'package:yovoice/features/premium/data/services/entitlement_service.dart'
 import 'package:yovoice/features/premium/presentation/widgets/premium_upsell_sheet.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/image_crop.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/image_crop_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
@@ -23,10 +24,16 @@ class EditProfileScreen extends StatefulWidget {
     this.service,
     this.entitlements,
     this.clock,
+    this.mediaService,
     super.key,
   });
 
   final UserProfile profile;
+
+  /// Test/preview seam for the live preview's viewer-authorized banner and
+  /// avatar. Production passes nothing and each media widget resolves its
+  /// own, exactly as before.
+  final ProfileMediaService? mediaService;
 
   /// Injectable so the end-to-end save test (test/profile_save_e2e_test.dart)
   /// can drive THIS screen's real pick→validate→upload→persist pipeline
@@ -537,6 +544,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   profile: widget.profile,
                   pendingAvatar: _pendingAvatar,
                   pendingBanner: _pendingBanner,
+                  mediaService: widget.mediaService,
                 ),
                 const SizedBox(height: 14),
                 Row(
@@ -903,11 +911,13 @@ class _ProfileImagePreview extends StatelessWidget {
     required this.profile,
     required this.pendingAvatar,
     required this.pendingBanner,
+    this.mediaService,
   });
 
   final UserProfile profile;
   final PickedProfileImage? pendingAvatar;
   final PickedProfileImage? pendingBanner;
+  final ProfileMediaService? mediaService;
 
   /// A thumbnail inside a form, not a hero: capped so a laptop never blows
   /// it up ("the banner is enormous"), centred like a device preview.
@@ -952,6 +962,7 @@ class _ProfileImagePreview extends StatelessWidget {
                           geometry: geometry,
                           userId: profile.uid,
                           mediaRevision: profile.profileUpdatedAt,
+                          mediaService: mediaService,
                           localImage: pendingBannerBytes == null
                               ? null
                               : MemoryImage(pendingBannerBytes),
@@ -981,6 +992,7 @@ class _ProfileImagePreview extends StatelessWidget {
                                   userId: profile.uid,
                                   photoUrl: profile.photoUrl,
                                   mediaRevision: profile.profileUpdatedAt,
+                                  mediaService: mediaService,
                                   displayName: profile.displayName,
                                   backgroundColor: colors.primary,
                                 ),
