@@ -13219,6 +13219,11 @@ them was built as drawn, and none will be until the named backend exists:
   the DM `_UnreadBadge` in `messages_screen.dart`. `YoServerRailItem` has no
   badge parameter, and `test/yo_server_rail_item_test.dart` asserts that none
   is drawn.
+  *Amended 2026-09-25 (ADR-XXX, listener questions dot):* the Podcast
+  Questions channel now has a real per-host cursor, so owners, admins and
+  moderators get the shared waiting dot for unseen listener questions — on
+  the rail item too, through an optional `attention` slot that is absent by
+  default. Still no counter, and no mark for any other channel.
 - **Avatars or a head count in a voice-channel row before joining.**
   `rooms/{roomId}`, `participants` and `channelSessions` are closed to the
   client (ADR-177). `YoVoiceChannelRow` drops `participants` unless
@@ -15227,3 +15232,80 @@ listener could read it with the SDK. The re-mint path, audio route and
 Android keep-alive type update are unverified on devices. The Community stage
 gets the same truthful listener status and inline queue through the shared
 controller.
+
+## ADR-XXX: Listener questions dot — a per-host cursor, one waiting mark, no push
+
+**Status:** accepted, 2026-09-25 (next build, `podcast-host`, part 2 of 2).
+Amends ADR-209 ("not built": unread marks on the server rail).
+
+**Context.** Kamil: "pytania słuchaczy dobrze jakby były powiadomienia w
+formie właśnie kropeczki małej albo coś, że masz jakieś pytanie". Nothing told
+a podcast host that a listener had asked something. `createServerPodcastQuestionV1`
+writes only the question document; questions are `queued` or `onAir` forever
+(there is no answered state), so "there are queued questions" can never clear
+and cannot drive a dot. ADR-209 refused unread marks on server surfaces until
+a read cursor exists. Same gap on released 3.0.0. Diagnosis and independent
+verdict: `yovoice-evidence/2026-09-25/diagnosis-listener-questions-dot.md` and
+`verdict-listener-questions-dot.md`.
+
+**Decision.**
+1. *Cursor.* `users/{uid}/serverQuestionSeen/{serverId}_{channelId}` =
+   exactly `{seenAt}`. Rules: owner `get`, `create` and `update` only, with
+   `isActiveAccount()` (the ADR-206 freeze), a `serverId_channelId` id pattern
+   (≤ 300 characters), `hasOnly(['seenAt'])`, `seenAt is timestamp` and
+   `seenAt <= request.time`; on update `seenAt` may only move forward. No
+   `list`, no `delete`. Account deletion sweeps the subcollection
+   (`PLAIN_SUBCOLLECTIONS`, sixteen → seventeen). The client writes the
+   newest shown question's own `createdAt`, never "now", so a question
+   committed during the write is not swallowed.
+2. *Signal.* `ServerQuestionAttentionRepository.watchPodcastQuestionsUnseen`
+   combines `questions orderBy createdAt desc limit 1` (single-field index, no
+   status filter needed) with the cursor document: unseen when the newest
+   parsed question is later than the cursor or there is no cursor, and was not
+   asked by the viewer. An unparseable newest document, no questions, or a
+   failed read settle on false. A dot, not a number: a count would need N
+   reads or a non-realtime aggregate.
+3. *Who.* Owners, admins and moderators (`canModerate`) of an active,
+   non-held Podcast server. The Community template's `questions` channel is a
+   plain thread and is not covered.
+4. *Where.* One shared `ServerWaitingDot` (the request-to-speak mark, so hosts
+   read one visual word for "somebody is waiting"): the `Pytania` local tab
+   (never while selected), the Questions channel row (desktop column and the
+   phone sheet; not while selected), the phone header `Kanały` entry when no
+   closer `Pytania` tab carries it, the server's squircle in the Servers
+   directory, and another podcast server's item in the server rail.
+   `YoSegmentedPillSegment` gains an optional `badge`, `ServerLocalTab` an
+   `attentionLabel`, `YoServerRailItem` an optional `attention`; all default to
+   nothing. The spoken label is "Nowe pytania słuchaczy" / "New listener
+   questions".
+5. *One set of listeners.* `ServerQuestionAttention` (a `ChangeNotifier` in
+   `data/services`) is owned by `ServersScreen` and handed to every workspace
+   it hosts or pushes; a workspace built elsewhere keeps its own. Directory
+   servers come from the viewer's own directory role and one channel read to
+   find the Questions channel; the open workspace pins its live role and
+   channel list instead, at no extra cost.
+6. *Retained slot.* While the shell hides the Servers slot (`isVisible`
+   false) every listener is cancelled — no reads — and the last answers are
+   kept; when the slot returns each listener reopens and its first snapshot
+   corrects them. The board moves the cursor only while it is really in front
+   of the host: `isVisible`, the app resumed, and `TickerMode` enabled (no
+   covering route), debounced 800 ms so a burst of questions writes once.
+7. *No push.* A member may create up to 120 questions a minute under the only
+   budget that applies, so a per-question push would be a harassment vector.
+   A coalesced, budgeted `serverQuestion` bell/push for hosts outside the
+   studio stays a separate decision.
+
+**Reasoning.** A counter or `latestQuestionAt` on the channel document would
+contend with liveness writes during a live show and re-deliver the channel to
+every member's list; per-question seen rows are the read explosion ruled out;
+a per-device cursor would leave a dot on the phone for questions read on
+desktop. Forward-only in the rules (not only on the client) keeps two devices
+from bringing a dot back.
+
+**Consequences.** Deploy Firestore rules and the functions (account-deletion
+list) before any client that writes the cursor; an older rules set refuses
+the write and the dot simply never clears. Cursor rows outlive a deleted
+server or a left membership (private, grant nothing) until account deletion.
+The board now keeps one question subscription per channel instead of
+re-subscribing on every rebuild. Rendering on devices and web lifecycle
+mapping are unverified.
