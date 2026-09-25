@@ -2807,6 +2807,23 @@ This source record does not claim a physical-device loudness or focus-mode
 acceptance run, and the pending Yeels custom-audio check above is a separate
 media-playback boundary.
 
+**Superseded in source on 2026-09-24:** **Velvet Mallet v6** (ADR-210) replaces
+Prism Halo v5. Its revision 2 fixes measured weaknesses found in review:
+
+- **First Velvet Mallet render:**
+  - weak phone-speaker presence;
+  - a microphone muted/unmuted pair that sounded alike.
+- **First fix round:**
+  - call loops that opened with the bare message YO;
+  - a sparse incoming ring;
+  - a muted cue 7.9 dB weaker than unmuted in the phone band;
+  - a stereo image that leaned left by up to 1.8 dB.
+
+The same caveat applies. The owner has not auditioned revision 2, and there is
+no physical-device listening run yet. The unchanged Android channel ids and
+the unchanged iOS bundled file names are **UNVERIFIED** until a real upgraded
+device plays the new bytes.
+
 > **A pattern, named once here rather than four times below.** Between
 > 2026-08-19 and 2026-08-20, four features were found to exist in source,
 > pass their tests, and — where a backend was involved — be deployed and
@@ -3501,7 +3518,8 @@ halves are live while the client halves are not. Status per item:
   Premium frame 1.6 px, softer glow); colours stay the palette's semantic
   tokens because the ring test enforces 3:1 contrast on the surface.
 - **UI sounds** — replaced by the v4 pack (ADR-148); not yet auditioned by
-  the owner.
+  the owner. (Later superseded by Prism Halo v5 and then Velvet Mallet v6,
+  ADR-210.)
 - **Draggable text/link overlays on the Reel canvas** — fixed in source
   (ADR-149): drag and pinch in the Text tool; sliders remain.
 - **No "Done" over multiline keyboards** — the shared `YoKeyboardDoneBar`

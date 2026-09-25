@@ -202,7 +202,38 @@ the provider-driven end of an empty channel remain unproven in production.
 
 ---
 
+## YO Voice 3.0.0 (35) — Velvet Mallet sounds — build prepared — 2026-09-25
+
+**Status: version bumped, not built or uploaded.** `pubspec.yaml` is
+`3.0.0+35` (35 is the next free build number). The version name stays 3.0.0
+because the planned 3.0.1 below is the redesign polish; this build only adds
+the Velvet Mallet v6 product-sound pack (ADR-210, `32c9dd9`) on top of 3.0.0
+(34). The web already serves it (Hosting run 36038221140).
+
+Owner steps: build and upload iOS (TestFlight) and Android (Play internal
+track), then the ADR-210 device checks: one backgrounded push per Android
+channel on a phone upgraded from build 34 (message, social, achievement,
+alert, call), one iOS push, and a listen on speaker and headphones.
+
+Release notes / What to Test:
+- **en:** New YO Voice sounds: warm, soft wooden tones for joining and
+  leaving conversations, the microphone, notifications and calls. Calls now
+  sound different from messages from the first moment. Please tell us if a
+  notification still plays the old sound.
+- **pl:** Nowe dźwięki YO Voice: ciepłe, miękkie drewniane tony przy
+  wchodzeniu i wychodzeniu z rozmów, mikrofonie, powiadomieniach i
+  połączeniach. Połączenie od pierwszej chwili brzmi inaczej niż wiadomość.
+  Daj znać, jeśli któreś powiadomienie wciąż gra stary dźwięk.
+
 ## YO Voice 3.0.0 (34) — the Slim redesign — released to testers — 2026-09-19
+
+**Web live 2026-09-24.** `main @ 32c9dd9` (3.0.0+34 plus the Velvet Mallet v6
+sound pack, ADR-210) was deployed to Firebase Hosting by the owner-approved
+`workflow_dispatch` run
+[36038221140](https://github.com/kamilxgriefer/yovoice/actions/runs/36038221140)
+(`deploy_hosting: true`; verify job and deploy job green). Not read back from
+this container: the egress proxy blocks app.yovoice.app, so the served
+`build_number` still needs an owner check in a browser.
 
 **Status: Done for 3.0.0.** `main` carries `version: 3.0.0+34` in the release
 commit `176ec120` (`chore(release): YO Voice 3.0.0+34, the Slim redesign`). Scope, per-phase
@@ -692,6 +723,57 @@ their separate production-deployment gates.
 > physical device and no production-traffic observation** except where a
 > simulator run is named explicitly. Session record:
 > [2026-09-07-build-22-engagement-and-tester-rounds](Sessions/2026-09-07-build-22-engagement-and-tester-rounds.md).
+
+- **Velvet Mallet product sound v6 replaces Prism Halo v5 — source
+  2026-09-24 (ADR-210)** (**SOURCE + ASSET CHECKS VERIFIED; NOT MERGED, NOT
+  BUILT, NOT RELEASED; REVISION 2 NOT YET AUDITIONED BY THE OWNER**).
+  - **Where it lives.** It is committed on branch
+    `claude/confident-franklin-bu0wax` in the commit that adds ADR-210. It is
+    not merged to `main`.
+  - **Scope.** Asked on 2026-09-24 which pack to ship, the owner answered
+    "B - Velvet Mallet".
+    - `tool/generate_ui_sounds.py` renders the same 18 cue names and six
+      native push copies, now under `assets/audio/ui/v6/`.
+    - The v5 assets are retired.
+  - **Revision 2** is the owner's pack B after two review rounds.
+    - **Phone presence.** Presence is measured on the mono mix through an
+      8th-order Butterworth band-pass at 800 Hz–6 kHz (scipy
+      `butter(N=4, btype='bandpass')`), as the loudest 400 ms of its mean
+      square. By that measure, at the v5 RMS targets, 17 of 18 cues are at
+      least as present as v5 (+0.02 to +10.22 dB). The outgoing ringback is
+      at parity (−0.01 dB).
+    - **Punchier attacks.** At the same RMS the attacks are punchier than
+      v5's. The loudest 100 ms of K-weighted power is +0.06 to +2.35 dB
+      higher, and the crest factor is higher in 17 cues.
+    - **Microphone.** Muted is a single, falling, darker thock that is now
+      1.84 dB under unmuted by that measure, against 7.9 dB before.
+    - **Calls.** Calls knock before they speak. Each ring opens with soft
+      D5 knocks before the YO, so a call no longer opens like a message.
+      The generator asserts an opening similarity below 0.65; the loops
+      score 0.594 and 0.556, against 0.996 and 0.969 before.
+    - **Incoming ring.** It rings three times per 3.2 s cycle and is audible
+      for 2.27 s, against 1.59 s before.
+    - **Stereo.** The width is symmetric, so there is no left lean.
+  - **Native sounds.** File names and Android channel ids are unchanged, so no
+    Functions deploy is needed. The Android caveat below still applies.
+  - **Release checks still open:**
+    - the owner's listen to revision 2 on a phone speaker and on headphones,
+      before any release build;
+    - a real Android upgrade confirming that the existing channels play the
+      new bytes (**UNVERIFIED**). ADR-116 recorded that an existing channel
+      could not reliably receive replacement bytes. If the device check
+      fails, the fix is new resource names and new channel ids in Flutter,
+      Functions and the manifest together, which needs a Functions deploy;
+    - an iOS device push.
+  - **Login music.** The owner rejected the proposed login music and it is not
+    in the repository.
+  - **Evidence:**
+    - `python3 tool/generate_ui_sounds.py --check` passes, byte-identical on
+      Python 3.10–3.13;
+    - `flutter analyze` is clean;
+    - the full `flutter test` suite passes **5319/5319** (Flutter
+      3.44.6);
+    - `node --test functions/test/push_payload.test.js` passes 5/5.
 
 - **Community OBS ingress — source 2026-09-16 (ADR-192)** (**NOT DEPLOYED;
   OFF BY DEFAULT; NO REAL OBS STREAM TESTED**), landed in `99b5916b` and

@@ -127,7 +127,7 @@ test("missed-call notification also hides caller details outside Android", () =>
   assert.equal(JSON.stringify(message.webpush).includes("Alex"), false);
 });
 
-test("every notification type selects its semantic Prism Halo profile", () => {
+test("every notification type selects its semantic sound profile", () => {
   const expected = new Map([
     ["directMessage", "yovoice_messages_v1"],
     ["mention", "yovoice_messages_v1"],

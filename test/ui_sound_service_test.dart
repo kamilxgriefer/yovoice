@@ -11,7 +11,7 @@ import 'package:yovoice/core/audio/ui_sound_service.dart';
 
 void main() {
   test(
-    'Prism Halo v5 pack is 48 kHz stereo, bounded and mastered in assets',
+    'Velvet Mallet v6 pack is 48 kHz stereo, bounded and mastered in assets',
     () {
       final uiPaths = UiSound.values.map((sound) => sound.assetPath).toSet();
       final tonePaths = CallTone.values.map((tone) => tone.assetPath).toSet();
@@ -21,7 +21,7 @@ void main() {
       expect(paths, hasLength(18));
       expect(UiSound.values, hasLength(17));
       expect(CallTone.values, hasLength(2));
-      expect(paths, everyElement(startsWith('audio/ui/v5/')));
+      expect(paths, everyElement(startsWith('audio/ui/v6/')));
       final packagedWavs = Directory('assets/audio/ui')
           .listSync(recursive: true)
           .whereType<File>()
@@ -31,24 +31,24 @@ void main() {
       expect(packagedWavs, paths.map((path) => 'assets/$path').toSet());
       final fingerprints = <String>{};
       const expectedSeconds = <String, double>{
-        'room_created.wav': 43552 / 48000,
-        'room_joined.wav': 35104 / 48000,
-        'room_left.wav': 34144 / 48000,
-        'participant_joined.wav': 21472 / 48000,
-        'participant_left.wav': 21472 / 48000,
+        'room_created.wav': 49920 / 48000,
+        'room_joined.wav': 38400 / 48000,
+        'room_left.wav': 37440 / 48000,
+        'participant_joined.wav': 22080 / 48000,
+        'participant_left.wav': 22080 / 48000,
         'microphone_muted.wav': 8800 / 48000,
         'microphone_unmuted.wav': 8800 / 48000,
-        'notification.wav': 40096 / 48000,
-        'notification_social.wav': 42592 / 48000,
-        'notification_achievement.wav': 52768 / 48000,
-        'notification_alert.wav': 43168 / 48000,
-        'call_connected.wav': 48736 / 48000,
-        'call_ended.wav': 45280 / 48000,
-        'call_declined.wav': 47584 / 48000,
-        'call_failed.wav': 49312 / 48000,
-        'call_busy.wav': 54304 / 48000,
-        'call_incoming_loop.wav': 158560 / 48000,
-        'call_outgoing_loop.wav': 161824 / 48000,
+        'notification.wav': 42240 / 48000,
+        'notification_social.wav': 43200 / 48000,
+        'notification_achievement.wav': 51840 / 48000,
+        'notification_alert.wav': 43200 / 48000,
+        'call_connected.wav': 48960 / 48000,
+        'call_ended.wav': 46080 / 48000,
+        'call_declined.wav': 47040 / 48000,
+        'call_failed.wav': 48960 / 48000,
+        'call_busy.wav': 51840 / 48000,
+        'call_incoming_loop.wav': 153600 / 48000,
+        'call_outgoing_loop.wav': 153600 / 48000,
       };
       const targetRms = <String, double>{
         'room_created.wav': -22.50,
@@ -310,16 +310,16 @@ void main() {
 
     expect(players.keys, UiSoundChannel.values);
     expect(players[UiSoundChannel.room]!.paths, [
-      'audio/ui/v5/room_joined.wav',
+      'audio/ui/v6/room_joined.wav',
     ]);
     expect(players[UiSoundChannel.controls]!.paths, [
-      'audio/ui/v5/microphone_muted.wav',
+      'audio/ui/v6/microphone_muted.wav',
     ]);
     expect(players[UiSoundChannel.notification]!.paths, [
-      'audio/ui/v5/notification.wav',
+      'audio/ui/v6/notification.wav',
     ]);
     expect(players[UiSoundChannel.call]!.paths, [
-      'audio/ui/v5/call_connected.wav',
+      'audio/ui/v6/call_connected.wav',
     ]);
   });
 

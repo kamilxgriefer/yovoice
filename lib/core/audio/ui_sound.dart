@@ -2,7 +2,7 @@ enum UiSoundChannel { room, controls, notification, call }
 
 /// Native notification delivery plays the incoming-call WAV once. Reserve
 /// that audible window before handing continuous ringing to the in-app loop.
-/// The generated master is 3.303 s; the small guard absorbs platform startup
+/// The generated master is 3.200 s; the small guard absorbs platform startup
 /// jitter without leaving the call screen silent for a long retention period.
 const Duration incomingCallNativeSoundWindow = Duration(milliseconds: 3600);
 
@@ -122,5 +122,5 @@ enum UiSound {
   final double volume;
   final Duration cooldown;
 
-  String get assetPath => 'audio/ui/v5/$fileName';
+  String get assetPath => 'audio/ui/v6/$fileName';
 }

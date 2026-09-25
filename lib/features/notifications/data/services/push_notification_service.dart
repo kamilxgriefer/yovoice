@@ -148,8 +148,12 @@ bool shouldSuppressForegroundNotification({
 
 /// Stable native sound families used by foreground and background delivery.
 ///
-/// Android persists a channel's sound forever, so each v5 Prism Halo family
-/// owns a fresh channel id. iOS selects the matching bundled WAV per payload.
+/// Android persists a channel's sound URI forever, so each semantic family owns
+/// its own channel id. That URI names a raw resource
+/// (`android.resource://<package>/raw/<name>`), so the Velvet Mallet v6
+/// remaster replaced the resource bytes under the same names and ids
+/// (ADR-210; an upgraded Android device playing the new bytes is a release
+/// check). iOS selects the matching bundled WAV per payload.
 enum NotificationSoundProfile { message, social, achievement, alert, call }
 
 NotificationSoundProfile notificationSoundProfileFor(NotificationType type) {
@@ -278,8 +282,9 @@ Future<void> resolveInitialNotificationNavigation<T>({
 /// pattern applied here.
 class PushNotificationService {
   /// Android notification-channel sound settings are immutable after the
-  /// channel is first created. Prism Halo therefore uses fresh ids for every
-  /// semantic family, including a new call channel for existing installs.
+  /// channel is first created, so every semantic family has its own id and a
+  /// renamed sound resource needs a fresh one. [NotificationSoundProfile]
+  /// records why the Velvet Mallet v6 remaster kept these ids (ADR-210).
   static const String androidChannelId = 'yovoice_messages_v1';
   static const String androidCallChannelId = 'yovoice_calls_v2';
 
