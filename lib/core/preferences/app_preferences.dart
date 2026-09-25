@@ -24,6 +24,7 @@ class AppPreferences {
     this.language = AppLanguagePreference.system,
     this.soundEffectsEnabled = true,
     this.gifAutoLoadEnabled = true,
+    this.bugReportButtonVisible = true,
   });
 
   final AppThemePreference theme;
@@ -43,17 +44,29 @@ class AppPreferences {
   /// retain the expected automatic-loading behavior.
   final bool gifAutoLoadEnabled;
 
+  /// Whether the movable "Bug" button floats over the app on this device.
+  ///
+  /// Only consulted in builds that compile the button in at all
+  /// (`YOVOICE_BUG_BUTTON`, see `bug_report_config.dart`). Default on, so a
+  /// tester sees it without looking for it; turning it off here, or with the
+  /// button's own long-press, hides it on this device only. "Report a bug" in
+  /// Settings and the More menu stays available either way.
+  final bool bugReportButtonVisible;
+
   AppPreferences copyWith({
     AppThemePreference? theme,
     AppLanguagePreference? language,
     bool? soundEffectsEnabled,
     bool? gifAutoLoadEnabled,
+    bool? bugReportButtonVisible,
   }) {
     return AppPreferences(
       theme: theme ?? this.theme,
       language: language ?? this.language,
       soundEffectsEnabled: soundEffectsEnabled ?? this.soundEffectsEnabled,
       gifAutoLoadEnabled: gifAutoLoadEnabled ?? this.gifAutoLoadEnabled,
+      bugReportButtonVisible:
+          bugReportButtonVisible ?? this.bugReportButtonVisible,
     );
   }
 }
@@ -91,6 +104,7 @@ class AppPreferencesController extends ChangeNotifier {
   static const _languageKey = 'appearance.language.v1';
   static const _soundEffectsKey = 'audio.sound_effects.enabled.v1';
   static const _gifAutoLoadKey = 'media.gif_auto_load.enabled.v1';
+  static const _bugReportButtonKey = 'testing.bug_report_button.visible.v1';
 
   static final instance = AppPreferencesController(
     store: SharedPreferencesAppPreferencesStore(),
@@ -109,12 +123,14 @@ class AppPreferencesController extends ChangeNotifier {
       _store.read(_languageKey),
       _store.read(_soundEffectsKey),
       _store.read(_gifAutoLoadKey),
+      _store.read(_bugReportButtonKey),
     ]);
     _value = AppPreferences(
       theme: _parseTheme(values[0]),
       language: _parseLanguage(values[1]),
       soundEffectsEnabled: _parseSoundEffects(values[2]),
       gifAutoLoadEnabled: _parseFlag(values[3]),
+      bugReportButtonVisible: _parseFlag(values[4]),
     );
     _loaded = true;
     notifyListeners();
@@ -169,6 +185,20 @@ class AppPreferencesController extends ChangeNotifier {
     notifyListeners();
     try {
       await _store.write(_gifAutoLoadKey, enabled.toString());
+    } catch (_) {
+      _value = previous;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> setBugReportButtonVisible(bool visible) async {
+    if (_value.bugReportButtonVisible == visible) return;
+    final previous = _value;
+    _value = _value.copyWith(bugReportButtonVisible: visible);
+    notifyListeners();
+    try {
+      await _store.write(_bugReportButtonKey, visible.toString());
     } catch (_) {
       _value = previous;
       notifyListeners();

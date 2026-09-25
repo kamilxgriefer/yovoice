@@ -736,6 +736,35 @@ Object.assign(exports, createServerMessageFunctions({ enforceAppCheck: false }))
 // gate; the frozen base manifest above is unchanged.
 Object.assign(exports, createServerSessionHandFunctions({ enforceAppCheck: false }));
 
+/*
+|--------------------------------------------------------------------------
+| In-app bug reports (see functions/bug_reports/registration.js)
+|--------------------------------------------------------------------------
+| Eight exports need no new secret: reporters submit a report (and optionally
+| attach one reserved screenshot); the protected owner lists, reads, triages
+| and (for rights requests) deletes them or their screenshot in the Staff
+| Center; a daily sweep enforces retention. Reports
+| are therefore usable with nothing else configured.
+|
+| Alert delivery is SOURCE-GATED OFF, one gate per channel. Turning a gate on
+| exports `deliverBugReportV1` and declares that channel's secret
+| (RESEND_API_KEY for e-mail, GITHUB_BUG_REPORT_TOKEN for GitHub issues), so
+| the secret must be set first, and test/cold_start_module_graph.test.js's
+| pinned export list must gain `deliverBugReportV1` in the same reviewed
+| commit. Each channel is then switched at runtime in the Admin-only
+| appConfig/bugReports document (docs/DEPLOYMENT.md, "Bug report alerts").
+*/
+const BUG_REPORT_EMAIL_DELIVERY_ENABLED = false;
+const BUG_REPORT_GITHUB_DELIVERY_ENABLED = false;
+const { createBugReportFunctions } = require("./bug_reports/registration");
+Object.assign(exports, createBugReportFunctions({
+  emailDelivery: BUG_REPORT_EMAIL_DELIVERY_ENABLED,
+  githubDelivery: BUG_REPORT_GITHUB_DELIVERY_ENABLED,
+  // Telemetry mode, like every other callable today (App Check attestation is
+  // not yet healthy on every platform).
+  enforceAppCheck: false,
+}));
+
 // Cold-start observability. Emitted once per instance start, only inside the
 // Cloud Run / Functions runtime (K_SERVICE and FUNCTION_TARGET are set there
 // and nowhere else): tests that require this module in a child process read

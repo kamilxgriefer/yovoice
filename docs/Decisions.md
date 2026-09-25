@@ -16098,3 +16098,187 @@ reuse the app-deletion transaction shape (`disabled: true`, the
 and re-check inside that transaction that the account is still password-only
 and unverified — never the bare `enqueueAccountDeletionOutbox`. Deletion only
 shortens the window; the pre-registrant can register again.
+
+## ADR-223: In-app bug reports are server-written and owner-read; alerts are source-gated channels that never carry the screenshot or the uid
+
+**Date:** 2026-09-25 · **Status:** accepted (source on `nb2/report-bug`; numbered
+ADR-223 at the build 36 integration) · **NOT DEPLOYED**
+
+### Context
+
+Testers had no in-app way to report a bug: the only path was a
+`mailto:support@yovoice.app` tile in Settings > Help that carried no version,
+device or screen. Kamil wants a "report bug" button for the testing period and
+beyond, with alerts arriving by e-mail or as "a new Claude chat". Facts that
+shaped the design, all checked in code: `functions/` held no e-mail capability
+(Resend is used only as Firebase Auth's console SMTP relay, ADR-008, so no
+Functions secret existed); `kamilxgriefer/yovoice` is a public repository
+(`docs/QUALITY_AUTOMATION.md`); an eagerly declared `defineSecret` blocks
+`firebase deploy` until it is set (the ADR-214 GIPHY lesson); only three of the
+app's routes carry a `RouteSettings.name`; the app has no tester flag and ships
+one binary per platform to testers and stores; `MoreDestination` is walked
+exhaustively by the shell and several suites.
+
+### Decision
+
+1. **One path in, one path out.** `submitBugReportV1` (any signed-in account,
+   unverified included; disabled/deleted refused; banned allowed in words, but
+   a banned account's screenshot is recorded `refused` and gets no
+   reservation, since `storage.rules` refuses a banned uploader) validates an
+   exact allowlist — a 10-2000 UTF-16-unit description, a fixed device-context
+   object and an optional JPEG declaration — rate-limits it (5 per 10 minutes
+   and 20 per day per account; no project-wide bucket refuses a report) and
+   writes `bugReports/{br_<sha256 prefix>}` in one transaction; the id is
+   derived from uid + requestId, so a retry replays. The uid is taken from the
+   session, never from the client. The protected owner reads through
+   `listBugReportsV1` (optionally by `reporterId`) / `getBugReportV1` /
+   `updateBugReportStatusV1` / `deleteBugReportV1` /
+   `deleteBugReportScreenshotV1`, each gated by `requireProtectedOwner` — i.e. only by the existing
+   `YOVOICE_PROTECTED_OWNER_UID` secret — and rendered as an owner-only Staff
+   Center section. Rules deny `bugReports` and `bugReportUploadReservations`
+   to every client.
+2. **Screenshots use the repo's reservation pattern.** A declared screenshot
+   gets one 15-minute reservation for `bug_reports/{uid}/{reportId}.jpg`;
+   `storage.rules` accepts only that object (exact metadata, JPEG, 128 B-1.5
+   MB, live reservation) and lets only its uploader read it back while the
+   reservation lives. `attachBugReportScreenshotV1` checks metadata,
+   generation and the JPEG magic bytes, strips the download token and binds the
+   generation to the report. The report is written before the upload, so a
+   failed upload never loses the words.
+3. **Consent before capture leaves the device.** The client captures the
+   navigator (never the top banners or the Bug button) before the reporter
+   opens, but attaches it only after the reporter opens a preview headed by
+   "may show other people's names, photos or messages" and confirms. The
+   preview opens full size with pinch-to-zoom (a thumbnail at ~40 % scale
+   cannot be read). The 2FA enrollment card blocks capture entirely.
+4. **Delivery is announcement only, and off twice.** `deliverBugReportV1`
+   (Firestore trigger, retrying, one transactional claim per channel, at most
+   five attempts) is exported only when a source gate in `functions/index.js`
+   is flipped, and only then declares that channel's secret
+   (`RESEND_API_KEY`, `GITHUB_BUG_REPORT_TOKEN`). Each channel is also switched
+   at runtime in Admin-only `appConfig/bugReports`, which holds the recipient,
+   sender and repository — not `functions/.env`, which is committed publicly.
+   Both channels are **link-only**: the report id, platform, version/build,
+   screen name and whether a screenshot was requested or attached, plus a
+   pointer to the Staff Center — never the description, uid, screenshot, OS
+   version or locale. Each channel has its own daily budget (200 e-mails, 50
+   issues, sentinel key); over it a report is stored but not announced.
+5. **Entry points do not touch navigation.** "Report a bug" is an action, not
+   a `MoreDestination`: the mobile sheet and the desktop popover close with no
+   destination and the reporter opens after their exit animation. The mobile
+   action sits in the sheet's chrome band (a new optional `leading` slot on
+   `YoModalSheetChrome`) so the compact sheet's height is unchanged. The
+   floating dock and `MainShell` are not modified.
+6. **The testing-period Bug button** is compiled in by
+   `--dart-define=YOVOICE_BUG_BUTTON` (default **true**, so the builds shipped
+   to testers now carry it with no build change; a public build passes
+   `false`), never shown on the web, and hideable per device (Settings switch
+   or long-press). It lives in `MaterialApp.builder`, stays inside the safe
+   area and the system gesture insets, below the toolbar band and above the
+   dock's own `reservedHeightFor` plus room for its expanded labels and the
+   mini bar, and hides while a modal, the reporter or the keyboard is up.
+7. **Retention is enforced in code**: a daily sweep removes abandoned uploads,
+   screenshots after 90 days and reports after 180 days, draining page after
+   page within a 240 s budget; account deletion sweeps `bug_reports/{uid}/`
+   with the other uid prefixes and deletes the account's reports and
+   reservations in the `records` stage. Rights requests are answered in the
+   Staff Center: find by account, delete a report, remove a screenshot, each
+   deletion audited in `adminAuditLogs`.
+
+### Reasoning
+
+Everything reuses existing primitives (guards, `privateRateLimits`,
+`requireProtectedOwner`, the reservation/finalize pattern, lazy buckets,
+source-gated secrets) and adds no npm or pub dependency (Node 22 `fetch` is
+enough for Resend and GitHub). Reports are useful the day the functions deploy,
+with nothing else configured. Keeping tester text out of a public repository by
+construction — and checking privacy at send time rather than trusting a
+setting — is the only safe reading of "open an issue" for this repository.
+
+### Consequences
+
+- The pinned export list grows 261 -> 269 (eight exports; `deliverBugReportV1`
+  joins only in the reviewed commit that flips a gate).
+- Three composite indexes on `bugReports`: `(status, createdAt DESC)`,
+  `(reporterId, createdAt DESC)` and `(reporterId, status, createdAt DESC)`.
+- The privacy policy's bug-report text must be **published before** the
+  functions deploy and before any build that shows "Report a bug" (the row is
+  on the public web app too); the App Store privacy labels and the Play Data
+  safety form ("diagnostics / user content (bug reports)") block the store
+  submission. The exact website text, retargeted to the page's real sections,
+  is in `docs/SECURITY.md` ("In-app bug reports"), with the open questions
+  for legal review.
+- `recentEvents` / device model / an owner FCM push, suggested in the design
+  review, are not built; the screen name is a class name, so a web release
+  build (minified) reports a mangled name.
+- **UNVERIFIED on devices.** RepaintBoundary capture over platform views
+  (LiveKit video, `video_player`) may be black; the button's placement is
+  proven by widget tests at 390 / 768 / 1440 px with a real dock, not on a
+  phone.
+
+## ADR-224: Bug report alerts are link-only, and rights requests have an owner tool
+
+**Date:** 2026-09-25 · **Status:** accepted (review fix round on
+`nb2/report-bug`, amends ADR-223 above; numbered ADR-224 at the
+build 36 integration) · **NOT DEPLOYED**
+
+### Context
+
+Review of the in-app bug reports found that the proposed privacy text promised
+more deletion than the code gave: the alert e-mail carried the description, OS
+and locale, and a private GitHub repository could receive the description too,
+and none of those copies (mailbox, Resend's sent-mail log, GitHub issue) is
+reached by the 180-day sweep or by account deletion. The owner also had no way
+to answer an access or erasure request — including from a third party shown
+in a screenshot — short of hand-editing Firestore and Storage in the console.
+A shared 300-a-day submit bucket let ~15 throwaway accounts block every
+tester, and a banned account was issued reservations that Storage would
+always refuse.
+
+### Decision
+
+1. **Alerts are link-only on every channel** (option (a) of the review): the
+   report id, platform, version/build, screen name and a requested/attached
+   screenshot line. The description stays in Firebase. The
+   `githubIncludeDescription` switch and the repository-visibility probe are
+   retired; a stale `true` is ignored.
+2. **Owner rights tools**: `deleteBugReportV1` (document, reservation, object —
+   the object deleted before and after the transaction) and
+   `deleteBugReportScreenshotV1` (object and reservation; the words stay,
+   `screenshot.status = "removed"`), both writing an `adminAuditLogs` entry in
+   the same transaction without the description; `listBugReportsV1` gains a
+   `reporterId` filter. Resolving or dismissing a report does not shorten its
+   retention (not built; the explicit remove action covers the need).
+3. **No shared bucket refuses a report.** The project-wide budgets move to the
+   alert channels (200 e-mails, 50 issues a day); over budget a report is kept
+   and listed, `delivery.<channel>.status = "throttled"`.
+4. **Banned accounts report in words only**: no reservation, screenshot
+   `refused`.
+5. **Delivery hardening**: 15 s provider timeouts; a live lease held by another
+   attempt throws so the event retries instead of counting as delivered; a
+   GitHub retry reuses an issue already titled with the report id.
+6. **The sweep drains** page after page within 240 s and logs a backlog.
+7. **Publication order**: the privacy text is a blocking step before the
+   functions deploy and the tester build; store labels block the store
+   submission; the public store build must pass
+   `--dart-define=YOVOICE_BUG_BUTTON=false` (release checklist).
+
+### Reasoning
+
+A copy that deletion cannot reach is only safe if it contains nothing personal.
+Making the alert link-only is cheaper and more robust than chasing copies
+across a mailbox, a provider log and an issue tracker, and it makes the
+privacy text true as written. The owner already reads reports in the Staff
+Center, so the alert loses little. Rights requests arrive at the published
+privacy@yovoice.app mailbox, so the tool to answer them belongs next to the
+inbox, audited like every other owner action.
+
+### Consequences
+
+- Two new owner callables: the pinned export list is 269 (recomputed from
+  `functions/index.js`); two new composite indexes.
+- A GitHub-issue "Claude chat" route now gets only the reference and must read
+  the report through the owner (the route was already documented as
+  data-only).
+- Legal questions (lawful basis, third parties in screenshots, US processors,
+  the age threshold) are recorded, not answered, in `docs/SECURITY.md`.

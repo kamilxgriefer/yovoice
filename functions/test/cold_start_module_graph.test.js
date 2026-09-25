@@ -90,9 +90,9 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 265 names (build 36
+// Every export of functions/index.js, sorted. 273 names (build 36
 // integration: 261 at the common base, +1 request to speak, +3 account
-// takeover).
+// takeover, +8 in-app bug reports).
 // 2026-09-25 (account-takeover Phase 1): onAuthUserCreated,
 // secureFederatedSignInV1 and sweepFederatedTakeoverSchedule join the map —
 // the unverified-password ledger trigger, the owner's post-sign-in
@@ -104,8 +104,14 @@ function inspectColdStart() {
 // joins it too. 2026-09-19: the Server channel media and reaction callables
 // join it as well. 2026-09-25 (request to speak): answerServerSessionHandV1,
 // the host's decline of a raised hand, joins it as its own extension (261 ->
-// 262). Extending this list is the deliberate review step the header
-// describes, not a drive-by edit.
+// 262 on its branch). 2026-09-25 (in-app bug reports): submitBugReportV1,
+// attachBugReportScreenshotV1, listBugReportsV1, getBugReportV1,
+// updateBugReportStatusV1 and sweepBugReportRetentionSchedule join it (261 +
+// 6 = 267 on its branch). 2026-09-25 (bug report rights requests): the
+// owner-only deleteBugReportV1 and deleteBugReportScreenshotV1 join it (267 +
+// 2 = 269 on its branch). `deliverBugReportV1` is NOT in it: both of its
+// delivery channels are source-gated off in index.js. Extending this list is
+// the deliberate review step the header describes, not a drive-by edit.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
@@ -116,6 +122,7 @@ const EXPORT_NAMES = Object.freeze([
   "applySanction",
   "archiveServerChannelV1",
   "assignUserRole",
+  "attachBugReportScreenshotV1",
   "bootstrapSuperAdmin",
   "cancelDirectCall",
   "cancelFriendRequest",
@@ -144,6 +151,8 @@ const EXPORT_NAMES = Object.freeze([
   "createServerWhiteboardStrokeV1",
   "declineDirectCall",
   "deleteAccountSelfV1",
+  "deleteBugReportScreenshotV1",
+  "deleteBugReportV1",
   "deleteClubSelf",
   "deleteDirectConversationForMe",
   "deleteDirectMessage",
@@ -192,6 +201,7 @@ const EXPORT_NAMES = Object.freeze([
   "getAdminDashboard",
   "getAdminRoom",
   "getAuditLogFilters",
+  "getBugReportV1",
   "getFriendSuggestions",
   "getGifCatalog",
   "getMutualFriends",
@@ -219,6 +229,7 @@ const EXPORT_NAMES = Object.freeze([
   "listAdminClubs",
   "listAdminRooms",
   "listAdminUsers",
+  "listBugReportsV1",
   "listReels",
   "listReelsV2",
   "listReportAuditTrail",
@@ -356,6 +367,8 @@ const EXPORT_NAMES = Object.freeze([
   "startDirectCall",
   "startRoomVoice",
   "startServerChannelSessionV1",
+  "submitBugReportV1",
+  "sweepBugReportRetentionSchedule",
   "sweepExpiredServerInvitesSchedule",
   "sweepFederatedTakeoverSchedule",
   "sweepServerCompanyFileMaintenanceSchedule",
@@ -366,6 +379,7 @@ const EXPORT_NAMES = Object.freeze([
   "transferClubOwnershipSelf",
   "transferServerOwnershipV1",
   "undoServerWhiteboardStrokeV1",
+  "updateBugReportStatusV1",
   "updateMyDisplayName",
   "updateServerChannelV1",
   "updateServerEventV1",

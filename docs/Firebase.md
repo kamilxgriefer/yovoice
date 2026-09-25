@@ -341,6 +341,24 @@ A `gifAsset` report is server-written only: the `reports` create rule has no
 branch for that target type, and its field allowlist has no room for
 `gifProvider`, `gifId`, `targetTextSnapshot` or `targetMediaUrl`.
 
+### Bug report collections (ADR-223) — server-owned, client-invisible
+
+| Collection | Document | Holds | Lifetime |
+|---|---|---|---|
+| `bugReports/{br_<40 hex>}` | one report | `schemaVersion, reportId, reporterId, inputHash, description, context{appVersion, buildNumber, platform, osVersion, locale, theme, brightness, route, routeDepth, viewportWidth, viewportHeight, textScale}, screenshot{status (reserved, attached, expired, deleted, refused, removed, missing), storagePath, contentType, size, generation, attachedAt} \| null, screenshotExpiresAt, status, createdAt, updatedAt, expiresAt`; server-added `delivery.{email,github}` and `statusUpdatedAt` | 180 days (daily sweep) |
+| `bugReportUploadReservations/{reportId}` | one screenshot upload capability | `schemaVersion, kind, reportId, ownerId, contentType, size, storagePath, status, createdAt, expiresAt` | 15 minutes, then swept |
+| `appConfig/bugReports` | operator switches | `enabled` (missing = on), `emailEnabled, emailTo, emailFrom, githubEnabled, githubRepo` (a stale `githubIncludeDescription` is ignored: alerts are link-only) | operator-written |
+
+Both collections are `allow read, write: if false` for every client. The owner
+list uses the composites `bugReports (status ASC, createdAt DESC)`,
+`(reporterId ASC, createdAt DESC)` and `(reporterId ASC, status ASC, createdAt
+DESC)` (the reporter filter answers access and erasure requests); everything
+else is a document read or a single-field range. The owner's delete and
+remove-screenshot actions write `adminAuditLogs` entries
+(`targetType: "bugReport"`). The alert channels' daily budgets are
+`privateRateLimits` documents keyed by the `bug-report-global-sentinel`
+sentinel.
+
 ## Composite indexes
 
 `firestore.indexes.json` currently holds **47** composite indexes and **13**
@@ -535,6 +553,8 @@ size/content-type limited:
 | `reel_voice_comments/{userId}/{reelId}/{commentId}.m4a` | Reel voice-comment audio (ADR-187, **not deployed**) | Uploader only while reserved; published audio only through a server-authorized, generation-bound V4 grant |
 | `message_attachments/{ownerId}/{conversationId}/{messageId}.{ext}` | Private DM photos and voice messages | Active conversation participants only |
 | `server_message_media/{serverId}/{channelId}/{userId}/{messageId}.{jpg\|png\|webp\|mp4\|mov\|webm}` | Server channel photos and videos (ADR-216, **not deployed**) | Create: verified, active uploader with a live server-issued reservation and exact metadata; image 128 B–8 MiB, video 1 KiB–64 MiB and 1–60 s. Get: uploader only while reserved. List/update/delete: never. Viewers: `getServerChannelMessageMediaAccessV1` V4 grants (90 s) only |
+
+| `bug_reports/{uid}/{reportId}.jpg` | In-app bug report screenshots (ADR-223, **not deployed**) | Uploader only while reserved; the owner through a 5-minute generation-bound V4 URL |
 
 Profile and room-cover uploads require a verified account plus an exact,
 server-issued reservation binding owner, object path, MIME type, byte length

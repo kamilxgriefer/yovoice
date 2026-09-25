@@ -15,6 +15,9 @@ import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/auth/presentation/navigation/auth_epoch_route_resetter.dart';
+import 'package:yovoice/features/bug_reports/data/bug_report_route_tracker.dart';
+import 'package:yovoice/features/bug_reports/presentation/bug_report_capture.dart';
+import 'package:yovoice/features/bug_reports/presentation/bug_report_floating_button.dart';
 import 'package:yovoice/features/auth/presentation/screens/auth_gate.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/calls/presentation/widgets/direct_call_coordinator.dart';
@@ -485,7 +488,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
         controller: controller,
         child: MaterialApp(
           navigatorKey: notificationNavigatorKey,
-          navigatorObservers: [appRouteObserver],
+          navigatorObservers: [appRouteObserver, bugReportRouteTracker],
           scaffoldMessengerKey: _messengerKey,
           debugShowCheckedModeBanner: false,
           title: 'YO Voice',
@@ -509,10 +512,20 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             final palette = context.appPalette;
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: AppTheme.systemOverlayStyle(theme.brightness, palette),
-              child: YoTopNotificationHost(
-                controller: _topNotifications,
-                onReady: () => _streamNotifications?.retryPendingBanners(),
-                child: child ?? const SizedBox.shrink(),
+              // The testing-period "Bug" button floats above everything,
+              // and outside the screenshot boundary, which wraps only the
+              // navigator: a bug-report screenshot never contains the button
+              // or a top banner (banners can preview other people's
+              // messages).
+              child: BugReportFloatingButtonHost(
+                navigatorKey: notificationNavigatorKey,
+                child: YoTopNotificationHost(
+                  controller: _topNotifications,
+                  onReady: () => _streamNotifications?.retryPendingBanners(),
+                  child: BugReportCaptureBoundary(
+                    child: child ?? const SizedBox.shrink(),
+                  ),
+                ),
               ),
             );
           },

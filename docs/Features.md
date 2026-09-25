@@ -381,6 +381,17 @@ time and replay **Quick app tour** from Settings. Completion and Skip are kept
 locally per Firebase uid and tour version, so the guide does not add profile
 data or interrupt established accounts on a new device. See ADR-132.
 
+### Report a bug (ADR-223, source only, not deployed)
+
+"Report a bug" / "Zgłoś błąd" in Settings > Help, the More sheet and the
+desktop More popover, plus a movable "Bug" button for the testing period
+(hide it with a long press or Settings > Help > Show the Bug button). The
+reporter takes a description, sends the app version, platform, OS, language,
+theme, screen size and screen name, and — only after the person previews it
+(full size, with zoom) and confirms it — a screenshot. Reports reach only the
+owner, in Staff Center > Bug reports, who can also find one account's reports
+and delete a report or its screenshot on request.
+
 ## Notifications
 
 `lib/features/notifications/` — an in-app notification center with

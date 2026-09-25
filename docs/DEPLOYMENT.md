@@ -487,8 +487,16 @@ says so.
 12. **The signBlob grant**, only if step 2's read-back does not show it:
     grant `roles/iam.serviceAccountTokenCreator` on the Functions runtime
     service account to itself. It is a precondition for step 3b.
-13. **Store and web release**, as always separate from all of the above.
-14. **A new build number before any store build of this branch.** Since the
+13. **In-app bug reports: the privacy text and store labels (ADR-223).**
+    Publish the bug-report text on yovoice.app/privacy and the deletion line
+    on yovoice.app/delete-account (SECURITY.md, "In-app bug reports") **before
+    the bug-report functions deploy and before any build that shows "Report a
+    bug"**; update the App Store privacy labels and the Play Data safety form
+    before store submission; answer the open legal questions before any alert
+    channel is switched on. Details:
+    [In-app bug reports and their alerts](#in-app-bug-reports-and-their-alerts-adr-223).
+14. **Store and web release**, as always separate from all of the above.
+15. **A new build number before any store build of this branch.** Since the
     3.0.0+35 merge, `pubspec.yaml` here reads `3.0.0+35` — the number `main`
     took for the Velvet Mallet sound pack. Build 35 is main's to upload; a
     store build of this branch needs the next free build number (36, unless
@@ -3299,6 +3307,13 @@ inventory green.
       Vercel and its 43/43 production route/header smoke passed.
 - [x] Signed iOS/Android artifacts were processed, assigned to persistent
       tester groups and observed as available.
+- [ ] Standing item for every PUBLIC store build from 2026-09-25 on (in-app bug
+      reports, ADR-223): the build passes
+      `--dart-define=YOVOICE_BUG_BUTTON=false`, so the testing-period floating
+      Bug button is not in the public binary; "Report a bug" in Settings and
+      More stays. Tester builds keep the default (`true`). The yovoice.app
+      privacy text and the store privacy labels for bug reports are published
+      before submission ([In-app bug reports](#in-app-bug-reports-and-their-alerts-adr-223)).
 
 #### Final results — directly observed
 
@@ -6454,6 +6469,81 @@ blocklist prevent new discovery/sends.
 denied terms and per-account `resource-exhausted` responses, plus growth of
 `gifAssets`. `provider_error` and external-provider quota/key alerts are dormant
 while YO Voice Originals is selected.
+
+## In-app bug reports and their alerts (ADR-223)
+
+**Step 0 — BLOCKING: publish the privacy text first.** Before any deploy below
+and before any client build that shows "Report a bug" (to testers or on the
+public web app — the Settings row is shown to everyone), publish the
+bug-report text on yovoice.app/privacy and the deletion line on
+yovoice.app/delete-account, exactly as given in
+[SECURITY.md](SECURITY.md#privacy-policy-text-for-yovoiceappprivacy-website-repo-not-edited-here).
+It is retargeted to the page's real sections (3 "Information we collect", 4
+"Why we use your information", 5 "Who processes your data", 8 retention, 9
+deletion); re-check the numbering against the live page. The reporter links to
+`https://yovoice.app/privacy`, so the feature must not go live before that
+page describes it. Read the live page back before continuing.
+
+**Base feature — needs nothing new.** Only after step 0, deploy, in order:
+`firestore:rules`, `firestore:indexes` (the three `bugReports` composites:
+status, reporter, reporter + status), `storage`, then
+`functions:submitBugReportV1,functions:attachBugReportScreenshotV1,functions:listBugReportsV1,functions:getBugReportV1,functions:updateBugReportStatusV1,functions:deleteBugReportV1,functions:deleteBugReportScreenshotV1,functions:sweepBugReportRetentionSchedule`,
+then a client build. The owner callables bind only the existing
+`YOVOICE_PROTECTED_OWNER_UID`. Reports are then listed in Staff Center > Bug
+reports, where the owner also answers rights requests (find by account ID,
+delete a report, remove a screenshot; each deletion is audited). Pause
+submission at any time with `appConfig/bugReports = { enabled: false }` (a
+missing document means on). Older installs never call these functions.
+
+**Store submission — BLOCKING.** Update the App Store privacy labels and the
+Play Data safety form ("diagnostics / user content (bug reports)", linked to
+the account, not used for tracking) before a build carrying the reporter is
+submitted for store review.
+
+**Optional retention backstops (Kamil, console).** A GCS lifecycle rule on the
+default bucket deleting objects with prefix `bug_reports/` older than 100 days,
+and a Firestore TTL policy on `bugReports.expiresAt`. The daily sweep already
+enforces both limits; these only catch a sweep that stops running. Note that a
+TTL deletion does not delete the Storage object, so keep the lifecycle rule if
+you add the TTL.
+
+**Floating Bug button.** Compiled in by default. A build meant for the general
+public passes `--dart-define=YOVOICE_BUG_BUTTON=false`; the web never shows it.
+This is also a line of the release checklist
+([Release checklist and residual acceptance](#release-checklist-and-residual-acceptance)).
+
+**Before any alert channel is switched on:** answer the open legal questions in
+[SECURITY.md](SECURITY.md#open-questions-for-legal-review-before-an-alert-channel-is-switched-on).
+Both channels are link-only (report id, platform, version/build, screen name,
+screenshot requested/attached) and each has its own daily budget (200 e-mails,
+50 issues); over budget a report is stored and listed but not announced.
+
+**E-mail alerts (Kamil only).** 1. In Resend, confirm the sending domain
+(`yovoice.app` or a subdomain) is Verified. 2. Create an API key with Sending
+access restricted to that domain. 3. In your own terminal:
+`firebase functions:secrets:set RESEND_API_KEY --project yovoice-ec54a` and paste
+it (never into a chat). 4. In source, set
+`BUG_REPORT_EMAIL_DELIVERY_ENABLED = true` in `functions/index.js` and add
+`deliverBugReportV1` to the pinned list in
+`functions/test/cold_start_module_graph.test.js` in the same commit; deploy
+`functions:deliverBugReportV1`. 5. Write
+`appConfig/bugReports.emailEnabled = true`, `emailTo = "<the Google Workspace
+team mailbox>"` (under Google's DPA — not a consumer Gmail),
+`emailFrom = "YO Voice Bugs <bugs@yovoice.app>"` in the console (these
+addresses never go into the committed `functions/.env`).
+
+**GitHub alerts (the route to "a new Claude chat").** Every issue is link-only
+(report id, platform, version/build, screen name), whatever the repository's
+visibility; the former `githubIncludeDescription` switch is retired and
+ignored. A PRIVATE `kamilxgriefer/yovoice-bug-inbox` is still recommended so
+the public repository is not filled with alerts: make a fine-grained token
+limited to that one repository (Issues read/write, 90-day expiry),
+`firebase functions:secrets:set GITHUB_BUG_REPORT_TOKEN`, flip
+`BUG_REPORT_GITHUB_DELIVERY_ENABLED` (same export-list rule), deploy, and set
+`githubEnabled = true`, `githubRepo = "kamilxgriefer/yovoice-bug-inbox"`. Then
+point a Claude Code routine or `claude-code-action` at new issues there,
+read-only on `yovoice`, with a daily cap; a PAT-authored issue does not notify
+its author, so e-mail stays the alert.
 
 ## GIPHY activation — option B (ADR-214)
 
