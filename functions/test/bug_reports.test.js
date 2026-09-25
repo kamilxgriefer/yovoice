@@ -588,6 +588,33 @@ async function auditEntries(reportId) {
   return snapshot.docs.map((document) => document.data());
 }
 
+emulatorTest("permanent deletes go through the step-up gate; reading and triage do not", async () => {
+  const uid = uniqueUid("owner-stepup");
+  await seedUser(uid);
+  const stepUp = [];
+  const storage = new FakeStorage();
+  const service = createBugReportService({
+    db, Timestamp, storage, clock: () => NOW,
+    authorizeOwner: ownerGate().authorizeOwner,
+    authorizeOwnerPrivileged: async (req) => {
+      stepUp.push(req.auth?.uid ?? null);
+      const error = new Error("Sign in again before performing this sensitive action.");
+      error.code = "failed-precondition";
+      throw error;
+    },
+    logger: { info() {}, warn() {} },
+  });
+  const pending = await reserve(service, uid);
+  await rejects(service.deleteBugReportV1(request(OWNER, { reportId: pending.reportId })), "failed-precondition");
+  await rejects(service.deleteBugReportScreenshotV1(request(OWNER, { reportId: pending.reportId })), "failed-precondition");
+  assert.deepEqual(stepUp, [OWNER, OWNER]);
+  assert.equal((await db.collection(BUG_REPORTS).doc(pending.reportId).get()).exists, true);
+  assert.deepEqual(storage.deleted, []);
+  // The plain owner gate still serves the read.
+  const page = await service.listBugReportsV1(request(OWNER, { limit: 50 }));
+  assert.ok(Array.isArray(page.reports));
+});
+
 emulatorTest("the owner deletes one report now: document, reservation and object, with an audit entry and no copy of the words", async () => {
   const uid = uniqueUid("owner-delete");
   await seedUser(uid);

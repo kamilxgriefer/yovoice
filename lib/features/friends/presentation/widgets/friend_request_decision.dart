@@ -57,6 +57,7 @@ class FriendRequestDecisionButtons extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
     );
     final who = name?.trim();
+    final named = who != null && who.isNotEmpty;
     Widget progress(Color color) => SizedBox(
       width: 15,
       height: 15,
@@ -65,19 +66,22 @@ class FriendRequestDecisionButtons extends StatelessWidget {
 
     final accept = Semantics(
       button: true,
-      label: who == null || who.isEmpty
-          ? null
-          : copy.template(
+      // Always labelled and always replacing the button's own node, named or
+      // not: a wrapper that declares a tap without excluding the child's
+      // node would leave two tap targets for one button.
+      label: named
+          ? copy.template(
               'Accept friend request from {name}',
               'Akceptuj zaproszenie od {name}',
               values: <String, Object>{'name': who},
-            ),
+            )
+          : copy.text('Accept friend request', 'Akceptuj zaproszenie'),
       // The spoken label replaces the button's own node, so this node must
       // carry the tap action and the enabled state itself (as the Yeel chip
       // does); otherwise a busy button is announced as active.
       enabled: !busy,
       onTap: busy ? null : onAccept,
-      excludeSemantics: who != null && who.isNotEmpty,
+      excludeSemantics: true,
       child: FilledButton.icon(
         key: acceptKey,
         onPressed: busy ? null : onAccept,
@@ -99,16 +103,16 @@ class FriendRequestDecisionButtons extends StatelessWidget {
     );
     final decline = Semantics(
       button: true,
-      label: who == null || who.isEmpty
-          ? null
-          : copy.template(
+      label: named
+          ? copy.template(
               'Decline friend request from {name}',
               'Odrzuć zaproszenie od {name}',
               values: <String, Object>{'name': who},
-            ),
+            )
+          : copy.text('Decline friend request', 'Odrzuć zaproszenie'),
       enabled: !busy,
       onTap: busy ? null : onDecline,
-      excludeSemantics: who != null && who.isNotEmpty,
+      excludeSemantics: true,
       child: OutlinedButton.icon(
         key: declineKey,
         onPressed: busy ? null : onDecline,

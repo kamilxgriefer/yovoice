@@ -500,4 +500,65 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     expect(BugReportCaptureGuard.isActive, isFalse);
   });
+
+  testWidgets('a failed send is a live region; a sent report is announced '
+      'and focus moves to Done', (tester) async {
+    final handle = tester.ensureSemantics();
+    final record = _Calls()..refuseWith = 'unavailable';
+    await _pumpForm(tester, record);
+    await _describe(tester, 'Something is wrong with the chat list.');
+    await _send(tester);
+
+    final error = find.byKey(const ValueKey('bug-report-error'));
+    expect(error, findsOneWidget);
+    final errorNode = tester.getSemantics(error).getSemanticsData();
+    expect(errorNode.flagsCollection.isLiveRegion, isTrue);
+    expect(errorNode.label, contains('Your report could not be sent.'));
+
+    record.refuseWith = null;
+    await _send(tester);
+    final status = find.byKey(const ValueKey('bug-report-sent-status'));
+    expect(status, findsOneWidget);
+    final statusNode = tester.getSemantics(status).getSemanticsData();
+    expect(statusNode.flagsCollection.isLiveRegion, isTrue);
+    expect(statusNode.label, contains('Thanks, your report was sent.'));
+    final done = find.byKey(const ValueKey('bug-report-done'));
+    expect(
+      FocusManager.instance.primaryFocus?.context,
+      isNotNull,
+    );
+    expect(
+      find.ancestor(
+        of: find.byWidgetPredicate(
+          (widget) =>
+              widget is Focus &&
+              widget.focusNode == FocusManager.instance.primaryFocus,
+        ),
+        matching: done,
+      ),
+      findsOneWidget,
+    );
+    handle.dispose();
+  });
+
+  testWidgets('with the keyboard up at 200 % text, a visible Done finishes '
+      'typing above the keyboard', (tester) async {
+    final record = _Calls();
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await _pumpForm(tester, record);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 336);
+    await tester.pump();
+    await tester.showKeyboard(
+      find.byKey(const ValueKey('bug-report-description')),
+    );
+    await tester.pumpAndSettle();
+
+    final done = find.byKey(const ValueKey('yo-keyboard-done'));
+    expect(done, findsOneWidget);
+    expect(tester.getRect(done).bottom, lessThanOrEqualTo(844 - 336));
+    await tester.tap(done);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('yo-keyboard-done')), findsNothing);
+  });
 }

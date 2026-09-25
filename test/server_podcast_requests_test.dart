@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
@@ -90,6 +91,7 @@ Future<FakeServerMediaLink> _joinStudio(
   double textScale = 1,
   bool light = false,
   List<ServerMediaParticipant> roster = const [_host, _kamil],
+  Locale locale = const Locale('pl'),
 }) async {
   final connector = FakeServerMediaConnector();
   await pumpServers(
@@ -98,6 +100,7 @@ Future<FakeServerMediaLink> _joinStudio(
     size: size,
     textScale: textScale,
     light: light,
+    locale: locale,
   );
   await tester.ensureVisible(join.first);
   await tester.tap(join.first);
@@ -569,6 +572,77 @@ void main() {
         const Size(10, 10),
       );
     }
+    handle.dispose();
+  });
+
+  for (final locale in const [Locale('en'), Locale('pl')]) {
+    testWidgets('Approve and Decline speak their visible word '
+        '(${locale.languageCode})', (tester) async {
+      final handle = tester.ensureSemantics();
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final hands = StreamController<List<ServerSessionHand>>.broadcast();
+      addTearDown(hands.close);
+      await _joinStudio(tester, _hostRepository(hands), locale: locale);
+      hands.add([_handOf('kamil', 'Kamil')]);
+      await tester.pumpAndSettle();
+
+      for (final key in const [
+        'server-stage-request-approve-kamil',
+        'server-stage-request-decline-kamil',
+      ]) {
+        final button = find.byKey(ValueKey(key));
+        final visible = tester
+            .widget<Text>(
+              find.descendant(of: button, matching: find.byType(Text)),
+            )
+            .data!;
+        final node = tester.getSemantics(button);
+        // WCAG 2.5.3: a voice-control "Tap <visible word>" must match.
+        expect(
+          node.label.toLowerCase(),
+          contains(visible.toLowerCase()),
+          reason: '$key: "${node.label}" vs "$visible"',
+        );
+        expect(node.label, contains('Kamil'));
+        expect(
+          node.getSemanticsData().flagsCollection.isEnabled,
+          ui.Tristate.isTrue,
+        );
+      }
+      handle.dispose();
+    });
+  }
+
+  testWidgets('a refused raise is spoken: the error is a live region', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final own = StreamController<ServerSessionParticipantState?>.broadcast();
+    addTearDown(own.close);
+    final repository = podcast.listenerRepository()
+      ..ownParticipantStream = own.stream;
+    await _joinStudio(tester, repository, roster: podcast.broadcast);
+    own.add(_own(decision: ServerHandDecision.declined));
+    await tester.pumpAndSettle();
+    repository.failNextCall['setServerSessionHandV1'] =
+        FirebaseFunctionsException(
+          code: 'failed-precondition',
+          message: 'Wait a moment before asking to speak again.',
+          details: const {'reason': 'hand-decline-cooldown'},
+        );
+    await tester.ensureVisible(hand);
+    await tester.tap(hand);
+    await tester.pumpAndSettle();
+
+    final error = find.byKey(const ValueKey('server-podcast-hand-error'));
+    expect(error, findsOneWidget);
+    final node = tester.getSemantics(error);
+    expect(
+      node.label,
+      'Daj prowadzącemu chwilę. Możesz poprosić ponownie za minutę.',
+    );
+    expect(node.getSemanticsData().flagsCollection.isLiveRegion, isTrue);
     handle.dispose();
   });
 }

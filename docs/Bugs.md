@@ -18,6 +18,49 @@ Run log: [Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md).
 Where an entry below says UNVERIFIED, it has not been looked at on a device
 or a simulator — nothing in this build was.
 
+### FIXED IN SOURCE — build 36 review round (2026-09-26, `nb/integrate`, `fix(build36): review round`)
+
+Found by the integrated-tree review of the next build; all source only.
+
+- **Takeover remediation re-signed-out the owner on every retry.** A
+  pre-registrant who planted more than the purge's 10 000-document budget of
+  `fcmTokens` made every remediation throw after it had revoked sessions and
+  moved the epoch, so each owner sign-in and each 5-minute sweep ended the
+  owner's new session again while the planted token kept receiving. Now the
+  epoch transaction checkpoints the ledger; retries resume at the purge, which
+  pages with a cursor, keeps post-epoch registrations and returns `securing`
+  when its budget runs out; push delivery ignores every registration older
+  than the epoch (ADR-222, Decision 3).
+- **A stale pre-takeover ID token could still create lasting social state.**
+  Friend requests and answers, unfriending, follows, blocks, DM send/open and
+  bug-report submit now refuse a session older than
+  `users/{uid}.authSessionEpoch` (ADR-222, Decision 5; remaining residuals
+  listed there).
+- **A late Stop after the automatic 1:00 (DM) / 0:30 (Family Memory) stop
+  discarded the kept take.** The record control ignores taps for 1.5 s after
+  an automatic stop, and "Record again" asks before replacing a kept take.
+- **Accessibility:** the English podcast Approve button's spoken name now
+  starts with "Approve" (WCAG 2.5.3) and both answers report disabled/"Sending…"
+  while in flight; a refused raise-hand is a live region (podcast and
+  community); the bug reporter announces a failed send and a sent report and
+  moves focus to Done, and offers the shared keyboard Done bar; the Bug
+  button's glyph uses `interactiveForeground` (Dark 2.93:1 → above 3:1 over
+  any backdrop); the countdown speaks "6 seconds left" / "Zostało 6 sekund";
+  unnamed friend-request buttons no longer leave a duplicate tap target; the
+  Friends list request card names the person on Accept / Decline and wraps the
+  name at large text.
+- **The Bug button could cover a top banner's Accept / Decline.** The banner
+  host now wraps the Bug host (app.dart), so banners paint above the button.
+- **A friend's profile kept an old answer** when the same person sent a new
+  request; the panel remounts with Accept / Decline on the next refresh.
+- Bug-report permanent deletes now require the owner's step-up sign-in; the
+  retention sweep is hourly; the App Review account's address is no longer in
+  the source (it remains in unpushed commit `ebfb04a1`'s history — Kamil's
+  call before the first push).
+
+UNVERIFIED on devices and in rendered frames: none of these was opened on a
+simulator or device in this round.
+
 ### FIXED IN SOURCE — a one-minute voice message could never be sent, and the recorder stopped silently (2026-09-25, next build, `voice-60s`; also broken on released 3.0.0)
 
 The DM voice sheet stops itself when its stopwatch reads 60.000 s, but native

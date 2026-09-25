@@ -966,8 +966,10 @@ extension ServerLocalizedCopy on AppLocalizations {
         );
   String get serverHandApprove => text('Approve', 'Zaproś');
   String get serverHandDecline => text('Decline', 'Odrzuć');
+  /// Starts with the visible word ("Approve" / "Zaproś"), so a voice-control
+  /// "Tap Approve" reaches it (WCAG 2.5.3 Label in Name).
   String serverHandApproveLabel(String name) =>
-      text('Bring $name on stage', 'Zaproś na scenę: $name');
+      text('Approve: bring $name on stage', 'Zaproś na scenę: $name');
   String serverHandDeclineLabel(String name) =>
       text('Decline $name\'s request', 'Odrzuć prośbę: $name');
   String get serverHandAnswerFailed => text(

@@ -6,7 +6,7 @@
 //   listBugReportsV1, getBugReportV1,
 //   updateBugReportStatusV1, deleteBugReportV1,
 //   deleteBugReportScreenshotV1                      the protected owner only
-//   sweepBugReportRetentionSchedule                  daily retention sweep
+//   sweepBugReportRetentionSchedule                  hourly retention sweep
 //
 // `deliverBugReportV1` is registered ONLY when index.js source-enables a
 // delivery channel, and only then are that channel's secrets declared — lazily,
@@ -53,6 +53,10 @@ function defaultRuntime() {
       logger,
       storage: createBugReportStorageAdapter(createLazyBucket(() => getStorage().bucket())),
       authorizeOwner: (request) => requireProtectedOwner(request),
+      // Permanent deletes need a recent sign-in (and MFA once required), as
+      // every other destructive owner action does.
+      authorizeOwnerPrivileged: (request) =>
+        requireProtectedOwner(request, { privileged: true }),
     }),
   };
 }
@@ -104,7 +108,10 @@ function createBugReportFunctions({
       (request) => resolve().service.deleteBugReportScreenshotV1(request)),
     sweepBugReportRetentionSchedule: registrars.onSchedule({
       region: REGION,
-      schedule: "every 24 hours",
+      // Hourly, not daily: an upload that was never attached keeps its bytes
+      // (and the uploader's download token) only until the next run after
+      // its reservation expires, so the bucket is not day-long file hosting.
+      schedule: "every 1 hours",
       timeZone: "UTC",
       maxInstances: 1,
       timeoutSeconds: 300,

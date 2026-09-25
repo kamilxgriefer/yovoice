@@ -1727,6 +1727,7 @@ class FriendRequestCard extends StatelessWidget {
     final name = request.senderName.trim().isNotEmpty
         ? request.senderName.trim()
         : copy.text('YO Voice user', 'Użytkownik YO Voice');
+    final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.4;
 
     return Container(
       key: ValueKey('friend-request-card-${request.senderId}'),
@@ -1775,9 +1776,11 @@ class FriendRequestCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // At large text a long name gets a second line instead of
+                // being cut to a few letters.
                 Text(
                   name,
-                  maxLines: 1,
+                  maxLines: largeText ? 2 : 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: palette.textPrimary,
@@ -1791,7 +1794,7 @@ class FriendRequestCard extends StatelessWidget {
                     'Wants to be your friend',
                     'Chce dodać Cię do znajomych',
                   ),
-                  maxLines: 1,
+                  maxLines: largeText ? 2 : 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: palette.textSecondary, fontSize: 12),
                 ),
@@ -1840,18 +1843,50 @@ class FriendRequestCard extends StatelessWidget {
                       label: Text(copy.text('Decline', 'Odrzuć')),
                     );
 
+                    // In a list of several requests each choice names the
+                    // person, as the shared FriendRequestDecisionButtons do;
+                    // the spoken node carries the tap and the busy state.
+                    final namedAccept = Semantics(
+                      button: true,
+                      label: copy.template(
+                        'Accept friend request from {name}',
+                        'Akceptuj zaproszenie od {name}',
+                        values: <String, Object>{'name': name},
+                      ),
+                      enabled: !processing,
+                      onTap: processing ? null : onAccept,
+                      excludeSemantics: true,
+                      child: accept,
+                    );
+                    final namedDecline = Semantics(
+                      button: true,
+                      label: copy.template(
+                        'Decline friend request from {name}',
+                        'Odrzuć zaproszenie od {name}',
+                        values: <String, Object>{'name': name},
+                      ),
+                      enabled: !processing,
+                      onTap: processing ? null : onDecline,
+                      excludeSemantics: true,
+                      child: decline,
+                    );
+
                     if (stackActions) {
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [accept, const SizedBox(height: 8), decline],
+                        children: [
+                          namedAccept,
+                          const SizedBox(height: 8),
+                          namedDecline,
+                        ],
                       );
                     }
 
                     return Row(
                       children: [
-                        Expanded(child: accept),
+                        Expanded(child: namedAccept),
                         const SizedBox(width: 8),
-                        Expanded(child: decline),
+                        Expanded(child: namedDecline),
                       ],
                     );
                   },

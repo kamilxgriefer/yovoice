@@ -37,6 +37,7 @@ const {
   timestampMillis,
   transactionGetAll,
 } = require("../integrity/guards");
+const { assertSessionNotBeforeEpoch } = require("../utils/auth");
 const {
   BUG_REPORTS,
   BUG_REPORT_CONFIG,
@@ -243,6 +244,11 @@ function deliveryOf(value) {
 function createBugReportService(dependencies) {
   const {
     db, Timestamp, storage, authorizeOwner, clock = Date.now, logger = console,
+    // The gate for the owner's DESTRUCTIVE actions (permanent deletes): the
+    // owner gate plus step-up authentication, like every other destructive
+    // owner mutation (utils/auth.js requirePrivilegedAuthentication).
+    // Defaults to the plain gate for callers that inject only one.
+    authorizeOwnerPrivileged = authorizeOwner,
     // Elapsed-time source for the sweep's budget only; `clock` is business
     // time (and is frozen in tests).
     monotonic = Date.now,
@@ -250,7 +256,8 @@ function createBugReportService(dependencies) {
   if (!db?.runTransaction || !Timestamp?.fromMillis || typeof clock !== "function" ||
       !storage?.getMetadata || !storage?.readHeader || !storage?.hardenObject ||
       !storage?.getSignedReadUrl || !storage?.deleteObject ||
-      typeof authorizeOwner !== "function") {
+      typeof authorizeOwner !== "function" ||
+      typeof authorizeOwnerPrivileged !== "function") {
     throw new TypeError("db, Timestamp, storage, authorizeOwner and clock are required.");
   }
 
@@ -303,6 +310,7 @@ function createBugReportService(dependencies) {
         fail("failed-precondition", "Bug reports are paused right now.");
       }
       const { banned } = assertReporterAccount(user);
+      assertSessionNotBeforeEpoch(user.data(), auth);
 
       if (existing.exists) {
         const prior = existing.data() ?? {};
@@ -607,7 +615,7 @@ function createBugReportService(dependencies) {
    * leave an orphan.
    */
   async function deleteBugReportV1(request) {
-    const caller = await authorizeOwner(request);
+    const caller = await authorizeOwnerPrivileged(request);
     const fields = ["reportId"];
     requireExactInput(request.data, fields, fields);
     const reportId = requireReportId(request.data.reportId);
@@ -642,7 +650,7 @@ function createBugReportService(dependencies) {
    * report without a live screenshot answers removed without an audit entry.
    */
   async function deleteBugReportScreenshotV1(request) {
-    const caller = await authorizeOwner(request);
+    const caller = await authorizeOwnerPrivileged(request);
     const fields = ["reportId"];
     requireExactInput(request.data, fields, fields);
     const reportId = requireReportId(request.data.reportId);

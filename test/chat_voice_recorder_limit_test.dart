@@ -75,6 +75,17 @@ void main() {
       );
     });
 
+    test('the spoken countdown names its unit, with Polish plurals', () {
+      const en = AppLocalizations(Locale('en'));
+      const pl = AppLocalizations(Locale('pl'));
+      expect(recordingSecondsLeftSpoken(en, 1), '1 second left');
+      expect(recordingSecondsLeftSpoken(en, 6), '6 seconds left');
+      expect(recordingSecondsLeftSpoken(pl, 1), 'Została 1 sekunda');
+      expect(recordingSecondsLeftSpoken(pl, 3), 'Zostały 3 sekundy');
+      expect(recordingSecondsLeftSpoken(pl, 6), 'Zostało 6 sekund');
+      expect(recordingSecondsLeftSpoken(pl, 10), 'Zostało 10 sekund');
+    });
+
     test('a take that ran past 60 s still declares 60', () async {
       final clock = FakeStopwatch();
       final recorder = VoiceMomentRecorder(
@@ -329,6 +340,82 @@ void main() {
       expect(stoppedAtLimit, findsOneWidget);
       expect(backend.stopCalls, 1);
       expect(take.audio.discarded, isFalse);
+    });
+
+    testWidgets(
+      'a Stop tap that lands just after the automatic stop keeps the take',
+      (tester) async {
+        final backend = FakeRecorderBackend();
+        final service = _VoiceMessageService(firestore, auth);
+        final take = await startTake(tester, service, backend: backend);
+        expect(backend.startCalls, 1);
+
+        await tick(tester, take.clock, 60_300);
+        await tester.pump();
+        expect(stoppedAtLimit, findsOneWidget);
+
+        // The same control, in the same place, now reads "Record again". A
+        // Stop aimed at the last second arrives 0.8 s late.
+        await tester.pump(const Duration(milliseconds: 800));
+        await tester.tap(labelled('Record again'));
+        await tester.pumpAndSettle();
+
+        expect(backend.startCalls, 1);
+        expect(
+          find.byKey(const ValueKey('recording-replace-dialog')),
+          findsNothing,
+        );
+        expect(find.text('Voice message ready'), findsOneWidget);
+        expect(find.text('Send voice message'), findsOneWidget);
+        expect(take.audio.discarded, isFalse);
+      },
+    );
+
+    testWidgets('Record again asks before it replaces a kept take', (
+      tester,
+    ) async {
+      final backend = FakeRecorderBackend();
+      final service = _VoiceMessageService(firestore, auth);
+      final take = await startTake(tester, service, backend: backend);
+      await tick(tester, take.clock, 60_300);
+      await tester.pump(recordingAutoStopTapGrace);
+
+      final dialog = find.byKey(const ValueKey('recording-replace-dialog'));
+      await tester.tap(labelled('Record again'));
+      await tester.pumpAndSettle();
+      expect(dialog, findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('recording-replace-keep')));
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+      expect(backend.startCalls, 1);
+      expect(take.audio.discarded, isFalse);
+      expect(find.text('Send voice message'), findsOneWidget);
+
+      take.clock.value = Duration.zero;
+      await tester.tap(labelled('Record again'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('recording-replace-confirm')));
+      await tester.pump();
+      expect(backend.startCalls, 2);
+      expect(take.audio.discarded, isTrue);
+      expect(find.text('Recording voice message…'), findsOneWidget);
+    });
+
+    testWidgets('the countdown speaks its unit in full', (tester) async {
+      final handle = tester.ensureSemantics();
+      final service = _VoiceMessageService(firestore, auth);
+      final take = await startTake(tester, service);
+      await tick(tester, take.clock, 54_100);
+      expect(
+        find.descendant(of: countdown, matching: find.text('6 s left')),
+        findsOneWidget,
+      );
+      // Let the pill's fade-in finish; a fully transparent pill is not in the
+      // semantics tree.
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.bySemanticsLabel(RegExp(r'\b6 seconds left\b')), findsWidgets);
+      expect(find.bySemanticsLabel(RegExp(r'\b6 s left\b')), findsNothing);
+      handle.dispose();
     });
 
     testWidgets('a camera clip the camera capped at 60 s is sent as 60 s', (

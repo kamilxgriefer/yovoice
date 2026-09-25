@@ -79,6 +79,30 @@ function requireRecentPrivilegedAuthentication(
   return authTime;
 }
 
+/// Refuses a session that started before the account's session epoch.
+///
+/// `users/{uid}.authSessionEpoch` (seconds) is written when a pre-registered
+/// account takeover is remediated (auth/federated_takeover.js): every session
+/// that existed then — the pre-registrant's included — is over, but an ID
+/// token it already minted stays cryptographically valid for up to an hour.
+/// Callables whose effects outlive that hour (friendships, follows, blocks,
+/// direct messages, bug reports) call this with the `users/{uid}` data their
+/// transaction already reads, so the check costs no extra document access.
+/// An account without the field is unaffected; a token without `auth_time`
+/// is refused, as the rules refuse it.
+function assertSessionNotBeforeEpoch(userData, auth) {
+  const epoch = userData?.authSessionEpoch;
+  if (!Number.isSafeInteger(epoch)) return;
+  const authTime = auth?.token?.auth_time;
+  if (!Number.isSafeInteger(authTime) || authTime < epoch) {
+    throw new HttpsError(
+      "permission-denied",
+      "This session has ended. Sign in again.",
+      { reason: "session-ended" },
+    );
+  }
+}
+
 /// Step-up authentication for every destructive staff/owner mutation.
 ///
 /// `request.auth.token` is produced by Firebase after signature verification,
@@ -244,6 +268,7 @@ async function requireVerifiedStaff(
 }
 
 module.exports = {
+  assertSessionNotBeforeEpoch,
   PRIVILEGED_AUTH_MAX_AGE_SECONDS,
   PRIVILEGED_MFA_MODES,
   requirePrivilegedAuthentication,

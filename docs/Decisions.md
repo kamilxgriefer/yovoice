@@ -15876,6 +15876,26 @@ free; its TTL deletion used the bare outbox entry point.
    after every pre-registrant `auth_time`; the epoch precedes the purge, so a
    stale session cannot re-plant. Every step is idempotent; a failure leaves
    the row pending for the next call or sweep.
+   **Sessions are ended once per takeover (review round, build 36).** The
+   epoch transaction also writes a checkpoint on the ledger row
+   (`sessionEpoch`, `sessionsEndedAt`, `sessionsEndedBy`, `purgeDeleted`). A
+   call that finds it on a still-pending row, with no credential or second
+   factor left to strip, resumes at the purge and never revokes or re-epochs
+   again — before this, a pre-registrant who planted more than the purge's
+   10 000-document budget made every call throw after revoking, so each
+   retry (every owner sign-in, every 5-minute sweep) signed the owner out of
+   the session they had just re-established. The purge now pages by document
+   id with a cursor, deletes only registrations written before the epoch (a
+   later one came from a session the rules accepted, i.e. the owner), and,
+   when its per-call budget runs out, records its progress and returns
+   `securing` (the owner's callable still answers `remediated` when the call
+   ended the caller's session, or the caller's session predates the epoch).
+   Independently, push delivery ignores every `fcmTokens` document whose
+   `updatedAt` predates `users/{uid}.authSessionEpoch`
+   (`registrationsNotBeforeEpoch`, push_delivery.js), so a planted token
+   receives nothing after the epoch however long the purge takes. A re-armed
+   row clears the checkpoint. The kept caller device is re-stamped at the
+   epoch so it keeps receiving.
 4. **Two triggers.** A: `secureFederatedSignInV1`, called by the owner's own
    client right after every Google/Apple sign-in; it remediates the caller
    only, answers `notApplicable` to any non-federated session, and is
@@ -15899,7 +15919,13 @@ free; its TTL deletion used the bare outbox entry point.
    rule (`server_rules.test.js`), so it stays scoped. It is provider-agnostic
    (`auth_time < epoch`): a pre-linked Google session is as stale as the
    password one, and the owner's own pre-remediation session was revoked
-   anyway.
+   anyway. **Callables whose effects outlive the hour check it too (review
+   round, build 36):** `assertSessionNotBeforeEpoch` (utils/auth.js) runs
+   inside the transactions that already read `users/{auth.uid}` —
+   `sendFriendRequest`, `respondToFriendRequest` (both answers),
+   `removeFriend`, `setFollow`, `setUserBlock` (both directions),
+   `sendDirectMessage`, `openDirectConversation` and `submitBugReportV1` — so
+   it costs no extra read there.
 6. **Report only for never-verified accounts.** Each completed walk logs
    password-only, never-verified accounts older than 7 days (count and up to
    100 uids, no addresses). No deletion code exists.
@@ -15911,19 +15937,29 @@ optional for the attacker, and the owner's client is the one party the
 attacker cannot silence, which is why it — not the attacker's session — is
 the trigger that can act within seconds. A ledger is the smallest thing that
 turns an unobservable past ("this uid once had a password nobody verified")
-into a server fact without the Identity Platform upgrade. Scoping the epoch to
-the push-token write keeps the rules change cheap and removes the only effect
-that outlives the one-hour ID token.
+into a server fact without the Identity Platform upgrade. Scoping the rules
+epoch to the push-token write keeps the rules change cheap. The push token was
+NOT the only effect that outlives the one-hour ID token, as this entry first
+claimed: friendships, follows, blocks, direct messages and bug reports written
+by callables persist too. The callables among them that already read
+`users/{auth.uid}` in their transaction now check the epoch for free; what a
+stale token can still create is listed under Consequences.
 
 ### Consequences
 
 - **Residual window, stated plainly.** An ID token the pre-registrant already
   holds stays valid until it expires (up to one hour). The epoch refuses it
-  for push registration and Storage; Cloud Functions callables (DM sends,
-  friend requests, calls and LiveKit tokens, billing), owner-only reads that
-  never consult account state (notifications, incoming calls, DM reads, the
-  private profile) and other `isActiveAccount()` writes still accept it until
-  it expires. Phase 2 may shrink what that token is worth (if the blocking
+  for push registration, Storage and the callables listed in Decision 5.
+  Other Cloud Functions callables (calls and LiveKit tokens, billing,
+  `cancelFriendRequest`, attachments, read markers, server and moment
+  callables), owner-only reads that never consult account state
+  (notifications, incoming calls, DM reads, the private profile) and other
+  `isActiveAccount()` writes still accept it until it expires. **Lasting
+  effects a stale token can still create in that hour:** Firestore writes
+  gated only by `isActiveAccount()` (profile fields, presence, moments,
+  comments and reactions, server messages and memberships the rules allow the
+  account), and the server callables that do not read `users/{uid}` — each
+  persists after the hour and is not rolled back by remediation. Phase 2 may shrink what that token is worth (if the blocking
   function runs before the pre-registrant can refresh into a verified token —
   UNVERIFIED until an emulator run of `beforeUserSignedIn` shows what it sees
   at the takeover) but does not revoke a token already minted either.

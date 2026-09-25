@@ -19,6 +19,7 @@ const {
   FIRESTORE_CLEANUP_BATCH_SIZE,
   MAX_FCM_TOKEN_DOCUMENT_READS,
   planTokenDocuments,
+  registrationsNotBeforeEpoch,
   sendMulticastInChunks,
 } = require("./push_delivery");
 
@@ -436,7 +437,10 @@ async function handleNotificationCreated(event, {
     currentData = currentNotification.data();
     const actorName = currentData.actorName || "YoVoice user";
     const title = buildTitle(actorName, currentData.targetLabel || null);
-    const plan = planTokenDocuments(tokensSnap.docs);
+    const plan = planTokenDocuments(registrationsNotBeforeEpoch(
+      tokensSnap.docs,
+      userDoc.data()?.authSessionEpoch,
+    ));
     if (plan.tokens.length === 0) {
       await skip("no-usable-token");
       return;

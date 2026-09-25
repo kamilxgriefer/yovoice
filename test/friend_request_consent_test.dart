@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -14,10 +15,12 @@ import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
+import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
+import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
 import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -854,6 +857,103 @@ void main() {
         expect(data.flagsCollection.isEnabled, ui.Tristate.isFalse);
         expect(data.hasAction(ui.SemanticsAction.tap), isFalse, reason: label);
       }
+      semantics.dispose();
+    });
+
+    testWidgets('the Friends list card names the person on each choice and '
+        'wraps the name at 200 % text on 320 px', (tester) async {
+      final semantics = tester.ensureSemantics();
+      tester.view.physicalSize = const Size(320, 700);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 2;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      var accepted = 0;
+      await tester.pumpWidget(
+        _localized(
+          Scaffold(
+            body: SingleChildScrollView(
+              child: FriendRequestCard(
+                request: const FriendRequest(
+                  senderId: 'long',
+                  senderName: 'Ola Nowak',
+                  senderEmail: '',
+                  senderPhotoUrl: null,
+                  createdAt: null,
+                ),
+                processing: false,
+                onAccept: () => accepted++,
+                onDecline: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final accept = tester.getSemantics(
+        find.bySemanticsLabel(
+          'Accept friend request from Ola Nowak',
+        ),
+      );
+      expect(
+        accept.getSemanticsData().hasAction(ui.SemanticsAction.tap),
+        isTrue,
+      );
+      expect(
+        find.bySemanticsLabel(
+          'Decline friend request from Ola Nowak',
+        ),
+        findsOneWidget,
+      );
+      accept.owner!.performAction(accept.id, ui.SemanticsAction.tap);
+      await tester.pump();
+      expect(accepted, 1);
+
+      final nameText = tester.renderObject<RenderParagraph>(
+        find.text('Ola Nowak'),
+      );
+      // The test font is 1 em per glyph, so "Ola Nowak" needs two lines here;
+      // one line would cut it.
+      expect(nameText.didExceedMaxLines, isFalse);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    });
+
+    testWidgets('without a sender name there are still exactly two labelled '
+        'tap targets', (tester) async {
+      final semantics = tester.ensureSemantics();
+      var accepted = 0;
+      await tester.pumpWidget(
+        _localized(
+          Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 360,
+                child: FriendRequestDecisionButtons(
+                  onAccept: () => accepted++,
+                  onDecline: () {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      final tappable = find.semantics
+          .byAction(ui.SemanticsAction.tap)
+          .evaluate()
+          .map((node) => node.label)
+          .toList();
+      expect(tappable, unorderedEquals(<String>[
+        'Accept friend request',
+        'Decline friend request',
+      ]));
+      final node = tester.getSemantics(
+        find.bySemanticsLabel('Accept friend request'),
+      );
+      node.owner!.performAction(node.id, ui.SemanticsAction.tap);
+      await tester.pump();
+      expect(accepted, 1);
       semantics.dispose();
     });
 

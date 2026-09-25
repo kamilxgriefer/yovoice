@@ -6521,7 +6521,7 @@ submitted for store review.
 
 **Optional retention backstops (Kamil, console).** A GCS lifecycle rule on the
 default bucket deleting objects with prefix `bug_reports/` older than 100 days,
-and a Firestore TTL policy on `bugReports.expiresAt`. The daily sweep already
+and a Firestore TTL policy on `bugReports.expiresAt`. The hourly sweep already
 enforces both limits; these only catch a sweep that stops running. Note that a
 TTL deletion does not delete the Storage object, so keep the lifecycle rule if
 you add the TTL.

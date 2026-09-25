@@ -122,9 +122,9 @@ const ROOMS_COLLECTION = "rooms";
 // subtracted (one point read each), so a deleted or never-projected service
 // account can never make the published number go down a second time.
 const PUBLIC_STATS_EXCLUDED_ACCOUNT_UIDS = Object.freeze([
-  // Apple App Review demo account (apple-review-build2@yovoice.app). It must
-  // stay signed-in-able so App Review can exercise the app, but it is Apple's
-  // reviewer, not a YO Voice user.
+  // Apple App Review demo account (its sign-in address is deliberately not in
+  // this public repository). It must stay signed-in-able so App Review can
+  // exercise the app, but it is Apple's reviewer, not a YO Voice user.
   "sugg76GWtpMe7vXM5SVWP0alsoi1",
 ]);
 

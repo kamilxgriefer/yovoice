@@ -7,10 +7,13 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/bug_reports/data/bug_report_route_tracker.dart';
 import 'package:yovoice/features/bug_reports/presentation/bug_report_floating_button.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
+import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
 
 /// The testing-period "Bug" button: it must never overlap or move the
 /// floating dock, never sit in a system gesture strip, and hide itself when
@@ -54,6 +57,7 @@ Future<({BugReportRouteTracker tracker, List<BuildContext> opened})> _pump(
   required Size size,
   AppPreferencesController? preferences,
   bool signedIn = true,
+  YoTopNotificationController? topNotifications,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -84,15 +88,24 @@ Future<({BugReportRouteTracker tracker, List<BuildContext> opened})> _pump(
           GlobalWidgetsLocalizations.delegate,
           GlobalCupertinoLocalizations.delegate,
         ],
-        builder: (context, child) => BugReportFloatingButtonHost(
-          navigatorKey: navigatorKey,
-          available: true,
-          initiallySignedIn: signedIn,
-          signedInChanges: const Stream<bool>.empty(),
-          routeTracker: tracker,
-          onOpenReporter: opened.add,
-          child: child!,
-        ),
+        builder: (context, child) {
+          final host = BugReportFloatingButtonHost(
+            navigatorKey: navigatorKey,
+            available: true,
+            initiallySignedIn: signedIn,
+            signedInChanges: const Stream<bool>.empty(),
+            routeTracker: tracker,
+            onOpenReporter: opened.add,
+            child: child!,
+          );
+          // The nesting app.dart uses: the banner layer above the button.
+          return topNotifications == null
+              ? host
+              : YoTopNotificationHost(
+                  controller: topNotifications,
+                  child: host,
+                );
+        },
         home: Scaffold(
           body: const Center(child: _Counter()),
           // The real dock, exactly as the mobile shell mounts it. On the
@@ -173,6 +186,50 @@ void main() {
     await tester.drag(_button, const Offset(-1300, 0));
     await tester.pumpAndSettle();
     expect(tester.getRect(_button).left, greaterThan(1440 / 2));
+  });
+
+  testWidgets('a top banner paints above a Bug button parked high: a tap on '
+      'the banner reaches the banner, never the reporter', (tester) async {
+    final banner = YoTopNotificationController();
+    addTearDown(banner.dispose);
+    final harness = await _pump(
+      tester,
+      size: const Size(390, 844),
+      topNotifications: banner,
+    );
+    // Park the button as high as it goes, on the right edge.
+    await tester.drag(_button, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    var opened = 0;
+    expect(
+      banner.show(
+        YoTopNotification(
+          title: 'Ola sent you a friend request',
+          body: 'Tap to see who it is and answer.',
+          type: NotificationType.friendRequest,
+          onOpen: () => opened++,
+        ),
+      ),
+      isTrue,
+    );
+    await tester.pump(const Duration(milliseconds: 900));
+
+    final card = tester.getRect(
+      find.byKey(const ValueKey('yo-top-notification-card')),
+    );
+    final overlap = card.intersect(tester.getRect(_button));
+    expect(
+      overlap.width > 0 && overlap.height > 0,
+      isTrue,
+      reason: 'the scenario needs the button under the banner: '
+          'card $card, button ${tester.getRect(_button)}',
+    );
+    await tester.tapAt(overlap.center);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(harness.opened, isEmpty);
+    expect(opened, 1);
+    banner.clear();
+    await tester.pump(const Duration(seconds: 6));
   });
 
   testWidgets('a tap opens the reporter from the navigator', (tester) async {
@@ -289,5 +346,41 @@ void main() {
       bugButtonAllowedArea(const MediaQueryData(size: Size(844, 200))),
       isNull,
     );
+  });
+
+  group('the glyph is legible in both themes (WCAG 1.4.11, 3:1)', () {
+    double contrast(Color a, Color b) {
+      final la = a.computeLuminance();
+      final lb = b.computeLuminance();
+      final high = la > lb ? la : lb;
+      final low = la > lb ? lb : la;
+      return (high + .05) / (low + .05);
+    }
+
+    for (final (name, palette) in const [
+      ('Dark', AppPalette.dark),
+      ('Pearl', AppPalette.light),
+    ]) {
+      test(name, () {
+        final glyph = bugReportButtonGlyphColor(palette);
+        final fill = palette.surfaceRaised.withValues(
+          alpha: bugReportButtonFillAlpha,
+        );
+        // The fill is translucent, so it is measured over the app's own
+        // canvas and over the brightest and darkest content behind it.
+        for (final backdrop in [
+          palette.background,
+          Colors.white,
+          Colors.black,
+        ]) {
+          final composited = Color.alphaBlend(fill, backdrop);
+          expect(
+            contrast(glyph, composited),
+            greaterThanOrEqualTo(3),
+            reason: '$name glyph on the fill over $backdrop',
+          );
+        }
+      });
+    }
   });
 }

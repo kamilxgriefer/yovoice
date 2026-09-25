@@ -919,6 +919,9 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
 
   /// The note was ended by the 0:30 cap rather than by the person.
   bool _stoppedAtCap = false;
+
+  /// Runs for [recordingAutoStopTapGrace] after the automatic stop at 0:30.
+  Timer? _capStopGrace;
   bool _previewing = false;
   bool _busy = false;
   bool _published = false;
@@ -971,6 +974,13 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
     if (_recording) {
       await _finishRecording();
       return;
+    }
+    // A Finish aimed at the last second that lands just after the automatic
+    // stop must not start a new take over the kept one.
+    if (_capStopGrace?.isActive ?? false) return;
+    if (_voice != null) {
+      final replace = await confirmReplaceRecording(context);
+      if (!replace || !mounted || _recording || _busy || _stopping) return;
     }
     try {
       await _stopPreview();
@@ -1047,6 +1057,8 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
         _notice = null;
       });
       if (atCap) {
+        _capStopGrace?.cancel();
+        _capStopGrace = Timer(recordingAutoStopTapGrace, () {});
         _limitCues.onAutomaticStop(
           context,
           AppLocalizations.of(context).text(
@@ -1153,6 +1165,7 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _capStopGrace?.cancel();
     _caption.dispose();
     unawaited(_previewCompletion?.cancel());
     unawaited(_previewPlayer?.dispose());

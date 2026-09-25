@@ -24,6 +24,8 @@ const {
   respondToFriendRequest,
   cancelFriendRequest,
   setUserBlock,
+  setFollow,
+  removeFriend,
 } = require("../friends/social_graph");
 const {
   handleNotificationCreated,
@@ -35,6 +37,8 @@ const runSend = sendFriendRequest.run ?? sendFriendRequest;
 const runRespond = respondToFriendRequest.run ?? respondToFriendRequest;
 const runCancel = cancelFriendRequest.run ?? cancelFriendRequest;
 const runBlock = setUserBlock.run ?? setUserBlock;
+const runFollow = setFollow.run ?? setFollow;
+const runUnfriend = removeFriend.run ?? removeFriend;
 
 const A = "frc-alice";
 const B = "frc-bob";
@@ -400,4 +404,96 @@ test("other types keep no push-decision receipt", async () => {
     (await pushDecisionLedgerReference(B, row.id).get()).exists,
     false,
   );
+});
+
+// ------------------------------------------- sessions older than the epoch
+
+// ADR-222: a remediated takeover writes users/{uid}.authSessionEpoch. An ID
+// token minted before it stays valid for up to an hour; the callables whose
+// effects outlive that hour refuse it.
+function staleRequest(uid, data, authTime) {
+  const built = request(uid, data);
+  if (authTime !== undefined) built.auth.token.auth_time = authTime;
+  return built;
+}
+
+const sessionEnded = (error) =>
+  error.code === "permission-denied" && error.details?.reason === "session-ended";
+
+test("a session that predates the account's epoch creates no lasting social edge", async () => {
+  await runSend(request(B, { targetUserId: A }));
+  const epoch = Math.floor(Date.now() / 1000);
+  await db.doc(`users/${A}`).set({ authSessionEpoch: epoch }, { merge: true });
+
+  for (const call of [
+    () => runRespond(staleRequest(A, { senderId: B, accept: true }, epoch - 5)),
+    () => runRespond(staleRequest(A, { senderId: B, accept: false }, epoch - 5)),
+    () => runSend(staleRequest(A, { targetUserId: B }, epoch - 5)),
+    () => runFollow(staleRequest(A, { targetUserId: B, following: true }, epoch - 5)),
+    () => runBlock(staleRequest(A, { targetUserId: B, blocked: true }, epoch - 5)),
+    () => runBlock(staleRequest(A, { targetUserId: B, blocked: false }, epoch - 5)),
+    () => runUnfriend(staleRequest(A, { targetUserId: B }, epoch - 5)),
+    // A token without auth_time is refused, as the rules refuse it.
+    () => runRespond(staleRequest(A, { senderId: B, accept: true })),
+  ]) {
+    await assert.rejects(call(), sessionEnded);
+  }
+  assert.deepEqual(Object.values(await friendshipPaths()), [
+    false, false, false, false,
+  ]);
+  assert.equal(await exists(`users/${A}/friendRequests/${B}`), true);
+  assert.equal(await exists(`users/${A}/blocked/${B}`), false);
+  assert.equal(await exists(`users/${A}/following/${B}`), false);
+
+  // The owner's own session after the epoch is unaffected.
+  const accepted = await runRespond(
+    staleRequest(A, { senderId: B, accept: true }, epoch),
+  );
+  assert.equal(accepted.outcome, "accepted");
+  // An account without an epoch keeps working with any token.
+  assert.equal(
+    (await runUnfriend(request(B, { targetUserId: A }))).changed,
+    true,
+  );
+});
+
+test("push ignores every registration written before the account's epoch", async () => {
+  const epoch = Math.floor(Date.now() / 1000);
+  await db.doc(`users/${A}`).set({ authSessionEpoch: epoch }, { merge: true });
+  await db.doc(`users/${A}/fcmTokens/frc-planted`).set({
+    updatedAt: Timestamp.fromMillis((epoch - 60) * 1000),
+  });
+  await db.doc(`users/${A}/fcmTokens/frc-owner`).set({
+    updatedAt: Timestamp.fromMillis(epoch * 1000),
+  });
+  await runSend(request(B, { targetUserId: A }));
+  const [row] = await notificationsOf(A, "friendRequest");
+  const sent = [];
+
+  await handleNotificationCreated(eventFor(A, await row.ref.get()), {
+    messaging: fakeMessaging(sent),
+  });
+
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].tokens, ["frc-owner"]);
+  // Left for the takeover purge; never a delivery target.
+  assert.equal(await exists(`users/${A}/fcmTokens/frc-planted`), true);
+});
+
+test("only planted registrations before the epoch: the push is skipped", async () => {
+  const epoch = Math.floor(Date.now() / 1000);
+  await db.doc(`users/${A}`).set({ authSessionEpoch: epoch }, { merge: true });
+  await db.doc(`users/${A}/fcmTokens/frc-planted`).set({
+    updatedAt: Timestamp.fromMillis((epoch - 60) * 1000),
+  });
+  await runSend(request(B, { targetUserId: A }));
+  const [row] = await notificationsOf(A, "friendRequest");
+  const sent = [];
+
+  await handleNotificationCreated(eventFor(A, await row.ref.get()), {
+    messaging: fakeMessaging(sent),
+  });
+
+  assert.equal(sent.length, 0);
+  assert.equal((await row.ref.get()).data().pushSkipReason, "no-usable-token");
 });

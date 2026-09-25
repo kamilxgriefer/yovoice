@@ -66,15 +66,29 @@
 //      reset cannot be sent to an address the pre-registrant controls;
 //   6. write the audit record and flip the ledger row to "remediated" in one
 //      batch.
-// A failure at any step throws; the ledger row stays "pending", so the next
-// call or sweep repeats the whole sequence. Every step is idempotent.
+// Steps 2 and 3 END SESSIONS, the owner's own included, so they run once per
+// takeover: the epoch transaction also records a checkpoint on the ledger row
+// (`sessionEpoch`, `sessionsEndedAt`, `sessionsEndedBy`). A call that finds
+// the checkpoint on a row that is still "pending" — and no credential or
+// second factor to remove — RESUMES at step 4 instead of revoking and
+// re-epoching the session the owner has just re-established. The purge is
+// bounded per call; a purge that runs out of pages records its progress
+// (`purgeDeleted`), leaves the row pending and returns "securing", and the
+// next call or sweep continues it. A planted token cannot receive anything
+// meanwhile: push delivery ignores every token document written before the
+// epoch (functions/notifications/push.js). Any other failure throws; the row
+// stays "pending" and the next call or sweep repeats from the first step not
+// yet recorded. Every step is idempotent.
 //
 // WHAT THIS DOES NOT DO (Phase 2 needs the Identity Platform upgrade): an ID
 // token the pre-registrant already holds stays cryptographically valid until
 // it expires (up to one hour). Rules paths gated by `isActiveAccount()` /
-// Storage `isActiveUser()` refuse it through the epoch; owner-only reads that
-// never consult account state (notifications, incoming calls, DM reads) and
-// Cloud Functions callables still accept it until it expires.
+// Storage `isActiveUser()` refuse it through the epoch, and so do the
+// callables whose effects outlive the hour — friend requests and answers,
+// follows, blocks, unfriending, direct messages and bug reports — through
+// `assertSessionNotBeforeEpoch` (utils/auth.js). Owner-only reads that never
+// consult account state (notifications, incoming calls, DM reads) and the
+// remaining callables still accept it until it expires (docs/SECURITY.md).
 
 const { createHash } = require("node:crypto");
 
@@ -86,6 +100,7 @@ const { getAuth } = require("firebase-admin/auth");
 const {
   FieldPath,
   FieldValue,
+  Timestamp,
   getFirestore,
 } = require("firebase-admin/firestore");
 
@@ -143,6 +158,30 @@ const SWEEP_TIME_BUDGET_MS = 240 * 1000;
 // The ledger pass may use this much of the run; the listUsers walk (backfill
 // and re-arming) always keeps the rest.
 const SWEEP_LEDGER_TIME_BUDGET_MS = 180 * 1000;
+
+// The ledger fields that record a remediation in progress (see ORDER).
+function CLEARED_CHECKPOINT() {
+  return {
+    sessionEpoch: FieldValue.delete(),
+    sessionsEndedAt: FieldValue.delete(),
+    sessionsEndedBy: FieldValue.delete(),
+    purgeDeleted: FieldValue.delete(),
+  };
+}
+
+/**
+ * Whether a pending row records that this takeover's sessions were already
+ * ended (steps 2-3), so a retry resumes at the purge. Only while no
+ * credential or second factor is left to remove: something new to strip
+ * means a session the checkpoint did not end, and the whole sequence runs
+ * again.
+ */
+function sessionsAlreadyEnded(ledgerRow, plan, enrolledFactors) {
+  return ledgerRow?.state === LEDGER_STATE.PENDING &&
+    Number.isSafeInteger(ledgerRow.sessionEpoch) &&
+    plan.unlinkProviders.length === 0 &&
+    enrolledFactors === 0;
+}
 
 function normalizeEmail(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -369,6 +408,9 @@ function createFederatedTakeoverService({
   db,
   clock = () => Date.now(),
   log = logger,
+  // Seams for the bounded push purge; production keeps the defaults.
+  fcmPurgePageSize = FCM_PURGE_PAGE_SIZE,
+  fcmPurgeMaxPages = FCM_PURGE_MAX_PAGES,
 } = {}) {
   if (!auth || typeof auth.getUser !== "function") {
     throw new TypeError("An Admin Auth service is required.");
@@ -407,12 +449,15 @@ function createFederatedTakeoverService({
       source,
       ...ledgerEvidenceOf(user),
       ...(existing ? {} : { firstSeenAt: FieldValue.serverTimestamp() }),
+      // A re-armed row watches a NEW password: the checkpoint of an earlier
+      // remediation must never let its next takeover skip ending sessions.
+      ...(existing ? CLEARED_CHECKPOINT() : {}),
       updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
     return true;
   }
 
-  async function writeSessionEpoch(uid) {
+  async function writeSessionEpoch(uid, trigger) {
     // +1: every session that started in or before the second in which the
     // pre-registrant's credentials were removed is dead. Nobody can sign in
     // with those credentials after step 1, and the owner's own re-sign-in is
@@ -432,37 +477,74 @@ function createFederatedTakeoverService({
       // before the owner's profile exists: a stale session must not regain
       // rules access when the owner's app creates it.
       transaction.set(userRef, { authSessionEpoch: next }, { merge: true });
+      // The checkpoint, in the same commit: sessions are ended exactly when
+      // the ledger says so, and never twice for one takeover.
+      transaction.set(ledgerRef(uid), {
+        sessionEpoch: next,
+        sessionsEndedAt: FieldValue.serverTimestamp(),
+        sessionsEndedBy: trigger,
+        purgeDeleted: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
       return next;
     });
   }
 
-  async function purgeFcmTokens(uid, keepTokenId) {
+  /**
+   * Deletes every push registration written before the epoch, up to
+   * `fcmPurgeMaxPages` pages per call. Returns `finished: false` when the
+   * budget ran out first: the epoch is already in force, so nothing stale can
+   * be adding tokens, and running out of pages means an abusive volume that
+   * the next call continues. A registration written AT or AFTER the epoch
+   * came from a session the rules accepted, which only the owner can hold
+   * now, so it stays — the owner's own devices after a re-sign-in are never
+   * purged by a call that resumes. A kept caller device is re-stamped at the
+   * epoch, so push delivery, which ignores every registration written before
+   * the epoch (functions/notifications/push.js), keeps reaching it.
+   */
+  async function purgeFcmTokens(uid, keepTokenId, sessionEpoch) {
     const tokens = db.collection("users").doc(uid).collection("fcmTokens");
+    const epochMillis = sessionEpoch * 1000;
     let deleted = 0;
     let keptCallerToken = false;
-    for (let page = 0; page < FCM_PURGE_MAX_PAGES; page += 1) {
-      const snapshot = await tokens.limit(FCM_PURGE_PAGE_SIZE).get();
-      const doomed = snapshot.docs.filter((entry) => {
-        if (keepTokenId && entry.id === keepTokenId) {
-          keptCallerToken = true;
-          return false;
-        }
-        return true;
-      });
-      if (doomed.length === 0) return { deleted, keptCallerToken };
+    let cursor = null;
+    for (let page = 0; page < fcmPurgeMaxPages; page += 1) {
+      let query = tokens.orderBy(FieldPath.documentId()).limit(fcmPurgePageSize);
+      if (cursor) query = query.startAfter(cursor);
+      const snapshot = await query.get();
+      if (snapshot.empty) return { deleted, keptCallerToken, finished: true };
       const batch = db.batch();
-      for (const entry of doomed) batch.delete(entry.ref);
-      await batch.commit();
-      deleted += doomed.length;
+      let writes = 0;
+      for (const entry of snapshot.docs) {
+        if (keepTokenId && entry.id === keepTokenId) {
+          batch.update(entry.ref, { updatedAt: Timestamp.fromMillis(epochMillis) });
+          keptCallerToken = true;
+          writes += 1;
+          continue;
+        }
+        const writtenAt = entry.get("updatedAt");
+        const writtenMillis = typeof writtenAt?.toMillis === "function"
+          ? writtenAt.toMillis()
+          : null;
+        if (writtenMillis !== null && writtenMillis >= epochMillis) continue;
+        batch.delete(entry.ref);
+        deleted += 1;
+        writes += 1;
+      }
+      if (writes > 0) await batch.commit();
+      if (snapshot.size < fcmPurgePageSize) {
+        return { deleted, keptCallerToken, finished: true };
+      }
+      cursor = snapshot.docs.at(-1).id;
     }
-    // The epoch is already in force, so nothing can be adding tokens; running
-    // out of pages means an abusive volume. Leave the row pending and retry.
-    throw new Error("fcmTokens purge did not finish within its page budget.");
+    return { deleted, keptCallerToken, finished: false };
   }
 
   /**
    * The single remediation authority. Returns
-   * `{ status: "remediated" | "clean" | "gone", ... }`.
+   * `{ status: "remediated" | "securing" | "clean" | "gone", ... }`;
+   * "securing" means the sessions are ended and the push purge continues on
+   * the next call.
    */
   async function remediateAccount(uid, {
     trigger,
@@ -506,19 +588,28 @@ function createFederatedTakeoverService({
     const enrolledFactors = Array.isArray(user.multiFactor?.enrolledFactors)
       ? user.multiFactor.enrolledFactors.length
       : 0;
+    const resumed = sessionsAlreadyEnded(ledger, plan, enrolledFactors);
 
-    // 1. No new session from the pre-registrant's credentials, and no second
-    //    factor of theirs between the owner and the account.
-    if (plan.unlinkProviders.length > 0) {
-      await auth.updateUser(uid, { providersToUnlink: plan.unlinkProviders });
+    let sessionEpoch;
+    if (resumed) {
+      // Steps 1-3 already ran for this takeover. Ending sessions again would
+      // sign the owner out of the session they re-established after it.
+      sessionEpoch = ledger.sessionEpoch;
+    } else {
+      // 1. No new session from the pre-registrant's credentials, and no
+      //    second factor of theirs between the owner and the account.
+      if (plan.unlinkProviders.length > 0) {
+        await auth.updateUser(uid, { providersToUnlink: plan.unlinkProviders });
+      }
+      if (enrolledFactors > 0) {
+        await auth.updateUser(uid, { multiFactor: { enrolledFactors: null } });
+      }
+      // 2. No refresh of a session that already exists.
+      await auth.revokeRefreshTokens(uid);
+      // 3. Rules refuse every older ID token from here on; the ledger records
+      //    that the sessions are ended.
+      sessionEpoch = await writeSessionEpoch(uid, trigger);
     }
-    if (enrolledFactors > 0) {
-      await auth.updateUser(uid, { multiFactor: { enrolledFactors: null } });
-    }
-    // 2. No refresh of a session that already exists.
-    await auth.revokeRefreshTokens(uid);
-    // 3. Rules refuse every older ID token from here on.
-    const sessionEpoch = await writeSessionEpoch(uid);
     // 4. Nothing planted survives, and nothing stale can re-plant.
     const nowSeconds = Math.floor(clock() / 1000);
     const keep = trigger === TRIGGER.OWNER &&
@@ -526,7 +617,28 @@ function createFederatedTakeoverService({
       callerMayKeepDevice(caller, user, plan, nowSeconds)
       ? keepFcmToken
       : null;
-    const purge = await purgeFcmTokens(uid, keep);
+    const purge = await purgeFcmTokens(uid, keep, sessionEpoch);
+    const priorDeleted = resumed && Number.isSafeInteger(ledger.purgeDeleted)
+      ? ledger.purgeDeleted
+      : 0;
+    const fcmTokensDeleted = priorDeleted + purge.deleted;
+    if (!purge.finished) {
+      await ledgerRef(uid).set({
+        purgeDeleted: fcmTokensDeleted,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      log.warn("federated takeover: sessions ended, push purge continues", {
+        uid,
+        trigger,
+        fcmTokensDeleted,
+      });
+      return {
+        status: "securing",
+        sessionsEndedNow: !resumed,
+        sessionEpoch,
+        fcmTokensDeleted,
+      };
+    }
 
     // 5. The owner's address back on the account. Without it a pre-registrant
     //    who moved the account to their own address could send a password
@@ -568,7 +680,8 @@ function createFederatedTakeoverService({
       ownerEmailRestored,
       refreshTokensRevoked: true,
       sessionEpoch,
-      fcmTokensDeleted: purge.deleted,
+      sessionsEndedBy: resumed ? (ledger.sessionsEndedBy ?? null) : trigger,
+      fcmTokensDeleted,
       callerDeviceKept: purge.keptCallerToken,
       ledgerStateBefore: ledger?.state ?? null,
       createdAt: FieldValue.serverTimestamp(),
@@ -579,6 +692,7 @@ function createFederatedTakeoverService({
       remediatedBy: trigger,
       lastAuditId: auditRef.id,
       ...(ownerEmailRestored === false ? { needsReview: "ownerAddressTaken" } : {}),
+      ...CLEARED_CHECKPOINT(),
       updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
     await batch.commit();
@@ -588,16 +702,18 @@ function createFederatedTakeoverService({
       trigger,
       reason: plan.reason,
       providersUnlinked: plan.unlinkProviders,
-      fcmTokensDeleted: purge.deleted,
+      fcmTokensDeleted,
+      resumed,
       auditId: auditRef.id,
     });
 
     return {
       status: "remediated",
+      sessionsEndedNow: !resumed,
       auditId: auditRef.id,
       sessionEpoch,
       providersUnlinked: plan.unlinkProviders,
-      fcmTokensDeleted: purge.deleted,
+      fcmTokensDeleted,
       callerDeviceKept: purge.keptCallerToken,
     };
   }
@@ -631,11 +747,18 @@ function createFederatedTakeoverService({
       );
     }
 
-    if (outcome.status === "remediated") {
-      // The owner's own refresh token was revoked with everyone else's, and
-      // the session epoch refuses this session's ID token in rules. The
-      // client must sign in again once; that new session is after the epoch.
-      return { status: "remediated", reauthenticate: true };
+    if (outcome.status === "remediated" || outcome.status === "securing") {
+      // When this call ended the sessions, the owner's own refresh token was
+      // revoked with everyone else's and the session epoch refuses this
+      // session's ID token in rules: the client must sign in again once, and
+      // that new session is after the epoch. A call that only resumed the
+      // purge asks for that only when the calling session itself predates
+      // the epoch (an ID token that outlived its revoked refresh token).
+      const authTime = caller.token?.auth_time;
+      const callerEnded = outcome.sessionsEndedNow ||
+        !Number.isSafeInteger(authTime) ||
+        authTime < outcome.sessionEpoch;
+      if (callerEnded) return { status: "remediated", reauthenticate: true };
     }
     return { status: "clean", reauthenticate: false };
   }
@@ -686,6 +809,7 @@ function createFederatedTakeoverService({
               ledger: row.data(),
             });
             if (outcome.status === "remediated") counts.remediated += 1;
+            if (outcome.status === "securing") counts.securing += 1;
             if (outcome.verdict === "verified" || outcome.verdict === "ambiguous") {
               counts.ledgerVerified += 1;
             }
@@ -800,6 +924,7 @@ function createFederatedTakeoverService({
                 ledger: existing,
               });
               if (outcome.status === "remediated") counts.remediated += 1;
+              if (outcome.status === "securing") counts.securing += 1;
             } else if (await watchUnverifiedPassword(user, "sweep", existing)) {
               stats.seeded += 1;
               counts.seeded += 1;
@@ -850,6 +975,7 @@ function createFederatedTakeoverService({
       ledgerUnconfirmed: 0,
       seeded: 0,
       remediated: 0,
+      securing: 0,
       failed: 0,
     };
 
@@ -933,6 +1059,8 @@ module.exports = {
   SWEEP_STATE_COLLECTION,
   TRIGGER,
   TRUSTED_FEDERATED_PROVIDERS,
+  FCM_PURGE_MAX_PAGES,
+  FCM_PURGE_PAGE_SIZE,
   callerMayKeepDevice,
   createFederatedTakeoverService,
   emailHashOf,

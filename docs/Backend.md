@@ -572,7 +572,7 @@ needs no change; the behaviour is pinned by `functions/test/gif_moderation.test.
 | `submitBugReportV1` | callable | any signed-in active account (unverified allowed) | validates the allowlist, rate-limits (5/10 min, 20/day, 300/day global), writes `bugReports/{id}`, issues a screenshot reservation when one is declared |
 | `attachBugReportScreenshotV1` | callable | the reporter | verifies the uploaded JPEG and binds it to the report |
 | `listBugReportsV1`, `getBugReportV1`, `updateBugReportStatusV1` | callables, `secrets: ["YOVOICE_PROTECTED_OWNER_UID"]` | protected owner only | the Staff Center inbox, a 5-minute screenshot URL, triage status |
-| `sweepBugReportRetentionSchedule` | daily schedule | — | abandoned uploads, 90-day screenshots, 180-day reports |
+| `sweepBugReportRetentionSchedule` | hourly schedule | — | abandoned uploads, 90-day screenshots, 180-day reports |
 | `deliverBugReportV1` | Firestore trigger, **source-gated off** | — | Resend e-mail (`RESEND_API_KEY`) and GitHub issue (`GITHUB_BUG_REPORT_TOKEN`) alerts, one claim per channel, at most five attempts |
 
 ## Admin

@@ -313,6 +313,16 @@ class _BugReportFloatingButtonHostState
   }
 }
 
+/// The Bug button's fill opacity over whatever is behind it.
+const double bugReportButtonFillAlpha = .94;
+
+/// The Bug button's glyph colour. It must clear 3:1 (WCAG 1.4.11) against
+/// [AppPalette.surfaceRaised] at [bugReportButtonFillAlpha] composited over
+/// any backdrop, in Dark and Pearl alike; `interactiveForeground` is the
+/// palette role that does (the Dark primary measured 2.93:1).
+Color bugReportButtonGlyphColor(AppPalette palette) =>
+    palette.interactiveForeground;
+
 class _BugButton extends StatelessWidget {
   const _BugButton({required this.onPressed, required this.onHide});
 
@@ -323,7 +333,6 @@ class _BugButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     return Semantics(
       key: const ValueKey('bug-report-floating-button'),
       button: true,
@@ -344,7 +353,7 @@ class _BugButton extends StatelessWidget {
       },
       excludeSemantics: true,
       child: Material(
-        color: palette.surfaceRaised.withValues(alpha: .94),
+        color: palette.surfaceRaised.withValues(alpha: bugReportButtonFillAlpha),
         elevation: 3,
         // A fully opaque shadow reads as a hard dark ring on the Home canvas
         // (the More popover hit the same thing); a translucent one is depth.
@@ -355,10 +364,13 @@ class _BugButton extends StatelessWidget {
           onTap: onPressed,
           onLongPress: onHide,
           child: Center(
+            // The glyph is the button's only visible identification, so it
+            // must clear 3:1 (WCAG 1.4.11) on the translucent fill over any
+            // content in both themes; the Dark primary does not (2.93:1).
             child: Icon(
               Icons.bug_report_rounded,
               size: 24,
-              color: colors.primary,
+              color: bugReportButtonGlyphColor(palette),
             ),
           ),
         ),

@@ -737,6 +737,109 @@ describe("the sweeper's ledger pass", () => {
   });
 });
 
+describe("an abusive volume of planted push rows", () => {
+  // The purge is bounded per call. Before the review round a purge that ran
+  // out of pages threw AFTER revoking and moving the epoch, so every retry —
+  // each owner sign-in, each sweep — signed the owner out again while the
+  // planted token kept receiving. The seams shrink the budget to two rows a
+  // call so the volume stays small.
+  test("sessions end once; retries only continue the purge and planted rows receive nothing", async () => {
+    const email = `victim-flood-${RUN}@gmail.com`;
+    const attacker = await registerWithPassword(email);
+    await deliverCreateTrigger(attacker.uid);
+    assert.equal(await createOwnProfile(attacker.idToken, attacker.uid, email), 200);
+    // Fake rows sort before the real one in document-id order, as an attacker
+    // would place them; the create rule has no count cap.
+    for (let index = 0; index < 6; index += 1) {
+      assert.equal(
+        await registerPushToken(attacker.idToken, attacker.uid, `a-fake-${index}-${RUN}`),
+        200,
+      );
+    }
+    assert.equal(
+      await registerPushToken(attacker.idToken, attacker.uid, `zz-attacker-${RUN}`),
+      200,
+    );
+    await letPreRegistrationAge();
+    const owner = await signInWithProvider(email, "google.com", `google-flood-${RUN}`);
+    assert.equal(owner.uid, attacker.uid);
+    await letPreRegistrationAge();
+
+    const service = createFederatedTakeoverService({
+      auth,
+      db,
+      log: capturingLog(),
+      fcmPurgePageSize: 2,
+      fcmPurgeMaxPages: 1,
+    });
+    const ownerCall = async (idToken) => {
+      const decoded = await auth.verifyIdToken(idToken);
+      return service.secureFederatedSignIn({
+        auth: { uid: decoded.uid, token: decoded },
+        data: {},
+      });
+    };
+
+    // 1. The first call ends every session even though the purge runs out of
+    //    budget; the owner is asked to sign in once, as usual.
+    assert.deepEqual(await ownerCall(owner.idToken), {
+      status: "remediated",
+      reauthenticate: true,
+    });
+    const ended = await auth.getUser(owner.uid);
+    const epoch = (await db.doc(`users/${owner.uid}`).get()).get("authSessionEpoch");
+    assert.ok(Number.isSafeInteger(epoch));
+    const checkpoint = (await db.collection(LEDGER_COLLECTION).doc(owner.uid).get()).data();
+    assert.equal(checkpoint.state, "pending");
+    assert.equal(checkpoint.sessionEpoch, epoch);
+    assert.equal(checkpoint.sessionsEndedBy, "ownerSignIn");
+    assert.equal(checkpoint.purgeDeleted, 2);
+    assert.equal((await pushTokenIds(owner.uid)).length, 5);
+    assert.deepEqual(await auditsFor(owner.uid), []);
+    assert.equal(await sessionIsRevoked(attacker.idToken), true);
+
+    // 2. The owner's new session is after the epoch. Its own call resumes the
+    //    purge: no second revocation, no new epoch, the session survives.
+    await waitUntilEpochSecond(epoch);
+    const again = await signInWithProvider(email, "google.com", `google-flood-${RUN}`);
+    assert.equal(await registerPushToken(again.idToken, again.uid, `owner-${RUN}`), 200);
+    assert.deepEqual(await ownerCall(again.idToken), {
+      status: "clean",
+      reauthenticate: false,
+    });
+    assert.equal(
+      (await auth.getUser(owner.uid)).tokensValidAfterTime,
+      ended.tokensValidAfterTime,
+    );
+    assert.equal(
+      (await db.doc(`users/${owner.uid}`).get()).get("authSessionEpoch"),
+      epoch,
+    );
+    assert.equal(await sessionIsRevoked(again.idToken), false);
+
+    // 3. The sweeper keeps going until the purge finishes, never ending the
+    //    owner's session either; the owner's post-epoch device survives.
+    for (let run = 0; run < 10 && (await ledgerState(owner.uid)) === "pending"; run += 1) {
+      await service.remediateAccount(owner.uid, { trigger: "sweeper" });
+    }
+    assert.equal(await ledgerState(owner.uid), "remediated");
+    assert.equal(
+      (await auth.getUser(owner.uid)).tokensValidAfterTime,
+      ended.tokensValidAfterTime,
+    );
+    assert.equal(await sessionIsRevoked(again.idToken), false);
+    assert.deepEqual(await pushTokenIds(owner.uid), [`owner-${RUN}`]);
+    const audits = await auditsFor(owner.uid);
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].fcmTokensDeleted, 7);
+    assert.equal(audits[0].sessionEpoch, epoch);
+    assert.equal(audits[0].sessionsEndedBy, "ownerSignIn");
+    const closed = (await db.collection(LEDGER_COLLECTION).doc(owner.uid).get()).data();
+    assert.equal(closed.sessionEpoch, undefined);
+    assert.equal(closed.purgeDeleted, undefined);
+  });
+});
+
 describe("legitimate accounts are never touched", () => {
   test("a verified password plus Google keeps both, its sessions and its push", async () => {
     const email = `legit-${RUN}@gmail.com`;

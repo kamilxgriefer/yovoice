@@ -1104,4 +1104,36 @@ void main() {
     );
     expect(repository.calls, isEmpty);
   });
+
+  testWidgets('a refused hand on the community stage is a live region', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = TestServerRepository()
+      ..servers = [communityServer()]
+      ..channels = communityChannels(
+        stage: const ServerChannelLiveness(isLive: false),
+        activeSessionId: 'gen-7',
+      )
+      ..sessionRole = 'listener';
+    await pumpServers(
+      tester,
+      communityWorkspace(repository),
+      size: const Size(1440, 900),
+    );
+    await tester.tap(join);
+    await tester.pumpAndSettle();
+
+    repository.failNextCall['setServerSessionHandV1'] =
+        FirebaseFunctionsException(code: 'not-found', message: 'unregistered');
+    await tester.tap(hand);
+    await tester.pumpAndSettle();
+    final error = find.byKey(const ValueKey('server-community-hand-error'));
+    expect(error, findsOneWidget);
+    final node = tester.getSemantics(error);
+    expect(node.label, 'Ta część YO Voice jest jeszcze przygotowywana.');
+    expect(node.getSemanticsData().flagsCollection.isLiveRegion, isTrue);
+    handle.dispose();
+  });
 }

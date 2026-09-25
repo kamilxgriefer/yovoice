@@ -6,7 +6,10 @@ const {
   Timestamp,
 } = require("firebase-admin/firestore");
 
-const { requireAuthentication } = require("../utils/auth");
+const {
+  assertSessionNotBeforeEpoch,
+  requireAuthentication,
+} = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
 const {
   canonicalNotificationData,
@@ -1175,6 +1178,7 @@ const sendFriendRequest = onCall(
         targetCapacitySnapshot,
       );
       const actor = profileData(actorSnapshot, "Your");
+      assertSessionNotBeforeEpoch(actor, auth);
       const target = profileData(targetSnapshot, "The selected");
       ensureNotRestricted(actorRestriction, "Your");
       ensureNotRestricted(targetRestriction, "The selected");
@@ -1484,6 +1488,7 @@ const respondToFriendRequest = onCall(
         senderCapacitySnapshot,
       );
       const actor = profileData(actorSnapshot, "Your");
+      assertSessionNotBeforeEpoch(actor, auth);
 
       if (!pending.exists) {
         if (
@@ -1755,6 +1760,7 @@ const removeFriend = onCall(
           theirGuardRef,
         );
       const actor = profileData(actorSnapshot, "Your");
+      assertSessionNotBeforeEpoch(actor, auth);
       if (
         !mine.exists &&
         !theirs.exists &&
@@ -1860,6 +1866,7 @@ const setFollow = onCall(
         targetEntitlementRef,
       );
       const actor = profileData(actorSnapshot, "Your");
+      assertSessionNotBeforeEpoch(actor, auth);
       if (followingEdge.exists !== followerEdge.exists) {
         throw new HttpsError(
           "data-loss",
@@ -2001,7 +2008,7 @@ const setUserBlock = onCall(
       return db.runTransaction(async (transaction) => {
         const [actor, existingBlock, actorCapacitySnapshot] =
           await transaction.getAll(actorRef, blockRef, actorCapacityRef);
-        profileData(actor, "Your");
+        assertSessionNotBeforeEpoch(profileData(actor, "Your"), auth);
         const actorCapacity = socialCapacityState(
           auth.uid,
           actorCapacitySnapshot,
@@ -2044,6 +2051,7 @@ const setUserBlock = onCall(
         targetCapacityRef,
       );
       const actor = profileData(snapshots[0], "Your");
+      assertSessionNotBeforeEpoch(actor, auth);
       const targetSnapshot = snapshots[1];
       profileData(targetSnapshot, "The selected");
       const existingBlock = snapshots[2];

@@ -3721,12 +3721,18 @@ class _VoiceMessageRecorderSheetState
 
   /// The take was ended by the 1:00 cap rather than by the person.
   bool _stoppedAtCap = false;
+
+  /// Runs for [recordingAutoStopTapGrace] after the automatic stop: a Stop
+  /// tap aimed at the last second that lands after it is ignored instead of
+  /// starting a new take over the kept one.
+  Timer? _capStopGrace;
   bool _publishing = false;
   String? _error;
 
   @override
   void dispose() {
     _timer?.cancel();
+    _capStopGrace?.cancel();
     unawaited(_previewStateSubscription?.cancel());
     unawaited(_previewPlayer?.dispose());
     unawaited(_recorder.dispose());
@@ -3739,6 +3745,15 @@ class _VoiceMessageRecorderSheetState
     if (_recording) {
       await _finishRecording();
       return;
+    }
+    if (_capStopGrace?.isActive ?? false) return;
+    // The same control that stopped the take now records again; a kept take
+    // is never thrown away without asking.
+    if (_audio != null) {
+      final replace = await confirmReplaceRecording(context);
+      if (!replace || !mounted || _recording || _publishing || _stopping) {
+        return;
+      }
     }
     await _stopPreview();
     final previous = _audio;
@@ -3807,6 +3822,8 @@ class _VoiceMessageRecorderSheetState
         _error = null;
       });
       if (atCap) {
+        _capStopGrace?.cancel();
+        _capStopGrace = Timer(recordingAutoStopTapGrace, () {});
         _limitCues.onAutomaticStop(
           context,
           AppLocalizations.of(context).text(

@@ -26,6 +26,7 @@ const {
   timestampMillis,
   transactionGetAll,
 } = require("../integrity/guards");
+const { assertSessionNotBeforeEpoch } = require("../utils/auth");
 const {
   gifMessageFallback,
   isCanonicalMessageGif,
@@ -1005,6 +1006,7 @@ function createDirectMessagingService({
       if (replay) return replay;
 
       activeProfile(actorProfileSnapshot, "Your");
+      assertSessionNotBeforeEpoch(actorProfileSnapshot.data(), auth);
       activeProfile(targetProfileSnapshot, "The selected");
       assertNotRestricted(actorRestriction, "Your", timing.nowMs);
       assertNotRestricted(targetRestriction, "The selected", timing.nowMs);
@@ -1193,6 +1195,7 @@ function createDirectMessagingService({
         pairGuard,
       );
       activeProfile(actorProfile, "Your");
+      assertSessionNotBeforeEpoch(actorProfile.data(), auth);
       activeProfile(recipientProfile, "The recipient");
       assertNotRestricted(actorRestriction, "Your", timing.nowMs);
       assertNotRestricted(recipientRestriction, "The recipient", timing.nowMs);

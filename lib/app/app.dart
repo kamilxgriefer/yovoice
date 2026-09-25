@@ -512,16 +512,18 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             final palette = context.appPalette;
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: AppTheme.systemOverlayStyle(theme.brightness, palette),
-              // The testing-period "Bug" button floats above everything,
-              // and outside the screenshot boundary, which wraps only the
-              // navigator: a bug-report screenshot never contains the button
-              // or a top banner (banners can preview other people's
-              // messages).
-              child: BugReportFloatingButtonHost(
-                navigatorKey: notificationNavigatorKey,
-                child: YoTopNotificationHost(
-                  controller: _topNotifications,
-                  onReady: () => _streamNotifications?.retryPendingBanners(),
+              // The testing-period "Bug" button floats above the app, and a
+              // top banner floats above the button: a banner's Accept /
+              // Decline must never be covered by a button parked high on the
+              // right. Both sit outside the screenshot boundary, which wraps
+              // only the navigator, so a bug-report screenshot never
+              // contains the button or a banner (banners can preview other
+              // people's messages).
+              child: YoTopNotificationHost(
+                controller: _topNotifications,
+                onReady: () => _streamNotifications?.retryPendingBanners(),
+                child: BugReportFloatingButtonHost(
+                  navigatorKey: notificationNavigatorKey,
                   child: BugReportCaptureBoundary(
                     child: child ?? const SizedBox.shrink(),
                   ),

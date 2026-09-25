@@ -272,9 +272,14 @@ class _RequestRowState extends State<_RequestRow> {
         ],
       ),
     );
+    // While an answer is in flight both buttons are disabled; the excluded
+    // spinner is spoken as the value, so the wait is not silent.
+    final busyValue = widget.busy ? copy.serverHandSending : null;
     final approve = Semantics(
       button: true,
+      enabled: !widget.busy,
       label: copy.serverHandApproveLabel(hand.displayName),
+      value: busyValue,
       excludeSemantics: true,
       onTap: widget.busy ? null : widget.onApprove,
       child: FilledButton(
@@ -291,7 +296,9 @@ class _RequestRowState extends State<_RequestRow> {
     );
     final decline = Semantics(
       button: true,
+      enabled: !widget.busy,
       label: copy.serverHandDeclineLabel(hand.displayName),
+      value: busyValue,
       excludeSemantics: true,
       onTap: widget.busy ? null : widget.onDecline,
       child: OutlinedButton(

@@ -11,6 +11,7 @@ import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/bug_reports/data/bug_report_context.dart';
 import 'package:yovoice/features/bug_reports/data/bug_report_service.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
@@ -164,9 +165,14 @@ class _BugReportFormState extends State<BugReportForm> {
   static const int _minLength = 10;
   static const int _maxLength = 2000;
 
+  /// Receives focus when the sent view replaces the form (and its focused
+  /// Send button), so keyboard and switch users are not dropped to the top.
+  final FocusNode _doneFocus = FocusNode(debugLabel: 'bug-report-done');
+
   @override
   void dispose() {
     _description.dispose();
+    _doneFocus.dispose();
     super.dispose();
   }
 
@@ -212,6 +218,9 @@ class _BugReportFormState extends State<BugReportForm> {
       setState(() {
         _result = result;
         _phase = _Phase.sent;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _phase == _Phase.sent) _doneFocus.requestFocus();
       });
     } on BugReportException catch (error) {
       if (!mounted) return;
@@ -283,7 +292,7 @@ class _BugReportFormState extends State<BugReportForm> {
     if (_phase == _Phase.sent) return _sentView(context, copy);
 
     final sending = _phase == _Phase.sending;
-    return SingleChildScrollView(
+    final form = SingleChildScrollView(
       key: const ValueKey('bug-report-form'),
       padding: const EdgeInsets.fromLTRB(
         AppRhythm.section,
@@ -387,17 +396,23 @@ class _BugReportFormState extends State<BugReportForm> {
           ),
           if (_errorCode != null) ...[
             const SizedBox(height: AppRhythm.hairline),
-            Container(
-              key: const ValueKey('bug-report-error'),
-              padding: const EdgeInsets.all(AppRhythm.item),
-              decoration: BoxDecoration(
-                color: palette.dangerSurface,
-                borderRadius: AppRadius.card,
-              ),
-              child: Text(
-                _errorText(copy, _errorCode!),
-                style: text.bodyMedium?.copyWith(
-                  color: palette.dangerForeground,
+            // The form's one live region: a failed send is spoken, not only
+            // shown, since the only other change is the button's label.
+            Semantics(
+              liveRegion: true,
+              container: true,
+              child: Container(
+                key: const ValueKey('bug-report-error'),
+                padding: const EdgeInsets.all(AppRhythm.item),
+                decoration: BoxDecoration(
+                  color: palette.dangerSurface,
+                  borderRadius: AppRadius.card,
+                ),
+                child: Text(
+                  _errorText(copy, _errorCode!),
+                  style: text.bodyMedium?.copyWith(
+                    color: palette.dangerForeground,
+                  ),
                 ),
               ),
             ),
@@ -437,6 +452,18 @@ class _BugReportFormState extends State<BugReportForm> {
           ),
         ],
       ),
+    );
+    // The description keeps Return as a line break, so the keyboard offers
+    // no way to finish typing; the shared Done bar is that way (docs/UI.md
+    // R3). It renders only while the keyboard is open, as the last child of
+    // the sheet's (or dialog's) inset-aware column.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Flexible(child: form),
+        const YoKeyboardDoneBar(),
+      ],
     );
   }
 
@@ -556,35 +583,53 @@ class _BugReportFormState extends State<BugReportForm> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(
-            Icons.check_circle_rounded,
-            size: 44,
-            color: palette.successForeground,
+          // The form (and the focused Send button) is gone: this one live
+          // region says the report arrived, and whether the screenshot did.
+          Semantics(
+            key: const ValueKey('bug-report-sent-status'),
+            liveRegion: true,
+            container: true,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ExcludeSemantics(
+                  child: Icon(
+                    Icons.check_circle_rounded,
+                    size: 44,
+                    color: palette.successForeground,
+                  ),
+                ),
+                const SizedBox(height: AppRhythm.item),
+                Text(
+                  copy.text(
+                    'Thanks, your report was sent.',
+                    'Dziękujemy, zgłoszenie zostało wysłane.',
+                  ),
+                  textAlign: TextAlign.center,
+                  style: text.titleMedium?.copyWith(
+                    color: palette.textPrimary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (result.screenshotRequested &&
+                    !result.screenshotAttached) ...[
+                  const SizedBox(height: AppRhythm.tight),
+                  Text(
+                    copy.text(
+                      'The screenshot could not be attached, but your description arrived.',
+                      'Nie udało się dołączyć zrzutu ekranu, ale opis dotarł.',
+                    ),
+                    key: const ValueKey('bug-report-screenshot-failed'),
+                    textAlign: TextAlign.center,
+                    style: text.bodyMedium?.copyWith(
+                      color: palette.textSecondary,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
-          const SizedBox(height: AppRhythm.item),
-          Text(
-            copy.text(
-              'Thanks, your report was sent.',
-              'Dziękujemy, zgłoszenie zostało wysłane.',
-            ),
-            textAlign: TextAlign.center,
-            style: text.titleMedium?.copyWith(
-              color: palette.textPrimary,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          if (result.screenshotRequested && !result.screenshotAttached) ...[
-            const SizedBox(height: AppRhythm.tight),
-            Text(
-              copy.text(
-                'The screenshot could not be attached, but your description arrived.',
-                'Nie udało się dołączyć zrzutu ekranu, ale opis dotarł.',
-              ),
-              key: const ValueKey('bug-report-screenshot-failed'),
-              textAlign: TextAlign.center,
-              style: text.bodyMedium?.copyWith(color: palette.textSecondary),
-            ),
-          ],
           const SizedBox(height: AppRhythm.tight),
           SelectableText(
             copy.template(
@@ -599,6 +644,7 @@ class _BugReportFormState extends State<BugReportForm> {
           Center(
             child: FilledButton(
               key: const ValueKey('bug-report-done'),
+              focusNode: _doneFocus,
               onPressed: () => Navigator.of(context).pop(),
               child: Text(copy.text('Done', 'Gotowe')),
             ),

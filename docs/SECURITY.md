@@ -1566,7 +1566,13 @@ left alone (the owner's own race). Order: unlink the password and foreign
 identities and remove enrolled second factors → revoke refresh tokens →
 `users/{uid}.authSessionEpoch` → purge `fcmTokens` → put the owner's address
 back if it moved (or was cleared with the password) → audit
-(`authTakeoverAudit`) and ledger (`authPasswordLedger`) in one batch.
+(`authTakeoverAudit`) and ledger (`authPasswordLedger`) in one batch. The
+epoch write records a checkpoint on the ledger row, so revocation and the
+epoch happen **once** per takeover: a retry resumes at the purge instead of
+signing the owner out again, and a purge that exceeds its per-call budget
+(an abusive volume of planted rows) returns `securing` and continues on the
+next call or sweep. Push delivery ignores every `fcmTokens` document written
+before the epoch, so a planted token receives nothing while the purge runs.
 Triggers: the owner's own client after every Google/Apple sign-in
 (`secureFederatedSignInV1`, remediates the caller only; awaited up to 8 s for a
 returning sign-in, in the background for a new one, a late "remediated" still
@@ -1582,7 +1588,10 @@ account.
 allowlists. The `fcmTokens` create/update rule and Storage `isActiveUser()`
 refuse any ID token whose `auth_time` predates it. It is deliberately **not**
 in `isActiveAccount()`: that was measured to exceed the 1000-expression budget
-of an existing Servers list rule. `authPasswordLedger`, `authTakeoverAudit` and
+of an existing Servers list rule. The callables whose effects outlive the hour
+and whose transaction already reads `users/{auth.uid}` refuse such a token
+too (`assertSessionNotBeforeEpoch`, utils/auth.js): friend request, answer,
+unfriend, follow, block, direct-message send and open, bug-report submit. `authPasswordLedger`, `authTakeoverAudit` and
 `authTakeoverSweep` are `allow read, write: if false` for every client.
 
 **Residual, stated plainly.**
@@ -1597,9 +1606,13 @@ of an existing Servers list rule. `authPasswordLedger`, `authTakeoverAudit` and
   anchor a remediation; the row stays pending (`unconfirmedPassword`) and the
   owner's next Google/Apple sign-in on it is remediated. Phase 2 closes it.
 - An ID token the stranger already holds stays valid until it expires (up to
-  one hour): callables, owner-only reads that never consult account state
-  (notifications, incoming calls, DMs, the private profile) and other
-  `isActiveAccount()` writes accept it until then. Only Phase 2's
+  one hour): the remaining callables (calls and LiveKit tokens, billing,
+  request cancel, attachments, read markers, server and moment callables),
+  owner-only reads that never consult account state (notifications, incoming
+  calls, DMs, the private profile) and other `isActiveAccount()` writes accept
+  it until then. Of those, the writes persist after the hour and are not
+  rolled back: profile fields, presence, moments, comments and reactions,
+  server messages and memberships the rules allow the account. Only Phase 2's
   `beforeUserSignedIn` (Identity Platform upgrade) removes the window between
   the owner's sign-in and the remediation; nothing revokes a minted ID token.
 - The purge matters more in the next build: it adds push types that carry
@@ -1686,8 +1699,10 @@ of an existing Servers list rule. `authPasswordLedger`, `authTakeoverAudit` and
   `bug_report.screenshot_removed`) in the same transaction, carrying the
   reporter uid and statuses but never the description or the image.
 - **Retention.** Abandoned uploads are deleted after their reservation
-  expires, screenshots after 90 days, reports after 180 days (daily
-  `sweepBugReportRetentionSchedule`, which drains page after page within a
+  expires, screenshots after 90 days, reports after 180 days (hourly
+  `sweepBugReportRetentionSchedule` — hourly since build 36's review round,
+  so an abandoned upload's bytes and download token live about an hour past
+  its reservation instead of a day; it drains page after page within a
   240 s budget and logs `backlog: true` if it could not finish); account
   deletion removes the `bug_reports/{uid}/` prefix and the account's reports.
   Optional backstops, a Kamil console step: a GCS lifecycle rule deleting

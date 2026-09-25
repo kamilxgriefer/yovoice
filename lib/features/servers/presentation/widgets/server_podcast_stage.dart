@@ -1018,12 +1018,18 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
           ),
           if (handMessage != null || error != null) const SizedBox(height: 6),
           if (error != null)
-            Text(
-              serverHandFailureCopy(error, copy),
-              key: const ValueKey('server-podcast-hand-error'),
-              textAlign: fullWidth ? TextAlign.center : TextAlign.start,
-              style: AppTypography.bodySmall.copyWith(
-                color: palette.dangerForeground,
+            // The refusal replaces the state line, so it takes that line's
+            // live region: a screen reader hears it, not only the colour.
+            Semantics(
+              liveRegion: true,
+              container: true,
+              child: Text(
+                serverHandFailureCopy(error, copy),
+                key: const ValueKey('server-podcast-hand-error'),
+                textAlign: fullWidth ? TextAlign.center : TextAlign.start,
+                style: AppTypography.bodySmall.copyWith(
+                  color: palette.dangerForeground,
+                ),
               ),
             )
           else if (handMessage != null)

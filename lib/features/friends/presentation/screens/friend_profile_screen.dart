@@ -136,6 +136,11 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   /// the result after [_relationship] leaves `requestReceived`.
   bool _requestPanelAnswered = false;
 
+  /// Part of the panel's key: a NEW request from the same person, after an
+  /// earlier one was answered here, mounts a fresh panel with Accept /
+  /// Decline instead of the old result.
+  int _requestPanelGeneration = 0;
+
   /// Which call slot is starting, so only the tapped tile shows progress.
   DirectCallMediaType? _startingCallType;
   bool _startingCall = false;
@@ -177,6 +182,11 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
               ? FriendRelationshipStatus.blocked
               : FriendRelationshipStatus.friends;
         } else {
+          if (status == FriendRelationshipStatus.requestReceived &&
+              _requestPanelAnswered) {
+            _requestPanelAnswered = false;
+            _requestPanelGeneration++;
+          }
           _relationship = status;
         }
       });
@@ -1049,9 +1059,13 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
               _requestPanelAnswered)) ...[
         measure(
           FriendRequestResponsePanel(
-            key: const ValueKey('friend-profile-request-panel'),
+            key: ValueKey(
+              _requestPanelGeneration == 0
+                  ? 'friend-profile-request-panel'
+                  : 'friend-profile-request-panel-$_requestPanelGeneration',
+            ),
             senderId: widget.friend.id,
-            senderName: widget.friend.displayName,
+            senderName: profile?.displayName ?? widget.friend.displayName,
             friendService: _friendService,
             profileMediaService: _profileMediaService,
             showIdentity: false,

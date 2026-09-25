@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/bug_reports/data/bug_report_admin_service.dart';
 import 'package:yovoice/features/staff/presentation/sections/staff_section_shared.dart';
@@ -646,12 +648,17 @@ class _BugReportDetailViewState extends State<BugReportDetailView> {
       await widget.service.delete(widget.reportId);
       if (!mounted) return;
       widget.onDeleted?.call();
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
+      // Deleting needs a recent sign-in (step-up); that refusal says so.
       _failedSnack(
-        copy.text(
-          'The report could not be deleted.',
-          'Nie udało się usunąć zgłoszenia.',
+        _stepUpOr(
+          error,
+          copy,
+          copy.text(
+            'The report could not be deleted.',
+            'Nie udało się usunąć zgłoszenia.',
+          ),
         ),
       );
     } finally {
@@ -676,12 +683,16 @@ class _BugReportDetailViewState extends State<BugReportDetailView> {
       await widget.service.removeScreenshot(widget.reportId);
       if (!mounted) return;
       await _load();
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       _failedSnack(
-        copy.text(
-          'The screenshot could not be removed.',
-          'Nie udało się usunąć zrzutu ekranu.',
+        _stepUpOr(
+          error,
+          copy,
+          copy.text(
+            'The screenshot could not be removed.',
+            'Nie udało się usunąć zrzutu ekranu.',
+          ),
         ),
       );
     } finally {
@@ -985,4 +996,19 @@ class _FindByAccountDialogState extends State<_FindByAccountDialog> {
       ],
     );
   }
+}
+
+/// The owner's permanent deletes need a recent sign-in (and MFA once it is
+/// required). That refusal says what to do; any other failure keeps the
+/// action's own sentence.
+String _stepUpOr(Object error, AppLocalizations copy, String fallback) {
+  if (error is FirebaseFunctionsException) {
+    final details = error.details;
+    final reason = details is Map ? details['reason'] : null;
+    if (reason == 'recent-authentication-required' ||
+        reason == 'multi-factor-authentication-required') {
+      return friendlyErrorMessage(error, copy: copy);
+    }
+  }
+  return fallback;
 }

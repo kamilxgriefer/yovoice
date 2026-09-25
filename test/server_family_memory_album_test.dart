@@ -19,6 +19,7 @@ import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_family_memory_service.dart';
 import 'package:yovoice/features/servers/presentation/theme/server_identity.dart';
 import 'package:yovoice/features/servers/presentation/widgets/server_family_memory_album.dart';
+import 'package:yovoice/shared/widgets/media/yo_recording_countdown.dart';
 
 import 'voice_moment_test_doubles.dart';
 
@@ -404,6 +405,64 @@ void main() {
       await tester.pumpAndSettle();
       expect(repository.publishCalls, 1);
       expect(repository.attempt?.voiceDurationMs, 30000);
+    },
+  );
+
+  testWidgets(
+    'a Finish tap just after the automatic stop at 0:30 keeps the voice',
+    (tester) async {
+      final stopwatch = FakeStopwatch();
+      final audio = FakeRecordedAudio();
+      final backend = FakeRecorderBackend();
+      final repository = MemoryRepository(Stream.value(const []));
+      await pumpAlbum(
+        tester,
+        repository,
+        picker: PickerStub(
+          XFile.fromData(validPng(), mimeType: 'image/png', name: 'family.png'),
+        ),
+        recorderFactory: () => VoiceMomentRecorder(
+          backend: backend,
+          capture: FakeAudioCapture()..result = audio,
+          clock: stopwatch,
+        ),
+        playerFactory: FakePreviewAudioPlayer.new,
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('server-family-memory-add')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('server-family-memory-pick-photo')),
+      );
+      await tester.pumpAndSettle();
+      final record = find.byKey(const ValueKey('server-family-memory-record'));
+      await tester.tap(record);
+      await tester.pump();
+      expect(backend.startCalls, 1);
+
+      stopwatch.value = const Duration(milliseconds: 30_300);
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      expect(find.text('Głos gotowy'), findsOneWidget);
+
+      // "Finish" became "Record again" under the finger; a late tap is ignored.
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.tap(record);
+      await tester.pumpAndSettle();
+      expect(backend.startCalls, 1);
+      expect(audio.discarded, isFalse);
+      expect(find.text('Głos gotowy'), findsOneWidget);
+
+      // Past the grace, a new take still asks first; "Zachowaj" keeps it.
+      await tester.pump(recordingAutoStopTapGrace);
+      await tester.tap(record);
+      await tester.pumpAndSettle();
+      expect(find.text('Nagrać ponownie?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('recording-replace-keep')));
+      await tester.pumpAndSettle();
+      expect(backend.startCalls, 1);
+      expect(audio.discarded, isFalse);
+      expect(find.text('Głos gotowy'), findsOneWidget);
     },
   );
 }
