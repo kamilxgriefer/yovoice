@@ -2672,6 +2672,38 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // A podcast host's "I last looked at the listener questions" cursor,
+      // one row per `{serverId}_{channelId}`, holding EXACTLY { seenAt }. The
+      // client writes the newest question's own server-stamped createdAt, not
+      // request.time, so a question committed during the write is never
+      // swallowed; the rule therefore bounds seenAt by request.time instead of
+      // pinning it. On update the cursor only moves forward, so a second
+      // device or a stale cached read cannot bring back a dot for questions
+      // already seen. The row grants nothing and previews nothing (no
+      // membership check, the momentViews stance). No list, no delete: the
+      // app reads its own row by id, and account deletion removes the rows
+      // (functions/account/stages.js). isActiveAccount() is the ADR-206
+      // freeze, as on momentViews: with no client delete, a row written after
+      // the deletion sweep passed could never be removed.
+      match /serverQuestionSeen/{cursorId} {
+        allow get: if isOwner(userId);
+        allow list: if false;
+        allow create: if isOwner(userId) && isActiveAccount() &&
+            cursorId.size() <= 300 &&
+            cursorId.matches('^[A-Za-z0-9-]+(_[A-Za-z0-9-]+)+$') &&
+            request.resource.data.keys().hasOnly(['seenAt']) &&
+            request.resource.data.seenAt is timestamp &&
+            request.resource.data.seenAt <= request.time;
+        allow update: if isOwner(userId) && isActiveAccount() &&
+            cursorId.size() <= 300 &&
+            cursorId.matches('^[A-Za-z0-9-]+(_[A-Za-z0-9-]+)+$') &&
+            request.resource.data.keys().hasOnly(['seenAt']) &&
+            request.resource.data.seenAt is timestamp &&
+            request.resource.data.seenAt <= request.time &&
+            request.resource.data.seenAt >= resource.data.seenAt;
+        allow delete: if false;
+      }
+
       // Reel "already watched" state, modelled directly on momentViews above
       // and used server-side by listReelsV2 as a RANKING input: a Reel seen
       // in the last few hours is suppressed from Discover, and one seen

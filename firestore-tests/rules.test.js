@@ -1867,6 +1867,92 @@ async function main() {
     await assertFails(deleteDoc(ref));
   });
 
+  // A podcast host's listener-questions cursor at
+  // users/{uid}/serverQuestionSeen/{serverId}_{channelId}, exactly { seenAt }.
+  // The client writes the newest question's own createdAt (never after
+  // request.time) and the cursor only moves forward. Owner get only; no list,
+  // no delete; the ADR-206 account freeze applies to writes.
+  const questionSeenPath = (uid, id = "srv_podcast_ch_questions") =>
+    `users/${uid}/serverQuestionSeen/${id}`;
+  const secondsAgo = (seconds) => Timestamp.fromMillis(Date.now() - seconds * 1000);
+
+  await check("regression: a host records the newest question they have seen", async () => {
+    const ref = doc(host.firestore(), questionSeenPath("host-uid"));
+    await assertSucceeds(setDoc(ref, { seenAt: secondsAgo(600) }));
+    await assertSucceeds(getDoc(ref));
+  });
+
+  await check("regression: the questions cursor moves forward and may stay where it is", async () => {
+    const ref = doc(host.firestore(), questionSeenPath("host-uid"));
+    await assertSucceeds(setDoc(ref, { seenAt: secondsAgo(300) }));
+    const current = (await getDoc(ref)).data().seenAt;
+    await assertSucceeds(setDoc(ref, { seenAt: current }));
+    await assertSucceeds(setDoc(ref, { seenAt: serverTimestamp() }));
+  });
+
+  await check("SECURITY: the questions cursor never moves backwards", async () => {
+    const ref = doc(host.firestore(), questionSeenPath("host-uid", "srv_back_ch_back"));
+    await assertSucceeds(setDoc(ref, { seenAt: secondsAgo(60) }));
+    await assertFails(setDoc(ref, { seenAt: secondsAgo(3600) }));
+    await assertFails(updateDoc(ref, { seenAt: secondsAgo(3600) }));
+  });
+
+  await check("SECURITY: the questions cursor cannot be set in the future or carry extra keys", async () => {
+    const db = host.firestore();
+    await assertFails(setDoc(doc(db, questionSeenPath("host-uid", "srv_future_ch_q")), {
+      seenAt: Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000),
+    }));
+    await assertFails(setDoc(doc(db, questionSeenPath("host-uid", "srv_extra_ch_q")), {
+      seenAt: secondsAgo(60),
+      count: 9,
+    }));
+    await assertFails(setDoc(doc(db, questionSeenPath("host-uid", "srv_type_ch_q")), {
+      seenAt: "yesterday",
+    }));
+    await assertFails(setDoc(doc(db, questionSeenPath("host-uid", "srv_empty_ch_q")), {}));
+  });
+
+  await check("SECURITY: the questions cursor id must be a server id and a channel id", async () => {
+    const db = host.firestore();
+    for (const id of ["nounderscore", "_leading", "trailing_", "a__b", "bad.char_ch",
+      `${"s".repeat(200)}_${"c".repeat(120)}`]) {
+      await assertFails(setDoc(doc(db, questionSeenPath("host-uid", id)), {
+        seenAt: secondsAgo(60),
+      }));
+    }
+  });
+
+  await check("SECURITY: nobody reads, lists or writes another host's questions cursor", async () => {
+    const db = attacker.firestore();
+    await assertFails(getDoc(doc(db, questionSeenPath("host-uid"))));
+    await assertFails(setDoc(doc(db, questionSeenPath("host-uid", "srv_x_ch_x")), {
+      seenAt: secondsAgo(60),
+    }));
+    await assertFails(getDocs(collection(db, "users/host-uid/serverQuestionSeen")));
+  });
+
+  await check("SECURITY: the questions cursor cannot be listed or deleted, even by its owner", async () => {
+    const db = host.firestore();
+    await assertFails(getDocs(collection(db, "users/host-uid/serverQuestionSeen")));
+    await assertFails(deleteDoc(doc(db, questionSeenPath("host-uid"))));
+  });
+
+  await check("SECURITY: a frozen or banned account cannot write a questions cursor", async () => {
+    for (const state of [{ disabled: true }, { banned: true }]) {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "users/frozen-question-host"), state);
+      });
+      const db = testEnv.authenticatedContext("frozen-question-host").firestore();
+      await assertFails(setDoc(doc(db, questionSeenPath("frozen-question-host")), {
+        seenAt: secondsAgo(60),
+      }));
+    }
+    const missing = testEnv.authenticatedContext("missing-question-host").firestore();
+    await assertFails(setDoc(doc(missing, questionSeenPath("missing-question-host")), {
+      seenAt: secondsAgo(60),
+    }));
+  });
+
   // Reel "already watched" state at users/{uid}/reelViews/{reelId}, the seen
   // signal listReelsV2 ranks on. Same owner-only shape as momentViews, plus a
   // bounded `expiresAt` carrying the TTL policy. These cases run against the

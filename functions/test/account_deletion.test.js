@@ -242,6 +242,8 @@ async function seedAccount({ banned = false } = {}) {
     user.collection("notifications").doc("n1").set({ actorId: PEER }),
     user.collection("reelViews").doc("r1").set({ viewedAt: Timestamp.now() }),
     user.collection("momentViews").doc("m1").set({ viewedAt: Timestamp.now() }),
+    user.collection("serverQuestionSeen").doc(`${SERVER}_questions`)
+      .set({ seenAt: Timestamp.now() }),
     user.collection("clubs").doc(SERVER).set({ serverId: SERVER }),
   ]);
 
@@ -1077,6 +1079,19 @@ describe("account deletion: the stages", () => {
         .collection(name).limit(1).get();
       assert.equal(snapshot.empty, true, name);
     }
+  });
+
+  test("the podcast host's listener-questions cursor is part of the sweep", async () => {
+    // users/{uid}/serverQuestionSeen has no client delete (firestore.rules),
+    // so account deletion is the only thing that ever removes these rows.
+    assert.ok(PLAIN_SUBCOLLECTIONS.includes("serverQuestionSeen"));
+    await seedAccount();
+    const cursor = db.collection("users").doc(SUBJECT)
+      .collection("serverQuestionSeen").doc(`${SERVER}_questions`);
+    assert.equal((await cursor.get()).exists, true, "seeded");
+    await executeDeleteAccountSelf(request(SUBJECT), { database: db });
+    await runPipeline(stagesWith());
+    assert.equal((await cursor.get()).exists, false);
   });
 
   test("the messaging stage anonymizes the peer's thread without breaking it", async () => {

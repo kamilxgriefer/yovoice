@@ -11,6 +11,7 @@ import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
 import '../../data/models/server_member_role.dart';
 import '../../data/models/server_podcast_episode.dart';
+import '../../data/models/server_session_hand.dart';
 import '../../data/services/server_media_connector.dart';
 import '../../data/services/server_podcast_episode_repository.dart';
 import '../../data/services/server_session_controller.dart';
@@ -21,7 +22,9 @@ import 'server_channel_scene.dart';
 import 'server_module_card.dart';
 import 'server_panel.dart';
 import 'server_scrolling_details.dart';
+import 'server_hand_status.dart';
 import 'server_stage_participant_menu.dart';
+import 'server_stage_requests.dart';
 
 /// `Studio LIVE` — board 05's centre, the podcast template's audio stage.
 ///
@@ -47,7 +50,10 @@ import 'server_stage_participant_menu.dart';
 ///
 /// `Poproś o głos` is real: it calls the registered `setServerSessionHandV1`,
 /// only from inside a joined generation, and never for that generation's own
-/// host. `Zadaj pytanie` opens the server's persisted Q&A: each member has one
+/// host or a guest already on the stage. What the listener then reads —
+/// waiting, declined, lowered on disconnect, on the stage — comes from their
+/// own participant document, and the generation's host and moderators see
+/// the raised hands in a queue here and in the dock, with Approve and Decline. `Zadaj pytanie` opens the server's persisted Q&A: each member has one
 /// vote per question and a moderator can select the single question currently
 /// marked `Na antenie`. A joined host or server moderator can move participants
 /// between the stage and audience and explicitly apply or release their own
@@ -97,6 +103,10 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
   /// which is exactly what the backend would say.
   bool _raised = false;
   String? _raisedSessionId;
+
+  /// [ServerSessionController.ownParticipantVersion] when that receipt
+  /// arrived: a document snapshot newer than it outranks the receipt.
+  int? _receiptVersion;
   bool _busy = false;
   Object? _error;
   bool _recordingBusy = false;
@@ -121,11 +131,24 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
       _inRoom ? widget.session.connection?.sessionId : null;
 
   /// The host of a generation never queues for their own studio, and the
-  /// callable says so; the control is not drawn for them.
+  /// callable says so; a guest is already on the air. The control is drawn
+  /// for neither, nor while a role change is moving this person onto a new
+  /// token.
   bool get _canRaiseHand =>
-      _sessionId != null && widget.session.connection?.sessionRole != 'host';
+      _sessionId != null &&
+      widget.session.reauthorization == null &&
+      widget.session.connection?.sessionRole != 'host' &&
+      widget.session.connection?.sessionRole != 'guest';
 
-  bool get _handIsUp => _raised && _raisedSessionId == _sessionId;
+  ({bool up, ServerHandDecision? decision}) get _ownHand => serverOwnHand(
+    session: widget.session,
+    sessionId: _sessionId,
+    receiptRaised: _raised,
+    receiptSessionId: _raisedSessionId,
+    receiptVersion: _receiptVersion,
+  );
+
+  bool get _handIsUp => _ownHand.up;
 
   /// The signed role for one person. For this device the token receipt is the
   /// same authority and is always present, so it is preferred; for everybody
@@ -204,6 +227,7 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
       setState(() {
         _raised = result.raised;
         _raisedSessionId = result.sessionId;
+        _receiptVersion = widget.session.ownParticipantVersion;
         _busy = false;
       });
     } catch (error) {
@@ -467,6 +491,12 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
             _quiet(copy, palette, colors)
           else
             _stageRow(context, copy, colors, stage),
+          // The raised hands, for the generation's host and moderators: who
+          // asked, how long they have waited, Approve / Decline.
+          if (_inRoom && widget.session.raisedHands.isNotEmpty) ...[
+            const SizedBox(height: AppRhythm.section),
+            ServerStageRequests(session: widget.session),
+          ],
           if (audience.isNotEmpty) ...[
             const SizedBox(height: 20),
             Divider(height: 1, color: palette.border),
@@ -605,6 +635,10 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
     final String message;
     if (widget.server.isHeld) {
       message = copy.serverHeldBody;
+    } else if (_inRoom && widget.session.reauthorization != null) {
+      // Between two tokens the provider reports nobody to this device; that
+      // is a reconnect, not an empty studio.
+      message = copy.serverReconnectingFor(widget.session.reauthorization);
     } else if (_inRoom) {
       message = copy.serverPodcastNobodyOnAir;
     } else if (widget.channel.liveness.isLive) {
@@ -944,7 +978,14 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
     final reconnecting =
         widget.session.phase == ServerSessionPhase.reconnecting;
     final error = _error;
-    final up = _handIsUp;
+    final ownHand = _ownHand;
+    final up = ownHand.up;
+    final handMessage = serverOwnHandMessage(
+      copy,
+      up: up,
+      decision: ownHand.decision,
+    );
+    final role = widget.session.connection?.sessionRole;
     return Column(
       crossAxisAlignment: fullWidth
           ? CrossAxisAlignment.stretch
@@ -954,7 +995,7 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
-              copy.serverReconnecting,
+              copy.serverReconnectingFor(widget.session.reauthorization),
               key: const ValueKey('server-session-status'),
               textAlign: fullWidth ? TextAlign.center : TextAlign.start,
               style: AppTypography.bodyMedium.copyWith(
@@ -975,38 +1016,43 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
                 : copy.serverRaiseHand,
             onPressed: _busy ? null : _toggleHand,
           ),
-          if (up || error != null) const SizedBox(height: 6),
+          if (handMessage != null || error != null) const SizedBox(height: 6),
           if (error != null)
             Text(
-              serverActionFailureCopy(
-                error,
-                copy,
-                fallback: copy.serverHandFailed,
-              ),
+              serverHandFailureCopy(error, copy),
               key: const ValueKey('server-podcast-hand-error'),
               textAlign: fullWidth ? TextAlign.center : TextAlign.start,
               style: AppTypography.bodySmall.copyWith(
                 color: palette.dangerForeground,
               ),
             )
-          else if (up)
-            Text(
-              copy.serverHandRaised,
-              key: const ValueKey('server-podcast-hand-state'),
-              textAlign: fullWidth ? TextAlign.center : TextAlign.start,
-              style: AppTypography.bodySmall.copyWith(
-                color: palette.textSecondary,
+          else if (handMessage != null)
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                handMessage,
+                key: const ValueKey('server-podcast-hand-state'),
+                textAlign: fullWidth ? TextAlign.center : TextAlign.start,
+                style: AppTypography.bodySmall.copyWith(
+                  color: palette.textSecondary,
+                ),
               ),
             ),
-        ] else
-          Text(
-            // The generation's host is on the air already; there is nothing
-            // for them to ask for.
-            copy.serverStageOnAir,
-            key: const ValueKey('server-podcast-hand-state'),
-            textAlign: fullWidth ? TextAlign.center : TextAlign.start,
-            style: AppTypography.bodyMedium.copyWith(
-              color: palette.textSecondary,
+        ] else if (widget.session.reauthorization == null)
+          Semantics(
+            liveRegion: role == 'guest',
+            child: Text(
+              // The generation's host is on the air already; there is nothing
+              // for them to ask for. A guest is on the stage by a host's
+              // decision, with the microphone still theirs to turn on.
+              role == 'guest' && widget.session.canPublish
+                  ? copy.serverHandApproved
+                  : copy.serverStageOnAir,
+              key: const ValueKey('server-podcast-hand-state'),
+              textAlign: fullWidth ? TextAlign.center : TextAlign.start,
+              style: AppTypography.bodyMedium.copyWith(
+                color: palette.textSecondary,
+              ),
             ),
           ),
       ],

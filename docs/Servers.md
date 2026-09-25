@@ -852,7 +852,7 @@ do not expose family data through public Voice Moments or duplicate bytes.
 | Module | Target persistence and lifecycle |
 | --- | --- |
 | Events/calendar/program | Channel `events/{eventId}` and `responses/{uid}`; UTC timestamp plus IANA timezone; cancelled rows remain revisioned. Friends/Community events, Family calendar and Podcast Program share the implemented RSVP contract; Family/Podcast responses also persist reminder opt-in state and a transactional count |
-| Questions | Channel `questions/{questionId}` and `votes/{uid}`; one vote per authorized member, server-derived count, explicit host selection for On air |
+| Questions | Channel `questions/{questionId}` and `votes/{uid}`; one vote per authorized member, server-derived count, explicit host selection for On air. A host's (owner, admin, moderator) "new listener questions" dot reads only the newest question plus the owner-private cursor `users/{uid}/serverQuestionSeen/{serverId}_{channelId}` = `{seenAt}` (owner get/create/update, forward-only, no list or delete). Cursor rows outlive a deleted server or a left membership — they are private and grant nothing — and are removed with the account (`functions/account/stages.js`) |
 | Episodes | Channel `episodes/{episodeId}`; draft/recording/processing/ready/published/error/deleting; canonical immutable media path/generation and private recording job outbox |
 | Shared list | Channel `listItems/{itemId}`; validated text, checked state and revision; concurrent edits/retries converge |
 | Whiteboard | Company channel `whiteboardState/main` plus `whiteboardStrokes/{strokeId}`; durable ordered normalized polylines, one active generation capped at 180 strokes, author-only undo and manager-only atomic clear |

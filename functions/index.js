@@ -700,6 +700,7 @@ exports.receiveLiveKitAchievementWebhook = receiveLiveKitAchievementWebhook;
 */
 const {
   createServerMessageFunctions,
+  createServerSessionHandFunctions,
   createServersV1Functions,
 } = require("./servers/registration");
 Object.assign(exports, createServersV1Functions({
@@ -715,6 +716,10 @@ Object.assign(exports, createServersV1Functions({
 // (SERVER_MESSAGE_EXPORT_NAMES) behind the same appConfig/serversV1 gate; the
 // frozen base manifest above is unchanged.
 Object.assign(exports, createServerMessageFunctions({ enforceAppCheck: false }));
+// Request to speak: the host's or a moderator's decline of a raised hand
+// (SESSION_HAND_EXPORT_NAMES). Another explicit extension behind the same
+// gate; the frozen base manifest above is unchanged.
+Object.assign(exports, createServerSessionHandFunctions({ enforceAppCheck: false }));
 
 // Cold-start observability. Emitted once per instance start, only inside the
 // Cloud Run / Functions runtime (K_SERVICE and FUNCTION_TARGET are set there

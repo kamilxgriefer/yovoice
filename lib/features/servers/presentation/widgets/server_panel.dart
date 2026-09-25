@@ -15,6 +15,7 @@ import '../../data/services/server_session_controller.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
 import 'server_channel_scene.dart';
+import 'server_waiting_dot.dart';
 
 /// The server panel: cover (an identity tile — no artwork writer exists,
 /// contract G7), name, the board's subtitle, `Zaproś`, the channel list
@@ -45,6 +46,7 @@ class ServerPanel extends StatefulWidget {
     this.onJoin,
     this.onHome,
     this.homeSelected = false,
+    this.questionsWaitingChannelId,
     super.key,
   });
 
@@ -92,6 +94,11 @@ class ServerPanel extends StatefulWidget {
   /// carries no channel id and nothing is seeded for it.
   final VoidCallback? onHome;
   final bool homeSelected;
+
+  /// The Questions channel whose listener questions this host has not seen
+  /// (`ServerQuestionAttention`), or null. Its row carries the shared waiting
+  /// dot unless it is the selected row, whose board is already on screen.
+  final String? questionsWaitingChannelId;
 
   /// Only board 04 draws a search field.
   bool get searchable => server.type == ServerType.company;
@@ -419,6 +426,8 @@ class _ServerPanelState extends State<ServerPanel> {
                   role: widget.role,
                   session: widget.session,
                   onJoin: widget.onJoin,
+                  questionsWaiting:
+                      channel.id == widget.questionsWaitingChannelId,
                   onTap: () => widget.onSelected(channel),
                 ),
               ),
@@ -529,6 +538,7 @@ class _PanelChannelRow extends StatelessWidget {
     this.role,
     this.session,
     this.onJoin,
+    this.questionsWaiting = false,
   });
   final Server server;
   final ServerChannel channel;
@@ -537,6 +547,10 @@ class _PanelChannelRow extends StatelessWidget {
   final ServerIdentityVisuals colors;
   final VoidCallback onTap;
   final ServerMemberRole? role;
+
+  /// Listener questions in this channel wait for the viewer (see
+  /// [ServerPanel.questionsWaitingChannelId]).
+  final bool questionsWaiting;
 
   /// Present only where the host holds a session; the roster is read from it
   /// for the connected row alone (ADR-177).
@@ -565,6 +579,12 @@ class _PanelChannelRow extends StatelessWidget {
         selected: selected,
         selectedForeground: colors.selectedForeground,
         selectedWash: colors.selectedWash,
+        trailing: questionsWaiting && !selected
+            ? ServerWaitingDot(
+                key: ValueKey('server-channel-questions-waiting-${channel.id}'),
+                semanticLabel: copy.serverQuestionsWaitingLabel,
+              )
+            : null,
         onTap: onTap,
       );
     }
@@ -576,7 +596,7 @@ class _PanelChannelRow extends StatelessWidget {
     final joinLabel = onJoin == null || server.isHeld || restricted || connected
         ? null
         : serverJoinLabel(copy, channel, live: live, role: role);
-    YoVoiceChannelRow row(List<YoVoiceRowParticipant> people) =>
+    YoVoiceChannelRow row(List<YoVoiceRowParticipant> people, int waiting) =>
         YoVoiceChannelRow(
           tileKey: ValueKey('server-channel-${channel.id}'),
           label: channel.name,
@@ -604,12 +624,33 @@ class _PanelChannelRow extends StatelessWidget {
           // Never `server-join`: the scene's single full-size CTA is counted
           // by that key, and this row is one more way to the same call.
           joinKey: ValueKey('server-channel-join-${channel.id}'),
+          // Raised hands the viewer may answer wait in the channel they are
+          // in; the dot is the entry's own reminder of them.
+          attention: waiting > 0
+              ? Padding(
+                  padding: const EdgeInsetsDirectional.only(end: 6),
+                  child: ServerWaitingDot(
+                    key: ValueKey('server-channel-waiting-${channel.id}'),
+                    semanticLabel: copy.serverHandWaitingLabel(waiting),
+                  ),
+                )
+              : null,
           onTap: onTap,
         );
 
     final controller = session;
-    if (!connected || controller == null) {
-      return row(const <YoVoiceRowParticipant>[]);
+    if (controller == null) return row(const <YoVoiceRowParticipant>[], 0);
+    int waiting() =>
+        controller.isIn(channel.id) ? controller.answerableHandCount : 0;
+    if (!connected) {
+      // This row is not rebuilt when a join or a raised hand changes the
+      // session, so it follows the waiting count itself — and only that, so
+      // a speaking tick never repaints it.
+      return _WaitingCount(
+        session: controller,
+        count: waiting,
+        builder: (count) => row(const <YoVoiceRowParticipant>[], count),
+      );
     }
     return ListenableBuilder(
       listenable: controller,
@@ -628,9 +669,60 @@ class _PanelChannelRow extends StatelessWidget {
                 copy.serverMicrophoneOff,
             ].join(', '),
           ),
-      ]),
+      ], waiting()),
     );
   }
+}
+
+/// Rebuilds [builder] only when [count] changes — the raised hands waiting
+/// on a row this viewer is in.
+class _WaitingCount extends StatefulWidget {
+  const _WaitingCount({
+    required this.session,
+    required this.count,
+    required this.builder,
+  });
+
+  final ServerSessionController session;
+  final int Function() count;
+  final Widget Function(int count) builder;
+
+  @override
+  State<_WaitingCount> createState() => _WaitingCountState();
+}
+
+class _WaitingCountState extends State<_WaitingCount> {
+  late int _count = widget.count();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.session.addListener(_onSession);
+  }
+
+  @override
+  void didUpdateWidget(covariant _WaitingCount oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session != widget.session) {
+      oldWidget.session.removeListener(_onSession);
+      widget.session.addListener(_onSession);
+    }
+    _count = widget.count();
+  }
+
+  @override
+  void dispose() {
+    widget.session.removeListener(_onSession);
+    super.dispose();
+  }
+
+  void _onSession() {
+    final next = widget.count();
+    if (next != _count && mounted) setState(() => _count = next);
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(_count);
 }
 
 IconData serverChannelIcon(ServerChannelKind kind) => switch (kind) {

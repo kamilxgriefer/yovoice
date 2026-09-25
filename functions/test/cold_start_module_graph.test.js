@@ -90,20 +90,23 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 261 names.
+// Every export of functions/index.js, sorted. 262 names.
 // 2026-09-19 (ADR-213): onMomentCommentCreated/Deleted,
 // onReelCommentCreated/Deleted and sendServerEventRemindersSchedule join the
 // map — the comment-notification triggers and the Server event reminder
 // worker. 2026-09-19 (ADR-180 amendment): releaseServerChannelSessionIfEmptyV1
 // joins it too. 2026-09-19: the Server channel media and reaction callables
-// join it as well. Extending this list is the deliberate review step the
-// header describes, not a drive-by edit.
+// join it as well. 2026-09-25 (request to speak): answerServerSessionHandV1,
+// the host's decline of a raised hand, joins it as its own extension (261 ->
+// 262). Extending this list is the deliberate review step the header
+// describes, not a drive-by edit.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
   "adminDeleteMessage",
   "adminDeleteRoom",
   "adminSetPremiumEntitlements",
+  "answerServerSessionHandV1",
   "applySanction",
   "archiveServerChannelV1",
   "assignUserRole",

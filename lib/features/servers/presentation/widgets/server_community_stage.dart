@@ -14,6 +14,7 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
 import '../../data/models/server_member_role.dart';
+import '../../data/models/server_session_hand.dart';
 import '../../data/server_links.dart';
 import '../../data/services/server_follow_service.dart';
 import '../../data/services/server_broadcast_ingress_service.dart';
@@ -28,7 +29,9 @@ import 'server_module_card.dart';
 import 'server_obs_broadcast_sheet.dart';
 import 'server_panel.dart';
 import 'server_scrolling_details.dart';
+import 'server_hand_status.dart';
 import 'server_stage_participant_menu.dart';
+import 'server_stage_requests.dart';
 
 /// `Scena LIVE` — board 02's centre, the community template's broadcast.
 ///
@@ -123,6 +126,10 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
   /// "ask", which is exactly what the backend would say.
   bool _raised = false;
   String? _raisedSessionId;
+
+  /// [ServerSessionController.ownParticipantVersion] when that receipt
+  /// arrived: a document snapshot newer than it outranks the receipt.
+  int? _receiptVersion;
   bool _busy = false;
   Object? _error;
   bool _followBusy = false;
@@ -152,11 +159,27 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
       _inRoom ? widget.session.connection?.sessionId : null;
 
   /// The host of a generation never queues for its own stage, and the
-  /// callable says so; the control is not drawn for them.
+  /// callable says so; a guest is already on the stage (every participant of
+  /// a non-broadcast Community stage starts as one), so there is nothing an
+  /// Approve could give them. The control is drawn for neither, nor while a
+  /// role change is moving this person onto a new token.
   bool get _canRaiseHand =>
-      _sessionId != null && widget.session.connection?.sessionRole != 'host';
+      _sessionId != null &&
+      widget.session.reauthorization == null &&
+      widget.session.connection?.sessionRole != 'host' &&
+      widget.session.connection?.sessionRole != 'guest';
 
-  bool get _handIsUp => _raised && _raisedSessionId == _sessionId;
+  /// The receipt of this person's own press until their own participant
+  /// document says otherwise (`server_hand_status.dart`).
+  ({bool up, ServerHandDecision? decision}) get _ownHand => serverOwnHand(
+    session: widget.session,
+    sessionId: _sessionId,
+    receiptRaised: _raised,
+    receiptSessionId: _raisedSessionId,
+    receiptVersion: _receiptVersion,
+  );
+
+  bool get _handIsUp => _ownHand.up;
 
   /// The active picture: a remote shared screen first, then a remote camera,
   /// because a stage is watched rather than self-viewed. Local sources are
@@ -228,6 +251,7 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
       setState(() {
         _raised = result.raised;
         _raisedSessionId = result.sessionId;
+        _receiptVersion = widget.session.ownParticipantVersion;
         _busy = false;
       });
     } catch (error) {
@@ -354,6 +378,10 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
               speaking: copy.serverSpeaking,
               actionBuilder: _participantMenu,
             ),
+            if (widget.session.raisedHands.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              ServerStageRequests(session: widget.session),
+            ],
           ],
           const SizedBox(height: 20),
           _actions(copy, palette, colors),
@@ -433,6 +461,10 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
                         _participantMenu(person, compact: true),
                   ),
                   const SizedBox(height: 10),
+                  if (widget.session.raisedHands.isNotEmpty) ...[
+                    ServerStageRequests(session: widget.session),
+                    const SizedBox(height: 10),
+                  ],
                 ],
                 _description(palette, copy, maxLines: 3),
                 const SizedBox(height: 12),
@@ -1074,7 +1106,13 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
     final reconnecting =
         widget.session.phase == ServerSessionPhase.reconnecting;
     final error = _error;
-    final up = _handIsUp;
+    final ownHand = _ownHand;
+    final up = ownHand.up;
+    final handMessage = serverOwnHandMessage(
+      copy,
+      up: up,
+      decision: ownHand.decision,
+    );
     return Column(
       crossAxisAlignment: fullWidth
           ? CrossAxisAlignment.stretch
@@ -1084,7 +1122,7 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
-              copy.serverReconnecting,
+              copy.serverReconnectingFor(widget.session.reauthorization),
               key: const ValueKey('server-session-status'),
               textAlign: fullWidth ? TextAlign.center : TextAlign.start,
               style: AppTypography.bodyMedium.copyWith(
@@ -1105,33 +1143,32 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
                 : copy.serverRaiseHand,
             onPressed: _busy ? null : _toggleHand,
           ),
-          if (up || error != null) const SizedBox(height: 6),
+          if (handMessage != null || error != null) const SizedBox(height: 6),
           if (error != null)
             Text(
-              serverActionFailureCopy(
-                error,
-                copy,
-                fallback: copy.serverHandFailed,
-              ),
+              serverHandFailureCopy(error, copy),
               key: const ValueKey('server-community-hand-error'),
               textAlign: fullWidth ? TextAlign.center : TextAlign.start,
               style: AppTypography.bodySmall.copyWith(
                 color: palette.dangerForeground,
               ),
             )
-          else if (up)
-            Text(
-              copy.serverHandRaised,
-              key: const ValueKey('server-community-hand-state'),
-              textAlign: fullWidth ? TextAlign.center : TextAlign.start,
-              style: AppTypography.bodySmall.copyWith(
-                color: palette.textSecondary,
+          else if (handMessage != null)
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                handMessage,
+                key: const ValueKey('server-community-hand-state'),
+                textAlign: fullWidth ? TextAlign.center : TextAlign.start,
+                style: AppTypography.bodySmall.copyWith(
+                  color: palette.textSecondary,
+                ),
               ),
             ),
-        ] else
+        ] else if (widget.session.reauthorization == null)
           Text(
-            // The generation's host is on the stage already; there is
-            // nothing for them to ask for.
+            // The generation's host and its guests are on the stage already;
+            // there is nothing for them to ask for.
             copy.serverInConversation,
             key: const ValueKey('server-community-hand-state'),
             textAlign: fullWidth ? TextAlign.center : TextAlign.start,

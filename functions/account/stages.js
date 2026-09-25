@@ -62,7 +62,7 @@ function canonicalUid(value) {
 // every denormalized name field enforces.
 const DELETED_IDENTITY_NAME = "YO Voice user";
 
-// The sixteen private subcollections of `users/{uid}`, from firestore.rules.
+// The seventeen private subcollections of `users/{uid}`, from firestore.rules.
 // Six carry a reciprocal edge in somebody else's document and are handled by
 // their own steps; the rest are a plain bounded batch delete.
 const RECIPROCAL_SUBCOLLECTIONS = Object.freeze([
@@ -78,6 +78,7 @@ const PLAIN_SUBCOLLECTIONS = Object.freeze([
   "muted",
   "momentViews",
   "reelViews",
+  "serverQuestionSeen",
   "clubs",
   "serverChannelRefs",
   "serverInviteRefs",

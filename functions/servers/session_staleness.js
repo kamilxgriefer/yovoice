@@ -1,5 +1,5 @@
 const { randomBytes } = require("node:crypto");
-const { FieldPath } = require("firebase-admin/firestore");
+const { FieldPath, FieldValue } = require("firebase-admin/firestore");
 const { HttpsError } = require("firebase-functions/v2/https");
 const { digest, requireSafeInteger, timestampMillis, transactionGetAll } = require("../integrity/guards");
 const { canonicalServer } = require("./authority");
@@ -194,6 +194,31 @@ function classifyChannelProjection({ serverId, channelId, channel, room, session
   return "unresolved";
 }
 
+// How close to a departure an authority change must be for that departure to
+// count as a re-mint rather than the person leaving. It covers the client's
+// own teardown on seeing the new revision (before the worker revokes), the
+// worker's RemoveParticipant, and the reconnect barrier the recipient ledger
+// sets after it.
+const REMINT_WINDOW_MS = 60_000;
+
+/**
+ * Whether `participant_left` at `leftAtMs` is this person being moved onto a
+ * new token rather than leaving: their authority changed (`lastModeratedAt`,
+ * written by every role and mute change) within the window around the
+ * departure, or their token recipient is being revoked or was revoked within
+ * it. Either way the client re-mints and is back in the room seconds later,
+ * so their raised hand must stay up.
+ */
+function remintingAround(participant, recipient, leftAtMs) {
+  const near = (millis) => millis !== null && Math.abs(millis - leftAtMs) <= REMINT_WINDOW_MS;
+  if (near(timestampMillis(participant?.lastModeratedAt))) return true;
+  if (recipient?.revocationState === "revoking") return true;
+  if (recipient?.revocationState === "revoked" &&
+      (near(timestampMillis(recipient.revokedAt)) ||
+        (Number.isSafeInteger(recipient.reconnectAfterMillis) && near(recipient.reconnectAfterMillis)))) return true;
+  return false;
+}
+
 /** Internal worker factory only. Registered by servers/registration.js as the
  * stale-generation schedule, and used by the release callable, the
  * `room_finished` webhook path and the repair script; no client reaches it. */
@@ -372,6 +397,82 @@ function createServerSessionStalenessService({
     const settled = await settleEmptyGeneration({ anchor, observedMaxTokenExpiresAtMillis: session.maxTokenExpiresAtMillis,
       verdict, source: "providerFinished", admissionSinceMillis: finishedAtMs });
     return { outcome: settled.outcome };
+  }
+
+  /**
+   * The provider half of a stale raised hand: LiveKit says `participantIdentity`
+   * left (or its connection aborted) a `srv_` generation at `leftAtMs`. A hand
+   * that person raised before leaving is lowered with `handDecision:
+   * "lowered"`, so the host's queue never offers somebody who is not there
+   * and the person reads why their request ended.
+   *
+   * Nothing is lowered while the provider still lists the identity (a
+   * reconnect under a new participant SID, or a second device), when the
+   * provider cannot say, for a hand raised after the departure instant, or
+   * for any other generation. A hand is a request, not authority: no
+   * revision moves and nothing is revoked. Replays converge on "unchanged".
+   *
+   * Nor is anything lowered while the departure is this person being moved
+   * onto a new token (`remintingAround`): a host or moderator mute, or a role
+   * change, revokes the held token, and the provider reports that removal as
+   * `participant_left` although the client re-mints and is back seconds
+   * later.
+   */
+  async function lowerDepartedHand({ livekitRoomName, participantIdentity, leftAtMs }) {
+    if (!isServerRtcRoomName(livekitRoomName) || typeof participantIdentity !== "string" ||
+        participantIdentity.length === 0 || participantIdentity.length > 128 || participantIdentity.includes("/") ||
+        !Number.isSafeInteger(leftAtMs) || leftAtMs <= 0) {
+      return { outcome: "skipped" };
+    }
+    livekit.assertSupported();
+    const binding = await resolveRtcBindingForLiveKitRoom({ db, livekitRoomName });
+    if (binding.bound !== true) return { outcome: "unbound" };
+    if (binding.status !== "live") return { outcome: "not-live" };
+    const anchor = { serverId: binding.serverId, channelId: binding.channelId, roomId: binding.roomId,
+      sessionId: binding.sessionId };
+    const reference = db.doc(`rooms/${anchor.roomId}/participants/${participantIdentity}`);
+    const raisedBefore = (value) => value?.serverSchemaVersion === 1 && value.serverId === anchor.serverId &&
+      value.channelId === anchor.channelId && value.roomId === anchor.roomId &&
+      value.sessionId === anchor.sessionId && value.userId === participantIdentity &&
+      value.isHandRaised === true && (timestampMillis(value.handRaisedAt) ?? Number.MAX_SAFE_INTEGER) <= leftAtMs;
+    const recipientReference = db.doc(`clubs/${anchor.serverId}/channels/${anchor.channelId}` +
+      `/channelSessions/${anchor.sessionId}/tokenRecipients/${tokenRecipientId(participantIdentity)}`);
+    const [first, recipient] = await Promise.all([reference.get(), recipientReference.get()]);
+    if (!first.exists || !raisedBefore(first.data())) return { outcome: "unchanged" };
+    if (remintingAround(first.data(), recipient.data(), leftAtMs)) return { outcome: "reminting" };
+    let occupancy;
+    try {
+      occupancy = await livekit.roomOccupancy({ ...anchor, livekitRoomName: binding.livekitRoomName });
+    } catch {
+      return { outcome: "unknown" };
+    }
+    const verdict = occupancyVerdict(occupancy, participantIdentity);
+    if (!verdict.known) return { outcome: "unknown" };
+    if (!verdict.empty) {
+      // An empty room is an answer by itself; an occupied one is an answer
+      // only when every listed identity can be compared with this one.
+      const identities = occupancy.participantIdentities;
+      if (!Array.isArray(identities) || identities.length !== occupancy.participantCount ||
+          identities.some((identity) => typeof identity !== "string" || identity.length === 0)) {
+        return { outcome: "unknown" };
+      }
+      if (identities.includes(participantIdentity)) return { outcome: "present" };
+    }
+    return db.runTransaction(async (transaction) => {
+      const sessionReference = db.doc(
+        `clubs/${anchor.serverId}/channels/${anchor.channelId}/channelSessions/${anchor.sessionId}`);
+      const [snapshot, sessionSnapshot, recipientSnapshot] = await transactionGetAll(transaction,
+        reference, sessionReference, recipientReference);
+      if (sessionSnapshot.data()?.status !== "live") return { outcome: "not-live" };
+      if (!snapshot.exists || !raisedBefore(snapshot.data())) return { outcome: "unchanged" };
+      if (remintingAround(snapshot.data(), recipientSnapshot.data(), leftAtMs)) return { outcome: "reminting" };
+      const now = Timestamp.fromMillis(checkedNow());
+      transaction.update(reference, {
+        isHandRaised: false, handRaisedAt: null,
+        handDecision: "lowered", handDecidedAt: now, handDecidedById: FieldValue.delete(), updatedAt: now,
+      });
+      return { outcome: "lowered" };
+    });
   }
 
   async function readProjection(transaction, serverId, channelId) {
@@ -563,7 +664,7 @@ function createServerSessionStalenessService({
   }
 
   return {
-    classifyChannelProjection, forEachVersionedServer, liveProjectionIds, recentAdmission,
+    classifyChannelProjection, forEachVersionedServer, liveProjectionIds, lowerDepartedHand, recentAdmission,
     repairChannelProjection, settleEmptyGeneration, settleEmptyGenerationWithin, stageEmptyGeneration,
     stageFinishedProviderRoom, stageStaleServerChannelSessions,
   };

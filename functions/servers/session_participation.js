@@ -1,6 +1,8 @@
+const { FieldValue } = require("firebase-admin/firestore");
+const { HttpsError } = require("firebase-functions/v2/https");
 const {
   activeProfile, fail, requireBoolean, requireExactInput, requireId, requireRequestId,
-  requireUid, transactionGetAll,
+  requireUid, timestampMillis, transactionGetAll,
 } = require("../integrity/guards");
 const { ROLE_POWER, requireEnum } = require("./contract");
 const { canonicalMember, denied, readBoundSessionAccess, validRevision } = require("./authority");
@@ -19,6 +21,32 @@ const PARTICIPATION_KIND = "sessionParticipantChanged";
 // bound to `channelSessions.startedById` (participantForSession) and changes
 // only when a new generation starts.
 const ASSIGNABLE_SESSION_ROLES = Object.freeze(["guest", "listener"]);
+// The answers a raised hand can receive, as written to `handDecision` on the
+// participant document. `approved` is written by a promotion that answers a
+// raised hand, `declined` by answerServerSessionHandV1, and `lowered` by the
+// provider path when the person left the generation with the hand still up
+// (session_staleness.js lowerDepartedHand). A raise clears it again.
+const HAND_DECISIONS = Object.freeze(["approved", "declined", "lowered"]);
+// The only answer answerServerSessionHandV1 gives. Approval stays the role
+// callable's job: it is the one that moves authority.
+const ANSWERABLE_HAND_DECISIONS = Object.freeze(["declined"]);
+// How long a declined person waits before the same generation takes a new
+// raise from them. Without it a decline has no lasting effect: the person
+// re-raises at once, the old answer is erased and they are back in the
+// host's queue (dot, live-region announcement) as often as the generic
+// attempt budget allows. One minute is long enough to stop a raise/lower
+// loop and short enough that "you can ask again" stays true.
+const HAND_DECLINE_COOLDOWN_MS = 60_000;
+// The `details.reason` of the cooldown refusal, so the client can say "wait
+// a moment" instead of "could not send".
+const HAND_COOLDOWN_REASON = "hand-decline-cooldown";
+// Who answered a hand is never written to the participant document: its
+// subject can read that whole document (`canReadOwnServerSessionParticipant`),
+// and a declined listener must not learn which moderator declined them. The
+// operation ledger already records the actor. Every hand write deletes the
+// field, so a document written by an earlier build of this branch is cleaned
+// by the next transition.
+const NO_HAND_DECIDER = Object.freeze({ handDecidedById: FieldValue.delete() });
 
 function participationInput(data, extras) {
   const keys = ["serverId", "channelId", "sessionId", "requestId", ...extras];
@@ -34,7 +62,8 @@ function participationInput(data, extras) {
 /**
  * Session participation (gap G5, contract decision C): promote or demote a
  * participant between `listener` and `guest`, raise or lower one's own hand,
- * and apply the host's or a moderator's mute. Every callable proves the same
+ * decline somebody else's raised hand (answerServerSessionHandV1), and apply
+ * the host's or a moderator's mute. Every callable proves the same
  * reciprocal server/channel/room/session binding token issuance proves, so a
  * call naming another channel's or another generation's session id fails
  * closed before any participant document is read. Standing comes only from
@@ -146,16 +175,33 @@ function createServerSessionParticipationService(dependencies) {
       if (target.participant.role === "host") fail("failed-precondition", "The session host keeps the host role for this generation.");
       if (prior) return prior;
       if (target.participant.role === role) {
+        // Somebody already on the stage with a hand still up (raised by an
+        // older client, where a guest could still ask) is answered all the
+        // same: the approval clears the hand and records the answer, so the
+        // host's Approve never leaves the request standing. Their authority
+        // does not move, so no revision, outbox job or revocation follows.
+        if (role === "guest" && target.participant.isHandRaised === true) {
+          transaction.update(target.reference, {
+            isHandRaised: false, handRaisedAt: null,
+            handDecision: "approved", handDecidedAt: now, ...NO_HAND_DECIDER, updatedAt: now,
+          });
+        }
         return receipt(access, participantId, target.participant, { changed: false, cleanupPending: false });
       }
       const revision = target.participant.authorizationRevision + 1;
       if (!validRevision(revision)) fail("data-loss", "The participant authorization revision is exhausted.");
       const promotion = role === "guest";
+      // A promotion that answers a raised hand records that answer, so the
+      // person reads "approved" from their own document instead of guessing
+      // from a dropped connection. A promotion nobody asked for records no
+      // hand decision at all.
+      const answersHand = promotion && target.participant.isHandRaised === true;
       transaction.update(target.reference, {
         role, authorizationRevision: revision,
         // A promotion answers the request that raised the hand. A demotion
         // leaves the hand as it is: the person may still be asking.
         ...(promotion ? { isHandRaised: false, handRaisedAt: null } : {}),
+        ...(answersHand ? { handDecision: "approved", handDecidedAt: now, ...NO_HAND_DECIDER } : {}),
         lastModeratedById: auth.uid, lastModeratedAt: now, updatedAt: now,
       });
       participationOutbox({ transaction, identity, access, participantId, revision, now });
@@ -179,10 +225,65 @@ function createServerSessionParticipationService(dependencies) {
       if (participant.isHandRaised === raised) {
         return receipt(access, auth.uid, participant, { raised, changed: false });
       }
+      // A decline lasts at least a minute: a raise straight after it would
+      // erase the answer and put the person back at the head of the queue.
+      const declinedAtMs = snapshot.get("handDecision") === "declined" ?
+        timestampMillis(snapshot.get("handDecidedAt")) : null;
+      if (raised && declinedAtMs !== null && now.toMillis() < declinedAtMs + HAND_DECLINE_COOLDOWN_MS) {
+        throw new HttpsError("failed-precondition", "Wait a moment before asking to speak again.",
+          { reason: HAND_COOLDOWN_REASON });
+      }
       // A hand is a request, not authority: the token fingerprint does not
       // include it, so no revision moves and no token is revoked.
-      transaction.update(reference, { isHandRaised: raised, handRaisedAt: raised ? now : null, updatedAt: now });
+      // Any earlier answer belonged to the earlier request: a new raise or
+      // the person's own withdrawal starts from no decision.
+      transaction.update(reference, {
+        isHandRaised: raised, handRaisedAt: raised ? now : null,
+        handDecision: null, handDecidedAt: null, ...NO_HAND_DECIDER, updatedAt: now,
+      });
       return receipt(access, auth.uid, participant, { raised, changed: true });
+    });
+  }
+
+  /**
+   * The host's or a moderator's answer to somebody else's raised hand, other
+   * than a promotion (ADR "request to speak"). Standing is exactly the role
+   * callable's: the session host over peers and those below, a moderator over
+   * members they strictly outrank. The generation's host never queues, so
+   * they are never answered.
+   *
+   * A hand is a request, not authority: no revision moves, no outbox job is
+   * staged and no token is revoked. The answer lowers the hand and records
+   * `handDecision: "declined"` with its instant on the person's own document,
+   * the one they may read. Who declined is not written there (the ledger
+   * keeps it), and the person may not raise again for a minute. A hand that is not up any more
+   * (already answered, withdrawn, lowered on leaving) is a no-op receipt, so
+   * two moderators answering at once cannot contradict each other.
+   */
+  async function answerServerSessionHandV1(request) {
+    const input = participationInput(request.data, ["participantId", "decision"]);
+    input.participantId = requireUid(request.data.participantId, "participantId");
+    input.decision = requireEnum(request.data.decision, ANSWERABLE_HAND_DECISIONS, "decision");
+    return operations.execute(request, "server.session.hand.answer.v1", input, async ({
+      transaction, auth, prior, now,
+    }) => {
+      const { participantId, decision, ...binding } = input;
+      if (participantId === auth.uid) fail("invalid-argument", "Lower your own hand with your own control.");
+      const access = await readParticipationAccess({ transaction, uid: auth.uid, input: binding });
+      if (!access.isHost && !access.isModerator) denied();
+      const target = await readTargetParticipant({ transaction, access, participantId });
+      const standing = standingOver(access, auth.uid, participantId, target.member);
+      if (!standing.host && !standing.moderator) denied();
+      if (target.participant.role === "host") fail("failed-precondition", "The session host does not queue for the stage.");
+      if (prior) return prior;
+      if (target.participant.isHandRaised !== true) {
+        return receipt(access, participantId, target.participant, { decision, changed: false });
+      }
+      transaction.update(target.reference, {
+        isHandRaised: false, handRaisedAt: null,
+        handDecision: decision, handDecidedAt: now, ...NO_HAND_DECIDER, updatedAt: now,
+      });
+      return receipt(access, participantId, target.participant, { decision, changed: true });
     });
   }
 
@@ -223,7 +324,12 @@ function createServerSessionParticipationService(dependencies) {
     });
   }
 
-  return { setServerSessionParticipantRoleV1, setServerSessionHandV1, setServerSessionMuteV1 };
+  return {
+    setServerSessionParticipantRoleV1, setServerSessionHandV1, setServerSessionMuteV1, answerServerSessionHandV1,
+  };
 }
 
-module.exports = { ASSIGNABLE_SESSION_ROLES, PARTICIPATION_KIND, createServerSessionParticipationService };
+module.exports = {
+  ANSWERABLE_HAND_DECISIONS, ASSIGNABLE_SESSION_ROLES, HAND_COOLDOWN_REASON, HAND_DECISIONS,
+  HAND_DECLINE_COOLDOWN_MS, PARTICIPATION_KIND, createServerSessionParticipationService,
+};

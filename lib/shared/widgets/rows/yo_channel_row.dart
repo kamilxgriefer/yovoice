@@ -191,6 +191,7 @@ class YoVoiceChannelRow extends StatelessWidget {
     this.joinIcon = Icons.mic_none_rounded,
     this.joinKey,
     this.tileKey,
+    this.attention,
     super.key,
   });
 
@@ -201,6 +202,13 @@ class YoVoiceChannelRow extends StatelessWidget {
   final Color? selectedForeground;
   final Color? selectedWash;
   final String? iconSemanticLabel;
+
+  /// A small marker the caller builds when something in this channel waits
+  /// for this person (the Servers "waiting" dot over a stage's raised hands).
+  /// Drawn first among the trailing markers; it carries its own spoken label
+  /// and its own spacing. Null (the only value while nothing waits) draws
+  /// nothing and leaves the row's layout exactly as it was.
+  final Widget? attention;
 
   /// The `NA ŻYWO` marker, built by the caller so its counted key lives in
   /// one place. Null when the channel document does not say live.
@@ -312,6 +320,7 @@ class YoVoiceChannelRow extends StatelessWidget {
               )
             : clockText;
         final markers = <Widget>[
+          ?attention,
           if (connected)
             Icon(
               Icons.graphic_eq_rounded,

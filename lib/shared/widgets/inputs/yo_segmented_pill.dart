@@ -11,10 +11,17 @@ class YoSegmentedPillSegment {
     this.icon,
     this.key,
     this.semanticLabel,
+    this.badge,
   });
 
   final String label;
   final IconData? icon;
+
+  /// A small mark drawn after the label — a "somebody is waiting" dot — or
+  /// null for none. Like the rest of the segment its own semantics are
+  /// replaced by the segment's, so a caller that draws one says what it means
+  /// in [semanticLabel] as well.
+  final Widget? badge;
 
   /// Applied to the segment's tappable region so tests and tours can address
   /// it without knowing how the pill is built.
@@ -253,6 +260,10 @@ class _SegmentState extends State<_Segment> {
                         ),
                       ),
                     ),
+                    if (widget.segment.badge != null) ...<Widget>[
+                      const SizedBox(width: 6),
+                      widget.segment.badge!,
+                    ],
                   ],
                 ),
               ),

@@ -80,8 +80,11 @@ class YoServerTile extends StatelessWidget {
 /// through the region's `selected` flag and [semanticLabel] (localized by the
 /// caller, typically the server name).
 ///
-/// There is deliberately no unread badge, counter or dot: server channels
-/// have no read cursor, so any such mark would be invented (ADR-209).
+/// There is deliberately no unread badge or counter: server channels have no
+/// read cursor, so any such mark would be invented (ADR-209). The one mark it
+/// can carry is [attention], which the caller builds only from a real cursor
+/// — a podcast host's unseen listener questions (ADR "listener questions
+/// dot") — and which is absent otherwise.
 /// The caller keys the item (`server-rail-<id>`) and owns the list, the
 /// selected id and the navigation.
 class YoServerRailItem extends StatefulWidget {
@@ -93,6 +96,7 @@ class YoServerRailItem extends StatefulWidget {
     required this.onTap,
     this.tooltip,
     this.focusNode,
+    this.attention,
     super.key,
   });
 
@@ -101,6 +105,11 @@ class YoServerRailItem extends StatefulWidget {
   final String semanticLabel;
   final bool selected;
   final VoidCallback? onTap;
+
+  /// A small "somebody is waiting" mark pinned to the squircle's top end
+  /// corner, carrying its own spoken label. Null (the default, and the only
+  /// value without a cursor behind it) draws nothing.
+  final Widget? attention;
 
   /// Hover label on pointer platforms; defaults to [semanticLabel].
   final String? tooltip;
@@ -170,7 +179,19 @@ class _YoServerRailItemState extends State<YoServerRailItem> {
             onHover: (hovered) {
               if (_hovered != hovered) setState(() => _hovered = hovered);
             },
-            child: YoServerTile(initial: widget.initial, type: widget.type),
+            child: widget.attention == null
+                ? YoServerTile(initial: widget.initial, type: widget.type)
+                : Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      YoServerTile(initial: widget.initial, type: widget.type),
+                      PositionedDirectional(
+                        top: -2,
+                        end: -2,
+                        child: widget.attention!,
+                      ),
+                    ],
+                  ),
           ),
         ],
       ),

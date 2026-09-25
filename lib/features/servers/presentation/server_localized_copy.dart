@@ -2,6 +2,8 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 
 import '../data/models/server_channel.dart';
 import '../data/models/server_type.dart';
+import '../data/services/server_session_controller.dart'
+    show ServerSessionReauthorization;
 
 extension ServerLocalizedCopy on AppLocalizations {
   String get serversTitle => text('Servers', 'Serwery');
@@ -696,6 +698,33 @@ extension ServerLocalizedCopy on AppLocalizations {
   String get serverCheckingAccess =>
       text('Checking access…', 'Sprawdzanie dostępu…');
   String get serverReconnecting => text('Reconnecting…', 'Ponowne łączenie…');
+
+  /// Said instead of [serverReconnecting] while a role or mute change moves
+  /// the person onto a new media token in the same generation — never the
+  /// red "connection lost".
+  String get serverJoiningStage =>
+      text('Joining the stage…', 'Wchodzisz na scenę…');
+  String get serverMovingToAudience =>
+      text('Moving to the audience…', 'Przechodzisz do publiczności…');
+  String get serverStageAccessMuted => text(
+    'Your stage access changed. Reconnecting…',
+    'Zmieniono Twój dostęp do sceny. Ponowne łączenie…',
+  );
+  String get serverStageAccessRestored => text(
+    'Your microphone access is back. Reconnecting…',
+    'Odzyskujesz dostęp do mikrofonu. Ponowne łączenie…',
+  );
+
+  /// The reconnecting line for a session, named for its cause when it is a
+  /// re-mint after a role or mute change.
+  String serverReconnectingFor(ServerSessionReauthorization? reason) =>
+      switch (reason) {
+        ServerSessionReauthorization.promoted => serverJoiningStage,
+        ServerSessionReauthorization.demoted => serverMovingToAudience,
+        ServerSessionReauthorization.muted => serverStageAccessMuted,
+        ServerSessionReauthorization.unmuted => serverStageAccessRestored,
+        ServerSessionReauthorization.changed || null => serverReconnecting,
+      };
   String get serverLeaving => text('Leaving…', 'Opuszczanie…');
   String get serverConnected => text('connected', 'połączono');
 
@@ -889,9 +918,83 @@ extension ServerLocalizedCopy on AppLocalizations {
   String get serverRaiseHand => text('Ask to speak', 'Poproś o głos');
   String get serverLowerHand =>
       text('Cancel the request', 'Anuluj prośbę o głos');
-  String get serverHandRaised =>
-      text('Your request is with the hosts.', 'Prowadzący widzą Twoją prośbę.');
+
+  /// Said while the person's own participant document shows the hand up. It
+  /// claims only what is true on every build: the request is recorded and
+  /// waits for an answer (a host on an older build has no queue to see it in).
+  String get serverHandRaised => text(
+    'Request sent. You\'re waiting for the host\'s answer.',
+    'Prośba wysłana. Czekasz na decyzję prowadzącego.',
+  );
+
+  /// `handDecision: declined`, read from the person's own document.
+  String get serverHandDeclined => text(
+    'The host didn\'t bring you on stage this time. You can ask again.',
+    'Prowadzący tym razem nie zaprosił Cię na scenę. Możesz poprosić ponownie.',
+  );
+
+  /// `handDecision: lowered`: the provider reported the person left the
+  /// generation with the hand still up.
+  String get serverHandLowered => text(
+    'Your request ended when you were disconnected. Ask again if you still want to speak.',
+    'Twoja prośba wygasła po rozłączeniu z transmisją. Poproś ponownie, jeśli nadal chcesz zabrać głos.',
+  );
+
+  /// A promoted guest: the grant permits publishing, but nothing turned the
+  /// microphone on — that stays the person's own press.
+  String get serverHandApproved => text(
+    'You\'re on stage. Turn on your microphone when you want to speak.',
+    'Jesteś na scenie. Włącz mikrofon, gdy chcesz mówić.',
+  );
+
+  /// The host's and moderators' queue of raised hands.
+  String get serverHandQueueTitle => text('Requests to speak', 'Prośby o głos');
+  String serverHandQueueCount(int count) =>
+      text('Requests to speak: $count', 'Prośby o głos: $count');
+  String get serverHandQueueShort => text('Requests', 'Prośby');
+  String get serverHandQueueEmpty => text(
+    'Nobody is asking to speak right now.',
+    'Nikt teraz nie prosi o głos.',
+  );
+
+  /// How long a hand has been up, from the backend's own instant.
+  String serverHandWaited(Duration waited) => waited.inMinutes < 1
+      ? text('Just asked', 'Przed chwilą')
+      : text(
+          'Waiting ${waited.inMinutes} min',
+          'Czeka ${waited.inMinutes} min',
+        );
+  String get serverHandApprove => text('Approve', 'Zaproś');
+  String get serverHandDecline => text('Decline', 'Odrzuć');
+  String serverHandApproveLabel(String name) =>
+      text('Bring $name on stage', 'Zaproś na scenę: $name');
+  String serverHandDeclineLabel(String name) =>
+      text('Decline $name\'s request', 'Odrzuć prośbę: $name');
+  String get serverHandAnswerFailed => text(
+    'That answer didn\'t go through. Try again.',
+    'Nie udało się odpowiedzieć na prośbę. Spróbuj ponownie.',
+  );
+
+  /// The small "waiting" dot's spoken form.
+  String serverHandWaitingLabel(int count) =>
+      text('$count waiting to speak', 'Czekające prośby o głos: $count');
   String get serverHandSending => text('Sending…', 'Wysyłanie…');
+
+  /// `setServerSessionHandV1` refused a new raise because a host declined
+  /// this person's request less than a minute ago.
+  String get serverHandCooldown => text(
+    'Give the host a moment. You can ask again in a minute.',
+    'Daj prowadzącemu chwilę. Możesz poprosić ponownie za minutę.',
+  );
+
+  /// Shown in a raised-hand row this viewer may not answer: a moderator
+  /// answers only people they outrank (and a plain member hosting the session
+  /// only peers), so an admin's or the owner's request waits for somebody
+  /// above them.
+  String get serverHandHigherRoleAnswers => text(
+    'Someone with a higher role will answer this request.',
+    'Na tę prośbę odpowie osoba z wyższą rolą.',
+  );
   String get serverHandFailed => text(
     'Could not send your request. Try again.',
     'Nie udało się wysłać prośby. Spróbuj ponownie.',
@@ -975,6 +1078,10 @@ extension ServerLocalizedCopy on AppLocalizations {
   /// named beside it, exactly as the lounge and live chats are.
   String get serverListenerQuestions =>
       text('Listener questions', 'Pytania słuchaczy');
+
+  /// The spoken half of the "new listener questions" waiting dot.
+  String get serverQuestionsWaitingLabel =>
+      text('New listener questions', 'Nowe pytania słuchaczy');
 
   String get serverRecording => text('Recording', 'Nagrywanie audycji');
   String get serverPodcastRecordingIdle => text(

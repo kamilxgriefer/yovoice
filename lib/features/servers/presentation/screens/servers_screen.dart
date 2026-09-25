@@ -16,10 +16,12 @@ import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
 import '../../data/models/server_member_role.dart';
 import '../../data/services/server_media_connector.dart';
+import '../../data/services/server_question_attention.dart';
 import '../../data/services/server_service.dart';
 import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
 import '../widgets/server_delete_flow.dart';
+import '../widgets/server_waiting_dot.dart';
 import 'create_server_screen.dart';
 import 'server_workspace_screen.dart';
 
@@ -81,11 +83,32 @@ class _ServersScreenState extends State<ServersScreen> {
   /// progress and a second tap cannot start a second call.
   final _busyIds = <String>{};
 
+  /// Listener questions this host has not seen, per podcast server. One set of
+  /// listeners for the directory's tiles and every workspace opened from here
+  /// (inline or pushed), paused while the shell hides this slot.
+  late final ServerQuestionAttention _attention;
+
   @override
   void initState() {
     super.initState();
     _repository = widget.repository ?? ServerService();
     _servers = _repository.watchMyServers();
+    _attention = ServerQuestionAttention(
+      repository: _repository,
+      isVisible: widget.isVisible,
+    )..addListener(_onAttention);
+  }
+
+  void _onAttention() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _attention
+      ..removeListener(_onAttention)
+      ..dispose();
+    super.dispose();
   }
 
   void _create() {
@@ -118,6 +141,7 @@ class _ServersScreenState extends State<ServersScreen> {
           repository: _repository,
           chatService: widget.chatService,
           connector: widget.connector,
+          questionAttention: _attention,
         ),
       ),
     );
@@ -355,6 +379,7 @@ class _ServersScreenState extends State<ServersScreen> {
                     chatService: widget.chatService,
                     connector: widget.connector,
                     isVisible: widget.isVisible,
+                    questionAttention: _attention,
                     onBack: () => setState(() => _inlineServerId = null),
                     // The workspace's server rail switches servers IN this
                     // slot. Without this callback it falls back to
@@ -401,6 +426,7 @@ class _ServersScreenState extends State<ServersScreen> {
           for (final server in snapshot.data ?? const <Server>[])
             if (!_removedIds.contains(server.id)) server,
         ];
+        _attention.trackDirectory(servers);
         return LayoutBuilder(
           builder: (context, constraints) {
             final padding = ResponsiveContentFrame.adaptivePagePadding(
@@ -478,6 +504,7 @@ class _ServersScreenState extends State<ServersScreen> {
                           width: rowWidth,
                           child: _ServerTile(
                             server: server,
+                            questionsWaiting: _attention.isWaiting(server.id),
                             onTap: () => _open(server),
                             onActions: _repository is ServerManagementRepository
                                 ? () => _showActions(server)
@@ -507,9 +534,15 @@ class _ServerTile extends StatelessWidget {
     required this.onTap,
     this.onActions,
     this.busy = false,
+    this.questionsWaiting = false,
   });
   final Server server;
   final VoidCallback onTap;
+
+  /// Listener questions on this podcast server wait for this host: the
+  /// squircle carries the shared waiting dot, so the host sees it before
+  /// opening the server.
+  final bool questionsWaiting;
 
   /// Opens the row's action sheet (delete for the owner, leave otherwise)
   /// from the trailing button, a long press or a secondary click. Null for a
@@ -525,10 +558,15 @@ class _ServerTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final avatar = YoServerTile(
-      initial: server.initial,
-      type: server.type,
-      size: _tileSize,
+    final avatar = ServerWaitingDot.on(
+      waiting: questionsWaiting,
+      semanticLabel: copy.serverQuestionsWaitingLabel,
+      dotKey: ValueKey('server-directory-questions-waiting-${server.id}'),
+      child: YoServerTile(
+        initial: server.initial,
+        type: server.type,
+        size: _tileSize,
+      ),
     );
     final details = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
