@@ -321,10 +321,7 @@ class _PremiumHero extends StatelessWidget {
                   top: height / 2 + 28,
                   child: _HeroPill(
                     icon: Icons.groups_rounded,
-                    label: copy.text(
-                      '30 Servers when live',
-                      '30 serwerów po starcie',
-                    ),
+                    label: copy.text('30 Servers', '30 serwerów'),
                   ),
                 ),
                 Positioned(
