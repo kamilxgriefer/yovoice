@@ -979,6 +979,22 @@ extension ServerLocalizedCopy on AppLocalizations {
   String serverHandWaitingLabel(int count) =>
       text('$count waiting to speak', 'Czekające prośby o głos: $count');
   String get serverHandSending => text('Sending…', 'Wysyłanie…');
+
+  /// `setServerSessionHandV1` refused a new raise because a host declined
+  /// this person's request less than a minute ago.
+  String get serverHandCooldown => text(
+    'Give the host a moment. You can ask again in a minute.',
+    'Daj prowadzącemu chwilę. Możesz poprosić ponownie za minutę.',
+  );
+
+  /// Shown in a raised-hand row this viewer may not answer: a moderator
+  /// answers only people they outrank (and a plain member hosting the session
+  /// only peers), so an admin's or the owner's request waits for somebody
+  /// above them.
+  String get serverHandHigherRoleAnswers => text(
+    'Someone with a higher role will answer this request.',
+    'Na tę prośbę odpowie osoba z wyższą rolą.',
+  );
   String get serverHandFailed => text(
     'Could not send your request. Try again.',
     'Nie udało się wysłać prośby. Spróbuj ponownie.',

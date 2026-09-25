@@ -106,8 +106,13 @@ class ServerSessionController extends ChangeNotifier
   /// first covers the revocation barrier the backend sets (at least two
   /// seconds after the change, `session_control.js`); the rest back off while
   /// the token call still answers `failed-precondition` ("still being
-  /// revoked"). About twelve seconds in all, then the surface says the
-  /// connection was lost and offers the retry it always did.
+  /// revoked"). About thirty seconds in all: the revocation runs on an outbox
+  /// worker with no warm instance, so a cold start plus one provider retry can
+  /// outlast a shorter budget, and nobody has yet measured it on the deployed
+  /// backend. The attempts stop at once when the generation is over (its own
+  /// document closed, or the channel no longer names it), so the long budget
+  /// never holds somebody whose conversation ended. After it the surface says
+  /// the connection was lost and offers the retry it always did.
   final List<Duration> _reauthorizationBackoff;
   static const defaultReauthorizationBackoff = <Duration>[
     Duration(milliseconds: 1500),
@@ -115,7 +120,15 @@ class ServerSessionController extends ChangeNotifier
     Duration(seconds: 2),
     Duration(seconds: 4),
     Duration(seconds: 4),
+    Duration(seconds: 4),
+    Duration(seconds: 4),
+    Duration(seconds: 4),
+    Duration(seconds: 4),
   ];
+
+  /// How long the one channel read that tells whether the joined generation
+  /// is still live may take ([_generationStillLive]).
+  static const _livenessProbeTimeout = Duration(seconds: 3);
 
   /// The speaker route and the Android keep-alive service. Neither is owned by
   /// this slice; both have to be asked for, per session, or a conversation
@@ -193,6 +206,7 @@ class ServerSessionController extends ChangeNotifier
   StreamSubscription<ServerSessionParticipantState?>? _ownSubscription;
   StreamSubscription<ServerMemberRole?>? _roleSubscription;
   StreamSubscription<List<ServerSessionHand>>? _handsSubscription;
+  StreamSubscription<Map<String, ServerMemberRole>>? _staffSubscription;
   String? _participationSessionId;
   ServerSessionParticipantState? _ownParticipant;
   int _ownParticipantVersion = 0;
@@ -202,6 +216,12 @@ class ServerSessionController extends ChangeNotifier
   /// fingerprint is an authority change the token no longer matches.
   ServerSessionParticipantState? _authorityBaseline;
   bool _canModerate = false;
+
+  /// This viewer's own server role, and the roles of the server's
+  /// moderate-capable members: together they say which raised hands this
+  /// viewer may answer ([canAnswerHand]).
+  ServerMemberRole? _myServerRole;
+  Map<String, ServerMemberRole> _staffRoles = const {};
   List<ServerSessionHand> _queuedHands = const [];
   final Set<String> _answeringHands = <String>{};
   Object? _handAnswerError;
@@ -317,6 +337,28 @@ class ServerSessionController extends ChangeNotifier
         if (present.contains(hand.userId)) hand,
     ];
   }
+
+  /// Whether this viewer may answer [hand], by the standing the callables
+  /// apply (`session_participation.js` standingOver): the session host
+  /// answers peers and everyone below their own server role, a moderator only
+  /// members they strictly outrank. Anybody not on the staff roster is a
+  /// member or below. While this viewer's own role is not known yet the
+  /// answer is offered and the callable decides, as it always did.
+  bool canAnswerHand(ServerSessionHand hand) {
+    if (!canAnswerHands) return false;
+    final mine = _myServerRole;
+    if (mine == null) return true;
+    final target = _staffRoles[hand.userId] ?? ServerMemberRole.member;
+    final asHost = isSessionHost && target.power <= mine.power;
+    final asModerator = mine.canModerate && target.power < mine.power;
+    return asHost || asModerator;
+  }
+
+  /// The raised hands this viewer can act on — what every "somebody is
+  /// waiting for you" mark counts. A request only the host may answer is
+  /// still listed in the queue, with a line saying so, but it does not ask
+  /// this viewer for anything.
+  int get answerableHandCount => raisedHands.where(canAnswerHand).length;
 
   /// Whether an answer for [userId] is on its way.
   bool isAnsweringHand(String userId) => _answeringHands.contains(userId);
@@ -852,7 +894,8 @@ class ServerSessionController extends ChangeNotifier
     try {
       _roleSubscription = _repository.watchMyRole(server.id).listen((role) {
         final canModerate = role?.canModerate ?? false;
-        if (canModerate == _canModerate) return;
+        if (canModerate == _canModerate && role == _myServerRole) return;
+        _myServerRole = role;
         _canModerate = canModerate;
         _syncHandsSubscription();
         if (!_disposed) notifyListeners();
@@ -875,15 +918,35 @@ class ServerSessionController extends ChangeNotifier
         (connection.sessionRole == 'host' || _canModerate);
     if (!wanted) {
       final subscription = _handsSubscription;
+      final staff = _staffSubscription;
       _handsSubscription = null;
+      _staffSubscription = null;
       if (subscription != null) unawaited(subscription.cancel());
+      if (staff != null) unawaited(staff.cancel());
       _queuedHands = const [];
+      _staffRoles = const {};
       return;
     }
     if (_handsSubscription != null) return;
     final server = _server;
     final channel = _channel;
     if (server == null || channel == null) return;
+    try {
+      _staffSubscription = (repository as ServerSessionHandsRepository)
+          .watchSessionStaffRoles(server.id)
+          .listen(
+            (roles) {
+              if (_disposed) return;
+              _staffRoles = roles;
+              notifyListeners();
+            },
+            // Unknown staff: every requester counts as a member, and the
+            // callable re-proves the standing of any answer.
+            onError: (Object _) {},
+          );
+    } on Object {
+      _staffRoles = const {};
+    }
     try {
       _handsSubscription = (repository as ServerSessionHandsRepository)
           .watchSessionHands(
@@ -916,10 +979,12 @@ class ServerSessionController extends ChangeNotifier
       _ownSubscription,
       _roleSubscription,
       _handsSubscription,
+      _staffSubscription,
     ];
     _ownSubscription = null;
     _roleSubscription = null;
     _handsSubscription = null;
+    _staffSubscription = null;
     for (final subscription in subscriptions) {
       if (subscription != null) unawaited(subscription.cancel());
     }
@@ -932,6 +997,8 @@ class ServerSessionController extends ChangeNotifier
     _ownParticipant = null;
     _authorityBaseline = null;
     _canModerate = false;
+    _myServerRole = null;
+    _staffRoles = const {};
     _queuedHands = const [];
     _answeringHands.clear();
     _handAnswerError = null;
@@ -999,13 +1066,42 @@ class ServerSessionController extends ChangeNotifier
         own.tokenFingerprint == baseline.tokenFingerprint &&
         own.authorizationRevision > baseline.authorizationRevision;
     if (changed) return _reasonBetween(baseline, own);
-    // Ending a generation also removes everybody from the provider room
-    // before deleting it, and closes the own-document read at once. A removal
-    // while that document is still readable is therefore a change to this
-    // person, not the end of the conversation.
+    // Ending a generation also removes everybody from the provider room, but
+    // it deletes the participant documents only afterwards, and an open
+    // own-document listener is not reliably re-evaluated when the channel it
+    // is read through changes. A removal while that document is still
+    // readable is therefore only *possibly* a change to this person:
+    // [_reauthorize] checks the channel before it says so.
     if (reason == ServerMediaDisconnectReason.participantRemoved &&
         own != null) {
       return ServerSessionReauthorization.changed;
+    }
+    return null;
+  }
+
+  /// Whether the joined generation is still the channel's live one, from one
+  /// read of the server's channel list: the end callable clears the
+  /// channel's `activeSessionId` in the same transaction that starts ending
+  /// the generation, before anybody is removed from the provider room. Null
+  /// when the read fails, times out or no longer lists the channel — the
+  /// caller then keeps its previous behaviour.
+  Future<bool?> _generationStillLive(
+    Server server,
+    ServerChannel channel,
+    String sessionId,
+  ) async {
+    try {
+      final channels = await _repository
+          .watchChannels(server.id)
+          .first
+          .timeout(_livenessProbeTimeout);
+      for (final candidate in channels) {
+        if (candidate.id == channel.id) {
+          return candidate.activeSessionId == sessionId;
+        }
+      }
+    } catch (_) {
+      // Unknown: neither a reason to give up nor a proof of life.
     }
     return null;
   }
@@ -1019,6 +1115,14 @@ class ServerSessionController extends ChangeNotifier
   /// barrier, retried while the backend still answers "being revoked", and
   /// the new link connects with every capture off — a promotion grants
   /// permission, never a live microphone.
+  ///
+  /// A removal nothing on the own document explains yet
+  /// ([ServerSessionReauthorization.changed]) may be the host ending the
+  /// whole generation, so it is not named as a change to this person until
+  /// the channel says the generation is still live; until then the surface
+  /// shows the plain reconnecting line. The same check turns a
+  /// `failed-precondition` for a generation that is no longer live into the
+  /// honest failure at once instead of a retry.
   Future<void> _reauthorize(ServerSessionReauthorization reason) async {
     final server = _server;
     final channel = _channel;
@@ -1027,7 +1131,8 @@ class ServerSessionController extends ChangeNotifier
       return;
     }
     final epoch = ++_epoch;
-    _reauthorization = reason;
+    final unexplained = reason == ServerSessionReauthorization.changed;
+    _reauthorization = unexplained ? null : reason;
     final link = _link;
     _link = null;
     _detachWhiteboardDataPlane();
@@ -1038,6 +1143,20 @@ class ServerSessionController extends ChangeNotifier
     _set(ServerSessionPhase.reconnecting);
     _pendingJoinOperations++;
     try {
+      if (unexplained) {
+        final live = await _generationStillLive(
+          server,
+          channel,
+          previous.sessionId,
+        );
+        if (!_current(epoch)) return;
+        if (live == false) {
+          _failReauthorization();
+          return;
+        }
+        _reauthorization = reason;
+        notifyListeners();
+      }
       for (final wait in _reauthorizationBackoff) {
         await Future<void>.delayed(wait);
         if (!_current(epoch)) return;
@@ -1080,21 +1199,37 @@ class ServerSessionController extends ChangeNotifier
         } catch (error) {
           if (!_current(epoch)) return;
           if (!_retriesReauthorization(error)) break;
+          // "Still being revoked" and "this generation is ending" share a
+          // code; only the second one is worth nothing to wait for.
+          if (error is FirebaseFunctionsException &&
+              error.code == 'failed-precondition') {
+            final live = await _generationStillLive(
+              server,
+              channel,
+              previous.sessionId,
+            );
+            if (!_current(epoch)) return;
+            if (live == false) break;
+          }
         }
       }
       if (!_current(epoch)) return;
-      // Out of patience or refused outright (removed from the server, the
-      // generation ended): exactly the outcome a lost link always had, with
-      // the retry the surface already offers.
-      _epoch++;
-      _stopParticipation(notify: false);
-      _releaseDevice();
-      _error = const ServerSessionDisconnected();
-      _set(ServerSessionPhase.failed);
+      _failReauthorization();
     } finally {
       _pendingJoinOperations--;
       _releaseRealtimeAudioIfIdle();
     }
+  }
+
+  /// Out of patience or refused outright (removed from the server, the
+  /// generation ended): exactly the outcome a lost link always had, with the
+  /// retry the surface already offers.
+  void _failReauthorization() {
+    _epoch++;
+    _stopParticipation(notify: false);
+    _releaseDevice();
+    _error = const ServerSessionDisconnected();
+    _set(ServerSessionPhase.failed);
   }
 
   /// "Still being revoked" and transient transport answers are worth another
@@ -1197,7 +1332,7 @@ class ServerSessionController extends ChangeNotifier
     final channel = _channel;
     final connection = _connection;
     if (_disposed ||
-        !canAnswerHands ||
+        !canAnswerHand(hand) ||
         server == null ||
         channel == null ||
         connection == null ||

@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 
 import '../models/server.dart';
@@ -177,6 +178,14 @@ abstract interface class ServerSessionHandsRepository {
     required String roomId,
     required String sessionId,
   });
+
+  /// The server roles of the members holding `moderate` (owner, coOwner,
+  /// admin, moderator), by uid — the only people a moderate-capable viewer may
+  /// fail to outrank. Anybody absent is a `member` or below. It decides only
+  /// which raised hands this viewer is offered answers for; the callables
+  /// re-prove the standing. Settles on an empty map when the roster is not
+  /// readable.
+  Stream<Map<String, ServerMemberRole>> watchSessionStaffRoles(String serverId);
 
   /// Declines somebody else's raised hand (`answerServerSessionHandV1`).
   /// Approval is a promotion: [ServerRepository.setSessionParticipantRole].
@@ -821,6 +830,29 @@ class ServerService
   }
 
   @override
+  Stream<Map<String, ServerMemberRole>> watchSessionStaffRoles(
+    String serverId,
+  ) {
+    _requireId(serverId);
+    // The same staff query [watchModerators] runs, keeping the role.
+    return _dropDenied<Map<String, ServerMemberRole>>(
+      _firestore
+          .collection('clubs')
+          .doc(serverId)
+          .collection('members')
+          .where('role', whereIn: _moderatorRoles)
+          .snapshots()
+          .map(
+            (snapshot) => Map<String, ServerMemberRole>.unmodifiable({
+              for (final document in snapshot.docs)
+                serverString(document.data()['userId']) ?? document.id:
+                    ?ServerMemberRole.parse(document.data()['role']),
+            }),
+          ),
+    ).map((value) => value ?? const <String, ServerMemberRole>{});
+  }
+
+  @override
   Stream<ServerSessionParticipantState?> watchOwnSessionParticipant({
     required String roomId,
     required String sessionId,
@@ -1345,32 +1377,42 @@ class ServerService
     if (cursorId == null) return Stream<bool>.value(false);
     return _switchMap(_watchAccountId(), (uid) {
       if (uid == null) return Stream<bool>.value(false);
-      final newest = _firestore
+      // The newest few questions, not only the newest: the viewer's own
+      // question is not news to them, and it must not hide a listener's
+      // question asked just before it. The newest question somebody else
+      // asked is the one compared with the cursor.
+      Stream<ServerNewestQuestion> newest() => _firestore
           .collection('clubs')
           .doc(serverId)
           .collection('channels')
           .doc(channelId)
           .collection('questions')
           .orderBy('createdAt', descending: true)
-          .limit(1)
+          .limit(_newestQuestionWindow)
           .snapshots()
           .map((snapshot) {
-            if (snapshot.docs.isEmpty) return const _NewestQuestion.none();
-            try {
-              final question = ServerPodcastQuestion.fromFirestore(
-                snapshot.docs.first,
-                serverId: serverId,
-                channelId: channelId,
-              );
-              return _NewestQuestion(question.createdAt, question.authorId);
-            } on FormatException {
-              // The board skips a document it cannot parse, so the host
-              // could never "see" it; it must not hold a dot on forever.
-              return const _NewestQuestion.none();
+            for (final document in snapshot.docs) {
+              try {
+                final question = ServerPodcastQuestion.fromFirestore(
+                  document,
+                  serverId: serverId,
+                  channelId: channelId,
+                );
+                if (question.authorId == uid) continue;
+                return (
+                  createdAt: question.createdAt,
+                  authorId: question.authorId,
+                );
+              } on FormatException {
+                // The board skips a document it cannot parse, so the host
+                // could never "see" it; it must not hold a dot on forever.
+                continue;
+              }
             }
+            return (createdAt: null, authorId: null);
           });
       final key = '$uid/$cursorId';
-      final cursor = _firestore
+      Stream<DateTime?> cursor() => _firestore
           .collection('users')
           .doc(uid)
           .collection('serverQuestionSeen')
@@ -1385,9 +1427,19 @@ class ServerService
             }
             return value;
           });
-      return _latestUnseen(newest, cursor, uid);
+      return serverLatestQuestionUnseen(
+        newest: newest,
+        cursor: cursor,
+        viewerId: uid,
+      );
     }).distinct();
   }
+
+  /// How many of the newest questions the dot reads to find the newest one
+  /// somebody else asked. A host who asks this many in a row before opening
+  /// Pytania has, by then, nothing older to be told about that the board
+  /// would not show them anyway.
+  static const _newestQuestionWindow = 5;
 
   @override
   Future<void> markPodcastQuestionsSeen({
@@ -2176,43 +2228,52 @@ Stream<List<T>> _combineNullable<T>(List<Stream<T?>> sources) {
   return controller.stream;
 }
 
-/// The newest listener question of a channel, reduced to what the
-/// "new questions" dot needs. [createdAt] is null when there is none (or none
-/// that parses).
-class _NewestQuestion {
-  const _NewestQuestion(this.createdAt, this.authorId);
-  const _NewestQuestion.none() : createdAt = null, authorId = null;
-  final DateTime? createdAt;
-  final String? authorId;
-}
+/// The newest listener question of a channel that somebody other than the
+/// viewer asked, reduced to what the "new questions" dot needs. `createdAt`
+/// is null when there is none (or none that parses).
+typedef ServerNewestQuestion = ({DateTime? createdAt, String? authorId});
 
 /// Combines the newest question and the host's cursor into the dot's value.
 ///
-/// It speaks only once both reads have answered, and an error in either
-/// settles on false and stops listening: a cursor that cannot be read must
-/// not leave a permanent dot, and a denied question list means there is
-/// nothing this host may be told about.
-Stream<bool> _latestUnseen(
-  Stream<_NewestQuestion> newest,
-  Stream<DateTime?> cursor,
-  String viewerId,
-) {
+/// It speaks only once both reads have answered. An error in either settles
+/// on false at once — a cursor that cannot be read must not leave a
+/// permanent dot. `permission-denied` is final (there is nothing this host
+/// may be told about); any other error (a network change, `unavailable`) is
+/// recoverable, so both reads are opened again after [retryDelay], doubling
+/// up to [maxRetryDelay], and the first answer after that corrects the dot.
+@visibleForTesting
+Stream<bool> serverLatestQuestionUnseen({
+  required Stream<ServerNewestQuestion> Function() newest,
+  required Stream<DateTime?> Function() cursor,
+  required String viewerId,
+  Duration retryDelay = const Duration(seconds: 2),
+  Duration maxRetryDelay = const Duration(minutes: 1),
+}) {
   late StreamController<bool> controller;
-  StreamSubscription<_NewestQuestion>? newestSubscription;
+  StreamSubscription<ServerNewestQuestion>? newestSubscription;
   StreamSubscription<DateTime?>? cursorSubscription;
-  _NewestQuestion? latest;
+  Timer? retry;
+  ServerNewestQuestion? latest;
   DateTime? seenAt;
   var cursorKnown = false;
   var failed = false;
+  var closed = false;
+  var nextDelay = retryDelay;
 
-  Future<void> cancel() async {
-    await newestSubscription?.cancel();
-    await cursorSubscription?.cancel();
+  Future<void> cancelReads() async {
+    final subscriptions = [newestSubscription, cursorSubscription];
+    newestSubscription = null;
+    cursorSubscription = null;
+    for (final subscription in subscriptions) {
+      await subscription?.cancel();
+    }
   }
 
   void emit() {
     final question = latest;
-    if (failed || question == null || !cursorKnown) return;
+    if (failed || closed || question == null || !cursorKnown) return;
+    // Both reads answered again: the next failure starts from a short wait.
+    nextDelay = retryDelay;
     controller.add(
       serverPodcastQuestionsUnseen(
         newestCreatedAt: question.createdAt,
@@ -2223,26 +2284,53 @@ Stream<bool> _latestUnseen(
     );
   }
 
-  void fail(Object _) {
-    if (failed) return;
+  late void Function() open;
+
+  void fail(Object error) {
+    if (failed || closed) return;
     failed = true;
     controller.add(false);
-    unawaited(cancel());
+    unawaited(cancelReads());
+    final terminal =
+        error is FirebaseException && error.code == 'permission-denied';
+    if (terminal) return;
+    final wait = nextDelay;
+    final doubled = nextDelay * 2;
+    nextDelay = doubled > maxRetryDelay ? maxRetryDelay : doubled;
+    retry = Timer(wait, () {
+      retry = null;
+      if (closed) return;
+      failed = false;
+      latest = null;
+      cursorKnown = false;
+      open();
+    });
   }
 
-  controller = StreamController<bool>(
-    onListen: () {
-      newestSubscription = newest.listen((value) {
+  open = () {
+    try {
+      newestSubscription = newest().listen((value) {
         latest = value;
         emit();
       }, onError: fail);
-      cursorSubscription = cursor.listen((value) {
+      cursorSubscription = cursor().listen((value) {
         seenAt = value;
         cursorKnown = true;
         emit();
       }, onError: fail);
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  controller = StreamController<bool>(
+    onListen: () => open(),
+    onCancel: () async {
+      closed = true;
+      retry?.cancel();
+      retry = null;
+      await cancelReads();
     },
-    onCancel: cancel,
   );
   return controller.stream;
 }

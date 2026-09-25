@@ -101,7 +101,8 @@ class ServerConversationDock extends StatelessWidget {
       final sharing = controller.isScreenShareEnabled;
       final cameraEnabled = controller.isCameraEnabled;
       final canUseCamera = controller.canPublishCamera;
-      final waitingHands = controller.raisedHands.length;
+      // Only requests this person can answer ask anything of them.
+      final waitingHands = controller.answerableHandCount;
       final controls = [
         if (publishing)
           _DockControl(

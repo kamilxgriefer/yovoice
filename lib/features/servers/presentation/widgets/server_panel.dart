@@ -641,7 +641,7 @@ class _PanelChannelRow extends StatelessWidget {
     final controller = session;
     if (controller == null) return row(const <YoVoiceRowParticipant>[], 0);
     int waiting() =>
-        controller.isIn(channel.id) ? controller.raisedHands.length : 0;
+        controller.isIn(channel.id) ? controller.answerableHandCount : 0;
     if (!connected) {
       // This row is not rebuilt when a join or a raised hand changes the
       // session, so it follows the waiting count itself — and only that, so

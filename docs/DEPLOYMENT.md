@@ -135,6 +135,48 @@ Read back after 3b:
   counters (`stagedEmpty`, `graceRunning`, `driftRepaired`,
   `driftUnresolved`, `driftTruncated`).
 
+### 3c. Request to speak and the listener-questions dot (`podcast-host`)
+
+Two ADR-XXX records ("Request to speak end to end" and "Listener questions
+dot") need their backend half live **before** any client that uses it. The
+full-surface deploys in steps 2 and 3b already carry all of it; this is what
+to check, and the order if it is ever deployed on its own:
+
+1. **Rules first.** The deployed ruleset must contain the
+   `users/{userId}/serverQuestionSeen/{cursorId}` block (owner `get`,
+   `create`, `update`; no `list`, no `delete`; forward-only `seenAt`).
+   Without it the questions dot fails closed: the cursor read is denied, so
+   the dot never lights and never clears.
+2. **Then Functions**, together:
+   - `answerServerSessionHandV1` — a **new** export (a creation, not an
+     update), the host's or a moderator's Decline. Without it every "Odrzuć"
+     shows "Nie udało się odpowiedzieć na prośbę.";
+   - `setServerSessionHandV1` and `setServerSessionParticipantRoleV1` — the
+     one-minute cooldown after a decline, no `handDecidedById` on the
+     listener-readable participant document, and Approve answering a guest's
+     leftover hand;
+   - `receiveLiveKitAchievementWebhook` — the new `participant_left` /
+     `participant_connection_aborted` handling that lowers a hand its owner
+     left behind (and not one that is only being re-minted);
+   - the account-deletion stage (`onAccountDeletionOutboxCreated`,
+     `processAccountDeletionOutboxSchedule`), which now sweeps
+     `serverQuestionSeen`.
+3. **Then the client and the web build.**
+
+Read back after it:
+
+- `answerServerSessionHandV1` is ACTIVE in `europe-west1` with **no**
+  `secretEnvironmentVariables` bound and `minInstances` 0;
+- the deployed ruleset shows the `serverQuestionSeen` block;
+- the next `receiveLiveKitAchievementWebhook` departure for a `srv_` room
+  logs "livekit server lifecycle handled a departure" with a closed-set
+  `outcome`.
+
+Not measured yet: how long a promoted listener waits between the promotion
+and a token the backend will issue again. The client now retries for about
+30 s (it used to give up after about 12.5 s); the two-device test should
+record the real number.
+
 ### 4. The app
 
 Only after 1–3 are read back. The client half of this build is

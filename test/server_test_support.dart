@@ -477,6 +477,15 @@ class TestServerRepository
     required String sessionId,
   }) => ownParticipantStream ?? Stream.value(null);
 
+  /// The server roles of the roster's moderate-capable members, by uid. Empty
+  /// (everybody a plain member) unless a test supplies them.
+  Map<String, ServerMemberRole> sessionStaffRoles = const {};
+
+  @override
+  Stream<Map<String, ServerMemberRole>> watchSessionStaffRoles(
+    String serverId,
+  ) => Stream.value(sessionStaffRoles);
+
   @override
   Future<ServerSessionHandAnswerResult> declineSessionHand({
     required String serverId,

@@ -137,10 +137,12 @@ final _questionSeenIdPattern = RegExp(r'^[A-Za-z0-9-]+(_[A-Za-z0-9-]+)+$');
 
 /// Whether a podcast host has listener questions they have not looked at.
 ///
-/// Only the newest question is known ([newestCreatedAt], [newestAuthorId]),
-/// and [seenAt] is the host's own cursor. Unseen means the newest question is
-/// later than the cursor, or there is no cursor yet. A question the viewer
-/// asked themselves is not news to them, so it never lights the dot.
+/// [newestCreatedAt] and [newestAuthorId] describe the newest question
+/// somebody other than the viewer asked (the repository skips the viewer's
+/// own, so their question never hides a listener's earlier one), and
+/// [seenAt] is the host's own cursor. Unseen means that question is later
+/// than the cursor, or there is no cursor yet. A question the viewer asked
+/// themselves is not news to them, so it never lights the dot.
 bool serverPodcastQuestionsUnseen({
   required DateTime? newestCreatedAt,
   required String? newestAuthorId,

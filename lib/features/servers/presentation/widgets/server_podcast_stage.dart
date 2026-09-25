@@ -1019,11 +1019,7 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
           if (handMessage != null || error != null) const SizedBox(height: 6),
           if (error != null)
             Text(
-              serverActionFailureCopy(
-                error,
-                copy,
-                fallback: copy.serverHandFailed,
-              ),
+              serverHandFailureCopy(error, copy),
               key: const ValueKey('server-podcast-hand-error'),
               textAlign: fullWidth ? TextAlign.center : TextAlign.start,
               style: AppTypography.bodySmall.copyWith(

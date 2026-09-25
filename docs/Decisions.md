@@ -15177,14 +15177,31 @@ requires one. A hand also survived its owner leaving. Same on released 3.0.0.
    (a sheet), and as one shared `ServerWaitingDot` on the connected channel
    row and the dock control. `ServerWaitingDot` is the product's single
    "somebody waits for you" mark; the listener-questions work reuses it.
+   The queue lists only listeners' hands (a guest is already on the stage,
+   so Approve could give them nothing), and a guest is never offered
+   "Poproś o głos" on either stage template. Answers follow the callables'
+   standing: the controller reads the server roles of the moderate-capable
+   members (`watchSessionStaffRoles`, the query `watchModerators` already
+   runs) and offers Approve / Decline only for hands this viewer outranks;
+   any other row says "Na tę prośbę odpowie osoba z wyższą rolą." and does
+   not count towards the dot or the dock control.
 2. *Decline.* New callable `answerServerSessionHandV1 {serverId, channelId,
    sessionId, participantId, decision: "declined", requestId}` with the role
    callable's standing (host over peers and below, moderator over members it
    strictly outranks). It lowers the hand and writes additive
-   `handDecision / handDecidedAt / handDecidedById`; no revision moves, no
-   outbox job, no revocation; an already-lowered hand is a `changed: false`
-   receipt. A promotion that answers a raised hand records
-   `handDecision: "approved"`; a new raise or the person's own withdrawal
+   `handDecision / handDecidedAt`; no revision moves, no outbox job, no
+   revocation; an already-lowered hand is a `changed: false` receipt. Who
+   answered is **not** written to the participant document — its subject can
+   read the whole document, and a declined listener must not learn which
+   moderator declined them; the operation ledger keeps the actor, and every
+   hand write deletes any `handDecidedById` an earlier build left. A decline
+   lasts a minute: `setServerSessionHandV1` refuses a new raise with
+   `failed-precondition` and `details.reason: "hand-decline-cooldown"` until
+   `handDecidedAt + 60 s`, and the listener reads "Daj prowadzącemu chwilę.
+   Możesz poprosić ponownie za minutę.". A promotion that answers a raised
+   hand records `handDecision: "approved"`; so does an Approve of a guest
+   whose hand is still up (raised by an older client), which clears it
+   without moving any authority. A new raise or the person's own withdrawal
    clears the decision. It ships as a separate registration extension
    (`SESSION_HAND_CALLABLE_METHODS`, like the message-parity one) so the
    frozen 62/56/55 manifest and its activation phase plan do not move; the
@@ -15194,7 +15211,11 @@ requires one. A hand also survived its owner leaving. Same on released 3.0.0.
    optional `onParticipantLeft` half of the webhook's server lifecycle hook
    (behind `workersEnabled`), which lowers a hand raised before the departure
    with `handDecision: "lowered"` unless the provider still lists the
-   identity or cannot answer. The client also withdraws its own raised hand on
+   identity or cannot answer, or the departure is a re-mint: the person's
+   `lastModeratedAt`, or their token recipient's revocation
+   (`revoking`, or `revokedAt` / `reconnectAfterMillis`), lies within a
+   minute of the departure. A departure during a full LiveKit reconnect
+   after a network change is not yet told apart. The client also withdraws its own raised hand on
    an explicit leave, and the host's queue never offers an absent requester.
 4. *Re-mint in place.* When the listener's own document shows a higher
    `authorizationRevision` under the same `tokenAuthorityFingerprint` (an
@@ -15203,7 +15224,15 @@ requires one. A hand also survived its owner leaving. Same on released 3.0.0.
    controller tears down only the link and re-requests a token for the same
    generation with a new request id after a 1.5 s barrier, retrying
    `failed-precondition` (still being revoked) and transient codes with
-   back-off (about 12.5 s in all), then reconnects. It never goes through
+   back-off (about 30 s in all: the revocation runs on a cold outbox worker
+   and has not been measured on the deployed backend), then reconnects. A
+   provider removal the own document does not explain yet may be the host
+   ending the generation, so it is named only after one read of the channel
+   list still shows this generation as `activeSessionId` (the end callable
+   clears it before anybody is removed); an ended generation fails at once
+   into the honest "Połączenie zostało przerwane.", and a
+   `failed-precondition` for a generation that is no longer live stops the
+   retries. It never goes through
    `leave()`: device claim, keep-alive, realtime-audio lease and
    subscriptions stay, no release signal is sent. The phase is
    `reconnecting` with a `reauthorization` reason, so every surface says
@@ -15225,10 +15254,11 @@ decline outside the frozen manifest follows the precedent the message-parity
 extension set.
 
 **Consequences.** Deploy Functions (the extension and the webhook) before the
-client; an older backend answers the decline with `not-found`, which the
-queue shows as one sentence. The listener's own document still carries
-`handDecidedById` (like `lastModeratedById` before it) and a determined
-listener could read it with the SDK. The re-mint path, audio route and
+client (docs/DEPLOYMENT.md, step 3c); an older backend answers the decline
+with `not-found`, which the queue shows as one sentence. The decider of a
+decline is no longer readable by the person declined; `lastModeratedById`
+still names whoever promoted, demoted or muted somebody, as it did before
+this ADR. The re-mint path, its real duration, the audio route and the
 Android keep-alive type update are unverified on devices. The Community stage
 gets the same truthful listener status and inline queue through the shared
 controller.
@@ -15259,11 +15289,15 @@ verdict: `yovoice-evidence/2026-09-25/diagnosis-listener-questions-dot.md` and
    newest shown question's own `createdAt`, never "now", so a question
    committed during the write is not swallowed.
 2. *Signal.* `ServerQuestionAttentionRepository.watchPodcastQuestionsUnseen`
-   combines `questions orderBy createdAt desc limit 1` (single-field index, no
+   combines `questions orderBy createdAt desc limit 5` (single-field index, no
    status filter needed) with the cursor document: unseen when the newest
-   parsed question is later than the cursor or there is no cursor, and was not
-   asked by the viewer. An unparseable newest document, no questions, or a
-   failed read settle on false. A dot, not a number: a count would need N
+   parsed question somebody else asked is later than the cursor or there is
+   no cursor. The viewer's own questions are skipped rather than treated as
+   seen, so a host's own question never hides a listener's question asked
+   just before it. Unparseable documents, no questions, or a failed read
+   settle on false; `permission-denied` is final, any other read error
+   reopens both reads after a back-off (2 s doubling to 1 min), so a network
+   change does not switch the dot off until the slot is hidden and shown. A dot, not a number: a count would need N
    reads or a non-realtime aggregate.
 3. *Who.* Owners, admins and moderators (`canModerate`) of an active,
    non-held Podcast server. The Community template's `questions` channel is a

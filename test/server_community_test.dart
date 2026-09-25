@@ -563,6 +563,38 @@ void main() {
     );
   });
 
+  testWidgets('a guest already on the stage is never offered a request an '
+      'Approve could not answer', (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    // Every participant of a non-broadcast Community stage starts as a guest,
+    // and a promoted listener is one too.
+    final repository = TestServerRepository()
+      ..servers = [communityServer()]
+      ..channels = communityChannels(
+        stage: ServerChannelLiveness(
+          isLive: true,
+          startedAt: DateTime(2026, 9, 12, 19, 40),
+        ),
+        activeSessionId: 'gen-7',
+      )
+      ..sessionRole = 'guest'
+      ..permittedTrackSources = const ['microphone'];
+    await pumpServers(
+      tester,
+      communityWorkspace(repository),
+      size: const Size(390, 844),
+    );
+    await tester.tap(join);
+    await tester.pumpAndSettle();
+    expect(hand, findsNothing);
+    expect(find.text('Poproś o głos'), findsNothing);
+    expect(find.text('W rozmowie'), findsWidgets);
+    expect(
+      repository.calls.map((call) => call.$1),
+      isNot(contains('setServerSessionHandV1')),
+    );
+  });
+
   testWidgets('the generation host is never offered the stage queue', (
     tester,
   ) async {

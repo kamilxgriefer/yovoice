@@ -1816,18 +1816,25 @@ async function main() {
         [`users/${APPROVED}`]: { displayName: APPROVED, banned: false, disabled: false },
         [`clubs/${ACTIVE}/members/${DECLINED}`]: member(DECLINED, "member"),
         [`clubs/${ACTIVE}/members/${APPROVED}`]: member(APPROVED, "member"),
+        // Deliberately updated (podcast-host fix round): exactly what the
+        // callables now write — no `handDecidedById`. The subject can read
+        // this whole document, so who answered them is kept out of it (the
+        // Functions suite proves no hand path writes the field).
         [own(DECLINED)]: participant(DECLINED, "listener", { isHandRaised: false, handRaisedAt: null,
-          handDecision: "declined", handDecidedAt: new Date(3), handDecidedById: ADMIN }),
+          handDecision: "declined", handDecidedAt: new Date(3) }),
         [own(APPROVED)]: participant(APPROVED, "guest", { authorizationRevision: 2, isHandRaised: false,
-          handRaisedAt: null, handDecision: "approved", handDecidedAt: new Date(4), handDecidedById: MEMBER }),
+          handRaisedAt: null, handDecision: "approved", handDecidedAt: new Date(4) }),
       });
-      // The subject reads the answer on their own live-generation document.
+      // The subject reads the answer on their own live-generation document,
+      // and nothing in it names the moderator who gave it.
       const declined = await assertSucceeds(read(DECLINED, own(DECLINED)));
       assert.equal(declined.data().handDecision, "declined");
       assert.equal(declined.data().isHandRaised, false);
+      assert.equal("handDecidedById" in declined.data(), false);
       const approved = await assertSucceeds(read(APPROVED, own(APPROVED)));
       assert.equal(approved.data().handDecision, "approved");
       assert.equal(approved.data().role, "guest");
+      assert.equal("handDecidedById" in approved.data(), false);
       // Nobody else point-reads an answered document, and the host's queue
       // still names only the hand that is up.
       for (const uid of [OWNER, MEMBER, ADMIN, LISTENER]) {

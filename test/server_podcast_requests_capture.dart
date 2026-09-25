@@ -5,9 +5,9 @@
 // seams, and writes PNGs so a human can look at what the code draws. It is
 // not a device or simulator frame. Run explicitly:
 //
-//   flutter test test/server_podcast_requests_capture.dart
+//   YOVOICE_CAPTURE_DIR=<evidence dir> flutter test test/server_podcast_requests_capture.dart
 //
-// PNGs land in yovoice-evidence/2026-09-25/podcast-host/.
+// PNGs land in $YOVOICE_CAPTURE_DIR; without it every capture is skipped.
 
 import 'dart:async';
 import 'dart:io';
@@ -28,18 +28,31 @@ import 'package:yovoice/features/servers/data/services/server_voice_device.dart'
 import 'server_podcast_test.dart' as board;
 import 'server_test_support.dart';
 
-const _outputDirectory =
-    '/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-25/podcast-host';
+/// Where the PNGs go. Nothing is written, and every capture is skipped, unless
+/// the person running it names a directory outside the repository:
+///
+/// `YOVOICE_CAPTURE_DIR=/path/to/evidence flutter test` on this file.
+final String? _outputDirectory = () {
+  final value = Platform.environment['YOVOICE_CAPTURE_DIR']?.trim();
+  return value == null || value.isEmpty ? null : value;
+}();
 
-String get _fontRoot {
-  const candidates = [
+/// The Flutter SDK's own Material fonts, found from `FLUTTER_ROOT` or the two
+/// usual Homebrew locations; null (and the captures skipped) when none has
+/// them.
+final String? _fontRoot = () {
+  final flutterRoot = Platform.environment['FLUTTER_ROOT'];
+  final candidates = [
+    if (flutterRoot != null && flutterRoot.isNotEmpty)
+      '$flutterRoot/bin/cache/artifacts/material_fonts',
     '/opt/homebrew/share/flutter/bin/cache/artifacts/material_fonts',
     '/usr/local/share/flutter/bin/cache/artifacts/material_fonts',
   ];
-  return candidates.firstWhere(
-    (path) => File('$path/Roboto-Regular.ttf').existsSync(),
-  );
-}
+  for (final path in candidates) {
+    if (File('$path/Roboto-Regular.ttf').existsSync()) return path;
+  }
+  return null;
+}();
 
 ByteData _read(String path) =>
     ByteData.view(Uint8List.fromList(File(path).readAsBytesSync()).buffer);
@@ -54,11 +67,11 @@ Future<void> _loadRealFonts() async {
     'Roboto-Medium.ttf',
     'Roboto-Bold.ttf',
   ]) {
-    roboto.addFont(Future.value(_read('$_fontRoot/$face')));
+    roboto.addFont(Future.value(_read('$_fontRoot!/$face')));
   }
   await roboto.load();
   final icons = FontLoader('MaterialIcons')
-    ..addFont(Future.value(_read('$_fontRoot/MaterialIcons-Regular.otf')));
+    ..addFont(Future.value(_read('$_fontRoot!/MaterialIcons-Regular.otf')));
   await icons.load();
 }
 
@@ -124,7 +137,7 @@ Future<void> _shoot(
     final image = await boundary.toImage(pixelRatio: 2);
     try {
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
-      final file = File('$_outputDirectory/$name.png');
+      final file = File('$_outputDirectory!/$name.png');
       file.parent.createSync(recursive: true);
       file.writeAsBytesSync(data!.buffer.asUint8List());
       // ignore: avoid_print
@@ -204,6 +217,16 @@ ServerSessionParticipantState _own({
 );
 
 void main() {
+  if (_outputDirectory == null || _fontRoot == null) {
+    test(
+      'visual capture',
+      () {},
+      skip:
+          'Developer-only: set YOVOICE_CAPTURE_DIR to a directory outside '
+          'the repository (and have the Flutter SDK Material fonts).',
+    );
+    return;
+  }
   setUpAll(_loadRealFonts);
 
   for (final (label, size, scale, light) in <(String, Size, double, bool)>[

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/features/servers/data/models/server_member_role.dart';
 import 'package:yovoice/features/servers/data/models/server_session_hand.dart';
 import 'package:yovoice/features/servers/data/services/server_service.dart';
 
@@ -68,6 +69,11 @@ void main() {
       await participants
           .doc('forged')
           .set(_participant('someone-else', raisedAt: DateTime(2026)));
+      // A guest is already on the stage: a hand left up (an older client let
+      // a guest ask) is nothing an Approve could answer, so it never queues.
+      await participants
+          .doc('guest')
+          .set(_participant('guest', role: 'guest', raisedAt: DateTime(2026)));
       final service = ServerService(
         firestore: firestore,
         auth: MockFirebaseAuth(
@@ -87,6 +93,29 @@ void main() {
       expect(hands.first.displayName, 'Name early');
       expect(hands.first.raisedAt, DateTime(2026, 9, 25, 18));
       expect(hands.first.role, 'listener');
+    },
+  );
+
+  test(
+    'the staff roster maps each moderate-capable member to their role',
+    () async {
+      final firestore = FakeFirebaseFirestore();
+      final members = firestore.collection('clubs/s/members');
+      await members.doc('owner').set({'userId': 'owner', 'role': 'owner'});
+      await members.doc('admin').set({'userId': 'admin', 'role': 'admin'});
+      await members.doc('mod').set({'userId': 'mod', 'role': 'moderator'});
+      await members.doc('plain').set({'userId': 'plain', 'role': 'member'});
+      await members.doc('odd').set({'userId': 'odd', 'role': 'emperor'});
+      final service = ServerService(
+        firestore: firestore,
+        auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'mod')),
+      );
+      final roles = await service.watchSessionStaffRoles('s').first;
+      expect(roles, {
+        'owner': ServerMemberRole.owner,
+        'admin': ServerMemberRole.admin,
+        'mod': ServerMemberRole.moderator,
+      });
     },
   );
 

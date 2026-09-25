@@ -43,7 +43,8 @@ class ServerSessionHand {
   final String userId;
   final String displayName;
 
-  /// `listener | guest` for this generation (the host never queues).
+  /// Always `listener`: only a listener's hand is a request an Approve can
+  /// answer (the host never queues, and a guest is already on the stage).
   final String role;
 
   /// When the hand went up, from the backend's own clock. Null only for a
@@ -51,8 +52,10 @@ class ServerSessionHand {
   final DateTime? raisedAt;
 
   /// Parses one queue document. The document id is the uid; a row that does
-  /// not name the same person, is not raised, or carries no usable role is
-  /// refused rather than shown under somebody else's name.
+  /// not name the same person, is not raised, or is not a listener's is
+  /// refused — the last because a guest's leftover hand (an older client let
+  /// a guest ask) cannot be promoted, and an Approve that changes nothing
+  /// would leave the row standing.
   static ServerSessionHand? fromDocument(
     String id,
     Map<String, Object?> data, {
@@ -64,7 +67,7 @@ class ServerSessionHand {
         userId != id ||
         data['isHandRaised'] != true ||
         serverString(data['sessionId']) != sessionId ||
-        (role != 'listener' && role != 'guest')) {
+        role != 'listener') {
       return null;
     }
     return ServerSessionHand(

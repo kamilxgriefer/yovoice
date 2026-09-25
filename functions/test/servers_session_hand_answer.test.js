@@ -25,7 +25,8 @@ const { createServerMembershipService } = require("../servers/memberships");
 const { createServerSessionService } = require("../servers/sessions");
 const { createServerConvergenceRuntimeService } = require("../servers/convergence_runtime");
 const {
-  ANSWERABLE_HAND_DECISIONS, HAND_DECISIONS, PARTICIPATION_KIND, createServerSessionParticipationService,
+  ANSWERABLE_HAND_DECISIONS, HAND_COOLDOWN_REASON, HAND_DECISIONS, HAND_DECLINE_COOLDOWN_MS, PARTICIPATION_KIND,
+  createServerSessionParticipationService,
 } = require("../servers/session_participation");
 const { createServerSessionStalenessService } = require("../servers/session_staleness");
 const { canonicalLiveKitRoomName } = require("../servers/contract");
@@ -188,7 +189,10 @@ emulatorTest("only the session host or an outranking moderator may decline, and 
   assert.equal(doc.isHandRaised, false);
   assert.equal(doc.handRaisedAt, null);
   assert.equal(doc.handDecision, "declined");
-  assert.equal(doc.handDecidedById, moderator);
+  // Deliberately updated (podcast-host fix round): the listener can read this
+  // whole document, so who declined them is never written to it; the
+  // operation ledger keeps the actor.
+  assert.equal("handDecidedById" in doc, false);
   assert.equal(doc.handDecidedAt.toMillis(), f.clock());
   // A hand is not authority: nothing that reaches the provider moved.
   assert.equal(doc.authorizationRevision, before.authorizationRevision);
@@ -222,13 +226,20 @@ emulatorTest("answers are idempotent: a replay returns its receipt, a second ans
     { ...binding, participantId: listener, decision: "declined" });
   assert.equal(second.result.changed, false);
   assert.deepEqual(await f.participant(listener), afterFirst);
+  // Deliberately updated (podcast-host fix round): a decline lasts a minute,
+  // so asking again straight away is refused with a reason the client can
+  // name, and the answer stays.
+  await assert.rejects(f.call("setServerSessionHandV1", listener, { ...binding, raised: true }),
+    (error) => error.code === "failed-precondition" && error.details?.reason === HAND_COOLDOWN_REASON);
+  assert.deepEqual(await f.participant(listener), afterFirst);
+  f.advance(HAND_DECLINE_COOLDOWN_MS);
   // The person asks again: the old decision belonged to the old request.
   await f.call("setServerSessionHandV1", listener, { ...binding, raised: true });
   let doc = await f.participant(listener);
   assert.equal(doc.isHandRaised, true);
   assert.equal(doc.handDecision, null);
   assert.equal(doc.handDecidedAt, null);
-  assert.equal(doc.handDecidedById, null);
+  assert.equal("handDecidedById" in doc, false);
   // Withdrawing it themselves also leaves no decision behind, and a decline
   // of a withdrawn hand is a no-op.
   await f.call("setServerSessionHandV1", listener, { ...binding, raised: false });
@@ -259,13 +270,105 @@ emulatorTest("a promotion that answers a raised hand records the approval; a pro
   assert.equal(approved.role, "guest");
   assert.equal(approved.isHandRaised, false);
   assert.equal(approved.handDecision, "approved");
-  assert.equal(approved.handDecidedById, f.owner);
+  // Deliberately updated (podcast-host fix round): the decider is not written
+  // to the subject-readable document (`lastModeratedById` still names the
+  // promoter, as it did before request to speak).
+  assert.equal("handDecidedById" in approved, false);
+  assert.equal(approved.lastModeratedById, f.owner);
   assert.equal(approved.handDecidedAt.toMillis(), f.clock());
   await f.call("setServerSessionParticipantRoleV1", f.owner, { ...binding, participantId: quiet, role: "guest" });
   const unasked = await f.participant(quiet);
   assert.equal(unasked.role, "guest");
   assert.equal(unasked.handDecision, undefined);
   assert.equal(unasked.handDecidedById, undefined);
+});
+
+emulatorTest("a decline cools down for a minute, a withdrawal or another answer does not, and a guest's leftover hand is answered by Approve without an authority change", async () => {
+  const f = await fixture();
+  const listener = await f.member();
+  const other = await f.member();
+  const { sessionId } = await f.start();
+  await f.token(sessionId, listener);
+  await f.token(sessionId, other);
+  const binding = { channelId: f.stage.id, sessionId };
+  const raise = (uid, raised = true) => f.call("setServerSessionHandV1", uid, { ...binding, raised });
+  const cooling = (error) => error.code === "failed-precondition" && error.details?.reason === HAND_COOLDOWN_REASON;
+  await raise(listener);
+  await f.call("answerServerSessionHandV1", f.owner, { ...binding, participantId: listener, decision: "declined" });
+  f.advance(HAND_DECLINE_COOLDOWN_MS - 1_000);
+  await assert.rejects(raise(listener), cooling);
+  // Lowering an already-lowered hand is still the plain no-op receipt.
+  assert.equal((await raise(listener, false)).result.changed, false);
+  f.advance(1_000);
+  assert.equal((await raise(listener)).result.changed, true);
+  // A withdrawal records no answer, so it never cools down.
+  await raise(other);
+  await raise(other, false);
+  assert.equal((await raise(other)).result.changed, true);
+
+  // A guest whose hand is still up (an older client let a guest ask) is
+  // answered by the host's Approve: the hand clears and the answer is
+  // recorded, and nothing about their authority moves.
+  await f.call("setServerSessionParticipantRoleV1", f.owner, { ...binding, participantId: other, role: "guest" });
+  await raise(other);
+  const before = await f.participant(other);
+  assert.equal(before.role, "guest");
+  assert.equal(before.isHandRaised, true);
+  const jobsBefore = (await f.jobs()).size;
+  f.advance(1_000);
+  const approve = await f.call("setServerSessionParticipantRoleV1", f.owner,
+    { ...binding, participantId: other, role: "guest" });
+  assert.equal(approve.result.changed, false);
+  assert.equal(approve.result.cleanupPending, false);
+  const after = await f.participant(other);
+  assert.equal(after.isHandRaised, false);
+  assert.equal(after.handRaisedAt, null);
+  assert.equal(after.handDecision, "approved");
+  assert.equal(after.handDecidedAt.toMillis(), f.clock());
+  assert.equal("handDecidedById" in after, false);
+  assert.equal(after.authorizationRevision, before.authorizationRevision);
+  assert.equal((await f.jobs()).size, jobsBefore);
+  // Approving a guest without a raised hand stays a pure no-op.
+  const again = await f.call("setServerSessionParticipantRoleV1", f.owner,
+    { ...binding, participantId: other, role: "guest" });
+  assert.equal(again.result.changed, false);
+  assert.deepEqual(await f.participant(other), after);
+});
+
+emulatorTest("a departure that is a re-mint after a mute or a role change keeps the hand up", async () => {
+  const f = await fixture();
+  const listener = await f.member();
+  const { sessionId } = await f.start();
+  await f.token(sessionId, listener);
+  const binding = { channelId: f.stage.id, sessionId };
+  await f.call("setServerSessionHandV1", listener, { ...binding, raised: true });
+  const livekitRoomName = f.rtcName(sessionId);
+  f.onOccupancy(async () => ({ present: true, participantCount: 1, participantIdentities: [f.owner] }));
+  // The host mutes the listener: the held token is revoked, the provider
+  // reports participant_left, and the client re-mints seconds later.
+  f.advance(1_000);
+  await f.call("setServerSessionMuteV1", f.owner, { ...binding, participantId: listener, muted: true });
+  f.advance(1_500);
+  const reminting = await f.staleness.lowerDepartedHand({ livekitRoomName, participantIdentity: listener,
+    leftAtMs: f.clock() });
+  assert.equal(reminting.outcome, "reminting");
+  assert.equal((await f.participant(listener)).isHandRaised, true);
+  // The same revocation recorded on the token recipient also counts.
+  const recipients = await db.collection(
+    `clubs/${f.root.id}/channels/${f.stage.id}/channelSessions/${sessionId}/tokenRecipients`).get();
+  const recipient = recipients.docs.find((item) => item.data().userId === listener);
+  assert.ok(recipient, "the listener holds a token recipient");
+  f.advance(5 * 60_000);
+  await recipient.ref.update({ revocationState: "revoking" });
+  assert.equal((await f.staleness.lowerDepartedHand({ livekitRoomName, participantIdentity: listener,
+    leftAtMs: f.clock() })).outcome, "reminting");
+  // Long after the change, with the recipient settled, a departure is a
+  // departure again.
+  await recipient.ref.update({ revocationState: "active" });
+  const left = await f.staleness.lowerDepartedHand({ livekitRoomName, participantIdentity: listener,
+    leftAtMs: f.clock() });
+  assert.equal(left.outcome, "lowered");
+  assert.equal((await f.participant(listener)).handDecision, "lowered");
 });
 
 emulatorTest("a hand on a finished generation can be neither raised nor answered", async () => {
@@ -330,7 +433,7 @@ emulatorTest("the provider lowers a hand its owner left behind, and only that on
   assert.equal(doc.isHandRaised, false);
   assert.equal(doc.handRaisedAt, null);
   assert.equal(doc.handDecision, "lowered");
-  assert.equal(doc.handDecidedById, null);
+  assert.equal("handDecidedById" in doc, false);
   assert.equal(doc.authorizationRevision, 1);
   assert.equal((await f.jobs()).size, 0);
   // A replay converges without a second write.

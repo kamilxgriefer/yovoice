@@ -46,6 +46,19 @@ const _studio = ServerChannel(
   schemaVersion: 1,
 );
 
+/// The same channel after its generation ended: the end callable clears
+/// `activeSessionId` before anybody is removed from the provider room.
+const _endedStudio = ServerChannel(
+  id: 'studio',
+  serverId: 's',
+  name: 'Studio LIVE',
+  kind: ServerChannelKind.stage,
+  roomId: 'room',
+  experience: RoomExperience.broadcast,
+  mediaMode: ServerMediaMode.audio,
+  schemaVersion: 1,
+);
+
 ServerSessionParticipantState _own({
   int revision = 1,
   String role = 'listener',
@@ -360,6 +373,75 @@ void main() {
     await h.dispose();
   });
 
+  test('a removal while the channel already says the generation ended is the '
+      'honest failure at once, never a stage-access change', () async {
+    final h = _Harness(sessionRole: 'guest', sources: const ['microphone']);
+    await h.join();
+    h.own.add(_own(role: 'guest'));
+    await h.settle();
+    // The host ended the generation: the end callable cleared the channel's
+    // live session first, and the own-document listener has not caught up.
+    h.repository.channels = [_endedStudio];
+    h.connector.links.single.drop(
+      ServerMediaDisconnectReason.participantRemoved,
+    );
+    await h.settle();
+    expect(h.controller.phase, ServerSessionPhase.failed);
+    expect(h.controller.error, isA<ServerSessionDisconnected>());
+    expect(h.reasons, isEmpty);
+    expect(h.tokenRequests, hasLength(1));
+    expect(h.device.keepAliveStops, 1);
+    await h.dispose();
+    expect(h.registry.activeLeaseCount, 0);
+  });
+
+  test(
+    '"being revoked" for a generation that has ended stops retrying',
+    () async {
+      final h = _Harness();
+      await h.join();
+      h.own.add(_own());
+      await h.settle();
+      h.repository.refusals = 99;
+      h.promote();
+      h.own.add(_own(revision: 2, role: 'guest'));
+      await h.settle();
+      // Still live: the refusals are retried (one per back-off step so far).
+      expect(h.controller.phase, ServerSessionPhase.failed);
+      expect(h.tokenRequests, hasLength(1 + 3));
+      await h.dispose();
+
+      final ended = _Harness();
+      await ended.join();
+      ended.own.add(_own());
+      await ended.settle();
+      ended.repository
+        ..refusals = 99
+        ..channels = [_endedStudio];
+      ended.promote();
+      ended.own.add(_own(revision: 2, role: 'guest'));
+      await ended.settle();
+      expect(ended.controller.phase, ServerSessionPhase.failed);
+      expect(ended.controller.error, isA<ServerSessionDisconnected>());
+      // One refused attempt, then the channel said the generation is over.
+      expect(ended.tokenRequests, hasLength(1 + 1));
+      await ended.dispose();
+    },
+  );
+
+  test('the default re-mint budget is about thirty seconds', () {
+    final total = ServerSessionController.defaultReauthorizationBackoff.fold(
+      Duration.zero,
+      (sum, wait) => sum + wait,
+    );
+    expect(total, greaterThanOrEqualTo(const Duration(seconds: 25)));
+    expect(total, lessThanOrEqualTo(const Duration(seconds: 35)));
+    expect(
+      ServerSessionController.defaultReauthorizationBackoff.first,
+      const Duration(milliseconds: 1500),
+    );
+  });
+
   test(
     'a re-mint that never gets through gives up into the ordinary failure',
     () async {
@@ -533,6 +615,77 @@ void main() {
       expect(h.controller.isAnsweringHand('kamil'), isFalse);
       await h.dispose();
     });
+
+    test(
+      'answers are offered only where the callables would accept them',
+      () async {
+        const admin = ServerMediaParticipant(
+          identity: 'admin',
+          name: 'Ada',
+          isLocal: false,
+          sessionRole: 'listener',
+        );
+        final adminHand = ServerSessionHand(
+          userId: 'admin',
+          displayName: 'Ada',
+          role: 'listener',
+          raisedAt: DateTime(2026, 9, 25, 17, 30),
+        );
+
+        // A moderator listener answers the member, never the admin they do not
+        // outrank; the admin's request does not count as waiting for them.
+        final moderator = _Harness(role: ServerMemberRole.moderator);
+        moderator.repository.sessionStaffRoles = const {
+          'admin': ServerMemberRole.admin,
+        };
+        await moderator.join();
+        moderator.connector.links.single.setRoster(const [admin, kamil]);
+        moderator.hands.add([adminHand, kamilHand]);
+        await moderator.settle();
+        expect(moderator.controller.raisedHands, [adminHand, kamilHand]);
+        expect(moderator.controller.canAnswerHand(adminHand), isFalse);
+        expect(moderator.controller.canAnswerHand(kamilHand), isTrue);
+        expect(moderator.controller.answerableHandCount, 1);
+        final before = moderator.repository.calls.length;
+        await moderator.controller.approveHand(adminHand);
+        await moderator.controller.declineHand(adminHand);
+        expect(moderator.repository.calls, hasLength(before));
+        await moderator.dispose();
+
+        // A plain member hosting the session answers peers, not a moderator.
+        final member = _Harness(
+          sessionRole: 'host',
+          sources: const ['microphone'],
+        );
+        member.repository.sessionStaffRoles = const {
+          'admin': ServerMemberRole.moderator,
+        };
+        await member.join();
+        member.connector.links.single.setRoster(const [admin, kamil]);
+        member.hands.add([adminHand, kamilHand]);
+        await member.settle();
+        expect(member.controller.canAnswerHand(adminHand), isFalse);
+        expect(member.controller.canAnswerHand(kamilHand), isTrue);
+        await member.dispose();
+
+        // The owner hosting it answers everybody below them.
+        final owner = _Harness(
+          sessionRole: 'host',
+          sources: const ['microphone'],
+          role: ServerMemberRole.owner,
+        );
+        owner.repository.sessionStaffRoles = const {
+          'admin': ServerMemberRole.admin,
+        };
+        await owner.join();
+        owner.connector.links.single.setRoster(const [admin, kamil]);
+        owner.hands.add([adminHand, kamilHand]);
+        await owner.settle();
+        expect(owner.controller.canAnswerHand(adminHand), isTrue);
+        expect(owner.controller.answerableHandCount, 2);
+        await owner.dispose();
+      },
+    );
 
     test('leaving ends every subscription the generation opened', () async {
       final h = _Harness(sessionRole: 'host', sources: const ['microphone']);

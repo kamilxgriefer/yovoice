@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
@@ -277,6 +278,82 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('raw'), findsNothing);
+  });
+
+  testWidgets('a request this viewer does not outrank is listed for somebody '
+      'above them and waits for nobody here', (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final hands = StreamController<List<ServerSessionHand>>.broadcast();
+    addTearDown(hands.close);
+    // A plain member hosts the session; the moderator asking is above them.
+    final repository = _hostRepository(hands)
+      ..sessionStaffRoles = const {'kamil': ServerMemberRole.moderator};
+    await _joinStudio(tester, repository);
+    hands.add([_handOf('kamil', 'Kamil')]);
+    await tester.pumpAndSettle();
+    expect(requests, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('server-stage-request-unanswerable-kamil')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Na tę prośbę odpowie osoba z wyższą rolą.'),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('server-stage-request-approve-kamil')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('server-stage-request-decline-kamil')),
+      findsNothing,
+    );
+    // Nothing asks this viewer for an answer they cannot give.
+    expect(dockRequests, findsNothing);
+    expect(
+      find.byKey(const ValueKey('server-channel-waiting-studio')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('server-dock-requests-dot')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('asking again straight after a decline says to wait a minute', (
+    tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final own = StreamController<ServerSessionParticipantState?>.broadcast();
+    addTearDown(own.close);
+    final repository = podcast.listenerRepository()
+      ..ownParticipantStream = own.stream;
+    await _joinStudio(tester, repository, roster: podcast.broadcast);
+    own.add(_own(decision: ServerHandDecision.declined));
+    await tester.pumpAndSettle();
+    repository.failNextCall['setServerSessionHandV1'] =
+        FirebaseFunctionsException(
+          code: 'failed-precondition',
+          message: 'Wait a moment before asking to speak again.',
+          details: const {'reason': 'hand-decline-cooldown'},
+        );
+    await tester.ensureVisible(hand);
+    await tester.tap(hand);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Daj prowadzącemu chwilę. Możesz poprosić ponownie za minutę.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('failed-precondition'), findsNothing);
+    // Any other refusal keeps the ordinary sentence.
+    repository.failNextCall['setServerSessionHandV1'] =
+        FirebaseFunctionsException(code: 'unavailable', message: 'offline');
+    await tester.tap(hand);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Daj prowadzącemu chwilę. Możesz poprosić ponownie za minutę.'),
+      findsNothing,
+    );
   });
 
   testWidgets('a listener never reads or sees the queue', (tester) async {

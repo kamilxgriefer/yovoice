@@ -159,12 +159,15 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
       _inRoom ? widget.session.connection?.sessionId : null;
 
   /// The host of a generation never queues for its own stage, and the
-  /// callable says so; the control is not drawn for them, nor while a role
-  /// change is moving this person onto a new token.
+  /// callable says so; a guest is already on the stage (every participant of
+  /// a non-broadcast Community stage starts as one), so there is nothing an
+  /// Approve could give them. The control is drawn for neither, nor while a
+  /// role change is moving this person onto a new token.
   bool get _canRaiseHand =>
       _sessionId != null &&
       widget.session.reauthorization == null &&
-      widget.session.connection?.sessionRole != 'host';
+      widget.session.connection?.sessionRole != 'host' &&
+      widget.session.connection?.sessionRole != 'guest';
 
   /// The receipt of this person's own press until their own participant
   /// document says otherwise (`server_hand_status.dart`).
@@ -1143,11 +1146,7 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
           if (handMessage != null || error != null) const SizedBox(height: 6),
           if (error != null)
             Text(
-              serverActionFailureCopy(
-                error,
-                copy,
-                fallback: copy.serverHandFailed,
-              ),
+              serverHandFailureCopy(error, copy),
               key: const ValueKey('server-community-hand-error'),
               textAlign: fullWidth ? TextAlign.center : TextAlign.start,
               style: AppTypography.bodySmall.copyWith(
@@ -1168,8 +1167,8 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
             ),
         ] else if (widget.session.reauthorization == null)
           Text(
-            // The generation's host is on the stage already; there is
-            // nothing for them to ask for.
+            // The generation's host and its guests are on the stage already;
+            // there is nothing for them to ask for.
             copy.serverInConversation,
             key: const ValueKey('server-community-hand-state'),
             textAlign: fullWidth ? TextAlign.center : TextAlign.start,

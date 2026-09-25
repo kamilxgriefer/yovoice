@@ -24,7 +24,10 @@ import 'server_waiting_dot.dart';
 /// instant, and offers the two answers: Approve (the reviewed promotion, after
 /// which the person's device re-mints onto the stage by itself) and Decline
 /// (`answerServerSessionHandV1`). Nothing is drawn for anybody who may not
-/// answer, and no count is ever invented.
+/// answer, and no count is ever invented. A request this viewer does not
+/// outrank (a moderator looking at an admin's hand) is listed with a line
+/// saying somebody with a higher role will answer it, and does not light the
+/// waiting dot.
 ///
 /// [showEmpty] decides whether an empty queue says so (the sheet, which the
 /// person opened on purpose) or draws nothing (inline in the studio).
@@ -45,6 +48,7 @@ class ServerStageRequests extends StatelessWidget {
       if (!session.canAnswerHands) return const SizedBox.shrink();
       final hands = session.raisedHands;
       if (hands.isEmpty && !showEmpty) return const SizedBox.shrink();
+      final answerable = session.answerableHandCount;
       final copy = AppLocalizations.of(context);
       final palette = context.appPalette;
       final error = session.handAnswerError;
@@ -62,8 +66,8 @@ class ServerStageRequests extends StatelessWidget {
               child: Row(
                 children: [
                   ServerWaitingDot.on(
-                    waiting: hands.isNotEmpty,
-                    semanticLabel: copy.serverHandWaitingLabel(hands.length),
+                    waiting: answerable > 0,
+                    semanticLabel: copy.serverHandWaitingLabel(answerable),
                     child: Icon(
                       Icons.back_hand_outlined,
                       size: 18,
@@ -100,6 +104,7 @@ class ServerStageRequests extends StatelessWidget {
                 _RequestRow(
                   key: ValueKey('server-stage-request-${hands[index].userId}'),
                   hand: hands[index],
+                  canAnswer: session.canAnswerHand(hands[index]),
                   busy: session.isAnsweringHand(hands[index].userId),
                   onApprove: () => session.approveHand(hands[index]),
                   onDecline: () => session.declineHand(hands[index]),
@@ -169,6 +174,7 @@ Future<void> showServerStageRequestsSheet(
 class _RequestRow extends StatefulWidget {
   const _RequestRow({
     required this.hand,
+    required this.canAnswer,
     required this.busy,
     required this.onApprove,
     required this.onDecline,
@@ -176,6 +182,10 @@ class _RequestRow extends StatefulWidget {
   });
 
   final ServerSessionHand hand;
+
+  /// False when the callables would refuse this viewer's answer: the row
+  /// then says so instead of offering two buttons that always fail.
+  final bool canAnswer;
   final bool busy;
   final VoidCallback onApprove;
   final VoidCallback onDecline;
@@ -300,6 +310,25 @@ class _RequestRowState extends State<_RequestRow> {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
+          if (!widget.canAnswer) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                identity,
+                const SizedBox(height: AppRhythm.tight),
+                Text(
+                  copy.serverHandHigherRoleAnswers,
+                  key: ValueKey(
+                    'server-stage-request-unanswerable-${hand.userId}',
+                  ),
+                  style: AppTypography.bodySmall.copyWith(
+                    color: palette.textSecondary,
+                  ),
+                ),
+              ],
+            );
+          }
           final stacked =
               constraints.maxWidth < _RequestRow.sideBySideWidth ||
               MediaQuery.textScalerOf(context).scale(16) > 22;

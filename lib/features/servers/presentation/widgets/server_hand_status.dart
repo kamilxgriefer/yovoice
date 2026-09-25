@@ -1,7 +1,9 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 
 import '../../data/models/server_session_hand.dart';
 import '../../data/services/server_session_controller.dart';
+import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
 
 /// Where this person's own request to speak stands in the generation they are
@@ -50,4 +52,22 @@ String? serverOwnHandMessage(
     ServerHandDecision.lowered => copy.serverHandLowered,
     ServerHandDecision.approved || null => null,
   };
+}
+
+/// The `details.reason` `setServerSessionHandV1` attaches when it refuses a
+/// raise straight after a decline (`functions/servers/session_participation.js`
+/// HAND_COOLDOWN_REASON).
+const serverHandCooldownReason = 'hand-decline-cooldown';
+
+/// The one sentence for a hand press that did not go through: "wait a minute"
+/// for the decline cooldown, otherwise the shared action-failure copy.
+String serverHandFailureCopy(Object error, AppLocalizations copy) {
+  if (error is FirebaseFunctionsException &&
+      error.code == 'failed-precondition') {
+    final details = error.details;
+    if (details is Map && details['reason'] == serverHandCooldownReason) {
+      return copy.serverHandCooldown;
+    }
+  }
+  return serverActionFailureCopy(error, copy, fallback: copy.serverHandFailed);
 }
