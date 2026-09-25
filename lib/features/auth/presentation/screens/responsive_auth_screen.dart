@@ -434,6 +434,7 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
     if (_interactionLocked) return;
     FocusManager.instance.primaryFocus?.unfocus();
     final securedNotice = _captureSecuredSessionNotice();
+    _listenForLateSecuredSession(securedNotice);
     setState(() => _isGoogleLoading = true);
     try {
       await _authService.signInWithGoogle();
@@ -464,6 +465,7 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
 
     FocusManager.instance.primaryFocus?.unfocus();
     final securedNotice = _captureSecuredSessionNotice();
+    _listenForLateSecuredSession(securedNotice);
     setState(() => _isAppleLoading = true);
     try {
       await _authService.signInWithApple();
@@ -538,6 +540,29 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
     messenger: ScaffoldMessenger.maybeOf(context),
     message: federatedSessionSecuredMessage(AppLocalizations.of(context)),
   );
+
+  ({ScaffoldMessengerState? messenger, String message})? _lateSecuredNotice;
+  bool _listeningForLateSecuredSession = false;
+
+  // The check can also answer after the sign-in returned: a brand-new account
+  // is checked in the background, and a slow returning check keeps running
+  // past its wait. AuthService signs the device out itself; this only makes
+  // sure the owner is told why, through the notice captured at the tap (the
+  // screen is usually gone by then). One pending listener per screen.
+  void _listenForLateSecuredSession(
+    ({ScaffoldMessengerState? messenger, String message}) notice,
+  ) {
+    _lateSecuredNotice = notice;
+    if (_listeningForLateSecuredSession) return;
+    _listeningForLateSecuredSession = true;
+    unawaited(
+      _authService.federatedSessionSecuredLater.first.then((_) {
+        _listeningForLateSecuredSession = false;
+        final latest = _lateSecuredNotice;
+        if (latest != null) _showSecuredSessionNotice(latest);
+      }, onError: (Object _) => _listeningForLateSecuredSession = false),
+    );
+  }
 
   void _showSecuredSessionNotice(
     ({ScaffoldMessengerState? messenger, String message}) notice,

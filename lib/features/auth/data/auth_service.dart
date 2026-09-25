@@ -61,6 +61,7 @@ class AuthService {
     @visibleForTesting AppleProviderProbe? appleProviderProbe,
     @visibleForTesting
     FederatedSignInSecurityCheck? federatedSignInSecurityCheck,
+    @visibleForTesting Duration? federatedSignInSecurityCheckWait,
     @visibleForTesting PresenceService? presenceService,
     @visibleForTesting DeviceTokenUnregister? unregisterDeviceToken,
     @visibleForTesting ActiveVoiceSessionReader? activeVoiceSessionReader,
@@ -94,7 +95,10 @@ class AuthService {
            ),
        _appleUseWebPopup = appleUseWebPopup,
        _appleProviderProbe = appleProviderProbe,
-       _injectedFederatedSignInSecurityCheck = federatedSignInSecurityCheck;
+       _injectedFederatedSignInSecurityCheck = federatedSignInSecurityCheck,
+       _federatedSignInSecurityCheckWait =
+           federatedSignInSecurityCheckWait ??
+           AuthService.federatedSignInSecurityCheckTimeout;
 
   final FirebaseAuth _firebaseAuth;
   final FirestoreService _firestoreService;
@@ -102,13 +106,28 @@ class AuthService {
   final bool? _appleUseWebPopup;
   final AppleProviderProbe? _appleProviderProbe;
   final FederatedSignInSecurityCheck? _injectedFederatedSignInSecurityCheck;
+  final Duration _federatedSignInSecurityCheckWait;
 
-  /// Upper bound on the post-sign-in takeover check. It covers a cold start of
-  /// the callable; past it the sign-in proceeds and the server sweep is the
-  /// backstop.
+  /// How long a returning Google/Apple sign-in waits for the post-sign-in
+  /// takeover check before it proceeds. Past it the sign-in continues and the
+  /// call keeps running: a late "remediated" still signs this device out and
+  /// is announced on [federatedSessionSecuredLater]. The server sweep is the
+  /// backstop when no answer arrives at all.
   static const Duration federatedSignInSecurityCheckTimeout = Duration(
-    seconds: 20,
+    seconds: 8,
   );
+
+  // Never closed: a pending `.first` on a closed stream would throw.
+  final StreamController<void> _federatedSessionSecuredLater =
+      StreamController<void>.broadcast(sync: true);
+
+  /// Emits when the post-sign-in check answered "remediated" AFTER the
+  /// sign-in had already returned (a brand-new account, which is checked in
+  /// the background, or a returning one whose check outlasted
+  /// [federatedSignInSecurityCheckTimeout]). This device has been signed out
+  /// by then; the listener only tells the owner why.
+  Stream<void> get federatedSessionSecuredLater =>
+      _federatedSessionSecuredLater.stream;
 
   // Resolved lazily, inside signOut() only. Building the production
   // PresenceService or touching PushNotificationService.instance eagerly in
@@ -673,31 +692,51 @@ class AuthService {
   /// Anyone can register a stranger's address with a password. When the
   /// owner then signs in with Google or Apple, Firebase gives the owner that
   /// same account — and the pre-registrant's session survives. Right after a
-  /// RETURNING Google/Apple sign-in, the owner's client is the one party the
+  /// Google/Apple sign-in, the owner's client is the one party the
   /// pre-registrant cannot silence, so it asks the server to check the
   /// account (`secureFederatedSignInV1`, functions/auth/federated_takeover.js).
+  ///
+  /// A RETURNING sign-in waits for the answer, up to
+  /// [federatedSignInSecurityCheckTimeout]. A BRAND-NEW account is checked
+  /// too, in the background: the server answers "clean" for a genuinely new
+  /// account, and whether Firebase reports a takeover as new is not something
+  /// the app relies on. Neither path blocks an ordinary sign-in.
   ///
   /// When the server remediates, it has revoked every refresh token of the
   /// account — this device's too — and its session epoch refuses this
   /// session's ID token for push registration. The app therefore signs out
   /// and asks the owner to sign in once more; that new session is after the
-  /// epoch and nothing further happens. No device token is passed: this
-  /// device registers push only after the shell opens and rotates its token
-  /// on every identity change, so there is none to keep yet.
-  ///
-  /// Best-effort by design: an unreachable or not-yet-deployed function never
-  /// blocks a sign-in. The scheduled server sweep covers the account anyway.
+  /// epoch and nothing further happens. An answer that arrives after the
+  /// sign-in returned does the same and emits on
+  /// [federatedSessionSecuredLater]. No device token is passed: this device
+  /// registers push only after the shell opens and rotates its token on every
+  /// identity change, so there is none to keep yet.
   Future<void> _secureReturningFederatedSignIn(
     UserCredential credential,
   ) async {
+    final uid = credential.user?.uid;
+    if (uid == null) return;
+
+    final check =
+        _injectedFederatedSignInSecurityCheck ?? _callSecureFederatedSignIn;
+    final inFlight = Future<Map<String, dynamic>>.sync(check);
+
     final isNewUser = credential.additionalUserInfo?.isNewUser ?? false;
-    if (isNewUser || credential.user == null) return;
+    if (isNewUser) {
+      unawaited(_honourLateSecurityAnswer(inFlight, uid));
+      return;
+    }
 
     final Map<String, dynamic> result;
     try {
-      final check =
-          _injectedFederatedSignInSecurityCheck ?? _callSecureFederatedSignIn;
-      result = await check().timeout(federatedSignInSecurityCheckTimeout);
+      result = await inFlight.timeout(_federatedSignInSecurityCheckWait);
+    } on TimeoutException {
+      debugPrint(
+        'AuthService: the post-sign-in account check is slow. Sign-in '
+        'continues; a late answer is still honoured.',
+      );
+      unawaited(_honourLateSecurityAnswer(inFlight, uid));
+      return;
     } catch (error) {
       debugPrint(
         'AuthService: the post-sign-in account check did not complete '
@@ -709,6 +748,35 @@ class AuthService {
 
     if (result['status'] != 'remediated') return;
 
+    await _signOutAfterSecuredSession();
+    throw const FederatedSessionSecuredException();
+  }
+
+  /// Waits for a check the sign-in no longer waits for. A "remediated"
+  /// answer signs this device out — only while the same account is still
+  /// signed in here — and is announced on [federatedSessionSecuredLater].
+  Future<void> _honourLateSecurityAnswer(
+    Future<Map<String, dynamic>> inFlight,
+    String uid,
+  ) async {
+    final Map<String, dynamic> result;
+    try {
+      result = await inFlight;
+    } catch (error) {
+      debugPrint(
+        'AuthService: the background account check did not complete '
+        '(${error.runtimeType}); the server sweep covers this account.',
+      );
+      return;
+    }
+    if (result['status'] != 'remediated') return;
+    if (_firebaseAuth.currentUser?.uid != uid) return;
+
+    await _signOutAfterSecuredSession();
+    _federatedSessionSecuredLater.add(null);
+  }
+
+  Future<void> _signOutAfterSecuredSession() async {
     try {
       await signOut();
     } catch (error) {
@@ -717,7 +785,6 @@ class AuthService {
         '(${error.runtimeType}).',
       );
     }
-    throw const FederatedSessionSecuredException();
   }
 
   Future<Map<String, dynamic>> _callSecureFederatedSignIn() async {

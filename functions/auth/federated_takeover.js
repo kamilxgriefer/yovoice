@@ -24,18 +24,34 @@
 // later).
 //
 // ONE AUTHORITY. `remediateAccount()` is the only code that acts. Both
-// triggers call it: the owner's own client right after a returning Google or
-// Apple sign-in (`secureFederatedSignInV1`, trigger A — the trustworthy party,
+// triggers call it: the owner's own client right after a Google or Apple
+// sign-in (`secureFederatedSignInV1`, trigger A — the trustworthy party,
 // because the pre-registrant cannot stop the owner's client from calling) and
 // the scheduled sweeper (trigger B — the website, old app builds, anyone who
-// never calls A). It acts only when the account has a Google/Apple identity on
-// the account's own address AND either still carries an unverified password,
-// or its password vanished while the ledger still said "pending". A password
-// its holder verified is the owner's by definition and is never touched.
+// never calls A). It acts when the account has a Google/Apple identity on the
+// owner's address and still carries an unverified password, or — for an
+// account the ledger still holds "pending" — whenever that owner identity is
+// linked and the ledger's evidence no longer matches the account: the password
+// vanished, the address changed, or a credential changed (Auth
+// `tokensValidAfterTime` moved past the baseline the ledger recorded).
+//
+// WHY THE LEDGER, NOT THE CURRENT RECORD. After the takeover the
+// pre-registrant's surviving session can rewrite the Auth record before any
+// trigger looks: re-link a password (accounts:update), change the address, or
+// both. The current `emailVerified` and `email` therefore prove nothing on
+// their own. What the pre-registrant cannot rewrite is the ledger row written
+// while the password was still visibly unverified: a hash of the address it
+// was registered on and the credential baseline (`tokensValidAfterTime`) at
+// that moment. A verification-link click moves neither; setting a password,
+// a password reset, an address change and Firebase's own takeover all move
+// the baseline. Only "verified by link, nothing else changed, then Google"
+// is left alone as the owner's (the "ambiguous" verdict).
 //
 // ORDER (each step closes the gap the next one would leave):
-//   1. unlink the password and every identity that is not the owner's, so no
-//      NEW session can be minted from the pre-registrant's credentials;
+//   1. unlink the password and every identity that is not the owner's, and
+//      remove every enrolled second factor, so no NEW session can be minted
+//      from the pre-registrant's credentials and none of their factors can
+//      lock the owner out;
 //   2. revoke refresh tokens, so no session that already exists can mint a
 //      fresh ID token (production; the emulator does not enforce this);
 //   3. write `users/{uid}.authSessionEpoch`, so Firestore and Storage rules
@@ -45,7 +61,10 @@
 //   4. delete the planted `fcmTokens` (all of them from the sweeper; all but
 //      the calling device's from the owner), which no stale session can now
 //      re-plant;
-//   5. write the audit record and flip the ledger row to "remediated" in one
+//   5. put the owner's address back on the account (the Google/Apple
+//      identity's address) when the pre-registrant moved it, so a password
+//      reset cannot be sent to an address the pre-registrant controls;
+//   6. write the audit record and flip the ledger row to "remediated" in one
 //      batch.
 // A failure at any step throws; the ledger row stays "pending", so the next
 // call or sweep repeats the whole sequence. Every step is idempotent.
@@ -56,6 +75,8 @@
 // Storage `isActiveUser()` refuse it through the epoch; owner-only reads that
 // never consult account state (notifications, incoming calls, DM reads) and
 // Cloud Functions callables still accept it until it expires.
+
+const { createHash } = require("node:crypto");
 
 const functionsV1 = require("firebase-functions/v1");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
@@ -103,15 +124,56 @@ const FCM_PURGE_MAX_PAGES = 25;
 const STALE_UNVERIFIED_REPORT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const STALE_REPORT_SAMPLE_LIMIT = 100;
 
+// The credential baseline is second-granular in Auth. When the record carries
+// no `tokensValidAfterTime` (an Auth event payload may omit it), the baseline
+// falls back to the creation second plus this tolerance, because the
+// sign-up's own value may land a second after the creation time.
+const CREATION_BASELINE_TOLERANCE_SECONDS = 2;
+
+// The ledger pass pages through EVERY pending row until its share of the time
+// budget runs out, then resumes from its cursor on the next run. One page is
+// one indexed query plus one `getUsers` call per 100 rows; rows that need no
+// action cost no write.
 const SWEEP_LEDGER_PAGE_SIZE = 300;
 const GET_USERS_BATCH_SIZE = 100;
 const SWEEP_LIST_USERS_PAGE_SIZE = 1000;
 const SWEEP_LIST_USERS_PAGES_PER_RUN = 2;
 const SWEEP_WALK_MIN_INTERVAL_MS = 60 * 60 * 1000;
 const SWEEP_TIME_BUDGET_MS = 240 * 1000;
+// The ledger pass may use this much of the run; the listUsers walk (backfill
+// and re-arming) always keeps the rest.
+const SWEEP_LEDGER_TIME_BUDGET_MS = 180 * 1000;
 
 function normalizeEmail(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+/** SHA-256 of the normalized address: the ledger never stores the address. */
+function emailHashOf(value) {
+  const email = normalizeEmail(value);
+  return email ? createHash("sha256").update(email).digest("hex") : null;
+}
+
+function secondsOf(dateString) {
+  const ms = Date.parse(typeof dateString === "string" ? dateString : "");
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+
+/**
+ * The evidence a ledger row keeps about the account at the moment it was seen
+ * with an unverified password: which address it was registered on (hashed)
+ * and its credential baseline. Auth moves `tokensValidAfterTime` on a
+ * password set or reset, an address change, a revocation and Firebase's own
+ * takeover; a verification-link click does not move it.
+ */
+function ledgerEvidenceOf(user) {
+  const validSince = secondsOf(user?.tokensValidAfterTime);
+  const created = secondsOf(user?.metadata?.creationTime);
+  return {
+    emailHash: emailHashOf(user?.email),
+    validSinceBaselineSeconds: validSince ??
+      (created === null ? null : created + CREATION_BASELINE_TOLERANCE_SECONDS),
+  };
 }
 
 function providerIdsOf(user) {
@@ -126,16 +188,24 @@ function providerIdsOf(user) {
  *
  * verdicts:
  *  - "takeover": remediate. `keepProviders` are the Google/Apple identities on
- *    the account's own address; `unlinkProviders` is everything else.
- *  - "verified": the password on this account is verified; the ledger row (if
- *    any) can stop watching it.
- *  - "ambiguous": a pending password became verified while a Google/Apple
- *    identity was also linked. Firebase links a verified password instead of
- *    replacing it, so this is treated as the owner's and NOT touched — but it
- *    is reported, because it is also what a production difference from the
- *    emulator (linking an unverified password) would look like.
+ *    the owner's address; `unlinkProviders` is everything else;
+ *    `ownerEmail` is that address and `ownerEmailMissing` says the account
+ *    no longer carries it.
+ *  - "verified": the password on this account was verified by its holder and
+ *    nothing else changed; the ledger row (if any) can stop watching it.
+ *  - "ambiguous": a pending password was verified by link — no credential or
+ *    address change since the ledger saw it — and a Google/Apple identity was
+ *    then linked. Firebase links a verified password instead of replacing it,
+ *    so this is the owner's own verification race and is NOT touched; it is
+ *    reported. A password or address the pre-registrant changed after a
+ *    takeover moves the baseline and is a "takeover", never "ambiguous".
  *  - "unverifiedPassword": a password on an unverified address with no
- *    Google/Apple identity yet; the ledger must watch it.
+ *    Google/Apple identity of the owner yet; the ledger must watch it.
+ *  - "unconfirmedPassword": a pending password-only account whose address is
+ *    now verified, but whose credentials or address changed after the ledger
+ *    saw it (a password reset — or a pre-registrant who stripped the owner's
+ *    identity). Not verifiable, not actionable: the row stays pending, so the
+ *    owner's next Google/Apple sign-in on it is a takeover.
  *  - "clean": nothing to do.
  */
 function planRemediation(user, ledgerRow = null) {
@@ -146,23 +216,44 @@ function planRemediation(user, ledgerRow = null) {
   );
   const emailVerified = user?.emailVerified === true;
   const ledgerPending = ledgerRow?.state === LEDGER_STATE.PENDING;
+  const ledgerEmailHash = ledgerPending && typeof ledgerRow.emailHash === "string"
+    ? ledgerRow.emailHash
+    : null;
 
   // A Google/Apple identity counts as the owner's only when it carries the
-  // account's own address: that is what made Firebase hand the owner this
-  // account. An identity without an address is NOT the owner's — a repeat
+  // owner's address: the account's own address, or — while the ledger is
+  // pending — the address the account was registered on (a pre-registrant who
+  // moved the account to their own address does not disown the owner's
+  // identity). An identity without an address is NOT the owner's — a repeat
   // Apple authorization omits the e-mail claim, so a pre-registrant could link
   // one of their own that way — and is stripped with the password.
-  const ownFederated = email
-    ? providers.filter((provider) =>
-      TRUSTED_FEDERATED_PROVIDERS.includes(provider?.providerId) &&
-      normalizeEmail(provider.email) === email)
-    : [];
+  const ownFederated = providers.filter((provider) => {
+    if (!TRUSTED_FEDERATED_PROVIDERS.includes(provider?.providerId)) return false;
+    const providerEmail = normalizeEmail(provider.email);
+    if (!providerEmail) return false;
+    return providerEmail === email ||
+      (ledgerEmailHash !== null && emailHashOf(providerEmail) === ledgerEmailHash);
+  });
+
+  // The ledger's evidence, compared with the account as it is now. Missing
+  // evidence counts as changed: deny by default.
+  const addressChanged = ledgerPending &&
+    (ledgerEmailHash === null || emailHashOf(email) !== ledgerEmailHash);
+  const baseline = ledgerRow?.validSinceBaselineSeconds;
+  const validSince = secondsOf(user?.tokensValidAfterTime);
+  const credentialsChanged = ledgerPending && (
+    !Number.isSafeInteger(baseline) ||
+    (validSince !== null && validSince > baseline)
+  );
 
   if (ownFederated.length === 0) {
     if (hasPassword && !emailVerified) {
       return { verdict: "unverifiedPassword", reason: "awaitingVerification" };
     }
     if (hasPassword && emailVerified && ledgerPending) {
+      if (addressChanged || credentialsChanged) {
+        return { verdict: "unconfirmedPassword", reason: "changedSinceLedger" };
+      }
       return { verdict: "verified", reason: "passwordVerified" };
     }
     return { verdict: "clean", reason: "noOwnFederatedIdentity" };
@@ -171,8 +262,12 @@ function planRemediation(user, ledgerRow = null) {
   let reason = null;
   if (hasPassword && !emailVerified) {
     reason = "unverifiedPasswordBesideFederated";
-  } else if (!hasPassword && ledgerPending) {
+  } else if (ledgerPending && addressChanged) {
+    reason = "accountAddressChangedAfterFederated";
+  } else if (ledgerPending && !hasPassword) {
     reason = "unverifiedPasswordReplacedByFederated";
+  } else if (ledgerPending && credentialsChanged) {
+    reason = "passwordChangedAfterFederated";
   }
 
   if (reason === null) {
@@ -185,7 +280,20 @@ function planRemediation(user, ledgerRow = null) {
   const keepProviders = [...new Set(ownFederated.map((p) => p.providerId))];
   const unlinkProviders = [...new Set(providerIdsOf(user))]
     .filter((providerId) => !keepProviders.includes(providerId));
-  return { verdict: "takeover", reason, keepProviders, unlinkProviders };
+  // The address to put back: the owner identity's, preferring the one the
+  // ledger recorded. Only needed when the account no longer carries it.
+  const ownerIdentity = ownFederated.find((p) =>
+    ledgerEmailHash !== null && emailHashOf(p.email) === ledgerEmailHash) ??
+    ownFederated[0];
+  const ownerEmail = normalizeEmail(ownerIdentity.email);
+  return {
+    verdict: "takeover",
+    reason,
+    keepProviders,
+    unlinkProviders,
+    ownerEmail,
+    ownerEmailMissing: ownerEmail !== email,
+  };
 }
 
 function validFcmTokenId(value) {
@@ -286,12 +394,18 @@ function createFederatedTakeoverService({
     }, { merge: true });
   }
 
-  /** Seeds (or re-arms) the ledger row for an unverified password. */
-  async function watchUnverifiedPassword(uid, source, existing) {
+  /**
+   * Seeds (or re-arms) the ledger row for an unverified password, with the
+   * evidence taken from the record as it is now — while no Google/Apple
+   * identity of the owner is linked, so nothing the owner's takeover changes
+   * can be in it.
+   */
+  async function watchUnverifiedPassword(user, source, existing) {
     if (existing?.state === LEDGER_STATE.PENDING) return false;
-    await ledgerRef(uid).set({
+    await ledgerRef(user.uid).set({
       state: LEDGER_STATE.PENDING,
       source,
+      ...ledgerEvidenceOf(user),
       ...(existing ? {} : { firstSeenAt: FieldValue.serverTimestamp() }),
       updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
@@ -389,10 +503,17 @@ function createFederatedTakeoverService({
     }
 
     const providersBefore = providerIdsOf(user);
+    const enrolledFactors = Array.isArray(user.multiFactor?.enrolledFactors)
+      ? user.multiFactor.enrolledFactors.length
+      : 0;
 
-    // 1. No new session from the pre-registrant's credentials.
+    // 1. No new session from the pre-registrant's credentials, and no second
+    //    factor of theirs between the owner and the account.
     if (plan.unlinkProviders.length > 0) {
       await auth.updateUser(uid, { providersToUnlink: plan.unlinkProviders });
+    }
+    if (enrolledFactors > 0) {
+      await auth.updateUser(uid, { multiFactor: { enrolledFactors: null } });
     }
     // 2. No refresh of a session that already exists.
     await auth.revokeRefreshTokens(uid);
@@ -407,7 +528,32 @@ function createFederatedTakeoverService({
       : null;
     const purge = await purgeFcmTokens(uid, keep);
 
-    // 5. Audit + ledger, together.
+    // 5. The owner's address back on the account. Without it a pre-registrant
+    //    who moved the account to their own address could send a password
+    //    reset there and add a password again. Also re-asserted after a
+    //    password unlink, which the Auth emulator answers by clearing the
+    //    address with the password (a no-op where the address survives). If
+    //    the address was taken in the meantime (the pre-registrant can
+    //    register it anew), the sessions are already ended; the audit row and
+    //    an error log flag the account for manual review instead of
+    //    re-revoking the owner every sweep.
+    let ownerEmailRestored = null;
+    if (
+      plan.ownerEmailMissing ||
+      plan.unlinkProviders.includes(PASSWORD_PROVIDER)
+    ) {
+      try {
+        await auth.updateUser(uid, { email: plan.ownerEmail, emailVerified: true });
+        ownerEmailRestored = true;
+      } catch (error) {
+        if (error?.code !== "auth/email-already-exists") throw error;
+        ownerEmailRestored = false;
+        log.error("federated takeover: the owner's address is taken by " +
+          "another account; manual review needed", { uid, trigger });
+      }
+    }
+
+    // 6. Audit + ledger, together.
     const auditRef = db.collection(AUDIT_COLLECTION).doc();
     const batch = db.batch();
     batch.set(auditRef, {
@@ -418,6 +564,8 @@ function createFederatedTakeoverService({
       providersBefore,
       providersUnlinked: plan.unlinkProviders,
       providersKept: plan.keepProviders,
+      mfaFactorsRemoved: enrolledFactors,
+      ownerEmailRestored,
       refreshTokensRevoked: true,
       sessionEpoch,
       fcmTokensDeleted: purge.deleted,
@@ -430,6 +578,7 @@ function createFederatedTakeoverService({
       remediatedAt: FieldValue.serverTimestamp(),
       remediatedBy: trigger,
       lastAuditId: auditRef.id,
+      ...(ownerEmailRestored === false ? { needsReview: "ownerAddressTaken" } : {}),
       updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
     await batch.commit();
@@ -453,7 +602,7 @@ function createFederatedTakeoverService({
     };
   }
 
-  /** Trigger A: the owner's own client after a returning Google/Apple sign-in. */
+  /** Trigger A: the owner's own client after a Google/Apple sign-in. */
   async function secureFederatedSignIn(request) {
     const caller = requireAuthentication(request);
     const { fcmToken } = parseOwnerInput(request.data);
@@ -503,6 +652,7 @@ function createFederatedTakeoverService({
       await ledgerRef(uid).create({
         state: LEDGER_STATE.PENDING,
         source: "authCreate",
+        ...ledgerEvidenceOf(user),
         firstSeenAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
@@ -514,18 +664,9 @@ function createFederatedTakeoverService({
     }
   }
 
-  async function sweepLedger(state, deadline, counts) {
-    let query = db.collection(LEDGER_COLLECTION)
-      .where("state", "==", LEDGER_STATE.PENDING)
-      .orderBy(FieldPath.documentId())
-      .limit(SWEEP_LEDGER_PAGE_SIZE);
-    if (typeof state.ledgerCursor === "string" && state.ledgerCursor) {
-      query = query.startAfter(state.ledgerCursor);
-    }
-    const snapshot = await query.get();
-    const rows = snapshot.docs;
+  /** Checks one page of pending rows; returns the last row id it finished. */
+  async function sweepLedgerRows(rows, deadline, counts) {
     let lastProcessed = null;
-
     for (let start = 0; start < rows.length; start += GET_USERS_BATCH_SIZE) {
       if (clock() > deadline) break;
       const slice = rows.slice(start, start + GET_USERS_BATCH_SIZE);
@@ -548,6 +689,9 @@ function createFederatedTakeoverService({
             if (outcome.verdict === "verified" || outcome.verdict === "ambiguous") {
               counts.ledgerVerified += 1;
             }
+            if (outcome.verdict === "unconfirmedPassword") {
+              counts.ledgerUnconfirmed += 1;
+            }
           }
         } catch (error) {
           counts.failed += 1;
@@ -559,10 +703,37 @@ function createFederatedTakeoverService({
         lastProcessed = row.id;
       }
     }
+    return lastProcessed;
+  }
 
-    const finished = rows.length < SWEEP_LEDGER_PAGE_SIZE &&
-      lastProcessed === (rows.at(-1)?.id ?? null);
-    return finished ? null : lastProcessed ?? state.ledgerCursor ?? null;
+  /**
+   * Pages through the pending rows from the stored cursor until the pass
+   * completes or the deadline passes. Returns the cursor for the next run
+   * (null once the pass completed). A pass never wraps around within a run.
+   */
+  async function sweepLedger(state, deadline, counts) {
+    let cursor = typeof state.ledgerCursor === "string" && state.ledgerCursor
+      ? state.ledgerCursor
+      : null;
+    while (clock() <= deadline) {
+      let query = db.collection(LEDGER_COLLECTION)
+        .where("state", "==", LEDGER_STATE.PENDING)
+        .orderBy(FieldPath.documentId())
+        .limit(SWEEP_LEDGER_PAGE_SIZE);
+      if (cursor) query = query.startAfter(cursor);
+      const rows = (await query.get()).docs;
+      if (rows.length === 0) return null;
+      counts.ledgerPages += 1;
+
+      const lastProcessed = await sweepLedgerRows(rows, deadline, counts);
+      if (lastProcessed !== rows.at(-1).id) {
+        // Out of time inside the page: resume after the last finished row.
+        return lastProcessed ?? cursor;
+      }
+      if (rows.length < SWEEP_LEDGER_PAGE_SIZE) return null;
+      cursor = lastProcessed;
+    }
+    return cursor;
   }
 
   async function sweepUsers(state, deadline, counts, nowMs) {
@@ -629,7 +800,7 @@ function createFederatedTakeoverService({
                 ledger: existing,
               });
               if (outcome.status === "remediated") counts.remediated += 1;
-            } else if (await watchUnverifiedPassword(user.uid, "sweep", existing)) {
+            } else if (await watchUnverifiedPassword(user, "sweep", existing)) {
               stats.seeded += 1;
               counts.seeded += 1;
             }
@@ -672,15 +843,21 @@ function createFederatedTakeoverService({
     const stateSnapshot = await sweepStateRef().get();
     const state = stateSnapshot.exists ? stateSnapshot.data() : {};
     const counts = {
+      ledgerPages: 0,
       ledgerChecked: 0,
       ledgerGone: 0,
       ledgerVerified: 0,
+      ledgerUnconfirmed: 0,
       seeded: 0,
       remediated: 0,
       failed: 0,
     };
 
-    const ledgerCursor = await sweepLedger(state, deadline, counts);
+    const ledgerCursor = await sweepLedger(
+      state,
+      Math.min(deadline, startedMs + SWEEP_LEDGER_TIME_BUDGET_MS),
+      counts,
+    );
     const { walk, report } = await sweepUsers(state, deadline, counts, startedMs);
 
     await sweepStateRef().set({
@@ -758,6 +935,8 @@ module.exports = {
   TRUSTED_FEDERATED_PROVIDERS,
   callerMayKeepDevice,
   createFederatedTakeoverService,
+  emailHashOf,
+  ledgerEvidenceOf,
   onAuthUserCreated,
   planRemediation,
   secureFederatedSignInV1,

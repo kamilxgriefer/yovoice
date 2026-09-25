@@ -1436,18 +1436,31 @@ planted keep receiving the owner's notifications. Full analysis, emulator
 evidence and Phase 2 in [Decisions.md](Decisions.md) (ADR-XXX).
 
 **Control (server-only; no client is trusted).** `functions/auth/federated_takeover.js`
-is the single remediation authority. It acts only on an account whose
-Google/Apple identity is on its own address and which still carries — or
-silently lost — a password nobody verified; a verified password is never
-touched. Order: unlink the password and foreign identities → revoke refresh
-tokens → `users/{uid}.authSessionEpoch` → purge `fcmTokens` → audit
+is the single remediation authority. It acts on an account whose Google/Apple
+identity is on the owner's address and which still carries an unverified
+password — or, while the ledger row is still pending, whose password vanished,
+whose address moved away from the one the ledger recorded, or whose
+credentials changed since (Auth `tokensValidAfterTime` past the ledger's
+baseline). The decision rests on the ledger's evidence, **never** on the
+current `emailVerified` or address: after a takeover the stranger's surviving
+session can re-link a password or move the account to their own address before
+any trigger runs, and both used to pass as "the owner's verified password".
+Only a password verified by link with nothing changed since, then Google, is
+left alone (the owner's own race). Order: unlink the password and foreign
+identities and remove enrolled second factors → revoke refresh tokens →
+`users/{uid}.authSessionEpoch` → purge `fcmTokens` → put the owner's address
+back if it moved (or was cleared with the password) → audit
 (`authTakeoverAudit`) and ledger (`authPasswordLedger`) in one batch.
-Triggers: the owner's own client after a returning Google/Apple sign-in
-(`secureFederatedSignInV1`, remediates the caller only) and a 5-minute sweeper
-(`sweepFederatedTakeoverSchedule`, `maxInstances: 1`). The Auth `onCreate`
-trigger and the sweeper's `listUsers` walk record unverified passwords while
-they are still visible, because Firebase removes them before anything else can
-see the account.
+Triggers: the owner's own client after every Google/Apple sign-in
+(`secureFederatedSignInV1`, remediates the caller only; awaited up to 8 s for a
+returning sign-in, in the background for a new one, a late "remediated" still
+signs the device out) and a 5-minute sweeper (`sweepFederatedTakeoverSchedule`,
+`maxInstances: 1`) whose ledger pass pages through every pending row until its
+180 s share of the budget runs out. The Auth `onCreate` trigger and the
+sweeper's `listUsers` walk record unverified passwords — with a SHA-256 of the
+address, never the address, and the credential baseline — while they are
+still visible, because Firebase removes them before anything else can see the
+account.
 
 **Rules.** `authSessionEpoch` is absent from both `users/{uid}` client
 allowlists. The `fcmTokens` create/update rule and Storage `isActiveUser()`
@@ -1458,6 +1471,15 @@ of an existing Servers list rule. `authPasswordLedger`, `authTakeoverAudit` and
 
 **Residual, stated plainly.**
 
+- The sweeper's delay is one 5-minute run while a pass over the pending ledger
+  fits in 180 s (emulator: 651 rows in ~2 s; production UNMEASURED); beyond
+  that it scales with the number of pending rows, which never-verified
+  accounts keep in the rotation. The owner's app (trigger A) does not wait for
+  the sweeper.
+- A stranger who strips the owner's Google/Apple identity (or whose password
+  reset does) before any trigger observes the takeover leaves nothing to
+  anchor a remediation; the row stays pending (`unconfirmedPassword`) and the
+  owner's next Google/Apple sign-in on it is remediated. Phase 2 closes it.
 - An ID token the stranger already holds stays valid until it expires (up to
   one hour): callables, owner-only reads that never consult account state
   (notifications, incoming calls, DMs, the private profile) and other

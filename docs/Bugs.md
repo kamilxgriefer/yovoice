@@ -32,6 +32,18 @@ and owner-only reads; the website needs the integrator change in ADR-XXX;
 Phase 2 needs the owner's Identity Platform upgrade; production behaviour
 (revocation, a pre-linked Google identity) is UNVERIFIED until the canary.
 
+**Review round (same day), FIXED IN SOURCE:** the remediation failed open when
+the stranger's surviving session changed the account before a trigger ran —
+re-linking a password made it "ambiguous" and the ledger was closed as
+verified; moving the account to the stranger's address made the owner's Google
+identity look foreign. The decision now rests on the ledger's evidence (address
+hash and credential baseline), the owner's address is put back, planted second
+factors are removed. The sweeper checked one 300-row ledger page per run; it
+now pages to the end of the pending ledger within its budget. The app checks
+new accounts too (in the background), waits at most 8 s, and honours a late
+"remediated". The website snippet no longer needs an import in
+`auth-errors.ts`.
+
 ### FIXED IN SOURCE — the Yeel hairline never drew its played part (2026-09-19, next build, `nb/yeels-scrub`)
 
 `ReelProgressBar` (`lib/features/reels/presentation/widgets/reel_progress_row.dart`)

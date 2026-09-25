@@ -46,6 +46,47 @@ refused by the rules.
 Not run: the full Functions suite and the full Flutter suite (only touched
 files and neighbours). Nothing ran on a device or a simulator.
 
+### Review round (fix) — the decision rests on the ledger's evidence
+
+New in `functions/test/federated_takeover.test.js` (now 23 cases), every
+attacker step production-shaped (Identity Toolkit REST with the stranger's
+refreshed session): the stranger re-links a password with `accounts:update`
+after a Google takeover and the owner's call remediates it; the same after an
+Apple takeover plus a planted second factor (planted through Admin — SMS MFA
+is not enabled in the emulator project) and the sweeper remediates it and
+removes the factor; the stranger moves the account to their own address with
+`verifyBeforeUpdateEmail` and the sweeper remediates it, puts the owner's
+address back and a password reset to the stranger's address answers
+`EMAIL_NOT_FOUND`; a password reset before verifying keeps the row pending and
+touches nothing; a 650-row pending backlog sorting before the victim is paged
+through in one run; the ledger stores a SHA-256 of the address and the
+baseline, never the address; the verdict matrix covers moved baselines and
+addresses. Deliberately changed: the matrix's `pending` fixture now carries
+the evidence the ledger records (the "ambiguous" and "verified" lines keep
+their meaning only with intact evidence, and a pending row without evidence is
+a takeover).
+
+`test/federated_sign_in_security_test.dart` (now 12 cases): deliberately
+changed — "a brand-new account is never checked" became "checked in the
+background and never waits"; new: a background or late "remediated" signs the
+device out and emits `federatedSessionSecuredLater`, a late answer never signs
+out a different account, and the sign-in screen shows the notice for a late
+remediation after an AuthGate-style swap.
+
+Anchor: the five new emulator regressions run against the pre-fix module
+(`a213195d`) all fail — `ambiguous` instead of `takeover`, no remediation for
+the re-linked password or the moved address, `verified` instead of `pending`,
+and 300 of 651 rows checked.
+
+| Run (through `tmp/lk.sh`) | Result |
+| --- | --- |
+| Functions: `federated_takeover`, `cold_start_module_graph` (264 exports, unchanged), `session_management` | 37 / 37 |
+| Functions neighbours (as above) | 24 / 24 |
+| `flutter test` on the takeover file plus `apple_sign_in`, `auth_responsive_screen`, `auth_link_tap_target`, `sign_out_cleanup`, `google_sign_in_configuration` | 88 / 88 |
+| `flutter analyze` | clean |
+
+Rules and Storage rules were not changed in this round and not re-run.
+
 ## ADR-215 notification review round — 2026-09-20 (source only, NOT deployed)
 
 Four defects found by a pre-merge review of `nb/notifications`

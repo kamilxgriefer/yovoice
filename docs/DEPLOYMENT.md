@@ -291,9 +291,21 @@ Order (each step is safe without the next):
 
 After deploying, read the sweeper's logs: `federated takeover remediated`
 (every remediation, also in `authTakeoverAudit`), `pending password verified
-beside a Google/Apple identity; left untouched` (the ambiguous case), and once
-per completed walk `never-verified password-only accounts older than 7 days`
-(report only).
+beside a Google/Apple identity; left untouched` (the ambiguous case — only a
+password verified by link with nothing changed since), `the owner's address is
+taken by another account; manual review needed` (an `authTakeoverAudit` row
+with `ownerEmailRestored: false`, ledger `needsReview`), and once per completed
+walk `never-verified password-only accounts older than 7 days` (report only).
+The per-run `federated takeover sweep` counts include `ledgerPages`,
+`ledgerChecked` and `ledgerUnconfirmed`; if a run stops reaching the end of
+the pending ledger (a non-null `authTakeoverSweep/state.ledgerCursor` after a
+run), the sweeper's delay has started to scale with the backlog (ADR-XXX).
+
+Canary additions for Phase 2 (ADR-XXX, "Phase 2" step 4): record `isNewUser`
+on the takeover sign-in, whether `tokensValidAfterTime` moved at the takeover,
+and whether a password set from the stranger's session needs a recent login;
+confirm the remediation still runs after that session re-links a password or
+moves the address.
 
 Owner steps (console; Claude does none of these):
 

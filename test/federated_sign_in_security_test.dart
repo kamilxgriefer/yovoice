@@ -13,10 +13,11 @@ import 'package:yovoice/features/auth/presentation/screens/login_screen.dart';
 import 'package:yovoice/services/firestore_service.dart';
 
 /// Pre-registered account takeover, trigger A (functions/auth/
-/// federated_takeover.js): right after a RETURNING Google/Apple sign-in the
-/// owner's client asks the server to secure the account. These tests pin the
-/// client half — who calls, what a remediation does to this device, and that
-/// the check can never block an ordinary sign-in.
+/// federated_takeover.js): right after a Google/Apple sign-in the owner's
+/// client asks the server to secure the account — awaited (bounded) for a
+/// returning sign-in, in the background for a new one. These tests pin the
+/// client half — who calls, what a remediation does to this device, early or
+/// late, and that the check can never block an ordinary sign-in.
 
 class _AdditionalUserInfo extends AdditionalUserInfo {
   _AdditionalUserInfo({required super.isNewUser})
@@ -42,14 +43,21 @@ class _RecordingFirebaseAuth extends MockFirebaseAuth {
 
   final UserCredential result;
   int signOutCalls = 0;
+  User? signedIn;
 
   @override
-  Future<UserCredential> signInWithProvider(AuthProvider provider) async =>
-      result;
+  User? get currentUser => signedIn;
+
+  @override
+  Future<UserCredential> signInWithProvider(AuthProvider provider) async {
+    signedIn = result.user;
+    return result;
+  }
 
   @override
   Future<void> signOut() async {
     signOutCalls += 1;
+    signedIn = null;
   }
 }
 
@@ -57,6 +65,7 @@ class _Harness {
   _Harness({
     required bool isNewUser,
     required Future<Map<String, dynamic>> Function() check,
+    Duration? wait,
   }) : auth = _RecordingFirebaseAuth(
          _UserCredential(
            user: MockUser(uid: 'owner', email: 'owner@gmail.com'),
@@ -73,6 +82,7 @@ class _Harness {
         checks += 1;
         return check();
       },
+      federatedSignInSecurityCheckWait: wait,
       clearEphemeralMediaAccess: () {},
       activeVoiceSessionReader: () => (
         directCallId: null,
@@ -86,6 +96,30 @@ class _Harness {
   final _RecordingFirebaseAuth auth;
   late final AuthService service;
   int checks = 0;
+}
+
+/// Signs in normally; the check's "remediated" arrives only afterwards.
+class _LateSecuredAuthService extends AuthService {
+  _LateSecuredAuthService()
+    : super(
+        firebaseAuth: MockFirebaseAuth(),
+        firestoreService: FirestoreService(firestore: FakeFirebaseFirestore()),
+      );
+
+  final StreamController<void> late = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get federatedSessionSecuredLater => late.stream;
+
+  @override
+  Future<AppleSignInAvailability> getAppleSignInAvailability() async =>
+      AppleSignInAvailability.available;
+
+  @override
+  Future<UserCredential> signInWithGoogle() async => _UserCredential(
+    user: MockUser(uid: 'owner', email: 'owner@gmail.com'),
+    isNewUser: false,
+  );
 }
 
 class _SecuredAuthService extends AuthService {
@@ -165,17 +199,96 @@ void main() {
       },
     );
 
-    test('a brand-new account is never checked', () async {
-      final harness = _Harness(
-        isNewUser: true,
-        check: () async => {'status': 'remediated', 'reauthenticate': true},
-      );
+    // Changed on purpose (review of the takeover fix): a brand-new account
+    // used to be skipped, which relied on Firebase never reporting a takeover
+    // as a new user — an assumption only the emulator had confirmed. It is
+    // now checked in the background, so it still never waits for the call.
+    test(
+      'a brand-new account is checked in the background and never waits',
+      () async {
+        final answer = Completer<Map<String, dynamic>>();
+        final harness = _Harness(isNewUser: true, check: () => answer.future);
 
-      await harness.service.signInWithApple();
+        final credential = await harness.service.signInWithApple();
 
-      expect(harness.checks, 0);
-      expect(harness.auth.signOutCalls, 0);
-    });
+        expect(credential.user?.uid, 'owner');
+        expect(harness.checks, 1);
+        expect(harness.auth.signOutCalls, 0);
+
+        answer.complete({'status': 'clean', 'reauthenticate': false});
+        await pumpEventQueue();
+        expect(harness.auth.signOutCalls, 0);
+      },
+    );
+
+    test(
+      'a background "remediated" for a new account signs this device out and says so',
+      () async {
+        final answer = Completer<Map<String, dynamic>>();
+        final harness = _Harness(isNewUser: true, check: () => answer.future);
+        var announced = 0;
+        final subscription = harness.service.federatedSessionSecuredLater
+            .listen((_) => announced += 1);
+        addTearDown(subscription.cancel);
+
+        await harness.service.signInWithApple();
+        answer.complete({'status': 'remediated', 'reauthenticate': true});
+        await pumpEventQueue();
+
+        expect(harness.auth.signOutCalls, 1);
+        expect(announced, 1);
+      },
+    );
+
+    test(
+      'a slow returning check lets the sign-in continue and still honours a late remediation',
+      () async {
+        final answer = Completer<Map<String, dynamic>>();
+        final harness = _Harness(
+          isNewUser: false,
+          check: () => answer.future,
+          wait: const Duration(milliseconds: 20),
+        );
+        var announced = 0;
+        final subscription = harness.service.federatedSessionSecuredLater
+            .listen((_) => announced += 1);
+        addTearDown(subscription.cancel);
+
+        final credential = await harness.service.signInWithApple();
+        expect(credential.user?.uid, 'owner');
+        expect(harness.auth.signOutCalls, 0);
+
+        answer.complete({'status': 'remediated', 'reauthenticate': true});
+        await pumpEventQueue();
+
+        expect(harness.auth.signOutCalls, 1);
+        expect(announced, 1);
+      },
+    );
+
+    test(
+      'a late answer never signs out a different account signed in since',
+      () async {
+        final answer = Completer<Map<String, dynamic>>();
+        final harness = _Harness(
+          isNewUser: false,
+          check: () => answer.future,
+          wait: const Duration(milliseconds: 20),
+        );
+        var announced = 0;
+        final subscription = harness.service.federatedSessionSecuredLater
+            .listen((_) => announced += 1);
+        addTearDown(subscription.cancel);
+
+        await harness.service.signInWithApple();
+        harness.auth.signedIn = MockUser(uid: 'someone-else');
+        answer.complete({'status': 'remediated', 'reauthenticate': true});
+        await pumpEventQueue();
+
+        expect(harness.auth.signOutCalls, 0);
+        expect(announced, 0);
+      },
+    );
 
     test(
       'a remediation signs this device out and asks the owner to sign in again',
@@ -291,6 +404,40 @@ void main() {
         expect(find.text('authenticated entry'), findsOneWidget);
 
         service.release.complete();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.text(_english), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'reaches the owner when the remediation is only known after sign-in',
+      (tester) async {
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final service = _LateSecuredAuthService();
+        addTearDown(service.late.close);
+        final signedIn = ValueNotifier<bool>(false);
+        addTearDown(signedIn.dispose);
+        await _pumpSignIn(
+          tester,
+          home: ValueListenableBuilder<bool>(
+            valueListenable: signedIn,
+            builder: (context, value, _) => value
+                ? const Scaffold(body: Text('authenticated entry'))
+                : LoginScreen(authService: service),
+          ),
+        );
+
+        await _tapGoogle(tester);
+        await tester.pump();
+        signedIn.value = true;
+        await tester.pump();
+        expect(find.text('authenticated entry'), findsOneWidget);
+        expect(find.text(_english), findsNothing);
+
+        // The slow or background check answers "remediated" afterwards.
+        service.late.add(null);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
 

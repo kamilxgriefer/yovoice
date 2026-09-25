@@ -48,6 +48,8 @@ const { getFirestore } = require("firebase-admin/firestore");
 
 if (getApps().length === 0) initializeApp({ projectId: process.env.GCLOUD_PROJECT });
 
+const { createHash } = require("node:crypto");
+
 const {
   AUDIT_COLLECTION,
   LEDGER_COLLECTION,
@@ -55,6 +57,8 @@ const {
   SWEEP_STATE_COLLECTION,
   callerMayKeepDevice,
   createFederatedTakeoverService,
+  emailHashOf,
+  ledgerEvidenceOf,
   onAuthUserCreated,
   planRemediation,
   secureFederatedSignInV1,
@@ -150,6 +154,48 @@ async function verifyEmailThroughLink(idToken, email) {
   assert.ok(code, "the verification e-mail was sent");
   const applied = await identityToolkit("accounts:update", { oobCode: code.oobCode });
   assert.equal(applied.status, 200, JSON.stringify(applied.body));
+}
+
+/**
+ * The pre-registrant's surviving session sets a password on the account
+ * (updatePassword / linkWithCredential(EmailAuthProvider)).
+ */
+async function setPasswordWithSession(idToken, password) {
+  const result = await identityToolkit("accounts:update", {
+    idToken,
+    password,
+    returnSecureToken: true,
+  });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  return { idToken: result.body.idToken, refreshToken: result.body.refreshToken };
+}
+
+/**
+ * The pre-registrant's surviving session moves the account to an address
+ * they control (verifyBeforeUpdateEmail, then opening their own link).
+ */
+async function moveAccountToAddress(idToken, currentEmail, newEmail) {
+  const sent = await identityToolkit("accounts:sendOobCode", {
+    requestType: "VERIFY_AND_CHANGE_EMAIL",
+    idToken,
+    newEmail,
+  });
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  const codes = await (await fetch(
+    `${AUTH}/emulator/v1/projects/${PROJECT}/oobCodes`,
+  )).json();
+  const code = codes.oobCodes
+    .filter((entry) => entry.requestType === "VERIFY_AND_CHANGE_EMAIL" &&
+      entry.email === currentEmail)
+    .at(-1);
+  assert.ok(code, "the change-address e-mail was sent");
+  const applied = await identityToolkit("accounts:update", { oobCode: code.oobCode });
+  assert.equal(applied.status, 200, JSON.stringify(applied.body));
+}
+
+/** sendPasswordResetEmail to an address. */
+async function requestPasswordReset(email) {
+  return identityToolkit("accounts:sendOobCode", { requestType: "PASSWORD_RESET", email });
 }
 
 async function commit(idToken, write) {
@@ -465,6 +511,232 @@ describe("Apple takeover closed by the sweeper (trigger B)", () => {
   });
 });
 
+// After the takeover the pre-registrant's session is still alive until a
+// trigger acts, and it can rewrite the Auth record first. The decision must
+// come from the ledger's evidence, never from the current emailVerified or
+// address.
+describe("the pre-registrant rewrites the account before any trigger runs", () => {
+  test("re-linking a password after a Google takeover is remediated by the owner's call (trigger A)", async () => {
+    const email = `victim-relink-a-${RUN}@gmail.com`;
+    const attacker = await registerWithPassword(email);
+    await deliverCreateTrigger(attacker.uid);
+    assert.equal(await createOwnProfile(attacker.idToken, attacker.uid, email), 200);
+    assert.equal(await registerPushToken(attacker.idToken, attacker.uid, `attacker-${RUN}`), 200);
+    await letPreRegistrationAge();
+
+    const owner = await signInWithProvider(email, "google.com", `google-relink-a-${RUN}`);
+    assert.equal(owner.uid, attacker.uid);
+
+    // The stranger's refreshed session now says email_verified and puts a
+    // password of their own back on the owner's account.
+    const stolen = await refresh(attacker.refreshToken);
+    assert.equal(claims(stolen.idToken).email_verified, true);
+    const relinked = await setPasswordWithSession(stolen.idToken, "stranger-new-password");
+    const rewritten = await auth.getUser(attacker.uid);
+    assert.deepEqual(rewritten.providerData.map((p) => p.providerId).sort(), ["google.com", "password"]);
+    assert.equal(rewritten.emailVerified, true);
+    // Regression anchor — the bug: this exact state was "ambiguous" and the
+    // ledger was closed as verified. The ledger's baseline says otherwise.
+    const ledgerRow = (await db.collection(LEDGER_COLLECTION).doc(attacker.uid).get()).data();
+    assert.equal(planRemediation(rewritten, ledgerRow).verdict, "takeover");
+    assert.equal(planRemediation(rewritten, ledgerRow).reason, "passwordChangedAfterFederated");
+    await letPreRegistrationAge();
+
+    assert.deepEqual(await ownerCallsSecureSignIn(owner.idToken), {
+      status: "remediated",
+      reauthenticate: true,
+    });
+
+    const user = await auth.getUser(attacker.uid);
+    assert.deepEqual(user.providerData.map((p) => p.providerId), ["google.com"]);
+    assert.equal(user.email, email);
+    assert.equal(await sessionIsRevoked(relinked.idToken), true);
+    assert.equal(await sessionIsRevoked(stolen.idToken), true);
+    const passwordSignIn = await identityToolkit("accounts:signInWithPassword", {
+      email,
+      password: "stranger-new-password",
+      returnSecureToken: true,
+    });
+    assert.equal(passwordSignIn.status, 400);
+    assert.deepEqual(await pushTokenIds(attacker.uid), []);
+    assert.equal(await registerPushToken(relinked.idToken, attacker.uid, `again-${RUN}`), 403);
+    const [audit] = await auditsFor(attacker.uid);
+    assert.equal(audit.reason, "passwordChangedAfterFederated");
+    assert.deepEqual(audit.providersUnlinked, ["password"]);
+    assert.equal(await ledgerState(attacker.uid), "remediated");
+  });
+
+  test("re-linking a password and planting a second factor after an Apple takeover is remediated by the sweeper (trigger B)", async () => {
+    const email = `victim-relink-b-${RUN}@icloud.com`;
+    const attacker = await registerWithPassword(email);
+    await deliverCreateTrigger(attacker.uid);
+    await letPreRegistrationAge();
+
+    const owner = await signInWithProvider(email, "apple.com", `apple-relink-b-${RUN}`);
+    assert.equal(owner.uid, attacker.uid);
+    const stolen = await refresh(attacker.refreshToken);
+    const relinked = await setPasswordWithSession(stolen.idToken, "stranger-new-password");
+    // A factor the stranger's verified session enrolled. Planted through
+    // Admin: SMS MFA is not enabled in this emulator project, and what is
+    // under test is that remediation removes whatever factor is there.
+    await auth.updateUser(attacker.uid, {
+      multiFactor: { enrolledFactors: [{
+        uid: `stranger-factor-${RUN}`,
+        factorId: "phone",
+        phoneNumber: "+15555550123",
+      }] },
+    });
+    assert.equal((await auth.getUser(attacker.uid)).multiFactor.enrolledFactors.length, 1);
+    await letPreRegistrationAge();
+
+    const outcome = await newService().runSweep();
+    assert.ok(outcome.remediated >= 1);
+
+    const user = await auth.getUser(attacker.uid);
+    assert.deepEqual(user.providerData.map((p) => p.providerId), ["apple.com"]);
+    assert.equal(user.multiFactor, undefined);
+    assert.equal(user.email, email);
+    assert.equal(await sessionIsRevoked(relinked.idToken), true);
+    const [audit] = await auditsFor(attacker.uid);
+    assert.equal(audit.trigger, "sweeper");
+    assert.equal(audit.reason, "passwordChangedAfterFederated");
+    assert.equal(audit.mfaFactorsRemoved, 1);
+    assert.equal(await ledgerState(attacker.uid), "remediated");
+  });
+
+  test("moving the account to the pre-registrant's own address is remediated and the address is put back", async () => {
+    const email = `victim-move-${RUN}@gmail.com`;
+    const strangerAddress = `stranger-move-${RUN}@example.com`;
+    const attacker = await registerWithPassword(email);
+    await deliverCreateTrigger(attacker.uid);
+    await letPreRegistrationAge();
+
+    const owner = await signInWithProvider(email, "google.com", `google-move-${RUN}`);
+    assert.equal(owner.uid, attacker.uid);
+    const stolen = await refresh(attacker.refreshToken);
+    await moveAccountToAddress(stolen.idToken, email, strangerAddress);
+    const moved = await auth.getUser(attacker.uid);
+    assert.equal(moved.email, strangerAddress);
+    assert.equal(moved.emailVerified, true);
+    // Regression anchor — the bug: the owner's Google identity no longer
+    // matched the account address, so nothing was "the owner's" and the
+    // account was left alone.
+    assert.equal(planRemediation(moved, null).verdict, "clean");
+    await letPreRegistrationAge();
+
+    const outcome = await newService().runSweep();
+    assert.ok(outcome.remediated >= 1);
+
+    const user = await auth.getUser(attacker.uid);
+    assert.equal(user.email, email);
+    assert.equal(user.emailVerified, true);
+    assert.deepEqual(user.providerData.map((p) => p.providerId), ["google.com"]);
+    assert.equal(await sessionIsRevoked(stolen.idToken), true);
+    // A password reset to the stranger's address has no account to reach.
+    const reset = await requestPasswordReset(strangerAddress);
+    assert.equal(reset.status, 400);
+    assert.equal(reset.body.error?.message, "EMAIL_NOT_FOUND");
+    const [audit] = await auditsFor(attacker.uid);
+    assert.equal(audit.reason, "accountAddressChangedAfterFederated");
+    assert.equal(audit.ownerEmailRestored, true);
+    assert.equal(await ledgerState(attacker.uid), "remediated");
+
+    // The owner signs in again and lands on the same, restored account.
+    const again = await signInWithProvider(email, "google.com", `google-move-${RUN}`);
+    assert.equal(again.uid, attacker.uid);
+  });
+
+  test("a pending password whose credentials changed is never closed as verified", async () => {
+    // A password reset by an owner who never clicked the verification link
+    // looks exactly like a stranger who stripped the owner's identity and set
+    // their own password: neither can be verified from the record, so the row
+    // keeps watching and nothing is touched.
+    const email = `reset-${RUN}@example.com`;
+    const member = await registerWithPassword(email);
+    await deliverCreateTrigger(member.uid);
+    await letPreRegistrationAge();
+    await identityToolkit("accounts:sendOobCode", { requestType: "PASSWORD_RESET", email });
+    const codes = await (await fetch(`${AUTH}/emulator/v1/projects/${PROJECT}/oobCodes`)).json();
+    const code = codes.oobCodes
+      .filter((entry) => entry.email === email && entry.requestType === "PASSWORD_RESET")
+      .at(-1);
+    const reset = await identityToolkit("accounts:resetPassword", {
+      oobCode: code.oobCode,
+      newPassword: "member-new-password",
+    });
+    assert.equal(reset.status, 200, JSON.stringify(reset.body));
+    const validBefore = (await auth.getUser(member.uid)).tokensValidAfterTime;
+    assert.equal((await auth.getUser(member.uid)).emailVerified, true);
+
+    await newService().runSweep();
+
+    const user = await auth.getUser(member.uid);
+    assert.deepEqual(user.providerData.map((p) => p.providerId), ["password"]);
+    assert.equal(user.tokensValidAfterTime, validBefore);
+    assert.deepEqual(await auditsFor(member.uid), []);
+    assert.equal(await ledgerState(member.uid), "pending");
+  });
+});
+
+describe("the sweeper's ledger pass", () => {
+  test("pages past a backlog of pending rows in one run", async () => {
+    // More never-verified accounts than two ledger pages, all sorting before
+    // the victim, as a mass-registration would put them.
+    const backlog = Array.from({ length: 650 }, (_, index) => ({
+      uid: `0000-backlog-${RUN}-${String(index).padStart(4, "0")}`,
+      email: `backlog-${index}-${RUN}@example.com`,
+      emailVerified: false,
+      passwordHash: Buffer.from(`hash-${index}`),
+      passwordSalt: Buffer.from(`salt-${index}`),
+    }));
+    const imported = await auth.importUsers(backlog, {
+      hash: { algorithm: "HMAC_SHA256", key: Buffer.from("test-key") },
+    });
+    assert.equal(imported.failureCount, 0);
+    const records = (await auth.getUsers(backlog.slice(0, 1).map(({ uid }) => ({ uid })))).users;
+    for (let start = 0; start < backlog.length; start += 400) {
+      const batch = db.batch();
+      for (const entry of backlog.slice(start, start + 400)) {
+        batch.set(db.collection(LEDGER_COLLECTION).doc(entry.uid), {
+          state: "pending",
+          source: "sweep",
+          ...ledgerEvidenceOf({
+            email: entry.email,
+            tokensValidAfterTime: records[0].tokensValidAfterTime,
+          }),
+        });
+      }
+      await batch.commit();
+    }
+
+    const email = `victim-backlog-${RUN}@gmail.com`;
+    const attacker = await registerWithPassword(email);
+    assert.ok(attacker.uid > backlog.at(-1).uid);
+    await deliverCreateTrigger(attacker.uid);
+    await letPreRegistrationAge();
+    await signInWithProvider(email, "google.com", `google-backlog-${RUN}`);
+    const stolen = await refresh(attacker.refreshToken);
+    await letPreRegistrationAge();
+
+    await db.collection(SWEEP_STATE_COLLECTION).doc("state").delete();
+    const outcome = await newService().runSweep();
+    assert.ok(outcome.ledgerPages >= 3, JSON.stringify(outcome));
+    assert.ok(outcome.ledgerChecked >= 651, JSON.stringify(outcome));
+    assert.equal(await ledgerState(attacker.uid), "remediated");
+    assert.equal(await sessionIsRevoked(stolen.idToken), true);
+    const state = (await db.collection(SWEEP_STATE_COLLECTION).doc("state").get()).data();
+    assert.equal(state.ledgerCursor, null);
+
+    await auth.deleteUsers(backlog.map(({ uid }) => uid));
+    const cleanup = db.batch();
+    for (const { uid } of backlog.slice(0, 400)) cleanup.delete(db.collection(LEDGER_COLLECTION).doc(uid));
+    await cleanup.commit();
+    const cleanupRest = db.batch();
+    for (const { uid } of backlog.slice(400)) cleanupRest.delete(db.collection(LEDGER_COLLECTION).doc(uid));
+    await cleanupRest.commit();
+  });
+});
+
 describe("legitimate accounts are never touched", () => {
   test("a verified password plus Google keeps both, its sessions and its push", async () => {
     const email = `legit-${RUN}@gmail.com`;
@@ -634,6 +906,18 @@ describe("the ledger", () => {
     assert.equal(await ledgerState(attacker.uid), null);
   });
 
+  test("keeps a hash of the address and the credential baseline, never the address", async () => {
+    const email = `evidence-${RUN}@example.com`;
+    const member = await registerWithPassword(email);
+    await deliverCreateTrigger(member.uid);
+    const row = (await db.collection(LEDGER_COLLECTION).doc(member.uid).get()).data();
+    assert.equal(row.emailHash, createHash("sha256").update(email).digest("hex"));
+    assert.equal(row.emailHash, emailHashOf(` ${email.toUpperCase()} `));
+    const user = await auth.getUser(member.uid);
+    assert.equal(row.validSinceBaselineSeconds, Date.parse(user.tokensValidAfterTime) / 1000);
+    assert.ok(!JSON.stringify(row).includes(email));
+  });
+
   test("a retried create delivery is a no-op", async () => {
     const member = await registerWithPassword(`retry-${RUN}@example.com`);
     assert.deepEqual(await deliverCreateTrigger(member.uid), { recorded: true });
@@ -643,16 +927,23 @@ describe("the ledger", () => {
 });
 
 describe("planRemediation", () => {
-  const account = (providers, emailVerified, email = "a@gmail.com") => ({
+  const BASELINE = 1_900_000_000;
+  const account = (providers, emailVerified, email = "a@gmail.com", validSince = BASELINE) => ({
     email,
     emailVerified,
+    tokensValidAfterTime: new Date(validSince * 1000).toUTCString(),
     providerData: providers.map(([providerId, providerEmail = email]) => ({
       providerId,
       email: providerEmail,
       uid: `${providerId}-sub`,
     })),
   });
-  const pending = { state: "pending" };
+  // What the ledger recorded while the password was visibly unverified.
+  const pending = {
+    state: "pending",
+    emailHash: emailHashOf("a@gmail.com"),
+    validSinceBaselineSeconds: BASELINE,
+  };
 
   test("acts only on an unverified password next to the owner's own Google/Apple identity", () => {
     assert.equal(planRemediation(account([["google.com"]], true), pending).verdict, "takeover");
@@ -661,6 +952,8 @@ describe("planRemediation", () => {
 
     assert.equal(planRemediation(account([["google.com"]], true), null).verdict, "clean");
     assert.equal(planRemediation(account([["google.com"]], true), { state: "remediated" }).verdict, "clean");
+    // "ambiguous" (left alone) ONLY while the ledger's evidence is intact:
+    // verified by link, no credential or address change since.
     assert.equal(planRemediation(account([["password"], ["google.com"]], true), pending).verdict, "ambiguous");
     assert.equal(planRemediation(account([["password"], ["google.com"]], true), null).verdict, "clean");
     assert.equal(planRemediation(account([["password"]], true), pending).verdict, "verified");
@@ -670,6 +963,67 @@ describe("planRemediation", () => {
       planRemediation(account([["google.com", "someone@gmail.com"]], true), pending).verdict,
       "clean",
     );
+  });
+
+  test("a password or address the pre-registrant changed after a takeover is a takeover, never 'ambiguous'", () => {
+    // A password (re)set moved the credential baseline.
+    const relinked = planRemediation(
+      account([["password"], ["google.com"]], true, "a@gmail.com", BASELINE + 60),
+      pending,
+    );
+    assert.equal(relinked.verdict, "takeover");
+    assert.equal(relinked.reason, "passwordChangedAfterFederated");
+    assert.deepEqual(relinked.unlinkProviders, ["password"]);
+    assert.equal(relinked.ownerEmailMissing, false);
+
+    // The account moved to the pre-registrant's address; the owner's Google
+    // identity still carries the address the ledger recorded.
+    const moved = planRemediation(
+      account([["google.com", "a@gmail.com"]], true, "stranger@example.com"),
+      pending,
+    );
+    assert.equal(moved.verdict, "takeover");
+    assert.equal(moved.reason, "accountAddressChangedAfterFederated");
+    assert.deepEqual(moved.keepProviders, ["google.com"]);
+    assert.equal(moved.ownerEmail, "a@gmail.com");
+    assert.equal(moved.ownerEmailMissing, true);
+    const movedWithPassword = planRemediation(
+      account([["password", "stranger@example.com"], ["google.com", "a@gmail.com"]], true, "stranger@example.com"),
+      pending,
+    );
+    assert.equal(movedWithPassword.verdict, "takeover");
+    assert.deepEqual(movedWithPassword.unlinkProviders, ["password"]);
+
+    // A pending row without evidence is never read as intact.
+    assert.equal(
+      planRemediation(account([["password"], ["google.com"]], true), { state: "pending" }).verdict,
+      "takeover",
+    );
+
+    // Password-only and verified, but changed since the ledger saw it: not
+    // closed as verified, not touched either.
+    assert.equal(
+      planRemediation(account([["password"]], true, "a@gmail.com", BASELINE + 60), pending).verdict,
+      "unconfirmedPassword",
+    );
+    assert.equal(
+      planRemediation(account([["password"]], true, "stranger@example.com"), pending).verdict,
+      "unconfirmedPassword",
+    );
+    // A later ledger state is never re-opened by the evidence check.
+    assert.equal(
+      planRemediation(account([["password"], ["google.com"]], true, "a@gmail.com", BASELINE + 60), { state: "verified" }).verdict,
+      "clean",
+    );
+  });
+
+  test("the credential baseline falls back to the creation second when the record has none", () => {
+    const created = new Date(BASELINE * 1000).toUTCString();
+    assert.deepEqual(
+      ledgerEvidenceOf({ email: "A@gmail.com ", metadata: { creationTime: created } }),
+      { emailHash: emailHashOf("a@gmail.com"), validSinceBaselineSeconds: BASELINE + 2 },
+    );
+    assert.deepEqual(ledgerEvidenceOf({}), { emailHash: null, validSinceBaselineSeconds: null });
   });
 
   test("keeps only the owner's identities and unlinks everything else", () => {
