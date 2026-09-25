@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
@@ -15,11 +17,14 @@ import 'package:yovoice/core/theme/app_typography.dart';
 ///   canvas, white @ .28 over media) so the badge reads as cut out of the
 ///   control it sits on. It is drawn inside the 20 px floor, exactly like
 ///   the badges it replaces.
-/// * The count does not grow with the reader's text size by default
-///   ([maxTextScale] 1), the same convention as the dock's unread badge
-///   (`TextScaler.noScaling`): at 200 % an 11 px count grew into a 22 px
-///   blot that covered the bell it counts. The control carries the number
-///   in its own label, and a host may pass a larger [maxTextScale].
+/// * The count grows with the reader's text size, as every badge it
+///   replaced did (they had no clamp), up to [maxTextScale] — 1.5 × by
+///   default, a 16.5 px count — and the floor and padding grow with it, so
+///   the pill keeps its proportions. Past that a count would blot out the
+///   control it counts. A host that pins the badge to a control's corner
+///   reads [growthFor] and lets it grow up and outward, never over the
+///   glyph. (The dock's own red badge is not this widget and stays
+///   unscaled.)
 ///
 /// The badge carries no semantics of its own: the control it decorates says
 /// the count in its label. Unchanged elsewhere: the dock's red badge, the
@@ -28,7 +33,7 @@ class YoCountBadge extends StatelessWidget {
   const YoCountBadge({
     required this.count,
     this.ring,
-    this.maxTextScale = 1,
+    this.maxTextScale = defaultMaxTextScale,
     super.key,
   });
 
@@ -38,9 +43,36 @@ class YoCountBadge extends StatelessWidget {
 
   static const double minSize = 20;
   static const double ringWidth = 2;
+  static const double paddingH = 5;
+
+  /// The largest text scale the count follows by default.
+  static const double defaultMaxTextScale = 1.5;
+
+  static double get _fontSize => AppTypography.count.fontSize!;
 
   /// The printed value: the count, or "99+" above 99.
   static String label(int count) => count > 99 ? '99+' : '$count';
+
+  /// How much the badge is scaled at [context]'s text size: 1 up to 100 %
+  /// (a smaller system font never shrinks the 20 px floor), [maxTextScale]
+  /// at most.
+  static double scaleFor(
+    BuildContext context, {
+    double maxTextScale = defaultMaxTextScale,
+  }) {
+    final scaler = MediaQuery.textScalerOf(
+      context,
+    ).clamp(maxScaleFactor: maxTextScale);
+    return math.max(1.0, scaler.scale(_fontSize) / _fontSize);
+  }
+
+  /// How many px taller the badge's floor is than at 100 % — the distance a
+  /// host shifts a corner-pinned badge up (and out) so it grows away from
+  /// the glyph it counts instead of over it.
+  static double growthFor(
+    BuildContext context, {
+    double maxTextScale = defaultMaxTextScale,
+  }) => minSize * (scaleFor(context, maxTextScale: maxTextScale) - 1);
 
   @override
   Widget build(BuildContext context) {
@@ -48,14 +80,15 @@ class YoCountBadge extends StatelessWidget {
     final scaler = MediaQuery.textScalerOf(
       context,
     ).clamp(maxScaleFactor: maxTextScale);
+    final scale = scaleFor(context, maxTextScale: maxTextScale);
     final ringColor = ring;
     return ExcludeSemantics(
       child: Container(
-        constraints: const BoxConstraints(
-          minWidth: minSize,
-          minHeight: minSize,
+        constraints: BoxConstraints(
+          minWidth: minSize * scale,
+          minHeight: minSize * scale,
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 5),
+        padding: EdgeInsets.symmetric(horizontal: paddingH * scale),
         decoration: BoxDecoration(
           gradient: AppGradients.primaryAction(scheme),
           borderRadius: AppRadius.pill,

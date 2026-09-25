@@ -43,6 +43,7 @@ import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/layout/status_bar_scrim.dart';
 
@@ -180,30 +181,17 @@ class _MobileHomeState extends State<MobileHome> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     // Warm the real logo and its pre-baked bloom so the Start lockup has its
-    // mark on the first frame (refine-look §4). The mark decodes at its own
-    // `cacheWidth`, which is part of the image cache key, so the warm-up
-    // asks for exactly the sizes the lockup will paint. A failed warm-up is
-    // not an error here: the mark's own errorBuilder owns a missing asset.
+    // mark on the first frame (refine-look §4), at exactly the size the
+    // lockup will paint.
     if (_brandWarmed) return;
     _brandWarmed = true;
-    final dpr = MediaQuery.devicePixelRatioOf(context);
     final mark = YoBrandLockup.markSizeFor(
       MediaQuery.sizeOf(context).width >= 600
           ? HomeGreetingHeader.brandMarkSizeMedium
           : HomeGreetingHeader.brandMarkSize,
       MediaQuery.textScalerOf(context),
     );
-    for (final (asset, logical) in [
-      (YoBrandMark.markAsset, mark),
-      (YoBrandMark.bloomAsset, mark * 1.6),
-    ]) {
-      final image = ResizeImage.resizeIfNeeded(
-        YoBrandMark.cacheWidthFor(logical, dpr),
-        null,
-        AssetImage(asset),
-      );
-      unawaited(precacheImage(image, context, onError: (_, _) {}));
-    }
+    unawaited(YoBrandMark.precache(context, size: mark));
   }
 
   void _loadFriends() {
@@ -360,8 +348,9 @@ class _MobileHomeState extends State<MobileHome> {
             viewedMomentIds: viewedIds,
             now: DateTime.now(),
           );
-    // With no server yet the empty invitation carries the page's one lifted
-    // "Stwórz serwer"; the quick action keeps its gradient without a lift.
+    // With no server yet the empty invitation carries the page's one violet,
+    // lifted "Stwórz serwer"; the quick action steps down to the same neutral
+    // glass as "Znajomi" rather than repeating that pill 72 px below it.
     final serversEmpty =
         serverSnapshot.hasData &&
         !serverSnapshot.hasError &&
@@ -370,7 +359,9 @@ class _MobileHomeState extends State<MobileHome> {
       createRoomKey: widget.createRoomKey,
       onCreateRoom: _openServers,
       onFriends: widget.onOpenFriends,
-      liftCreate: !serversEmpty,
+      createEmphasis: serversEmpty
+          ? YoActionEmphasis.neutral
+          : YoActionEmphasis.lifted,
     );
 
     return _BottomSeamFade(
@@ -508,8 +499,13 @@ class _MobileHomeState extends State<MobileHome> {
 /// The page's lower edge above the dock (refine-look §8.1, "seam").
 ///
 /// While there is more of Start below the fold, the last 24 px of the list
-/// dissolve into the canvas instead of ending on a hard horizontal cut. At
-/// the end of the page the fade is gone, so the last block is never dimmed.
+/// dissolve into the canvas instead of ending on a hard horizontal cut. The
+/// dissolve eases in — barely there over its upper half, the canvas only in
+/// the last few px — so a card's action row that lands in the band at first
+/// paint still reads as live, not disabled. At the end of the page the fade
+/// is gone, so the last block is never dimmed. Under high contrast there is
+/// no fade at all (no gradient over text, spec principle 4); the overlay is
+/// then left out of the tree.
 /// Decoration only: it never takes a pointer or a semantics node, and it
 /// listens to the page's own vertical scroll (depth 0) — never to the
 /// horizontal rails inside it. The dock and the shell are untouched.
@@ -519,6 +515,10 @@ class _BottomSeamFade extends StatefulWidget {
   final Widget child;
 
   static const double height = 24;
+
+  /// The ease-in: .18 of the canvas at 55 % of the band, full canvas only at
+  /// the very bottom.
+  static const List<double> stops = [0, .55, 1];
 
   @override
   State<_BottomSeamFade> createState() => _BottomSeamFadeState();
@@ -554,9 +554,12 @@ class _BottomSeamFadeState extends State<_BottomSeamFade> {
   @override
   Widget build(BuildContext context) {
     final canvas = context.appPalette.background;
+    final highContrast = MediaQuery.highContrastOf(context);
     return Stack(
       fit: StackFit.expand,
       children: [
+        // Always the first child, so turning high contrast on or off never
+        // re-parents the page (it keeps its scroll offset).
         NotificationListener<ScrollMetricsNotification>(
           onNotification: (n) => _track(n.metrics, n.depth),
           child: NotificationListener<ScrollNotification>(
@@ -564,25 +567,32 @@ class _BottomSeamFadeState extends State<_BottomSeamFade> {
             child: widget.child,
           ),
         ),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: _BottomSeamFade.height,
-          child: IgnorePointer(
-            child: ExcludeSemantics(
-              child: ValueListenableBuilder<bool>(
-                valueListenable: _moreBelow,
-                builder: (context, moreBelow, _) => AnimatedOpacity(
-                  key: const ValueKey('mobile-home-seam-fade'),
-                  opacity: moreBelow ? 1 : 0,
-                  duration: AppMotion.resolve(context, AppMotion.quick),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [canvas.withValues(alpha: 0), canvas],
+        if (!highContrast)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: _BottomSeamFade.height,
+            child: IgnorePointer(
+              child: ExcludeSemantics(
+                child: ValueListenableBuilder<bool>(
+                  valueListenable: _moreBelow,
+                  builder: (context, moreBelow, _) => AnimatedOpacity(
+                    key: const ValueKey('mobile-home-seam-fade'),
+                    opacity: moreBelow ? 1 : 0,
+                    duration: AppMotion.resolve(context, AppMotion.quick),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            canvas.withValues(alpha: 0),
+                            canvas.withValues(alpha: .18),
+                            canvas,
+                          ],
+                          stops: _BottomSeamFade.stops,
+                        ),
                       ),
                     ),
                   ),
@@ -590,7 +600,6 @@ class _BottomSeamFadeState extends State<_BottomSeamFade> {
               ),
             ),
           ),
-        ),
       ],
     );
   }

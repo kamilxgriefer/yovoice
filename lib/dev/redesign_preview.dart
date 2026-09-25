@@ -16,7 +16,8 @@
 // More sheet / the desktop rail's More item):
 //   --dart-define=YO_PREVIEW_STATE=populated|empty|loading|error|denied
 //   --dart-define=YO_PREVIEW_TAB=home|servers|chats|friends|voice|yeels
-//   --dart-define=YO_PREVIEW_LOCALE=pl|en
+//   --dart-define=YO_PREVIEW_LOCALE=pl|en|ar   (ar: the RTL spot check;
+//                                              fixtures stay Polish)
 //   --dart-define=YO_PREVIEW_THEME=system|dark|pearl
 //   --dart-define=YO_PREVIEW_TEXT=100|200
 //   --dart-define=YO_PREVIEW_LONG_NAMES=true|false
@@ -105,6 +106,7 @@ class _Config {
   const _Config({
     required this.state,
     required this.polish,
+    this.arabic = false,
     required this.theme,
     required this.bigText,
     required this.longNames,
@@ -134,6 +136,7 @@ class _Config {
         orElse: () => _State.populated,
       ),
       polish: locale != 'en',
+      arabic: locale == 'ar',
       theme: _Theme.values.firstWhere(
         (value) => value.name == theme,
         orElse: () => _Theme.system,
@@ -148,6 +151,11 @@ class _Config {
 
   final _State state;
   final bool polish;
+
+  /// The right-to-left spot check (spec §11): the app in Arabic, so every
+  /// mirrored layout, corner tint and fade can be looked at. The language
+  /// chips below still switch to Polish or English.
+  final bool arabic;
   final _Theme theme;
   final bool bigText;
   final bool longNames;
@@ -166,6 +174,8 @@ class _Config {
   }) => _Config(
     state: state ?? this.state,
     polish: polish ?? this.polish,
+    // Picking a language chip leaves the RTL spot check.
+    arabic: polish == null && arabic,
     theme: theme ?? this.theme,
     bigText: bigText ?? this.bigText,
     longNames: longNames ?? this.longNames,
@@ -1978,7 +1988,13 @@ class _PreviewAppState extends State<_PreviewApp> {
       _Theme.dark => ThemeMode.dark,
       _Theme.pearl => ThemeMode.light,
     },
-    locale: Locale(_config.polish ? 'pl' : 'en'),
+    locale: Locale(
+      _config.arabic
+          ? 'ar'
+          : _config.polish
+          ? 'pl'
+          : 'en',
+    ),
     localizationsDelegates: const [
       AppLocalizationsDelegate(),
       GlobalMaterialLocalizations.delegate,
@@ -2345,7 +2361,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               children: [
                 ChoiceChip(
                   label: const Text('Polski'),
-                  selected: _config.polish,
+                  selected: _config.polish && !_config.arabic,
                   onSelected: (_) => _apply(_config.copyWith(polish: true)),
                 ),
                 ChoiceChip(

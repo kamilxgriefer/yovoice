@@ -42,6 +42,7 @@ class YoCard extends StatefulWidget {
     this.radius = AppRadius.block,
     this.minHeight,
     this.semanticButton = true,
+    this.semanticLabel,
     this.elevated = true,
   });
 
@@ -62,6 +63,12 @@ class YoCard extends StatefulWidget {
   /// Whether an interactive card announces itself as one button. A caller
   /// that already wraps the card in its own `Semantics` passes false.
   final bool semanticButton;
+
+  /// One spoken label for the whole card, in place of its children's own
+  /// semantics — for a card whose visible parts only make sense read
+  /// together (a name, a count badge that carries no semantics of its own,
+  /// a preview). The card stays one node with its own tap and focus.
+  final String? semanticLabel;
 
   /// Pearl's shadow pair; false for chip-like blocks.
   final bool elevated;
@@ -117,7 +124,13 @@ class _YoCardState extends State<YoCard> {
       );
     }
 
-    Widget content = Padding(padding: widget.padding, child: widget.child);
+    final label = widget.semanticLabel;
+    Widget content = Padding(
+      padding: widget.padding,
+      child: label == null
+          ? widget.child
+          : ExcludeSemantics(child: widget.child),
+    );
     final minHeight = widget.minHeight;
     if (minHeight != null) {
       content = ConstrainedBox(
@@ -178,8 +191,17 @@ class _YoCardState extends State<YoCard> {
     }
     card = Padding(padding: widget.margin, child: card);
 
-    if (!interactive || !widget.semanticButton) return card;
-    return Semantics(button: true, selected: widget.selected, child: card);
+    final button = interactive && widget.semanticButton;
+    if (!button && label == null) return card;
+    return Semantics(
+      // A label replaces the children's semantics, so the card is its own
+      // node: the label, the button role and the InkWell's tap and focus.
+      container: label != null,
+      button: button ? true : null,
+      selected: button ? widget.selected : null,
+      label: label,
+      child: card,
+    );
   }
 }
 

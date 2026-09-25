@@ -8,6 +8,8 @@ import 'dart:async';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -57,6 +59,7 @@ Widget _host(
   double textScale = 1,
   bool disableAnimations = false,
   bool highContrast = false,
+  bool accessibleNavigation = false,
   bool scroll = true,
 }) => MaterialApp(
   locale: const Locale('pl'),
@@ -76,6 +79,7 @@ Widget _host(
       textScaler: TextScaler.linear(textScale),
       disableAnimations: disableAnimations,
       highContrast: highContrast,
+      accessibleNavigation: accessibleNavigation,
     ),
     child: Scaffold(
       body: scroll
@@ -255,6 +259,82 @@ void main() {
       expect(tester.getSize(find.byType(HomeHeaderDisc)).height, 46);
     });
 
+    testWidgets('at 200 % text the bell count grows to 16.5 px, up and out '
+        'of the disc, never over the bell glyph (review D2 / D7)', (
+      tester,
+    ) async {
+      _useView(tester, const Size(390, 900));
+      await tester.pumpWidget(
+        _host(
+          Align(
+            alignment: Alignment.topRight,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: HomeHeaderDisc(
+                icon: Icons.notifications_none_rounded,
+                onTap: () {},
+                tooltip: 'Powiadomienia',
+                badgeCount: 2,
+              ),
+            ),
+          ),
+          textScale: 2,
+        ),
+      );
+      final count = tester.renderObject<RenderParagraph>(
+        find.descendant(
+          of: find.byKey(const ValueKey('home-bell-count')),
+          matching: find.text('2'),
+        ),
+      );
+      final fontSize = count.textScaler.scale(count.text.style!.fontSize!);
+      expect(fontSize, greaterThanOrEqualTo(16));
+      expect(fontSize, closeTo(16.5, .01));
+      final badge = tester.getRect(find.byKey(const ValueKey('home-bell-count')));
+      expect(badge.height, closeTo(30, .01), reason: 'the floor grows too');
+      // The 46 px glass disc itself (its tap region may be a little larger).
+      Rect discRect() => tester.getRect(
+        find
+            .descendant(
+              of: find.byType(HomeHeaderDisc),
+              matching: find.byType(Container),
+            )
+            .first,
+      );
+      final disc = discRect();
+      expect(disc.size, const Size(46, 46));
+      final glyph = tester.getCenter(
+        find.byIcon(Icons.notifications_none_rounded),
+      );
+      expect(badge.contains(glyph), isFalse);
+      // Up by its whole growth; out by at most 4 px of the gap beside it.
+      // (The badge is placed inside the disc's 1 px hairline.)
+      expect(badge.top, closeTo(disc.top + 1 - 4 - 10, .01));
+      expect(badge.right, lessThanOrEqualTo(disc.right + 8 + .01));
+
+      // At 100 % it is the 20 px badge at its old corner.
+      await tester.pumpWidget(
+        _host(
+          Align(
+            alignment: Alignment.topRight,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: HomeHeaderDisc(
+                icon: Icons.notifications_none_rounded,
+                onTap: () {},
+                tooltip: 'Powiadomienia',
+                badgeCount: 2,
+              ),
+            ),
+          ),
+        ),
+      );
+      final small = tester.getRect(find.byKey(const ValueKey('home-bell-count')));
+      final smallDisc = discRect();
+      expect(small.height, 20);
+      expect(small.top, closeTo(smallDisc.top + 1 - 4, .01));
+    });
+
     testWidgets('no badge at zero, and the heading is the w700 screen title', (
       tester,
     ) async {
@@ -379,6 +459,70 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets('a screen reader (accessible navigation) gets the section '
+        'without a growing box, even with animations on (review D7)', (
+      tester,
+    ) async {
+      _useView(tester, const Size(390, 900));
+      final repository = _Channels();
+      await tester.pumpWidget(
+        _host(
+          HomeLiveNowSection(
+            servers: [_server('a')],
+            repository: repository,
+            onOpenServer: (_) {},
+          ),
+          accessibleNavigation: true,
+        ),
+      );
+      repository.controllers['a']!.add([
+        _live('a', 'stage', DateTime(2026, 9, 25, 17, 30)),
+      ]);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('home-live-now')), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.byKey(const ValueKey('home-live-now')),
+          matching: find.byType(AnimatedSize),
+        ),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('keyboard focus swaps the live rim for the 2 px focus ring '
+        '(review D6)', (tester) async {
+      final repository = await pumpLive(tester);
+      repository.controllers['a']!.add([
+        _live('a', 'stage', DateTime(2026, 9, 25, 16, 30)),
+      ]);
+      await tester.pump();
+      await tester.pump(AppMotion.entrance * 2);
+      Border rim() =>
+          (tester
+                      .widget<AnimatedContainer>(
+                        find.byKey(const ValueKey('home-live-thumbnail')),
+                      )
+                      .foregroundDecoration!
+                  as BoxDecoration)
+              .border!
+              as Border;
+      expect(rim().top.color, AppColors.live.withValues(alpha: .30));
+
+      FocusManager.instance.highlightStrategy =
+          FocusHighlightStrategy.alwaysTraditional;
+      addTearDown(
+        () => FocusManager.instance.highlightStrategy =
+            FocusHighlightStrategy.automatic,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      await tester.pump(AppMotion.quick);
+      expect(rim().top.color, AppPalette.dark.focus);
+      expect(rim().top.width, 2);
+    });
 
     testWidgets('the R4 recipe: live rim, live under-glow, identity-accent '
         'corner light, block radius', (tester) async {
@@ -610,16 +754,14 @@ void main() {
       );
     });
 
-    testWidgets('liftCreate false keeps the gradient and drops the lift', (
-      tester,
-    ) async {
+    testWidgets('flat keeps the gradient and drops the lift', (tester) async {
       _useView(tester, const Size(390, 900));
       await tester.pumpWidget(
         _host(
           HomeQuickActions(
             onCreateRoom: () {},
             onFriends: () {},
-            liftCreate: false,
+            createEmphasis: YoActionEmphasis.flat,
           ),
         ),
       );
@@ -632,10 +774,87 @@ void main() {
       final shadows = (lift.decoration! as ShapeDecoration).shadows ?? [];
       expect(shadows, isEmpty);
       expect(
-        tester.widget<YoGradientFilledButton>(create).lift,
-        isFalse,
+        find.descendant(of: create, matching: find.byType(Ink)),
+        findsOneWidget,
         reason: 'the gradient stays; only the lift goes',
       );
+    });
+
+    for (final brightness in Brightness.values) {
+      testWidgets('neutral is the same R7 glass as "Znajomi" '
+          '(${brightness.name}; review D2)', (tester) async {
+        _useView(tester, const Size(390, 900));
+        var creates = 0;
+        await tester.pumpWidget(
+          _host(
+            HomeQuickActions(
+              onCreateRoom: () => creates++,
+              onFriends: () {},
+              createEmphasis: YoActionEmphasis.neutral,
+            ),
+            brightness: brightness,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        final palette = brightness == Brightness.dark
+            ? AppPalette.dark
+            : AppPalette.light;
+        final create = find.byKey(const ValueKey('home-quick-create-server'));
+        expect(tester.getSize(create).height, 44);
+        final button = tester.widget<FilledButton>(
+          find.descendant(of: create, matching: find.byType(FilledButton)),
+        );
+        expect(button.style!.backgroundColor!.resolve({}), palette.glass);
+        expect(
+          button.style!.side!.resolve({})!.color,
+          palette.hairlineControl,
+        );
+        expect(
+          button.style!.foregroundColor!.resolve({}),
+          palette.interactiveForeground,
+        );
+        expect(find.descendant(of: create, matching: find.byType(Ink)), findsNothing);
+        final lift = tester.widget<AnimatedContainer>(
+          find
+              .descendant(of: create, matching: find.byType(AnimatedContainer))
+              .first,
+        );
+        expect((lift.decoration! as ShapeDecoration).shadows ?? [], isEmpty);
+        final friends = tester.widget<OutlinedButton>(
+          find.byKey(const ValueKey('home-quick-friends')),
+        );
+        expect(
+          friends.style!.backgroundColor!.resolve({}),
+          button.style!.backgroundColor!.resolve({}),
+        );
+        expect(find.byType(Tooltip), findsNWidgets(2));
+        await tester.tap(create);
+        expect(creates, 1);
+      });
+    }
+
+    testWidgets('demoting and promoting the create pill keeps its keyboard '
+        'focus (same FilledButton element)', (tester) async {
+      _useView(tester, const Size(390, 900));
+      Widget actions(YoActionEmphasis emphasis) => _host(
+        HomeQuickActions(
+          onCreateRoom: () {},
+          onFriends: () {},
+          createEmphasis: emphasis,
+        ),
+      );
+      await tester.pumpWidget(actions(YoActionEmphasis.neutral));
+      final create = find.byKey(const ValueKey('home-quick-create-server'));
+      final focus = Focus.of(
+        tester.element(
+          find.descendant(of: create, matching: find.byType(Text)).first,
+        ),
+      );
+      focus.requestFocus();
+      await tester.pump();
+      await tester.pumpWidget(actions(YoActionEmphasis.lifted));
+      expect(focus.hasFocus, isTrue);
+      expect(find.descendant(of: create, matching: find.byType(Ink)), findsOneWidget);
     });
 
     testWidgets('"Masz chwilę?" is an untinted block with the 48 px voice '
@@ -703,6 +922,90 @@ void main() {
         tester.widget<UserAvatar>(find.byType(UserAvatar).first).finish,
         UserAvatarFinish.brand,
       );
+    });
+
+    testWidgets('a phone chat card speaks who, the unread count and the last '
+        'message as one button (review D1)', (tester) async {
+      _useView(tester, const Size(390, 900));
+      final handle = tester.ensureSemantics();
+      var opened = 0;
+      await tester.pumpWidget(
+        _host(
+          RecentChats(
+            snapshot: AsyncSnapshot.withData(ConnectionState.active, [
+              _conversation(1, unread: 2),
+              _conversation(2),
+            ]),
+            currentUserId: 'me',
+            onOpenConversation: (_) => opened++,
+            onFindFriends: () {},
+          ),
+        ),
+      );
+      const copy = AppLocalizations(Locale('pl'));
+      final unreadCard = tester.getSemantics(find.byType(YoCard).first);
+      expect(
+        unreadCard.label,
+        '${copy.openChatWith('Przyjaciel 1')}. '
+        '${copy.unreadMessages(2)}. '
+        '${copy.lastMessage('Masz chwilę na rozmowę?')}',
+      );
+      expect(
+        unreadCard,
+        isSemantics(isButton: true, hasTapAction: true, isFocusable: true),
+      );
+      final readCard = tester.getSemantics(find.byType(YoCard).last);
+      expect(readCard.label, isNot(contains(copy.unreadMessages(2))));
+      expect(readCard.label, startsWith(copy.openChatWith('Przyjaciel 2')));
+      // One node per card: the name and preview are not read twice.
+      expect(find.bySemanticsLabel('Przyjaciel 1'), findsNothing);
+      tester.semantics.tap(find.semantics.byLabel(unreadCard.label));
+      expect(opened, 1);
+      handle.dispose();
+    });
+
+    test('the peek mask starts faint and is opaque at the end and under high '
+        'contrast (review D4 / D5)', () {
+      final fading = recentChatsPeekMask(
+        width: 300,
+        peek: 32,
+        gap: 12,
+        hasMoreAfter: true,
+        rtl: false,
+        highContrast: false,
+      );
+      expect(fading.colors.map((c) => c.a).toList(), [1, 1, closeTo(.22, 1e-3), 0]);
+      expect(fading.stops, [0, closeTo(1 - 44 / 300, 1e-9), closeTo(1 - 32 / 300, 1e-9), 1]);
+      expect(fading.begin, Alignment.centerLeft);
+      final rtl = recentChatsPeekMask(
+        width: 300,
+        peek: 32,
+        gap: 12,
+        hasMoreAfter: true,
+        rtl: true,
+        highContrast: false,
+      );
+      expect(rtl.begin, Alignment.centerRight);
+      for (final mask in [
+        recentChatsPeekMask(
+          width: 300,
+          peek: 32,
+          gap: 12,
+          hasMoreAfter: true,
+          rtl: false,
+          highContrast: true,
+        ),
+        recentChatsPeekMask(
+          width: 300,
+          peek: 32,
+          gap: 12,
+          hasMoreAfter: false,
+          rtl: false,
+          highContrast: false,
+        ),
+      ]) {
+        expect(mask.colors.every((c) => c.a == 1), isTrue);
+      }
     });
 
     testWidgets('the desktop rail fades its peek while it can scroll and keeps '
@@ -803,9 +1106,11 @@ void main() {
     });
   });
 
-  testWidgets('the phone page fades into the canvas above the dock only '
-      'while there is more below', (tester) async {
-    const size = Size(390, 700);
+  Future<void> pumpMobileHome(
+    WidgetTester tester,
+    Size size, {
+    bool highContrast = false,
+  }) async {
     _useView(tester, size);
     final db = FakeFirebaseFirestore();
     final auth = MockFirebaseAuth(
@@ -847,8 +1152,37 @@ void main() {
         ),
         scroll: false,
         size: size,
+        highContrast: highContrast,
       ),
     );
+  }
+
+  testWidgets('high contrast: no seam fade over the page at all (review D4)', (
+    tester,
+  ) async {
+    const size = Size(390, 700);
+    await pumpMobileHome(tester, size, highContrast: true);
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    final list = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('mobile-home-server-first')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    expect(list.position.extentAfter, greaterThan(.5));
+    expect(find.byKey(const ValueKey('mobile-home-seam-fade')), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the phone page fades into the canvas above the dock only '
+      'while there is more below', (tester) async {
+    const size = Size(390, 700);
+    await pumpMobileHome(tester, size);
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 80));
     }
@@ -857,6 +1191,13 @@ void main() {
     expect(tester.widget<AnimatedOpacity>(fade).opacity, 1);
     expect(tester.getBottomLeft(fade).dy, size.height);
     expect(tester.getSize(fade).height, 24);
+    // It eases in (review D6): faint over the band's upper half.
+    final band = tester.widget<DecoratedBox>(
+      find.descendant(of: fade, matching: find.byType(DecoratedBox)),
+    );
+    final ease = (band.decoration as BoxDecoration).gradient! as LinearGradient;
+    expect(ease.stops, const [0, .55, 1]);
+    expect(ease.colors.map((c) => c.a).toList(), [0, closeTo(.18, 1e-3), 1]);
     expect(
       find.ancestor(of: fade, matching: find.byType(IgnorePointer)),
       findsWidgets,

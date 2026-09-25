@@ -20,10 +20,14 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_gradients.dart';
+import 'package:yovoice/core/theme/app_icons.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_greeting_header.dart'
+    show HomeHeaderDisc;
 import 'package:yovoice/features/servers/data/models/server_channel.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/presentation/server_localized_copy.dart';
@@ -31,7 +35,6 @@ import 'package:yovoice/features/servers/presentation/theme/server_identity.dart
 import 'package:yovoice/features/servers/presentation/widgets/server_panel.dart'
     show serverChannelIcon;
 import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
-import 'package:yovoice/shared/widgets/badges/yo_count_badge.dart';
 import 'package:yovoice/shared/widgets/badges/yo_metric_pill.dart';
 import 'package:yovoice/shared/widgets/badges/yo_progress_ring.dart';
 import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
@@ -362,14 +365,24 @@ class _LogoSamples extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 28),
-        const SizedBox(
-          height: 208 + 72,
-          child: Center(
-            child: YoBrandMark(size: 208, light: YoBrandLight.bloom),
+        // The startup screen is immersive (dark in both themes), so its
+        // sample is drawn on the immersive canvas in both sheet themes too.
+        const DecoratedBox(
+          key: ValueKey('refine-logo-immersive'),
+          decoration: BoxDecoration(
+            color: AppImmersiveColors.background,
+            borderRadius: AppRadius.block,
+          ),
+          child: SizedBox(
+            height: 208 + 72,
+            child: Center(
+              child: YoBrandMark(size: 208, light: YoBrandLight.bloom),
+            ),
           ),
         ),
         const _Caption(
-          '208 px z poświatą (ekran startowy — zawsze ciemny w aplikacji)',
+          '208 px z poświatą na ciemnym tle ekranu startowego (w aplikacji '
+          'zawsze ciemny, w obu motywach)',
           align: TextAlign.center,
         ),
       ],
@@ -1120,7 +1133,8 @@ class _CountBadgeSamples extends StatelessWidget {
         ),
         _Caption(
           'Dzwonek na Starcie: szklany krąg 46 px, licznik z gradientem '
-          'akcji i pierścieniem w kolorze tła (bez cienia).',
+          'akcji i pierścieniem w kolorze tła (bez cienia). Przy większym '
+          'tekście licznik rośnie do 1,5 × w górę i na zewnątrz.',
         ),
       ],
     );
@@ -1134,35 +1148,15 @@ class _BellCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
+    // The real Start bell: at larger text its count grows up and out from
+    // the disc's corner, so the cell leaves room above it.
     return Padding(
-      padding: const EdgeInsets.only(top: 6, right: 6),
-      child: SizedBox(
-        width: 46,
-        height: 46,
-        child: Stack(
-          clipBehavior: Clip.none,
-          alignment: Alignment.center,
-          children: [
-            DecoratedBox(
-              decoration: AppFinish.glassDecoration(
-                palette,
-                shape: BoxShape.circle,
-              ).copyWith(border: Border.all(color: palette.hairline)),
-              child: const SizedBox.expand(),
-            ),
-            Icon(
-              Icons.notifications_none_rounded,
-              color: palette.textPrimary,
-              size: 21,
-            ),
-            PositionedDirectional(
-              top: -4,
-              end: -4,
-              child: YoCountBadge(count: count, ring: palette.background),
-            ),
-          ],
-        ),
+      padding: const EdgeInsets.only(top: 16, right: 8),
+      child: HomeHeaderDisc(
+        icon: AppIcons.notifications,
+        onTap: () {},
+        tooltip: 'Powiadomienia',
+        badgeCount: count,
       ),
     );
   }
@@ -1258,7 +1252,10 @@ class _WaveSamples extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final variantB = LinearGradient(colors: AppGradients.primary.colors);
+    final variantB = AppGradients.voicePlayed(
+      Theme.of(context).colorScheme,
+      palette,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1300,17 +1297,19 @@ class _WaveSamples extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 14),
-              _TransportRow(tag: 'A', gradient: palette.audioProgressGradient),
-              const SizedBox(height: 14),
               _TransportRow(tag: 'B', gradient: variantB),
+              const SizedBox(height: 14),
+              _TransportRow(tag: 'A', gradient: palette.audioProgressGradient),
             ],
           ),
         ),
         const _Caption(
-          'Odtworzone 40%, pauza. A — cyjan → lawenda (domyślne w '
-          'specyfikacji, jedyny akcent odtwarzania). B — fiolet → magenta z '
-          'logo. Gradient rozpięty na całej fali i odsłaniany do głowicy; '
-          'nieodtworzone słupki nie ciemnieją.',
+          'Odtworzone 40%, pauza. B — fiolet → magenta z logo (wybrane '
+          '25.09); w ciemnym motywie rozjaśnione, żeby odtworzona część '
+          'miała co najmniej 3:1 wobec nieodtworzonej na obu końcach. '
+          'A — cyjan → lawenda, tylko dla porównania. Gradient rozpięty na '
+          'całej fali i odsłaniany do głowicy; nieodtworzone słupki nie '
+          'ciemnieją.',
         ),
       ],
     );
@@ -1552,7 +1551,9 @@ class _BubbleSamples extends StatelessWidget {
         ),
         const _Caption(
           'Przychodzące: blok z włoskową krawędzią. Wychodzące: gradient akcji '
-          '(biały tekst 5,8:1). Ogonek 6 px, reakcja w osobnym miejscu.',
+          '(biały tekst 5,8:1; godzina i czas trwania białe @ .92, co '
+          'najmniej 5:1; nieodtworzone słupki białe @ .35, co najmniej 3:1 '
+          'wobec odtworzonych). Ogonek 6 px, reakcja w osobnym miejscu.',
         ),
       ],
     );
@@ -1616,7 +1617,7 @@ class _Bubble extends StatelessWidget {
                     textAlign: TextAlign.end,
                     style: AppTypography.labelSmall.copyWith(
                       color: outgoing
-                          ? AppColors.white.withValues(alpha: .78)
+                          ? AppFinish.outgoingMeta
                           : palette.textTertiary,
                       letterSpacing: 0,
                     ),
@@ -1654,8 +1655,10 @@ class _VoiceBubbleBody extends StatelessWidget {
           width: 132,
           child: outgoing
               ? YoWaveform(
-                  color: AppColors.white.withValues(alpha: .50),
-                  playedColor: AppColors.white,
+                  color: AppFinish.outgoingWaveUnplayed,
+                  playedColor: AppFinish.outgoingWavePlayed,
+                  progress: .6,
+                  continuousProgress: true,
                   height: 26,
                   barWidth: 3,
                   barGap: 2,
@@ -1664,7 +1667,10 @@ class _VoiceBubbleBody extends StatelessWidget {
               : YoWaveform(
                   color: palette.waveUnplayed,
                   progress: .35,
-                  playedGradient: palette.audioProgressGradient,
+                  playedGradient: AppGradients.voicePlayed(
+                    Theme.of(context).colorScheme,
+                    palette,
+                  ),
                   continuousProgress: true,
                   gradientSpan: YoWaveformGradientSpan.full,
                   height: 26,
@@ -1677,9 +1683,7 @@ class _VoiceBubbleBody extends StatelessWidget {
         Text(
           outgoing ? '0:12' : '0:24',
           style: AppTypography.labelSmall.copyWith(
-            color: outgoing
-                ? AppColors.white.withValues(alpha: .85)
-                : palette.textSecondary,
+            color: outgoing ? AppFinish.outgoingMeta : palette.textSecondary,
             fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),

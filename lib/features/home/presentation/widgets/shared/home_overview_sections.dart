@@ -29,17 +29,26 @@ class HomeQuickActions extends StatelessWidget {
     required this.onCreateRoom,
     required this.onFriends,
     this.createRoomKey,
-    this.liftCreate = true,
+    this.createEmphasis = YoActionEmphasis.lifted,
     super.key,
   });
 
   final VoidCallback onCreateRoom;
   final VoidCallback onFriends;
 
-  /// Whether the create pill carries the screen's one CTA lift. Start passes
-  /// false while its empty-servers invitation shows its own lifted "Stwórz
-  /// serwer", so the page never has two (the light budget in `AppFinish`).
-  final bool liftCreate;
+  /// How loud the create pill is (the light budget in `AppFinish`):
+  ///
+  /// * `lifted` — the phone Start's one CTA;
+  /// * `flat` — the gradient without the lift, on desktop, where the rail's
+  ///   own lifted "Stwórz serwer" sits beside it;
+  /// * `neutral` — the same R7 glass as "Znajomi", while the empty-servers
+  ///   invitation shows the page's violet "Stwórz serwer" 72 px above: two
+  ///   identical gradient pills read as duplicated emphasis.
+  ///
+  /// Key, tooltip, callback, the 44 px shrink-wrapped box and the tour
+  /// anchor are the same in all three, and so is the [FilledButton] element,
+  /// so a server arriving under a focused pill never drops its focus.
+  final YoActionEmphasis createEmphasis;
 
   /// The guided tour's mobile Create anchor. Attached to the create pill's
   /// box (not its ink) so the spotlight frames the whole control; null when
@@ -80,10 +89,11 @@ class HomeQuickActions extends StatelessWidget {
         final stacked =
             constraints.maxWidth < minimumActionWidth * 2 + AppRhythm.item;
         // Filled primary controls take their `onPrimary` foreground as the
-        // 2 px keyboard boundary (UI.md); the neutral pill keeps `focus`.
+        // 2 px keyboard boundary (UI.md); a neutral pill keeps `focus`.
+        final neutralCreate = createEmphasis == YoActionEmphasis.neutral;
         final createPill = _FocusOutline(
           radius: 999,
-          color: colors.onPrimary,
+          color: neutralCreate ? null : colors.onPrimary,
           child: Tooltip(
             message: copy.homeStartConversation,
             // Shrink-wrapped inside the primitive: Material otherwise
@@ -99,8 +109,7 @@ class HomeQuickActions extends StatelessWidget {
                 horizontal: AppRhythm.title,
                 vertical: AppRhythm.tight,
               ),
-              // No lift while another lifted CTA owns the page.
-              lift: liftCreate,
+              emphasis: createEmphasis,
               icon: const Icon(Icons.add_rounded, size: 20),
               child: Text(copy.homeCreateServer, textAlign: TextAlign.center),
             ),

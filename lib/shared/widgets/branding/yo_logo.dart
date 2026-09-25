@@ -62,12 +62,35 @@ class YoBrandMark extends StatelessWidget {
   final double bloomScale;
   final Key? bloomKey;
 
-  /// Warms both images so the first frame already has the mark (call from
-  /// `didChangeDependencies` of a screen that shows it).
-  static Future<void> precache(BuildContext context) => Future.wait<void>([
-    precacheImage(const AssetImage(markAsset), context),
-    precacheImage(const AssetImage(bloomAsset), context),
-  ]);
+  /// Warms the mark and its bloom for a [size] px mark so the first frame
+  /// already has them (call from `didChangeDependencies` of a screen that
+  /// shows it). The images decode at a `cacheWidth` ([cacheWidthFor]),
+  /// which is part of the image-cache key, so this warms exactly those
+  /// resized keys — a plain `AssetImage` would warm an entry the mark never
+  /// reads. A failed warm-up is not an error: the mark's own errorBuilder
+  /// owns a missing asset.
+  static Future<void> precache(
+    BuildContext context, {
+    required double size,
+    double bloomScale = 1.6,
+  }) {
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    return Future.wait<void>([
+      for (final (asset, logical) in [
+        (markAsset, size),
+        (bloomAsset, size * bloomScale),
+      ])
+        precacheImage(
+          ResizeImage.resizeIfNeeded(
+            cacheWidthFor(logical, dpr),
+            null,
+            AssetImage(asset),
+          ),
+          context,
+          onError: (_, _) {},
+        ),
+    ]);
+  }
 
   static int cacheWidthFor(double logicalSize, double devicePixelRatio) =>
       (logicalSize * devicePixelRatio).ceil().clamp(64, 512);
