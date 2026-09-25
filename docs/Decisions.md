@@ -15175,7 +15175,7 @@ control; making the retry a true replay fixes the client without touching it.
 - **No server-side video thumbnails.** A video poster is a placeholder with
   the duration; DMs have none either, so this is parity, not a regression.
 
-## ADR-XXX: A take that reaches its recorder's cap is a full-length take: the server accepts a 2 s measured grace and stores the cap
+## ADR-217: A take that reaches its recorder's cap is a full-length take: the server accepts a 2 s measured grace and stores the cap
 
 **Date:** 2026-09-25 · **Status:** accepted (source on the `voice-60s`
 branch, based on `985dceee`) · **NOT DEPLOYED**

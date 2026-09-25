@@ -31,7 +31,7 @@ before cutting off. Fixed by a 2 s measured grace with the stored duration
 clamped to the limit (DM voice/video, server channel video, Family Memory),
 the camera-capped clip declared as 60, and a countdown, haptic and
 announcement in the last ten seconds with the take kept ready to send
-(ADR-XXX). **Functions must be deployed first; that alone fixes voice notes
+(ADR-217). **Functions must be deployed first; that alone fixes voice notes
 and Family Memory notes that hit the cap on released builds.** A full-length
 camera video on released 3.0.0 is still refused on the client before upload
 (`ceil(60.0x) = 61`) and needs the next app build. Still open: a library video
