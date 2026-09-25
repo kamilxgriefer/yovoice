@@ -2440,6 +2440,19 @@ their separate production-deployment gates.
 
 ## In Progress
 
+### Store builds from GitHub Actions — source written 2026-09-25, not configured, never run
+
+`.github/workflows/store-release.yml` builds, signs and uploads Android to the
+Play internal track and iOS to TestFlight. It is dispatch-only and a dry run
+by default. A real run needs one approval on the `store-release` environment.
+Its preflight checks CI green, Hosting on the same SHA and the backend gate.
+Remaining work is Kamil's one-time setup: the environment, nine secrets, a
+Play service account and the first `store-build-<N>` tag. After that come a
+dry run and a first real run with `play_release_status=draft`. See
+[RELEASE_CI.md](RELEASE_CI.md) and the ADR "Store builds come from a manually
+dispatched, reviewer-gated workflow". Until then, store builds stay on the
+Mac.
+
 ### ~~Slim redesign (3.0.0)~~ DONE 2026-09-19
 
 Phases 0–7 shipped to testers as 3.0.0 (34); see the entry at the top of this

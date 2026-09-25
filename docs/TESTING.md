@@ -1699,6 +1699,40 @@ were inspected. This is local simulator and screenshot evidence only: it does
 not prove production configuration or deployment, and VoiceOver/TalkBack has
 not been verified on a physical device.
 
+## Store release tooling (source only, 2026-09-25)
+
+These tests cover `.github/workflows/store-release.yml` and its
+zero-dependency scripts in `tool/release/` ([RELEASE_CI.md](RELEASE_CI.md)).
+They need Node 22 or later and `git`, and nothing from npm:
+
+```bash
+node --test tool/test/release_*.test.mjs
+```
+
+The store-release **preflight job runs them before every release**. The
+push-triggered CI does not run them.
+
+| File | Tests | What it pins |
+| --- | --- | --- |
+| `release_preflight.test.mjs` | 41 | Input validation (shell metacharacters, short SHAs and Play's versionCode ceiling are refused). Pubspec match. Gradle configuration cache refused. Baseline tag choice. Check runs counted only from GitHub Actions. Every release-order gate: hard on a real run, a warning on a dry run. End to end against a throwaway git repository: not-on-main, no baseline (fail closed), backend diff with and without `backend_confirmed`, a tag already used by another commit |
+| `release_play.test.mjs` | 11 | The RS256 assertion verifies and carries the androidpublisher scope. The call order insert → list → upload → track → commit → read-back. A used versionCode is refused before upload. **One** upload attempt. Play's versionCode and SHA-256 must match. The edit is deleted on every failure before the commit. `changesNotSentForReview` is used only when Play asks for it. Only the internal track is reachable |
+| `release_asc.test.mjs` | 9 | The ES256 token has a raw r‖s signature, audience `appstoreconnect-v1` and a life of at most 20 min. An existing build number is refused in any state. The processing poll handles VALID, INVALID/FAILED and a timeout |
+| `release_aab_manifest.test.mjs` | 6 | The protobuf manifest decoder: raw and compiled values, disagreement refused, namespace, truncation. It was also checked by hand against the retained bundles 33 and 34 |
+| `release_workflow.test.mjs` | 10 | Dispatch-only. No `${{ }}` in any `run:`. No `set -x`, `--dart-define` or upload export options. Actions pinned by SHA. No cache or artifact. Dry-run jobs have no secret and no environment. Secrets appear only in the two `store-release` jobs, gated to real runs from `main`. Tooling comes from the workflow commit. Every secret is documented |
+
+The structural test was mutation-checked. Each of these edits turns it red:
+- injecting `${{ inputs.ref }}` into a script;
+- a secret in a dry-run job;
+- `cache: true`;
+- an `upload-artifact` step;
+- an unpinned action;
+- `set -x`.
+
+**What this does not prove:** that the workflow runs on GitHub. No runner has
+executed it; `actionlint` is not installed here, and the YAML was
+parsed with js-yaml and Ruby Psych instead. The first dry run is the first
+real evidence.
+
 ## Static analysis — the actual baseline gate
 
 `flutter analyze` is the one form of verification that's both
