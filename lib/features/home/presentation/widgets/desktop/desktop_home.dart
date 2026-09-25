@@ -309,10 +309,17 @@ class _DesktopHomeState extends State<DesktopHome> {
         slot >= DesktopHome.twoColumnThreshold + extraScale * 260;
     final contextWidth = (300 + extraScale * 40).clamp(280.0, 344.0);
 
+    // With no server yet the empty invitation carries the page's one lifted
+    // "Stwórz serwer"; the quick action keeps its gradient without a lift.
+    final serversEmpty =
+        serverSnapshot.hasData &&
+        !serverSnapshot.hasError &&
+        (serverSnapshot.data?.isEmpty ?? false);
     final quickActions = HomeQuickActions(
       key: _quickActionsKey,
       onCreateRoom: _openServers,
       onFriends: widget.onViewAllFriends,
+      liftCreate: !serversEmpty,
     );
     final conversationSection = Column(
       key: _conversationKey,

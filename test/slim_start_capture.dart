@@ -16,9 +16,18 @@
 //     --dart-define=YO_PREVIEW_LONG_NAMES=true|false \
 //     --dart-define=SLIM_CAPTURE_OUT=<dir> \
 //     --dart-define=SLIM_CAPTURE_STATE=<file-name state label> \
-//     --dart-define=SLIM_CAPTURE_MATRIX=full|single \
+//     --dart-define=SLIM_CAPTURE_MATRIX=full|pair|single \
 //     --dart-define=SLIM_CAPTURE_PAGES=<n> \\
-//     --dart-define=SLIM_CAPTURE_SETTLE_MS=<ms, 2000+ for error>
+//     --dart-define=SLIM_CAPTURE_SETTLE_MS=<ms, 2000+ for error> \\
+//     --dart-define=YO_PREVIEW_LIVE_TYPE=friends|community|podcast|family|company
+//
+// Refine-look additions (B2): the macOS colour-emoji font is registered when
+// the host has it, so the greeting's wave never draws as a tofu box; and the
+// test framework's default of painting every BoxShadow as a hard, unblurred
+// block (`debugDisableShadows`, meant for golden stability) is switched off
+// while a frame is captured and restored before the case ends, so the
+// Pearl block shadows, the CTA lift and the LIVE under-glow render as they
+// do on a device.
 
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -50,6 +59,7 @@ const _pages = int.fromEnvironment('SLIM_CAPTURE_PAGES', defaultValue: 1);
 // error capture needs SLIM_CAPTURE_SETTLE_MS >= 2000 or its first page still
 // shows the populated data.
 const _settleMs = int.fromEnvironment('SLIM_CAPTURE_SETTLE_MS');
+const _emojiFont = '/System/Library/Fonts/Apple Color Emoji.ttc';
 
 Future<void> _loadFonts() async {
   final inter = FontLoader('Inter')
@@ -57,6 +67,25 @@ Future<void> _loadFonts() async {
     ..addFont(rootBundle.load('assets/fonts/InterVariable-Italic.ttf'));
   await inter.load();
   await loadMaterialIconsFont();
+  final emoji = File(_emojiFont);
+  if (emoji.existsSync()) {
+    final bytes = ByteData.sublistView(emoji.readAsBytesSync());
+    // The test renderer has no system font fallback, which a phone always
+    // has for emoji. Register the host's colour-emoji font under its own
+    // name and under the generic 'sans-serif' family that closes the app's
+    // own `AppTypography.fontFamilyFallback` list, so a glyph Inter lacks
+    // (the greeting's wave) falls back to it exactly as it would on a
+    // device. The app's text styles are not touched.
+    for (final family in const ['Apple Color Emoji', 'sans-serif']) {
+      final loader = FontLoader(family)..addFont(Future.value(bytes));
+      await loader.load();
+    }
+    // ignore: avoid_print
+    print('emoji font registered: $_emojiFont');
+  } else {
+    // ignore: avoid_print
+    print('emoji font NOT available on this host: the greeting may show tofu');
+  }
 }
 
 Future<void> _pumpFrames(WidgetTester tester, int count) async {
@@ -94,6 +123,10 @@ void main() {
       for (final width in heights.keys)
         for (final brightness in [Brightness.dark, Brightness.light])
           for (final text in [100, 200]) (width, brightness, text)
+    else if (_matrix == 'pair')
+      // One phone cell per theme, for single-state evidence.
+      for (final brightness in [Brightness.dark, Brightness.light])
+        (390, brightness, 100)
     else
       (390, Brightness.dark, 100),
   ];
@@ -109,65 +142,71 @@ void main() {
       tester.platformDispatcher.textScaleFactorTestValue = text / 100;
       addTearDown(tester.view.reset);
       addTearDown(tester.platformDispatcher.clearAllTestValues);
-
-      await tester.runAsync(preview.main);
-      await _pumpFrames(tester, 20);
-      // Asset decodes (the atmosphere art, the brand mark) complete on the
-      // real event loop; give them several real turns so the first frame is
-      // not captured before the page background has painted.
-      for (var i = 0; i < 6; i++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 120)),
-        );
-        await _pumpFrames(tester, 2);
+      debugDisableShadows = false;
+      try {
+        await _capture(tester, size, base);
+      } finally {
+        debugDisableShadows = true;
       }
-      if (_settleMs > 0) {
-        await tester.runAsync(
-          () => Future<void>.delayed(Duration(milliseconds: _settleMs)),
-        );
-        await _pumpFrames(tester, 6);
-      }
-
-      final home = width >= 1100
-          ? find.byType(DesktopHome)
-          : find.byType(MobileHome);
-      // ignore: avoid_print
-      print('$base home-found=${home.evaluate().length}');
-      final exception = tester.takeException();
-      if (exception != null) {
-        // ignore: avoid_print
-        print('$base EXCEPTION: $exception');
-      }
-      await _shoot(tester, size, base);
-
-      for (var page = 2; page <= _pages; page++) {
-        final scrollables = find.descendant(
-          of: home,
-          matching: find.byWidgetPredicate(
-            (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
-          ),
-        );
-        if (scrollables.evaluate().isEmpty) break;
-        final state = tester.state<ScrollableState>(scrollables.first);
-        final position = state.position;
-        if (position.pixels >= position.maxScrollExtent) break;
-        position.jumpTo(
-          (position.pixels + size.height - 200).clamp(
-            0,
-            position.maxScrollExtent,
-          ),
-        );
-        await _pumpFrames(tester, 4);
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 120)),
-        );
-        await _pumpFrames(tester, 2);
-        await _shoot(tester, size, '$base-p$page');
-      }
-
-      // Tear the preview down so its fixtures dispose before the next cell.
-      await tester.pumpWidget(const SizedBox.shrink());
-      await _pumpFrames(tester, 2);
     });
   }
+}
+
+/// One cell: boot the preview, settle, shoot page 1 and any further pages.
+Future<void> _capture(WidgetTester tester, Size size, String base) async {
+  await tester.runAsync(preview.main);
+  await _pumpFrames(tester, 20);
+  // Asset decodes (the atmosphere art, the brand mark) complete on the
+  // real event loop; give them several real turns so the first frame is
+  // not captured before the page background has painted.
+  for (var i = 0; i < 6; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 120)),
+    );
+    await _pumpFrames(tester, 2);
+  }
+  if (_settleMs > 0) {
+    await tester.runAsync(
+      () => Future<void>.delayed(Duration(milliseconds: _settleMs)),
+    );
+    await _pumpFrames(tester, 6);
+  }
+
+  final home = size.width >= 1100
+      ? find.byType(DesktopHome)
+      : find.byType(MobileHome);
+  // ignore: avoid_print
+  print('$base home-found=${home.evaluate().length}');
+  final exception = tester.takeException();
+  if (exception != null) {
+    // ignore: avoid_print
+    print('$base EXCEPTION: $exception');
+  }
+  await _shoot(tester, size, base);
+
+  for (var page = 2; page <= _pages; page++) {
+    final scrollables = find.descendant(
+      of: home,
+      matching: find.byWidgetPredicate(
+        (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
+      ),
+    );
+    if (scrollables.evaluate().isEmpty) break;
+    final state = tester.state<ScrollableState>(scrollables.first);
+    final position = state.position;
+    if (position.pixels >= position.maxScrollExtent) break;
+    position.jumpTo(
+      (position.pixels + size.height - 200).clamp(0, position.maxScrollExtent),
+    );
+    await _pumpFrames(tester, 4);
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 120)),
+    );
+    await _pumpFrames(tester, 2);
+    await _shoot(tester, size, '$base-p$page');
+  }
+
+  // Tear the preview down so its fixtures dispose before the next cell.
+  await tester.pumpWidget(const SizedBox.shrink());
+  await _pumpFrames(tester, 2);
 }

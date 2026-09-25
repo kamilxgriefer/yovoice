@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
-import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
+import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_section_status.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
@@ -109,42 +111,42 @@ class HomeServersOverview extends StatelessWidget {
               : HomeSectionHeaderScale.compact,
           onSeeAll: onOpenServers,
         ),
-        // One layer (Slim): a single bordered list whose rows are divided
-        // by 1 px hairlines indented to the text edge, instead of a stack
-        // of separately bordered cards.
-        Material(
+        // One layer (Slim): a single block whose rows are divided by 1 px
+        // hairlines indented to the text edge, instead of a stack of
+        // separately bordered cards. Refine-look: the R2 block finish (lit
+        // fill, hairline edge, radius 20) with no padding; the rows keep
+        // their own ink on a transparent Material inside the block.
+        YoCard(
           key: const ValueKey('home-servers-list'),
-          color: palette.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: AppRadius.card,
-            side: BorderSide(color: palette.border),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (final server in visibleServers) ...[
-                if (server != visibleServers.first)
-                  Divider(
-                    height: 1,
-                    thickness: 1,
-                    indent: _ServerRow.textInset,
-                    color: palette.border,
+          padding: EdgeInsets.zero,
+          child: Material(
+            type: MaterialType.transparency,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final server in visibleServers) ...[
+                  if (server != visibleServers.first)
+                    Divider(
+                      height: 1,
+                      thickness: 1,
+                      indent: _ServerRow.textInset,
+                      color: palette.hairline,
+                    ),
+                  _ServerRow(
+                    key: ValueKey('home-server-row-${server.id}'),
+                    server: server,
+                    onTap: () {
+                      final openServer = onOpenServer;
+                      if (openServer != null) {
+                        openServer(server);
+                      } else {
+                        onOpenServers();
+                      }
+                    },
                   ),
-                _ServerRow(
-                  key: ValueKey('home-server-row-${server.id}'),
-                  server: server,
-                  onTap: () {
-                    final openServer = onOpenServer;
-                    if (openServer != null) {
-                      openServer(server);
-                    } else {
-                      onOpenServers();
-                    }
-                  },
-                ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ],
@@ -176,114 +178,118 @@ class _ServerContinueCard extends StatelessWidget {
     final status = server.isHeld
         ? copy.text('Preparing', 'W przygotowaniu')
         : copy.text('Choose a channel', 'Wybierz kanał');
-    // Slim: one flat surface with a 1 px `border` hairline and the card
-    // radius. The server's identity rides its squircle and eyebrow, not a
-    // tinted wash over the whole card. The phone composition is sized by
-    // its content; the wide one keeps its 216 px floor so the two-column
-    // desktop body still starts on an even line.
-    return Material(
-      color: palette.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: AppRadius.card,
-        side: BorderSide(color: palette.border),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () {
-          final openServer = onOpenServer;
-          if (openServer != null) {
-            openServer(server);
-          } else {
-            onOpenServers();
-          }
-        },
-        child: Container(
-          constraints: BoxConstraints(minHeight: expanded ? 216 : 0),
-          padding: EdgeInsets.all(expanded ? AppSpacing.xl : AppRhythm.title),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
+    // Refine-look R2 + R3: Start's ONE lead block. The lit block finish
+    // with a 240 px corner tint in the server's identity hue at the top-end
+    // corner — fixed in pixels, so at 1440 it lights the empty right half of
+    // the wide card instead of washing the whole of it. The phone
+    // composition is sized by its content; the wide one keeps its 216 px
+    // floor so the two-column desktop body still starts on an even line.
+    return YoCard(
+      tint: ServerIdentity.of(server.type).primary,
+      minHeight: expanded ? 216 : null,
+      padding: EdgeInsets.all(expanded ? AppSpacing.xl : AppRhythm.title),
+      onTap: () {
+        final openServer = onOpenServer;
+        if (openServer != null) {
+          openServer(server);
+        } else {
+          onOpenServers();
+        }
+      },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: expanded ? MainAxisSize.max : MainAxisSize.min,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  YoServerTile(
-                    initial: server.initial,
-                    type: server.type,
-                    size: expanded ? 56 : 48,
-                    textStyle: AppTypography.titleLarge.copyWith(
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(width: AppRhythm.item),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          copy.serverTypeTitle(server.type),
-                          style: AppTypography.labelMedium.copyWith(
-                            color: visuals.foreground,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        Text(
-                          server.name,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style:
-                              (expanded
-                                      ? AppTypography.headlineSmall
-                                      : AppTypography.titleLarge)
-                                  .copyWith(
-                                    color: palette.textPrimary,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppRhythm.item),
-              Text(
-                server.description.trim().isEmpty
-                    ? copy.serverTypeDescription(server.type)
-                    : server.description,
-                maxLines: expanded ? 3 : 2,
-                overflow: TextOverflow.ellipsis,
-                style: AppTypography.bodyMedium.copyWith(
-                  color: palette.textSecondary,
+              YoServerTile(
+                initial: server.initial,
+                type: server.type,
+                size: expanded ? 56 : 48,
+                textStyle: AppTypography.titleLarge.copyWith(
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(height: AppRhythm.item),
-              Row(
-                children: [
-                  Icon(
-                    server.isHeld
-                        ? Icons.schedule_rounded
-                        : Icons.forum_outlined,
-                    size: 18,
-                    color: visuals.foreground,
-                  ),
-                  const SizedBox(width: AppRhythm.tight),
-                  Expanded(
-                    child: Text(
-                      status,
-                      style: AppTypography.labelLarge.copyWith(
-                        color: palette.textPrimary,
+              const SizedBox(width: AppRhythm.item),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      copy.serverTypeTitle(server.type),
+                      style: AppTypography.labelMedium.copyWith(
+                        color: visuals.foreground,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
-                  Icon(
-                    Icons.arrow_forward_rounded,
-                    size: 22,
-                    color: palette.textSecondary,
-                  ),
-                ],
+                    Text(
+                      server.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTypography.headlineSmall.copyWith(
+                        color: palette.textPrimary,
+                        fontSize: expanded ? 22 : 20,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -.3,
+                        height: 1.2,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
-        ),
+          const SizedBox(height: AppRhythm.item),
+          Text(
+            server.description.trim().isEmpty
+                ? copy.serverTypeDescription(server.type)
+                : server.description,
+            maxLines: expanded ? 3 : 2,
+            overflow: TextOverflow.ellipsis,
+            style: AppTypography.bodyMedium.copyWith(
+              color: palette.textSecondary,
+            ),
+          ),
+          const SizedBox(height: AppRhythm.item),
+          Row(
+            children: [
+              Icon(
+                server.isHeld ? Icons.schedule_rounded : Icons.forum_outlined,
+                size: 18,
+                color: visuals.foreground,
+              ),
+              const SizedBox(width: AppRhythm.tight),
+              Expanded(
+                child: Text(
+                  status,
+                  style: AppTypography.labelLarge.copyWith(
+                    color: palette.textPrimary,
+                  ),
+                ),
+              ),
+              // The way in, as a quiet identity disc. Decorative: the whole
+              // card is the one button, so the disc adds no second node.
+              ExcludeSemantics(
+                child: Container(
+                  key: const ValueKey('home-server-continue-arrow'),
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: visuals.iconSurface,
+                    border: Border.all(color: visuals.iconBorder),
+                  ),
+                  child: Icon(
+                    Icons.arrow_forward_rounded,
+                    size: 20,
+                    color: visuals.foreground,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -303,17 +309,16 @@ class _ServerEmptyCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    return Container(
-      constraints: BoxConstraints(minHeight: expanded ? 216 : 0),
+    // With no server yet, the invitation is Start's lead block: the brand
+    // violet in the corner, and the screen's one lifted action.
+    return YoCard(
+      tint: AppColors.primary,
+      minHeight: expanded ? 216 : null,
       padding: EdgeInsets.all(expanded ? AppSpacing.xl : AppRhythm.title),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: AppRadius.card,
-        border: Border.all(color: palette.border),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: expanded ? MainAxisSize.max : MainAxisSize.min,
         children: [
           Icon(Icons.hub_outlined, color: palette.interactiveForeground),
           const SizedBox(height: AppRhythm.item),
@@ -324,7 +329,8 @@ class _ServerEmptyCard extends StatelessWidget {
             ),
             style: AppTypography.titleLarge.copyWith(
               color: palette.textPrimary,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -.2,
             ),
           ),
           const SizedBox(height: AppRhythm.tight),
@@ -338,14 +344,16 @@ class _ServerEmptyCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: AppRhythm.item),
-          FilledButton.icon(
+          YoGradientFilledButton(
             key: const ValueKey('home-empty-create-server'),
             onPressed: onOpenServers,
-            style: FilledButton.styleFrom(
-              minimumSize: const Size(0, AppSizing.minimumTouchTarget),
+            minimumSize: const Size(0, AppSizing.minimumTouchTarget),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppRhythm.title,
+              vertical: AppRhythm.tight,
             ),
             icon: const Icon(Icons.add_rounded),
-            label: Text(copy.homeCreateServer),
+            child: Text(copy.homeCreateServer),
           ),
         ],
       ),
@@ -358,22 +366,15 @@ class _ServerLoadingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
     return Semantics(
       label: copy.text('Loading servers', 'Wczytywanie serwerów'),
-      // A calm placeholder in the card's slim shape (radius 12, 1 px
-      // hairline). The indicator stays: it is the one moving signal that
-      // the directory is still on its way.
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 164),
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: AppRadius.card,
-          border: Border.all(color: palette.border),
-        ),
-        alignment: Alignment.center,
-        child: const CircularProgressIndicator(strokeWidth: 2.4),
+      // A calm placeholder in the block's shape, without a tint (a tint is a
+      // claim about a server that has not arrived). The indicator stays: it
+      // is the one moving signal that the directory is still on its way.
+      child: const YoCard(
+        minHeight: 164,
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2.4)),
       ),
     );
   }
@@ -411,7 +412,7 @@ class _ServerRow extends StatelessWidget {
               type: server.type,
               size: _tile,
               textStyle: AppTypography.titleMedium.copyWith(
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(width: AppRhythm.item),

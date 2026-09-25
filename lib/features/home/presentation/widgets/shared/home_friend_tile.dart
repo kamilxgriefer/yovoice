@@ -11,6 +11,7 @@ import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart'
     show MomentStoryTile;
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -228,41 +229,49 @@ class HomeFriendTile extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.deferToChild,
         onLongPress: onOpenProfile,
-        child: PeopleTileInk(
-          onTap: tapsVoice ? () => onOpenVoice!(content.chain) : onOpenProfile,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _disc(context, palette: palette, content: content),
-              const SizedBox(height: AppRhythm.tight),
-              SizedBox(
-                width: columnWidth,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
+        // Refine-look §8.1: a small, honest .97 settle on touch around the
+        // rail's existing ink. It listens to raw pointers only, so the tap,
+        // the long-press and the focus ring are exactly as before.
+        child: YoPressFeedback(
+          scale: YoPressFeedback.tile,
+          child: PeopleTileInk(
+            onTap: tapsVoice
+                ? () => onOpenVoice!(content.chain)
+                : onOpenProfile,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _disc(context, palette: palette, content: content),
+                const SizedBox(height: AppRhythm.tight),
+                SizedBox(
+                  width: columnWidth,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    _StatusLine(
-                      label: content == null
-                          ? presenceWord
-                          : 'Voice ${content.durationLabel}',
-                      foreground: palette.textSecondary,
-                      showCaret: showChangeCaret,
-                    ),
-                  ],
+                      const SizedBox(height: 2),
+                      _StatusLine(
+                        label: content == null
+                            ? presenceWord
+                            : 'Voice ${content.durationLabel}',
+                        foreground: palette.textSecondary,
+                        showCaret: showChangeCaret,
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -297,12 +306,15 @@ class HomeFriendTile extends StatelessWidget {
             // 2 px ring + 2 px gap on each side: the disc stays discSize.
             child: Padding(
               padding: const EdgeInsets.all(4),
+              // The one brand letter-avatar (refine-look R10): no coin-flat
+              // discs, no per-person hues. The ring language is unchanged.
               child: UserAvatar(
                 radius: avatarRadius,
                 userId: userId,
                 photoUrl: photoUrl,
                 mediaRevision: mediaRevision,
                 displayName: displayName,
+                finish: UserAvatarFinish.brand,
               ),
             ),
           ),
