@@ -210,7 +210,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(calls.single.name, 'sendFriendRequest');
-    expect(calls.single.data, {'targetUserId': 'riley'});
+    expect(calls.single.data, {
+      'targetUserId': 'riley',
+      'acceptIncoming': false,
+    });
     expect(
       find.descendant(of: card, matching: find.text('Sent')),
       findsOneWidget,
@@ -249,7 +252,16 @@ void main() {
 
     expect(find.text('Friends'), findsWidgets);
     expect(find.text('Sent'), findsNothing);
-    expect(find.text('You and Riley are now friends.'), findsOneWidget);
+    // "accepted" in reply to acceptIncoming: false can only come from an
+    // older Functions deployment; it is named, not shown as plain success.
+    expect(find.text('You and Riley are now friends.'), findsNothing);
+    expect(
+      find.text(
+        'Riley had already sent you a request, so you are now friends. '
+        'You can remove them from their profile.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('a failed send restores the action and never claims success', (

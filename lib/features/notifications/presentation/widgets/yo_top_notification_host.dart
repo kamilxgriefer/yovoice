@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 
 /// Presentation only. Delivery, privacy, deduplication and navigation authority
@@ -20,13 +21,21 @@ class YoTopNotification {
     this.body,
     this.leading,
     this.source,
+    this.decision,
   });
 
   final String title;
   final String? body;
   final NotificationType type;
+
+  /// Opens the destination. For a decision card (a friend request) this is
+  /// the request list — it never answers the request.
   final VoidCallback onOpen;
   final Widget? leading;
+
+  /// An explicit, labelled Accept / Decline pair shown on the card itself.
+  /// Only the two buttons answer; the card body and "View request" open.
+  final YoTopNotificationDecision? decision;
 
   /// Presentation owner only; not a delivery/deduplication identifier.
   /// Lets a retiring route clear its own card without dismissing a newer one.
@@ -34,6 +43,26 @@ class YoTopNotification {
 
   bool get isAchievement => type == NotificationType.achievementUnlocked;
   Duration get duration => Duration(seconds: isAchievement ? 2 : 5);
+}
+
+/// The labelled Accept / Decline pair a foreground card can carry.
+///
+/// Each handler performs the call and returns the feedback line the card
+/// shows in its place (for example "You and Ada are now friends."). A thrown
+/// error becomes a generic failure line; the choice is never silently lost.
+@immutable
+class YoTopNotificationDecision {
+  const YoTopNotificationDecision({
+    required this.onAccept,
+    required this.onDecline,
+    this.subjectName,
+  });
+
+  final Future<String> Function(AppLocalizations copy) onAccept;
+  final Future<String> Function(AppLocalizations copy) onDecline;
+
+  /// Who is asking, for the buttons' spoken labels.
+  final String? subjectName;
 }
 
 /// An accepted show is immediately owned by the mounted foreground host.
@@ -50,7 +79,7 @@ class YoTopNotificationController {
   /// Privacy/session boundaries bypass exit animation and cancel every timer.
   void clear({Object? source}) {
     if (source != null && _host?._notification?.source != source) return;
-    _host?._clear();
+    _host?._clear(boundary: true);
   }
 
   void dispose() {
@@ -108,6 +137,30 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
   bool _foreground = true;
   bool _hasSpace = false;
 
+  /// The decision in flight on the current card (true = Accept), or null.
+  /// It belongs to the card on screen: swapping or clearing the card resets
+  /// it, so a newer card is never left busy by an older card's call.
+  bool? _decisionBusy;
+
+  /// Whether the current card's Accept / Decline take input yet. A card
+  /// slides in unrequested near the app bar, so a tap aimed at the app as it
+  /// arrives must never answer a friend request: the pair arms only once the
+  /// entrance has settled plus [_decisionArmDelay].
+  bool _decisionArmed = false;
+  Timer? _armTimer;
+  static const _decisionArmDelay = Duration(milliseconds: 500);
+
+  /// Bumped by every privacy/session/lifecycle clear. A decision that
+  /// finishes across one says nothing: the next account or a backgrounded
+  /// app must never see the previous answer.
+  int _boundary = 0;
+
+  /// The result of a decision whose card was replaced by a newer
+  /// notification while the call ran. It is shown once that newer card
+  /// closes, so the answer is never silently lost and the newer card is
+  /// never cut short.
+  YoTopNotification? _deferredFeedback;
+
   double _topInset(MediaQueryData media) =>
       math.max(media.padding.top, media.viewPadding.top) + 10;
 
@@ -147,7 +200,7 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller._host = null;
-      _clear();
+      _clear(boundary: true);
       widget.controller._host = this;
       _notifyReadyAfterFrame();
     }
@@ -173,7 +226,7 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
       _scheduleDismissal();
     }
     if (!_hasSpace) {
-      _clear();
+      _clear(boundary: true);
     } else if (!previousHasSpace) {
       _notifyReadyAfterFrame();
     }
@@ -183,7 +236,7 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = _isForeground(state);
     if (!_foreground) {
-      _clear();
+      _clear(boundary: true);
     } else {
       _notifyReadyAfterFrame();
     }
@@ -211,14 +264,37 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
     setState(() {
       _notification = notification;
       _closing = false;
+      // Any decision still running belonged to the card being replaced.
+      _decisionBusy = null;
+      _decisionArmed = false;
     });
     if (_reducedMotion) {
       _motion.value = 1;
     } else {
       _motion.forward(from: 0);
     }
+    _armDecision();
     _scheduleDismissal();
     return true;
+  }
+
+  /// Arms the current card's Accept / Decline once it has settled: the
+  /// entrance (none under reduced motion) plus [_decisionArmDelay].
+  void _armDecision() {
+    _armTimer?.cancel();
+    _armTimer = null;
+    if (_notification?.decision == null) return;
+    final generation = _generation;
+    final entrance = _reducedMotion
+        ? Duration.zero
+        : _motion.duration ?? Duration.zero;
+    _armTimer = Timer(entrance + _decisionArmDelay, () {
+      _armTimer = null;
+      if (!mounted || generation != _generation || _notification == null) {
+        return;
+      }
+      setState(() => _decisionArmed = true);
+    });
   }
 
   void _scheduleDismissal() {
@@ -230,7 +306,8 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
         !_foreground ||
         _accessibleNavigation ||
         _hovered ||
-        _focused) {
+        _focused ||
+        _decisionBusy != null) {
       return;
     }
     final generation = _generation;
@@ -332,21 +409,52 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
     if (status == AnimationStatus.dismissed && _closing) _clear();
   }
 
-  void _clear() {
+  /// [boundary] marks a privacy/session/lifecycle clear: it also drops any
+  /// deferred decision result and silences decisions still in flight. A
+  /// card that simply closed (timer, Close, Escape, Open) is not a boundary,
+  /// and a deferred result is shown once it has gone.
+  void _clear({bool boundary = false}) {
     _generation++;
+    if (boundary) {
+      _boundary++;
+      _deferredFeedback = null;
+    }
     // External/session/lifecycle clears and Open deliberately do not restore
     // old-route focus. The destination/auth boundary owns its next focus.
     _returnFocus = null;
     _dismissTimer?.cancel();
     _dismissTimer = null;
+    _armTimer?.cancel();
+    _armTimer = null;
     _motion.stop();
-    if (_notification == null) return;
-    setState(() {
-      _notification = null;
-      _closing = false;
-      _hovered = false;
-      _focused = false;
+    if (_notification != null) {
+      setState(() {
+        _notification = null;
+        _closing = false;
+        _hovered = false;
+        _focused = false;
+        _decisionBusy = null;
+        _decisionArmed = false;
+      });
+    }
+    _showDeferredFeedbackAfterFrame();
+  }
+
+  void _showDeferredFeedbackAfterFrame() {
+    final pending = _deferredFeedback;
+    if (pending == null || _notification != null) return;
+    _deferredFeedback = null;
+    final boundary = _boundary;
+    // _clear can run inside a build (didChangeDependencies); show after it.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || boundary != _boundary) return;
+      if (_notification != null) {
+        _deferredFeedback ??= pending;
+        return;
+      }
+      _show(pending);
     });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   void _open(YoTopNotification notification) {
@@ -355,10 +463,63 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
     notification.onOpen();
   }
 
+  /// Runs one Accept / Decline, then replaces the card with its result. The
+  /// card stays up (no timer) while the call is in flight. If the card was
+  /// closed meanwhile the result is shown on its own; if a newer banner
+  /// replaced it, the result waits until that banner closes. Across a
+  /// privacy/session boundary (sign-out, background) it shows nothing.
+  Future<void> _decide(YoTopNotification notification, bool accept) async {
+    final decision = notification.decision;
+    if (decision == null ||
+        _notification != notification ||
+        _closing ||
+        !_decisionArmed ||
+        _decisionBusy != null) {
+      return;
+    }
+    final copy = AppLocalizations.of(context);
+    final boundary = _boundary;
+    setState(() => _decisionBusy = accept);
+    _scheduleDismissal();
+    String feedback;
+    try {
+      feedback = await (accept ? decision.onAccept : decision.onDecline)(copy);
+    } catch (_) {
+      feedback = copy.text(
+        'Could not answer this request. Open it to try again.',
+        'Nie udało się odpowiedzieć na zaproszenie. Otwórz je i spróbuj '
+            'ponownie.',
+      );
+    }
+    if (!mounted || boundary != _boundary) return;
+    final result = YoTopNotification(
+      title: feedback,
+      type: notification.type,
+      onOpen: notification.onOpen,
+      leading: notification.leading,
+      source: notification.source,
+    );
+    if (_notification == notification) {
+      // _show swaps the card and resets the busy flag in one setState.
+      if (!_show(result)) _clear();
+      return;
+    }
+    // The card is gone, and its busy flag went with it (_show / _clear).
+    if (_notification == null) {
+      // Closed by hand while the call ran: still say what happened. With no
+      // room or no foreground the request list carries the state.
+      _show(result);
+    } else {
+      _deferredFeedback = result;
+    }
+  }
+
   @override
   void dispose() {
     _generation++;
     _dismissTimer?.cancel();
+    _armTimer?.cancel();
+    _deferredFeedback = null;
     _notification = null;
     if (widget.controller._host == this) widget.controller._host = null;
     WidgetsBinding.instance.removeObserver(this);
@@ -415,7 +576,12 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
                               math.min(
                                 360,
                                 math.max(
-                                  _minimumHeight(media),
+                                  _minimumHeight(media) +
+                                      (notification.decision != null &&
+                                              availableHeight >=
+                                                  _minimumHeight(media) + 52
+                                          ? 52
+                                          : 0),
                                   availableHeight * .65,
                                 ),
                               ),
@@ -460,6 +626,18 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
                                     showKeyboardHint: showKeyboardHint,
                                     onOpen: () => _open(notification),
                                     onClose: _dismissFromInteraction,
+                                    decisionBusy: _decisionBusy,
+                                    decisionArmed: _decisionArmed,
+                                    // A decision card needs one more 52 px
+                                    // row; without that room it degrades to
+                                    // "View request", never to a lone button.
+                                    showDecision:
+                                        notification.decision != null &&
+                                        availableHeight >=
+                                            _minimumHeight(media) + 52,
+                                    onDecide: (accept) => unawaited(
+                                      _decide(notification, accept),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -488,11 +666,22 @@ class _NotificationCard extends StatelessWidget {
     required this.openFocus,
     required this.scrollController,
     required this.showKeyboardHint,
+    this.decisionBusy,
+    this.decisionArmed = true,
+    this.showDecision = false,
+    this.onDecide,
   });
 
   final YoTopNotification notification;
   final VoidCallback onOpen;
   final VoidCallback onClose;
+  final bool? decisionBusy;
+
+  /// False while the card is still arriving: the pair is drawn but takes no
+  /// pointer or semantics action yet.
+  final bool decisionArmed;
+  final bool showDecision;
+  final ValueChanged<bool>? onDecide;
   final int contentRevision;
   final FocusNode closeFocus;
   final FocusNode openFocus;
@@ -650,6 +839,24 @@ class _NotificationCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (showDecision && onDecide != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: IgnorePointer(
+                    key: const ValueKey('yo-top-notification-decision-guard'),
+                    ignoring: !decisionArmed,
+                    child: FriendRequestDecisionButtons(
+                      acceptKey: const ValueKey('yo-top-notification-accept'),
+                      declineKey: const ValueKey('yo-top-notification-decline'),
+                      name: notification.decision?.subjectName,
+                      dense: true,
+                      busyAccept: decisionBusy == true,
+                      busyDecline: decisionBusy == false,
+                      onAccept: () => onDecide!(true),
+                      onDecline: () => onDecide!(false),
+                    ),
+                  ),
+                ),
               Row(
                 children: [
                   if (showKeyboardHint)
@@ -687,7 +894,11 @@ class _NotificationCard extends StatelessWidget {
                         onPressed: onOpen,
                         iconAlignment: IconAlignment.end,
                         icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-                        label: Text(copy.text('Open', 'Otwórz')),
+                        label: Text(
+                          notification.decision != null
+                              ? copy.text('View request', 'Zobacz zaproszenie')
+                              : copy.text('Open', 'Otwórz'),
+                        ),
                         style: ButtonStyle(
                           visualDensity: VisualDensity.standard,
                           foregroundColor: WidgetStatePropertyAll(

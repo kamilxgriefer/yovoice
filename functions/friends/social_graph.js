@@ -1049,9 +1049,29 @@ const getFriendSuggestions = onCall(
 );
 
 /**
- * Creates a request, or accepts the other party's existing request. Every
- * mirror, counter and notification is part of one Admin transaction; clients
- * cannot pick persisted identity fields or timestamps.
+ * Whether a send may turn the other party's pending request into a
+ * friendship. Absent means true: every installed client predates the flag and
+ * keeps today's reciprocal behaviour. A client that sends `false` never makes
+ * a friendship through "Add friend"; it gets `incomingPending` and asks the
+ * user with an explicit Accept / Decline instead.
+ */
+function acceptIncomingFrom(request) {
+  const value = request.data?.acceptIncoming;
+  if (value === undefined || value === null) return true;
+  if (typeof value !== "boolean") {
+    throw new HttpsError(
+      "invalid-argument",
+      "acceptIncoming must be a boolean.",
+    );
+  }
+  return value;
+}
+
+/**
+ * Creates a request, or — only for callers that allow it — accepts the other
+ * party's existing request. Every mirror, counter and notification is part of
+ * one Admin transaction; clients cannot pick persisted identity fields or
+ * timestamps.
  */
 const sendFriendRequest = onCall(
   { region: REGION, enforceAppCheck: false },
@@ -1060,6 +1080,7 @@ const sendFriendRequest = onCall(
     await consumeSocialRateLimit(auth.uid, "mutation");
     requireVerified(auth);
     const targetUserId = targetIdFrom(request);
+    const acceptIncoming = acceptIncomingFrom(request);
     if (targetUserId === auth.uid) {
       throw new HttpsError("invalid-argument", "You cannot add yourself.");
     }
@@ -1219,6 +1240,12 @@ const sendFriendRequest = onCall(
             "data-loss",
             "The pending friend request is not canonical.",
           );
+        }
+        if (!acceptIncoming) {
+          // A friendship is a consent decision. "Add friend" on someone who
+          // already asked must not answer for the user: nothing is written,
+          // and the client shows an explicit Accept / Decline prompt.
+          return { outcome: "incomingPending", changed: false };
         }
         const timestamp = FieldValue.serverTimestamp();
         requireCapacity(
