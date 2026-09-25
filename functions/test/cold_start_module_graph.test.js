@@ -90,7 +90,11 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 261 names.
+// Every export of functions/index.js, sorted. 264 names.
+// 2026-09-25 (account-takeover Phase 1): onAuthUserCreated,
+// secureFederatedSignInV1 and sweepFederatedTakeoverSchedule join the map —
+// the unverified-password ledger trigger, the owner's post-sign-in
+// remediation callable and its sweeper backstop.
 // 2026-09-19 (ADR-213): onMomentCommentCreated/Deleted,
 // onReelCommentCreated/Deleted and sendServerEventRemindersSchedule join the
 // map — the comment-notification triggers and the Server event reminder
@@ -233,6 +237,7 @@ const EXPORT_NAMES = Object.freeze([
   "onAchievementRoomMemberCreated",
   "onAchievementRoomMessageCreated",
   "onAchievementUserSocialCountersChanged",
+  "onAuthUserCreated",
   "onAuthUserDeleted",
   "onClubInviteCreated",
   "onClubMemberCreated",
@@ -306,6 +311,7 @@ const EXPORT_NAMES = Object.freeze([
   "searchGifs",
   "searchPublicProfiles",
   "searchUserDirectory",
+  "secureFederatedSignInV1",
   "selectMyAchievementTitle",
   "sendClubInvite",
   "sendClubMessage",
@@ -346,6 +352,7 @@ const EXPORT_NAMES = Object.freeze([
   "startRoomVoice",
   "startServerChannelSessionV1",
   "sweepExpiredServerInvitesSchedule",
+  "sweepFederatedTakeoverSchedule",
   "sweepServerCompanyFileMaintenanceSchedule",
   "sweepServerFamilyMemoryMaintenanceSchedule",
   "sweepStaleServerChannelSessionsSchedule",

@@ -3,8 +3,8 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "test": "node rules.test.js && node premium_messaging_privacy_rules.test.js",
-    "test:storage": "node storage.test.js",
+    "test": "node rules.test.js && node premium_messaging_privacy_rules.test.js && node account_takeover_rules.test.js",
+    "test:storage": "node storage.test.js && node account_takeover_storage.test.js",
     "test:family-media": "node family-media.test.js",
     "test:servers": "node server_rules.test.js",
     "test:notification-engagement": "node notification_engagement_rules.test.js",
