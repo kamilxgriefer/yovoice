@@ -90,14 +90,18 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 261 names.
+// Every export of functions/index.js, sorted. 267 names.
 // 2026-09-19 (ADR-213): onMomentCommentCreated/Deleted,
 // onReelCommentCreated/Deleted and sendServerEventRemindersSchedule join the
 // map — the comment-notification triggers and the Server event reminder
 // worker. 2026-09-19 (ADR-180 amendment): releaseServerChannelSessionIfEmptyV1
 // joins it too. 2026-09-19: the Server channel media and reaction callables
-// join it as well. Extending this list is the deliberate review step the
-// header describes, not a drive-by edit.
+// join it as well. 2026-09-25 (in-app bug reports): submitBugReportV1,
+// attachBugReportScreenshotV1, listBugReportsV1, getBugReportV1,
+// updateBugReportStatusV1 and sweepBugReportRetentionSchedule join it (261 +
+// 6 = 267). `deliverBugReportV1` is NOT in it: both of its delivery channels
+// are source-gated off in index.js. Extending this list is the deliberate
+// review step the header describes, not a drive-by edit.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
@@ -107,6 +111,7 @@ const EXPORT_NAMES = Object.freeze([
   "applySanction",
   "archiveServerChannelV1",
   "assignUserRole",
+  "attachBugReportScreenshotV1",
   "bootstrapSuperAdmin",
   "cancelDirectCall",
   "cancelFriendRequest",
@@ -183,6 +188,7 @@ const EXPORT_NAMES = Object.freeze([
   "getAdminDashboard",
   "getAdminRoom",
   "getAuditLogFilters",
+  "getBugReportV1",
   "getFriendSuggestions",
   "getGifCatalog",
   "getMutualFriends",
@@ -210,6 +216,7 @@ const EXPORT_NAMES = Object.freeze([
   "listAdminClubs",
   "listAdminRooms",
   "listAdminUsers",
+  "listBugReportsV1",
   "listReels",
   "listReelsV2",
   "listReportAuditTrail",
@@ -345,6 +352,8 @@ const EXPORT_NAMES = Object.freeze([
   "startDirectCall",
   "startRoomVoice",
   "startServerChannelSessionV1",
+  "submitBugReportV1",
+  "sweepBugReportRetentionSchedule",
   "sweepExpiredServerInvitesSchedule",
   "sweepServerCompanyFileMaintenanceSchedule",
   "sweepServerFamilyMemoryMaintenanceSchedule",
@@ -354,6 +363,7 @@ const EXPORT_NAMES = Object.freeze([
   "transferClubOwnershipSelf",
   "transferServerOwnershipV1",
   "undoServerWhiteboardStrokeV1",
+  "updateBugReportStatusV1",
   "updateMyDisplayName",
   "updateServerChannelV1",
   "updateServerEventV1",

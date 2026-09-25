@@ -4982,5 +4982,22 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // In-app bug reports. One path in (submitBugReportV1 /
+    // attachBugReportScreenshotV1, Admin SDK) and one path out (the protected
+    // owner's listBugReportsV1 / getBugReportV1). A report holds the
+    // reporter's own words and uid, so NO client — the reporter, staff or the
+    // owner — reads or writes it directly, and no collectionGroup() query
+    // reads either collection. The upload reservation is read only by
+    // storage.rules' cross-service firestore.get(), which these rules do not
+    // govern. Default-deny already covers both; stated out loud so a later
+    // wildcard cannot silently widen them.
+    match /bugReports/{reportId} {
+      allow read, write: if false;
+    }
+
+    match /bugReportUploadReservations/{reportId} {
+      allow read, write: if false;
+    }
+
   }
 }

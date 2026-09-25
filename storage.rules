@@ -603,6 +603,62 @@ service firebase.storage {
       allow update, delete: if false;
     }
 
+    // In-app bug report screenshots. The upload capability is ONE live,
+    // server-issued reservation (bugReportUploadReservations/{reportId},
+    // written only by submitBugReportV1 after its rate limits); the path alone
+    // grants nothing. Exactly one JPEG of 128 B-1.5 MB, named after the
+    // report, with exactly the reserved metadata. The reservation is the
+    // second and last cross-service document (the first is the account-status
+    // read). E-mail verification is deliberately NOT required: a tester stuck
+    // before verification must be able to report, and the server-side rate
+    // limit on reservations bounds the surface. The owner reads the bytes only
+    // through getBugReportV1's 5-minute generation-bound V4 URL; the uploader
+    // may read their own object back only while the reservation is live
+    // (upload recovery). Nobody lists, updates or deletes.
+    match /bug_reports/{userId}/{fileName} {
+      function reservationPath(metadata) {
+        return /databases/(default)/documents/bugReportUploadReservations/$(metadata.get('yovoiceReportId', ''));
+      }
+
+      function exactReservedScreenshot(size, contentType, metadata) {
+        let reportId = metadata.get('yovoiceReportId', '');
+        let path = reservationPath(metadata);
+        let reservation = firestore.get(path).data;
+        return metadata.keys().hasOnly(['yovoiceOwnerUid', 'yovoiceReportId']) &&
+            metadata.get('yovoiceOwnerUid', '') == userId &&
+            reportId.matches('br_[a-f0-9]{40}') &&
+            fileName == reportId + '.jpg' &&
+            contentType == 'image/jpeg' &&
+            size >= 128 && size <= 1500000 &&
+            firestore.exists(path) &&
+            reservation.keys().hasOnly([
+              'schemaVersion', 'kind', 'reportId', 'ownerId', 'contentType',
+              'size', 'storagePath', 'status', 'createdAt', 'expiresAt'
+            ]) &&
+            reservation.schemaVersion == 1 &&
+            reservation.kind == 'bugReportScreenshot' &&
+            reservation.reportId == reportId &&
+            reservation.ownerId == userId &&
+            reservation.storagePath == 'bug_reports/' + userId + '/' + fileName &&
+            reservation.contentType == contentType &&
+            reservation.size == size &&
+            reservation.status == 'uploading' &&
+            reservation.expiresAt is timestamp &&
+            reservation.expiresAt > request.time;
+      }
+
+      allow get: if isActiveUser(userId) && resource != null &&
+          exactReservedScreenshot(resource.size, resource.contentType, resource.metadata);
+      allow list: if false;
+      allow create: if resource == null && isActiveUser(userId) &&
+          exactReservedScreenshot(
+            request.resource.size,
+            request.resource.contentType,
+            request.resource.metadata
+          );
+      allow update, delete: if false;
+    }
+
     // Podcast Egress writes directly through its dedicated, least-privilege
     // GCS service account. Firebase clients never upload or read these MP3s;
     // playback is a short-lived, generation-bound signed URL issued only

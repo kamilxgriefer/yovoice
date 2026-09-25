@@ -123,8 +123,10 @@ const UID_KEYED_DOCUMENTS = Object.freeze([
 
 // Every Storage prefix owned by exactly one uid (storage.rules).
 //
-// storage.rules declares TWELVE top-level prefixes. Seven of them begin with a
-// uid, and those seven are this list. An eighth,
+// storage.rules declares THIRTEEN top-level prefixes. Eight of them carry the
+// uid as their first path segment after the prefix, and those eight are this
+// list (the eighth, bug_reports/{uid}/, holds in-app bug report screenshots).
+// A ninth,
 //
 //   server_message_media/{serverId}/{channelId}/{userId}/   (channel photos
 //                                                           and videos)
@@ -157,7 +159,7 @@ const UID_KEYED_DOCUMENTS = Object.freeze([
 //        neither uid nor uploader anywhere in the path or the object name.
 //        There is no uid-derived handle on it to delete.
 //
-// This list is therefore exactly seven fixed prefixes and nothing more. The
+// This list is therefore exactly eight fixed prefixes and nothing more. The
 // gap is tracked in docs/Bugs.md ("Account deletion leaves cross-container
 // Storage objects", 2026-09-18), mirrored in the public /delete-account
 // "what deleting your account does not do" section, and NO user-facing copy
@@ -173,6 +175,9 @@ function uidStoragePrefixes(uid) {
     `reels/${uid}/`,
     `message_attachments/${uid}/`,
     `clubs/${uid}/`,
+    // In-app bug report screenshots (functions/bug_reports). The reports
+    // themselves are deleted by the `records` stage.
+    `bug_reports/${uid}/`,
   ]);
 }
 
@@ -827,7 +832,45 @@ function createAccountDeletionStages({
       };
     }
 
+    if (step === 5) {
+      const outcome = await deleteBugReports(uid);
+      return {
+        done: false,
+        cursor: { step: outcome.complete ? 6 : 5 },
+        details: { bugReportsDeleted: outcome.removed },
+      };
+    }
+
     return { done: true, cursor: null, details: { step: "complete" } };
+  }
+
+  /**
+   * The account's in-app bug reports and any open screenshot reservation.
+   *
+   * Deleted, not re-keyed: unlike a safety report (retained as moderation
+   * evidence above), a bug report has no value to anybody once its reporter
+   * is gone, and its description is the reporter's own words. The screenshot
+   * objects live under bug_reports/{uid}/, which the `storage` stage has
+   * already swept by prefix.
+   */
+  async function deleteBugReports(uid) {
+    const [reports, reservations] = await Promise.all([
+      db.collection("bugReports").where("reporterId", "==", uid)
+        .limit(limits.reportPage).get(),
+      db.collection("bugReportUploadReservations").where("ownerId", "==", uid)
+        .limit(limits.reportPage).get(),
+    ]);
+    const documents = [...reports.docs, ...reservations.docs];
+    if (documents.length > 0) {
+      const batch = db.batch();
+      for (const document of documents) batch.delete(document.ref);
+      await batch.commit();
+    }
+    return {
+      removed: documents.length,
+      complete: reports.size < limits.reportPage &&
+        reservations.size < limits.reportPage,
+    };
   }
 
   // ------------------------------------------------------------------ auth
