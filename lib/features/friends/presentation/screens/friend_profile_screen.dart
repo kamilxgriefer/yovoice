@@ -16,6 +16,7 @@ import 'package:yovoice/features/calls/presentation/direct_call_launcher.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
+import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/moderation/data/services/report_service.dart';
@@ -130,6 +131,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
 
   /// Null while unknown. Starts as friends when the route vouches for it.
   FriendRelationshipStatus? _relationship;
+
+  /// True once the incoming-request panel has answered, so it stays to show
+  /// the result after [_relationship] leaves `requestReceived`.
+  bool _requestPanelAnswered = false;
 
   /// Which call slot is starting, so only the tapped tile shows progress.
   DirectCallMediaType? _startingCallType;
@@ -1000,6 +1005,36 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           },
         ),
       const SizedBox(height: 14),
+      // Someone who asked to be friends gets an explicit, labelled Accept /
+      // Decline here — never a single button, never a tap elsewhere.
+      if (!_isBlocked &&
+          (_relationship == FriendRelationshipStatus.requestReceived ||
+              _requestPanelAnswered)) ...[
+        measure(
+          FriendRequestResponsePanel(
+            key: const ValueKey('friend-profile-request-panel'),
+            senderId: widget.friend.id,
+            senderName: widget.friend.displayName,
+            friendService: _friendService,
+            profileMediaService: _profileMediaService,
+            showIdentity: false,
+            keyPrefix: 'friend-profile-request',
+            onResolved: (outcome) {
+              if (!mounted) return;
+              setState(() {
+                _requestPanelAnswered = true;
+                _relationship = switch (outcome) {
+                  FriendRequestResponseOutcome.accepted ||
+                  FriendRequestResponseOutcome.alreadyFriends =>
+                    FriendRelationshipStatus.friends,
+                  _ => FriendRelationshipStatus.none,
+                };
+              });
+            },
+          ),
+        ),
+        const SizedBox(height: 12),
+      ],
       if (_isBlocked)
         measure(
           Row(

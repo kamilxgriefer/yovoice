@@ -523,7 +523,10 @@ void main() {
 
     expect(calls, hasLength(1));
     expect(calls.single.name, 'sendFriendRequest');
-    expect(calls.single.data, {'targetUserId': 'creator'});
+    expect(calls.single.data, {
+      'targetUserId': 'creator',
+      'acceptIncoming': false,
+    });
     expect(find.text('Friends'), findsWidgets);
     expect(find.text('Requested'), findsNothing);
   });

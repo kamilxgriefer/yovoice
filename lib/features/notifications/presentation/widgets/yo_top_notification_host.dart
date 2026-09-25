@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 
 /// Presentation only. Delivery, privacy, deduplication and navigation authority
@@ -20,13 +21,21 @@ class YoTopNotification {
     this.body,
     this.leading,
     this.source,
+    this.decision,
   });
 
   final String title;
   final String? body;
   final NotificationType type;
+
+  /// Opens the destination. For a decision card (a friend request) this is
+  /// the request list — it never answers the request.
   final VoidCallback onOpen;
   final Widget? leading;
+
+  /// An explicit, labelled Accept / Decline pair shown on the card itself.
+  /// Only the two buttons answer; the card body and "View request" open.
+  final YoTopNotificationDecision? decision;
 
   /// Presentation owner only; not a delivery/deduplication identifier.
   /// Lets a retiring route clear its own card without dismissing a newer one.
@@ -34,6 +43,26 @@ class YoTopNotification {
 
   bool get isAchievement => type == NotificationType.achievementUnlocked;
   Duration get duration => Duration(seconds: isAchievement ? 2 : 5);
+}
+
+/// The labelled Accept / Decline pair a foreground card can carry.
+///
+/// Each handler performs the call and returns the feedback line the card
+/// shows in its place (for example "You and Ada are now friends."). A thrown
+/// error becomes a generic failure line; the choice is never silently lost.
+@immutable
+class YoTopNotificationDecision {
+  const YoTopNotificationDecision({
+    required this.onAccept,
+    required this.onDecline,
+    this.subjectName,
+  });
+
+  final Future<String> Function(AppLocalizations copy) onAccept;
+  final Future<String> Function(AppLocalizations copy) onDecline;
+
+  /// Who is asking, for the buttons' spoken labels.
+  final String? subjectName;
 }
 
 /// An accepted show is immediately owned by the mounted foreground host.
@@ -107,6 +136,9 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
   bool _accessibleNavigation = false;
   bool _foreground = true;
   bool _hasSpace = false;
+
+  /// The decision in flight on the current card (true = Accept), or null.
+  bool? _decisionBusy;
 
   double _topInset(MediaQueryData media) =>
       math.max(media.padding.top, media.viewPadding.top) + 10;
@@ -230,7 +262,8 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
         !_foreground ||
         _accessibleNavigation ||
         _hovered ||
-        _focused) {
+        _focused ||
+        _decisionBusy != null) {
       return;
     }
     final generation = _generation;
@@ -346,6 +379,7 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
       _closing = false;
       _hovered = false;
       _focused = false;
+      _decisionBusy = null;
     });
   }
 
@@ -353,6 +387,44 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
     if (_notification != notification || _closing) return;
     _clear();
     notification.onOpen();
+  }
+
+  /// Runs one Accept / Decline, then replaces the card with its result. The
+  /// card stays up (no timer) while the call is in flight, and a card that
+  /// was cleared meanwhile — sign-out, another banner — shows nothing.
+  Future<void> _decide(YoTopNotification notification, bool accept) async {
+    final decision = notification.decision;
+    if (decision == null ||
+        _notification != notification ||
+        _closing ||
+        _decisionBusy != null) {
+      return;
+    }
+    final copy = AppLocalizations.of(context);
+    setState(() => _decisionBusy = accept);
+    _scheduleDismissal();
+    String feedback;
+    try {
+      feedback = await (accept ? decision.onAccept : decision.onDecline)(copy);
+    } catch (_) {
+      feedback = copy.text(
+        'Could not answer this request. Open it to try again.',
+        'Nie udało się odpowiedzieć na zaproszenie. Otwórz je i spróbuj '
+            'ponownie.',
+      );
+    }
+    if (!mounted || _notification != notification) return;
+    _decisionBusy = null;
+    final shown = _show(
+      YoTopNotification(
+        title: feedback,
+        type: notification.type,
+        onOpen: notification.onOpen,
+        leading: notification.leading,
+        source: notification.source,
+      ),
+    );
+    if (!shown) _clear();
   }
 
   @override
@@ -415,7 +487,12 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
                               math.min(
                                 360,
                                 math.max(
-                                  _minimumHeight(media),
+                                  _minimumHeight(media) +
+                                      (notification.decision != null &&
+                                              availableHeight >=
+                                                  _minimumHeight(media) + 52
+                                          ? 52
+                                          : 0),
                                   availableHeight * .65,
                                 ),
                               ),
@@ -460,6 +537,17 @@ class _YoTopNotificationHostState extends State<YoTopNotificationHost>
                                     showKeyboardHint: showKeyboardHint,
                                     onOpen: () => _open(notification),
                                     onClose: _dismissFromInteraction,
+                                    decisionBusy: _decisionBusy,
+                                    // A decision card needs one more 52 px
+                                    // row; without that room it degrades to
+                                    // "View request", never to a lone button.
+                                    showDecision:
+                                        notification.decision != null &&
+                                        availableHeight >=
+                                            _minimumHeight(media) + 52,
+                                    onDecide: (accept) => unawaited(
+                                      _decide(notification, accept),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -488,11 +576,17 @@ class _NotificationCard extends StatelessWidget {
     required this.openFocus,
     required this.scrollController,
     required this.showKeyboardHint,
+    this.decisionBusy,
+    this.showDecision = false,
+    this.onDecide,
   });
 
   final YoTopNotification notification;
   final VoidCallback onOpen;
   final VoidCallback onClose;
+  final bool? decisionBusy;
+  final bool showDecision;
+  final ValueChanged<bool>? onDecide;
   final int contentRevision;
   final FocusNode closeFocus;
   final FocusNode openFocus;
@@ -650,6 +744,20 @@ class _NotificationCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (showDecision && onDecide != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: FriendRequestDecisionButtons(
+                    acceptKey: const ValueKey('yo-top-notification-accept'),
+                    declineKey: const ValueKey('yo-top-notification-decline'),
+                    name: notification.decision?.subjectName,
+                    dense: true,
+                    busyAccept: decisionBusy == true,
+                    busyDecline: decisionBusy == false,
+                    onAccept: () => onDecide!(true),
+                    onDecline: () => onDecide!(false),
+                  ),
+                ),
               Row(
                 children: [
                   if (showKeyboardHint)
@@ -687,7 +795,11 @@ class _NotificationCard extends StatelessWidget {
                         onPressed: onOpen,
                         iconAlignment: IconAlignment.end,
                         icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-                        label: Text(copy.text('Open', 'Otwórz')),
+                        label: Text(
+                          notification.decision != null
+                              ? copy.text('View request', 'Zobacz zaproszenie')
+                              : copy.text('Open', 'Otwórz'),
+                        ),
                         style: ButtonStyle(
                           visualDensity: VisualDensity.standard,
                           foregroundColor: WidgetStatePropertyAll(

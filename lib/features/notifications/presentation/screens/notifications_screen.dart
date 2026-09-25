@@ -11,8 +11,10 @@ import 'package:flutter/semantics.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
@@ -27,9 +29,6 @@ import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
-Color _notificationSuccess(BuildContext context) =>
-    context.appPalette.successForeground;
-
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({
     this.isRootTab = false,
@@ -40,6 +39,7 @@ class NotificationsScreen extends StatefulWidget {
     this.firestore,
     this.auth,
     this.acknowledgeOnVisible = true,
+    this.openNotification,
     super.key,
   });
 
@@ -73,6 +73,11 @@ class NotificationsScreen extends StatefulWidget {
   /// side effect while still exercising the production widgets.
   final bool acknowledgeOnVisible;
 
+  /// Test-only, like the services above: what a tap on a row's body does.
+  /// Production passes nothing and routes through [NotificationRouter],
+  /// which needs an initialised Firebase app a widget test does not have.
+  final Future<void> Function(AppNotification notification)? openNotification;
+
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
@@ -88,7 +93,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   late final Stream<List<FriendRequest>> _friendRequestsStream;
   late final Stream<List<Conversation>> _conversationsStream;
 
-  final Set<String> _processingRequestIds = <String>{};
+  /// senderId → the decision in flight (true = Accept, false = Decline).
+  /// One entry drives both the Friend requests card and the activity row for
+  /// the same person, so neither can start a second call.
+  final Map<String, bool> _processingRequests = <String, bool>{};
+
+  /// What an Accept / Decline on this screen resolved to, by senderId. The
+  /// server removes the request and its activity row in one transaction, but
+  /// the two streams do not update in the same frame; this keeps the row
+  /// honest ("You and Ada are now friends") instead of flashing a stale
+  /// state in between.
+  final Map<String, FriendRequestResponseOutcome> _resolvedRequests =
+      <String, FriendRequestResponseOutcome>{};
   int _notificationsLimit = 50;
   StreamSubscription<int>? _unreadCountSubscription;
   bool _isVisible = false;
@@ -160,23 +176,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  Future<void> _acceptRequest(FriendRequest request) async {
-    final copy = AppLocalizations.of(context);
-    await _processRequest(
-      request,
-      () => _friendService.acceptFriendRequest(request),
-      copy.text('Friend request accepted.', 'Zaproszenie zostało przyjęte.'),
-    );
-  }
+  Future<void> _acceptRequest(FriendRequest request) =>
+      _respondToRequest(request.senderId, request.senderName, accept: true);
 
-  Future<void> _declineRequest(FriendRequest request) async {
-    final copy = AppLocalizations.of(context);
-    await _processRequest(
-      request,
-      () => _friendService.declineFriendRequest(request.senderId),
-      copy.text('Friend request declined.', 'Zaproszenie zostało odrzucone.'),
-    );
-  }
+  Future<void> _declineRequest(FriendRequest request) =>
+      _respondToRequest(request.senderId, request.senderName, accept: false);
 
   /// The inbox answers "who is this?" the same way every other surface
   /// does. Injected services are forwarded when a test supplied them;
@@ -196,34 +200,38 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  Future<void> _processRequest(
-    FriendRequest request,
-    Future<void> Function() action,
-    String successMessage,
-  ) async {
-    if (_processingRequestIds.contains(request.senderId)) {
-      return;
-    }
-
-    setState(() => _processingRequestIds.add(request.senderId));
+  /// The one Accept / Decline path for this screen, from the Friend
+  /// requests card and from a friend-request activity row alike. The answer
+  /// shown is the server's: a request that was cancelled, answered on
+  /// another device or cut off by a block says so instead of failing.
+  Future<void> _respondToRequest(
+    String senderId,
+    String senderName, {
+    required bool accept,
+  }) async {
+    if (_processingRequests.containsKey(senderId)) return;
+    setState(() => _processingRequests[senderId] = accept);
 
     try {
-      await action();
-
-      if (!mounted) {
-        return;
-      }
-
-      _showMessage(successMessage);
+      final outcome = await _friendService.respondToFriendRequest(
+        senderId,
+        accept: accept,
+      );
+      if (!mounted) return;
+      setState(() => _resolvedRequests[senderId] = outcome);
+      _showMessage(
+        friendRequestResponseMessage(
+          AppLocalizations.of(context),
+          outcome,
+          name: senderName,
+        ),
+      );
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       _showMessage(_readableError(error), isError: true);
     } finally {
       if (mounted) {
-        setState(() => _processingRequestIds.remove(request.senderId));
+        setState(() => _processingRequests.remove(senderId));
       }
     }
   }
@@ -246,6 +254,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _openNotification(AppNotification notification) async {
+    final injected = widget.openNotification;
+    if (injected != null) return injected(notification);
     await NotificationRouter.route(
       type: notification.type,
       targetId: notification.targetId,
@@ -545,9 +555,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         if (index > 0) const SizedBox(height: 10),
                         _FriendRequestCard(
                           request: request,
-                          isProcessing: _processingRequestIds.contains(
-                            request.senderId,
-                          ),
+                          pendingDecision:
+                              _processingRequests[request.senderId],
                           onAccept: () => _acceptRequest(request),
                           onDecline: () => _declineRequest(request),
                           onOpenProfile: () =>
@@ -607,6 +616,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                             onTap: () => _openNotification(notification),
                             onDismissed: () =>
                                 _deleteNotification(notification),
+                            requestDecision: _requestDecisionFor(
+                              notification,
+                              requests: requests,
+                              requestsKnown:
+                                  friendSnapshot.hasData &&
+                                  !friendSnapshot.hasError,
+                            ),
                           ),
                           const SizedBox(height: 10),
                         ],
@@ -634,6 +650,43 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           },
         );
       },
+    );
+  }
+
+  /// The inline Accept / Decline state for a friend-request activity row,
+  /// or null for every other type. While the request list is still loading
+  /// (or failed) nothing is claimed either way.
+  _RequestDecision? _requestDecisionFor(
+    AppNotification notification, {
+    required List<FriendRequest> requests,
+    required bool requestsKnown,
+  }) {
+    if (notification.type != NotificationType.friendRequest) return null;
+    final senderId = notification.actorId;
+    if (senderId.isEmpty) return null;
+    final resolved = _resolvedRequests[senderId];
+    FriendRequest? pending;
+    for (final request in requests) {
+      if (request.senderId == senderId) {
+        pending = request;
+        break;
+      }
+    }
+    if (pending == null && resolved == null && !requestsKnown) return null;
+    final name = notification.actorName;
+    return _RequestDecision(
+      senderId: senderId,
+      pending: pending != null && resolved == null,
+      resolved:
+          resolved ??
+          (pending == null
+              ? FriendRequestResponseOutcome.noLongerAvailable
+              : null),
+      pendingDecision: _processingRequests[senderId],
+      onAccept: () =>
+          unawaited(_respondToRequest(senderId, name, accept: true)),
+      onDecline: () =>
+          unawaited(_respondToRequest(senderId, name, accept: false)),
     );
   }
 
@@ -757,14 +810,16 @@ class _ActivityHeader extends StatelessWidget {
 class _FriendRequestCard extends StatelessWidget {
   const _FriendRequestCard({
     required this.request,
-    required this.isProcessing,
+    required this.pendingDecision,
     required this.onAccept,
     required this.onDecline,
     required this.onOpenProfile,
   });
 
   final FriendRequest request;
-  final bool isProcessing;
+
+  /// The decision in flight for this sender, or null when idle.
+  final bool? pendingDecision;
   final VoidCallback onAccept;
   final VoidCallback onDecline;
   final VoidCallback onOpenProfile;
@@ -773,7 +828,6 @@ class _FriendRequestCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final name = request.senderName.trim().isNotEmpty
         ? request.senderName.trim()
         : copy.text('YO Voice user', 'Użytkownik YO Voice');
@@ -837,43 +891,24 @@ class _FriendRequestCard extends StatelessWidget {
         ),
       ],
     );
-    final controls = isProcessing
-        ? SizedBox(
-            width: 48,
-            height: 48,
-            child: Center(
-              child: SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.2,
-                  color: colors.primary,
-                ),
-              ),
-            ),
-          )
-        : Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                tooltip: copy.text('Decline', 'Odrzuć'),
-                onPressed: onDecline,
-                icon: Icon(Icons.close_rounded, color: colors.error),
-              ),
-              IconButton(
-                tooltip: copy.text('Accept', 'Przyjmij'),
-                onPressed: onAccept,
-                icon: Icon(
-                  Icons.check_rounded,
-                  color: _notificationSuccess(context),
-                ),
-              ),
-            ],
-          );
+    // Two labelled buttons, never an icon-only check and X: accepting is a
+    // consent decision, and the pair must read as one (ADR on explicit
+    // friend-request consent). They sit under the identity at every width,
+    // so both labels always fit and neither hides at the card's edge.
+    final controls = FriendRequestDecisionButtons(
+      acceptKey: ValueKey('notification-request-accept-${request.senderId}'),
+      declineKey: ValueKey('notification-request-decline-${request.senderId}'),
+      name: name,
+      busyAccept: pendingDecision == true,
+      busyDecline: pendingDecision == false,
+      onAccept: onAccept,
+      onDecline: onDecline,
+    );
 
     // A card because it groups its own actions; Slim flattens it to one
     // layer (1 px border, radius 12) with the 56–68 px row padding.
     return Container(
+      key: ValueKey('notification-request-card-${request.senderId}'),
       padding: _notificationCardPadding,
       decoration: BoxDecoration(
         color: palette.surface,
@@ -882,23 +917,25 @@ class _FriendRequestCard extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final useStacked =
-              MediaQuery.textScalerOf(context).scale(14) >= 21 &&
-              constraints.maxWidth < 500;
-          if (useStacked) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          // Wide rows keep the pair beside the identity, capped so it never
+          // stretches into a desktop-wide bar; narrow rows put it below.
+          final besideIdentity =
+              constraints.maxWidth >= 620 &&
+              MediaQuery.textScalerOf(context).scale(14) < 21;
+          if (besideIdentity) {
+            return Row(
               children: [
-                identity,
-                const SizedBox(height: 8),
-                Align(alignment: Alignment.centerRight, child: controls),
+                Expanded(child: identity),
+                const SizedBox(width: AppRhythm.item),
+                SizedBox(width: 320, child: controls),
               ],
             );
           }
-          return Row(
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(child: identity),
-              const SizedBox(width: 8),
+              identity,
+              const SizedBox(height: AppRhythm.item),
               controls,
             ],
           );
@@ -906,6 +943,29 @@ class _FriendRequestCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The inline response state of one friend-request activity row.
+class _RequestDecision {
+  const _RequestDecision({
+    required this.senderId,
+    required this.pending,
+    required this.resolved,
+    required this.pendingDecision,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  final String senderId;
+
+  /// The request still exists: offer Accept / Decline.
+  final bool pending;
+
+  /// What happened to it, when it no longer exists.
+  final FriendRequestResponseOutcome? resolved;
+  final bool? pendingDecision;
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
 }
 
 class _UnreadMessageCard extends StatelessWidget {
@@ -1012,11 +1072,18 @@ class _NotificationCard extends StatelessWidget {
     required this.notification,
     required this.onTap,
     required this.onDismissed,
+    this.requestDecision,
   });
 
   final AppNotification notification;
+
+  /// Opens the destination (for a friend request: the request list). It
+  /// never answers a request; only the labelled buttons below do.
   final VoidCallback onTap;
   final VoidCallback onDismissed;
+
+  /// Only for a friendRequest row whose state is known.
+  final _RequestDecision? requestDecision;
 
   static const Map<NotificationType, IconData> _icons = {
     NotificationType.friendRequest: Icons.person_add_alt_1_rounded,
@@ -1350,6 +1417,41 @@ class _NotificationCard extends StatelessWidget {
       ],
     );
 
+    final decision = requestDecision;
+    final Widget? requestActions = decision == null
+        ? null
+        : Padding(
+            key: ValueKey('notification-request-actions-${notification.id}'),
+            padding: const EdgeInsets.only(top: AppRhythm.item),
+            // Capped so a desktop-wide row keeps a button pair, not a bar.
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 400),
+                child: decision.pending
+                    ? FriendRequestDecisionButtons(
+                        acceptKey: ValueKey(
+                          'notification-row-accept-${notification.id}',
+                        ),
+                        declineKey: ValueKey(
+                          'notification-row-decline-${notification.id}',
+                        ),
+                        name: notification.actorName,
+                        busyAccept: decision.pendingDecision == true,
+                        busyDecline: decision.pendingDecision == false,
+                        onAccept: decision.onAccept,
+                        onDecline: decision.onDecline,
+                      )
+                    : FriendRequestResolvedNotice(
+                        outcome:
+                            decision.resolved ??
+                            FriendRequestResponseOutcome.noLongerAvailable,
+                        name: notification.actorName,
+                      ),
+              ),
+            ),
+          );
+
     return Semantics(
       customSemanticsActions: {
         CustomSemanticsAction(
@@ -1412,11 +1514,12 @@ class _NotificationCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 12),
                         notificationCopy,
+                        ?requestActions,
                       ],
                     );
                   }
 
-                  return Row(
+                  final row = Row(
                     children: [
                       avatar,
                       const SizedBox(width: 12),
@@ -1425,6 +1528,11 @@ class _NotificationCard extends StatelessWidget {
                       unreadIndicator,
                       actions,
                     ],
+                  );
+                  if (requestActions == null) return row;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [row, requestActions],
                   );
                 },
               ),

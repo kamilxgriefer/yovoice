@@ -357,10 +357,22 @@ void main() {
 
     expect(calls, hasLength(1));
     expect(calls.single.name, 'sendFriendRequest');
-    expect(calls.single.data, {'targetUserId': otherUid});
+    expect(calls.single.data, {
+      'targetUserId': otherUid,
+      'acceptIncoming': false,
+    });
     expect(find.text('Friends'), findsOneWidget);
     expect(find.text('Sent'), findsNothing);
-    expect(find.text('You and Riley are now friends.'), findsOneWidget);
+    // Only an older Functions deployment can answer "accepted" to a send
+    // with acceptIncoming: false; that is named, never a plain success.
+    expect(find.text('You and Riley are now friends.'), findsNothing);
+    expect(
+      find.text(
+        'Riley had already sent you a request, so you are now friends. '
+        'You can remove them from their profile.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('search result chrome follows Pearl and dark semantic palettes', (

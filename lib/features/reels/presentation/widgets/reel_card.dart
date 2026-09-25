@@ -15,6 +15,7 @@ import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/presentation/friend_request_error_copy.dart';
+import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
@@ -1838,13 +1839,50 @@ class _ReelFriendButtonState extends State<_ReelFriendButton> {
     try {
       final next = await entry.submit(displayName: widget.displayName);
       if (!mounted) return;
+      final sent = previous == FriendRelationshipStatus.none
+          ? entry.lastSend
+          : null;
+      // "Add friend" found the author had already asked: nothing changed,
+      // and the decision is made in the explicit Accept / Decline prompt.
+      if (sent != null && sent.incomingPending) {
+        messenger?.hideCurrentSnackBar();
+        final outcome = await showFriendRequestPrompt(
+          context,
+          senderId: widget.userId,
+          senderName: widget.displayName,
+          friendService: entry.friendService,
+        );
+        if (outcome != null) {
+          entry.applyResponse(outcome);
+          messenger
+            ?..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(
+                behavior: SnackBarBehavior.floating,
+                content: Text(
+                  friendRequestResponseMessage(
+                    copy,
+                    outcome,
+                    name: widget.displayName,
+                  ),
+                ),
+              ),
+            );
+        }
+        return;
+      }
       messenger
         ?..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
             behavior: SnackBarBehavior.floating,
             content: Text(
-              next == FriendRelationshipStatus.friends
+              sent != null && sent.acceptedWithoutPrompt
+                  ? friendRequestAcceptedWithoutPromptMessage(
+                      copy,
+                      name: widget.displayName,
+                    )
+                  : next == FriendRelationshipStatus.friends
                   ? copy.template(
                       'You and {name} are now friends.',
                       'Ty i {name} jesteście teraz znajomymi.',

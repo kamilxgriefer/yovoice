@@ -17,6 +17,7 @@ import 'package:yovoice/features/friends/presentation/friend_request_error_copy.
 import 'package:yovoice/features/friends/presentation/screens/add_friend_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/blocked_users_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
+import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
 import 'package:yovoice/features/friends/presentation/widgets/friend_suggestions_section.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
@@ -351,16 +352,24 @@ class _FriendsScreenState extends State<FriendsScreen> {
 
   /// Same FriendService path, optimistic state and error copy as the Add
   /// friends screen's suggestion list, so the two rails behave identically.
+  ///
+  /// "Add" never accepts: when the person already sent this user a request
+  /// the server answers `incomingPending` and the explicit Accept / Decline
+  /// prompt opens; a later tap on the same card reopens it.
   Future<void> _addSuggestion(SuggestedFriend suggestion) async {
     if (_processingSuggestionIds.contains(suggestion.uid)) return;
     final previous = _suggestionStatuses[suggestion.uid];
+    if (previous == FriendRelationshipStatus.requestReceived) {
+      await _promptIncomingRequest(suggestion);
+      return;
+    }
     setState(() {
       _processingSuggestionIds.add(suggestion.uid);
       _suggestionStatuses[suggestion.uid] =
           FriendRelationshipStatus.requestSent;
     });
     try {
-      final relationship = await _friendService.sendFriendRequest(
+      final result = await _friendService.requestFriendship(
         FriendUser(
           id: suggestion.uid,
           displayName: suggestion.displayName,
@@ -374,11 +383,20 @@ class _FriendsScreenState extends State<FriendsScreen> {
       if (!mounted) return;
       final copy = AppLocalizations.of(context);
       setState(() {
-        _suggestionStatuses[suggestion.uid] = relationship;
-        _sentSuggestionIds.add(suggestion.uid);
+        _suggestionStatuses[suggestion.uid] = result.status;
+        if (!result.incomingPending) _sentSuggestionIds.add(suggestion.uid);
       });
+      if (result.incomingPending) {
+        await _promptIncomingRequest(suggestion);
+        return;
+      }
       _showMessage(
-        relationship == FriendRelationshipStatus.friends
+        result.acceptedWithoutPrompt
+            ? friendRequestAcceptedWithoutPromptMessage(
+                copy,
+                name: suggestion.displayName,
+              )
+            : result.status == FriendRelationshipStatus.friends
             ? copy.template(
                 'You and {name} are now friends.',
                 'Ty i {name} jesteście teraz znajomymi.',
@@ -411,6 +429,35 @@ class _FriendsScreenState extends State<FriendsScreen> {
         setState(() => _processingSuggestionIds.remove(suggestion.uid));
       }
     }
+  }
+
+  /// The explicit Accept / Decline prompt for a suggested person who has
+  /// already sent this user a request. The card reflects the answer.
+  Future<void> _promptIncomingRequest(SuggestedFriend suggestion) async {
+    final outcome = await showFriendRequestPrompt(
+      context,
+      senderId: suggestion.uid,
+      senderName: suggestion.displayName,
+      friendService: _friendService,
+      profileMediaService: _profileMediaService,
+    );
+    if (!mounted || outcome == null) return;
+    setState(() {
+      _suggestionStatuses[suggestion.uid] = switch (outcome) {
+        FriendRequestResponseOutcome.accepted ||
+        FriendRequestResponseOutcome.alreadyFriends =>
+          FriendRelationshipStatus.friends,
+        _ => FriendRelationshipStatus.none,
+      };
+    });
+    _showMessage(
+      friendRequestResponseMessage(
+        AppLocalizations.of(context),
+        outcome,
+        name: suggestion.displayName,
+      ),
+    );
+    unawaited(_loadSuggestions(background: true));
   }
 
   Widget _buildSuggestions(Set<String> friendIds) {
@@ -489,38 +536,44 @@ class _FriendsScreenState extends State<FriendsScreen> {
     }
   }
 
-  Future<void> _acceptRequest(FriendRequest request) async {
-    await _runRequestAction(
-      request.senderId,
-      () => _friendService.acceptFriendRequest(request),
-      AppLocalizations.of(context).text(
-        '${request.senderName} is now your friend.',
-        '${request.senderName} jest teraz w gronie Twoich znajomych.',
-      ),
-    );
-  }
+  Future<void> _acceptRequest(FriendRequest request) =>
+      _runRequestAction(request, accept: true);
 
-  Future<void> _declineRequest(FriendRequest request) async {
-    await _runRequestAction(
-      request.senderId,
-      () => _friendService.declineFriendRequest(request.senderId),
-      AppLocalizations.of(
-        context,
-      ).text('Friend request declined.', 'Odrzucono zaproszenie.'),
-    );
-  }
+  Future<void> _declineRequest(FriendRequest request) =>
+      _runRequestAction(request, accept: false);
 
+  /// Accept and Decline both report the server's answer. A request that was
+  /// cancelled, answered elsewhere or cut off by a block is named as such;
+  /// only a real failure reads as an error.
   Future<void> _runRequestAction(
-    String requestId,
-    Future<void> Function() action,
-    String successMessage,
-  ) async {
+    FriendRequest request, {
+    required bool accept,
+  }) async {
+    final requestId = request.senderId;
     if (_processingRequestIds.contains(requestId)) return;
 
     setState(() => _processingRequestIds.add(requestId));
     try {
-      await action();
-      if (mounted) _showMessage(successMessage);
+      final outcome = await _friendService.respondToFriendRequest(
+        requestId,
+        accept: accept,
+      );
+      if (!mounted) return;
+      final copy = AppLocalizations.of(context);
+      _showMessage(
+        outcome == FriendRequestResponseOutcome.accepted
+            ? copy.text(
+                '${request.senderName} is now your friend.',
+                '${request.senderName} jest teraz w gronie Twoich znajomych.',
+              )
+            : outcome == FriendRequestResponseOutcome.declined
+            ? copy.text('Friend request declined.', 'Odrzucono zaproszenie.')
+            : friendRequestResponseMessage(
+                copy,
+                outcome,
+                name: request.senderName,
+              ),
+      );
     } catch (error) {
       if (mounted) {
         _showMessage(

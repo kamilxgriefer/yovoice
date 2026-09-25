@@ -72,6 +72,14 @@ class ReelFriendRelationshipEntry extends ChangeNotifier {
   Future<FriendRelationshipStatus>? _mutationInFlight;
 
   FriendRelationshipStatus? get status => _status;
+
+  /// The service the card needs to open the explicit Accept / Decline prompt
+  /// when "Add friend" finds the author already asked (`incomingPending`).
+  FriendService get friendService => _friendService;
+
+  /// How the last "Add friend" resolved, for the card's feedback only.
+  FriendRequestSendResult? _lastSend;
+  FriendRequestSendResult? get lastSend => _lastSend;
   Object? get loadError => _loadError;
   bool get loading => _loading;
   bool get busy => _busy;
@@ -159,7 +167,7 @@ class ReelFriendRelationshipEntry extends ChangeNotifier {
         );
         next = FriendRelationshipStatus.friends;
       } else {
-        next = await _friendService.sendFriendRequest(
+        final result = await _friendService.requestFriendship(
           FriendUser(
             id: authorId,
             displayName: displayName,
@@ -169,6 +177,8 @@ class ReelFriendRelationshipEntry extends ChangeNotifier {
             lastSeen: null,
           ),
         );
+        _lastSend = result;
+        next = result.status;
       }
       if (!_disposed) {
         _status = next;
@@ -191,6 +201,19 @@ class ReelFriendRelationshipEntry extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  /// Records an answer given in the Accept / Decline prompt, so every card
+  /// for this author shows the same relationship.
+  void applyResponse(FriendRequestResponseOutcome outcome) {
+    if (_disposed) return;
+    _status = switch (outcome) {
+      FriendRequestResponseOutcome.accepted ||
+      FriendRequestResponseOutcome.alreadyFriends =>
+        FriendRelationshipStatus.friends,
+      _ => FriendRelationshipStatus.none,
+    };
+    notifyListeners();
   }
 
   @override
