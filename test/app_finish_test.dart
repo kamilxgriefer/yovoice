@@ -116,7 +116,14 @@ void main() {
       expect(pearl.hairlineControl, pearl.textPrimary.withValues(alpha: .16));
       expect(dark.hairlineHover, dark.borderStrong.withValues(alpha: .55));
       expect(dark.glass, dark.textPrimary.withValues(alpha: .07));
-      expect(pearl.glass, pearl.textPrimary.withValues(alpha: .05));
+      // Review D1 (deliberate spec change): Pearl's glass is a lit surface,
+      // not an ink tint — surfaceRaised @ .80 instead of textPrimary @ .05.
+      expect(pearl.glass, pearl.surfaceRaised.withValues(alpha: .80));
+      // Lighter than the canvas it sits on, never darker.
+      expect(
+        Color.alphaBlend(pearl.glass, pearl.background).computeLuminance(),
+        greaterThan(pearl.background.computeLuminance()),
+      );
     });
 
     test('block fill is the spec\'s #1C1626 → #17121F / #FFFFFF → #FCFAFD', () {
@@ -176,6 +183,63 @@ void main() {
       final mid = dark.lerp(pearl, 1);
       expect(mid.hairline, pearl.hairline);
       expect(mid.blockShadows, hasLength(2));
+    });
+
+    test('the variant B played sweep holds 3:1 against the unplayed bars at '
+        'both ends, on the block top and the surface (review D3)', () {
+      for (final (palette, scheme) in [
+        (dark, AppTheme.darkTheme.colorScheme),
+        (pearl, AppTheme.lightTheme.colorScheme),
+      ]) {
+        final played = AppGradients.voicePlayed(scheme, palette);
+        expect(played.colors, hasLength(2));
+        for (final base in [palette.blockTop, palette.surface]) {
+          final unplayed = Color.alphaBlend(palette.waveUnplayed, base);
+          for (final stop in played.colors) {
+            expect(
+              _contrast(stop, unplayed),
+              greaterThanOrEqualTo(3),
+              reason: '$stop vs $unplayed',
+            );
+          }
+        }
+      }
+      // Pearl is the primaryAction pair; Dark lifts the primary halfway to
+      // white into the interactive lavender.
+      expect(
+        AppGradients.voicePlayed(AppTheme.lightTheme.colorScheme, pearl).colors,
+        AppGradients.primaryAction(AppTheme.lightTheme.colorScheme).colors,
+      );
+      _expectHex(
+        AppGradients.voicePlayed(AppTheme.darkTheme.colorScheme, dark)
+            .colors
+            .first,
+        0xFFBD97FB,
+      );
+    });
+
+    test('ink on the outgoing bubble holds AA text and 3:1 bars on both stops '
+        'of primaryAction in both themes (review D5)', () {
+      for (final scheme in [
+        AppTheme.darkTheme.colorScheme,
+        AppTheme.lightTheme.colorScheme,
+      ]) {
+        for (final stop in AppGradients.primaryAction(scheme).colors) {
+          expect(
+            _contrast(Color.alphaBlend(AppFinish.outgoingMeta, stop), stop),
+            greaterThanOrEqualTo(4.5),
+            reason: 'meta text on $stop',
+          );
+          expect(
+            _contrast(
+              Color.alphaBlend(AppFinish.outgoingWavePlayed, stop),
+              Color.alphaBlend(AppFinish.outgoingWaveUnplayed, stop),
+            ),
+            greaterThanOrEqualTo(3),
+            reason: 'played vs unplayed bars on $stop',
+          );
+        }
+      }
     });
 
     test('played vs unplayed bars hold 3:1 at both ends of the sweep', () {
@@ -368,6 +432,29 @@ void main() {
       expect(AppFinish.glass(dark), dark.glass);
       expect(AppFinish.glass(dark, hovered: true).a, closeTo(.07 * 1.6, 1e-3));
       expect(AppFinish.glass(dark, pressed: true).a, closeTo(.11, 1e-3));
+      // Pearl's lit glass never darkens on hover (the edge moves instead);
+      // a press lays the block's pressed wash over it.
+      expect(AppFinish.glass(pearl, hovered: true), pearl.glass);
+      expect(
+        AppFinish.glass(pearl, pressed: true),
+        Color.alphaBlend(AppFinish.blockPressedWash(pearl), pearl.glass),
+      );
+      final pearlNeutral = AppFinish.tonalNeutral(pearl);
+      expect(pearlNeutral.backgroundColor!.resolve({}), pearl.glass);
+      expect(
+        pearlNeutral.backgroundColor!.resolve({WidgetState.hovered}),
+        pearl.glass,
+      );
+      expect(
+        pearlNeutral.side!.resolve({WidgetState.hovered})!.color,
+        pearl.hairlineHover,
+      );
+      expect(pearlNeutral.side!.resolve({})!.color, pearl.hairlineControl);
+      expect(
+        AppFinish.tonalNeutral(dark).side!.resolve({WidgetState.hovered})!.color,
+        dark.hairlineControl,
+        reason: 'Dark keeps its fill-only hover',
+      );
 
       final neutral = AppFinish.tonalNeutral(dark);
       expect(neutral.backgroundColor!.resolve({}), dark.glass);

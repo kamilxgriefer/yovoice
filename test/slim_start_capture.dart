@@ -16,10 +16,19 @@
 //     --dart-define=YO_PREVIEW_LONG_NAMES=true|false \
 //     --dart-define=SLIM_CAPTURE_OUT=<dir> \
 //     --dart-define=SLIM_CAPTURE_STATE=<file-name state label> \
-//     --dart-define=SLIM_CAPTURE_MATRIX=full|pair|single \
+//     --dart-define=SLIM_CAPTURE_MATRIX=full|pair|wide|single \
 //     --dart-define=SLIM_CAPTURE_PAGES=<n> \\
 //     --dart-define=SLIM_CAPTURE_SETTLE_MS=<ms, 2000+ for error> \\
 //     --dart-define=YO_PREVIEW_LIVE_TYPE=friends|community|podcast|family|company
+//     --dart-define=SLIM_CAPTURE_HC=true            (system high contrast)
+//     --dart-define=SLIM_CAPTURE_FOCUS=<key>[,<key>] (keyboard-focus frames)
+//
+// YO_PREVIEW_LOCALE=ar renders the RTL spot check (the file name carries
+// the locale). SLIM_CAPTURE_FOCUS moves keyboard focus to each keyed control
+// after the page shots, with the keyboard highlight mode on, and writes
+// `<base>-focus-<key>.png` — e.g. the "Tu i teraz" continue card
+// (`home-server-continue-preview-friends`) and the live card
+// (`home-live-preview-podcast-studio`).
 //
 // Refine-look additions (B2): the macOS colour-emoji font is registered when
 // the host has it, so the greeting's wave never draws as a tofu box; and the
@@ -60,6 +69,9 @@ const _pages = int.fromEnvironment('SLIM_CAPTURE_PAGES', defaultValue: 1);
 // shows the populated data.
 const _settleMs = int.fromEnvironment('SLIM_CAPTURE_SETTLE_MS');
 const _emojiFont = '/System/Library/Fonts/Apple Color Emoji.ttc';
+const _arabicFont = '/System/Library/Fonts/SFArabic.ttf';
+const _highContrast = bool.fromEnvironment('SLIM_CAPTURE_HC');
+const _focusKeys = String.fromEnvironment('SLIM_CAPTURE_FOCUS');
 
 Future<void> _loadFonts() async {
   final inter = FontLoader('Inter')
@@ -85,6 +97,18 @@ Future<void> _loadFonts() async {
   } else {
     // ignore: avoid_print
     print('emoji font NOT available on this host: the greeting may show tofu');
+  }
+  // The RTL spot check (YO_PREVIEW_LOCALE=ar): Inter has no Arabic, and a
+  // phone resolves the app's first fallback family ('Noto Sans Arabic') to
+  // a system Arabic face. The host's Arabic system font stands in for it
+  // under that name, so Arabic copy is drawn instead of tofu boxes.
+  final arabic = File(_arabicFont);
+  if (arabic.existsSync()) {
+    final loader = FontLoader('Noto Sans Arabic')
+      ..addFont(Future.value(ByteData.sublistView(arabic.readAsBytesSync())));
+    await loader.load();
+    // ignore: avoid_print
+    print('arabic font registered: $_arabicFont');
   }
 }
 
@@ -127,6 +151,10 @@ void main() {
       // One phone cell per theme, for single-state evidence.
       for (final brightness in [Brightness.dark, Brightness.light])
         (390, brightness, 100)
+    else if (_matrix == 'wide')
+      // One desktop cell per theme (e.g. the keyboard-focus frames).
+      for (final brightness in [Brightness.dark, Brightness.light])
+        (1440, brightness, 100)
     else
       (390, Brightness.dark, 100),
   ];
@@ -140,6 +168,10 @@ void main() {
       tester.view.devicePixelRatio = 1;
       tester.platformDispatcher.platformBrightnessTestValue = brightness;
       tester.platformDispatcher.textScaleFactorTestValue = text / 100;
+      if (_highContrast) {
+        tester.platformDispatcher.accessibilityFeaturesTestValue =
+            const FakeAccessibilityFeatures(highContrast: true);
+      }
       addTearDown(tester.view.reset);
       addTearDown(tester.platformDispatcher.clearAllTestValues);
       debugDisableShadows = false;
@@ -206,7 +238,50 @@ Future<void> _capture(WidgetTester tester, Size size, String base) async {
     await _shoot(tester, size, '$base-p$page');
   }
 
+  for (final key in _focusKeys.split(',').where((k) => k.isNotEmpty)) {
+    await _shootFocus(tester, size, base, key);
+  }
+
   // Tear the preview down so its fixtures dispose before the next cell.
   await tester.pumpWidget(const SizedBox.shrink());
   await _pumpFrames(tester, 2);
+}
+
+/// Keyboard focus on the control keyed [key], in the keyboard highlight
+/// mode, scrolled into view: `<base>-focus-<key>.png`.
+Future<void> _shootFocus(
+  WidgetTester tester,
+  Size size,
+  String base,
+  String key,
+) async {
+  final target = find.byKey(ValueKey(key), skipOffstage: false);
+  if (target.evaluate().isEmpty) {
+    // ignore: avoid_print
+    print('$base focus target not found: $key');
+    return;
+  }
+  final strategy = FocusManager.instance.highlightStrategy;
+  FocusManager.instance.highlightStrategy =
+      FocusHighlightStrategy.alwaysTraditional;
+  try {
+    await tester.ensureVisible(target);
+    await _pumpFrames(tester, 4);
+    final label = find
+        .descendant(
+          of: target,
+          matching: find.byType(Text),
+          skipOffstage: false,
+        )
+        .first;
+    Focus.of(tester.element(label)).requestFocus();
+    await _pumpFrames(tester, 4);
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 120)),
+    );
+    await _pumpFrames(tester, 2);
+    await _shoot(tester, size, '$base-focus-$key');
+  } finally {
+    FocusManager.instance.highlightStrategy = strategy;
+  }
 }

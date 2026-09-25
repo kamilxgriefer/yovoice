@@ -162,7 +162,7 @@ class RecentChats extends StatelessWidget {
           final cardWidth = (constraints.maxWidth - (gap * 2) - peek) / 2;
           return SizedBox(
             height: cardHeight,
-            child: _PeekFadeRail(fadeExtent: peek + gap, child: row(cardWidth)),
+            child: _PeekFadeRail(peek: peek, gap: gap, child: row(cardWidth)),
           );
         }
 
@@ -226,20 +226,31 @@ class _RecentChatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
     final otherUserId = conversation.otherUserId(currentUserId);
     final unread = conversation.unreadCountFor(currentUserId);
+    final displayName = conversation.displayNameFor(otherUserId);
+    final preview = conversationPreview(conversation, currentUserId, copy);
     // Refine-look §8.1: the R2 block (lit fill, hairline, radius 20) with
-    // the brand-finished avatar and the one gradient count.
+    // the brand-finished avatar and the one gradient count. The count badge
+    // is silent by design, so the card speaks the same one phrase as the
+    // desktop tile — who, how many unread, the last message — instead of
+    // its children's name and preview alone.
     return YoCard(
       padding: const EdgeInsets.all(AppRhythm.item),
       onTap: onTap,
+      semanticLabel: [
+        copy.openChatWith(displayName),
+        if (unread > 0) copy.unreadMessages(unread),
+        copy.lastMessage(preview),
+      ].join('. '),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               _LiveRecentChatAvatar(
-                displayName: conversation.displayNameFor(otherUserId),
+                displayName: displayName,
                 conversationPhotoUrl: conversation.photoUrlFor(otherUserId),
                 userId: otherUserId,
                 photoStreamForUser: photoStreamForUser,
@@ -255,7 +266,7 @@ class _RecentChatCard extends StatelessWidget {
           ),
           const Spacer(),
           Text(
-            conversation.displayNameFor(otherUserId),
+            displayName,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -268,11 +279,7 @@ class _RecentChatCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            conversationPreview(
-              conversation,
-              currentUserId,
-              AppLocalizations.of(context),
-            ),
+            preview,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -739,20 +746,62 @@ class _RecentChatsMessage extends StatelessWidget {
   }
 }
 
+/// The `dstIn` mask of the desktop chats rail's trailing peek (refine-look
+/// §8.1), as a gradient across the rail's [width].
+///
+/// While the rail can scroll ([hasMoreAfter]), the second card stays fully
+/// opaque up to its end, the [gap] after it ramps down to .22, and the
+/// [peek] slice of the third card fades from there to nothing at the
+/// viewport edge — so the peek starts faint (its text, 14 px in, at about
+/// 12 %) instead of as a still-legible cut through the next card's words.
+/// Mirrored under RTL. Fully opaque (no fade) at the end of the rail, when
+/// the rail is too narrow to fade, and under high contrast, where no
+/// gradient may sit over text (spec principle 4).
+@visibleForTesting
+LinearGradient recentChatsPeekMask({
+  required double width,
+  required double peek,
+  required double gap,
+  required bool hasMoreAfter,
+  required bool rtl,
+  required bool highContrast,
+}) {
+  const opaque = LinearGradient(colors: [Colors.white, Colors.white]);
+  final extent = peek + gap;
+  if (highContrast || !hasMoreAfter || width <= extent) return opaque;
+  final start = 1 - extent / width;
+  return LinearGradient(
+    begin: rtl ? Alignment.centerRight : Alignment.centerLeft,
+    end: rtl ? Alignment.centerLeft : Alignment.centerRight,
+    colors: [
+      Colors.white,
+      Colors.white,
+      Colors.white.withValues(alpha: .22),
+      Colors.white.withValues(alpha: 0),
+    ],
+    stops: [0, start, start + gap / width, 1],
+  );
+}
+
 /// A horizontal rail that fades its trailing peek out while there is more to
 /// scroll to (refine-look §8.1), so the column never ends on a hard cut
 /// through the next card's words.
 ///
-/// The fade covers the last [fadeExtent] px of the viewport (the peek plus
-/// its gap) through a `dstIn` mask, mirrored under RTL. It is decided from
-/// the scroll position at paint time, so it costs no extra frame: once the
-/// rail reaches its end (or cannot scroll at all) the mask turns fully
-/// opaque and fades nothing.
-/// Pointer, keyboard and semantics behaviour are the scroll view's own.
+/// The fade is [recentChatsPeekMask] over the last [peek] + [gap] px of the
+/// viewport. It is decided from the scroll position at paint time, so it
+/// costs no extra frame: once the rail reaches its end (or cannot scroll at
+/// all), and under high contrast, the mask turns fully opaque and fades
+/// nothing. Pointer, keyboard and semantics behaviour are the scroll view's
+/// own.
 class _PeekFadeRail extends StatefulWidget {
-  const _PeekFadeRail({required this.fadeExtent, required this.child});
+  const _PeekFadeRail({
+    required this.peek,
+    required this.gap,
+    required this.child,
+  });
 
-  final double fadeExtent;
+  final double peek;
+  final double gap;
   final Widget child;
 
   @override
@@ -780,6 +829,7 @@ class _PeekFadeRailState extends State<_PeekFadeRail> {
   @override
   Widget build(BuildContext context) {
     final rtl = Directionality.of(context) == TextDirection.rtl;
+    final highContrast = MediaQuery.highContrastOf(context);
     final rail = SingleChildScrollView(
       controller: _controller,
       scrollDirection: Axis.horizontal,
@@ -790,29 +840,23 @@ class _PeekFadeRailState extends State<_PeekFadeRail> {
     );
     // Rebuilt on every scroll tick so the mask re-reads the position: the
     // viewport is its own repaint boundary and would not repaint the mask.
-    // The mask stays in the tree at the end of the rail (fully opaque there)
-    // so the scroll view below it is never re-parented and never loses its
-    // offset.
+    // The mask stays in the tree at the end of the rail and under high
+    // contrast (fully opaque there) so the scroll view below it is never
+    // re-parented and never loses its offset.
     return ListenableBuilder(
       listenable: _controller,
       builder: (context, child) {
         return ShaderMask(
           key: const ValueKey('recent-chats-peek-fade'),
           blendMode: BlendMode.dstIn,
-          shaderCallback: (bounds) {
-            if (!_hasMoreAfter || bounds.width <= widget.fadeExtent) {
-              return const LinearGradient(
-                colors: [Colors.white, Colors.white],
-              ).createShader(bounds);
-            }
-            final start = 1 - widget.fadeExtent / bounds.width;
-            return LinearGradient(
-              begin: rtl ? Alignment.centerRight : Alignment.centerLeft,
-              end: rtl ? Alignment.centerLeft : Alignment.centerRight,
-              colors: const [Colors.white, Colors.white, Colors.transparent],
-              stops: [0, start, 1],
-            ).createShader(bounds);
-          },
+          shaderCallback: (bounds) => recentChatsPeekMask(
+            width: bounds.width,
+            peek: widget.peek,
+            gap: widget.gap,
+            hasMoreAfter: _hasMoreAfter,
+            rtl: rtl,
+            highContrast: highContrast,
+          ).createShader(bounds),
           child: child,
         );
       },

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -288,6 +290,11 @@ class HomeBrandLockup extends StatelessWidget {
 /// holds; a bare dot would be a lossy view of the same fact, so the badge
 /// prints the number (99+ above that) as the one [YoCountBadge], ringed in
 /// the canvas colour so it reads as cut out of the disc.
+///
+/// The count grows with the reader's text (to 1.5 ×, a 16.5 px figure) and
+/// the badge grows UP and slightly out from the disc's top-end corner — up
+/// by its whole growth, out by at most 4 px of the 8 px gap to the next
+/// disc — so a larger count never covers the bell glyph or the avatar.
 class HomeHeaderDisc extends StatelessWidget {
   const HomeHeaderDisc({
     required this.icon,
@@ -306,6 +313,7 @@ class HomeHeaderDisc extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final highContrast = MediaQuery.highContrastOf(context);
+    final badgeGrowth = YoCountBadge.growthFor(context);
     return AccessibleTapRegion(
       onTap: onTap,
       semanticLabel: tooltip,
@@ -332,8 +340,8 @@ class HomeHeaderDisc extends StatelessWidget {
               Icon(icon, color: palette.textPrimary, size: 21),
               if (badgeCount > 0)
                 PositionedDirectional(
-                  top: -4,
-                  end: -4,
+                  top: -4 - badgeGrowth,
+                  end: -4 - math.min(badgeGrowth, 4),
                   child: YoCountBadge(
                     key: const ValueKey('home-bell-count'),
                     count: badgeCount,

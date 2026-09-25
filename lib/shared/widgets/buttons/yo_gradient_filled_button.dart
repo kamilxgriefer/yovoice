@@ -1,10 +1,27 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+
+/// How much a labelled action asks for on its screen (refine-look R5 / R7
+/// and the light budget in `AppFinish`).
+enum YoActionEmphasis {
+  /// The screen's one CTA: the gradient and its coloured lift.
+  lifted,
+
+  /// The gradient without the lift, while another action on the same screen
+  /// owns it (on desktop, the rail's "Stwórz serwer").
+  flat,
+
+  /// The R7 neutral tonal finish — glass fill, control hairline,
+  /// `interactiveForeground` label — while another violet fill already owns
+  /// the screen (Start's empty-servers invitation).
+  neutral,
+}
 
 /// The screen's one labelled primary action (refine-look R5).
 ///
@@ -21,11 +38,19 @@ import 'package:yovoice/core/theme/app_palette.dart';
 ///   on an OUTER box, so the button's own clip never cuts it. The lift is
 ///   paint only: it changes no measured gap.
 ///
+/// [emphasis] demotes the action without changing the widget: `flat` drops
+/// the lift, `neutral` paints the R7 neutral tonal finish instead of the
+/// gradient. The [FilledButton] element (and with it keyboard focus) stays
+/// the same when a screen promotes or demotes the action under the reader.
+///
 /// States: hover white @ .06 and a stronger lift; pressed white @ .10 with the
 /// lift sunk; focus the existing 2 px `onPrimary` edge; disabled
-/// `surfaceSunken` with `textTertiary` and no lift; [busy] keeps the gradient,
-/// halves the lift, shows an 18 px white spinner beside the label and does
-/// not accept presses. Under high contrast the lift is dropped.
+/// `surfaceSunken` with `textTertiary` and no lift. [busy] keeps the
+/// gradient, halves the lift and shows an 18 px white spinner beside the
+/// label; the button stays enabled and focusable (a disabled one would drop
+/// keyboard focus and be announced as dimmed) but ignores presses, and its
+/// semantics value says it is loading. Under high contrast the lift is
+/// dropped.
 ///
 /// Never set this through `filledButtonTheme` (84 call sites recolour
 /// `FilledButton`s) and never use it for repeated, list, retry or tonal
@@ -41,7 +66,7 @@ class YoGradientFilledButton extends StatefulWidget {
     this.padding = const EdgeInsets.symmetric(horizontal: 20),
     this.gradient,
     this.liftColor,
-    this.lift = true,
+    this.emphasis = YoActionEmphasis.lifted,
     this.busy = false,
     this.focusNode,
     this.autofocus = false,
@@ -69,11 +94,10 @@ class YoGradientFilledButton extends StatefulWidget {
   /// Defaults to [AppColors.primary] (the rail's lift colour).
   final Color? liftColor;
 
-  /// Whether this action carries the screen's one CTA lift. A screen that
-  /// shows a second gradient action while another one owns the lift (Start's
-  /// empty-servers invitation above its quick actions) passes false: the
-  /// gradient stays, the coloured shadow goes.
-  final bool lift;
+  /// Whether this action is the screen's one lifted CTA, a flat gradient
+  /// (another action owns the lift) or a neutral tonal action (another
+  /// violet fill owns the screen).
+  final YoActionEmphasis emphasis;
 
   final bool busy;
   final FocusNode? focusNode;
@@ -134,13 +158,18 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
     });
   }
 
+  /// A busy action keeps focus and its semantics but does nothing on press.
+  static void _ignorePress() {}
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final scheme = Theme.of(context).colorScheme;
     final highContrast = MediaQuery.highContrastOf(context);
     final enabled = widget.onPressed != null;
-    final interactive = enabled && !widget.busy;
+    final busy = enabled && widget.busy;
+    final interactive = enabled && !busy;
+    final neutral = widget.emphasis == YoActionEmphasis.neutral;
     final gradient = widget.gradient ?? AppGradients.primaryAction(scheme);
     final states = _states.value;
     final hovered = interactive && states.contains(WidgetState.hovered);
@@ -148,40 +177,22 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
     _hovered = states.contains(WidgetState.hovered);
     _pressed = states.contains(WidgetState.pressed);
 
-    final lift = !enabled || highContrast || !widget.lift
+    final lift =
+        !enabled || highContrast || widget.emphasis != YoActionEmphasis.lifted
         ? const <BoxShadow>[]
         : AppFinish.actionLift(
             widget.liftColor ?? AppColors.primary,
             hovered: hovered,
             pressed: pressed,
-            strength: widget.busy ? .5 : 1,
+            strength: busy ? .5 : 1,
           );
 
     Color foreground(Set<WidgetState> s) =>
         enabled ? scheme.onPrimary : palette.textTertiary;
 
-    final style = ButtonStyle(
-      // The gradient is laid by backgroundBuilder; a disabled action is a
-      // flat sunken fill. A busy action keeps its gradient.
-      backgroundColor: WidgetStatePropertyAll(
-        enabled ? Colors.transparent : palette.surfaceSunken,
-      ),
-      foregroundColor: WidgetStateProperty.resolveWith(foreground),
-      iconColor: WidgetStateProperty.resolveWith(foreground),
-      overlayColor: WidgetStateProperty.resolveWith((s) {
-        if (s.contains(WidgetState.pressed)) {
-          return AppColors.white.withValues(alpha: .10);
-        }
-        if (s.contains(WidgetState.hovered)) {
-          return AppColors.white.withValues(alpha: .06);
-        }
-        return null;
-      }),
-      side: WidgetStateProperty.resolveWith(
-        (s) => s.contains(WidgetState.focused)
-            ? BorderSide(color: scheme.onPrimary, width: 2)
-            : BorderSide.none,
-      ),
+    // Geometry is the same in every emphasis, so demoting the action never
+    // moves a neighbour.
+    final geometry = ButtonStyle(
       shape: WidgetStatePropertyAll(widget.shape),
       minimumSize: WidgetStatePropertyAll(widget.minimumSize),
       padding: WidgetStatePropertyAll(widget.padding),
@@ -191,32 +202,95 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
       elevation: const WidgetStatePropertyAll(0),
       shadowColor: const WidgetStatePropertyAll(Colors.transparent),
       surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
-      backgroundBuilder: enabled
-          ? (context, states, child) => Ink(
-              // Keep `color` null behind the gradient (see yo_button.dart).
-              decoration: BoxDecoration(gradient: gradient),
-              child: child,
-            )
-          : null,
     );
 
-    final label = widget.busy
-        ? Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: scheme.onPrimary,
-                  // No theme track (surfaceSunken) under a white spinner.
-                  backgroundColor: Colors.transparent,
+    ButtonStyle neutralStyle() {
+      final tonal = AppFinish.tonalNeutral(
+        palette,
+        shape: widget.shape,
+        highContrast: highContrast,
+      );
+      // The button's Material cross-fades its label style between builds,
+      // and a style that inherits cannot be interpolated into the
+      // FilledButton default (the theme's `labelLarge`, which does not).
+      // The tonal label is therefore laid over that same theme style, so a
+      // screen can switch the emphasis under the reader.
+      final label = Theme.of(
+        context,
+      ).textTheme.labelLarge?.merge(tonal.textStyle?.resolve(const {}));
+      return tonal
+          .copyWith(
+            textStyle: label == null ? null : WidgetStatePropertyAll(label),
+          )
+          .merge(geometry);
+    }
+
+    var style = neutral
+        ? neutralStyle()
+        : ButtonStyle(
+            // The gradient is laid by backgroundBuilder; a disabled action
+            // is a flat sunken fill. A busy action keeps its gradient.
+            backgroundColor: WidgetStatePropertyAll(
+              enabled ? Colors.transparent : palette.surfaceSunken,
+            ),
+            foregroundColor: WidgetStateProperty.resolveWith(foreground),
+            iconColor: WidgetStateProperty.resolveWith(foreground),
+            overlayColor: WidgetStateProperty.resolveWith((s) {
+              if (s.contains(WidgetState.pressed)) {
+                return AppColors.white.withValues(alpha: .10);
+              }
+              if (s.contains(WidgetState.hovered)) {
+                return AppColors.white.withValues(alpha: .06);
+              }
+              return null;
+            }),
+            side: WidgetStateProperty.resolveWith(
+              (s) => s.contains(WidgetState.focused)
+                  ? BorderSide(color: scheme.onPrimary, width: 2)
+                  : BorderSide.none,
+            ),
+            backgroundBuilder: enabled
+                ? (context, states, child) => Ink(
+                    // Keep `color` null behind the gradient (see
+                    // yo_button.dart).
+                    decoration: BoxDecoration(gradient: gradient),
+                    child: child,
+                  )
+                : null,
+          ).merge(geometry);
+    if (busy) {
+      // Enabled for focus and semantics, but a press shows nothing and does
+      // nothing while the work runs.
+      style = style.copyWith(
+        overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+        splashFactory: NoSplash.splashFactory,
+        mouseCursor: const WidgetStatePropertyAll(SystemMouseCursors.basic),
+      );
+    }
+
+    final label = busy
+        ? Semantics(
+            // Merges into the button's own node: "Stwórz serwer, Ładowanie".
+            value: AppLocalizations.of(context).text('Loading', 'Ładowanie'),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: neutral
+                        ? palette.interactiveForeground
+                        : scheme.onPrimary,
+                    // No theme track (surfaceSunken) under the spinner.
+                    backgroundColor: Colors.transparent,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Flexible(child: widget.child),
-            ],
+                const SizedBox(width: 10),
+                Flexible(child: widget.child),
+              ],
+            ),
           )
         : widget.icon == null
         ? widget.child
@@ -240,7 +314,11 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
         // FilledButton defaults to Clip.none, which lets the gradient `Ink`
         // paint as a rectangle past a stadium or rounded shape.
         clipBehavior: Clip.antiAlias,
-        onPressed: interactive ? widget.onPressed : null,
+        onPressed: !enabled
+            ? null
+            : busy
+            ? _ignorePress
+            : widget.onPressed,
         focusNode: widget.focusNode,
         autofocus: widget.autofocus,
         statesController: _states,

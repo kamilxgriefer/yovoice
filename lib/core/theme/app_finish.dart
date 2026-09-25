@@ -320,15 +320,43 @@ abstract final class AppFinish {
   );
 
   // -------------------------------------------------------------------------
+  // R13 / R15 — ink on the outgoing bubble (`AppGradients.primaryAction`)
+  // -------------------------------------------------------------------------
+
+  /// Meta text on an outgoing bubble (time, voice duration, "edited", read
+  /// state): white @ .92 holds ≥ 5:1 on both stops of `primaryAction` in
+  /// both themes. White @ .78 fell to 3.99:1 on the #A117D8 end, below
+  /// WCAG 1.4.3 for 11 px text.
+  static final Color outgoingMeta = AppColors.white.withValues(alpha: .92);
+
+  /// Played bars of an outgoing voice bubble.
+  static const Color outgoingWavePlayed = AppColors.white;
+
+  /// Unplayed bars of an outgoing voice bubble: white @ .35, so the played
+  /// (white) part holds ≥ 3:1 against them on both stops (R13). At @ .50 it
+  /// was 2.34 – 2.59:1.
+  static final Color outgoingWaveUnplayed = AppColors.white.withValues(
+    alpha: .35,
+  );
+
+  // -------------------------------------------------------------------------
   // R7 — tonal actions
   // -------------------------------------------------------------------------
 
   /// Neutral glass: the fill of every neutral tonal surface.
+  ///
+  /// Dark: hover × 1.6, pressed + .04 on the textPrimary tint. Pearl's glass
+  /// is a lit surface, so it never darkens on hover — the edge moves to
+  /// `hairlineHover` instead ([glassDecoration], [tonalNeutral]) — and a
+  /// press lays the block's pressed wash over the lit fill.
   static Color glass(
     AppPalette p, {
     bool hovered = false,
     bool pressed = false,
   }) {
+    if (!p.isDark) {
+      return pressed ? Color.alphaBlend(blockPressedWash(p), p.glass) : p.glass;
+    }
     final base = p.glass.a;
     if (pressed) return p.textPrimary.withValues(alpha: base + .04);
     if (hovered) return p.textPrimary.withValues(alpha: base * 1.6);
@@ -387,6 +415,10 @@ abstract final class AppFinish {
           return BorderSide(color: p.border);
         }
         if (highContrast) return BorderSide(color: p.borderStrong);
+        // Pearl's lit glass does not darken on hover; its edge does.
+        if (!p.isDark && states.contains(WidgetState.hovered)) {
+          return BorderSide(color: p.hairlineHover);
+        }
         return BorderSide(color: p.hairlineControl);
       },
       ink: (states) =>

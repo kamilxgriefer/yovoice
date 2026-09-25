@@ -1,9 +1,9 @@
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
@@ -369,6 +369,146 @@ void main() {
     });
   });
 
+  group('YoGradientFilledButton emphasis and busy (review D2 / D8)', () {
+    testWidgets('neutral is the R7 glass on the same FilledButton; flat keeps '
+        'the gradient without the lift', (tester) async {
+      await _pump(
+        tester,
+        YoGradientFilledButton(
+          onPressed: () {},
+          emphasis: YoActionEmphasis.neutral,
+          child: const Text('Stwórz serwer'),
+        ),
+        theme: AppTheme.lightTheme,
+      );
+      const pearl = AppPalette.light;
+      final button = tester.widget<FilledButton>(find.byType(FilledButton));
+      expect(button.style!.backgroundColor!.resolve({}), pearl.glass);
+      expect(button.style!.side!.resolve({})!.color, pearl.hairlineControl);
+      expect(
+        button.style!.side!.resolve({WidgetState.focused})!.color,
+        pearl.focus,
+      );
+      expect(find.byType(Ink), findsNothing);
+      final neutralLift = tester.widget<AnimatedContainer>(
+        find.descendant(
+          of: find.byType(YoGradientFilledButton),
+          matching: find.byType(AnimatedContainer),
+        ),
+      );
+      expect(
+        (neutralLift.decoration! as ShapeDecoration).shadows ?? [],
+        isEmpty,
+      );
+      expect(tester.getSize(find.byType(FilledButton)).height, 44);
+
+      await _pump(
+        tester,
+        YoGradientFilledButton(
+          onPressed: () {},
+          emphasis: YoActionEmphasis.flat,
+          child: const Text('Stwórz serwer'),
+        ),
+      );
+      expect(find.byType(Ink), findsOneWidget);
+      final flatLift = tester.widget<AnimatedContainer>(
+        find.descendant(
+          of: find.byType(YoGradientFilledButton),
+          matching: find.byType(AnimatedContainer),
+        ),
+      );
+      expect((flatLift.decoration! as ShapeDecoration).shadows ?? [], isEmpty);
+    });
+
+    testWidgets('busy stays enabled and focusable, ignores presses and says '
+        'it is loading', (tester) async {
+      final handle = tester.ensureSemantics();
+      var presses = 0;
+      final focus = FocusNode();
+      addTearDown(focus.dispose);
+      await _pump(
+        tester,
+        YoGradientFilledButton(
+          onPressed: () => presses++,
+          busy: true,
+          focusNode: focus,
+          child: const Text('Zapisz'),
+        ),
+      );
+      final node = tester.getSemantics(find.byType(FilledButton));
+      expect(
+        node,
+        isSemantics(
+          isButton: true,
+          isEnabled: true,
+          isFocusable: true,
+          label: 'Zapisz',
+          value: 'Loading',
+        ),
+      );
+      focus.requestFocus();
+      await tester.pump();
+      expect(focus.hasFocus, isTrue);
+      await tester.tap(find.byType(FilledButton));
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(presses, 0);
+      expect(focus.hasFocus, isTrue);
+
+      // Done: the same node, pressable again, no loading value.
+      await _pump(
+        tester,
+        YoGradientFilledButton(
+          onPressed: () => presses++,
+          focusNode: focus,
+          child: const Text('Zapisz'),
+        ),
+      );
+      expect(
+        tester.getSemantics(find.byType(FilledButton)).value,
+        isEmpty,
+      );
+      await tester.tap(find.byType(FilledButton));
+      await tester.pump();
+      expect(presses, 1);
+      handle.dispose();
+    });
+  });
+
+  group('YoCard semantic label (review D1)', () {
+    testWidgets('one label replaces the children and keeps tap and focus', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      var taps = 0;
+      await _pump(
+        tester,
+        SizedBox(
+          width: 200,
+          child: YoCard(
+            onTap: () => taps++,
+            semanticLabel: 'Otwórz czat: Ola. 2 nieprzeczytane wiadomości',
+            child: const Text('Ola'),
+          ),
+        ),
+      );
+      final node = tester.getSemantics(find.byType(YoCard));
+      expect(
+        node,
+        isSemantics(
+          label: 'Otwórz czat: Ola. 2 nieprzeczytane wiadomości',
+          isButton: true,
+          hasTapAction: true,
+          isFocusable: true,
+        ),
+      );
+      expect(find.bySemanticsLabel('Ola'), findsNothing);
+      await tester.tap(find.byType(YoCard));
+      expect(taps, 1);
+      handle.dispose();
+    });
+  });
+
   group('YoGradientDisc (R6 / R14)', () {
     testWidgets('draw-only, exact box, lit glow and focus ring outside', (
       tester,
@@ -493,10 +633,34 @@ void main() {
       expect(size.width, inInclusiveRange(20, 24));
       expect(YoCountBadge.label(99), '99');
 
-      // Like the dock badge, the count does not balloon at 200 % text.
+      // Review D2 / D7 (deliberate change): the count grows with the
+      // reader's text like the badges it replaced, to 1.5 × (16.5 px) at
+      // most, and the floor grows with it; it no longer stays 11 px at 200 %.
       await _pump(
         tester,
         const YoCountBadge(count: 7),
+        media: const MediaQueryData(textScaler: TextScaler.linear(2)),
+      );
+      expect(tester.getSize(find.byType(YoCountBadge)).height, 30);
+      final count = tester.renderObject<RenderParagraph>(find.text('7'));
+      expect(count.textScaler.scale(11), closeTo(16.5, .01));
+      await _pump(
+        tester,
+        const YoCountBadge(count: 7),
+        media: const MediaQueryData(textScaler: TextScaler.linear(3)),
+      );
+      expect(tester.getSize(find.byType(YoCountBadge)).height, 30);
+      // A smaller system font never shrinks the 20 px floor; a host may still
+      // pin the badge to 100 %.
+      await _pump(
+        tester,
+        const YoCountBadge(count: 7),
+        media: const MediaQueryData(textScaler: TextScaler.linear(.85)),
+      );
+      expect(tester.getSize(find.byType(YoCountBadge)).height, 20);
+      await _pump(
+        tester,
+        const YoCountBadge(count: 7, maxTextScale: 1),
         media: const MediaQueryData(textScaler: TextScaler.linear(2)),
       );
       expect(tester.getSize(find.byType(YoCountBadge)).height, 20);
@@ -526,6 +690,40 @@ void main() {
   });
 
   group('YoBrandMark / YoBrandLockup / YoLogo (§4)', () {
+    testWidgets('precache warms the resized keys the mark and its bloom '
+        'actually read (review D8)', (tester) async {
+      late BuildContext context;
+      await _pump(
+        tester,
+        Builder(
+          builder: (c) {
+            context = c;
+            return const SizedBox();
+          },
+        ),
+      );
+      await tester.runAsync(() => YoBrandMark.precache(context, size: 32));
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      for (final (asset, logical) in [
+        (YoBrandMark.markAsset, 32.0),
+        (YoBrandMark.bloomAsset, 32 * 1.6),
+      ]) {
+        final provider = ResizeImage.resizeIfNeeded(
+          YoBrandMark.cacheWidthFor(logical, dpr),
+          null,
+          AssetImage(asset),
+        );
+        final key = await tester.runAsync(
+          () => provider.obtainKey(createLocalImageConfiguration(context)),
+        );
+        expect(
+          PaintingBinding.instance.imageCache.containsKey(key!),
+          isTrue,
+          reason: '$asset at $logical px',
+        );
+      }
+    });
+
     testWidgets('mark box is exactly its size; bloom in Dark, contact in '
         'Pearl, none under high contrast', (tester) async {
       const bloomKey = ValueKey('startup-logo-bloom');
