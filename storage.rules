@@ -23,7 +23,16 @@ service firebase.storage {
           firestore.get(userPath).data.get('disabled', false) != true &&
           firestore.get(userPath).data.get('deleted', false) != true &&
           firestore.get(userPath).data.get('status', '') != 'deleted' &&
-          !firestore.get(userPath).data.keys().hasAny(['authDeletedAt']);
+          !firestore.get(userPath).data.keys().hasAny(['authDeletedAt']) &&
+          // Session epoch (pre-registered account takeover, Phase 1): a
+          // session that signed in before the account was remediated is
+          // refused here, as it is on the push-token write in
+          // firestore.rules. Same document, so no extra cross-service read.
+          !(
+            firestore.get(userPath).data.get('authSessionEpoch', null) is int &&
+            request.auth.token.get('auth_time', 0) <
+              firestore.get(userPath).data.authSessionEpoch
+          );
     }
 
     function isAllowedImageType() {

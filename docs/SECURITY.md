@@ -100,6 +100,10 @@ direct integrity 38/38 and browser media/crop/Reels 39/39. See
   `request.auth.token.email_verified` is checked directly in Firestore
   rules and Cloud Functions before allowing outbound/content-creation
   actions (posting, creating rooms/clubs/moments, admin bootstrap).
+  Because a Google/Apple sign-in can inherit an account a stranger
+  pre-registered with a password, that claim is only as good as the
+  takeover remediation below
+  ([Pre-registered account takeover](#pre-registered-account-takeover-2026-09-25-adr-xxx-phase-1--source-only-not-deployed)).
 - **Two-factor authentication uses Firebase TOTP, not an app-owned secret or
   SMS code.** Enrollment and sign-in assertions are created by the Firebase
   Auth SDK. The app keeps an enrollment secret only in memory until setup is
@@ -1534,3 +1538,73 @@ wrong rather than when it goes right.
   the honest retained set and for the four categories that currently survive a
   deletion; they are tracked in [Bugs.md](Bugs.md) and are not claimed by any
   user-facing copy.
+
+## Pre-registered account takeover (2026-09-25, ADR-222, Phase 1 — source only, NOT deployed)
+
+**Threat.** A stranger registers the owner's address with a password; when the
+owner later signs in with Google or Apple, Firebase hands the owner the same
+uid and unlinks the unverified password, but the stranger's session survives,
+its refreshed ID tokens say `email_verified: true`, and the push tokens it
+planted keep receiving the owner's notifications. Full analysis, emulator
+evidence and Phase 2 in [Decisions.md](Decisions.md) (ADR-222).
+
+**Control (server-only; no client is trusted).** `functions/auth/federated_takeover.js`
+is the single remediation authority. It acts on an account whose Google/Apple
+identity is on the owner's address and which still carries an unverified
+password — or, while the ledger row is still pending, whose password vanished,
+whose address moved away from the one the ledger recorded, or whose
+credentials changed since (Auth `tokensValidAfterTime` past the ledger's
+baseline). The decision rests on the ledger's evidence, **never** on the
+current `emailVerified` or address: after a takeover the stranger's surviving
+session can re-link a password or move the account to their own address before
+any trigger runs, and both used to pass as "the owner's verified password".
+Only a password verified by link with nothing changed since, then Google, is
+left alone (the owner's own race). Order: unlink the password and foreign
+identities and remove enrolled second factors → revoke refresh tokens →
+`users/{uid}.authSessionEpoch` → purge `fcmTokens` → put the owner's address
+back if it moved (or was cleared with the password) → audit
+(`authTakeoverAudit`) and ledger (`authPasswordLedger`) in one batch.
+Triggers: the owner's own client after every Google/Apple sign-in
+(`secureFederatedSignInV1`, remediates the caller only; awaited up to 8 s for a
+returning sign-in, in the background for a new one, a late "remediated" still
+signs the device out) and a 5-minute sweeper (`sweepFederatedTakeoverSchedule`,
+`maxInstances: 1`) whose ledger pass pages through every pending row until its
+180 s share of the budget runs out. The Auth `onCreate` trigger and the
+sweeper's `listUsers` walk record unverified passwords — with a SHA-256 of the
+address, never the address, and the credential baseline — while they are
+still visible, because Firebase removes them before anything else can see the
+account.
+
+**Rules.** `authSessionEpoch` is absent from both `users/{uid}` client
+allowlists. The `fcmTokens` create/update rule and Storage `isActiveUser()`
+refuse any ID token whose `auth_time` predates it. It is deliberately **not**
+in `isActiveAccount()`: that was measured to exceed the 1000-expression budget
+of an existing Servers list rule. `authPasswordLedger`, `authTakeoverAudit` and
+`authTakeoverSweep` are `allow read, write: if false` for every client.
+
+**Residual, stated plainly.**
+
+- The sweeper's delay is one 5-minute run while a pass over the pending ledger
+  fits in 180 s (emulator: 651 rows in ~2 s; production UNMEASURED); beyond
+  that it scales with the number of pending rows, which never-verified
+  accounts keep in the rotation. The owner's app (trigger A) does not wait for
+  the sweeper.
+- A stranger who strips the owner's Google/Apple identity (or whose password
+  reset does) before any trigger observes the takeover leaves nothing to
+  anchor a remediation; the row stays pending (`unconfirmedPassword`) and the
+  owner's next Google/Apple sign-in on it is remediated. Phase 2 closes it.
+- An ID token the stranger already holds stays valid until it expires (up to
+  one hour): callables, owner-only reads that never consult account state
+  (notifications, incoming calls, DMs, the private profile) and other
+  `isActiveAccount()` writes accept it until then. Only Phase 2's
+  `beforeUserSignedIn` (Identity Platform upgrade) removes the window between
+  the owner's sign-in and the remediation; nothing revokes a minted ID token.
+- The purge matters more in the next build: it adds push types that carry
+  actor names and server labels.
+- A Google identity the stranger linked before the takeover can survive as a
+  stale federated index in the emulator; production is UNVERIFIED (canary).
+- An owner who clicks the verification link the stranger triggered verifies
+  the stranger's password — indistinguishable from a legitimate account.
+- Accounts taken over before deployment left no evidence.
+- Never-verified password-only accounts older than 7 days are **reported**, not
+  deleted; deletion is the owner's decision (ADR-222 lists what it must reuse).

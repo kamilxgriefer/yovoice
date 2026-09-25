@@ -338,6 +338,21 @@ const {
 
 exports.revokeMyRefreshTokens = revokeMyRefreshTokens;
 
+// Pre-registered account takeover, Phase 1: one remediation authority, two
+// triggers (the owner's own client right after a returning Google/Apple
+// sign-in, and a bounded sweeper), plus the Auth onCreate trigger that
+// records an unverified password while it is still visible. See
+// functions/auth/federated_takeover.js and docs/SECURITY.md.
+const {
+  onAuthUserCreated,
+  secureFederatedSignInV1,
+  sweepFederatedTakeoverSchedule,
+} = require("./auth/federated_takeover");
+
+exports.onAuthUserCreated = onAuthUserCreated;
+exports.secureFederatedSignInV1 = secureFederatedSignInV1;
+exports.sweepFederatedTakeoverSchedule = sweepFederatedTakeoverSchedule;
+
 /*
 |--------------------------------------------------------------------------
 | Account deletion (ADR-206)

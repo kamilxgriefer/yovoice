@@ -15777,3 +15777,324 @@ server or a left membership (private, grant nothing) until account deletion.
 The board now keeps one question subscription per channel instead of
 re-subscribing on every rebuild. Rendering on devices and web lifecycle
 mapping are unverified.
+
+## ADR-222: A Google or Apple sign-in that inherits a password nobody verified ends every earlier session (pre-registered account takeover, Phase 1)
+
+**Date:** 2026-09-25 · **Status:** accepted (source on branch
+`nb2-account-takeover`: `a136ea2a` server, rules and tests; `1c248efb` app;
+`a213195d` adds these docs and strips address-less identities; the
+`fix(account-takeover):` commit after it bases the decision on the ledger's
+evidence, pages the ledger pass and checks every Google/Apple sign-in) ·
+**NOT DEPLOYED** · Phase 2 needs the owner's Identity Platform upgrade
+
+### Context
+
+Anyone can register a stranger's e-mail address with a password — from the
+app, the website, or straight against the public Identity Toolkit REST API. The
+account stays unverified. When the real owner later signs in with Google or
+Apple, Firebase ("one account per e-mail") gives the owner that same uid and
+unlinks the unverified password. It does not end the pre-registrant's session:
+their refresh token keeps working and every ID token it mints now says
+`email_verified: true`, which opens every `isVerified()` rule and every
+callable that trusts the claim. Push tokens planted while unverified
+(`users/{uid}/fcmTokens`, which never required verification) keep receiving
+the owner's notification metadata — and the next build adds push types that
+carry actor names and server labels. Pre-existing on the whole platform since
+ADR-068; the website's security note recorded it as an accepted risk on
+2026-09-24.
+
+Reproduced in the Auth emulator (firebase-tools 15.29.0) before writing code:
+
+- after the takeover the password provider is **already gone** from
+  `providerData` and `emailVerified` is true — the Auth record alone cannot
+  tell a taken-over account from one created with Google;
+- a verified password plus a Google sign-in is **linked**, not replaced;
+- the emulator does **not** enforce refresh-token revocation
+  (`state.js validateRefreshToken` checks only that the user exists) and it
+  stamps every token, refreshes included, with the account's latest sign-in
+  as `auth_time` (`getAuthTime` → `lastLoginAt`); production does neither;
+- a Google identity the pre-registrant linked to the unverified account before
+  the takeover disappears from `providerData`, yet in the emulator it still
+  signs in to the uid afterwards (a stale federated index).
+
+An earlier proposal was independently refuted in part: its remediation order
+let a stale session re-plant a push token between the purge and the epoch
+write; an epoch in `accountIsActive` was claimed to close reads it never
+reaches; `requireActor` never reads `users/{uid}`, so a callable epoch is not
+free; its TTL deletion used the bare outbox entry point.
+
+### Decision
+
+1. **One remediation authority**, `remediateAccount()` in
+   `functions/auth/federated_takeover.js`, used by every trigger. It acts when
+   the account has a Google/Apple identity on the owner's address AND still
+   carries an unverified password — or, while the server-side ledger still
+   says "pending", whenever that owner identity is linked and the ledger's
+   **evidence** no longer matches the account: the password vanished, the
+   account address differs from the one the ledger recorded, or a credential
+   changed (Auth `tokensValidAfterTime` is past the ledger's baseline). The
+   current `emailVerified` and address are never trusted on their own: after a
+   takeover the pre-registrant's surviving session can re-link a password
+   (`accounts:update`) or move the account to their own address before any
+   trigger runs, and both used to read as "the owner's verified password".
+   Only the owner's own race — verified by link, nothing changed since the
+   ledger saw it, then Google — is left alone ("ambiguous": logged, ledger
+   `verified`). The owner identity is the Google/Apple identity on the
+   account's address or on the address the ledger recorded, so moving the
+   account does not disown it.
+2. **Evidence is recorded while it is visible.** `authPasswordLedger/{uid}`
+   (`pending | verified | remediated`) is seeded by a v1 Auth `onCreate`
+   trigger (`onAuthUserCreated`, standard Firebase Auth, no upgrade needed) and
+   by the sweeper's bounded `listUsers` walk, which also backfills existing
+   accounts and re-arms an address that became unverified later. Each seeding
+   records `emailHash` (SHA-256 of the normalized address — never the address)
+   and `validSinceBaselineSeconds` (the record's `tokensValidAfterTime`, or its
+   creation second + 2 when an Auth event omits it). A verification-link click
+   moves neither; a password set or reset, an address change, a revocation
+   and Firebase's own takeover (emulator: `validSince` on the replaced
+   account) all move the baseline. A pending password-only account that is
+   verified but changed since the ledger saw it (a password reset before
+   verifying — or a pre-registrant who stripped the owner's identity) is
+   `unconfirmedPassword`: not closed as verified, not touched, still watched,
+   so the owner's next Google/Apple sign-in on it is a takeover.
+3. **Order**, so nothing planted or issued survives in between: (1) unlink the
+   password and every identity that is not the owner's, and remove every
+   enrolled second factor (a verified stranger session could enroll one and
+   lock the owner out), (2) revoke refresh tokens, (3) write
+   `users/{uid}.authSessionEpoch` = remediation second + 1, (4) purge
+   `fcmTokens` (all of them from the sweeper; all but the calling device's for
+   the owner, and only when the caller's session is the kept identity, fresh
+   and the account's latest sign-in), (5) put the owner identity's address
+   back on the account when it is missing or the password was unlinked, so a
+   password reset cannot be sent to an address the pre-registrant controls —
+   if that address was re-registered meanwhile, the audit row records
+   `ownerEmailRestored: false`, the ledger row `needsReview`, and an error log
+   asks for manual review instead of re-revoking the owner every sweep,
+   (6) audit row in `authTakeoverAudit` (now also `mfaFactorsRemoved`,
+   `ownerEmailRestored`) plus ledger `remediated`, one batch. Unlinking first
+   means no new session can start from those credentials, so the epoch is
+   after every pre-registrant `auth_time`; the epoch precedes the purge, so a
+   stale session cannot re-plant. Every step is idempotent; a failure leaves
+   the row pending for the next call or sweep.
+4. **Two triggers.** A: `secureFederatedSignInV1`, called by the owner's own
+   client right after every Google/Apple sign-in; it remediates the caller
+   only, answers `notApplicable` to any non-federated session, and is
+   best-effort on the client (a failure never blocks a sign-in). The app wires
+   it in `AuthService`: a returning sign-in waits for it up to 8 s (was 20 s;
+   the register route no longer spins through a cold start), a brand-new
+   account is checked in the background (whether production reports a
+   takeover as `isNewUser` is no longer load-bearing), and a check that
+   outlasts the wait keeps running. On `remediated` — early or late, and a late
+   one only while the same account is still signed in on the device — it signs
+   out and asks the owner to sign in once more (localized notice, through the
+   messenger captured at the tap), because revocation ended this device's
+   session too. B: `sweepFederatedTakeoverSchedule`, every 5 minutes,
+   `maxInstances: 1`, for the website and old builds. Its ledger pass pages
+   through **every** pending row until 180 s of the 240 s budget are used, then
+   resumes from a cursor; the `listUsers` walk keeps the rest of the budget.
+5. **The epoch is checked only where it is free and closes something
+   lasting**: the `fcmTokens` create/update rule and Storage `isActiveUser`.
+   Both already read `users/{uid}`. Folding it into `isActiveAccount()` was
+   tried and exceeded the 1000-expression budget of an existing Servers list
+   rule (`server_rules.test.js`), so it stays scoped. It is provider-agnostic
+   (`auth_time < epoch`): a pre-linked Google session is as stale as the
+   password one, and the owner's own pre-remediation session was revoked
+   anyway.
+6. **Report only for never-verified accounts.** Each completed walk logs
+   password-only, never-verified accounts older than 7 days (count and up to
+   100 uids, no addresses). No deletion code exists.
+
+### Reasoning
+
+The server is the only control: the REST API makes every client-side check
+optional for the attacker, and the owner's client is the one party the
+attacker cannot silence, which is why it — not the attacker's session — is
+the trigger that can act within seconds. A ledger is the smallest thing that
+turns an unobservable past ("this uid once had a password nobody verified")
+into a server fact without the Identity Platform upgrade. Scoping the epoch to
+the push-token write keeps the rules change cheap and removes the only effect
+that outlives the one-hour ID token.
+
+### Consequences
+
+- **Residual window, stated plainly.** An ID token the pre-registrant already
+  holds stays valid until it expires (up to one hour). The epoch refuses it
+  for push registration and Storage; Cloud Functions callables (DM sends,
+  friend requests, calls and LiveKit tokens, billing), owner-only reads that
+  never consult account state (notifications, incoming calls, DM reads, the
+  private profile) and other `isActiveAccount()` writes still accept it until
+  it expires. Phase 2 may shrink what that token is worth (if the blocking
+  function runs before the pre-registrant can refresh into a verified token —
+  UNVERIFIED until an emulator run of `beforeUserSignedIn` shows what it sees
+  at the takeover) but does not revoke a token already minted either.
+- Revocation is second-granular in Firebase: a session that starts in the same
+  second as the revocation survives it; the epoch's +1 covers that in rules.
+- Only a Google/Apple identity carrying the account's own address is kept. One
+  without an address (a repeat Apple authorization omits the e-mail claim) is
+  stripped with the password.
+- The callable and the sweeper do not lock each other out. Running both at
+  once is harmless (every step is idempotent) except that the audit may hold
+  two rows and a concurrent sweep may purge the owner's kept device row; the
+  app re-registers after its next sign-in anyway.
+- The owner signs in once more after a remediation. On the website and old
+  builds the sweeper acts within one run (5 minutes) as long as a pass over
+  the pending ledger fits in the ledger pass's 180 s; beyond that the bound
+  **scales with the backlog**: worst case ≈ ⌈pending rows ÷ rows per run⌉ ×
+  5 minutes, where rows per run is about 180 s ÷ (one `getUsers` round trip
+  per 100 rows plus one query per 300). The emulator did 651 rows in one run
+  in about 2 s; production throughput is UNMEASURED, but at even 300 ms per
+  100 rows one run covers ~60 000 rows, so mass unverified sign-ups need tens
+  of thousands of accounts to add a single 5-minute run. Never-verified rows
+  stay pending by design (deleting them is the owner's decision, below). No
+  prioritisation by recent sign-in: that signal lives only in the Auth record
+  the pass already reads, so it cannot make the pass cheaper; Phase 2's
+  blocking function is the real fix. The owner's own session ends at its next
+  refresh.
+- **Rewrites the ledger cannot see.** If the pre-registrant's session also
+  unlinks the owner's Google/Apple identity (or a password reset does that —
+  the emulator's `resetPassword` drops every other provider) before any
+  trigger observes the takeover, no owner identity is left to anchor a
+  remediation: the account reads `unconfirmedPassword` and is only watched.
+  The owner's next Google/Apple sign-in on it (a re-link on the same address)
+  is then a takeover; if the account was also moved to another address, the
+  owner's next sign-in creates a new account in production (the emulator's
+  stale federated index still signs into the old uid). Trigger A's race and
+  Phase 2 are what shrink this. Legitimate false positives, all benign: an
+  owner who reset or changed a password, or changed the address, between
+  registering and a Google/Apple link before any sweep has their password
+  unlinked (Google stays) or their address set back to the Google address,
+  and signs in once more; enrolled second factors on a remediated account are
+  removed (TOTP needs the Identity Platform upgrade, so none exist yet).
+- The app's TOTP sign-in path (`TotpChallengeScreen` → `resolveSignIn`) does
+  not call trigger A; the sweeper covers it. Wiring it is a Phase 2
+  precondition, together with enabling TOTP.
+- Not reset: the pre-registrant's `notificationPreferences`, `messagePrivacy`,
+  display name and Auth `displayName` stay on the owner's account; the owner
+  can change them (display-name cooldown applies). Candidate follow-up.
+- A foreign Google identity pre-linked before the takeover that survives only
+  as a stale index (emulator behaviour) is invisible to `providerData`, so
+  Phase 1 cannot unlink it. Production behaviour is UNVERIFIED — see the
+  canary below. Any foreign identity still listed is unlinked.
+- The owner who clicks the verification link the pre-registrant triggered
+  verifies the pre-registrant's password; no server check can tell that apart
+  from a legitimate user. Residual.
+- Accounts taken over before this is deployed left no evidence and cannot be
+  found. One option for the owner: a one-time revocation of every
+  federated-only account's sessions (one forced re-sign-in each).
+- Cost: one callable, one Firestore read and one Auth lookup per federated
+  sign-in (new accounts included now); every 5 minutes one indexed equality
+  query per 300 pending rows and one `getUsers` per 100; the `listUsers` walk
+  at most hourly. No new composite index (equality + document-id order).
+- **Website (integrator; the website repo was not edited).** In
+  `src/providers/auth-provider.tsx` `signInWithProvider`, after
+  `await createSocialUserProfileIfNeeded(credential, provider);` add
+  `await secureReturningFederatedSignIn(auth, credential);`, with:
+
+  ```ts
+  // src/lib/auth/federated-session.ts
+  import { getAdditionalUserInfo, signOut, type Auth, type UserCredential } from "firebase/auth";
+  import { httpsCallable } from "firebase/functions";
+  import { getFirebaseFunctions } from "@/lib/firebase/functions";
+
+  /** Matched by `code` in auth-errors.ts, which must stay import-free. */
+  export const FEDERATED_SESSION_SECURED_CODE = "yovoice/federated-session-secured";
+
+  export class FederatedSessionSecuredError extends Error {
+    readonly code = FEDERATED_SESSION_SECURED_CODE;
+    constructor() {
+      super("federated-session-secured");
+      this.name = "FederatedSessionSecuredError";
+    }
+  }
+
+  /** Trigger A of the app repo's ADR on pre-registered account takeover. */
+  export async function secureReturningFederatedSignIn(
+    auth: Auth,
+    credential: UserCredential,
+  ): Promise<void> {
+    const uid = credential.user.uid;
+    const check = httpsCallable<Record<string, never>, { status?: string }>(
+      getFirebaseFunctions(),
+      "secureFederatedSignInV1",
+    );
+    const answer = check({}).then((result) => result.data?.status);
+    if (getAdditionalUserInfo(credential)?.isNewUser) {
+      // Checked too, without waiting: a remediation signs this tab out.
+      void answer
+        .then((status) => {
+          if (status === "remediated" && auth.currentUser?.uid === uid) {
+            return signOut(auth);
+          }
+        })
+        .catch(() => undefined);
+      return;
+    }
+    let status: unknown;
+    try {
+      status = await answer;
+    } catch (error) {
+      console.error("YO Voice sign-in: the account check did not complete; the server sweep covers it.", error);
+      return;
+    }
+    if (status !== "remediated") return;
+    await signOut(auth).catch(() => undefined);
+    throw new FederatedSessionSecuredError();
+  }
+  ```
+
+  and in `src/lib/auth/auth-errors.ts` `getSocialAuthErrorMessage`, first —
+  matching the code string, **not** `instanceof`, because that file is kept
+  free of imports so `node --test` can load it:
+  `if ((error as { code?: unknown } | null)?.code === "yovoice/federated-session-secured") return "We secured your account and ended every earlier session, including a password sign-in that was never verified. Sign in again to continue.";`
+  The existing `catch` in `signInWithProvider` rethrows it (it is not an MFA
+  error) and the social form shows it through `onError`. Replace the
+  "Pre-registered addresses" accepted-risk paragraph in
+  `docs/security/security-notes.md` with a pointer to this ADR, and fix its
+  contradiction: line 151 calls Google authoritative for Workspace addresses,
+  lines 164-166 say Workspace gets `account-exists-with-different-credential`.
+
+### Phase 2 — the owner's step, then a separate change
+
+1. **Decide and upgrade.** Firebase Console → Authentication → Settings →
+   "Upgrade to Firebase Authentication with Identity Platform". The upgrade
+   **cannot be undone**; check the current Identity Platform pricing first. It
+   is the same upgrade TOTP already waits for and does not turn MFA on.
+2. **Then (new code, not on this branch):** `functions/auth/blocking.js` with
+   `beforeUserSignedIn` (europe-west1) that returns at once unless the provider
+   is `google.com`/`apple.com` and the user is not new, and otherwise runs the
+   same `remediateAccount()` synchronously, throwing `unavailable` only on that
+   branch; plus a best-effort `beforeUserCreated` ledger write (never failing
+   a registration). It can also refuse a Google/Apple sign-in whose provider
+   address differs from the account address on an account with a ledger row,
+   which covers the stale pre-linked identity above.
+3. **Register and confirm.** Deploy the functions, then Firebase Console →
+   Authentication → Settings → Blocking functions: select
+   `beforeUserSignedIn` under "Before sign in" (and `beforeUserCreated` under
+   "Before account creation"), Save, and confirm both are listed.
+4. **Canary** with owner-controlled accounts: pre-register a spare Gmail
+   address by password on device A, sign in with Google on device B; A must be
+   signed out at its next refresh and receive no further push. Repeat with
+   Apple (real address, not Hide My Email). Also pre-link a second Google
+   account on A before the takeover and check it cannot sign in afterwards.
+   Record from the takeover sign-in: `isNewUser` (the app no longer depends on
+   it, but the website snippet's wait/background split does), whether
+   `tokensValidAfterTime` moved at the takeover, and whether setting a
+   password from A's session afterwards needs a recent login
+   (`CREDENTIAL_TOO_OLD_LOGIN_AGAIN`) — then confirm the remediation still
+   runs when A re-links a password or moves the address first.
+5. **Before TOTP is enabled** (it needs the same upgrade): call trigger A
+   after a TOTP-resolved Google/Apple sign-in too; the server already removes
+   every enrolled factor during a remediation.
+
+### The owner's decision on never-verified accounts
+
+The sweeper reports them and deletes nothing. Deleting them is the owner's
+call, with three questions to settle first: the age (the report uses 7 days;
+it must exceed the verification link's lifetime), grandfathering and a warning
+e-mail for existing unverified testers (the app lets unverified users into the
+shell, so they may have real data), and the mechanism. If approved, it must
+reuse the app-deletion transaction shape (`disabled: true`, the
+`accountDeletion` mark and the outbox row together, `functions/account/deletion.js`)
+and re-check inside that transaction that the account is still password-only
+and unverified — never the bare `enqueueAccountDeletionOutbox`. Deletion only
+shortens the window; the pre-registrant can register again.

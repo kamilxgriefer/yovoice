@@ -10,6 +10,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/auth/presentation/auth_error_localizer.dart';
 import 'package:yovoice/features/auth/presentation/screens/forgot_password_screen.dart';
 import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
@@ -432,6 +433,8 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
   Future<void> _signInWithGoogle() async {
     if (_interactionLocked) return;
     FocusManager.instance.primaryFocus?.unfocus();
+    final securedNotice = _captureSecuredSessionNotice();
+    _listenForLateSecuredSession(securedNotice);
     setState(() => _isGoogleLoading = true);
     try {
       await _authService.signInWithGoogle();
@@ -439,6 +442,10 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
         Navigator.of(context).pop();
       }
     } catch (error) {
+      if (error is FederatedSessionSecuredException) {
+        _showSecuredSessionNotice(securedNotice);
+        return;
+      }
       if (!mounted) return;
       final completedMfa = await _handleAuthenticationError(error);
       if (mounted && completedMfa && widget.popAfterSocialSuccess) {
@@ -457,6 +464,8 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
     }
 
     FocusManager.instance.primaryFocus?.unfocus();
+    final securedNotice = _captureSecuredSessionNotice();
+    _listenForLateSecuredSession(securedNotice);
     setState(() => _isAppleLoading = true);
     try {
       await _authService.signInWithApple();
@@ -464,6 +473,10 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
         Navigator.of(context).pop();
       }
     } catch (error) {
+      if (error is FederatedSessionSecuredException) {
+        _showSecuredSessionNotice(securedNotice);
+        return;
+      }
       if (!mounted) return;
       final completedMfa = await _handleAuthenticationError(error);
       if (mounted && completedMfa && widget.popAfterSocialSuccess) {
@@ -515,6 +528,50 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
 
   void _showMessage(String message) {
     _showMessageOn(ScaffoldMessenger.of(context), message);
+  }
+
+  // A returning Google/Apple sign-in publishes the account before the
+  // post-sign-in security check finishes, so AuthGate may already have
+  // replaced this screen when the check signs the device out again. Capture
+  // the app-level messenger and the copy up front, as registration does, so
+  // the owner still learns why they are back on the sign-in screen.
+  ({ScaffoldMessengerState? messenger, String message})
+  _captureSecuredSessionNotice() => (
+    messenger: ScaffoldMessenger.maybeOf(context),
+    message: federatedSessionSecuredMessage(AppLocalizations.of(context)),
+  );
+
+  ({ScaffoldMessengerState? messenger, String message})? _lateSecuredNotice;
+  bool _listeningForLateSecuredSession = false;
+
+  // The check can also answer after the sign-in returned: a brand-new account
+  // is checked in the background, and a slow returning check keeps running
+  // past its wait. AuthService signs the device out itself; this only makes
+  // sure the owner is told why, through the notice captured at the tap (the
+  // screen is usually gone by then). One pending listener per screen.
+  void _listenForLateSecuredSession(
+    ({ScaffoldMessengerState? messenger, String message}) notice,
+  ) {
+    _lateSecuredNotice = notice;
+    if (_listeningForLateSecuredSession) return;
+    _listeningForLateSecuredSession = true;
+    unawaited(
+      _authService.federatedSessionSecuredLater.first.then((_) {
+        _listeningForLateSecuredSession = false;
+        final latest = _lateSecuredNotice;
+        if (latest != null) _showSecuredSessionNotice(latest);
+      }, onError: (Object _) => _listeningForLateSecuredSession = false),
+    );
+  }
+
+  void _showSecuredSessionNotice(
+    ({ScaffoldMessengerState? messenger, String message}) notice,
+  ) {
+    if (mounted) {
+      _showMessage(notice.message);
+    } else if (notice.messenger?.mounted ?? false) {
+      _showMessageOn(notice.messenger!, notice.message);
+    }
   }
 
   void _showMessageOn(ScaffoldMessengerState messenger, String message) {

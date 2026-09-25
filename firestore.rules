@@ -2509,6 +2509,24 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Pre-registered account takeover (functions/auth/federated_takeover.js).
+    // The ledger records which accounts carried an unverified password, the
+    // audit records every remediation, and the sweep state is the sweeper's
+    // cursor. All three are Admin-SDK-only: a client that could read the
+    // ledger could learn which addresses were pre-registered, and one that
+    // could write it could mark its own planted password "verified".
+    match /authPasswordLedger/{uid} {
+      allow read, write: if false;
+    }
+
+    match /authTakeoverAudit/{auditId} {
+      allow read, write: if false;
+    }
+
+    match /authTakeoverSweep/{stateId} {
+      allow read, write: if false;
+    }
+
     match /users/{userId} {
       // The root user document is private account state. Owners retain their
       // own profile/settings/presence flow. Staff account-management uses
@@ -2880,6 +2898,34 @@ service cloud.firestore {
         allow create, update, delete: if false;
       }
 
+      // SESSION EPOCH (pre-registered account takeover, Phase 1).
+      //
+      // `users/{uid}.authSessionEpoch` (int, epoch seconds) is written only by
+      // functions/auth/federated_takeover.js through the Admin SDK, after it
+      // has unlinked a password its holder never verified and revoked the
+      // account's refresh tokens, and BEFORE it purges this collection. It is
+      // absent from both client allowlists on users/{userId}. Revocation stops
+      // NEW ID tokens; one already issued stays valid for up to an hour, and a
+      // push token planted with it would outlive that hour indefinitely. So a
+      // token whose sign-in (`auth_time`) predates the epoch may not register
+      // or refresh a device here, whatever provider it signed in with; the
+      // owner signs in again once and that session is after the epoch.
+      //
+      // Deliberately scoped to this collection (and Storage isActiveUser).
+      // Folding it into isActiveAccount() exceeded the 1000-expression budget
+      // on an existing list rule in the Servers suite. Other paths keep the
+      // stale ID token's remaining lifetime as a documented residual — see
+      // docs/SECURITY.md. It reads the users/{uid} document isActiveAccount()
+      // has already read, so it costs no extra document access, and an
+      // account without the field short-circuits before any token field.
+      function sessionPredatesAuthEpoch() {
+        return get(/databases/$(database)/documents/users/$(userId))
+              .data.get('authSessionEpoch', null) is int &&
+            request.auth.token.get('auth_time', 0) <
+              get(/databases/$(database)/documents/users/$(userId))
+                .data.authSessionEpoch;
+      }
+
       // One doc per registered device. Only the Admin SDK (push-send Cloud
       // Function) ever reads across users' tokens; clients only manage
       // their own.
@@ -2887,6 +2933,7 @@ service cloud.firestore {
         allow read: if isOwner(userId);
         allow create, update: if isOwner(userId) &&
             isActiveAccount() &&
+            !sessionPredatesAuthEpoch() &&
             request.resource.data.keys().hasOnly([
               'platform',
               'directVideoProtocol',
