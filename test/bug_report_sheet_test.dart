@@ -279,6 +279,143 @@ void main() {
     );
   });
 
+  testWidgets('the consent preview opens full size with pinch-to-zoom, and '
+      'closing it attaches nothing', (tester) async {
+    final record = _Calls();
+    await _pumpForm(tester, record, screenshot: _screenshot);
+    await tester.tap(
+      find.byKey(const ValueKey('bug-report-screenshot-review')),
+    );
+    await tester.pumpAndSettle();
+    // Decode the frame for real, so the thumbnail has its on-screen size.
+    await tester.runAsync(
+      () => precacheImage(
+        MemoryImage(_screenshot),
+        tester.element(find.byType(BugReportForm)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    for (final opener in const [
+      'bug-report-screenshot-full-size',
+      'bug-report-screenshot-thumbnail',
+    ]) {
+      await tester.ensureVisible(find.byKey(ValueKey(opener)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey(opener)));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('bug-report-screenshot-full-size-view')),
+        findsOneWidget,
+        reason: opener,
+      );
+      final viewer = tester.widget<InteractiveViewer>(
+        find.byKey(const ValueKey('bug-report-screenshot-zoom')),
+      );
+      expect(viewer.maxScale, greaterThanOrEqualTo(4));
+      final image = tester.widget<Image>(
+        find.descendant(
+          of: find.byKey(const ValueKey('bug-report-screenshot-zoom')),
+          matching: find.byType(Image),
+        ),
+      );
+      expect((image.image as MemoryImage).bytes, _screenshot);
+      expect(tester.getSize(find.byType(InteractiveViewer)).width, 390);
+
+      await tester.tap(
+        find.byKey(const ValueKey('bug-report-screenshot-full-size-close')),
+      );
+      await tester.pumpAndSettle();
+      // Back on the consent step, still undecided.
+      expect(
+        find.byKey(const ValueKey('bug-report-screenshot-preview')),
+        findsOneWidget,
+      );
+    }
+    await tester.tap(
+      find.byKey(const ValueKey('bug-report-screenshot-decline')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('bug-report-screenshot-attached')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('after a failed send, changing the words or the screenshot '
+      'choice starts a new request id; an unchanged retry keeps it', (
+    tester,
+  ) async {
+    final record = _Calls()..refuseWith = 'network';
+    await _pumpForm(tester, record, screenshot: _screenshot);
+    await _describe(tester, 'The call drops after ten seconds.');
+    await _send(tester);
+    await _send(tester);
+    expect(record.calls[0].$2['requestId'], record.calls[1].$2['requestId']);
+
+    await _describe(tester, 'The call drops after ten seconds on Wi-Fi.');
+    await _send(tester);
+    expect(
+      record.calls[2].$2['requestId'],
+      isNot(record.calls[1].$2['requestId']),
+      reason: 'the server binds a request id to exactly what was sent',
+    );
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('bug-report-screenshot-review')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('bug-report-screenshot-review')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('bug-report-screenshot-confirm')),
+    );
+    await tester.pumpAndSettle();
+    record.refuseWith = null;
+    await _send(tester);
+    expect(
+      record.calls[3].$2['requestId'],
+      isNot(record.calls[2].$2['requestId']),
+    );
+    expect(find.byKey(const ValueKey('bug-report-sent')), findsOneWidget);
+  });
+
+  testWidgets('already-exists and invalid-argument get their own copy, not '
+      'the connection message', (tester) async {
+    final record = _Calls()..refuseWith = 'already-exists';
+    await _pumpForm(tester, record);
+    await _describe(tester, 'Something is wrong with the chat list.');
+    await _send(tester);
+    expect(find.textContaining('already received'), findsOneWidget);
+    expect(find.textContaining('Check your connection'), findsNothing);
+
+    record.refuseWith = 'invalid-argument';
+    await _send(tester);
+    expect(find.textContaining('Shorten the description'), findsOneWidget);
+    expect(find.textContaining('Check your connection'), findsNothing);
+  });
+
+  testWidgets('the description is bounded in UTF-16 code units, as the '
+      'server counts it', (tester) async {
+    final record = _Calls();
+    await _pumpForm(tester, record);
+    // 1500 emoji are 1500 graphemes but 3000 UTF-16 code units.
+    await _describe(tester, 'Broken ${'\u{1F41B}' * 1500}');
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey('bug-report-description')),
+    );
+    expect(field.controller!.text.length, lessThanOrEqualTo(2000));
+    expect(find.textContaining('/2000'), findsOneWidget);
+    await _send(tester);
+    final sent = record.calls.single.$2['description']! as String;
+    expect(sent.length, lessThanOrEqualTo(2000));
+    // Never half a surrogate pair.
+    final last = sent.codeUnitAt(sent.length - 1);
+    expect(last >= 0xD800 && last <= 0xDBFF, isFalse);
+  });
+
   for (final (size, dialog) in const [
     (Size(390, 844), false),
     (Size(768, 1024), true),

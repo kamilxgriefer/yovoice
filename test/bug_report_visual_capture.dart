@@ -260,6 +260,20 @@ void main() {
         );
         await tester.pumpAndSettle();
         await _capturePng(tester, 'consent-$label');
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('bug-report-screenshot-full-size')),
+        );
+        await tester.pumpAndSettle();
+        await _capturePng(tester, 'consent-scrolled-$label');
+        await tester.tap(
+          find.byKey(const ValueKey('bug-report-screenshot-full-size')),
+        );
+        await tester.pumpAndSettle();
+        await _capturePng(tester, 'consent-full-size-$label');
+        await tester.tap(
+          find.byKey(const ValueKey('bug-report-screenshot-full-size-close')),
+        );
+        await tester.pumpAndSettle();
         await tester.tap(
           find.byKey(const ValueKey('bug-report-screenshot-confirm')),
         );
@@ -397,6 +411,35 @@ void main() {
         await tester.pumpAndSettle();
       }
       await _capturePng(tester, 'staff-inbox-${size.width.toInt()}');
+      if (size.width > 1000) {
+        // The rights-request actions at the foot of the detail.
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('staff-bug-report-delete')),
+        );
+        await tester.pumpAndSettle();
+        await _capturePng(tester, 'staff-detail-rights-1440');
+        await tester.tap(find.byKey(const ValueKey('staff-bug-report-delete')));
+        await tester.pumpAndSettle();
+        await _capturePng(tester, 'staff-delete-confirm-1440');
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(
+        find.byKey(const ValueKey('staff-bug-report-find-account')),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('staff-bug-report-find-account-field')),
+        'uid-0',
+      );
+      await tester.pumpAndSettle();
+      await _capturePng(tester, 'staff-find-account-${size.width.toInt()}');
+      await tester.tap(
+        find.byKey(const ValueKey('staff-bug-report-find-account-submit')),
+      );
+      await tester.pumpAndSettle();
+      await _capturePng(tester, 'staff-account-filter-${size.width.toInt()}');
+      expect(tester.takeException(), isNull);
     });
   }
 }

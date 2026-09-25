@@ -23,9 +23,12 @@ dock and gesture edges; a reporter with a required description, allowlisted
 device context and a preview-and-confirm screenshot step; server-written,
 owner-read `bugReports` with a reserved private screenshot upload, rate limits,
 a retention sweep and account-deletion coverage; an owner-only Staff Center
-inbox; e-mail (Resend) and GitHub alert channels source-gated off. Six new
-exports (261 -> 267), one composite index, two deny-all Rules blocks, one
-Storage path. Not verified on a device or simulator.
+inbox with rights-request tools (find by account, delete a report, remove a
+screenshot, each audited); link-only e-mail (Resend) and GitHub alert channels
+source-gated off. Eight new exports (261 -> 269), three composite indexes, two
+deny-all Rules blocks, one Storage path. The yovoice.app privacy text must be
+published before the deploy (docs/DEPLOYMENT.md). Not verified on a device or
+simulator.
 
 ## Next build after 3.0.0 — seven branches on `nb/integrate` — source only, NOTHING DEPLOYED — 2026-09-20
 

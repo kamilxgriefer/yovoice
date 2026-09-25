@@ -14,6 +14,17 @@
 //      functions/.env, because functions/.env is committed to a public
 //      repository.
 //
+// Both channels are LINK-ONLY. An alert carries the report id, the platform,
+// the app version and build, the screen name and whether a screenshot was
+// requested or attached — and nothing the reporter wrote or showed: no
+// description, no uid, no screenshot, no OS version, no locale. The report
+// itself stays in Firebase, where the 180-day sweep, the owner's delete
+// action and account deletion all reach it. A copy in a mailbox, in Resend's
+// sent-mail log or in a GitHub issue is reached by none of those, so no copy
+// of the reporter's words or image is ever made there (the privacy text in
+// docs/SECURITY.md promises exactly this). The owner reads the report in the
+// Staff Center, looking it up by the id in the alert.
+//
 // E-mail goes through the Resend HTTP API with the RESEND_API_KEY secret. The
 // only Resend use in this project before this was Firebase Auth's own SMTP
 // relay, configured in the Firebase console (ADR-008); Cloud Functions held no
@@ -21,18 +32,31 @@
 //
 // GitHub opens an issue with the GITHUB_BUG_REPORT_TOKEN secret, as the route
 // to "a new Claude chat" (a Claude Code routine or action that reacts to new
-// issues). kamilxgriefer/yovoice is PUBLIC, so by default an issue carries
-// NOTHING personal: no description, no uid, no screenshot, no locale — only the
-// report id, platform, app version/build and screen name, and a pointer to the
-// owner-only Staff Center. The description is added (fenced, as data) only
-// when BOTH `githubIncludeDescription` is true AND the GitHub API itself says
-// the target repository is private at send time. The screenshot and the uid
-// are never sent to any channel.
+// issues). kamilxgriefer/yovoice is PUBLIC; since the issue is link-only it is
+// the same minimal issue whatever the repository's visibility. The retired
+// `githubIncludeDescription` switch is ignored if it is still set.
+//
+// Each channel has its own project-wide daily budget (RATE_LIMITS in
+// contract.js). A report over budget is still stored and listed; it is only
+// not announced, and its channel records "throttled".
 
-const { BUG_REPORTS, BUG_REPORT_CONFIG, REPORT_ID_PATTERN } = require("./contract");
+const { consumeRateLimit, rateLimitReference } = require("../integrity/guards");
+const {
+  BUG_REPORTS,
+  BUG_REPORT_CONFIG,
+  GLOBAL_RATE_LIMIT_SENTINEL,
+  RATE_LIMITS,
+  REPORT_ID_PATTERN,
+} = require("./contract");
 
 const MAX_ATTEMPTS = 5;
 const CLAIM_LEASE_MS = 5 * 60 * 1000;
+// A stalled provider must fail the attempt well inside the trigger's 60 s.
+const PROVIDER_TIMEOUT_MS = 15 * 1000;
+const CHANNEL_BUDGETS = Object.freeze({
+  email: RATE_LIMITS.emailDelivery,
+  github: RATE_LIMITS.githubDelivery,
+});
 const REPOSITORY_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/u;
 const EMAIL_PATTERN = /^[^\s@<>"',;]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$/u;
 // "YO Voice Bugs <bugs@yovoice.app>" or a bare address.
@@ -47,6 +71,12 @@ class DeliveryFailure extends Error {
   }
 }
 
+function timeoutSignal() {
+  return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(PROVIDER_TIMEOUT_MS)
+    : undefined;
+}
+
 function escapeHtml(value) {
   return String(value)
     .replace(/&/gu, "&amp;")
@@ -56,6 +86,8 @@ function escapeHtml(value) {
     .replace(/'/gu, "&#39;");
 }
 
+// The only context an alert carries. Every value is server-validated against
+// a strict pattern or enum in contract.js before it is stored.
 function contextOf(report) {
   const context = report?.context ?? {};
   const text = (value) => (typeof value === "string" ? value : "unknown");
@@ -63,36 +95,40 @@ function contextOf(report) {
     platform: text(context.platform),
     appVersion: text(context.appVersion),
     buildNumber: text(context.buildNumber),
-    osVersion: text(context.osVersion),
-    locale: text(context.locale),
-    theme: text(context.theme),
-    brightness: text(context.brightness),
     route: text(context.route),
   };
 }
 
-/** The alert e-mail. Tester text is escaped: it is untrusted input. */
+/**
+ * What the alert says about the screenshot. The trigger fires when the report
+ * is created, before any upload, so "reserved" means requested, not attached.
+ */
+function screenshotLine(report) {
+  switch (report?.screenshot?.status) {
+    case "attached": return "attached (open it in the Staff Center)";
+    case "reserved": return "requested (upload pending)";
+    default: return "no";
+  }
+}
+
+/** The link-only alert e-mail: no description, no uid, no screenshot. */
 function buildBugReportEmail(reportId, report) {
   const context = contextOf(report);
-  const description = typeof report?.description === "string" ? report.description : "";
-  const hasScreenshot = report?.screenshot && report.screenshot.status !== "none";
   const lines = [
     `Report: ${reportId}`,
     `App: ${context.appVersion} (${context.buildNumber}) on ${context.platform}`,
-    `OS: ${context.osVersion}`,
     `Screen: ${context.route}`,
-    `Locale: ${context.locale} · Theme: ${context.theme} (${context.brightness})`,
-    `Screenshot: ${hasScreenshot ? "yes — open it in the Staff Center" : "no"}`,
+    `Screenshot: ${screenshotLine(report)}`,
   ];
-  const footer = "The reporter and any screenshot are only in YO Voice > Staff Center > " +
-    "Bug reports (owner only). This e-mail never contains the screenshot.";
+  const footer = "Read the report in YO Voice > Staff Center > Bug reports (owner only); " +
+    "look it up by its id. This e-mail never contains the description, the reporter " +
+    "or the screenshot.";
   return {
     subject: `[YO Voice bug] ${context.platform} ${context.appVersion}+${context.buildNumber} · ${reportId}`,
-    text: `${description}\n\n---\n${lines.join("\n")}\n\n${footer}\n`,
+    text: `A new in-app bug report arrived.\n\n${lines.join("\n")}\n\n${footer}\n`,
     html: [
       "<div style=\"font-family:system-ui,sans-serif;font-size:14px;line-height:1.5\">",
-      `<pre style="white-space:pre-wrap;font-family:inherit">${escapeHtml(description)}</pre>`,
-      "<hr>",
+      "<p>A new in-app bug report arrived.</p>",
       `<p>${lines.map(escapeHtml).join("<br>")}</p>`,
       `<p style="color:gray">${escapeHtml(footer)}</p>`,
       "</div>",
@@ -100,17 +136,8 @@ function buildBugReportEmail(reportId, report) {
   };
 }
 
-function fenceFor(text) {
-  const runs = String(text).match(/`+/gu) ?? [];
-  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
-  return "`".repeat(Math.max(3, longest + 1));
-}
-
-/**
- * The GitHub issue. `includeDescription` is true only for a repository the
- * API confirmed private; even then the uid and screenshot are never included.
- */
-function buildBugReportIssue(reportId, report, { includeDescription = false } = {}) {
+/** The link-only GitHub issue, identical for a public and a private repository. */
+function buildBugReportIssue(reportId, report) {
   const context = contextOf(report);
   const lines = [
     "A new in-app bug report arrived.",
@@ -118,26 +145,11 @@ function buildBugReportIssue(reportId, report, { includeDescription = false } = 
     `- Report: \`${reportId}\``,
     `- App: ${context.appVersion} (${context.buildNumber}) on ${context.platform}`,
     `- Screen: \`${context.route}\``,
-  ];
-  if (includeDescription) {
-    const description = typeof report?.description === "string" ? report.description : "";
-    const fence = fenceFor(description);
-    lines.push(
-      `- OS: ${context.osVersion}`,
-      `- Locale: ${context.locale} · Theme: ${context.theme} (${context.brightness})`,
-      "",
-      "Reporter's description (untrusted user input, shown as data):",
-      "",
-      `${fence}text`,
-      description,
-      fence,
-    );
-  }
-  lines.push(
+    `- Screenshot: ${screenshotLine(report)}`,
     "",
     "The description, the reporter and any screenshot are in YO Voice > Staff Center > " +
       "Bug reports (owner only). Look the report up by its id.",
-  );
+  ];
   return {
     title: `Bug report ${reportId} (${context.platform} ${context.appVersion}+${context.buildNumber})`,
     body: lines.join("\n"),
@@ -154,7 +166,7 @@ function readConfig(snapshot) {
       ? { emailTo, emailFrom }
       : null,
     github: value.githubEnabled === true && REPOSITORY_PATTERN.test(githubRepo)
-      ? { githubRepo, includeDescription: value.githubIncludeDescription === true }
+      ? { githubRepo }
       : null,
   };
 }
@@ -179,18 +191,29 @@ function createBugReportDelivery(dependencies) {
     await reportRef(reportId).update({ [`delivery.${channel}`]: value });
   }
 
-  /** One transactional claim per channel; null when there is nothing to do. */
+  /**
+   * One transactional claim per channel:
+   *   { state: "done" }     nothing to do (sent, failed, throttled, gone)
+   *   { state: "leased" }   another attempt holds a live lease; the caller
+   *                         THROWS so the event is retried after the lease,
+   *                         never silently counted as delivered
+   *   { state: "claimed", report, attempts }
+   */
   async function claim(reportId, channel) {
+    const budget = CHANNEL_BUDGETS[channel];
+    const budgetRef = rateLimitReference(db, budget.scope, GLOBAL_RATE_LIMIT_SENTINEL);
     return db.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(reportRef(reportId));
-      if (!snapshot.exists) return null;
+      if (!snapshot.exists) return { state: "done" };
       const report = snapshot.data() ?? {};
       const entry = report.delivery?.[channel] ?? {};
       const nowMs = clock();
-      if (entry.status === "sent" || entry.status === "failed") return null;
+      if (entry.status === "sent" || entry.status === "failed" || entry.status === "throttled") {
+        return { state: "done" };
+      }
       if (entry.status === "sending" && typeof entry.claimedAt?.toMillis === "function" &&
           nowMs - entry.claimedAt.toMillis() < CLAIM_LEASE_MS) {
-        return null;
+        return { state: "leased" };
       }
       const attempts = (Number.isSafeInteger(entry.attempts) ? entry.attempts : 0) + 1;
       if (attempts > MAX_ATTEMPTS) {
@@ -199,7 +222,31 @@ function createBugReportDelivery(dependencies) {
             ...entry, status: "failed", updatedAt: Timestamp.fromMillis(nowMs),
           },
         });
-        return null;
+        return { state: "done" };
+      }
+      const budgetSnapshot = await transaction.get(budgetRef);
+      try {
+        consumeRateLimit(transaction, budgetSnapshot, {
+          reference: budgetRef,
+          scope: budget.scope,
+          uid: GLOBAL_RATE_LIMIT_SENTINEL,
+          nowMs,
+          now: Timestamp.fromMillis(nowMs),
+          maxEvents: budget.maxEvents,
+          windowMs: budget.windowMs,
+        });
+      } catch (error) {
+        if (error?.code !== "resource-exhausted") throw error;
+        // Over the channel's daily budget: stored and listed, not announced.
+        transaction.update(reportRef(reportId), {
+          [`delivery.${channel}`]: {
+            status: "throttled",
+            attempts: attempts - 1,
+            lastErrorCode: "budget",
+            updatedAt: Timestamp.fromMillis(nowMs),
+          },
+        });
+        return { state: "throttled" };
       }
       transaction.update(reportRef(reportId), {
         [`delivery.${channel}`]: {
@@ -209,7 +256,7 @@ function createBugReportDelivery(dependencies) {
           lastErrorCode: typeof entry.lastErrorCode === "string" ? entry.lastErrorCode : null,
         },
       });
-      return { report, attempts };
+      return { state: "claimed", report, attempts };
     });
   }
 
@@ -224,6 +271,7 @@ function createBugReportDelivery(dependencies) {
           "Content-Type": "application/json",
           "Idempotency-Key": `yovoice-bug-${reportId}`,
         },
+        signal: timeoutSignal(),
         body: JSON.stringify({
           from: config.emailFrom,
           to: [config.emailTo],
@@ -244,6 +292,7 @@ function createBugReportDelivery(dependencies) {
     try {
       return await fetchImpl(`https://api.github.com${path}`, {
         ...init,
+        signal: timeoutSignal(),
         headers: {
           Accept: "application/vnd.github+json",
           Authorization: `Bearer ${channels.github.token()}`,
@@ -257,17 +306,28 @@ function createBugReportDelivery(dependencies) {
     }
   }
 
-  async function sendGithub(reportId, report, config) {
-    let includeDescription = false;
-    if (config.includeDescription) {
-      // Asked, not assumed: the repository's visibility is read at send time,
-      // so a repository made public later never receives tester text.
-      const repository = await githubRequest(`/repos/${config.githubRepo}`);
-      if (!repository.ok) throw new DeliveryFailure(`http-${repository.status}`);
-      const body = await repository.json().catch(() => ({}));
-      includeDescription = body?.private === true;
+  /**
+   * GitHub has no idempotency key. On a retry (an earlier attempt may have
+   * created the issue and lost the answer), look for an issue already titled
+   * with this report id among the most recent ones before creating another.
+   */
+  async function existingIssue(reportId, config) {
+    const response = await githubRequest(
+      `/repos/${config.githubRepo}/issues?state=all&sort=created&direction=desc&per_page=100`);
+    if (!response.ok) throw new DeliveryFailure(`http-${response.status}`);
+    const issues = await response.json().catch(() => []);
+    if (!Array.isArray(issues)) return null;
+    const match = issues.find((issue) => typeof issue?.title === "string" &&
+      issue.title.includes(reportId) && Number.isSafeInteger(issue.number));
+    return match ? String(match.number) : null;
+  }
+
+  async function sendGithub(reportId, report, config, { attempts = 1 } = {}) {
+    if (attempts > 1) {
+      const found = await existingIssue(reportId, config);
+      if (found !== null) return found;
     }
-    const issue = buildBugReportIssue(reportId, report, { includeDescription });
+    const issue = buildBugReportIssue(reportId, report);
     const response = await githubRequest(`/repos/${config.githubRepo}/issues`, {
       method: "POST",
       body: JSON.stringify({ title: issue.title, body: issue.body }),
@@ -300,12 +360,26 @@ function createBugReportDelivery(dependencies) {
         continue;
       }
       const claimed = await claim(reportId, channel);
-      if (!claimed) {
+      if (claimed.state === "leased") {
+        // Another attempt is (or was, until it died) sending. Retry the event
+        // after the lease instead of reporting success for an alert that may
+        // never have gone out.
+        outcome[channel] = "leased";
+        retry = true;
+        continue;
+      }
+      if (claimed.state === "throttled") {
+        outcome[channel] = "throttled";
+        continue;
+      }
+      if (claimed.state !== "claimed") {
         outcome[channel] = "skipped";
         continue;
       }
       try {
-        const externalId = await SENDERS[channel](reportId, claimed.report, config[channel]);
+        const externalId = await SENDERS[channel](reportId, claimed.report, config[channel], {
+          attempts: claimed.attempts,
+        });
         await setDelivery(reportId, channel, {
           status: "sent",
           attempts: claimed.attempts,
@@ -342,6 +416,7 @@ function createBugReportDelivery(dependencies) {
 }
 
 module.exports = {
+  CLAIM_LEASE_MS,
   MAX_ATTEMPTS,
   buildBugReportEmail,
   buildBugReportIssue,

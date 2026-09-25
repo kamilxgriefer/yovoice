@@ -36,14 +36,22 @@ const REPORT_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
 const SCREENSHOT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const SCREENSHOT_ACCESS_TTL_MS = 5 * 60 * 1000;
 
-// Per-reporter and project-wide ceilings. The global bucket protects the paid
-// delivery channels (Resend quota, GitHub API) from one runaway client or a
-// scripted abuse wave; its rate-limit document is keyed by a sentinel that is
-// not an Auth uid, so the account-deletion sweep can never mistake it for one.
+// Per-reporter ceilings on the report itself, and project-wide ceilings on
+// the optional alert channels only.
+//
+// There is deliberately NO project-wide ceiling on submitting a report: one
+// fixed 24-hour bucket shared by every account let about fifteen throwaway
+// accounts (20 a day each) lock every real tester out of reporting for a day.
+// The shared buckets instead bound what reaches the paid or public alert
+// channels (Resend quota, GitHub issues): a report over budget is still
+// stored and listed in the Staff Center, it is only not announced. Their
+// rate-limit documents are keyed by a sentinel that is not an Auth uid, so the
+// account-deletion sweep can never mistake one for an account's.
 const RATE_LIMITS = Object.freeze({
   burst: Object.freeze({ scope: "bugReport.submit.10m", maxEvents: 5, windowMs: 10 * 60 * 1000 }),
   daily: Object.freeze({ scope: "bugReport.submit.day", maxEvents: 20, windowMs: 24 * 60 * 60 * 1000 }),
-  global: Object.freeze({ scope: "bugReport.submit.global.day", maxEvents: 300, windowMs: 24 * 60 * 60 * 1000 }),
+  emailDelivery: Object.freeze({ scope: "bugReport.delivery.email.day", maxEvents: 200, windowMs: 24 * 60 * 60 * 1000 }),
+  githubDelivery: Object.freeze({ scope: "bugReport.delivery.github.day", maxEvents: 50, windowMs: 24 * 60 * 60 * 1000 }),
 });
 const GLOBAL_RATE_LIMIT_SENTINEL = "bug-report-global-sentinel";
 
@@ -51,6 +59,13 @@ const PLATFORMS = Object.freeze(["ios", "android", "web", "macos", "windows", "l
 const THEMES = Object.freeze(["system", "dark", "light"]);
 const BRIGHTNESS = Object.freeze(["dark", "light"]);
 const STATUSES = Object.freeze(["new", "triaged", "resolved", "dismissed"]);
+// screenshot.status values. "refused": a banned account declared a screenshot;
+// the report is stored, no upload reservation is issued (storage.rules'
+// isActiveUser refuses a banned uploader anyway). "removed": the owner removed
+// it (a rights request, or it shows something it should not).
+const SCREENSHOT_STATUSES = Object.freeze([
+  "reserved", "attached", "expired", "deleted", "refused", "removed", "missing",
+]);
 
 const CONTEXT_FIELDS = Object.freeze([
   "appVersion", "buildNumber", "platform", "osVersion", "locale", "theme",
@@ -206,6 +221,7 @@ module.exports = {
   SCREENSHOT_MAX_BYTES,
   SCREENSHOT_MIN_BYTES,
   SCREENSHOT_RETENTION_MS,
+  SCREENSHOT_STATUSES,
   STATUSES,
   THEMES,
   bugReportId,

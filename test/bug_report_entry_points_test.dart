@@ -288,6 +288,159 @@ void main() {
       expect(calls, contains('updateBugReportStatusV1'));
     });
 
+    testWidgets('rights requests: find an account\'s reports, remove a '
+        'screenshot and delete a report, each confirmed first', (tester) async {
+      _useSize(tester, const Size(1440, 900));
+      final calls = <(String, Map<String, Object?>)>[];
+      final reportId = 'br_${'c' * 40}';
+      var screenshotStatus = 'attached';
+      var deleted = false;
+      final service = BugReportAdminService(
+        invoker: (name, payload) async {
+          calls.add((name, payload));
+          if (name == 'listBugReportsV1') {
+            return <Object?, Object?>{
+              'reports': [
+                if (!deleted)
+                  {
+                    'reportId': reportId,
+                    'reporterId': 'reporter-uid',
+                    'status': 'new',
+                    'descriptionPreview': 'Names of friends show in the shot.',
+                    'screenshotStatus': screenshotStatus,
+                  },
+              ],
+              'nextCursor': null,
+            };
+          }
+          if (name == 'getBugReportV1') {
+            return <Object?, Object?>{
+              'reportId': reportId,
+              'reporterId': 'reporter-uid',
+              'status': 'new',
+              'description':
+                  'Names of friends show in the shot. Please remove.',
+              'context': {'platform': 'ios'},
+              'screenshot': {
+                'status': screenshotStatus,
+                'url': screenshotStatus == 'attached'
+                    ? 'https://storage.googleapis.com/demo/x.jpg'
+                    : null,
+              },
+              'delivery': <Object?, Object?>{},
+            };
+          }
+          if (name == 'deleteBugReportScreenshotV1') {
+            screenshotStatus = 'removed';
+            return <Object?, Object?>{'reportId': reportId, 'removed': true};
+          }
+          if (name == 'deleteBugReportV1') {
+            deleted = true;
+            return <Object?, Object?>{'reportId': reportId, 'deleted': true};
+          }
+          return <Object?, Object?>{};
+        },
+      );
+      await tester.pumpWidget(
+        _app(Scaffold(body: StaffBugReportsSection(service: service))),
+      );
+      await tester.pumpAndSettle();
+
+      // Find by account: the list call carries the reporter filter.
+      await tester.tap(
+        find.byKey(const ValueKey('staff-bug-report-find-account')),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('staff-bug-report-find-account-field')),
+        'a/b',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('staff-bug-report-find-account-submit')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Enter a valid account ID.'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const ValueKey('staff-bug-report-find-account-field')),
+        'reporter-uid',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('staff-bug-report-find-account-submit')),
+      );
+      await tester.pumpAndSettle();
+      expect(calls.last.$1, 'listBugReportsV1');
+      expect(calls.last.$2['reporterId'], 'reporter-uid');
+      expect(
+        find.byKey(const ValueKey('staff-bug-report-account-filter')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Names of friends show in the shot.'));
+      await tester.pumpAndSettle();
+      // The owner's decode is bounded whatever dimensions the file declares.
+      final image = tester.widget<Image>(
+        find.descendant(
+          of: find.byKey(const ValueKey('staff-bug-report-detail')),
+          matching: find.byType(Image),
+        ),
+      );
+      expect(image.image, isA<ResizeImage>());
+      expect((image.image as ResizeImage).width, 1280);
+
+      // Remove the screenshot: nothing happens until confirmed.
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('staff-bug-report-remove-screenshot')),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('staff-bug-report-remove-screenshot')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        calls.map((call) => call.$1),
+        isNot(contains('deleteBugReportScreenshotV1')),
+      );
+      await tester.tap(
+        find.byKey(
+          const ValueKey('staff-bug-report-remove-screenshot-confirm'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        calls.map((call) => call.$1),
+        contains('deleteBugReportScreenshotV1'),
+      );
+      expect(
+        find.byKey(const ValueKey('staff-bug-report-remove-screenshot')),
+        findsNothing,
+        reason: 'a removed screenshot has nothing left to remove',
+      );
+
+      // Delete the report.
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('staff-bug-report-delete')),
+      );
+      await tester.tap(find.byKey(const ValueKey('staff-bug-report-delete')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('staff-bug-report-delete-confirm')),
+      );
+      await tester.pumpAndSettle();
+      expect(calls.last.$1, 'deleteBugReportV1');
+      expect(calls.last.$2, {'reportId': reportId});
+      expect(find.text('Names of friends show in the shot.'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('staff-bug-report-detail')),
+        findsNothing,
+      );
+
+      // Clearing the account filter lists every account again.
+      await tester.tap(find.byTooltip('Show every account'));
+      await tester.pumpAndSettle();
+      expect(calls.last.$1, 'listBugReportsV1');
+      expect(calls.last.$2.containsKey('reporterId'), isFalse);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('a refused or failed load is an error with Retry, not an '
         'empty inbox', (tester) async {
       _useSize(tester, const Size(390, 844));

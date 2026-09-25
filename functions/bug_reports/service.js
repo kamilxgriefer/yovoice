@@ -9,10 +9,14 @@
 //   attach  -> metadata, JPEG magic bytes, download token revoked, then ONE
 //              transaction binds the object's generation to the report and
 //              consumes the reservation
-//   owner   -> list / get (with a 5-minute generation-bound signed URL) /
-//              status, every call gated by requireProtectedOwner, i.e. by the
-//              existing YOVOICE_PROTECTED_OWNER_UID secret
-//   sweep   -> expired reservations, 90-day screenshots, 180-day reports
+//   owner   -> list (optionally by reporter, for access and erasure
+//              requests) / get (with a 5-minute generation-bound signed URL) /
+//              status / delete a report / remove its screenshot, every call
+//              gated by requireProtectedOwner, i.e. by the existing
+//              YOVOICE_PROTECTED_OWNER_UID secret; both deletions write an
+//              adminAuditLogs entry in the same transaction
+//   sweep   -> expired reservations, 90-day screenshots, 180-day reports,
+//              page after page until each query drains or the time budget ends
 //
 // The report is written BEFORE the screenshot is uploaded on purpose: the
 // words are the report, and a failed or abandoned upload must never lose them.
@@ -25,6 +29,7 @@ const {
   consumeRateLimit,
   digest,
   fail,
+  isValidOpaqueUid,
   rateLimitReference,
   requireActor,
   requireExactInput,
@@ -38,7 +43,6 @@ const {
   BUG_REPORT_RESERVATIONS,
   BUG_REPORT_SCHEMA_VERSION,
   GENERATION_PATTERN,
-  GLOBAL_RATE_LIMIT_SENTINEL,
   RATE_LIMITS,
   REPORT_RETENTION_MS,
   RESERVATION_TTL_MS,
@@ -62,6 +66,11 @@ const RESERVATION_KEYS = Object.freeze([
 ].sort());
 const LIST_MAX = 50;
 const SWEEP_PAGE = 50;
+// The schedule's timeout is 300 s; stop starting new pages well before it.
+const SWEEP_BUDGET_MS = 240 * 1000;
+// A hard stop independent of the clock, so a page that never shrinks (a write
+// that silently does not take) can never spin until the timeout.
+const SWEEP_MAX_PAGES = 200;
 // A reservation is swept a little after it expires so an upload racing the
 // deadline is never deleted underneath a finalize that is still in flight.
 const RESERVATION_SWEEP_GRACE_MS = 10 * 60 * 1000;
@@ -123,16 +132,24 @@ function createBugReportStorageAdapter(bucket) {
   });
 }
 
-/** Authoritative account state: refuses deleted and disabled accounts. */
+/**
+ * Authoritative account state: refuses deleted and disabled accounts, and
+ * returns whether the account is banned.
+ *
+ * A banned account MAY report in words: a bug in the ban flow is still a bug,
+ * and the rate limits bound what a banned account can send. It may NOT attach
+ * a screenshot: storage.rules' isActiveUser refuses a banned uploader, so a
+ * reservation would only ever be left unused. The server therefore issues
+ * none, and records the screenshot as "refused" (ADR, "In-app bug reports").
+ */
 function assertReporterAccount(snapshot) {
   if (!snapshot?.exists) fail("permission-denied", "Your account is not active.");
   const profile = snapshot.data() ?? {};
-  // A banned account MAY report: a bug in the ban flow is still a bug, and the
-  // rate limits bound what a banned account can send.
   if (profile.disabled === true || profile.deleted === true || profile.status === "deleted" ||
       (profile.authDeletedAt !== null && profile.authDeletedAt !== undefined)) {
     fail("permission-denied", "Your account is not active.");
   }
+  return { banned: profile.banned === true };
 }
 
 function canonicalReservation(snapshot, { uid, reportId }) {
@@ -226,6 +243,9 @@ function deliveryOf(value) {
 function createBugReportService(dependencies) {
   const {
     db, Timestamp, storage, authorizeOwner, clock = Date.now, logger = console,
+    // Elapsed-time source for the sweep's budget only; `clock` is business
+    // time (and is frozen in tests).
+    monotonic = Date.now,
   } = dependencies ?? {};
   if (!db?.runTransaction || !Timestamp?.fromMillis || typeof clock !== "function" ||
       !storage?.getMetadata || !storage?.readHeader || !storage?.hardenObject ||
@@ -261,10 +281,11 @@ function createBugReportService(dependencies) {
     const inputHash = digest("bugReport.input.v1", auth.uid, input.requestId, {
       description: input.description, context: input.context, screenshot: input.screenshot,
     });
+    // Per-account limits only: no shared bucket may refuse a report (see
+    // RATE_LIMITS in contract.js).
     const limits = [
       { ...RATE_LIMITS.burst, uid: auth.uid },
       { ...RATE_LIMITS.daily, uid: auth.uid },
-      { ...RATE_LIMITS.global, uid: GLOBAL_RATE_LIMIT_SENTINEL },
     ].map((limit) => ({ ...limit, reference: rateLimitReference(db, limit.scope, limit.uid) }));
 
     const result = await db.runTransaction(async (transaction) => {
@@ -281,7 +302,7 @@ function createBugReportService(dependencies) {
       if (config.exists && (config.data() ?? {}).enabled === false) {
         fail("failed-precondition", "Bug reports are paused right now.");
       }
-      assertReporterAccount(user);
+      const { banned } = assertReporterAccount(user);
 
       if (existing.exists) {
         const prior = existing.data() ?? {};
@@ -311,7 +332,8 @@ function createBugReportService(dependencies) {
         windowMs: limit.windowMs,
       }));
 
-      const storagePath = input.screenshot ? bugReportStoragePath(auth.uid, reportId) : null;
+      const reserveScreenshot = input.screenshot !== null && !banned;
+      const storagePath = reserveScreenshot ? bugReportStoragePath(auth.uid, reportId) : null;
       transaction.create(reportRef(reportId), {
         schemaVersion: BUG_REPORT_SCHEMA_VERSION,
         reportId,
@@ -321,7 +343,7 @@ function createBugReportService(dependencies) {
         context: input.context,
         screenshot: input.screenshot
           ? {
-            status: "reserved",
+            status: reserveScreenshot ? "reserved" : "refused",
             storagePath,
             contentType: input.screenshot.contentType,
             size: input.screenshot.size,
@@ -335,7 +357,7 @@ function createBugReportService(dependencies) {
         updatedAt: now,
         expiresAt: Timestamp.fromMillis(nowMs + REPORT_RETENTION_MS),
       });
-      if (!input.screenshot) return { reportId, replayed: false, screenshotUpload: null };
+      if (!reserveScreenshot) return { reportId, replayed: false, screenshotUpload: null };
 
       const expiresAtMillis = nowMs + RESERVATION_TTL_MS;
       const reserved = {
@@ -455,7 +477,7 @@ function createBugReportService(dependencies) {
   async function listBugReportsV1(request) {
     await authorizeOwner(request);
     const data = request.data ?? {};
-    requireExactInput(data, ["limit", "cursor", "status"]);
+    requireExactInput(data, ["limit", "cursor", "status", "reporterId"]);
     const limit = data.limit === undefined || data.limit === null ? 25 : data.limit;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > LIST_MAX) {
       fail("invalid-argument", "limit is invalid.");
@@ -465,8 +487,16 @@ function createBugReportService(dependencies) {
     const cursor = data.cursor === undefined || data.cursor === null
       ? null
       : requireReportId(data.cursor);
+    // One account's reports, for an access or erasure request.
+    const reporterId = data.reporterId === undefined || data.reporterId === null
+      ? null
+      : data.reporterId;
+    if (reporterId !== null && !isValidOpaqueUid(reporterId)) {
+      fail("invalid-argument", "reporterId is invalid.");
+    }
 
     let query = db.collection(BUG_REPORTS);
+    if (reporterId !== null) query = query.where("reporterId", "==", reporterId);
     if (status !== null) query = query.where("status", "==", status);
     query = query.orderBy("createdAt", "desc");
     if (cursor !== null) {
@@ -534,6 +564,122 @@ function createBugReportService(dependencies) {
       transaction.update(reportRef(reportId), { status, updatedAt: now, statusUpdatedAt: now });
     });
     return { reportId, status };
+  }
+
+  /** The canonical object path of a report's screenshot, or null. */
+  function screenshotPathOf(reportId, value) {
+    const reporterId = typeof value?.reporterId === "string" ? value.reporterId : null;
+    const stored = value?.screenshot?.storagePath;
+    const parsed = parseBugReportStoragePath(stored);
+    if (parsed && parsed.reportId === reportId && parsed.ownerId === reporterId) return stored;
+    // A reservation that never became an upload still names one exact path.
+    return reporterId !== null && isValidOpaqueUid(reporterId)
+      ? bugReportStoragePath(reporterId, reportId)
+      : null;
+  }
+
+  /**
+   * One adminAuditLogs entry, in the caller's transaction, in exactly the flat
+   * shape functions/utils/audit.js writeAuditLog writes (the Staff Center
+   * audit browser reads that shape). Never the description or the image.
+   */
+  function auditOwnerAction(transaction, caller, { action, reportId, details, now }) {
+    transaction.create(db.collection("adminAuditLogs").doc(), {
+      actorId: caller?.uid ?? null,
+      actorEmail: caller?.token?.email ?? caller?.email ?? null,
+      actorRole: caller?.role ?? caller?.token?.role ?? "owner",
+      action,
+      targetType: "bugReport",
+      targetId: reportId,
+      targetLabel: null,
+      details,
+      createdAt: now,
+    });
+  }
+
+  /**
+   * Deletes one report now: the document, any upload reservation and the
+   * screenshot object. For erasure requests (the reporter's, or a third
+   * party's shown in a screenshot) and for reports that should not be kept.
+   * The object is deleted before AND after the transaction: before, so a
+   * failed transaction never leaves a report pointing at a half-deleted
+   * image; after, so an upload racing the reservation's deletion cannot
+   * leave an orphan.
+   */
+  async function deleteBugReportV1(request) {
+    const caller = await authorizeOwner(request);
+    const fields = ["reportId"];
+    requireExactInput(request.data, fields, fields);
+    const reportId = requireReportId(request.data.reportId);
+    const snapshot = await reportRef(reportId).get();
+    if (!snapshot.exists) fail("not-found", "The bug report was not found.");
+    const objectPath = screenshotPathOf(reportId, snapshot.data());
+    if (objectPath !== null) await storage.deleteObject(objectPath);
+    await db.runTransaction(async (transaction) => {
+      const current = await transaction.get(reportRef(reportId));
+      if (!current.exists) fail("not-found", "The bug report was not found.");
+      const value = current.data() ?? {};
+      const now = Timestamp.fromMillis(clock());
+      transaction.delete(reportRef(reportId));
+      transaction.delete(reservationRef(reportId));
+      auditOwnerAction(transaction, caller, {
+        action: "bug_report.deleted",
+        reportId,
+        now,
+        details: {
+          reporterId: typeof value.reporterId === "string" ? value.reporterId : null,
+          screenshotStatus: typeof value.screenshot?.status === "string" ? value.screenshot.status : "none",
+        },
+      });
+    });
+    if (objectPath !== null) await storage.deleteObject(objectPath);
+    logger.info?.("bug report deleted by the owner", { reportId });
+    return { reportId, deleted: true };
+  }
+
+  /**
+   * Removes only the screenshot of one report; the words stay. Idempotent: a
+   * report without a live screenshot answers removed without an audit entry.
+   */
+  async function deleteBugReportScreenshotV1(request) {
+    const caller = await authorizeOwner(request);
+    const fields = ["reportId"];
+    requireExactInput(request.data, fields, fields);
+    const reportId = requireReportId(request.data.reportId);
+    const snapshot = await reportRef(reportId).get();
+    if (!snapshot.exists) fail("not-found", "The bug report was not found.");
+    const before = snapshot.data() ?? {};
+    const status = before.screenshot?.status;
+    if (status !== "attached" && status !== "reserved" && status !== "missing") {
+      return { reportId, removed: false };
+    }
+    const objectPath = screenshotPathOf(reportId, before);
+    if (objectPath !== null) await storage.deleteObject(objectPath);
+    await db.runTransaction(async (transaction) => {
+      const current = await transaction.get(reportRef(reportId));
+      if (!current.exists) fail("not-found", "The bug report was not found.");
+      const value = current.data() ?? {};
+      const now = Timestamp.fromMillis(clock());
+      transaction.update(reportRef(reportId), {
+        "screenshot.status": "removed",
+        "screenshot.generation": null,
+        screenshotExpiresAt: null,
+        updatedAt: now,
+      });
+      transaction.delete(reservationRef(reportId));
+      auditOwnerAction(transaction, caller, {
+        action: "bug_report.screenshot_removed",
+        reportId,
+        now,
+        details: {
+          reporterId: typeof value.reporterId === "string" ? value.reporterId : null,
+          previousStatus: typeof value.screenshot?.status === "string" ? value.screenshot.status : "none",
+        },
+      });
+    });
+    if (objectPath !== null) await storage.deleteObject(objectPath);
+    logger.info?.("bug report screenshot removed by the owner", { reportId });
+    return { reportId, removed: true };
   }
 
   // ---------------------------------------------------------------- sweep
@@ -605,17 +751,45 @@ function createBugReportService(dependencies) {
     return removed;
   }
 
+  /**
+   * Runs one sub-sweep page after page until a page comes back short (the
+   * query drained), the time budget ends, or the page cap is hit. One page a
+   * day could not keep up with the permitted intake.
+   */
+  async function drain(sweepPage, nowMs, startedAt) {
+    let total = 0;
+    for (let page = 0; page < SWEEP_MAX_PAGES; page += 1) {
+      if (monotonic() - startedAt >= SWEEP_BUDGET_MS) return { total, drained: false };
+      const removed = await sweepPage(nowMs);
+      total += removed;
+      if (removed < SWEEP_PAGE) return { total, drained: true };
+    }
+    return { total, drained: false };
+  }
+
   async function sweepBugReportRetention() {
     const nowMs = clock();
-    const reservations = await sweepExpiredReservations(nowMs);
-    const screenshots = await sweepExpiredScreenshots(nowMs);
-    const reports = await sweepExpiredReports(nowMs);
-    logger.info?.("bug report retention sweep", { reservations, screenshots, reports });
-    return { reservations, screenshots, reports };
+    const startedAt = monotonic();
+    const reservations = await drain(sweepExpiredReservations, nowMs, startedAt);
+    const screenshots = await drain(sweepExpiredScreenshots, nowMs, startedAt);
+    const reports = await drain(sweepExpiredReports, nowMs, startedAt);
+    // Counts only. A backlog means the next run (or an operator) must catch up.
+    const backlog = !(reservations.drained && screenshots.drained && reports.drained);
+    const outcome = {
+      reservations: reservations.total,
+      screenshots: screenshots.total,
+      reports: reports.total,
+      backlog,
+    };
+    if (backlog) logger.warn?.("bug report retention sweep left a backlog", outcome);
+    else logger.info?.("bug report retention sweep", outcome);
+    return outcome;
   }
 
   return Object.freeze({
     attachBugReportScreenshotV1,
+    deleteBugReportScreenshotV1,
+    deleteBugReportV1,
     getBugReportV1,
     listBugReportsV1,
     submitBugReportV1,

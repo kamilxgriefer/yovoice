@@ -65,6 +65,7 @@ class BugReportDetail {
     required this.context,
     required this.screenshotUrl,
     required this.delivery,
+    this.screenshotStatus = 'none',
   });
 
   factory BugReportDetail.fromMap(Map<Object?, Object?> map) {
@@ -85,6 +86,9 @@ class BugReportDetail {
       screenshotUrl: screenshot is Map && screenshot['url'] is String
           ? screenshot['url'] as String
           : null,
+      screenshotStatus: screenshot is Map && screenshot['status'] is String
+          ? screenshot['status'] as String
+          : 'none',
       delivery: <String, String>{
         if (delivery is Map)
           for (final entry in delivery.entries)
@@ -99,6 +103,17 @@ class BugReportDetail {
   final Map<String, String> context;
   final String? screenshotUrl;
   final Map<String, String> delivery;
+
+  /// The server's screenshot state: none, reserved, attached, expired,
+  /// deleted, refused, removed or missing.
+  final String screenshotStatus;
+
+  /// Whether the owner can still remove a screenshot (or a pending upload).
+  bool get screenshotRemovable => const <String>{
+    'attached',
+    'reserved',
+    'missing',
+  }.contains(screenshotStatus);
 }
 
 @immutable
@@ -136,11 +151,18 @@ class BugReportAdminService {
     return response.data;
   }
 
-  Future<BugReportPage> list({String? status, String? cursor}) async {
+  /// [reporterId] narrows the list to one account, for an access or erasure
+  /// request. It is sent only when set.
+  Future<BugReportPage> list({
+    String? status,
+    String? cursor,
+    String? reporterId,
+  }) async {
     final data = await _call('listBugReportsV1', <String, Object?>{
       'limit': 25,
       'status': status,
       'cursor': cursor,
+      'reporterId': ?reporterId,
     });
     final rows = data['reports'];
     final next = data['nextCursor'];
@@ -165,6 +187,19 @@ class BugReportAdminService {
     await _call('updateBugReportStatusV1', <String, Object?>{
       'reportId': reportId,
       'status': status,
+    });
+  }
+
+  /// Deletes the report, any pending upload and its screenshot now. Audited
+  /// server-side; cannot be undone.
+  Future<void> delete(String reportId) async {
+    await _call('deleteBugReportV1', <String, Object?>{'reportId': reportId});
+  }
+
+  /// Removes only the screenshot; the words stay. Audited server-side.
+  Future<void> removeScreenshot(String reportId) async {
+    await _call('deleteBugReportScreenshotV1', <String, Object?>{
+      'reportId': reportId,
     });
   }
 }

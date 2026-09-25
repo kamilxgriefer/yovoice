@@ -44,6 +44,7 @@ const {
 } = require("../bug_reports/contract");
 const { createBugReportService, isJpegHeader } = require("../bug_reports/service");
 const {
+  CLAIM_LEASE_MS,
   MAX_ATTEMPTS,
   buildBugReportEmail,
   buildBugReportIssue,
@@ -254,6 +255,26 @@ emulatorTest("an unverified account may report; a disabled or deleted one may no
   assert.match(ban.reportId, /^br_/u);
 });
 
+emulatorTest("a banned account's words are stored but its screenshot is refused: no reservation is issued", async () => {
+  const banned = uniqueUid("banned-shot");
+  await seedUser(banned, { banned: true });
+  const { service } = serviceWith();
+  const data = submitData({ screenshot: { contentType: "image/jpeg", size: 4096 } });
+  const result = await service.submitBugReportV1(request(banned, data));
+  // storage.rules' isActiveUser refuses a banned uploader, so a reservation
+  // could only ever be left unused.
+  assert.equal(result.screenshotUpload, null);
+  assert.equal((await db.collection(BUG_REPORT_RESERVATIONS).doc(result.reportId).get()).exists, false);
+  const report = (await db.collection(BUG_REPORTS).doc(result.reportId).get()).data();
+  assert.equal(report.description, data.description);
+  assert.equal(report.screenshot.status, "refused");
+  assert.equal(report.screenshot.storagePath, null);
+  // A replay answers the same way.
+  const again = await service.submitBugReportV1(request(banned, data));
+  assert.equal(again.reportId, result.reportId);
+  assert.equal(again.screenshotUpload, null);
+});
+
 emulatorTest("the stored report carries exactly the allowlisted fields and the server uid", async () => {
   const uid = uniqueUid("shape");
   await seedUser(uid);
@@ -315,7 +336,7 @@ emulatorTest("five reports per ten minutes per account, then resource-exhausted"
   await later.submitBugReportV1(request(uid, submitData()));
 });
 
-emulatorTest("the daily per-account and the project-wide ceilings both refuse", async () => {
+emulatorTest("the daily per-account ceiling refuses; no project-wide bucket refuses a report", async () => {
   const uid = uniqueUid("daily");
   await seedUser(uid);
   const { service } = serviceWith();
@@ -326,19 +347,24 @@ emulatorTest("the daily per-account and the project-wide ceilings both refuse", 
   });
   await rejects(service.submitBugReportV1(request(uid, submitData())), "resource-exhausted");
 
+  // A handful of throwaway accounts must not be able to lock every real
+  // tester out: the only shared buckets are the alert channels' budgets, and
+  // even full they never refuse the report itself.
   const fresh = uniqueUid("global");
   await seedUser(fresh);
-  const globalRef = rateLimitReference(db, RATE_LIMITS.global.scope, GLOBAL_RATE_LIMIT_SENTINEL);
-  await globalRef.set({
-    schemaVersion: 1, ownerId: GLOBAL_RATE_LIMIT_SENTINEL, scope: RATE_LIMITS.global.scope,
-    windowStartedAt: Timestamp.fromMillis(NOW - 1000), count: RATE_LIMITS.global.maxEvents,
+  const budgets = [RATE_LIMITS.emailDelivery, RATE_LIMITS.githubDelivery];
+  await Promise.all(budgets.map((budget) => rateLimitReference(db, budget.scope, GLOBAL_RATE_LIMIT_SENTINEL).set({
+    schemaVersion: 1, ownerId: GLOBAL_RATE_LIMIT_SENTINEL, scope: budget.scope,
+    windowStartedAt: Timestamp.fromMillis(NOW - 1000), count: budget.maxEvents,
     updatedAt: Timestamp.fromMillis(NOW - 1000),
-  });
+  })));
   try {
-    await rejects(service.submitBugReportV1(request(fresh, submitData())), "resource-exhausted");
+    const accepted = await service.submitBugReportV1(request(fresh, submitData()));
+    assert.match(accepted.reportId, /^br_/u);
   } finally {
-    await clearRate(RATE_LIMITS.global.scope, GLOBAL_RATE_LIMIT_SENTINEL);
+    await Promise.all(budgets.map((budget) => clearRate(budget.scope, GLOBAL_RATE_LIMIT_SENTINEL)));
   }
+  assert.equal("global" in RATE_LIMITS, false, "no shared submit bucket exists");
 });
 
 emulatorTest("appConfig/bugReports.enabled=false pauses submission; a missing document does not", async () => {
@@ -518,6 +544,113 @@ emulatorTest("the owner lists newest first, filters by status, pages, reads deta
   await rejects(service.listBugReportsV1(request(OWNER, { limit: 500 })), "invalid-argument");
 });
 
+emulatorTest("the rights-request callables refuse everybody but the protected owner and change nothing", async () => {
+  const uid = uniqueUid("rights-gate");
+  await seedUser(uid);
+  const { service, gate, storage } = serviceWith();
+  const { reportId } = await service.submitBugReportV1(request(uid, submitData()));
+  await rejects(service.deleteBugReportV1(request(uid, { reportId })), "permission-denied");
+  await rejects(service.deleteBugReportScreenshotV1(request(uid, { reportId })), "permission-denied");
+  await rejects(service.listBugReportsV1(request(uid, { reporterId: uid })), "permission-denied");
+  assert.deepEqual(gate.calls, [uid, uid, uid]);
+  assert.equal((await db.collection(BUG_REPORTS).doc(reportId).get()).exists, true);
+  assert.equal(storage.deleted.length, 0);
+});
+
+emulatorTest("the owner finds one account's reports for an access or erasure request", async () => {
+  const uid = uniqueUid("by-reporter");
+  const other = uniqueUid("by-reporter-other");
+  await Promise.all([seedUser(uid), seedUser(other)]);
+  const early = serviceWith({ clock: () => NOW - 60_000 }).service;
+  const { service } = serviceWith();
+  const first = await early.submitBugReportV1(request(uid, submitData()));
+  const second = await service.submitBugReportV1(request(uid, submitData()));
+  await service.submitBugReportV1(request(other, submitData()));
+
+  const page = await service.listBugReportsV1(request(OWNER, { reporterId: uid, limit: 50 }));
+  assert.deepEqual(page.reports.map((row) => row.reportId), [second.reportId, first.reportId]);
+  assert.ok(page.reports.every((row) => row.reporterId === uid));
+  // Combined with a status filter, and paged.
+  await service.updateBugReportStatusV1(request(OWNER, { reportId: first.reportId, status: "triaged" }));
+  const triaged = await service.listBugReportsV1(request(OWNER, { reporterId: uid, status: "triaged" }));
+  assert.deepEqual(triaged.reports.map((row) => row.reportId), [first.reportId]);
+  const one = await service.listBugReportsV1(request(OWNER, { reporterId: uid, limit: 1 }));
+  assert.equal(one.nextCursor, second.reportId);
+  const rest = await service.listBugReportsV1(request(OWNER, { reporterId: uid, limit: 1, cursor: one.nextCursor }));
+  assert.deepEqual(rest.reports.map((row) => row.reportId), [first.reportId]);
+  for (const reporterId of ["", "a/b", 42, "x".repeat(200)]) {
+    await rejects(service.listBugReportsV1(request(OWNER, { reporterId })), "invalid-argument");
+  }
+});
+
+async function auditEntries(reportId) {
+  const snapshot = await db.collection("adminAuditLogs").where("targetId", "==", reportId).get();
+  return snapshot.docs.map((document) => document.data());
+}
+
+emulatorTest("the owner deletes one report now: document, reservation and object, with an audit entry and no copy of the words", async () => {
+  const uid = uniqueUid("owner-delete");
+  await seedUser(uid);
+  const { service, storage } = serviceWith();
+  const attached = await reserve(service, uid);
+  storage.put(attached.screenshotUpload.storagePath, { size: 4096, metadata: attached.screenshotUpload.uploadMetadata });
+  await service.attachBugReportScreenshotV1(request(uid, { reportId: attached.reportId, objectGeneration: "1700000000000001" }));
+  const pending = await reserve(service, uid);
+
+  for (const target of [attached, pending]) {
+    const result = await service.deleteBugReportV1(request(OWNER, { reportId: target.reportId }));
+    assert.deepEqual(result, { reportId: target.reportId, deleted: true });
+    assert.equal((await db.collection(BUG_REPORTS).doc(target.reportId).get()).exists, false);
+    assert.equal((await db.collection(BUG_REPORT_RESERVATIONS).doc(target.reportId).get()).exists, false);
+    assert.ok(storage.deleted.some((entry) => entry.objectPath === target.screenshotUpload.storagePath));
+    const audit = await auditEntries(target.reportId);
+    assert.equal(audit.length, 1);
+    assert.equal(audit[0].action, "bug_report.deleted");
+    assert.equal(audit[0].actorId, OWNER);
+    assert.equal(audit[0].targetType, "bugReport");
+    assert.equal(audit[0].details.reporterId, uid);
+    assert.ok(!JSON.stringify(audit[0]).includes("send button"), "the audit never copies the description");
+  }
+  assert.equal(storage.objects.has(attached.screenshotUpload.storagePath), false);
+  await rejects(service.deleteBugReportV1(request(OWNER, { reportId: attached.reportId })), "not-found");
+  await rejects(service.deleteBugReportV1(request(OWNER, { reportId: "nope" })), "invalid-argument");
+});
+
+emulatorTest("the owner removes only a screenshot: the words stay, the object and signed access go", async () => {
+  const uid = uniqueUid("owner-remove-shot");
+  await seedUser(uid);
+  const { service, storage } = serviceWith();
+  const { reportId, screenshotUpload } = await reserve(service, uid);
+  storage.put(screenshotUpload.storagePath, { size: 4096, metadata: screenshotUpload.uploadMetadata });
+  await service.attachBugReportScreenshotV1(request(uid, { reportId, objectGeneration: "1700000000000001" }));
+
+  const result = await service.deleteBugReportScreenshotV1(request(OWNER, { reportId }));
+  assert.deepEqual(result, { reportId, removed: true });
+  assert.equal(storage.objects.has(screenshotUpload.storagePath), false);
+  const report = (await db.collection(BUG_REPORTS).doc(reportId).get()).data();
+  assert.equal(report.description, "The send button stays grey after I pick a photo.");
+  assert.equal(report.screenshot.status, "removed");
+  assert.equal(report.screenshot.generation, null);
+  assert.equal(report.screenshotExpiresAt, null);
+  const detail = await service.getBugReportV1(request(OWNER, { reportId }));
+  assert.equal(detail.screenshot.status, "removed");
+  assert.equal(detail.screenshot.url, null);
+  const audit = await auditEntries(reportId);
+  assert.deepEqual(audit.map((entry) => entry.action), ["bug_report.screenshot_removed"]);
+  // Idempotent: nothing more to remove, no second audit entry.
+  assert.deepEqual(await service.deleteBugReportScreenshotV1(request(OWNER, { reportId })), { reportId, removed: false });
+  assert.equal((await auditEntries(reportId)).length, 1);
+
+  // A screenshot still uploading: the reservation goes too, so the upload
+  // can no longer land.
+  const pending = await reserve(service, uid);
+  await service.deleteBugReportScreenshotV1(request(OWNER, { reportId: pending.reportId }));
+  assert.equal((await db.collection(BUG_REPORT_RESERVATIONS).doc(pending.reportId).get()).exists, false);
+  await rejects(service.attachBugReportScreenshotV1(request(uid, {
+    reportId: pending.reportId, objectGeneration: "1700000000000001",
+  })), "failed-precondition");
+});
+
 // ------------------------------------------------------------------ sweep
 
 emulatorTest("the retention sweep removes abandoned uploads, 90-day screenshots and 180-day reports", async () => {
@@ -556,6 +689,50 @@ emulatorTest("the retention sweep removes abandoned uploads, 90-day screenshots 
   }
   assert.equal((await db.collection(BUG_REPORTS).doc(kept.reportId).get()).exists, false);
   assert.equal((await db.collection(BUG_REPORTS).doc(abandoned.reportId).get()).exists, false);
+});
+
+emulatorTest("the retention sweep drains more than one page per run", async () => {
+  const label = uniqueUid("sweep-drain");
+  const expired = Timestamp.fromMillis(NOW - 1000);
+  const ids = Array.from({ length: 57 }, (_, index) => bugReportId(label, `drain-${index}-request-id`));
+  // More than one SWEEP_PAGE (50) of expired reports.
+  const batch = db.batch();
+  for (const reportId of ids) {
+    batch.set(db.collection(BUG_REPORTS).doc(reportId), {
+      schemaVersion: 1, reportId, reporterId: label, description: "Expired long ago.",
+      screenshot: null, screenshotExpiresAt: null, status: "new",
+      createdAt: expired, updatedAt: expired, expiresAt: expired,
+    });
+  }
+  await batch.commit();
+  const { service } = serviceWith();
+  const swept = await service.sweepBugReportRetention();
+  assert.ok(swept.reports >= 57, `swept ${swept.reports}`);
+  assert.equal(swept.backlog, false);
+  const left = await db.collection(BUG_REPORTS).where("reporterId", "==", label).get();
+  assert.equal(left.size, 0);
+});
+
+emulatorTest("a sweep out of time budget stops and reports a backlog", async () => {
+  const label = uniqueUid("sweep-budget");
+  const expired = Timestamp.fromMillis(NOW - 1000);
+  const reportId = bugReportId(label, "budget-request-id-0001");
+  await db.collection(BUG_REPORTS).doc(reportId).set({
+    schemaVersion: 1, reportId, reporterId: label, description: "Expired long ago.",
+    screenshot: null, screenshotExpiresAt: null, status: "new",
+    createdAt: expired, updatedAt: expired, expiresAt: expired,
+  });
+  let tick = 0;
+  const service = createBugReportService({
+    db, Timestamp, storage: new FakeStorage(), clock: () => NOW, authorizeOwner: ownerGate().authorizeOwner,
+    logger: { info() {}, warn() {} },
+    // The budget is already spent after the first reading.
+    monotonic: () => (tick++ === 0 ? 0 : 10 * 60 * 1000),
+  });
+  const swept = await service.sweepBugReportRetention();
+  assert.equal(swept.backlog, true);
+  assert.equal(swept.reports, 0);
+  await db.collection(BUG_REPORTS).doc(reportId).delete();
 });
 
 // --------------------------------------------------------------- delivery
@@ -614,7 +791,7 @@ emulatorTest("a channel whose runtime switch is off is recorded as disabled and 
   assert.equal(report.delivery.email.status, "disabled");
 });
 
-emulatorTest("e-mail goes once through Resend, escaped, without the uid or the screenshot", async () => {
+emulatorTest("e-mail goes once through Resend, link-only: no description, uid, OS, locale or screenshot", async () => {
   const uid = uniqueUid("email");
   const reportId = await seededReport(uid);
   const { calls, fetchImpl } = fakeFetch([{ status: 200, body: { id: "resend-1" } }]);
@@ -629,28 +806,36 @@ emulatorTest("e-mail goes once through Resend, escaped, without the uid or the s
   assert.equal(calls[0].url, "https://api.resend.com/emails");
   assert.equal(calls[0].init.headers.Authorization, "Bearer re_test_key");
   assert.deepEqual(calls[0].body.to, ["owner@example.com"]);
-  assert.ok(calls[0].body.html.includes("&lt;script&gt;"));
-  assert.ok(!calls[0].body.html.includes("<script>"));
-  assert.ok(!JSON.stringify(calls[0].body).includes(uid), "the uid is never e-mailed");
+  // Link-only: a copy in a mailbox or Resend's log is outside the 180-day
+  // sweep, the owner's delete and account deletion, so the words never go.
+  const sent = JSON.stringify(calls[0].body);
+  for (const absent of ["Crash", "<script>", "alert(1)", "@someone", uid, "pl-PL", "Version 18.6", "bug_reports/"]) {
+    assert.ok(!sent.includes(absent), `the e-mail never carries ${absent}`);
+  }
   assert.ok(calls[0].body.subject.includes(reportId));
+  assert.ok(calls[0].body.text.includes(reportId));
+  assert.ok(calls[0].body.text.includes("ChatScreen"));
+  assert.ok(calls[0].body.text.includes("Screenshot: no"));
+  assert.ok(calls[0].init.signal === undefined || typeof calls[0].init.signal.aborted === "boolean",
+    "every provider call carries a timeout signal");
   const report = (await db.collection(BUG_REPORTS).doc(reportId).get()).data();
   assert.equal(report.delivery.email.status, "sent");
   assert.equal(report.delivery.email.externalId, "resend-1");
 });
 
-emulatorTest("a public repository gets a minimal issue: no description, no uid, no locale", async () => {
+emulatorTest("a public repository gets a link-only issue: no description, no uid, no locale", async () => {
   const uid = uniqueUid("github-public");
   const reportId = await seededReport(uid);
   const { calls, fetchImpl } = fakeFetch([
-    { status: 200, body: { private: false } },
     { status: 201, body: { number: 77 } },
   ]);
   const delivery = deliveryWith({ fetchImpl, channels: { github: GITHUB_CHANNEL } });
   await withConfig({ githubEnabled: true, githubRepo: "kamilxgriefer/yovoice", githubIncludeDescription: true },
     () => delivery.deliverBugReport(reportId));
-  assert.equal(calls[0].url, "https://api.github.com/repos/kamilxgriefer/yovoice");
-  assert.equal(calls[1].url, "https://api.github.com/repos/kamilxgriefer/yovoice/issues");
-  const issue = JSON.stringify(calls[1].body);
+  // No visibility probe any more: the issue is the same everywhere.
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api.github.com/repos/kamilxgriefer/yovoice/issues");
+  const issue = JSON.stringify(calls[0].body);
   assert.ok(issue.includes(reportId));
   assert.ok(!issue.includes("Crash"), "the description never reaches a public repository");
   assert.ok(!issue.includes(uid));
@@ -660,26 +845,93 @@ emulatorTest("a public repository gets a minimal issue: no description, no uid, 
   assert.equal(report.delivery.github.externalId, "77");
 });
 
-emulatorTest("a repository the API confirms private may carry the fenced description, still without the uid", async () => {
+emulatorTest("even a private repository with the retired githubIncludeDescription switch gets the link-only issue", async () => {
+  // A GitHub issue is outside the 180-day sweep, the owner's delete and
+  // account deletion, so the reporter's words never go there.
   const uid = uniqueUid("github-private");
   const reportId = await seededReport(uid);
   const { calls, fetchImpl } = fakeFetch([
-    { status: 200, body: { private: true } },
     { status: 201, body: { number: 5 } },
   ]);
   const delivery = deliveryWith({ fetchImpl, channels: { github: GITHUB_CHANNEL } });
   await withConfig({ githubEnabled: true, githubRepo: "kamilxgriefer/yovoice-bug-inbox", githubIncludeDescription: true },
     () => delivery.deliverBugReport(reportId));
-  const body = calls[1].body.body;
-  assert.ok(body.includes("````text\nCrash <script>"), "a fence longer than any backtick run in the text");
+  assert.equal(calls.length, 1, "no visibility probe");
+  const body = calls[0].body.body;
+  assert.ok(body.includes(reportId));
+  assert.ok(!body.includes("Crash"));
   assert.ok(!body.includes(uid));
-  // Without the explicit opt-in, even a private repository gets the minimal form.
-  const quiet = await seededReport(uniqueUid("github-quiet"));
-  const second = fakeFetch([{ status: 201, body: { number: 6 } }]);
-  await withConfig({ githubEnabled: true, githubRepo: "kamilxgriefer/yovoice-bug-inbox" },
-    () => deliveryWith({ fetchImpl: second.fetchImpl, channels: { github: GITHUB_CHANNEL } }).deliverBugReport(quiet));
-  assert.equal(second.calls.length, 1, "no visibility probe without the opt-in");
-  assert.ok(!second.calls[0].body.body.includes("Crash"));
+  assert.ok(!body.includes("pl-PL"));
+});
+
+emulatorTest("a live lease held by another attempt throws for a retry instead of counting as delivered", async () => {
+  const reportId = await seededReport(uniqueUid("lease"));
+  const config = { emailEnabled: true, emailTo: "owner@example.com", emailFrom: "bugs@yovoice.app" };
+  await db.collection(BUG_REPORTS).doc(reportId).update({
+    "delivery.email": { status: "sending", attempts: 1, claimedAt: Timestamp.fromMillis(NOW - 1000), lastErrorCode: null },
+  });
+  await withConfig(config, async () => {
+    const idle = fakeFetch([]);
+    await assert.rejects(deliveryWith({ fetchImpl: idle.fetchImpl, channels: { email: EMAIL_CHANNEL } })
+      .deliverBugReport(reportId), (error) => {
+      assert.deepEqual(error.outcome, { email: "leased" });
+      return true;
+    });
+    assert.equal(idle.calls.length, 0, "no second send while the lease is live");
+    // After the lease (the first attempt died), the retry sends it.
+    const later = fakeFetch([{ status: 200, body: { id: "r-after-lease" } }]);
+    const outcome = await deliveryWith({
+      fetchImpl: later.fetchImpl, channels: { email: EMAIL_CHANNEL }, clock: () => NOW + CLAIM_LEASE_MS,
+    }).deliverBugReport(reportId);
+    assert.deepEqual(outcome, { email: "sent" });
+    assert.equal((await db.collection(BUG_REPORTS).doc(reportId).get()).data().delivery.email.attempts, 2);
+  });
+});
+
+emulatorTest("a GitHub retry finds the issue an earlier attempt created instead of opening a duplicate", async () => {
+  const reportId = await seededReport(uniqueUid("github-dedupe"));
+  await db.collection(BUG_REPORTS).doc(reportId).update({
+    "delivery.github": { status: "retrying", attempts: 1, lastErrorCode: "network" },
+  });
+  const { calls, fetchImpl } = fakeFetch([
+    { status: 200, body: [{ number: 12, title: "Something else" }, { number: 41, title: `Bug report ${reportId} (ios 3.0.0+36)` }] },
+  ]);
+  const outcome = await withConfig({ githubEnabled: true, githubRepo: "kamilxgriefer/yovoice" },
+    () => deliveryWith({ fetchImpl, channels: { github: GITHUB_CHANNEL } }).deliverBugReport(reportId));
+  assert.deepEqual(outcome, { github: "sent" });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/repos\/kamilxgriefer\/yovoice\/issues\?state=all/u);
+  assert.equal(calls[0].init.method, undefined, "a read, never a second POST");
+  const report = (await db.collection(BUG_REPORTS).doc(reportId).get()).data();
+  assert.equal(report.delivery.github.externalId, "41");
+});
+
+emulatorTest("each channel has its own daily budget; over it the report is kept and only not announced", async () => {
+  const reportId = await seededReport(uniqueUid("budget"));
+  const budget = RATE_LIMITS.githubDelivery;
+  const budgetRef = rateLimitReference(db, budget.scope, GLOBAL_RATE_LIMIT_SENTINEL);
+  await budgetRef.set({
+    schemaVersion: 1, ownerId: GLOBAL_RATE_LIMIT_SENTINEL, scope: budget.scope,
+    windowStartedAt: Timestamp.fromMillis(NOW - 1000), count: budget.maxEvents,
+    updatedAt: Timestamp.fromMillis(NOW - 1000),
+  });
+  try {
+    const { calls, fetchImpl } = fakeFetch([{ status: 200, body: { id: "resend-ok" } }]);
+    const outcome = await withConfig({
+      emailEnabled: true, emailTo: "owner@example.com", emailFrom: "bugs@yovoice.app",
+      githubEnabled: true, githubRepo: "kamilxgriefer/yovoice",
+    }, () => deliveryWith({ fetchImpl, channels: { email: EMAIL_CHANNEL, github: GITHUB_CHANNEL } })
+      .deliverBugReport(reportId));
+    assert.deepEqual(outcome, { email: "sent", github: "throttled" });
+    assert.equal(calls.length, 1, "the throttled channel makes no request");
+    assert.equal(calls[0].url, "https://api.resend.com/emails");
+    const report = (await db.collection(BUG_REPORTS).doc(reportId).get()).data();
+    assert.equal(report.delivery.github.status, "throttled");
+    assert.equal(report.status, "new", "the report itself is untouched");
+  } finally {
+    await clearRate(budget.scope, GLOBAL_RATE_LIMIT_SENTINEL);
+    await clearRate(RATE_LIMITS.emailDelivery.scope, GLOBAL_RATE_LIMIT_SENTINEL);
+  }
 });
 
 emulatorTest("a transient failure is recorded and retried; a permanent one is recorded once; attempts are bounded", async () => {
@@ -723,16 +975,45 @@ unitTest("the message builders never include the screenshot path or the uid", ()
     screenshot: { status: "attached", storagePath: "bug_reports/secret-uid/br_x.jpg" },
   };
   const email = buildBugReportEmail("br_" + "a".repeat(40), report);
-  const issue = buildBugReportIssue("br_" + "a".repeat(40), report, { includeDescription: true });
+  const issue = buildBugReportIssue("br_" + "a".repeat(40), report);
   for (const text of [email.text, email.html, issue.body, issue.title]) {
     assert.ok(!text.includes("secret-uid"));
     assert.ok(!text.includes("bug_reports/"));
+    assert.ok(!text.includes("Hello"), "no channel carries the description");
+  }
+});
+
+unitTest("the screenshot line tells requested from attached", () => {
+  const id = "br_" + "b".repeat(40);
+  const line = (status) => buildBugReportEmail(id, { context: context(), screenshot: status ? { status } : null })
+    .text.split("\n").find((row) => row.startsWith("Screenshot:"));
+  // The trigger runs at creation, while the upload is still pending.
+  assert.equal(line("reserved"), "Screenshot: requested (upload pending)");
+  assert.equal(line("attached"), "Screenshot: attached (open it in the Staff Center)");
+  for (const status of [null, "expired", "refused", "removed", "deleted"]) {
+    assert.equal(line(status), "Screenshot: no", String(status));
+  }
+});
+
+unitTest("firestore.indexes.json declares every owner list shape", () => {
+  // The emulator does not enforce composite indexes; production does. Every
+  // where(...)+orderBy("createdAt","desc") listBugReportsV1 can build.
+  const { indexes } = require(path.resolve(__dirname, "../../firestore.indexes.json"));
+  const declared = new Set(indexes
+    .filter((index) => index.collectionGroup === "bugReports" && index.queryScope === "COLLECTION")
+    .map((index) => index.fields.map((field) => `${field.fieldPath}:${field.order}`).join(",")));
+  for (const shape of [
+    "status:ASCENDING,createdAt:DESCENDING",
+    "reporterId:ASCENDING,createdAt:DESCENDING",
+    "reporterId:ASCENDING,status:ASCENDING,createdAt:DESCENDING",
+  ]) {
+    assert.ok(declared.has(shape), shape);
   }
 });
 
 // ------------------------------------------------------------ registration
 
-unitTest("six base exports need no new secret; delivery registers only when a channel is source-enabled", () => {
+unitTest("eight base exports need no new secret; delivery registers only when a channel is source-enabled", () => {
   const registered = [];
   const registrars = {
     onCall: (options, handler) => { registered.push({ kind: "call", options }); return { options, handler }; },
@@ -741,7 +1022,10 @@ unitTest("six base exports need no new secret; delivery registers only when a ch
   };
   const base = createBugReportFunctions({ registrars, runtimeFactory: () => ({}) });
   assert.deepEqual(Object.keys(base).sort(), [...BUG_REPORT_BASE_EXPORT_NAMES]);
-  for (const name of ["listBugReportsV1", "getBugReportV1", "updateBugReportStatusV1"]) {
+  for (const name of [
+    "listBugReportsV1", "getBugReportV1", "updateBugReportStatusV1",
+    "deleteBugReportV1", "deleteBugReportScreenshotV1",
+  ]) {
     assert.deepEqual(base[name].options.secrets, ["YOVOICE_PROTECTED_OWNER_UID"], name);
     assert.equal(base[name].options.region, "europe-west1");
   }

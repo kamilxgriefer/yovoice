@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -179,6 +180,32 @@ void main() {
     await tester.tap(_button);
     await tester.pump();
     expect(harness.opened, hasLength(1));
+  });
+
+  testWidgets('screen readers can activate it: the node is a button with a '
+      'tap action that opens the reporter, and a hide action', (tester) async {
+    final semantics = tester.ensureSemantics();
+    final harness = await _pump(tester, size: const Size(390, 844));
+    final node = tester.getSemantics(_button);
+    expect(
+      node,
+      isSemantics(
+        label: 'Report a bug',
+        hint: 'Drag to move. Touch and hold to hide.',
+        isButton: true,
+        hasTapAction: true,
+        hasLongPressAction: true,
+        customActions: const <CustomSemanticsAction>[
+          CustomSemanticsAction(label: 'Hide the Bug button'),
+        ],
+      ),
+    );
+    // Dispatch the tap the way TalkBack and VoiceOver do: through the
+    // semantics tree, not a pointer.
+    tester.semantics.tap(find.semantics.byLabel('Report a bug'));
+    await tester.pump();
+    expect(harness.opened, hasLength(1));
+    semantics.dispose();
   });
 
   testWidgets('hidden while signed out, while a dialog is open and while '

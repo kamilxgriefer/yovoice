@@ -387,8 +387,10 @@ data or interrupt established accounts on a new device. See ADR-132.
 desktop More popover, plus a movable "Bug" button for the testing period
 (hide it with a long press or Settings > Help > Show the Bug button). The
 reporter takes a description, sends the app version, platform, OS, language,
-theme and screen name, and — only after the person previews and confirms it —
-a screenshot. Reports reach only the owner, in Staff Center > Bug reports.
+theme, screen size and screen name, and — only after the person previews it
+(full size, with zoom) and confirms it — a screenshot. Reports reach only the
+owner, in Staff Center > Bug reports, who can also find one account's reports
+and delete a report or its screenshot on request.
 
 ## Notifications
 

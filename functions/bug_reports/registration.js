@@ -1,10 +1,11 @@
 // In-app bug reports: the export map.
 //
-// Six exports are always registered and need no new secret:
+// Eight exports are always registered and need no new secret:
 //
 //   submitBugReportV1, attachBugReportScreenshotV1   any signed-in account
 //   listBugReportsV1, getBugReportV1,
-//   updateBugReportStatusV1                          the protected owner only
+//   updateBugReportStatusV1, deleteBugReportV1,
+//   deleteBugReportScreenshotV1                      the protected owner only
 //   sweepBugReportRetentionSchedule                  daily retention sweep
 //
 // `deliverBugReportV1` is registered ONLY when index.js source-enables a
@@ -24,6 +25,8 @@ const REGION = "europe-west1";
 
 const BUG_REPORT_BASE_EXPORT_NAMES = Object.freeze([
   "attachBugReportScreenshotV1",
+  "deleteBugReportScreenshotV1",
+  "deleteBugReportV1",
   "getBugReportV1",
   "listBugReportsV1",
   "submitBugReportV1",
@@ -93,6 +96,12 @@ function createBugReportFunctions({
       (request) => resolve().service.getBugReportV1(request)),
     updateBugReportStatusV1: registrars.onCall(ownerOptions,
       (request) => resolve().service.updateBugReportStatusV1(request)),
+    // Rights requests (access and erasure): delete one report, or only its
+    // screenshot, now rather than at the 180/90-day sweep. Both audited.
+    deleteBugReportV1: registrars.onCall(ownerOptions,
+      (request) => resolve().service.deleteBugReportV1(request)),
+    deleteBugReportScreenshotV1: registrars.onCall(ownerOptions,
+      (request) => resolve().service.deleteBugReportScreenshotV1(request)),
     sweepBugReportRetentionSchedule: registrars.onSchedule({
       region: REGION,
       schedule: "every 24 hours",

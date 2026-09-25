@@ -332,6 +332,11 @@ class _BugButton extends StatelessWidget {
         'Drag to move. Touch and hold to hide.',
         'Przeciągnij, aby przesunąć. Przytrzymaj, aby ukryć.',
       ),
+      // excludeSemantics drops the InkWell's own tap and long-press actions,
+      // so they are declared here: without onTap TalkBack does not treat the
+      // button as clickable and a VoiceOver double-tap has nothing to invoke.
+      onTap: onPressed,
+      onLongPress: onHide,
       customSemanticsActions: <CustomSemanticsAction, VoidCallback>{
         CustomSemanticsAction(
           label: copy.text('Hide the Bug button', 'Ukryj przycisk Bug'),

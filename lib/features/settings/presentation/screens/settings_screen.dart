@@ -1477,8 +1477,14 @@ List<Widget> settingsBugReportRows(
         trailing: Switch.adaptive(
           value: preferences.value.bugReportButtonVisible,
           activeTrackColor: colors.primary,
-          onChanged: (visible) =>
-              unawaited(preferences.setBugReportButtonVisible(visible)),
+          // The controller rolls back and rethrows when the store write
+          // fails; the switch then shows the real state, so the error is
+          // handled here rather than reaching the zone and crash reporting.
+          onChanged: (visible) => unawaited(
+            preferences
+                .setBugReportButtonVisible(visible)
+                .catchError((Object _) {}),
+          ),
         ),
       ),
   ];

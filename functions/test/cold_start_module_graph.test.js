@@ -90,7 +90,7 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 267 names.
+// Every export of functions/index.js, sorted. 269 names.
 // 2026-09-19 (ADR-213): onMomentCommentCreated/Deleted,
 // onReelCommentCreated/Deleted and sendServerEventRemindersSchedule join the
 // map — the comment-notification triggers and the Server event reminder
@@ -99,9 +99,11 @@ function inspectColdStart() {
 // join it as well. 2026-09-25 (in-app bug reports): submitBugReportV1,
 // attachBugReportScreenshotV1, listBugReportsV1, getBugReportV1,
 // updateBugReportStatusV1 and sweepBugReportRetentionSchedule join it (261 +
-// 6 = 267). `deliverBugReportV1` is NOT in it: both of its delivery channels
-// are source-gated off in index.js. Extending this list is the deliberate
-// review step the header describes, not a drive-by edit.
+// 6 = 267). 2026-09-25 (bug report rights requests): the owner-only
+// deleteBugReportV1 and deleteBugReportScreenshotV1 join it (267 + 2 = 269).
+// `deliverBugReportV1` is NOT in it: both of its delivery channels are
+// source-gated off in index.js. Extending this list is the deliberate review
+// step the header describes, not a drive-by edit.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
@@ -140,6 +142,8 @@ const EXPORT_NAMES = Object.freeze([
   "createServerWhiteboardStrokeV1",
   "declineDirectCall",
   "deleteAccountSelfV1",
+  "deleteBugReportScreenshotV1",
+  "deleteBugReportV1",
   "deleteClubSelf",
   "deleteDirectConversationForMe",
   "deleteDirectMessage",

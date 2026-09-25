@@ -720,9 +720,10 @@ Object.assign(exports, createServerMessageFunctions({ enforceAppCheck: false }))
 |--------------------------------------------------------------------------
 | In-app bug reports (see functions/bug_reports/registration.js)
 |--------------------------------------------------------------------------
-| Six exports need no new secret: reporters submit a report (and optionally
-| attach one reserved screenshot); the protected owner lists, reads and
-| triages them in the Staff Center; a daily sweep enforces retention. Reports
+| Eight exports need no new secret: reporters submit a report (and optionally
+| attach one reserved screenshot); the protected owner lists, reads, triages
+| and (for rights requests) deletes them or their screenshot in the Staff
+| Center; a daily sweep enforces retention. Reports
 | are therefore usable with nothing else configured.
 |
 | Alert delivery is SOURCE-GATED OFF, one gate per channel. Turning a gate on

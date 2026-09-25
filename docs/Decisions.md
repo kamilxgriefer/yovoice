@@ -15168,15 +15168,18 @@ exhaustively by the shell and several suites.
 ### Decision
 
 1. **One path in, one path out.** `submitBugReportV1` (any signed-in account,
-   unverified included; disabled/deleted refused; banned allowed) validates an
-   exact allowlist — a 10-2000 character description, a fixed device-context
+   unverified included; disabled/deleted refused; banned allowed in words, but
+   a banned account's screenshot is recorded `refused` and gets no
+   reservation, since `storage.rules` refuses a banned uploader) validates an
+   exact allowlist — a 10-2000 UTF-16-unit description, a fixed device-context
    object and an optional JPEG declaration — rate-limits it (5 per 10 minutes
-   and 20 per day per account, 300 per day project-wide under a sentinel key)
-   and writes `bugReports/{br_<sha256 prefix>}` in one transaction; the id is
+   and 20 per day per account; no project-wide bucket refuses a report) and
+   writes `bugReports/{br_<sha256 prefix>}` in one transaction; the id is
    derived from uid + requestId, so a retry replays. The uid is taken from the
    session, never from the client. The protected owner reads through
-   `listBugReportsV1` / `getBugReportV1` / `updateBugReportStatusV1`, each
-   gated by `requireProtectedOwner` — i.e. only by the existing
+   `listBugReportsV1` (optionally by `reporterId`) / `getBugReportV1` /
+   `updateBugReportStatusV1` / `deleteBugReportV1` /
+   `deleteBugReportScreenshotV1`, each gated by `requireProtectedOwner` — i.e. only by the existing
    `YOVOICE_PROTECTED_OWNER_UID` secret — and rendered as an owner-only Staff
    Center section. Rules deny `bugReports` and `bugReportUploadReservations`
    to every client.
@@ -15191,8 +15194,9 @@ exhaustively by the shell and several suites.
 3. **Consent before capture leaves the device.** The client captures the
    navigator (never the top banners or the Bug button) before the reporter
    opens, but attaches it only after the reporter opens a preview headed by
-   "may show other people's names, photos or messages" and confirms. The 2FA
-   enrollment card blocks capture entirely.
+   "may show other people's names, photos or messages" and confirms. The
+   preview opens full size with pinch-to-zoom (a thumbnail at ~40 % scale
+   cannot be read). The 2FA enrollment card blocks capture entirely.
 4. **Delivery is announcement only, and off twice.** `deliverBugReportV1`
    (Firestore trigger, retrying, one transactional claim per channel, at most
    five attempts) is exported only when a source gate in `functions/index.js`
@@ -15200,12 +15204,11 @@ exhaustively by the shell and several suites.
    (`RESEND_API_KEY`, `GITHUB_BUG_REPORT_TOKEN`). Each channel is also switched
    at runtime in Admin-only `appConfig/bugReports`, which holds the recipient,
    sender and repository — not `functions/.env`, which is committed publicly.
-   E-mail HTML-escapes the description and carries no screenshot and no uid.
-   A GitHub issue carries only the report id, platform, version/build and
-   screen name, plus a pointer to the Staff Center; the description is added,
-   fenced as data, only when `githubIncludeDescription` is true **and** the
-   GitHub API reports the target repository private at send time. The uid and
-   screenshot never reach any channel.
+   Both channels are **link-only**: the report id, platform, version/build,
+   screen name and whether a screenshot was requested or attached, plus a
+   pointer to the Staff Center — never the description, uid, screenshot, OS
+   version or locale. Each channel has its own daily budget (200 e-mails, 50
+   issues, sentinel key); over it a report is stored but not announced.
 5. **Entry points do not touch navigation.** "Report a bug" is an action, not
    a `MoreDestination`: the mobile sheet and the desktop popover close with no
    destination and the reporter opens after their exit animation. The mobile
@@ -15221,9 +15224,12 @@ exhaustively by the shell and several suites.
    dock's own `reservedHeightFor` plus room for its expanded labels and the
    mini bar, and hides while a modal, the reporter or the keyboard is up.
 7. **Retention is enforced in code**: a daily sweep removes abandoned uploads,
-   screenshots after 90 days and reports after 180 days; account deletion
-   sweeps `bug_reports/{uid}/` with the other uid prefixes and deletes the
-   account's reports and reservations in the `records` stage.
+   screenshots after 90 days and reports after 180 days, draining page after
+   page within a 240 s budget; account deletion sweeps `bug_reports/{uid}/`
+   with the other uid prefixes and deletes the account's reports and
+   reservations in the `records` stage. Rights requests are answered in the
+   Staff Center: find by account, delete a report, remove a screenshot, each
+   deletion audited in `adminAuditLogs`.
 
 ### Reasoning
 
@@ -15237,15 +15243,17 @@ setting — is the only safe reading of "open an issue" for this repository.
 
 ### Consequences
 
-- The pinned export list grows 261 -> 267 (six exports; `deliverBugReportV1`
+- The pinned export list grows 261 -> 269 (eight exports; `deliverBugReportV1`
   joins only in the reviewed commit that flips a gate).
-- One composite index, `bugReports (status ASC, createdAt DESC)`, for the
-  owner's status filter.
-- The privacy policy needs a bug-report paragraph and retention lines before
-  release, and GitHub/Anthropic become processors only if the private-repo
-  description route is switched on; the App Store privacy labels and the Play
-  Data safety form need "diagnostics / user content (bug reports)". The exact
-  website text is in `docs/SECURITY.md` ("In-app bug reports").
+- Three composite indexes on `bugReports`: `(status, createdAt DESC)`,
+  `(reporterId, createdAt DESC)` and `(reporterId, status, createdAt DESC)`.
+- The privacy policy's bug-report text must be **published before** the
+  functions deploy and before any build that shows "Report a bug" (the row is
+  on the public web app too); the App Store privacy labels and the Play Data
+  safety form ("diagnostics / user content (bug reports)") block the store
+  submission. The exact website text, retargeted to the page's real sections,
+  is in `docs/SECURITY.md` ("In-app bug reports"), with the open questions
+  for legal review.
 - `recentEvents` / device model / an owner FCM push, suggested in the design
   review, are not built; the screen name is a class name, so a web release
   build (minified) reports a mangled name.
@@ -15253,3 +15261,70 @@ setting — is the only safe reading of "open an issue" for this repository.
   (LiveKit video, `video_player`) may be black; the button's placement is
   proven by widget tests at 390 / 768 / 1440 px with a real dock, not on a
   phone.
+
+## ADR-XXX: Bug report alerts are link-only, and rights requests have an owner tool
+
+**Date:** 2026-09-25 · **Status:** accepted (review fix round on
+`nb2/report-bug`, amends the in-app bug reports ADR above; the integrator
+assigns the number) · **NOT DEPLOYED**
+
+### Context
+
+Review of the in-app bug reports found that the proposed privacy text promised
+more deletion than the code gave: the alert e-mail carried the description, OS
+and locale, and a private GitHub repository could receive the description too,
+and none of those copies (mailbox, Resend's sent-mail log, GitHub issue) is
+reached by the 180-day sweep or by account deletion. The owner also had no way
+to answer an access or erasure request — including from a third party shown
+in a screenshot — short of hand-editing Firestore and Storage in the console.
+A shared 300-a-day submit bucket let ~15 throwaway accounts block every
+tester, and a banned account was issued reservations that Storage would
+always refuse.
+
+### Decision
+
+1. **Alerts are link-only on every channel** (option (a) of the review): the
+   report id, platform, version/build, screen name and a requested/attached
+   screenshot line. The description stays in Firebase. The
+   `githubIncludeDescription` switch and the repository-visibility probe are
+   retired; a stale `true` is ignored.
+2. **Owner rights tools**: `deleteBugReportV1` (document, reservation, object —
+   the object deleted before and after the transaction) and
+   `deleteBugReportScreenshotV1` (object and reservation; the words stay,
+   `screenshot.status = "removed"`), both writing an `adminAuditLogs` entry in
+   the same transaction without the description; `listBugReportsV1` gains a
+   `reporterId` filter. Resolving or dismissing a report does not shorten its
+   retention (not built; the explicit remove action covers the need).
+3. **No shared bucket refuses a report.** The project-wide budgets move to the
+   alert channels (200 e-mails, 50 issues a day); over budget a report is kept
+   and listed, `delivery.<channel>.status = "throttled"`.
+4. **Banned accounts report in words only**: no reservation, screenshot
+   `refused`.
+5. **Delivery hardening**: 15 s provider timeouts; a live lease held by another
+   attempt throws so the event retries instead of counting as delivered; a
+   GitHub retry reuses an issue already titled with the report id.
+6. **The sweep drains** page after page within 240 s and logs a backlog.
+7. **Publication order**: the privacy text is a blocking step before the
+   functions deploy and the tester build; store labels block the store
+   submission; the public store build must pass
+   `--dart-define=YOVOICE_BUG_BUTTON=false` (release checklist).
+
+### Reasoning
+
+A copy that deletion cannot reach is only safe if it contains nothing personal.
+Making the alert link-only is cheaper and more robust than chasing copies
+across a mailbox, a provider log and an issue tracker, and it makes the
+privacy text true as written. The owner already reads reports in the Staff
+Center, so the alert loses little. Rights requests arrive at the published
+privacy@yovoice.app mailbox, so the tool to answer them belongs next to the
+inbox, audited like every other owner action.
+
+### Consequences
+
+- Two new owner callables: the pinned export list is 269 (recomputed from
+  `functions/index.js`); two new composite indexes.
+- A GitHub-issue "Claude chat" route now gets only the reference and must read
+  the report through the owner (the route was already documented as
+  data-only).
+- Legal questions (lawful basis, third parties in screenshots, US processors,
+  the age threshold) are recorded, not answered, in `docs/SECURITY.md`.
