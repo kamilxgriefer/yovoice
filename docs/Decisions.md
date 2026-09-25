@@ -16282,3 +16282,117 @@ inbox, audited like every other owner action.
   data-only).
 - Legal questions (lawful basis, third parties in screenshots, US processors,
   the age threshold) are recorded, not answered, in `docs/SECURITY.md`.
+
+## ADR-225: Store builds come from a manually dispatched, reviewer-gated workflow that never publishes a binary
+
+**Date:** 2026-09-25 · **Status:** accepted (source only: the workflow has
+never run, and none of its GitHub, Play, App Store Connect or Keychain setup
+exists yet) · **NOTHING DISPATCHED**
+
+### Context
+
+Every store build so far was signed and uploaded by hand on Kamil's Mac:
+`flutter build ipa` plus `xcrun altool`, and `flutter build appbundle` plus a
+Play Console upload through the native file picker. The handover asked for
+either that or a GitHub Actions release path. An independent review of the
+first design found real flaws:
+
+- the repository is **public**, so logs and artifacts are world-readable;
+- no protected environment exists (`production` has no rules);
+- free-text inputs could be interpolated into shell;
+- fork pull-request runs share cache scopes with `main`;
+- a third job would ask for a second approval;
+- Hosting always deploys `main` HEAD, so web and store builds could come from
+  different SHAs;
+- a backend baseline taken from an empty variable would silently pass.
+
+### Decision
+
+1. `.github/workflows/store-release.yml` has a `workflow_dispatch` trigger
+   only. It is **dry run by default**. The dry-run jobs use no environment and
+   reference no secret. Android signs with a key generated on the runner,
+   because `build.gradle.kts` refuses to configure without one, and a
+   runner-only Gradle init script switches off the Crashlytics mapping-file
+   upload so a dry run writes nothing to Firebase. iOS builds with
+   `--no-codesign`.
+2. The real Android and iOS jobs run only from `main`, behind one protected
+   environment, `store-release` (required reviewer Kamil, branches `main`).
+   Both wait at the same moment, so **one review approves the release**.
+   TestFlight processing is polled inside the iOS job instead of a third
+   gated job.
+3. A no-secret **preflight** refuses a real release unless:
+   - `ref` is on `main`;
+   - `build_number` equals the pubspec `+N`;
+   - `verify_and_build` and the Playwright smoke are green on exactly `ref`,
+     counting only push or dispatch workflow runs on `main` (a
+     `pull_request` run tests a merge commit, so it never counts);
+   - a `deploy_hosting` job succeeded on exactly `ref` in a dispatch run on
+     `main` (web and store ship one SHA), unless `web_confirmed`;
+   - nothing under `functions/`, `firestore.rules`, `firestore.indexes.json`
+     or `storage.rules` changed since the last store release, unless
+     `backend_confirmed`.
+
+   The baseline is the newest `store-build-<N>` tag, which the workflow writes
+   itself after a successful upload. With no baseline it fails closed.
+4. Uploads use repository-owned, zero-dependency Node scripts
+   (`tool/release/`), always checked out from the workflow commit, never from
+   `ref`.
+   - Android: Play Developer API; internal track only; refuse a used
+     versionCode; one upload, never retried; Play's reported versionCode and
+     SHA-256 must match; commit; read back.
+   - iOS: App Store Connect API check that the build number is free; **one**
+     `altool` upload with no retry; poll until `VALID`. If the build never
+     appears in App Store Connect within 45 minutes the job fails, so the
+     release is not tagged; a build seen but still processing only warns.
+5. Hygiene rules for the public repository:
+   - inputs pass through `env:` only;
+   - no cache is read or written;
+   - no artifact is uploaded;
+   - secrets reach only the step that uses them, under `RUNNER_TEMP`, and
+     are removed in `always()` steps;
+   - actions are pinned by SHA.
+
+   `tool/test/release_workflow.test.mjs` pins these rules and runs in every
+   preflight.
+6. External TestFlight distribution, rolling out a Play draft, and handing
+   testers the opt-in link stay manual.
+
+### Reasoning
+
+A repository-owned script is a few hundred lines to review. A third-party
+upload action would hold the upload key and the store credentials. Checking
+CI and the Hosting deploy inside the workflow is necessary because `main`
+requires no status check (ADR-108), so nothing else stops a red SHA from
+shipping. Writing the baseline tag from the workflow removes the "someone
+forgot to update the variable" failure. Refusing on a missing baseline makes
+the dangerous direction impossible. A dry run with no secret lets the whole
+build half be proven, and re-proven after any workflow change, without the
+reviewer or the keys.
+
+### Consequences
+
+- Kamil has a one-time setup. It is exact, command by command, in
+  [RELEASE_CI.md](RELEASE_CI.md):
+  - the environment;
+  - nine environment secrets;
+  - a Play service account with "Release apps to testing tracks";
+  - optionally a dedicated App Store Connect key;
+  - the first `store-build-<N>` tag.
+- **With the classic token sessions use today (`repo`, `workflow`), the
+  reviewer gate does not bind a session.** That token can approve its own
+  pending deployment and change the workflow. The control becomes real only
+  when sessions move to a fine-grained token without Deployments or Workflows
+  permission. RELEASE_CI.md says so plainly.
+- App code at `ref` (Gradle scripts, the Xcode build) runs with the signing
+  material, as any signing build does. The approver's summary lists every
+  change under `android/`, `ios/`, the pubspec, the sound generator and
+  `tool/release/` since the last release.
+- Hosting still deploys `main` HEAD. The procedure is: backend by hand,
+  Hosting while `main` is at the release SHA, then this workflow with that
+  SHA. The web gate refuses anything else unless `web_confirmed`.
+- Making the repository private on a free plan would remove required
+  reviewers and environment secrets, and so the protection itself.
+- Nothing here is proven on a runner yet. These stay **UNVERIFIED** until the
+  first dry run and first real run: Xcode 26.6 on `macos-26`, the first Linux
+  Gradle release build, the Play API behaviour for this app, and the
+  one-approval behaviour.

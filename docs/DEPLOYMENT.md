@@ -4189,6 +4189,25 @@ new follow edges carry `notificationId`; old rows need no migration and use
 the legacy cleanup fallback. Do not delete the legacy triggers before the
 corrected callables are verified live.
 
+## Store builds from GitHub Actions (source only, never run)
+
+`.github/workflows/store-release.yml` can build, sign and upload a store
+release from one commit on `main`: Android to the Play **internal** track and
+iOS to TestFlight. It is manual (`workflow_dispatch`) and a dry run by
+default. A real run waits for one approval on the protected `store-release`
+environment. Its preflight refuses a real release unless CI is green on the
+commit, `deploy_hosting` succeeded on the same commit, and nothing under
+`functions/`, the rules or the indexes changed since the last `store-build-<N>`
+tag. The backend-changed case needs explicit `backend_confirmed=true` after
+steps 1-3 of the deploy order are read back.
+
+**Nothing of it is configured yet.** The environment, the nine secrets, the
+Play service account and the first baseline tag are Kamil's one-time setup.
+Until that setup exists, the Mac procedure in the release rounds below stays
+the way store builds are made. Setup, dispatch commands, gates and rollback:
+[RELEASE_CI.md](RELEASE_CI.md). Decision: ADR-225, "Store builds come from a
+manually dispatched, reviewer-gated workflow" in [Decisions.md](Decisions.md).
+
 ## Flutter web verification and Hosting release
 
 `.github/workflows/firebase-hosting-merge.yml` runs the complete verification
