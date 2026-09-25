@@ -5,7 +5,9 @@ testers on both stores). Integration branch: `nb/integrate`, in the worktree
 `/Users/kamil/Documents/GitHub/tmp/nb-integrate`.
 
 **Outcome: done in source. Nothing is on `main`, nothing is deployed, nothing
-is with testers, nothing was run on a real device or a simulator.** The single
+is with testers, nothing was run on a real device or a simulator.** Built on
+2026-09-19/20; the branch then waited while `main` shipped 3.0.0+35 and was
+merged with it on 2026-09-25 (see "Waiting for 3.0.0+35" below). The single
 deploy order and the owner-only steps live in
 [DEPLOYMENT.md](../DEPLOYMENT.md#next-build-after-300--one-deploy-order-for-the-whole-build-source-only-nothing-deployed);
 the product account is in [Roadmap.md](../Roadmap.md); the defects are in
@@ -22,7 +24,7 @@ the product account is in [Roadmap.md](../Roadmap.md); the defects are in
 | "zatwierdzam wszystko, opcja b" (GIFs) | GIPHY searched by the client with `rating=g` pinned, resolved by the server at send time by id, the official Powered By GIPHY mark, Action Register pingbacks gated on "Load GIFs automatically", and a dual-provider allow-set on every send path so Originals can never be stranded by a provider flip. **The whole server half is source-gated off.** | `nb/giphy` | ADR-214 |
 | "a channel still says LIVE with nobody in it" | A session now ends one 60 s backend-observed reconnect grace after the last person leaves, through three paths into the one existing end writer: the leaving client's new `releaseServerChannelSessionIfEmptyV1`, the provider's signed `room_finished`, and the tightened five-minute sweep, which also repairs projections no live generation backs. Plus a dry-run-first repair script for the badges already stuck in production. | `nb/server-live` (Windows PC) | **an amendment to ADR-180, deliberately not a new number** |
 | "notifications are missing" | Comments on your Voice Moment and your Yeel notify you; `@mentions` inside them notify the mentioned person, validated against *their* audience; Server event reminders are finally delivered; a role promotion and an ownership transfer tell the member. Deny-by-default at the push boundary, a "Moments & Yeels" preference group, and copy in 41 locales. | `nb/notifications` | ADR-213, and ADR-215 for the hardening round |
-| Server channels should do what DMs do (next-build Task 2a) | Emoji in the channel composer; one reaction per person in the DM vocabulary, toggled from the actions sheet, in announcements and rules channels too, never for guests; photos and videos through a server-issued reservation, a byte-probing finalize, 90-second V4 read grants and durable deletion jobs; authors can retract their own messages. io uploads stream from disk; a library pick goes through the ADR-212 review first. | `nb/server-messaging` | ADR-216 |
+| Server channels should do what DMs do (next-build Task 2a) | The emoji input stays in the channel composer while membership loads (it used to vanish); one reaction per person in the DM vocabulary, toggled from the actions sheet, in announcements and rules channels too, never for guests; photos and videos through a server-issued reservation, a byte-probing finalize, 90-second V4 read grants and durable deletion jobs; authors can retract their own messages. io uploads stream from disk; a library pick goes through the ADR-212 review first. | `nb/server-messaging` | ADR-216 |
 
 The decisions as they finally stand: **ADR-211** Yeels drag-to-seek,
 **ADR-212** confirm before upload, **ADR-213** the notification slice,
@@ -49,10 +51,13 @@ machines cannot merge prose safely at the same time. This session folded that
 brief into `Decisions.md`, `SECURITY.md`, `Servers.md`, `DEPLOYMENT.md`,
 `Firebase.md`, `Bugs.md` and `Roadmap.md` and deleted it. The eighth branch,
 `nb/server-messaging`, was also built on the Windows PC and arrived the same
-way, as `docs/briefs/2026-09-19-nb-server-messaging-docs.md`; its deploy
+way, as `docs/briefs/2026-09-19-nb-server-messaging-docs.md`. Its deploy
 order (section 7 of that brief) is folded into DEPLOYMENT.md — with Storage
 Rules moved *before* the Functions that issue reservations, as ADR-216
-requires, where the brief had them second.
+requires, where the brief had them second — and the rest of it into
+`Decisions.md` (ADR-216), `SECURITY.md`, `Servers.md`, `Firebase.md`,
+`Bugs.md` and `Roadmap.md`; the brief was then deleted (2026-09-25). It is in
+git history at `afa9dc03` for anyone who needs the branch-time evidence.
 
 The Windows machine also produced the only cross-platform noise worth
 recording: seven Functions cases fail there on *any* tree, `origin/main`
@@ -78,6 +83,70 @@ integration commits followed the merges rather than the branches:
   commit.
 - `f0ea2867` — the ADR-215 hardening round, which is a real behaviour change
   and has its own entries in Bugs.md and TESTING.md.
+
+## What the final passes found and fixed
+
+Three changes landed after the eight branches were merged, each found by a
+review of the integrated tree rather than of a single branch. All three are
+on the server channel media path (ADR-216); none touches a rule, an index or
+a pinned number.
+
+- **`e69b1013` — uploads stream from disk.** The channel photo/video path read
+  the whole pick into the Dart heap to measure it and then `putData` copied
+  it again: ~128 MiB transient for a 64 MiB video, an out-of-memory kill on a
+  mid-range Android phone. Now platform-split like the DM store
+  (`club_media_upload_source_io.dart` uses `putFile`, web keeps `putData`),
+  measured with `XFile.length()`. The one new failure mode — the OS evicted
+  the picker's temp file — is refused locally with the existing copy and
+  leaves the reservation unused. ADR-216 decision 5.
+- **`6a473b27` — the review sheet on server channels.** A photo or video picked
+  from the library in a server text channel now opens ADR-212's
+  `YoMediaSendReview` ("Send this photo?") before anything uploads; a camera
+  capture deliberately goes straight through. The review's bounds are the
+  DM constants because `storage.rules` declares exactly those for
+  `server_message_media`. ADR-212 amendment, ADR-216 decision 6.
+- **`77264f18` — a failed send can be retried.** The review keeps Send armed
+  after a failure, but every press minted a fresh `reserveRequestId`, so the
+  retry was read as a second upload and refused `resource-exhausted` —
+  "We're a little overloaded right now" — for up to fifteen minutes, in every
+  channel of every server. Fixed on the client: one `ServerMediaSendAttempt`
+  per pick replays its reservation and committed generation. The backend's
+  one-lease rule was not relaxed. ADR-216 decision 7, [Bugs.md](../Bugs.md).
+
+Documentation corrections from the same passes: `afa9dc03` put the Storage
+Rules deploy (step 2b) before the Functions that issue reservations — the
+branch brief had it second, which would refuse every upload after a
+reservation was granted — and corrected the `firestore.rules` and
+`storage.rules` rows below; this pass corrected ADR-216's export-surface line,
+which had counted the broadcast and last-leave callables twice, and folded
+the branch brief into SECURITY.md, Servers.md, Firebase.md and Bugs.md.
+
+## Waiting for 3.0.0+35
+
+The branch was finished on 2026-09-20 and not merged to `main`. While it
+waited, `main` shipped the Velvet Mallet v6 sound pack: `32c9dd9b` (ADR-210),
+served on the web since Hosting run 36038221140 on 2026-09-24, and `738ecc4a`
+setting `3.0.0+35` on 2026-09-25. Its store upload is the owner's step and is
+not recorded as done. 3.0.0+35 changed no rule, index or deployed Function
+(the only file under `functions/` it touched is one test), so production's
+backend is still 3.0.0+34's and every backend change of this build is still
+outstanding.
+
+On 2026-09-25 the branch took it in:
+
+- `2d1bfdef` moved every record this branch had introduced up by one, because
+  `main` had used ADR-210: Yeels scrub 211, confirm before upload 212,
+  notifications 213, GIPHY option B 214, the notification hardening round
+  215, server channel reactions and media 216. 72 files, 153 references,
+  anchors included.
+- `985dceee` merged `main`. The only code overlap was
+  `lib/features/notifications/data/services/push_notification_service.dart`
+  and `test/notification_sound_profile_test.dart`. The sound resource names
+  did not change, so the new notification types still point at existing
+  files.
+- `pubspec.yaml` therefore reads `3.0.0+35` here. It is not changed on this
+  branch; a store build of it needs the next free build number (DEPLOYMENT.md,
+  owner step 14).
 
 ## What this session verified, on this tree
 
@@ -121,6 +190,15 @@ seven server channel messaging exports are deliberately outside
 `SERVERS_V1_EXPORT_NAMES`, which is why none of those four numbers moved for
 them.
 
+**The last fully verified state is `cd30afea`** (2026-09-20): Flutter 5505,
+Functions 2480, rules 781, all green, as reported by the integrating session
+(the Flutter and rules counts are not otherwise recorded in this repository).
+The table above is from an earlier point in the same session (5467 Flutter
+tests). After `cd30afea` came `77264f18` (the retry fix), the documentation
+commits `b75d19df`, `2d1bfdef` and `afa9dc03`, and the merge `985dceee`; the
+full suites on the merged tree are recorded by the session that runs them,
+not by this documentation pass.
+
 No test assertion, finder or pinned number was edited to make anything go
 green in this session. The only numbers that moved are the Servers V1 export
 counts, and they moved because one callable was genuinely added; they were
@@ -134,10 +212,15 @@ recomputed from the merged code.
   seek latency, the arena feel of a diagonal flick, the media review on a real
   phone, the server delete/leave flow against the deployed backend and the
   friend-profile quick actions are all **UNVERIFIED on hardware**.
-- **Nothing is deployed.** Production still runs the 3.0.0+34 backend: the
-  old sweep, no reminder scheduler, no comment notifications, no
-  `releaseServerChannelSessionIfEmptyV1`. Every defect fixed here is still
-  live for every user.
+- **Nothing is deployed.** Production is on 3.0.0+35 on the web (sounds
+  only), and its backend is still 3.0.0+34's: the old sweep, no reminder
+  scheduler, no comment notifications, no
+  `releaseServerChannelSessionIfEmptyV1`, no server channel reactions or
+  media, no `server_message_media` Storage rule. Every defect fixed here is
+  still live for every user.
+- **No server-side video thumbnails.** A server channel video shows a
+  placeholder poster with its duration (DMs have none either). Hover-revealed
+  reactions and a side-sheet actions menu on wide screens were not built.
 - **No production data was read** and **no provider console was touched** —
   not LiveKit, not Firebase, not GIPHY. No secret was written.
 - **The LiveKit webhook is the biggest open question.** The URL was
@@ -165,6 +248,22 @@ recomputed from the merged code.
   has never been run against production, not even as a dry run.
 - The **`yovoice-website` branch `privacy/giphy`** is written and must not be
   published until GIPHY is actually live.
+
+## Owner steps, in short
+
+The full list, with commands, is
+[DEPLOYMENT.md, "Steps only Kamil can do"](../DEPLOYMENT.md#steps-only-kamil-can-do);
+the deploy order itself is steps 1 → 2 → 2b → 3a → 3b → 4 there. In short:
+read back (or grant) the Functions runtime `signBlob` permission before 3b;
+confirm one LiveKit webhook delivery after 3b; dry-run, apply and re-check
+the stale-LIVE repair script; run the provider drill; confirm the
+`notificationDeliveryEvents` TTL after the index deploy; change the website's
+`/delete-account` copy only after 3b; keep GIPHY off (production key, the
+official mark, the secret, the privacy disclosure and a separate deploy wave
+all still pending) and App Check telemetry-only; pick the next free build
+number before a store build; then the store and web release. The smoke after
+the release now includes the two checks the final passes added: a library
+pick opens the review first, and a failed send goes through on the retry.
 
 ## Release notes
 
@@ -199,10 +298,13 @@ e-mails carry none.
 > or handed ownership of one, now tells you. You can turn all of this on or
 > off under "Moments & Yeels" and "Servers" in your notification settings.
 >
-> **React, and share photos and videos, in server channels.** Tap and hold a
-> message in a server text channel to react with an emoji — announcements
-> too. You can send photos and short videos (up to a minute) there, see them
-> before they go, and delete your own messages.
+> **Emoji, reactions, photos and videos in server channels.** The emoji
+> button no longer disappears from a server channel's message box while the
+> channel is still loading. Tap and hold a message in a
+> server text channel to react with an emoji — announcements too. You can
+> send photos and short videos (up to a minute) there; anything you pick from
+> your library shows up for a look before it goes, and you can delete your
+> own messages.
 >
 > **The LIVE badge tells the truth.** A voice channel stops showing LIVE about
 > a minute after the last person leaves, instead of hanging on for up to
@@ -237,10 +339,12 @@ e-mails carry none.
 > "Serwery" (przełączniki "Komentarze i oznaczenia", "Wydarzenia na
 > serwerach" i "Twoja rola na serwerze").
 >
-> **Reakcje, zdjęcia i filmy na kanałach serwera.** Przytrzymaj wiadomość na
-> kanale tekstowym serwera, żeby zareagować emoji — także w ogłoszeniach.
-> Możesz tam też wysyłać zdjęcia i krótkie filmy (do minuty), zobaczyć je
-> przed wysłaniem i usuwać własne wiadomości.
+> **Emoji, reakcje, zdjęcia i filmy na kanałach serwera.** Przycisk emoji
+> nie znika już z pola wiadomości na kanale serwera, gdy kanał jeszcze się
+> wczytuje. Przytrzymaj wiadomość na kanale
+> tekstowym serwera, żeby zareagować emoji — także w ogłoszeniach. Możesz tam
+> też wysyłać zdjęcia i krótkie filmy (do minuty); to, co wybierzesz z
+> galerii, zobaczysz przed wysłaniem, a własne wiadomości możesz usuwać.
 >
 > **Plakietka NA ŻYWO mówi prawdę.** Kanał głosowy przestaje pokazywać NA
 > ŻYWO mniej więcej minutę po wyjściu ostatniej osoby, zamiast trzymać ją

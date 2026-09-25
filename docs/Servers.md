@@ -615,6 +615,36 @@ not deployed.
   room occupancy, so the staleness sweep keeps a generation live while OBS
   streams.
 
+### Message parity extension (7 exports, outside the manifest; ADR-216, source only, NOT deployed)
+
+Server text channels gain direct-message-style reactions and photo/video
+messages through seven exports that sit **outside** both the frozen 54-entry
+table above and the 62-name Servers V1 manifest (`SERVERS_V1_EXPORT_NAMES`).
+They are listed in `SERVER_MESSAGE_EXPORT_NAMES` in
+`functions/servers/registration.js` and built by
+`createServerMessageFunctions`, not `createServersV1Functions`, behind the
+same `appConfig/serversV1` activation gate (`callableAccess` for the
+callables, `workersEnabled` for the schedules), the same Auth binding and the
+same error mapping. They are not part of `tool/servers_activation_package.js`'s
+phase plan, which is why none of its 62 / 56 / 55 numbers moved for them.
+
+| export | service | notes |
+| --- | --- | --- |
+| `setServerChannelMessageReactionV1` | `messageReactions` | `read` capability + non-guest, the DM's six emoji, 500 reactors per message, 60/min per account |
+| `reserveServerChannelMessageMediaV1` | `messageMedia` | `write` capability, 15-minute reservation, one live lease per member, 512 MiB/day |
+| `finalizeServerChannelMessageMediaV1` | `messageMedia` | byte probe + token revocation + message publication (512 MiB, 120 s) |
+| `getServerChannelMessageMediaAccessV1` | `messageMedia` | ≤20 ids, 90 s V4 grants, re-authorized after signing (512 MiB, 120 s) |
+| `deleteServerChannelMessageV1` | `messageMedia` | author-only retraction + object deletion job (512 MiB, 120 s) |
+| `expireServerChannelMessageMediaReservations` | schedule | every 10 minutes, drops abandoned uploads |
+| `processServerChannelMessageMediaDeletionJobs` | schedule | every 10 minutes, object and prefix jobs |
+
+The client retries a failed media send as a replay of the same attempt (the
+same reserve and finalize request ids, `77264f18`), so the one-lease rule is
+never met by the member's own retry. Security model:
+[SECURITY.md](SECURITY.md#server-channel-reactions-and-media-2026-09-19-adr-216-source-only-not-deployed);
+deploy order:
+[DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-path-before-any-function-that-issues-a-reservation).
+
 ### The admin and staff surface on a versioned root (ADR-188)
 
 Trust & Safety does not get a second set of callables. `functions/admin/clubs.js`

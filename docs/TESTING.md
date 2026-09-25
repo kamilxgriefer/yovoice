@@ -4,6 +4,34 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
+## ADR-216 server channel reactions and media — 2026-09-19/20 (source only, NOT deployed)
+
+Emoji reactions and photo/video messages in server text channels
+([ADR-216](Decisions.md#adr-216-server-channel-reactions-and-media-are-admin-sdk-only-and-the-react-permission-is-derived-in-the-callable-never-stored-in-a-channel-grant)).
+The rules suite is new; everything else was added beside existing cases, and
+no assertion was edited.
+
+| Suite | How it runs | What it proves |
+| --- | --- | --- |
+| `firestore-tests/server_message_media_rules.test.js` | `firebase emulators:exec --only firestore,storage --project demo-yovoice 'npm --prefix firestore-tests run test:server-message-media'` | The `server_message_media` Storage block: a create only with a live reservation and exact metadata and inside the DM bounds; get only for the uploader while reserved; list, update and delete never; the five Admin-only collections unreachable from any client. It must use the emulator project `demo-yovoice` (as `storage.test.js` does) — a project id the Storage emulator's cross-service reads cannot see fails every reservation lookup |
+| `functions/test/server_message_reactions.test.js`, `server_message_media.test.js`, `server_message_media_admin_delete.test.js` | inside the Functions suite (fresh Auth + Firestore emulators, the storage bucket in `FIREBASE_CONFIG`) | Reactions (vocabulary, 500-reactor cap, rate limit, guests refused, announcements allowed); reserve, probe, finalize, the batched access grant, author retraction, the deletion jobs and the account-deletion sweep; staff removal through `adminDeleteMessage` |
+| `test/server_message_reactions_test.dart`, `test/server_composer_emoji_test.dart`, `test/server_channel_media_test.dart` | Flutter suite | The pill and the actions sheet; the emoji input kept while membership loads; the attach flow at 390 / 768 / 1440 px; the io upload streaming from disk (a pick whose `readAsBytes()` throws still sends) and the web `putData` path; the ADR-212 review on a library pick and its absence on a camera capture (`6a473b27`); and a retry after a failed upload replaying the reservation it already holds, plus a committed object being finalized instead of re-uploaded (`77264f18`) |
+
+Branch-time results (2026-09-19/20, from the branch's own gate): rules
+`test:server-message-media` 9/9, `test:storage` 76/0, firestore 577/0;
+Functions `server_message_reactions` 14/14, `server_message_media` 21/21,
+`server_message_media_admin_delete` 2/2. On the integrated tree the whole
+Functions suite is 2480/2480 (`6a473b27`, unchanged at `cd30afea`); see
+[Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md) for
+the later runs. Pre-existing and unrelated: `test:servers` is 68/3 with and
+without this work — its three Storage cases use a project id the Storage
+emulator's cross-service reads cannot see.
+
+**What this does not prove.** No device or simulator has shown the pill, the
+sheet, the review or a media bubble; the V4 grant path needs the runtime
+service account's `signBlob` permission, which no emulator exercises; and
+nothing here is deployed.
+
 ## ADR-215 notification review round — 2026-09-20 (source only, NOT deployed)
 
 Four defects found by a pre-merge review of `nb/notifications`

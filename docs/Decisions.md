@@ -15037,6 +15037,16 @@ obvious way to add "may react" to a V1 channel is a new capability key in
    measures the pick with `XFile.length()` and never reads it into the heap.
 6. A library pick goes through **ADR-212's `YoMediaSendReview`** before any
    byte leaves the device; a camera capture deliberately does not.
+7. **A send is one attempt per pick, not per press** (`77264f18`).
+   `ServerMediaSendAttempt` (`club_chat_service.dart`) carries the reserve and
+   finalize request ids and caches the reservation and the committed
+   generation as they are earned; `sendServerMediaAttempt` replays whatever
+   the attempt already holds. The scene mints the attempt once per pick, so a
+   retry from the review re-uploads under the reservation it already has, and
+   a finalize failure after a committed object costs no second upload. This is
+   the `ServerCompanyFileUploadAttempt` shape. `sendServerMediaMessage` stays
+   as the one-shot wrapper for a camera capture, which is re-taken rather
+   than re-sent. The backend's one-live-lease-per-member rule is unchanged.
 
 ### Reasoning
 
@@ -15065,6 +15075,15 @@ out-of-memory kill on a mid-range Android phone. Direct messages were already
 split this way (`direct_attachment_payload_store_io.dart`); this surface now
 matches, and web is unchanged because a Blob has no path to stream from.
 
+The attempt-per-pick shape exists because the backend's lease is keyed on the
+request id. `reserveServerChannelMessageMediaV1` gives a member one live
+upload lease (15 minutes) and short-circuits only a replay of the *same*
+`requestId`. When the client minted a fresh id per press, the review's armed
+Send after a failure was read as a second upload and refused
+`resource-exhausted` for up to fifteen minutes, in every channel of every
+server. Relaxing the lease would have weakened the one-upload-at-a-time
+control; making the retry a true replay fixes the client without touching it.
+
 ### Consequences
 
 - Members can react in announcements and rules channels they cannot post in;
@@ -15079,8 +15098,19 @@ matches, and web is unchanged because a Blob has no path to stream from.
   (`serverMessageMediaObjects`) purely so an author's objects can be found
   under other people's servers. `server_message_media` is therefore **swept**,
   and the cross-container gap list in [Bugs.md](Bugs.md) shrinks to four.
-- The Servers export surface is now 55 base + 1 broadcast + 1 last-leave
-  release + 7 message-parity names, deployed by two selectors instead of one.
+- The Servers export surface is now the 62-name Servers V1 manifest (55
+  base, which already include `createServerBroadcastIngressV1` and the
+  ADR-180 amendment's `releaseServerChannelSessionIfEmptyV1`, plus 7
+  source-disabled Podcast-recording names) and, outside it, the 7
+  message-parity names in `SERVER_MESSAGE_EXPORT_NAMES`. They can be named by
+  two selectors; this build's deploy order deploys the whole Functions
+  surface at once (DEPLOYMENT.md step 3b). *(Corrected 2026-09-25: this line
+  first read "55 base + 1 broadcast + 1 last-leave release + 7", which counted
+  the broadcast and release callables twice.)*
+- A **different** pick while a lease is live is still refused
+  `resource-exhausted` until the first upload is finalized or its lease
+  expires (the expiry sweep then removes it).
+  That is the backend limit doing its job, not a defect.
 - **On io the bytes are read at send time, from the picked path.** If the OS
   evicted the picker's temporary file, or it changed size, the source refuses
   locally and the reservation is left unused — no object, no message, no retry

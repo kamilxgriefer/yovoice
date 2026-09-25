@@ -8,7 +8,8 @@ about things that are broken, risky, or need verification.
 ## Next build after 3.0.0 — fixed in source on `nb/integrate`, NOT DEPLOYED
 
 Everything under this heading was found and fixed while building the next
-build after 3.0.0+34, across seven branches merged onto `nb/integrate`.
+build after 3.0.0+34, across eight branches merged onto `nb/integrate`
+(3.0.0+35, merged in on 2026-09-25, is sounds only and fixed none of them).
 **None of it is on `main`, none of it is deployed and none of it is with
 testers**, so every one of these defects is still live for every user until
 that build ships. Deploy order and owner steps:
@@ -228,6 +229,44 @@ one-shot wrapper for a camera capture, which is re-taken rather than re-sent.
 Not fixed, and not a defect: a *different* pick while a lease is live is still
 refused. That is the backend limit doing its job.
 
+### FIXED IN SOURCE — a V1 server author could not retract their own message at all (2026-09-19, next build, `nb/server-messaging`)
+
+`firestore.rules` allows a client message update only on a legacy club, so the
+app's "Delete" silently could not apply to a Servers V1 channel; posting a
+photo you cannot take back would have shipped with media. Closed by
+`deleteServerChannelMessageV1` (author only, allowed while muted or
+unverified; a tombstone plus a durable object deletion job), ADR-216.
+
+### FIXED IN SOURCE — the emoji input vanished from a server channel composer while membership loaded (2026-09-19, next build, `nb/server-messaging`)
+
+`ClubChatAuthority.canSendToChannel` is false both for a real refusal and for
+"not known yet", and the scene swapped the whole composer — emoji button and
+panel included — for the read-only sentence on that predicate. Now only a
+resolved refusal does (`showsReadOnlyNotice`), ADR-216.
+
+### FIXED IN SOURCE — a server channel photo or video held the whole file in memory twice (2026-09-20, next build, `e69b1013`)
+
+The scene called `XFile.readAsBytes()` only to measure the pick and
+`ClubChatService` handed that buffer to `putData`, which copies it again: a
+64 MiB video had a ~128 MiB transient peak, an out-of-memory kill on a
+mid-range Android phone. Now platform-split like the DM store
+(`club_media_upload_source_io.dart` streams with `putFile`, web keeps
+`putData`) and measured with `XFile.length()`. One new, accepted failure mode
+on io: if the OS evicted the picker's temporary file, or it changed size, the
+send is refused locally with the existing "could not be sent" copy and the
+reservation is left unused (ADR-216, decision 5).
+
+### KNOWN LIMIT — server channel media removed by a moderator lingers until the next sweep (2026-09-19, next build, `nb/server-messaging`)
+
+A moderator's redaction of a media message removes the object through a
+durable job drained every 10 minutes by
+`processServerChannelMessageMediaDeletionJobs`; channel and server deletion
+use the same prefix jobs. Between the redaction and that sweep the bytes exist
+but are unreachable — no grant is issued for a removed message. Separately,
+`adminDeleteMessage` strips `mediaUrl` but leaves the `media` descriptor (path
+and generation) on the tombstone; the object itself is deleted through its
+metadata binding.
+
 ## FIXED IN SOURCE — the voice message bubble drew a different waveform per message from its duration (2026-09-19, Slim phase 0)
 
 Found by the phase-0 inventory for the waveform family. `_VoiceMessageContent`
@@ -439,8 +478,15 @@ plus an emulator test before the matching claim may come back.
   real query, not a direct-path one. Owner: backend.
 - **Storage objects outside a uid-keyed prefix.** `uidStoragePrefixes` is a
   fixed seven-element list and `runStorage` sweeps only it. `storage.rules`
-  declares eleven prefixes, so **four** are never deleted by the pipeline — the
-  first disclosure of this named only the first two:
+  declares eleven prefixes on `main`, so **four** are never deleted by the
+  pipeline — the first disclosure of this named only the first two. *(Next
+  build, source only: `nb/integrate` adds a twelfth,
+  `server_message_media/{serverId}/{channelId}/{uid}/`, and it is **swept** —
+  account deletion finds the account's objects under other people's servers
+  through the Admin-only `serverMessageMediaObjects` owner index, ADR-216 —
+  so the list below stays at four. The `/delete-account` copy may drop
+  server channel photos and videos only once those Functions are deployed:
+  DEPLOYMENT.md, owner step 11. Line numbers below are `main`'s.)*
   1. `family_moments/{clubId}/{uid}/` (`storage.rules:321`) — Family memories.
   2. `server_company_files/{serverId}/{channelId}/{uid}/` (`storage.rules:434`)
      — Company channel files. Both are uid-keyed but nested under somebody

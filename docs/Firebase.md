@@ -77,6 +77,8 @@ Top-level collections (from `firestore.rules`):
 | `appConfig/{configId}` (server-only runtime configuration; every client read/write denied) | — |
 | `accountDeletionOutbox/{outboxId}` (server-only deletion queue; `allow read, write: if false`, `firestore.rules:2504`) | — |
 | `deletedAccountDigests/{digestId}` (server-only ban-survival digests; `allow read, write: if false`, `firestore.rules:2508`) | — |
+| `serverMessageMediaUploadReservations/{messageId}`, `serverMessageMediaUploadLeases/{uid}`, `serverMessageMediaUploadBudgets/{digest}`, `serverMessageMediaDeletionJobs/{jobId}` (server channel media, ADR-216, **not deployed**; `allow read, write: if false`) | — |
+| `serverMessageMediaObjects/{messageId}` (server-only owner index for account deletion: `schemaVersion`, `ownerId`, `serverId`, `channelId`, `messageId`, `storagePath`, `generation`, `createdAt`; ADR-216, **not deployed**; `allow read, write: if false`) | — |
 
 Notable fields:
 
@@ -93,6 +95,18 @@ Notable fields:
   is not. Both collections are reached through the Admin SDK, which bypasses
   Rules; the two deny blocks close a client enumeration surface and enable
   nothing.
+
+- **Server channel messages gain reactions and media (ADR-216, source
+  only, NOT deployed)** — additive, server-written fields on the existing
+  `clubs/{serverId}/channels/{channelId}/messages/{messageId}` document:
+  `reactions` (map uid → one of the DM's six emoji, at most 500 entries);
+  new values `image` and `video` of the existing optional `type`; `mediaUrl`
+  (`gs://…`, never an HTTPS URL); `media {schemaVersion, storagePath,
+  generation, contentType, size, durationSeconds}`; and `content` carrying
+  `Photo` or `Video` for a media message so installed clients render a
+  readable line. Nothing renamed or removed, no rules change on the message
+  match (every write is Admin SDK), and no new index: the sweeps use a
+  single-field range on `expiresAt` and equality filters.
 
 - **Direct-call signaling (ADR-117)** — `directCalls` is the canonical status
   machine (`ringing`, `active`, `declined`, `cancelled`, `ended`, `missed`). A
@@ -112,7 +126,10 @@ Notable fields:
   cannot read the cohort or mutate the gate because `match
   /appConfig/{configId}` denies every client operation. The 54 base export
   names are source-static and ignore `YOVOICE_SERVERS_V1`; the seven Podcast
-  recording/Egress exports remain source-disabled.
+  recording/Egress exports remain source-disabled. *(On `nb/integrate` the base
+  is 55: the ADR-180 amendment adds `releaseServerChannelSessionIfEmptyV1`.
+  The seven ADR-216 message exports sit outside that manifest and use the
+  same gate.)*
 
   **Live production values (read 2026-09-16, unchanged by either deploy that
   day).** `appConfig` holds exactly two documents. `appConfig/serversV1` is
@@ -517,6 +534,7 @@ size/content-type limited:
 | `voice_replies/{userId}/{momentId}/{fileName}` | Voice Moment reply audio | Signed-in only |
 | `reel_voice_comments/{userId}/{reelId}/{commentId}.m4a` | Reel voice-comment audio (ADR-187, **not deployed**) | Uploader only while reserved; published audio only through a server-authorized, generation-bound V4 grant |
 | `message_attachments/{ownerId}/{conversationId}/{messageId}.{ext}` | Private DM photos and voice messages | Active conversation participants only |
+| `server_message_media/{serverId}/{channelId}/{userId}/{messageId}.{jpg\|png\|webp\|mp4\|mov\|webm}` | Server channel photos and videos (ADR-216, **not deployed**) | Create: verified, active uploader with a live server-issued reservation and exact metadata; image 128 B–8 MiB, video 1 KiB–64 MiB and 1–60 s. Get: uploader only while reserved. List/update/delete: never. Viewers: `getServerChannelMessageMediaAccessV1` V4 grants (90 s) only |
 
 Profile and room-cover uploads require a verified account plus an exact,
 server-issued reservation binding owner, object path, MIME type, byte length

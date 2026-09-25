@@ -14,11 +14,32 @@ someone decide what to pick up next.
 
 ---
 
-## Next build after 3.0.0 — eight branches on `nb/integrate` — source only, NOTHING DEPLOYED — 2026-09-20
+## Next build after 3.0.0 — eight branches on `nb/integrate` — source only, NOTHING DEPLOYED — built 2026-09-19/20, merged with 3.0.0+35 on 2026-09-25
+
+**The sequence, oldest first** (the two entries below this line are one
+story):
+
+1. **2026-09-19** — 3.0.0+34, the Slim redesign, released to testers
+   (release commit `176ec120`; `f71a2ae2` is the `main` tip this build
+   started from; entry further down).
+2. **2026-09-19/20** — this build is done in source on `nb/integrate`, on top
+   of `f71a2ae2`: eight branches, ADRs then numbered 210–215, and the final
+   review fixes up to `77264f18`. It then waited.
+3. **2026-09-24** — `main` gains the Velvet Mallet v6 sound pack (`32c9dd9b`,
+   ADR-210) and the web serves it (Hosting run 36038221140).
+4. **2026-09-25** — `main` sets `3.0.0+35` (`738ecc4a`, next entry). The same
+   day this branch renumbers its own records 211–216 to make room for the
+   sound pack's ADR-210 (`2d1bfdef`), merges 3.0.0+35 in (`985dceee`), and
+   corrects the deploy order for the Storage Rules step (`afa9dc03`).
+
+3.0.0+35 is sounds only — no rules, index or deployed Functions change — so
+the production backend is still 3.0.0+34's and every backend change of this
+build is still ahead of it.
 
 **Status: done in source, integrated on `nb/integrate` (based on `main`
-`f71a2ae2`, YO Voice 3.0.0+34, the Slim redesign already with testers).
-Nothing is on `main`, nothing is deployed, nothing is with testers.** Eight
+`f71a2ae2`, YO Voice 3.0.0+34, with `main`'s 3.0.0+35 merged in on
+2026-09-25). Nothing is on `main`, nothing is deployed, nothing is with
+testers.** Eight
 branches were built in parallel across the Mac and the Windows PC and merged
 in this order: `nb/yeels-scrub`, `nb/friend-actions`, `nb/confirm-upload`,
 `nb/server-delete`, `nb/giphy`, `nb/server-live`, `nb/notifications`,
@@ -227,10 +248,14 @@ server channel messages. No rename, no removal, no migration.
 
 ### What is verified, and what is not
 
-Verified on this tree: `flutter analyze` clean; the Flutter suite run as two
-halves; the Functions suite after the integration fix commit `bd549032`;
+Last fully verified state: `cd30afea` (2026-09-20) — Flutter 5505, Functions
+2480 and rules 781, all green, as reported by the integrating session;
 `firestore.rules`, `storage.rules` and `firestore.indexes.json` reviewed
-against what the branches claim. Exact counts and commands:
+against what the branches claim. After it came the retry fix `77264f18`, the
+documentation commits and the 3.0.0+35 merge `985dceee`, whose only code
+overlap was `push_notification_service.dart` and
+`test/notification_sound_profile_test.dart`. What was re-run after each, with
+exact counts and commands:
 [Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md).
 
 **Not verified, for the whole build:** nothing was run on a real device or a
@@ -244,7 +269,9 @@ the provider-driven end of an empty channel remain unproven in production.
 
 ## YO Voice 3.0.0 (35) — Velvet Mallet sounds — build prepared — 2026-09-25
 
-**Status: version bumped, not built or uploaded.** `pubspec.yaml` is
+**Status: version bumped, not built or uploaded.** It landed on `main` while
+the next build (above) waited on `nb/integrate`; that branch merged it on
+2026-09-25 and builds on it. `pubspec.yaml` is
 `3.0.0+35` (35 is the next free build number). The version name stays 3.0.0
 because the planned 3.0.1 below is the redesign polish; this build only adds
 the Velvet Mallet v6 product-sound pack (ADR-210, `32c9dd9`) on top of 3.0.0
@@ -850,7 +877,7 @@ their separate production-deployment gates.
 
 - **GIPHY GIFs, option B (ADR-214)** — source on `nb/giphy`, merged into the
   next build. Not repeated here: the full entry is in
-  [Next build after 3.0.0](#next-build-after-300--eight-branches-on-nbintegrate--source-only-nothing-deployed--2026-09-20)
+  [Next build after 3.0.0](#next-build-after-300--eight-branches-on-nbintegrate--source-only-nothing-deployed--built-2026-09-1920-merged-with-30035-on-2026-09-25)
   above, because it ships with that build and not with this one.
 
 - **GIFs in the composer — production-original catalog complete in source

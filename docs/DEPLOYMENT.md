@@ -12,9 +12,22 @@ merges eight branches — `nb/yeels-scrub`, `nb/friend-actions`,
 `nb/notifications` and `nb/server-messaging` (server channel emoji, reactions,
 photos and videos, ADR-216) — and main's 3.0.0+35 (the Velvet Mallet sound
 pack, ADR-210, a client-only change with no step in this order). **Merging
-this source deploys nothing.** Production still runs the 3.0.0+34 backend, and
-every claim below is about what a deploy would do, not about something
-observed in production.
+this source deploys nothing.**
+
+**Where production stands (2026-09-25).** This branch waited while `main`
+shipped 3.0.0+35 and took it in on 2026-09-25 (`985dceee`). That release is
+sounds only: `32c9dd9b` replaced the product-sound pack, `738ecc4a` set
+`3.0.0+35`, the web serves `main @ 32c9dd9` since Hosting run 36038221140
+(the owner confirmed the site works), and the store upload of build 35 is the
+owner's step, not recorded as done anywhere in this repository. Between
+`f71a2ae2` and `87a2f996` nothing under `firestore.rules`, `storage.rules`,
+`firestore.indexes.json` or `firebase.json` changed, and the only file under
+`functions/` that changed is one test (`functions/test/push_payload.test.js`);
+no Functions were deployed for it. **So the production backend is still the
+one 3.0.0+34 shipped with, and this build still carries every backend change
+listed below** — none of them reached production with 3.0.0+35. Every claim
+below is about what a deploy would do, not about something observed in
+production.
 
 This is the *only* deploy order for this build. The per-branch runbooks the
 branches carried (GIPHY activation, the empty-channel liveness fix, section 7
@@ -134,6 +147,30 @@ service agent holding `roles/firebaserules.firestoreServiceAgent`; run the
 check in [Storage rules (manual)](#storage-rules-manual) before this deploy —
 an empty result there fails every Firestore-backed Storage rule closed, this
 one included.
+
+**Why this position is safe in both directions.**
+
+- *The rule before any function that issues reservations* (the order here):
+  the block accepts a create only when a live
+  `serverMessageMediaUploadReservations/{messageId}` document matches it, and
+  that collection is `allow read, write: if false` for every client — only
+  `reserveServerChannelMessageMediaV1` writes it. Until step 3b deploys that
+  callable, no such document can exist, so the new block admits nothing: it
+  is inert, not open. No installed client knows the path either. Reads are
+  unaffected in every order, because viewers never read these objects through
+  the rules — `getServerChannelMessageMediaAccessV1` signs V4 URLs through
+  the Admin SDK, which bypasses Storage rules.
+- *The reverse order* (functions first, rule second) is the unsafe one: the
+  callable would grant a reservation and start a member's 15-minute
+  one-upload lease, then default-deny would refuse the upload on a path with
+  no rule. Every attempt in that window costs the member their lease until it
+  expires. That is why 2b precedes 3b and why a rollback removes the media
+  Functions before it rolls Storage back (see Rollback).
+- A Storage deploy publishes the **whole** `storage.rules` file, not one
+  block. Read the deployed ruleset back **before** this deploy as well and
+  diff it against `git show f71a2ae2:storage.rules`; if production has drifted
+  from that base, stop and reconcile first, because the deploy would silently
+  replace whatever differs.
 
 ```bash
 firebase deploy --only storage --project yovoice-ec54a
@@ -259,7 +296,13 @@ announcements channel as an ordinary member (both must work) and as a guest
 (must fail); send a photo and a 5-second video; reopen the thread on a second
 account to prove the grant path; retract your own media message and confirm
 the object is gone; have a moderator remove another member's media message
-and confirm the deletion job drains within one sweep.
+and confirm the deletion job drains within one sweep. Two checks come from the
+final review passes: a photo or video picked from the library must open the
+ADR-212 review ("Send this photo?") before anything uploads, while a camera
+capture goes straight through; and a send that fails (go offline mid-upload,
+press Send in the review again once back online) must go through on the
+retry, not answer "We're a little overloaded right now" for fifteen minutes
+(`77264f18`, [Bugs.md](Bugs.md)).
 
 Build the client **without** `--dart-define=YOVOICE_GIPHY_API_KEY`. A build
 that carries a key still shows Originals only, because `getGifCatalog`
@@ -393,6 +436,12 @@ says so.
     grant `roles/iam.serviceAccountTokenCreator` on the Functions runtime
     service account to itself. It is a precondition for step 3b.
 13. **Store and web release**, as always separate from all of the above.
+14. **A new build number before any store build of this branch.** Since the
+    3.0.0+35 merge, `pubspec.yaml` here reads `3.0.0+35` — the number `main`
+    took for the Velvet Mallet sound pack. Build 35 is main's to upload; a
+    store build of this branch needs the next free build number (36, unless
+    35's upload consumed more) set in its own release commit. The version is
+    deliberately not changed on `nb/integrate`.
 
 ## Build 33 release round — web deployed, iOS with testers, Play upload outstanding (2026-09-19)
 

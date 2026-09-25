@@ -1376,6 +1376,119 @@ specific message is the existing per-surface removal
 (`adminDeleteMessage`, `moderateClubMessage`).
 
 
+## Server channel reactions and media (2026-09-19, ADR-216, source only, NOT deployed)
+
+Server text channels now carry direct-message-style reactions and private
+photos and videos
+([ADR-216](Decisions.md#adr-216-server-channel-reactions-and-media-are-admin-sdk-only-and-the-react-permission-is-derived-in-the-callable-never-stored-in-a-channel-grant)).
+Both are **Admin-SDK-only writes on the existing club message store**:
+`firestore.rules`'s `clubs/{clubId}/channels/{channelId}/messages` match is
+unchanged — `create: if false`, V1 `update` false, `delete` false — so no
+client predicate was widened to ship either feature. Deploy order:
+[DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-path-before-any-function-that-issues-a-reservation).
+
+- **Who may react is derived inside the callable, never stored as a
+  capability.** `setServerChannelMessageReactionV1` requires the channel's
+  `read` capability (including a current restricted-channel grant), a
+  non-guest role, an active profile, a verified e-mail and no communication
+  mute. A `react` key was deliberately NOT added to `capabilitiesFor`
+  (`functions/servers/authority.js`): `grantMatches` compares a stored
+  `accessGrants` document against `capabilitiesFor` with an exact key count,
+  so a new key would invalidate every stored grant and lock members out of
+  their private channels. Ordinary members may therefore react in
+  announcements and rules channels, where only moderators may post.
+- **The reaction map is bounded and validated, never repaired.** One reaction
+  per person from the fixed direct-message six (imported from
+  `ALLOWED_DIRECT_REACTIONS`, not copied), at most 500 reactors per message
+  (a new reactor past the cap is `resource-exhausted`; changing or removing
+  an existing one is not), 60 reactions per minute per account, and a
+  malformed stored map fails `data-loss` rather than being rewritten.
+- **Upload authority is one live reservation, never the path.**
+  `storage.rules`'s new
+  `server_message_media/{serverId}/{channelId}/{userId}/{fileName}` accepts a
+  create only for a verified, active uploader whose exact custom metadata set
+  {`yovoiceServerId`, `yovoiceChannelId`, `yovoiceOwnerUid`,
+  `yovoiceMessageId`, `yovoiceMessagePath`, `yovoiceMediaType`} matches the
+  path and whose `serverMessageMediaUploadReservations/{messageId}` document
+  (the second and last cross-service read) matches on every field, including
+  `status: 'uploading'` and `expiresAt > request.time`. Bounds are the DM
+  ones: image jpeg/png/webp 128 B–8 MiB, video mp4/quicktime/webm
+  1 KiB–64 MiB, duration 1–60 s. `list`, `update` and `delete` are false, and
+  `get` exists only for the uploader while their reservation is live (upload
+  recovery). A member holds one live upload lease at a time (15 minutes) and
+  512 MiB a day.
+- **A retry replays, it does not re-reserve.** The client mints one
+  `ServerMediaSendAttempt` per pick and replays its reservation and committed
+  generation on a retry (`77264f18`), so the one-lease rule above is enforced
+  unchanged and a failed send no longer locks the member out for fifteen
+  minutes. A different pick while a lease is live is still refused.
+- **Viewers never read bytes through Storage rules.** The two-document
+  cross-service budget cannot evaluate a V1 channel ACL (root + member +
+  profile + channel + grant), so playback uses
+  `getServerChannelMessageMediaAccessV1`: up to 20 message ids per call, the
+  channel ACL and mute re-checked, removed, non-media or missing ids reported
+  `unavailable`, object metadata re-verified against the stored descriptor,
+  90-second generation-bound V4 URLs, and the whole batch re-authorized after
+  signing (a revision or descriptor change answers `aborted`). This is the
+  Company Files pattern, and it needs the runtime service account's `signBlob`
+  grant (DEPLOYMENT.md step 2).
+- **Publication is server-owned end to end.** Finalize validates metadata,
+  runs the trusted GCS probe under the DM contract (real image/video bytes,
+  track presence, duration within 1–60 s and within 2 s of the declaration),
+  re-reads metadata, revokes the durable download token generation-guarded,
+  then in one transaction re-authorizes `write`, consumes the same
+  `club.message.send.{server}.{channel}` bucket `sendClubMessage` uses and
+  writes `{type, mediaUrl: 'gs://…', media: {schemaVersion, storagePath,
+  generation, contentType, size, durationSeconds}}` plus the
+  `content: 'Photo'|'Video'` fallback installed clients render.
+- **The client never holds more than the file handle.** On io the upload
+  streams the picked file with `putFile`; web keeps `putData`
+  (`club_media_upload_source*.dart`). A library pick is shown in ADR-212's
+  review before any byte leaves the device; a camera capture is not. Neither
+  changes what may be sent: the reservation and the rule above decide that.
+- **Removal.** A moderator uses the existing `moderateClubMessage`, which now
+  also deletes `media`, `mediaUrl` and `reactions` and writes a durable,
+  generation-guarded object deletion job in the same transaction; its rank
+  ordering and owner protection are unchanged. An author uses the new
+  `deleteServerChannelMessageV1` (author only, allowed while muted or
+  unverified, like the legacy author branch of the club-chat rule), which
+  closes the long-standing gap that a V1 author could not retract anything.
+  Staff removal (`adminDeleteMessage`) needed no change: the object metadata
+  binds `yovoiceMessagePath` and `yovoiceOwnerUid`, which is exactly what its
+  attachment sweep requires.
+- **Deletion reaches the bytes.** Channel and server deletion write prefix
+  sweep jobs (`server_message_media/{serverId}/{channelId}/` and
+  `server_message_media/{serverId}/`) drained page by page, generation
+  guarded, by `processServerChannelMessageMediaDeletionJobs` (every 10
+  minutes); abandoned uploads are removed by
+  `expireServerChannelMessageMediaReservations` (every 10 minutes); and
+  account deletion sweeps the account's own objects across every server
+  through the Admin-only `serverMessageMediaObjects` owner index (the uid is
+  the fourth path segment, so no uid prefix delete could reach them). Both
+  schedules run only while `appConfig/serversV1.workersEnabled` is true.
+- **Residual, stated rather than hidden.** An issued V4 URL remains a bearer
+  capability for at most 90 seconds after a ban, a leave or a removal — the
+  same residual the private-media section already accepts.
+  `adminDeleteMessage` leaves the now-unreferenced `media` descriptor on its
+  tombstone (path and generation only; the object is deleted). Reaction
+  writes are a transaction on the message document, so a very popular
+  announcement can see retries; the upgrade path is a `reactions/{uid}`
+  subcollection and needs its own ADR. Five new collections
+  (`serverMessageMediaUploadReservations`, `…Leases`, `…Budgets`,
+  `serverMessageMediaDeletionJobs`, `serverMessageMediaObjects`) are
+  `allow read, write: if false` for every client, staff included.
+
+Evidence. On the branch (`nb/server-messaging`, 2026-09-19):
+`firestore-tests/server_message_media_rules.test.js` 9/9, storage 76/0 and
+firestore 577/0 unchanged; Functions `server_message_reactions` 14/14,
+`server_message_media` 21/21, `server_message_media_admin_delete` 2/2,
+moderation 8/8, account deletion 46/46. On the integrated tree the whole
+Functions suite is 2480/2480
+([Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md)).
+Everything here is emulator and unit evidence; nothing is deployed and no
+device or simulator has run it.
+
+
 ## Account deletion (2026-09-18, ADR-206)
 
 Self-service deletion is a **mark-and-sweep** pipeline, and the security
