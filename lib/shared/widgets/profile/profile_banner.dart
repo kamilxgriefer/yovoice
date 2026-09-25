@@ -27,6 +27,10 @@ class ProfileBanner extends StatelessWidget {
     this.mediaRevision,
     this.mediaService,
     this.overlay,
+    this.fallback,
+    this.alignment = Alignment.center,
+    this.imageProvider,
+    this.imageLayerBuilder,
     super.key,
   });
 
@@ -42,21 +46,41 @@ class ProfileBanner extends StatelessWidget {
   /// keep identical depth.
   final Gradient? overlay;
 
+  /// What is painted while there is no photo on screen — pending, absent or
+  /// failed. Null keeps [kProfileBannerFallbackGradient]; the profile hero
+  /// passes a theme-aware base so Pearl never flashes a dark slab.
+  final Widget? fallback;
+
+  /// Where `BoxFit.cover` anchors the photo when the box crops it.
+  final AlignmentGeometry alignment;
+
+  /// Test/preview seam, the same one [ProfileMediaImage] exposes.
+  final ProfileMediaImageProvider? imageProvider;
+
+  /// Layers that belong to the photo (see [ProfileMediaImageLayerBuilder]).
+  final ProfileMediaImageLayerBuilder? imageLayerBuilder;
+
   @override
   Widget build(BuildContext context) {
     return Stack(
       fit: StackFit.expand,
       children: [
-        const DecoratedBox(
-          decoration: BoxDecoration(gradient: kProfileBannerFallbackGradient),
-        ),
+        fallback ??
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: kProfileBannerFallbackGradient,
+              ),
+            ),
         ProfileMediaImage(
           userId: userId,
           kind: ProfileMediaKind.banner,
           fallback: const SizedBox.shrink(),
           fit: BoxFit.cover,
+          alignment: alignment,
           revision: mediaRevision,
           service: mediaService,
+          imageProvider: imageProvider,
+          imageLayerBuilder: imageLayerBuilder,
         ),
         if (overlay != null)
           DecoratedBox(decoration: BoxDecoration(gradient: overlay)),

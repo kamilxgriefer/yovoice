@@ -12,7 +12,8 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/image_crop.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/image_crop_screen.dart';
-import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
+import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 
@@ -886,10 +887,17 @@ class _SectionLabel extends StatelessWidget {
 }
 
 /// Live preview of what Save will publish, built on the same shared
-/// [ProfileBanner]/[UserAvatar] widgets the Profile screen renders with —
-/// so the preview and the real profile literally cannot drift apart.
+/// [ProfileHeroBackdrop]/[UserAvatar] widgets the Profile screens render
+/// with — so the preview and the real profile literally cannot drift apart.
 /// Pending picks render straight from memory, so a newly chosen image
 /// appears instantly with no upload and no network round trip.
+///
+/// It is the phone hero in miniature, because that is what most people who
+/// open the profile see: [ProfileHeroGeometry.preview] scales a 390pt phone
+/// under a status bar, which shows the WHOLE 16:9 banner, with the same top
+/// scrim, blurred melt into the page canvas and hairline avatar cut-out on
+/// the text line. Wider screens show a centred strip of it — the crop
+/// editor's "always visible" guide marks that strip.
 class _ProfileImagePreview extends StatelessWidget {
   const _ProfileImagePreview({
     required this.profile,
@@ -901,6 +909,10 @@ class _ProfileImagePreview extends StatelessWidget {
   final PickedProfileImage? pendingAvatar;
   final PickedProfileImage? pendingBanner;
 
+  /// A thumbnail inside a form, not a hero: capped so a laptop never blows
+  /// it up ("the banner is enormous"), centred like a device preview.
+  static const double maxWidth = 440;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
@@ -908,54 +920,78 @@ class _ProfileImagePreview extends StatelessWidget {
     final pendingBannerBytes = pendingBanner?.bytes;
     final pendingAvatarBytes = pendingAvatar?.bytes;
 
-    return AspectRatio(
-      // 21:9 preview: reads as a cover card, and inside the form's 640px
-      // cap it never exceeds ~275px tall on any screen.
-      aspectRatio: 21 / 9,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (pendingBannerBytes != null)
-              Image.memory(pendingBannerBytes, fit: BoxFit.cover)
-            else
-              ProfileBanner(
-                userId: profile.uid,
-                bannerUrl: profile.bannerUrl,
-                mediaRevision: profile.profileUpdatedAt,
-              ),
-            Positioned(
-              left: 16,
-              bottom: 16,
-              child: Container(
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [colors.primary, colors.secondary],
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: maxWidth),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            final geometry = ProfileHeroGeometry.preview(width: width);
+            final scale = width / ProfileHeroGeometry.previewReferenceWidth;
+            // The phone header's avatar: radius 37 + 3 ring at 390pt.
+            final radius = 37 * scale;
+            final ring = 3 * scale;
+            final extent = (radius + ring) * 2;
+            final height = geometry.textLine + extent + 12 * scale;
+            return ClipRRect(
+              key: const ValueKey('edit-profile-hero-preview'),
+              borderRadius: BorderRadius.circular(18),
+              child: ColoredBox(
+                // The page canvas the real hero melts into.
+                color: palette.background,
+                child: SizedBox(
+                  height: height,
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        height: geometry.height,
+                        child: ProfileHeroBackdrop(
+                          geometry: geometry,
+                          userId: profile.uid,
+                          mediaRevision: profile.profileUpdatedAt,
+                          localImage: pendingBannerBytes == null
+                              ? null
+                              : MemoryImage(pendingBannerBytes),
+                        ),
+                      ),
+                      Positioned(
+                        left: ProfileHeader.gutter * scale,
+                        top: geometry.textLine,
+                        child: Container(
+                          padding: EdgeInsets.all(ring),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: palette.background,
+                            border: Border.all(color: palette.border),
+                          ),
+                          child: pendingAvatarBytes != null
+                              ? ClipOval(
+                                  child: Image.memory(
+                                    pendingAvatarBytes,
+                                    width: radius * 2,
+                                    height: radius * 2,
+                                    fit: BoxFit.cover,
+                                  ),
+                                )
+                              : UserAvatar(
+                                  radius: radius,
+                                  userId: profile.uid,
+                                  photoUrl: profile.photoUrl,
+                                  mediaRevision: profile.profileUpdatedAt,
+                                  displayName: profile.displayName,
+                                  backgroundColor: colors.primary,
+                                ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                child: pendingAvatarBytes != null
-                    ? ClipOval(
-                        child: Image.memory(
-                          pendingAvatarBytes,
-                          width: 68,
-                          height: 68,
-                          fit: BoxFit.cover,
-                        ),
-                      )
-                    : UserAvatar(
-                        radius: 34,
-                        userId: profile.uid,
-                        photoUrl: profile.photoUrl,
-                        mediaRevision: profile.profileUpdatedAt,
-                        displayName: profile.displayName,
-                        backgroundColor: palette.surfaceSunken,
-                      ),
               ),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );

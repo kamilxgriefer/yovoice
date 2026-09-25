@@ -51,14 +51,13 @@ class ProfileImageRules {
 
   /// 16:9 — deliberately a superset of what any screen shows.
   ///
-  /// The Profile header no longer paints a full-bleed `SizedBox(height: 320)`.
-  /// `ProfileHeader` draws a fixed-height band at content width (104dp
-  /// compact, 132dp at >=900dp) inside an 18dp gutter, so the *visible* ratio
-  /// runs about 3.3:1 on a 390pt phone and about 7.6:1 at the 1040pt feed cap.
-  /// Because it is drawn with `BoxFit.cover` and `Alignment.center`, only the
-  /// middle ~52% of the stored 16:9 survives on a phone and only ~23% at the
-  /// cap. Storing the wider superset is the point: the band can change in a
-  /// redesign without asking anyone to re-upload their banner.
+  /// The profile hero (`ProfileHeroGeometry`) paints the banner as the
+  /// header's full-bleed background with `BoxFit.cover` and
+  /// `Alignment.center`. Its height is capped at the width's 16:9, so a phone
+  /// shows the whole stored image; wider heroes run up to about 6.2:1 at the
+  /// 1440pt cap, where only the middle ~29% of the height survives. Storing
+  /// the 16:9 superset is the point: the hero can change in a redesign
+  /// without asking anyone to re-upload their banner.
   ///
   /// The crop editor marks that surviving strip inside the 16:9 frame
   /// (`ImageCropScreen`'s banner safe band, sized from

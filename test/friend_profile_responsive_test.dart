@@ -21,6 +21,7 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
+import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 
 class _EmptySocialGraphService implements SocialGraphService {
@@ -284,7 +285,9 @@ void main() {
   });
 
   testWidgets('keeps phones full-width and centres an 880px profile feed '
-      'across desktop widths with long content', (tester) async {
+      'under a full-bleed hero across desktop widths with long content', (
+    tester,
+  ) async {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
@@ -314,11 +317,22 @@ void main() {
       final background = tester.getRect(
         find.byKey(const ValueKey('friend-profile-background')),
       );
-      final expectedWidth = size.width > 880 ? 880.0 : size.width;
+      // The scroll view spans the hero's own 1440pt cap (the banner is the
+      // header's full-bleed background); the readable column inside it keeps
+      // the 880pt list measure. Before the hero, the scroll view itself was
+      // the 880pt column.
+      final expectedWidth = size.width > 1440 ? 1440.0 : size.width;
       final expectedLeft = (size.width - expectedWidth) / 2;
+      final columnWidth = size.width > 880 ? 880.0 : size.width;
+      final columnLeft = (size.width - columnWidth) / 2;
 
       expect(frame.width, expectedWidth, reason: '$size frame width');
       expect(frame.left, expectedLeft, reason: '$size top-centred frame');
+      expect(
+        tester.getRect(find.byType(ProfilePhotoButton)).left,
+        closeTo(columnLeft + 20, .01),
+        reason: '$size identity stays on the centred 880px column',
+      );
       expect(background.width, size.width, reason: '$size full-bleed bg');
       expect(find.text(longDisplayName), findsOneWidget);
       expect(
@@ -583,7 +597,7 @@ void main() {
   });
 
   testWidgets('the friend banner resolves through the injected media service, '
-      'stays above the avatar and grows with the available band', (
+      'is the full-bleed hero behind the avatar and follows its geometry', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -653,12 +667,39 @@ void main() {
         reason: '$size banner grant must be requested by uid and kind alone',
       );
 
+      // Re-based when the banner became the header's full-bleed background:
+      // it used to be an inset card that had to end above the avatar, capped
+      // by the 880px measure. Now it starts at y = 0, runs edge to edge up to
+      // the 1440pt cap, and the avatar stands in its bottom melt.
       final band = tester.getRect(find.byType(ProfileBannerButton));
       final avatar = tester.getRect(find.byType(ProfilePhotoButton));
+      final geometry = ProfileHeroGeometry.resolve(
+        width: size.width,
+        viewportHeight: size.height,
+        windowWidth: size.width,
+      );
+      expect(band.top, 0, reason: '$size hero starts at the top edge');
       expect(
-        band.bottom,
-        lessThanOrEqualTo(avatar.top),
-        reason: '$size banner must stay above the avatar',
+        band.width,
+        size.width > 1440 ? 1440 : size.width,
+        reason: '$size hero is full bleed',
+      );
+      expect(band.left, (size.width - band.width) / 2);
+      expect(band.height, closeTo(geometry.height, .01));
+      expect(
+        avatar.top,
+        greaterThanOrEqualTo(geometry.textLine - .01),
+        reason: '$size identity row starts on the hero text line',
+      );
+      expect(
+        tester.getRect(find.text(longDisplayName)).top,
+        greaterThanOrEqualTo(geometry.textLine - .01),
+        reason: '$size the name only stands where the photo has melted away',
+      );
+      expect(
+        avatar.top,
+        lessThan(band.bottom),
+        reason: '$size avatar stands in the hero, not below it',
       );
       expect(
         band.width,
@@ -675,9 +716,9 @@ void main() {
       reason: 'a tablet band must not stay phone-sized',
     );
     expect(
-      bandHeights[768],
-      bandHeights[1440],
-      reason: 'the band is capped by the 880px content measure, not the window',
+      bandHeights[768]!,
+      lessThan(bandHeights[1440]!),
+      reason: 'a desktop hero takes the wide tier, not the tablet one',
     );
   });
 }

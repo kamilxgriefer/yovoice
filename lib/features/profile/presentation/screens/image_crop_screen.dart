@@ -771,19 +771,23 @@ class _RoomCoverSafeAreaOverlay extends StatelessWidget {
   }
 }
 
-/// The stored banner is 16:9, but the profile header paints it into a fixed
-/// band at content width — roughly 3.4:1 on a phone and ~7.6:1 at the feed's
-/// 1040pt cap — with `BoxFit.cover` and `Alignment.center`. Only the centre
-/// strip therefore survives every width, and without this guide the user
-/// composes a 16:9 picture whose top and bottom are silently discarded.
+/// The stored banner is 16:9, and the profile hero paints it full bleed
+/// with `BoxFit.cover` and `Alignment.center`. A phone shows all of it (the
+/// hero is never narrower than 16:9, so nothing is cut at the sides); wider
+/// heroes are wider than 16:9 — about 6.2:1 at the 1440pt cap — and crop the
+/// top and bottom symmetrically. Only the centre strip therefore survives
+/// every width, and without this guide the user composes a 16:9 picture
+/// whose top and bottom are silently discarded on a desktop.
 ///
 /// The frame still stores the full 16:9 on purpose: it is the superset, so a
 /// later band change needs no re-upload.
 class _BannerSafeBandOverlay extends StatelessWidget {
   const _BannerSafeBandOverlay();
 
-  /// What `ProfileHeader` keeps at its widest — derived there, never a second
-  /// hand-copied number here.
+  /// What the profile hero keeps at its widest — derived in
+  /// `ProfileHeroGeometry` and exposed as
+  /// `ProfileHeader.bannerSafeBandFraction`, never a second hand-copied
+  /// number here.
   static final double _bandFraction = ProfileHeader.bannerSafeBandFraction;
 
   static const double _labelSize = 7.5;

@@ -35,7 +35,7 @@ import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headl
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
-import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
+import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
@@ -594,26 +594,35 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                     ],
                   ),
                 ),
+                // The banner is the header's full-bleed background: it runs
+                // under the status bar and edge to edge (landscape insets
+                // included), so only the bottom inset stays a SafeArea and
+                // the scroll view spans the hero's own 1440pt cap. Readable
+                // content keeps the 880pt list measure through the hero and
+                // the measured padding below.
                 child: SafeArea(
+                  top: false,
+                  left: false,
+                  right: false,
                   child: ResponsiveContentFrame(
-                    width: ResponsiveContentWidth.list,
+                    width: ResponsiveContentWidth.workbench,
                     alignment: ResponsiveContentAlignment.topCenter,
                     child: CustomScrollView(
                       key: const ValueKey('friend-profile-content-frame'),
                       slivers: [
-                        SliverToBoxAdapter(child: _header()),
-                        SliverPadding(
-                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
+                        SliverToBoxAdapter(
+                          child: _header(profile, isFollowing),
+                        ),
+                        ProfileMeasuredSliverPadding(
+                          maxWidth: ResponsiveContentWidth.list.maxWidth,
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
                           sliver: SliverList.list(
                             children: [
-                              // Slim header: banner, identity row (avatar +
-                              // name + handle + presence), badges, bio, then
-                              // Follow and the quick actions (call, video,
-                              // message, more), then the social block. The
-                              // banner stays fully above the avatar here.
-                              _banner(profile),
-                              const SizedBox(height: 12),
-                              _identity(profile, isFollowing),
+                              // Slim header: the hero (banner behind the
+                              // toolbar and the identity row — avatar, name,
+                              // handle, presence), then badges, bio, Follow
+                              // and the quick actions (call, video, message,
+                              // more), then the social block.
                               const SizedBox(height: 10),
                               Align(
                                 alignment: AlignmentDirectional.centerStart,
@@ -727,74 +736,75 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     );
   }
 
-  Widget _header() {
+  /// The hero: the friend's banner as the full-bleed background of the
+  /// header, Back floating over it, and the identity row (avatar, name,
+  /// handle, presence, and Follow when it fits) on the photo's melt. The
+  /// same [ProfileHeroLayout] the own profile uses, on this screen's 880pt
+  /// list measure and 20px gutter.
+  Widget _header(UserProfile? profile, bool isFollowing) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 18, 4),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            tooltip: copy.text('Back', 'Wstecz'),
-            icon: Icon(
-              Icons.arrow_back_ios_new_rounded,
-              color: palette.textPrimary,
-            ),
-          ),
-          Expanded(
-            child: Text(
-              copy.text('Profile', 'Profil'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+    return ProfileHeroLayout(
+      contentMaxWidth: ResponsiveContentWidth.list.maxWidth,
+      backdrop: (context, frame) => _banner(profile, frame.geometry),
+      toolbar: (context, frame) => Padding(
+        padding: frame.inset(start: 8, end: 18),
+        child: Row(
+          children: [
+            IconButton(
+              onPressed: () => Navigator.pop(context),
+              tooltip: copy.text('Back', 'Wstecz'),
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              // A raised fill keeps Back legible on any photo.
+              style: IconButton.styleFrom(
+                backgroundColor: palette.surfaceRaised.withValues(alpha: .92),
+              ),
+              icon: Icon(
+                Icons.arrow_back_ios_new_rounded,
                 color: palette.textPrimary,
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
               ),
             ),
-          ),
-        ],
+            // No visible title over the photo — the display name is the
+            // page's headline — but the page is still announced as a profile.
+            Expanded(
+              child: Semantics(
+                namesRoute: true,
+                label: copy.text('Profile', 'Profil'),
+                child: const SizedBox(height: 44),
+              ),
+            ),
+          ],
+        ),
+      ),
+      identity: (context, frame) => Padding(
+        padding: frame.inset(start: 20, end: 20),
+        child: _identity(profile, isFollowing),
       ),
     );
   }
 
-  /// The friend's banner ("zdjęcie w tle"). Own Profile has always drawn one
-  /// and a friend's profile drew none, so the same identity read differently
-  /// depending on whose profile you opened. The band is sized by available
-  /// width, never by a device label.
-  Widget _banner(UserProfile? profile) {
+  /// The friend's banner ("zdjęcie w tle") as the hero's full-bleed
+  /// background. Own Profile has always drawn one and a friend's profile
+  /// drew none, so the same identity read differently depending on whose
+  /// profile you opened. Its size comes from [ProfileHeroGeometry]: the
+  /// available width, never a device label.
+  Widget _banner(UserProfile? profile, ProfileHeroGeometry geometry) {
     final name = profile?.displayName ?? widget.friend.displayName;
     final revision =
         profile?.profileUpdatedAt ?? widget.friend.profileUpdatedAt;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // Breakpoint on the band's own measure, not the window. This feed is
-        // capped at ResponsiveContentWidth.list (880) and pays a 20px gutter
-        // on each side, so the widest band the screen can ever hand this
-        // builder is 840: a 900 threshold is unreachable here and the banner
-        // would stay phone-sized on tablets and desktop alike. 700 is the
-        // first step above a 768pt tablet's 728px band.
-        final height = constraints.maxWidth >= 700 ? 168.0 : 116.0;
-        return ProfileBannerButton(
-          userId: widget.friend.id,
-          displayName: name,
-          mediaRevision: revision,
-          mediaService: _profileMediaService,
-          child: SizedBox(
-            width: double.infinity,
-            height: height,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: ProfileBanner(
-                userId: widget.friend.id,
-                mediaRevision: revision,
-                mediaService: _profileMediaService,
-              ),
-            ),
-          ),
-        );
-      },
+    return ProfileBannerButton(
+      userId: widget.friend.id,
+      displayName: name,
+      mediaRevision: revision,
+      mediaService: _profileMediaService,
+      borderRadius: 0,
+      focusContrastColor: context.appPalette.scrim,
+      child: ProfileHeroBackdrop(
+        geometry: geometry,
+        userId: widget.friend.id,
+        mediaRevision: revision,
+        mediaService: _profileMediaService,
+      ),
     );
   }
 
@@ -941,7 +951,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           );
         }
         return Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+          // Top-anchored: the row starts on the hero's text line, so a long
+          // name grows downward instead of pushing the avatar out of the hero.
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _avatar(profile, radius: radius),
             const SizedBox(width: 14),

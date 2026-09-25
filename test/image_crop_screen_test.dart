@@ -12,6 +12,7 @@ import 'package:yovoice/features/profile/data/services/profile_image_rules.dart'
 import 'package:yovoice/features/profile/presentation/screens/image_crop_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
 
 Future<ui.Image> _solidImage(int width, int height) async {
   final recorder = ui.PictureRecorder();
@@ -410,12 +411,15 @@ void main() {
         reason: 'the stored crop stays the 16:9 superset',
       );
 
-      // What the profile header can still show at its widest: the band is
-      // ResponsiveContentWidth.feed minus two gutters, at the wide band
-      // height, and the 16:9 source is drawn into it with BoxFit.cover.
+      // What the profile header can still show at its widest: the hero is
+      // full bleed up to ResponsiveContentWidth.workbench (1440pt) and, on a
+      // desktop with no status bar, the toolbar row plus the wide band tall;
+      // the 16:9 source is drawn into it with BoxFit.cover. (Re-based from the
+      // retired inset card — feed minus two gutters at 132pt — when the
+      // banner became the header's full-bleed background.)
       final widestHeaderBand =
-          (ResponsiveContentWidth.feed.maxWidth - ProfileHeader.gutter * 2) /
-          ProfileHeader.bannerHeightWide;
+          ResponsiveContentWidth.workbench.maxWidth /
+          (ProfileHeroGeometry.toolbarExtent + ProfileHeroGeometry.wideBand);
       final surviving = ProfileImageRules.banner.aspectRatio / widestHeaderBand;
       expect(
         ProfileHeader.bannerSafeBandFraction,

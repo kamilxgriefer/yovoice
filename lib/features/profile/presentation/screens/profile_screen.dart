@@ -31,6 +31,7 @@ import 'package:yovoice/features/creator/presentation/screens/creator_pinned_mom
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_server_rail_item.dart';
+import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -307,25 +308,26 @@ class ProfileScreenView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.appPalette.background,
+      // The scroll view runs the full width of the route so the banner can be
+      // the header's full-bleed background; every readable block keeps the
+      // 1040pt feed measure through ProfileHeader and the measured padding
+      // below.
       body: YoPageBackground(
-        child: ResponsiveContentFrame(
-          width: ResponsiveContentWidth.feed,
-          child: _ProfileContent(
-            profile: profile,
-            servers: servers,
-            serversLoading: serversLoading,
-            onEdit: onEdit,
-            onAchievements: onAchievements,
-            onOpenServer: onOpenServer,
-            showSuperAdminActivation: showSuperAdminActivation,
-            isActivatingSuperAdmin: isActivatingSuperAdmin,
-            currentRole: currentRole,
-            onActivateSuperAdmin: onActivateSuperAdmin,
-            onLogout: onLogout,
-            identityRepository: identityRepository,
-            mediaService: mediaService,
-            creatorPinnedPostService: creatorPinnedPostService,
-          ),
+        child: _ProfileContent(
+          profile: profile,
+          servers: servers,
+          serversLoading: serversLoading,
+          onEdit: onEdit,
+          onAchievements: onAchievements,
+          onOpenServer: onOpenServer,
+          showSuperAdminActivation: showSuperAdminActivation,
+          isActivatingSuperAdmin: isActivatingSuperAdmin,
+          currentRole: currentRole,
+          onActivateSuperAdmin: onActivateSuperAdmin,
+          onLogout: onLogout,
+          identityRepository: identityRepository,
+          mediaService: mediaService,
+          creatorPinnedPostService: creatorPinnedPostService,
         ),
       ),
     );
@@ -542,7 +544,8 @@ class _ProfileContent extends StatelessWidget {
             actions: _actions(context),
           ),
         ),
-        SliverPadding(
+        ProfileMeasuredSliverPadding(
+          maxWidth: ResponsiveContentWidth.feed.maxWidth,
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 124),
           sliver: SliverList.list(
             children: [
