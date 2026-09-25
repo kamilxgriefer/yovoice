@@ -679,6 +679,14 @@ describe("planRemediation", () => {
     );
     assert.deepEqual(plan.keepProviders, ["google.com"]);
     assert.deepEqual(plan.unlinkProviders.sort(), ["apple.com", "password", "phone"]);
+
+    // An Apple identity without an address (a repeat authorization omits the
+    // e-mail claim) is not the one that took the account over: stripped.
+    const silent = planRemediation(account([["google.com"], ["apple.com", ""]], true), pending);
+    assert.deepEqual(silent.keepProviders, ["google.com"]);
+    assert.deepEqual(silent.unlinkProviders, ["apple.com"]);
+    // And it can never anchor a takeover on its own.
+    assert.equal(planRemediation(account([["apple.com", ""]], true), pending).verdict, "clean");
   });
 });
 

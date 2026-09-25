@@ -100,6 +100,10 @@ direct integrity 38/38 and browser media/crop/Reels 39/39. See
   `request.auth.token.email_verified` is checked directly in Firestore
   rules and Cloud Functions before allowing outbound/content-creation
   actions (posting, creating rooms/clubs/moments, admin bootstrap).
+  Because a Google/Apple sign-in can inherit an account a stranger
+  pre-registered with a password, that claim is only as good as the
+  takeover remediation below
+  ([Pre-registered account takeover](#pre-registered-account-takeover-2026-09-25-adr-xxx-phase-1--source-only-not-deployed)).
 - **Two-factor authentication uses Firebase TOTP, not an app-owned secret or
   SMS code.** Enrollment and sign-in assertions are created by the Firebase
   Auth SDK. The app keeps an enrollment secret only in memory until setup is
@@ -1421,3 +1425,51 @@ wrong rather than when it goes right.
   the honest retained set and for the four categories that currently survive a
   deletion; they are tracked in [Bugs.md](Bugs.md) and are not claimed by any
   user-facing copy.
+
+## Pre-registered account takeover (2026-09-25, ADR-XXX, Phase 1 — source only, NOT deployed)
+
+**Threat.** A stranger registers the owner's address with a password; when the
+owner later signs in with Google or Apple, Firebase hands the owner the same
+uid and unlinks the unverified password, but the stranger's session survives,
+its refreshed ID tokens say `email_verified: true`, and the push tokens it
+planted keep receiving the owner's notifications. Full analysis, emulator
+evidence and Phase 2 in [Decisions.md](Decisions.md) (ADR-XXX).
+
+**Control (server-only; no client is trusted).** `functions/auth/federated_takeover.js`
+is the single remediation authority. It acts only on an account whose
+Google/Apple identity is on its own address and which still carries — or
+silently lost — a password nobody verified; a verified password is never
+touched. Order: unlink the password and foreign identities → revoke refresh
+tokens → `users/{uid}.authSessionEpoch` → purge `fcmTokens` → audit
+(`authTakeoverAudit`) and ledger (`authPasswordLedger`) in one batch.
+Triggers: the owner's own client after a returning Google/Apple sign-in
+(`secureFederatedSignInV1`, remediates the caller only) and a 5-minute sweeper
+(`sweepFederatedTakeoverSchedule`, `maxInstances: 1`). The Auth `onCreate`
+trigger and the sweeper's `listUsers` walk record unverified passwords while
+they are still visible, because Firebase removes them before anything else can
+see the account.
+
+**Rules.** `authSessionEpoch` is absent from both `users/{uid}` client
+allowlists. The `fcmTokens` create/update rule and Storage `isActiveUser()`
+refuse any ID token whose `auth_time` predates it. It is deliberately **not**
+in `isActiveAccount()`: that was measured to exceed the 1000-expression budget
+of an existing Servers list rule. `authPasswordLedger`, `authTakeoverAudit` and
+`authTakeoverSweep` are `allow read, write: if false` for every client.
+
+**Residual, stated plainly.**
+
+- An ID token the stranger already holds stays valid until it expires (up to
+  one hour): callables, owner-only reads that never consult account state
+  (notifications, incoming calls, DMs, the private profile) and other
+  `isActiveAccount()` writes accept it until then. Only Phase 2's
+  `beforeUserSignedIn` (Identity Platform upgrade) removes the window between
+  the owner's sign-in and the remediation; nothing revokes a minted ID token.
+- The purge matters more in the next build: it adds push types that carry
+  actor names and server labels.
+- A Google identity the stranger linked before the takeover can survive as a
+  stale federated index in the emulator; production is UNVERIFIED (canary).
+- An owner who clicks the verification link the stranger triggered verifies
+  the stranger's password — indistinguishable from a legitimate account.
+- Accounts taken over before deployment left no evidence.
+- Never-verified password-only accounts older than 7 days are **reported**, not
+  deleted; deletion is the owner's decision (ADR-XXX lists what it must reuse).

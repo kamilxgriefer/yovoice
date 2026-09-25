@@ -268,6 +268,49 @@ says so.
     delivery ledger is written there and would otherwise grow without bound.
 11. **Store and web release**, as always separate from all of the above.
 
+## Pre-registered account takeover, Phase 1 (ADR-XXX) — deploy order and owner steps (source only, NOTHING DEPLOYED)
+
+Source: branch `nb2-account-takeover` (from `a136ea2a` on). Why and what:
+[Decisions.md](Decisions.md) ADR-XXX, [SECURITY.md](SECURITY.md). Nothing here
+has been deployed and no console was touched.
+
+Order (each step is safe without the next):
+
+1. **Rules first** — `firebase deploy --only firestore:rules,storage`. The
+   epoch check reads a field no document has yet, so it changes nothing until
+   the first remediation; deploying it before the functions is what keeps the
+   push-token purge from being raced.
+2. **Functions** — `onAuthUserCreated`, `secureFederatedSignInV1`,
+   `sweepFederatedTakeoverSchedule` (three new exports; the pinned list is 264).
+   The first sweeps backfill `authPasswordLedger` for existing unverified
+   password accounts through the `listUsers` walk; no separate script. No new
+   index, no secret.
+3. **App build** with the `AuthService` call. Before step 2 it gets NOT_FOUND
+   and continues silently, so the order between 2 and 3 is not load-bearing.
+4. **Website** — the integrator change listed in ADR-XXX ("Website").
+
+After deploying, read the sweeper's logs: `federated takeover remediated`
+(every remediation, also in `authTakeoverAudit`), `pending password verified
+beside a Google/Apple identity; left untouched` (the ambiguous case), and once
+per completed walk `never-verified password-only accounts older than 7 days`
+(report only).
+
+Owner steps (console; Claude does none of these):
+
+- Confirm Firebase Console → Authentication → Settings → User account linking
+  reads "Link accounts that use the same email" (the whole analysis assumes
+  it).
+- Optional, recommended: Google Cloud Console → IAM & Admin → Audit Logs →
+  Identity Toolkit API → enable Data Read/Data Write, so a future takeover
+  leaves a trail (none exists for the past).
+- Decide on deleting never-verified accounts (ADR-XXX, last section).
+- Phase 2: the irreversible Identity Platform upgrade, then the blocking
+  functions and the canary (ADR-XXX, "Phase 2").
+
+Rollback: redeploying the previous rules removes the epoch check; deleting the
+three functions stops remediation. Neither undoes a remediation already done
+(the pre-registrant's password stays unlinked, which is the intended state).
+
 ## Build 33 release round — web deployed, iOS with testers, Play upload outstanding (2026-09-19)
 
 Source for everything below: `main` at

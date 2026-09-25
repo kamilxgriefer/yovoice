@@ -147,17 +147,15 @@ function planRemediation(user, ledgerRow = null) {
   const emailVerified = user?.emailVerified === true;
   const ledgerPending = ledgerRow?.state === LEDGER_STATE.PENDING;
 
-  // A Google/Apple identity counts as the owner's only when it is on the
-  // account's own address. An identity without an e-mail cannot be attributed
-  // to a different address, so it is kept rather than stripped.
+  // A Google/Apple identity counts as the owner's only when it carries the
+  // account's own address: that is what made Firebase hand the owner this
+  // account. An identity without an address is NOT the owner's — a repeat
+  // Apple authorization omits the e-mail claim, so a pre-registrant could link
+  // one of their own that way — and is stripped with the password.
   const ownFederated = email
-    ? providers.filter((provider) => {
-      if (!TRUSTED_FEDERATED_PROVIDERS.includes(provider?.providerId)) {
-        return false;
-      }
-      const providerEmail = normalizeEmail(provider.email);
-      return providerEmail === "" || providerEmail === email;
-    })
+    ? providers.filter((provider) =>
+      TRUSTED_FEDERATED_PROVIDERS.includes(provider?.providerId) &&
+      normalizeEmail(provider.email) === email)
     : [];
 
   if (ownFederated.length === 0) {

@@ -17,6 +17,21 @@ Run log: [Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md).
 Where an entry below says UNVERIFIED, it has not been looked at on a device
 or a simulator — nothing in this build was.
 
+### FIXED IN SOURCE (Phase 1) — a pre-registered password account survived the owner's Google/Apple takeover (2026-09-25, pre-existing since ADR-068, branch `nb2-account-takeover`)
+
+Anyone could register a stranger's address with a password; when the owner
+later signed in with Google or Apple, Firebase gave the owner the same uid, the
+stranger's refresh token kept working with `email_verified: true`, and push
+tokens planted while unverified kept receiving the owner's notifications. The
+server did nothing at sign-in. Phase 1 (ADR-XXX): one remediation authority
+(`functions/auth/federated_takeover.js`) triggered by the owner's app right
+after a returning Google/Apple sign-in and by a 5-minute sweeper; the session
+epoch on the push-token write and Storage `isActiveUser`. **Still open:** an ID
+token the stranger already holds stays valid for up to one hour on callables
+and owner-only reads; the website needs the integrator change in ADR-XXX;
+Phase 2 needs the owner's Identity Platform upgrade; production behaviour
+(revocation, a pre-linked Google identity) is UNVERIFIED until the canary.
+
 ### FIXED IN SOURCE — the Yeel hairline never drew its played part (2026-09-19, next build, `nb/yeels-scrub`)
 
 `ReelProgressBar` (`lib/features/reels/presentation/widgets/reel_progress_row.dart`)

@@ -4,6 +4,48 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
+## Pre-registered account takeover, Phase 1 — 2026-09-25 (ADR-XXX, source only, NOT deployed)
+
+Every attack step in the Functions suite is the production-shaped client call:
+Identity Toolkit REST against the Auth emulator for sign-up, Google/Apple
+sign-in, refresh and e-mail verification (through the emulator's real oob
+code), and Firestore REST `documents:commit` with the caller's own ID token for
+the profile bootstrap and `NotificationService.registerFcmToken`'s exact write,
+so the real `firestore.rules` decide.
+
+| Suite | Cases | What it proves |
+| --- | --- | --- |
+| `functions/test/federated_takeover.test.js` (new) | 15 | Regression anchor: after the owner's Google sign-in the pre-registrant's refresh succeeds and says `email_verified: true`. Trigger A then: only Google remains, `tokensValidAfterTime` is after the pre-registrant's sign-in, Admin `verifyIdToken(…, true)` rejects its ID tokens, `accounts:lookup` answers `TOKEN_EXPIRED`, the planted push token is gone, a re-plant is **403** through the rules, the password cannot sign in, one audit row, ledger `remediated`; the owner's next sign-in is after the epoch and registers push; a second call is `clean`. The owner's calling device is kept. Trigger B (Apple, no client call) purges every token. An unverified password still linked beside Google is unlinked. Not touched: verified password + Google (including the race where Google comes before any sweep saw the verification), verified password-only, Google-created. Stale never-verified accounts are reported and not deleted. Input refusals, `notApplicable` for password sessions, the keep-device decision, ledger retry/cleanup, the verdict matrix and deployment metadata. |
+| `firestore-tests/account_takeover_rules.test.js` (new, in `npm test`) | 6 | A session older than `authSessionEpoch` cannot create or refresh a push token (password or google.com); at/after the epoch it can; an account without the field is unaffected however old its session; a stale session can still delete its own row; no client can create, raise, lower or remove the epoch; the ledger, audit and sweep collections refuse get/list/set/update/delete for owner, other, staff and anonymous. |
+| `firestore-tests/account_takeover_storage.test.js` (new, in `test:storage`) | 2 | Storage `isActiveUser()`: a pre-epoch session cannot read or upload the owner's private avatar; the post-epoch session can; an untouched account is unaffected. |
+| `test/federated_sign_in_security_test.dart` (new) | 8 | `AuthService` checks only a returning sign-in, once; a remediation signs this device out and throws `FederatedSessionSecuredException`; a failing, slow or undeployed check never blocks a sign-in; any other answer is ignored. The sign-in screen shows the notice in English and Polish, and still shows it after an AuthGate-style swap removed the screen. |
+
+Anchors: the new rules suite run against the pre-change `firestore.rules`
+fails the push-token case; the Storage suite against the pre-change
+`storage.rules` fails the stale-session case.
+
+Emulator limits the Functions suite states rather than hides: the Auth
+emulator does not enforce refresh-token revocation and stamps refreshed tokens
+with the account's latest sign-in as `auth_time`. Revocation is therefore
+proven the way production evaluates it (`tokensValidAfterTime`,
+`verifyIdToken(…, true)`), and whatever the emulator still mints is shown to be
+refused by the rules.
+
+| Run (through `tmp/lk.sh`) | Result |
+| --- | --- |
+| `emulators:exec --only firestore --project demo-yovoice 'npm --prefix firestore-tests test'` | 577 + 4 + 6 pass |
+| `emulators:exec --only firestore,storage --project demo-yovoice 'npm --prefix firestore-tests run test:storage'` | 76 + 2 pass |
+| Servers suite (`demo-yovoice-server-acl`) | 71 / 71 (an `isActiveAccount()` placement of the epoch made it 70 / 71 on the 1000-expression budget — the reason the check is scoped) |
+| `server_message_media`, `notification_engagement`, `creator_audience`, `server_followups_adversarial`, `server_liveness_adversarial`, `family-media` | all pass |
+| `company_files_rules.test.js` | 3 pass, 2 fail — **identical against the pre-change rules**, pre-existing and unrelated |
+| `emulators:exec --only auth,firestore --project demo-yovoice` Functions: `federated_takeover`, `cold_start_module_graph` (264 exports), `session_management` | 29 / 29 |
+| Functions neighbours (`latency_critical_configuration`, `callable_invocation_contract`, `privileged_authentication`, `push_delivery`, `account_deletion_index`, `optional_secret_discovery`) | 24 / 24 |
+| `flutter test` on the new file plus `apple_sign_in`, `auth_responsive_screen`, `sign_out_cleanup`, `google_sign_in_configuration` | 74 / 74 |
+| `flutter analyze` | clean |
+
+Not run: the full Functions suite and the full Flutter suite (only touched
+files and neighbours). Nothing ran on a device or a simulator.
+
 ## ADR-215 notification review round — 2026-09-20 (source only, NOT deployed)
 
 Four defects found by a pre-merge review of `nb/notifications`
