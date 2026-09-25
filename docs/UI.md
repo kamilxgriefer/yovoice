@@ -619,6 +619,51 @@ Everything above still holds.
   (`profile_header.dart`) on own and friend profiles: stats from real fields
   only, audience counts only when the audience is visible, one primary + one
   secondary CTA + an icon sheet.
+- **Profile hero (full-bleed banner).** On the own and the friend profile
+  the banner is the background of the whole header: edge to edge, from
+  y = 0 under the status bar, spanning the route (beside the desktop sidebar
+  it fills the content column). One shared primitive owns it —
+  `ProfileHeroGeometry` / `ProfileHeroLayout` / `ProfileHeroBackdrop` in
+  `lib/shared/widgets/profile/profile_hero_backdrop.dart`. Height
+  `T + 56 + band` (band 124 / 156 / 176 below 600 / below 1100 / above),
+  never narrower than 16:9 (a phone shows the whole banner, `Alignment.center`
+  crops only top and bottom elsewhere), at most 45% of a short viewport
+  (but never below the crop guide's share), growing with the width past
+  1440. The crop editor's guide marks the centred ~28.6% that is always on
+  screen and, inside it, the upper ~14.8% that is always above the melt.
+  The toolbar floats over a `scrim` top gradient with raised 44 px
+  controls and no visible title (the display name is the headline; a
+  `namesRoute` node still names the page). The photo stands behind the
+  identity (Kamil, second round): the name and handle keep their line
+  (`nameLine`, so the header is no taller), the avatar's top (`textLine`)
+  rises 30 pt above it into the photo — on a phone most of the avatar
+  stands on the photo's 16:9 box — and the text sits on a veil. The backdrop
+  keeps painting below its box, a mirrored continuation of the blurred copy,
+  down to `extent` (`nameLine` + 112 / 120 / 128). The veil is one alpha
+  mask, so it dissolves into any canvas: the photo is opaque down to the
+  melt (never shorter than the crop guide's clear part), .45 on the name
+  line (the name is large text: ≥ 3:1 over a white photo in Dark or a black
+  one in Pearl), .15 from 22 pt lower (handle, chip, badges: ≥ 4.5:1), and
+  gone at `extent`. The avatar ring is a canvas cut-out with a
+  `borderStrong` hairline (≥ 3:1 against the cut-out in both themes), so it
+  reads over any photo. High contrast drops the photo before the identity
+  row. The melt never takes more than 112/232 of the photo's box. The top scrim holds .62 across the whole status
+  bar before fading (white status icons ≥ 4.5:1 over a white photo). The
+  bottom soft focus is a once-rendered, pre-blurred small copy of the same
+  image drawn over the bottom band and its continuation only — no per-frame
+  filter, never `BackdropFilter` — off under high contrast. Read and focus order: Back,
+  page name, Edit, identity, footer, then the banner, whose focus ring sits
+  on the visible photo. The side melt appears only where at least 48 pt of
+  page canvas is left beside the column. No banner, pending
+  or failed: Dark keeps `kProfileBannerFallbackGradient`, Pearl a light
+  palette wash; the photo, its scrim, blur and light status-bar region fade
+  in together (no fade under Reduce Motion). The banner scrolls away 1:1 (no
+  parallax); an iOS bounce stretches it upward instead of opening a canvas
+  strip. The edit-profile preview is the phone hero in miniature, avatar
+  on the photo included. Readable
+  content keeps its measure through `ProfileMeasuredSliverPadding`
+  (`ResponsiveContentWidth.fullBleed` exists only for such hero scroll
+  views).
 - **Sign-in chain.** One background layer (`AuthBackdrop`, no waves), no
   form card, a flat primary mode rail, a solid `FilledButton` primary, 52 px
   fields with `authBorderStrong` and a 2 px `authFocus` edge, 48 px

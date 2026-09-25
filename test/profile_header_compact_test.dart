@@ -251,7 +251,11 @@ void main() {
       tester.getSize(find.byType(ProfileHeader)).height,
       // 305, not 295: the availability chip on the username line now
       // reserves its 44 px tap target, which the name plate pays for.
-      lessThanOrEqualTo(305),
+      // 309, not 305: this 390 pt test host has no status bar, so the hero
+      // is 180 pt tall and its bottom melt is now held to the share it has
+      // at the widest size (86.9 pt instead of 96), which lowers the text
+      // line by 3.6 pt (ProfileHeroGeometry.maxFadeShare).
+      lessThanOrEqualTo(309),
       reason: 'the complete owner identity stays substantially compact',
     );
     expect(tester.takeException(), isNull);

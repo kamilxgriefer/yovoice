@@ -15395,3 +15395,187 @@ friend mutation, and no friendRequest-specific push defect. What it did find:
   (`yovoice-evidence/2026-09-25/friend-request/frames/`), not on a simulator
   or phone. Why Kamil got no system push is still runtime state the code
   cannot see; the receipt makes the next occurrence answerable.
+
+## ADR-219: The profile banner is the header's full-bleed background, softened by a blurred copy of itself
+
+*(Numbered ADR-219 at the build 36 integration.)*
+
+### Context
+
+Kamil: "tło w profilu użytkownika powinno być na cały górny panel, nie w
+takim prostokącie, z ewentualnym blurem na dole". ADR-209 phase 5 had turned
+the old 300–320 px banner into a 104–168 px inset, rounded card below a
+separate toolbar row on both profile screens, so the banner read as a
+rectangle. Diagnosis and verdict:
+`yovoice-evidence/2026-09-25/diagnosis-profile-banner.md`,
+`verdict-profile-banner.md`.
+
+### Decision
+
+- One shared primitive, `lib/shared/widgets/profile/profile_hero_backdrop.dart`:
+  `ProfileHeroGeometry` (every size), `ProfileHeroLayout` (backdrop, floating
+  toolbar, identity on the text line, footer) and `ProfileHeroBackdrop` (the
+  drawing). `ProfileHeader` and `FriendProfileScreen` both use it; the
+  edit-profile preview renders it at the phone geometry.
+- The backdrop spans the whole host from y = 0. Height `T + 56 + band`
+  (124 / 156 / 176 by width), capped at the width's 16:9 — phones show the
+  whole banner and nothing is cut at the sides — and at 45% of a short
+  viewport; past 1440 it grows with the width so the visible share stays
+  ~28.6%, which is also the crop editor's "always visible" guide
+  (`ProfileHeader.bannerSafeBandFraction`, re-derived from 23.4%).
+- The blur Kamil asked for is a soft-focus copy of the same image provider
+  (image-cache hit, no second fetch), masked in over the bottom melt. It is
+  rendered once per photo and width into a tiny pre-blurred bitmap (one
+  texel per 7 pt, 2 texels of blur ≈ the former sigma 14) and drawn scaled
+  up over the bottom `fade + 24` pt only. Never a `BackdropFilter`, and no
+  per-frame `ImageFiltered` either (see the fix round below). High contrast
+  drops it. The whole stack alpha-melts into the page canvas.
+- The photo's scrim, blur and sized light status-bar region are built by a
+  new `ProfileMediaImage.imageLayerBuilder`, so they exist only while the
+  photo is on screen and fade in with it (instantly under Reduce Motion,
+  which now also applies to every profile image's 180 ms fade). The no-photo
+  base (pending, absent, failed) is the Dark fallback gradient or a Pearl
+  palette wash, so a Pearl profile never flashes a dark slab first.
+- The visible "Profil" toolbar title is gone from over the photo; a
+  `namesRoute` container still names the page.
+- `ResponsiveContentWidth.fullBleed` is added only for scroll views whose
+  first sliver is such a hero; readable slivers use
+  `ProfileMeasuredSliverPadding`.
+
+### Reasoning
+
+ADR-209's objection was imagery without data at desktop sizes. The banner is
+user content, and it now carries the header (toolbar, avatar, name) instead
+of sitting beside it, while readable content keeps its 1040 / 880 measure —
+desktop is not a stretched phone layout. The earlier rejections of blur
+(room board, chat cards) were about `BackdropFilter` save layers per card and
+about blur owning text contrast; here there is one hero, the blur is on the
+image itself, and contrast is owned by the melt (text only below the 10%
+line).
+
+### Consequences
+
+- The friend screen's `SafeArea` keeps only the bottom inset; landscape
+  insets are applied to the content column instead.
+- Test pins re-based deliberately: `image_crop_screen_test` (safe-band
+  derivation) and `friend_profile_responsive_test` (frame width; banner
+  above the avatar; 768 == 1440 band height).
+- UNVERIFIED: frame cost on a low-end Android device and on web CanvasKit
+  (no device or profile run was available; after the fix round nothing in
+  the hero filters per frame, only two alpha masks are composited); the
+  iOS bounce feel; status-bar legibility on a physical iPhone; how old
+  banners cropped for the 23% strip look now. Frames:
+  `yovoice-evidence/2026-09-25/profile-banner/` (flutter test renders) and
+  `…/profile-banner/fix-round/` (after the fix round).
+
+### Fix round (review findings)
+
+- **Status bar.** The top scrim is held at full strength across the whole
+  status-bar inset and only then fades out over 72 pt, and its strength
+  rose from .55 to .62. Over a pure-white banner the clock and battery now
+  stand at ≥ 5.2:1 in Pearl and ≥ 5.8:1 in Dark at every row of the bar
+  (measured in the frames: 5.18–5.25 and 5.83–5.94; it was 2.5–3.5:1 where
+  the old gradient had already faded). A pixel test pins ≥ 4.5:1 at
+  `T/2` and `T − 8` in both themes.
+- **Soft focus cost.** The per-frame `ImageFiltered` over the whole hero is
+  gone: renderers without a raster cache (Impeller, web CanvasKit) re-ran
+  it on every scroll frame. The blurred copy is now computed once
+  (`renderProfileHeroSoftFocus`, ~56×32 texels on a phone, ~206×116 at
+  1440) and drawn only over the bottom band. With no per-frame filter left
+  there is nothing to switch off by platform, so `softFocus` is still only
+  turned off by high contrast; the look is unchanged in the frames.
+- **Crop guide.** The "always visible" band stays the centred ~28.6% on
+  screen at every width, but it is now split: the upper ~14.8%
+  (`alwaysClearFraction`, the band's share above the melt at the widest
+  size) is "always visible", the rest "fades into the page". Two geometry
+  rules make that true at every size instead of at 1440 only, pinned by a
+  sweep of widths 280–3840 × status bars 0–59 × viewports 320–1440 that
+  maps the stored rows onto the hero: the height never drops below the
+  guide's share (a short desktop window keeps 232 pt at 1440 instead of
+  45% of its height), and the melt never takes a larger share of the hero
+  than at the widest size (`maxFadeShare` = 112/232; landscape phones and
+  narrow windows without a status bar get a shorter melt, e.g. 84.7 pt at
+  844×390, which lowers the text line by up to ~4 pt there).
+- **16:9 on phones.** The 16:9 cap now wins over the clear-band floor, so no
+  phone ever crops the banner's sides (it could at 320 pt under a ≥ 44 pt
+  status bar). `minimumClearBand`'s doc now says what it is: photo down to
+  the text line, not unaltered photo.
+- **Side melt** is decided by the canvas actually left beside the column
+  (`ResponsiveContentFrame.sideCanvasOf`), not by the window width: beside
+  the 264 pt sidebar at a 1704 pt window the photo meets the sidebar with
+  no melt; it melts only into a gutter of at least 48 pt.
+- **Order and focus.** The backdrop is painted first but read and focused
+  last: toolbar (Back, page name, Edit) → identity → footer → banner, by
+  `OrdinalSortKey` and an `OrderedTraversalPolicy` group. The banner's
+  focus ring (`focusRingInsets`) is drawn on the visible photo — below the
+  status bar, above the text line, 4 pt inside the content column.
+- **Open product call (resolved in the second round below):** on current phones the
+  16:9 cap decides the height, so the photo is almost entirely scrim and
+  melt — at 393 pt under the 59 pt Dynamic Island about 10 pt of it is
+  unaltered, and the avatar and name stand on the page canvas below the
+  melt, not on the photo. Kamil's "cały górny panel" may mean the photo
+  should reach behind the avatar; that needs his sign-off on
+  `fix-round/profile_393x852_*_bright_island.png` before testers. The
+  options are a shorter phone melt, or a phone hero slightly taller than
+  16:9 with a small side crop.
+
+### Second round: the photo stands behind the identity (Kamil's decision)
+
+Kamil looked at the fix-round frames and decided: the photo must stand
+BEHIND the avatar, the name and the handle too, covering the whole header,
+with a stronger fade under the text so it stays readable.
+
+- **Layout.** `ProfileHeroGeometry` gains `nameLine` and `extent`, and
+  `textLine` now means the identity row's top — the avatar's. The text
+  keeps the line the identity had (`nameLine` = `height − 0.4 · fade`), so
+  the header is never taller than before (about 12 pt shorter on a phone,
+  where the text column is shorter than the avatar); the avatar rises
+  `nameDrop` = 30 pt above it into the photo, and the photo no longer melts away above
+  the text but runs on behind it. `minimumClearBand` (toolbar → avatar)
+  drops from 48 to 24: it was the air above an identity that stood under
+  the photo, now it keeps the avatar off the floating Back / Edit. The
+  height floor built on it only binds in very short windows (below the 45%
+  viewport cap), where the photo can now be up to 24 pt shorter; the crop
+  guide's own floor and every pinned height still hold. At 390 × 844 under
+  a 47 pt status bar the avatar spans 151–231 against the 219 pt photo; at
+  393 under the 59 pt Dynamic Island, 153–233 against 221. Both screens pad
+  the text column (and the friend's inline Follow) by `nameOffset`. A
+  36 pt rise with the text moved up was tried first; it put the own
+  avatar's centre in the header's upper half at 320 × 568 and the banner's
+  centre under the identity, which `profile_header_layout_test` and
+  `profile_banner_viewer_test` rightly reject.
+- **The photo's box does not change.** `height` is still the 16:9-capped
+  photo, the banner button's tap target and focus ring, and the crop
+  guide's truth; `ProfileHeroBackdrop` paints past it (an `OverflowBox`,
+  never clipped by the hero's Stack) down to `extent`, where the picture
+  has fully dissolved. Below the box the soft-focus copy continues: the same
+  pre-blurred bitmap through an `ImageShader` with the photo's own cover
+  mapping, mirrored past the image edge, overlapping the box by 2 pt so
+  two anti-aliased edges never leave a hairline. Still no per-frame filter.
+- **The veil** (one `dstIn` mask over the whole stack, keyed to
+  `nameLine`): opaque down to 28 pt above the name line (never above
+  `height − fade`, so the crop guide's "always visible" part stays
+  unveiled — it is now conservative), .45 on the name line, .15
+  from 22 pt lower, 0 at `extent`. Chosen from the contrast limits over the
+  worst photo per theme (white on Dark, black on Pearl), including the
+  friend profile's tinted canvas: the name (22–27 pt w800, large text)
+  ≥ 3.6:1 (≥ 4.1:1 on the plain canvas), `textPrimary` / `textSecondary`
+  for the handle and smaller ≥ 4.7:1. A pixel test renders white and black photos in both themes and
+  checks every row from the name line to the extent.
+- **Readability of the rest.** The avatar ring's hairline is now
+  `borderStrong` (4.0:1 Dark, 3.4:1 Pearl against the canvas cut-out), so
+  the ring reads over any photo. The presence chips carry their own fills
+  (`successSurface` / `surfaceMuted`, `surfaceSunken`), Back its raised
+  fill, Edit and Follow filled; the stats and action rows below the
+  identity sit where the photo is ≤ 15% or gone. High contrast drops the
+  photo 8 pt above the avatar after a 24 pt melt, so nothing of the
+  identity stands on it; the top scrim stays.
+- The crop editor's screen-reader copy now says the strip's lower part
+  fades into the page behind the avatar and name (not only on wide
+  screens).
+- Frames: `yovoice-evidence/2026-09-25/profile-banner/final/`.
+- No existing test assertion changed; new pins: the geometry (avatar in the
+  photo, text on the veil, header never taller), own and friend layout at
+  390 / 768 / 1440, the veil's contrast per row in Dark and Pearl over a
+  white and a black photo (and high contrast), the seam, and the ring.
+

@@ -21,6 +21,7 @@ class AccessibleTapRegion extends StatefulWidget {
     this.onHover,
     this.focusContrastColor,
     this.focusNode,
+    this.focusRingInsets = EdgeInsets.zero,
     super.key,
   });
 
@@ -51,6 +52,12 @@ class AccessibleTapRegion extends StatefulWidget {
   /// cards can supply a dark contrast color to create a black/white two-tone
   /// indicator: at least one edge remains visible on every possible pixel.
   final Color? focusContrastColor;
+
+  /// Draws the ring (focus, hover and selected) this far inside the tap
+  /// region's edges instead of on them. A full-bleed region whose edges sit
+  /// under the status bar or run through text laid over it (the profile
+  /// hero's banner) keeps its ring on the part the user actually sees.
+  final EdgeInsets focusRingInsets;
 
   @override
   State<AccessibleTapRegion> createState() => _AccessibleTapRegionState();
@@ -133,6 +140,10 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
               ),
               if (contrastedFocus)
                 Positioned.fill(
+                  left: widget.focusRingInsets.left,
+                  top: widget.focusRingInsets.top,
+                  right: widget.focusRingInsets.right,
+                  bottom: widget.focusRingInsets.bottom,
                   child: IgnorePointer(
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 120),
@@ -152,6 +163,10 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
                   ),
                 ),
               Positioned.fill(
+                left: widget.focusRingInsets.left,
+                top: widget.focusRingInsets.top,
+                right: widget.focusRingInsets.right,
+                bottom: widget.focusRingInsets.bottom,
                 child: IgnorePointer(
                   child: Padding(
                     padding: EdgeInsets.all(contrastedFocus ? 2 : 0),

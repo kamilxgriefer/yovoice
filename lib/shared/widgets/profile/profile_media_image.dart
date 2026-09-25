@@ -5,9 +5,22 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 
 typedef ProfileMediaImageProvider = ImageProvider<Object> Function(Uri uri);
+
+/// Wraps a loaded profile image in extra layers that belong to the photo and
+/// must appear with it — never over the fallback. [image] is the laid-out
+/// photo; [provider] is the same provider it paints, so a second copy of the
+/// photo (a blurred one, say) is an image-cache hit rather than a second
+/// fetch or decode.
+typedef ProfileMediaImageLayerBuilder =
+    Widget Function(
+      BuildContext context,
+      Widget image,
+      ImageProvider<Object> provider,
+    );
 
 /// Callable failure codes that describe an unlucky moment rather than an
 /// answer. Everything else — above all `permission-denied`, which is the
@@ -81,6 +94,7 @@ class ProfileMediaImage extends StatefulWidget {
     this.onResolution,
     this.alignment = Alignment.center,
     this.filterQuality = FilterQuality.low,
+    this.imageLayerBuilder,
     super.key,
   });
 
@@ -99,6 +113,12 @@ class ProfileMediaImage extends StatefulWidget {
   final ValueChanged<ProfileMediaResolution>? onResolution;
   final AlignmentGeometry alignment;
   final FilterQuality filterQuality;
+
+  /// Optional layers drawn with the photo (the profile hero's scrim and soft
+  /// focus). They fade in together with the first frame and vanish with it,
+  /// so a surface can never show a photo's scrim over its fallback. Null —
+  /// the default — keeps every existing call site's output unchanged.
+  final ProfileMediaImageLayerBuilder? imageLayerBuilder;
 
   @override
   State<ProfileMediaImage> createState() => _ProfileMediaImageState();
@@ -322,19 +342,26 @@ class _ProfileMediaImageState extends State<ProfileMediaImage> {
   Widget build(BuildContext context) {
     final uri = _resolvedUri;
     if (uri == null) return widget.fallback;
+    final provider = _resolvedProvider ?? NetworkImage(uri.toString());
+    final layers = widget.imageLayerBuilder;
     return Image(
       key: widget.imageKey,
-      image: _resolvedProvider ?? NetworkImage(uri.toString()),
+      image: provider,
       fit: widget.fit,
       alignment: widget.alignment,
       filterQuality: widget.filterQuality,
-      frameBuilder: (context, child, frame, synchronous) => synchronous
-          ? child
-          : AnimatedOpacity(
-              opacity: frame == null ? 0 : 1,
-              duration: const Duration(milliseconds: 180),
-              child: child,
-            ),
+      frameBuilder: (context, child, frame, synchronous) {
+        final layered = layers == null
+            ? child
+            : layers(context, child, provider);
+        if (synchronous) return layered;
+        // Reduce Motion: the photo simply appears — no 180 ms fade.
+        return AnimatedOpacity(
+          opacity: frame == null ? 0 : 1,
+          duration: AppMotion.resolve(context, AppMotion.standard),
+          child: layered,
+        );
+      },
       errorBuilder: (context, error, stackTrace) {
         if (kDebugMode) {
           debugPrint('[IMAGE] profile media grant failed to load: $error');
