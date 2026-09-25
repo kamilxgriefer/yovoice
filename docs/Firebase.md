@@ -324,6 +324,18 @@ A `gifAsset` report is server-written only: the `reports` create rule has no
 branch for that target type, and its field allowlist has no room for
 `gifProvider`, `gifId`, `targetTextSnapshot` or `targetMediaUrl`.
 
+### Bug report collections (ADR-XXX) — server-owned, client-invisible
+
+| Collection | Document | Holds | Lifetime |
+|---|---|---|---|
+| `bugReports/{br_<40 hex>}` | one report | `schemaVersion, reportId, reporterId, inputHash, description, context{appVersion, buildNumber, platform, osVersion, locale, theme, brightness, route, routeDepth, viewportWidth, viewportHeight, textScale}, screenshot{status, storagePath, contentType, size, generation, attachedAt} \| null, screenshotExpiresAt, status, createdAt, updatedAt, expiresAt`; server-added `delivery.{email,github}` and `statusUpdatedAt` | 180 days (daily sweep) |
+| `bugReportUploadReservations/{reportId}` | one screenshot upload capability | `schemaVersion, kind, reportId, ownerId, contentType, size, storagePath, status, createdAt, expiresAt` | 15 minutes, then swept |
+| `appConfig/bugReports` | operator switches | `enabled` (missing = on), `emailEnabled, emailTo, emailFrom, githubEnabled, githubRepo, githubIncludeDescription` | operator-written |
+
+Both collections are `allow read, write: if false` for every client. The owner
+list's status filter uses the composite `bugReports (status ASC, createdAt
+DESC)`; everything else is a document read or a single-field range.
+
 ## Composite indexes
 
 `firestore.indexes.json` currently holds **47** composite indexes and **13**
@@ -517,6 +529,7 @@ size/content-type limited:
 | `voice_replies/{userId}/{momentId}/{fileName}` | Voice Moment reply audio | Signed-in only |
 | `reel_voice_comments/{userId}/{reelId}/{commentId}.m4a` | Reel voice-comment audio (ADR-187, **not deployed**) | Uploader only while reserved; published audio only through a server-authorized, generation-bound V4 grant |
 | `message_attachments/{ownerId}/{conversationId}/{messageId}.{ext}` | Private DM photos and voice messages | Active conversation participants only |
+| `bug_reports/{uid}/{reportId}.jpg` | In-app bug report screenshots (ADR-XXX, **not deployed**) | Uploader only while reserved; the owner through a 5-minute generation-bound V4 URL |
 
 Profile and room-cover uploads require a verified account plus an exact,
 server-issued reservation binding owner, object path, MIME type, byte length

@@ -461,7 +461,10 @@ the repo, never sent to a client. `LIVEKIT_URL` is a plain `defineString`,
 not a secret, since it's just the public WebSocket endpoint every client
 needs to connect (equivalent to a hostname, not a credential). No other
 Cloud Function in this project currently holds a secret — see
-[Backend.md](Backend.md) for the full function inventory.
+[Backend.md](Backend.md) for the full function inventory. The in-app bug
+report alert channels declare `RESEND_API_KEY` and `GITHUB_BUG_REPORT_TOKEN`
+only when their source gates in `functions/index.js` are flipped; both are
+off, so neither is required to deploy.
 
 Direct calls use a server-authored `mediaType`. Audio-call JWTs allow the
 declared microphone source; video-call JWTs allow declared microphone and
@@ -1421,3 +1424,86 @@ wrong rather than when it goes right.
   the honest retained set and for the four categories that currently survive a
   deletion; they are tracked in [Bugs.md](Bugs.md) and are not claimed by any
   user-facing copy.
+
+## In-app bug reports (2026-09-25, ADR-XXX, source only, NOT deployed)
+
+- **Server-written, owner-read.** `bugReports/{reportId}` and
+  `bugReportUploadReservations/{reportId}` are `allow read, write: if false`
+  for every client, the reporter and staff included
+  (`firestore-tests/bug_report_rules.test.js`). Reports are written only by
+  `submitBugReportV1` / `attachBugReportScreenshotV1` and read only by
+  `listBugReportsV1` / `getBugReportV1` / `updateBugReportStatusV1`, which call
+  `requireProtectedOwner` — the uid must equal `YOVOICE_PROTECTED_OWNER_UID`
+  and hold a live super-admin claim and record. The Staff Center section is
+  shown for `manageRoles` (owner-confirmed); that is presentation only.
+- **What a report holds.** The reporter's own description (10-2000
+  characters, control characters stripped), the session uid (never a client
+  value), and an exact device context: app version and build, platform, OS
+  version string, locale, theme and brightness, the visible screen's CLASS
+  NAME (pattern-bound, so no ids can pass) and route depth, viewport and text
+  scale. Never message content, other people's ids or names, tokens, signed
+  URLs, the e-mail address, IP address or device identifiers. The only way
+  another person's content can reach a report is a screenshot the reporter
+  chose to attach after a preview that says so.
+- **Screenshot upload** follows the reservation pattern: one server-issued,
+  15-minute reservation per report; `storage.rules`
+  (`match /bug_reports/{userId}/{fileName}`) accepts exactly the reserved JPEG
+  (exact metadata keys, 128 B-1.5 MB, `br_…jpg` name) from an active account.
+  E-mail verification is deliberately not required (a tester stuck before
+  verification must be able to report); reservations are issued only after
+  the callable's rate limits. Attach verifies metadata, generation and JPEG
+  magic bytes and strips the download token. The owner sees the image only
+  through a 5-minute, generation-bound V4 URL. The 2FA enrollment card blocks
+  capture on the client.
+- **Abuse bounds.** 5 reports per 10 minutes and 20 per day per account, 300
+  per day project-wide (sentinel key `bug-report-global-sentinel`, not a uid).
+  `appConfig/bugReports.enabled = false` pauses submission immediately.
+- **Alert channels are off twice** (source gate in `functions/index.js`, then
+  `appConfig/bugReports`). Their secrets, `RESEND_API_KEY` and
+  `GITHUB_BUG_REPORT_TOKEN`, are declared only when a gate is flipped. Tester
+  text is untrusted: the e-mail escapes it; a GitHub issue omits it unless the
+  API says the repository is private and the owner opted in, and then fences
+  it. The uid and screenshot never leave Firebase. Any agent that reads those
+  issues (a Claude Code routine or action) must treat the body as data, run
+  read-only against `yovoice`, hold no deploy or store credentials and push
+  only to `claude/*` branches if at all.
+- **Retention.** Abandoned uploads are deleted after their reservation
+  expires, screenshots after 90 days, reports after 180 days (daily
+  `sweepBugReportRetentionSchedule`); account deletion removes the
+  `bug_reports/{uid}/` prefix and the account's reports.
+
+### Privacy policy text for yovoice.app/privacy (website repo, not edited here)
+
+Add under "Information you give us" / diagnostics:
+
+> **Bug reports.** If you choose "Report a bug" in the app, we receive the
+> description you write, your YO Voice account ID, and technical details about
+> the app and device: app version and build, platform and operating-system
+> version, language, theme, screen size and text size, and the name of the
+> screen you were on. If you choose to attach a screenshot, we also receive
+> that image, which may show anything that was on your screen, including other
+> people's names, photos or messages; you see it and decide before it is
+> sent. We never collect your messages or calls through a bug report. Only the
+> YO Voice owner can read bug reports. We use them only to find and fix
+> problems.
+
+Add to "How we use information": "to investigate and fix problems you report
+to us".
+
+Add to the processors list (Resend already appears for sign-in e-mail):
+
+> **Resend** — also sends our team a notification when a bug report arrives.
+> The notification contains your description and the technical details above,
+> never your screenshot or account ID.
+
+Only if the private GitHub route with descriptions is switched on, also add:
+
+> **GitHub** (and **Anthropic**, if we use Claude to help triage) — may
+> process the text of a bug report and its technical details so we can track
+> and diagnose it. Never your screenshot or account ID.
+
+Add to retention:
+
+> Bug reports are kept for up to 180 days and screenshots attached to them for
+> up to 90 days, then deleted automatically. Both are deleted when you delete
+> your account.

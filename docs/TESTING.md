@@ -4,6 +4,16 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
+## In-app bug reports — 2026-09-25 (ADR-XXX, source only, NOT deployed)
+
+| Suite | How to run it | What it proves |
+| --- | --- | --- |
+| `functions/test/bug_reports.test.js` | `./firestore-tests/node_modules/.bin/firebase emulators:exec --only auth,firestore --project demo-yovoice "cd functions && node --test --test-concurrency=1 test/bug_reports.test.js"` (with `FIREBASE_CONFIG` carrying a `storageBucket`) | 24 cases: the exact input allowlist and bounds, account states (unverified and banned may report; disabled, deleted and missing may not), the stored document's exact keys and server uid, requestId replay without spending the limit, the 5/10-min, daily and project-wide limits, the `appConfig` kill switch, the upload reservation's exact shape and TTL, attach (metadata, generation, size, JPEG magic bytes, token stripped, expired window), the owner callables refusing everybody else, list/filter/page/detail with a signed URL and status change, the retention sweep, every delivery channel (disabled, sent once, escaped, public-repo minimal issue, private-repo fenced description, retry/permanent/bounded), each secret declared only by its own source gate, and account deletion. |
+| `firestore-tests/bug_report_rules.test.js` | `./firestore-tests/node_modules/.bin/firebase emulators:exec --only firestore,storage --project demo-yovoice 'npm --prefix firestore-tests run test:bug-reports'` | 7 cases: no client (reporter, other, owner, moderator, anonymous) reads, queries (the owner list shape and the deletion sweep shape) or writes either collection; Storage accepts exactly the reserved JPEG (unverified included) and refuses a missing/expired/used/forged/foreign reservation, any metadata/size/MIME/name mismatch, banned/deleted/anonymous uploaders and overwrites; only the uploader reads back, only while reserved; nobody lists, updates or deletes. |
+| `functions/test/cold_start_module_graph.test.js` | part of the functions suite | The export list, deliberately 261 -> 267. |
+| `test/bug_report_sheet_test.dart`, `test/bug_report_floating_button_test.dart`, `test/bug_report_entry_points_test.dart` | `flutter test …` | The consent step (no screenshot without the preview and an explicit confirm; remove after attaching; blocked screens offer none), the payload keys, refusal copy and same-requestId retry, sheet at 390 and dialog at 768/1440; the Bug button against the real dock at 390/768/1440 with gesture insets, dragged to every corner, hidden when signed out, under a modal and with the keyboard up, without resetting the app below; Settings, More sheet and desktop popover entry points; the owner inbox. |
+| `test/bug_report_visual_capture.dart` | `YOVOICE_CAPTURE_DIR=… flutter test test/bug_report_visual_capture.dart` | 34 rendered frames (Dark and Pearl, 390/768/1440): reporter, consent preview, attached state, button resting and dragged, More sheet, owner inbox. Test-harness frames, not a device. |
+
 ## ADR-215 notification review round — 2026-09-20 (source only, NOT deployed)
 
 Four defects found by a pre-merge review of `nb/notifications`

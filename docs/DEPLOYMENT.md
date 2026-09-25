@@ -6173,6 +6173,50 @@ denied terms and per-account `resource-exhausted` responses, plus growth of
 `gifAssets`. `provider_error` and external-provider quota/key alerts are dormant
 while YO Voice Originals is selected.
 
+## In-app bug reports and their alerts (ADR-XXX)
+
+**Base feature — needs nothing new.** Deploy, in order: `firestore:rules`,
+`firestore:indexes` (the `bugReports` status composite), `storage`, then
+`functions:submitBugReportV1,functions:attachBugReportScreenshotV1,functions:listBugReportsV1,functions:getBugReportV1,functions:updateBugReportStatusV1,functions:sweepBugReportRetentionSchedule`,
+then a client build. The owner callables bind only the existing
+`YOVOICE_PROTECTED_OWNER_UID`. Reports are then listed in Staff Center > Bug
+reports. Pause submission at any time with
+`appConfig/bugReports = { enabled: false }` (a missing document means on).
+Older installs never call these functions.
+
+**Floating Bug button.** Compiled in by default. A build meant for the general
+public passes `--dart-define=YOVOICE_BUG_BUTTON=false`; the web never shows it.
+
+**E-mail alerts (Kamil only).** 1. In Resend, confirm the sending domain
+(`yovoice.app` or a subdomain) is Verified. 2. Create an API key with Sending
+access restricted to that domain. 3. In your own terminal:
+`firebase functions:secrets:set RESEND_API_KEY --project yovoice-ec54a` and paste
+it (never into a chat). 4. In source, set
+`BUG_REPORT_EMAIL_DELIVERY_ENABLED = true` in `functions/index.js` and add
+`deliverBugReportV1` to the pinned list in
+`functions/test/cold_start_module_graph.test.js` in the same commit; deploy
+`functions:deliverBugReportV1`. 5. Write
+`appConfig/bugReports.emailEnabled = true`, `emailTo = "<your inbox>"`,
+`emailFrom = "YO Voice Bugs <bugs@yovoice.app>"` in the console (these
+addresses never go into the committed `functions/.env`).
+
+**GitHub alerts (the route to "a new Claude chat").** `kamilxgriefer/yovoice` is
+public, so issues there carry only the report id, platform, version/build and
+screen name. Recommended: create a PRIVATE `kamilxgriefer/yovoice-bug-inbox`,
+make a fine-grained token limited to that one repository (Issues read/write,
+90-day expiry), `firebase functions:secrets:set GITHUB_BUG_REPORT_TOKEN`, flip
+`BUG_REPORT_GITHUB_DELIVERY_ENABLED` (same export-list rule), deploy, and set
+`githubEnabled = true`, `githubRepo = "kamilxgriefer/yovoice-bug-inbox"` and —
+only for that private repository — `githubIncludeDescription = true` (the
+function re-checks that the repository is private on every send). Then point a
+Claude Code routine or `claude-code-action` at new issues there, read-only on
+`yovoice`, with a daily cap; a PAT-authored issue does not notify its author,
+so e-mail stays the alert.
+
+**Before release:** update yovoice.app/privacy with the text in
+[SECURITY.md](SECURITY.md#in-app-bug-reports-2026-09-25-adr-xxx-source-only-not-deployed),
+the App Store privacy labels and the Play Data safety form.
+
 ## GIPHY activation — option B (ADR-214)
 
 > This section is the GIPHY-specific detail: the source flip, the exact

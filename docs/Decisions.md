@@ -15144,3 +15144,112 @@ matches, and web is unchanged because a Blob has no path to stream from.
   1440 px, not by looking at them.
 - **No server-side video thumbnails.** A video poster is a placeholder with
   the duration; DMs have none either, so this is parity, not a regression.
+
+## ADR-XXX: In-app bug reports are server-written and owner-read; alerts are source-gated channels that never carry the screenshot or the uid
+
+**Date:** 2026-09-25 · **Status:** accepted (source on `nb2/report-bug`; the
+integrator assigns the number) · **NOT DEPLOYED**
+
+### Context
+
+Testers had no in-app way to report a bug: the only path was a
+`mailto:support@yovoice.app` tile in Settings > Help that carried no version,
+device or screen. Kamil wants a "report bug" button for the testing period and
+beyond, with alerts arriving by e-mail or as "a new Claude chat". Facts that
+shaped the design, all checked in code: `functions/` held no e-mail capability
+(Resend is used only as Firebase Auth's console SMTP relay, ADR-008, so no
+Functions secret existed); `kamilxgriefer/yovoice` is a public repository
+(`docs/QUALITY_AUTOMATION.md`); an eagerly declared `defineSecret` blocks
+`firebase deploy` until it is set (the ADR-214 GIPHY lesson); only three of the
+app's routes carry a `RouteSettings.name`; the app has no tester flag and ships
+one binary per platform to testers and stores; `MoreDestination` is walked
+exhaustively by the shell and several suites.
+
+### Decision
+
+1. **One path in, one path out.** `submitBugReportV1` (any signed-in account,
+   unverified included; disabled/deleted refused; banned allowed) validates an
+   exact allowlist — a 10-2000 character description, a fixed device-context
+   object and an optional JPEG declaration — rate-limits it (5 per 10 minutes
+   and 20 per day per account, 300 per day project-wide under a sentinel key)
+   and writes `bugReports/{br_<sha256 prefix>}` in one transaction; the id is
+   derived from uid + requestId, so a retry replays. The uid is taken from the
+   session, never from the client. The protected owner reads through
+   `listBugReportsV1` / `getBugReportV1` / `updateBugReportStatusV1`, each
+   gated by `requireProtectedOwner` — i.e. only by the existing
+   `YOVOICE_PROTECTED_OWNER_UID` secret — and rendered as an owner-only Staff
+   Center section. Rules deny `bugReports` and `bugReportUploadReservations`
+   to every client.
+2. **Screenshots use the repo's reservation pattern.** A declared screenshot
+   gets one 15-minute reservation for `bug_reports/{uid}/{reportId}.jpg`;
+   `storage.rules` accepts only that object (exact metadata, JPEG, 128 B-1.5
+   MB, live reservation) and lets only its uploader read it back while the
+   reservation lives. `attachBugReportScreenshotV1` checks metadata,
+   generation and the JPEG magic bytes, strips the download token and binds the
+   generation to the report. The report is written before the upload, so a
+   failed upload never loses the words.
+3. **Consent before capture leaves the device.** The client captures the
+   navigator (never the top banners or the Bug button) before the reporter
+   opens, but attaches it only after the reporter opens a preview headed by
+   "may show other people's names, photos or messages" and confirms. The 2FA
+   enrollment card blocks capture entirely.
+4. **Delivery is announcement only, and off twice.** `deliverBugReportV1`
+   (Firestore trigger, retrying, one transactional claim per channel, at most
+   five attempts) is exported only when a source gate in `functions/index.js`
+   is flipped, and only then declares that channel's secret
+   (`RESEND_API_KEY`, `GITHUB_BUG_REPORT_TOKEN`). Each channel is also switched
+   at runtime in Admin-only `appConfig/bugReports`, which holds the recipient,
+   sender and repository — not `functions/.env`, which is committed publicly.
+   E-mail HTML-escapes the description and carries no screenshot and no uid.
+   A GitHub issue carries only the report id, platform, version/build and
+   screen name, plus a pointer to the Staff Center; the description is added,
+   fenced as data, only when `githubIncludeDescription` is true **and** the
+   GitHub API reports the target repository private at send time. The uid and
+   screenshot never reach any channel.
+5. **Entry points do not touch navigation.** "Report a bug" is an action, not
+   a `MoreDestination`: the mobile sheet and the desktop popover close with no
+   destination and the reporter opens after their exit animation. The mobile
+   action sits in the sheet's chrome band (a new optional `leading` slot on
+   `YoModalSheetChrome`) so the compact sheet's height is unchanged. The
+   floating dock and `MainShell` are not modified.
+6. **The testing-period Bug button** is compiled in by
+   `--dart-define=YOVOICE_BUG_BUTTON` (default **true**, so the builds shipped
+   to testers now carry it with no build change; a public build passes
+   `false`), never shown on the web, and hideable per device (Settings switch
+   or long-press). It lives in `MaterialApp.builder`, stays inside the safe
+   area and the system gesture insets, below the toolbar band and above the
+   dock's own `reservedHeightFor` plus room for its expanded labels and the
+   mini bar, and hides while a modal, the reporter or the keyboard is up.
+7. **Retention is enforced in code**: a daily sweep removes abandoned uploads,
+   screenshots after 90 days and reports after 180 days; account deletion
+   sweeps `bug_reports/{uid}/` with the other uid prefixes and deletes the
+   account's reports and reservations in the `records` stage.
+
+### Reasoning
+
+Everything reuses existing primitives (guards, `privateRateLimits`,
+`requireProtectedOwner`, the reservation/finalize pattern, lazy buckets,
+source-gated secrets) and adds no npm or pub dependency (Node 22 `fetch` is
+enough for Resend and GitHub). Reports are useful the day the functions deploy,
+with nothing else configured. Keeping tester text out of a public repository by
+construction — and checking privacy at send time rather than trusting a
+setting — is the only safe reading of "open an issue" for this repository.
+
+### Consequences
+
+- The pinned export list grows 261 -> 267 (six exports; `deliverBugReportV1`
+  joins only in the reviewed commit that flips a gate).
+- One composite index, `bugReports (status ASC, createdAt DESC)`, for the
+  owner's status filter.
+- The privacy policy needs a bug-report paragraph and retention lines before
+  release, and GitHub/Anthropic become processors only if the private-repo
+  description route is switched on; the App Store privacy labels and the Play
+  Data safety form need "diagnostics / user content (bug reports)". The exact
+  website text is in `docs/SECURITY.md` ("In-app bug reports").
+- `recentEvents` / device model / an owner FCM push, suggested in the design
+  review, are not built; the screen name is a class name, so a web release
+  build (minified) reports a mangled name.
+- **UNVERIFIED on devices.** RepaintBoundary capture over platform views
+  (LiveKit video, `video_player`) may be black; the button's placement is
+  proven by widget tests at 390 / 768 / 1440 px with a real dock, not on a
+  phone.

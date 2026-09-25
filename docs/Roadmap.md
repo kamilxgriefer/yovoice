@@ -14,6 +14,19 @@ someone decide what to pick up next.
 
 ---
 
+## In-app bug reporter — source on `nb2/report-bug` — NOTHING DEPLOYED — 2026-09-25
+
+Done in source (ADR-XXX): "Report a bug" in Settings > Help, the mobile More
+sheet and the desktop More popover; a movable, hideable testing-period Bug
+button (`YOVOICE_BUG_BUTTON`, default on, never on web) that stays clear of the
+dock and gesture edges; a reporter with a required description, allowlisted
+device context and a preview-and-confirm screenshot step; server-written,
+owner-read `bugReports` with a reserved private screenshot upload, rate limits,
+a retention sweep and account-deletion coverage; an owner-only Staff Center
+inbox; e-mail (Resend) and GitHub alert channels source-gated off. Six new
+exports (261 -> 267), one composite index, two deny-all Rules blocks, one
+Storage path. Not verified on a device or simulator.
+
 ## Next build after 3.0.0 — seven branches on `nb/integrate` — source only, NOTHING DEPLOYED — 2026-09-20
 
 **Status: done in source, integrated on `nb/integrate` (based on `main`
