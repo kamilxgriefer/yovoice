@@ -14,6 +14,29 @@ someone decide what to pick up next.
 
 ---
 
+## YO Voice 3.0.0 (35) — Velvet Mallet sounds — build prepared — 2026-09-25
+
+**Status: version bumped, not built or uploaded.** `pubspec.yaml` is
+`3.0.0+35` (35 is the next free build number). The version name stays 3.0.0
+because the planned 3.0.1 below is the redesign polish; this build only adds
+the Velvet Mallet v6 product-sound pack (ADR-210, `32c9dd9`) on top of 3.0.0
+(34). The web already serves it (Hosting run 36038221140).
+
+Owner steps: build and upload iOS (TestFlight) and Android (Play internal
+track), then the ADR-210 device checks: one backgrounded push per Android
+channel on a phone upgraded from build 34 (message, social, achievement,
+alert, call), one iOS push, and a listen on speaker and headphones.
+
+Release notes / What to Test:
+- **en:** New YO Voice sounds: warm, soft wooden tones for joining and
+  leaving conversations, the microphone, notifications and calls. Calls now
+  sound different from messages from the first moment. Please tell us if a
+  notification still plays the old sound.
+- **pl:** Nowe dźwięki YO Voice: ciepłe, miękkie drewniane tony przy
+  wchodzeniu i wychodzeniu z rozmów, mikrofonie, powiadomieniach i
+  połączeniach. Połączenie od pierwszej chwili brzmi inaczej niż wiadomość.
+  Daj znać, jeśli któreś powiadomienie wciąż gra stary dźwięk.
+
 ## YO Voice 3.0.0 (34) — the Slim redesign — released to testers — 2026-09-19
 
 **Web live 2026-09-24.** `main @ 32c9dd9` (3.0.0+34 plus the Velvet Mallet v6
