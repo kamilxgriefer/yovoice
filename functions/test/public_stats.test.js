@@ -39,12 +39,15 @@ const {
   ACTIVE_ACCOUNTS_COLLECTION,
   LIVE_SESSION_FRESHNESS_SECONDS,
   MAX_LIVE_SESSION_SCAN,
+  PUBLIC_STATS_EXCLUDED_ACCOUNT_UIDS,
   PUBLIC_STATS_SCHEMA_VERSION,
   PublicStatsError,
   ROOMS_COLLECTION,
   canonicalSessionUser,
   computePublicStats,
+  countActiveAccounts,
   countCollection,
+  countExcludedAccountsPresent,
   distinctLiveSpeakers,
   fetchFreshVoiceSessions,
   publishPublicStats,
@@ -373,6 +376,120 @@ describe("public stats — the account figure is not counted from `users`", () =
 
       assert.equal(stats.activeAccounts, 2);
       assert.equal(stats.existingRooms, 3);
+    });
+});
+
+describe("public stats — service accounts are not counted as people", () => {
+  // The Apple App Review demo account is a real, usable account with a
+  // `publicProfiles` projection (App Review must be able to sign in), but it
+  // is not somebody using YO Voice. Each case uses its own fixture collection
+  // so parallel suites seeding `publicProfiles` cannot race the totals.
+  const APPLE_REVIEW_UID = "sugg76GWtpMe7vXM5SVWP0alsoi1";
+  const SERVICE = `${P}service-account`;
+
+  test("the Apple App Review demo account is on the explicit exclusion list",
+    () => {
+      assert.ok(Object.isFrozen(PUBLIC_STATS_EXCLUDED_ACCOUNT_UIDS));
+      assert.ok(PUBLIC_STATS_EXCLUDED_ACCOUNT_UIDS.includes(APPLE_REVIEW_UID));
+    });
+
+  test("an excluded account whose projection exists is subtracted once",
+    async () => {
+      const fixture = `${P}excludedPresent`;
+      await Promise.all([
+        db.collection(fixture).doc(`${P}a`).set({ seeded: true }),
+        db.collection(fixture).doc(`${P}b`).set({ seeded: true }),
+        db.collection(fixture).doc(SERVICE).set({ seeded: true }),
+      ]);
+
+      assert.equal(await countCollection(fixture), 3);
+      assert.equal(
+        await countExcludedAccountsPresent({
+          excludedUids: [SERVICE],
+          collection: fixture,
+        }),
+        1,
+      );
+      assert.equal(
+        await countActiveAccounts({ excludedUids: [SERVICE], collection: fixture }),
+        2,
+      );
+      // A duplicated list entry must not subtract the same account twice.
+      assert.equal(
+        await countActiveAccounts({
+          excludedUids: [SERVICE, SERVICE],
+          collection: fixture,
+        }),
+        2,
+      );
+    });
+
+  test("an excluded account with no projection subtracts nothing", async () => {
+    const fixture = `${P}excludedAbsent`;
+    await Promise.all([
+      db.collection(fixture).doc(`${P}a`).set({ seeded: true }),
+      db.collection(fixture).doc(`${P}b`).set({ seeded: true }),
+    ]);
+
+    // A deleted service account is already missing from the aggregate, so
+    // subtracting it again would undercount a real person.
+    assert.equal(
+      await countExcludedAccountsPresent({
+        excludedUids: [SERVICE],
+        collection: fixture,
+      }),
+      0,
+    );
+    assert.equal(
+      await countActiveAccounts({ excludedUids: [SERVICE], collection: fixture }),
+      2,
+    );
+  });
+
+  test("the published figure never goes below zero", async () => {
+    // The aggregate and the point reads are separate reads, so a projection
+    // removed between them can leave the aggregate lower than the number of
+    // excluded accounts that were seen to exist.
+    const racing = {
+      collection: () => ({
+        count: () => ({ get: async () => ({ data: () => ({ count: 1 }) }) }),
+        doc: () => ({ get: async () => ({ exists: true }) }),
+      }),
+    };
+    assert.equal(
+      await countActiveAccounts({
+        excludedUids: [`${P}svc-1`, `${P}svc-2`],
+        database: racing,
+      }),
+      0,
+    );
+  });
+
+  test("by default it reads `publicProfiles` and the listed uids, nothing else",
+    async () => {
+      const counted = [];
+      const pointReads = [];
+      const recording = {
+        collection: (name) => ({
+          count: () => {
+            counted.push(name);
+            return { get: async () => ({ data: () => ({ count: 19 }) }) };
+          },
+          doc: (id) => {
+            pointReads.push(`${name}/${id}`);
+            return { get: async () => ({ exists: id === APPLE_REVIEW_UID }) };
+          },
+        }),
+      };
+
+      assert.equal(await countActiveAccounts({ database: recording }), 18);
+      assert.deepEqual(counted, ["publicProfiles"]);
+      assert.deepEqual(
+        pointReads.sort(),
+        PUBLIC_STATS_EXCLUDED_ACCOUNT_UIDS
+          .map((uid) => `publicProfiles/${uid}`)
+          .sort(),
+      );
     });
 });
 

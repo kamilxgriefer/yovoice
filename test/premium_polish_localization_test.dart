@@ -134,7 +134,7 @@ void main() {
     );
     await tester.pump();
     expect(find.text('Konto twórcy i Studio'), findsOneWidget);
-    expect(find.text('Do 30 serwerów po uruchomieniu'), findsOneWidget);
+    expect(find.text('Do 30 serwerów'), findsOneWidget);
     expect(find.text('Wygląd i prywatność Premium'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Sprawdź plany'),
@@ -188,7 +188,7 @@ void main() {
     );
     expect(
       find.text(
-        'Po uruchomieniu Serwerów: do 30 własnych serwerów (bezpłatnie: 5); dołączanie bez limitu dla każdego',
+        'Do 30 własnych serwerów (bezpłatnie: 5); dołączanie bez limitu dla każdego',
       ),
       findsOneWidget,
     );

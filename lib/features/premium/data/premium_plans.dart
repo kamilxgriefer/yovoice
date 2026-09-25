@@ -11,8 +11,8 @@ class PremiumPlans {
       'Unlock Creator Studio; age confirmation and opt-in enable Follow',
     ),
     (
-      'Up to 30 Servers after launch',
-      'After Servers launch, Free includes 5; joining stays unlimited for everyone',
+      'Up to 30 Servers',
+      'Free includes 5; joining stays unlimited for everyone',
     ),
     (
       'Premium presence & privacy',
@@ -26,7 +26,7 @@ class PremiumPlans {
     'Creator access',
     'Audience tools',
     'Premium profile appearance',
-    'Up to 30 Servers after launch',
+    'Up to 30 Servers',
     'Privacy controls',
     'Yeels discovery boost',
     'Exclusive features',
@@ -35,7 +35,7 @@ class PremiumPlans {
   /// The "Everything Premium includes" list on the plans screen.
   static const List<String> everythingIncluded = [
     'Creator account and Studio; age confirmation and opt-in enable Follow',
-    'After Servers launch: up to 30 owned Servers (Free: 5); unlimited joins for everyone',
+    'Up to 30 owned Servers (Free: 5); unlimited joins for everyone',
     'In private chats, Incognito hides read receipts; typing visibility is separate',
     'Premium badge and shimmering profile ring',
     'Modest Yeels recommendation boost; reach is never guaranteed',

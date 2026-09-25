@@ -565,7 +565,7 @@ void main() {
       );
       await tester.pump();
       expect(find.text('Creator account & studio'), findsOneWidget);
-      expect(find.text('Up to 30 Servers after launch'), findsOneWidget);
+      expect(find.text('Up to 30 Servers'), findsOneWidget);
       expect(find.text('Premium presence & privacy'), findsOneWidget);
       // No pricing on the presentation — that's the plans screen's job.
       expect(find.text('19,99 zł'), findsNothing);
@@ -596,7 +596,7 @@ void main() {
       );
       expect(
         find.text(
-          'After Servers launch: up to 30 owned Servers (Free: 5); unlimited joins for everyone',
+          'Up to 30 owned Servers (Free: 5); unlimited joins for everyone',
         ),
         findsOneWidget,
       );
