@@ -72,6 +72,11 @@ class FriendRequestDecisionButtons extends StatelessWidget {
               'Akceptuj zaproszenie od {name}',
               values: <String, Object>{'name': who},
             ),
+      // The spoken label replaces the button's own node, so this node must
+      // carry the tap action and the enabled state itself (as the Yeel chip
+      // does); otherwise a busy button is announced as active.
+      enabled: !busy,
+      onTap: busy ? null : onAccept,
       excludeSemantics: who != null && who.isNotEmpty,
       child: FilledButton.icon(
         key: acceptKey,
@@ -101,6 +106,8 @@ class FriendRequestDecisionButtons extends StatelessWidget {
               'Odrzuć zaproszenie od {name}',
               values: <String, Object>{'name': who},
             ),
+      enabled: !busy,
+      onTap: busy ? null : onDecline,
       excludeSemantics: who != null && who.isNotEmpty,
       child: OutlinedButton.icon(
         key: declineKey,
@@ -197,6 +204,41 @@ String friendRequestResponseMessage(
       'To zaproszenie jest niedostępne.',
     ),
   };
+}
+
+/// The relationship to show after an explicit Accept / Decline.
+///
+/// A fresh answer is definitive. A stale one is not: the server answers
+/// `alreadyResolved` to a Decline on a request that was already accepted on
+/// another device (the friendship stays), and a request that is "no longer
+/// available" may have been accepted, cancelled or sent again. Those re-read
+/// the relationship instead of assuming "not friends", so no surface offers
+/// "Add friend" to a friend or disables calls between friends. A failed
+/// re-read falls back to [FriendRelationshipStatus.none], the answer the
+/// user asked for.
+///
+/// [reread] is the surface's own relationship read (normally
+/// `friendService.getRelationshipStatus(senderId)`); it only runs for the
+/// stale outcomes.
+Future<FriendRelationshipStatus> friendRelationshipAfterResponse(
+  FriendRequestResponseOutcome outcome, {
+  required Future<FriendRelationshipStatus> Function() reread,
+}) async {
+  switch (outcome) {
+    case FriendRequestResponseOutcome.accepted:
+    case FriendRequestResponseOutcome.alreadyFriends:
+      return FriendRelationshipStatus.friends;
+    case FriendRequestResponseOutcome.declined:
+    case FriendRequestResponseOutcome.unavailable:
+      return FriendRelationshipStatus.none;
+    case FriendRequestResponseOutcome.alreadyResolved:
+    case FriendRequestResponseOutcome.noLongerAvailable:
+      try {
+        return await reread();
+      } catch (_) {
+        return FriendRelationshipStatus.none;
+      }
+  }
 }
 
 /// The copy an "Add friend" tap shows when an older Functions deployment
@@ -442,15 +484,20 @@ class _FriendRequestResponsePanelState
 /// already sent a request (`incomingPending`). Nothing was changed by the
 /// tap; this sheet is where the user decides. Returns the answer, or null
 /// when the sheet was closed without one.
+///
+/// The answer is returned however the sheet closes — "Done", a swipe down,
+/// the barrier or Back — so a caller never keeps a stale "request received"
+/// state for a request that was just answered.
 Future<FriendRequestResponseOutcome?> showFriendRequestPrompt(
   BuildContext context, {
   required String senderId,
   required String senderName,
   required FriendService friendService,
   ProfileMediaService? profileMediaService,
-}) {
+}) async {
   final palette = context.appPalette;
-  return showModalBottomSheet<FriendRequestResponseOutcome>(
+  FriendRequestResponseOutcome? answered;
+  final popped = await showModalBottomSheet<FriendRequestResponseOutcome>(
     context: context,
     showDragHandle: true,
     useSafeArea: true,
@@ -465,8 +512,10 @@ Future<FriendRequestResponseOutcome?> showFriendRequestPrompt(
       senderName: senderName,
       friendService: friendService,
       profileMediaService: profileMediaService,
+      onResolved: (outcome) => answered = outcome,
     ),
   );
+  return popped ?? answered;
 }
 
 class _FriendRequestPromptSheet extends StatefulWidget {
@@ -474,6 +523,7 @@ class _FriendRequestPromptSheet extends StatefulWidget {
     required this.senderId,
     required this.senderName,
     required this.friendService,
+    required this.onResolved,
     this.profileMediaService,
   });
 
@@ -481,6 +531,10 @@ class _FriendRequestPromptSheet extends StatefulWidget {
   final String senderName;
   final FriendService friendService;
   final ProfileMediaService? profileMediaService;
+
+  /// Records the answer for [showFriendRequestPrompt] the moment it arrives,
+  /// independent of how the sheet is later closed.
+  final ValueChanged<FriendRequestResponseOutcome> onResolved;
 
   @override
   State<_FriendRequestPromptSheet> createState() =>
@@ -543,7 +597,10 @@ class _FriendRequestPromptSheetState extends State<_FriendRequestPromptSheet> {
               friendService: widget.friendService,
               profileMediaService: widget.profileMediaService,
               keyPrefix: 'friend-request-prompt',
-              onResolved: (outcome) => setState(() => _outcome = outcome),
+              onResolved: (outcome) {
+                widget.onResolved(outcome);
+                setState(() => _outcome = outcome);
+              },
             ),
             const SizedBox(height: AppRhythm.tight),
             Align(

@@ -150,14 +150,12 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
       profileMediaService: widget.profileMediaService,
     );
     if (!mounted || outcome == null) return;
-    setState(() {
-      _suggestionStatuses[suggestion.uid] = switch (outcome) {
-        FriendRequestResponseOutcome.accepted ||
-        FriendRequestResponseOutcome.alreadyFriends =>
-          FriendRelationshipStatus.friends,
-        _ => FriendRelationshipStatus.none,
-      };
-    });
+    final next = await friendRelationshipAfterResponse(
+      outcome,
+      reread: () => _friendService.getRelationshipStatus(suggestion.uid),
+    );
+    if (!mounted) return;
+    setState(() => _suggestionStatuses[suggestion.uid] = next);
     _showMessage(
       friendRequestResponseMessage(
         AppLocalizations.of(context),
@@ -286,14 +284,12 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         );
 
         if (!mounted) return;
-        setState(() {
-          _relationshipStatuses[user.id] = switch (outcome) {
-            FriendRequestResponseOutcome.accepted ||
-            FriendRequestResponseOutcome.alreadyFriends =>
-              FriendRelationshipStatus.friends,
-            _ => FriendRelationshipStatus.none,
-          };
-        });
+        final next = await friendRelationshipAfterResponse(
+          outcome,
+          reread: () => _friendService.getRelationshipStatus(user.id),
+        );
+        if (!mounted) return;
+        setState(() => _relationshipStatuses[user.id] = next);
         _showMessage(
           friendRequestResponseMessage(
             AppLocalizations.of(context),
@@ -323,14 +319,12 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
           profileMediaService: widget.profileMediaService,
         );
         if (!mounted || outcome == null) return;
-        setState(() {
-          _relationshipStatuses[user.id] = switch (outcome) {
-            FriendRequestResponseOutcome.accepted ||
-            FriendRequestResponseOutcome.alreadyFriends =>
-              FriendRelationshipStatus.friends,
-            _ => FriendRelationshipStatus.none,
-          };
-        });
+        final next = await friendRelationshipAfterResponse(
+          outcome,
+          reread: () => _friendService.getRelationshipStatus(user.id),
+        );
+        if (!mounted) return;
+        setState(() => _relationshipStatuses[user.id] = next);
         _showMessage(
           friendRequestResponseMessage(
             AppLocalizations.of(context),
@@ -411,12 +405,12 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
       );
 
       if (!mounted) return;
-      setState(() {
-        _relationshipStatuses[user.id] =
-            outcome == FriendRequestResponseOutcome.alreadyFriends
-            ? FriendRelationshipStatus.friends
-            : FriendRelationshipStatus.none;
-      });
+      final next = await friendRelationshipAfterResponse(
+        outcome,
+        reread: () => _friendService.getRelationshipStatus(user.id),
+      );
+      if (!mounted) return;
+      setState(() => _relationshipStatuses[user.id] = next);
       _showMessage(
         outcome == FriendRequestResponseOutcome.declined
             ? AppLocalizations.of(

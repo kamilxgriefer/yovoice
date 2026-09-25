@@ -442,14 +442,12 @@ class _FriendsScreenState extends State<FriendsScreen> {
       profileMediaService: _profileMediaService,
     );
     if (!mounted || outcome == null) return;
-    setState(() {
-      _suggestionStatuses[suggestion.uid] = switch (outcome) {
-        FriendRequestResponseOutcome.accepted ||
-        FriendRequestResponseOutcome.alreadyFriends =>
-          FriendRelationshipStatus.friends,
-        _ => FriendRelationshipStatus.none,
-      };
-    });
+    final next = await friendRelationshipAfterResponse(
+      outcome,
+      reread: () => _friendService.getRelationshipStatus(suggestion.uid),
+    );
+    if (!mounted) return;
+    setState(() => _suggestionStatuses[suggestion.uid] = next);
     _showMessage(
       friendRequestResponseMessage(
         AppLocalizations.of(context),

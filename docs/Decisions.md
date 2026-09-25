@@ -15241,11 +15241,27 @@ friend mutation, and no friendRequest-specific push defect. What it did find:
   (`functions/test/social_graph_security.test.js`) still holds for installed
   clients. For new clients it is replaced by "one request stands and the other
   caller is prompted" (`functions/test/friend_request_consent.test.js`).
-- The Yeel footer chip keeps its existing single labelled "Accept" for
-  `requestReceived` (pinned by `test/reel_footer_bar_test.dart`); its "Add
-  friend" path now opens the prompt on `incomingPending`. Giving the chip its
-  own Decline is left for a follow-up because the footer has no room for a
-  pair.
+- The Yeel footer chip has no room for a pair, so for `requestReceived` it
+  reads "Respond" / "Odpowiedz" and opens the same explicit prompt
+  (`showFriendRequestPrompt`) that its "Add friend" path opens on
+  `incomingPending`. The chip itself never answers; only Accept or Decline in
+  the prompt does (`test/reel_footer_bar_test.dart`, changed deliberately in
+  the fix round from the old one-tap "Accept").
+- **The foreground banner arms its pair only once it has settled.** A card
+  slides in unrequested near the app bar, so Accept / Decline take no pointer
+  or semantics action until the 300 ms entrance (none under reduced motion)
+  plus 500 ms have passed, per card. A newer banner resets the old card's
+  busy state; the old card's answer is shown after the newer card closes, is
+  shown on its own if the card was closed by hand, and is dropped only across
+  a privacy/session/lifecycle clear.
+- **After a stale answer the relationship is read again.** `alreadyResolved`
+  and `noLongerAvailable` say nothing certain about the friendship (a Decline
+  on a request accepted on another device keeps it), so every surface calls
+  `friendRelationshipAfterResponse`, which re-reads instead of assuming "not
+  friends". The prompt returns its answer however it is closed (Done, swipe,
+  barrier, Back), and the bell's per-row result is tied to the `createdAt` of
+  the request it answered, so a new request from the same person shows the
+  buttons again.
 - **Deploy order:** Functions (`sendFriendRequest`, `onNotificationCreated`)
   before the app. The app is safe against an old deployment (point 3) but
   would show the "already asked, so you are now friends" copy instead of the

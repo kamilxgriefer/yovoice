@@ -205,14 +205,26 @@ class ReelFriendRelationshipEntry extends ChangeNotifier {
 
   /// Records an answer given in the Accept / Decline prompt, so every card
   /// for this author shows the same relationship.
+  ///
+  /// A fresh answer is definitive. A stale one (`alreadyResolved`,
+  /// `noLongerAvailable`) says nothing certain about the friendship — a
+  /// Decline on a request accepted on another device keeps it — so the
+  /// relationship is read again instead of assumed to be "not friends".
   void applyResponse(FriendRequestResponseOutcome outcome) {
     if (_disposed) return;
-    _status = switch (outcome) {
-      FriendRequestResponseOutcome.accepted ||
-      FriendRequestResponseOutcome.alreadyFriends =>
-        FriendRelationshipStatus.friends,
-      _ => FriendRelationshipStatus.none,
-    };
+    switch (outcome) {
+      case FriendRequestResponseOutcome.accepted:
+      case FriendRequestResponseOutcome.alreadyFriends:
+        _status = FriendRelationshipStatus.friends;
+      case FriendRequestResponseOutcome.declined:
+      case FriendRequestResponseOutcome.unavailable:
+        _status = FriendRelationshipStatus.none;
+      case FriendRequestResponseOutcome.alreadyResolved:
+      case FriendRequestResponseOutcome.noLongerAvailable:
+        unawaited(refresh());
+        return;
+    }
+    _loadError = null;
     notifyListeners();
   }
 

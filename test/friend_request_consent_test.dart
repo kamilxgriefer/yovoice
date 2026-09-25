@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
@@ -462,6 +463,70 @@ void main() {
       );
     });
 
+    testWidgets('a new request from the same person after a Decline offers '
+        'the buttons again', (tester) async {
+      final first = DateTime(2026, 9, 25, 10);
+      Future<void> seedRequest(DateTime createdAt) => db
+          .collection('users')
+          .doc(_me)
+          .collection('friendRequests')
+          .doc(_other)
+          .set(<String, dynamic>{
+            'senderId': _other,
+            'senderName': 'Ola',
+            'senderPhotoUrl': null,
+            'createdAt': Timestamp.fromDate(createdAt),
+          });
+      await seedRequest(first);
+      await seedRequestRow('friendRequest_${_other}_1');
+      await pumpInbox(
+        tester,
+        friends: friendsWith(
+          (_, _) async => <String, dynamic>{'outcome': 'declined'},
+        ),
+      );
+
+      await tester.tap(
+        find.byKey(
+          const ValueKey('notification-row-decline-friendRequest_${_other}_1'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        find.byKey(
+          const ValueKey('notification-row-accept-friendRequest_${_other}_1'),
+        ),
+        findsNothing,
+        reason: 'the answered row shows its result, not buttons',
+      );
+
+      // The server removes the answered request and row; later Ola asks again.
+      await db
+          .collection('users')
+          .doc(_me)
+          .collection('notifications')
+          .doc('friendRequest_${_other}_1')
+          .delete();
+      await seedRequest(first.add(const Duration(hours: 1)));
+      await seedRequestRow('friendRequest_${_other}_2');
+      for (var pump = 0; pump < 6; pump++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+
+      _expectLabelledButton(
+        find.byKey(
+          const ValueKey('notification-row-accept-friendRequest_${_other}_2'),
+        ),
+        'Accept',
+      );
+      _expectLabelledButton(
+        find.byKey(const ValueKey('notification-request-accept-$_other')),
+        'Accept',
+      );
+      expect(calls, hasLength(1));
+    });
+
     testWidgets('a row whose request is gone shows the state, not buttons', (
       tester,
     ) async {
@@ -664,6 +729,42 @@ void main() {
       expect(calls, isEmpty);
     });
 
+    testWidgets('a Decline on a request accepted on another device re-reads '
+        'the friendship instead of offering Add friend', (tester) async {
+      await openPreview(
+        tester,
+        friends: friendsWith(
+          (_, _) async => <String, dynamic>{'outcome': 'alreadyResolved'},
+        ),
+      );
+      // Accepted on another device while the preview was open.
+      await db
+          .collection('users')
+          .doc(_me)
+          .collection('friendRequests')
+          .doc(_other)
+          .delete();
+      await db
+          .collection('users')
+          .doc(_me)
+          .collection('friends')
+          .doc(_other)
+          .set(<String, dynamic>{'uid': _other});
+
+      final decline = find.byKey(
+        const ValueKey('profile-preview-request-decline'),
+      );
+      await tester.ensureVisible(decline);
+      await tester.tap(decline);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(calls.single.data['accept'], isFalse);
+      expect(find.text('This request was already answered.'), findsOneWidget);
+      expect(find.text('Add friend'), findsNothing);
+      expect(find.text('Friends'), findsWidgets);
+    });
+
     testWidgets('Add friend on someone who already asked opens the prompt '
         'and changes nothing', (tester) async {
       await openPreview(
@@ -700,6 +801,167 @@ void main() {
       expect(calls.last.data['accept'], isFalse);
       expect(find.text('Friend request declined.'), findsOneWidget);
     });
+  });
+
+  group('Decision buttons', () {
+    testWidgets('the spoken Accept / Decline carry the tap action and the '
+        'enabled state', (tester) async {
+      final semantics = tester.ensureSemantics();
+      var accepted = 0;
+      var declined = 0;
+      Future<void> pumpPair({bool busyAccept = false}) => tester.pumpWidget(
+        _localized(
+          Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 360,
+                child: FriendRequestDecisionButtons(
+                  name: 'Ola',
+                  busyAccept: busyAccept,
+                  onAccept: () => accepted++,
+                  onDecline: () => declined++,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await pumpPair();
+      for (final label in const [
+        'Accept friend request from Ola',
+        'Decline friend request from Ola',
+      ]) {
+        final node = tester.getSemantics(find.bySemanticsLabel(label));
+        final data = node.getSemanticsData();
+        expect(data.hasAction(ui.SemanticsAction.tap), isTrue, reason: label);
+        expect(data.flagsCollection.isEnabled, ui.Tristate.isTrue);
+        expect(data.flagsCollection.isButton, isTrue);
+        node.owner!.performAction(node.id, ui.SemanticsAction.tap);
+        await tester.pump();
+      }
+      expect(accepted, 1);
+      expect(declined, 1);
+
+      await pumpPair(busyAccept: true);
+      for (final label in const [
+        'Accept friend request from Ola',
+        'Decline friend request from Ola',
+      ]) {
+        final data = tester
+            .getSemantics(find.bySemanticsLabel(label))
+            .getSemanticsData();
+        expect(data.flagsCollection.isEnabled, ui.Tristate.isFalse);
+        expect(data.hasAction(ui.SemanticsAction.tap), isFalse, reason: label);
+      }
+      semantics.dispose();
+    });
+
+    for (final (width, theme) in [
+      (320.0, AppTheme.lightTheme),
+      (390.0, AppTheme.darkTheme),
+    ]) {
+      testWidgets('Pearl and Dark at 200 % text: both labels read in full at '
+          '${width.toInt()} px', (tester) async {
+        tester.view.physicalSize = Size(width, 700);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          _localized(
+            MediaQuery(
+              data: const MediaQueryData(
+                size: Size(390, 700),
+                textScaler: TextScaler.linear(2),
+              ),
+              child: Scaffold(
+                body: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: FriendRequestResponsePanel(
+                    senderId: _other,
+                    senderName: 'Aleksandra Konstantynopolitańczykiewicz',
+                    friendService: friendsWith(null),
+                    showIdentity: false,
+                  ),
+                ),
+              ),
+            ),
+            polish: true,
+            theme: theme,
+          ),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        _expectLabelledButton(
+          find.byKey(const ValueKey('friend-request-panel-accept')),
+          'Akceptuj',
+        );
+        _expectLabelledButton(
+          find.byKey(const ValueKey('friend-request-panel-decline')),
+          'Odrzuć',
+        );
+        final accept = tester.getRect(
+          find.byKey(const ValueKey('friend-request-panel-accept')),
+        );
+        final decline = tester.getRect(
+          find.byKey(const ValueKey('friend-request-panel-decline')),
+        );
+        expect(
+          decline.top,
+          greaterThanOrEqualTo(accept.bottom),
+          reason: 'at 200 % text the pair stacks instead of squeezing',
+        );
+      });
+    }
+
+    test(
+      'a stale answer re-reads the relationship; a fresh one does not',
+      () async {
+        var reads = 0;
+        Future<FriendRelationshipStatus> reread() async {
+          reads++;
+          return FriendRelationshipStatus.friends;
+        }
+
+        expect(
+          await friendRelationshipAfterResponse(
+            FriendRequestResponseOutcome.accepted,
+            reread: reread,
+          ),
+          FriendRelationshipStatus.friends,
+        );
+        expect(
+          await friendRelationshipAfterResponse(
+            FriendRequestResponseOutcome.declined,
+            reread: reread,
+          ),
+          FriendRelationshipStatus.none,
+        );
+        expect(reads, 0);
+        expect(
+          await friendRelationshipAfterResponse(
+            FriendRequestResponseOutcome.alreadyResolved,
+            reread: reread,
+          ),
+          FriendRelationshipStatus.friends,
+          reason: 'a Decline on a request accepted elsewhere keeps the friends',
+        );
+        expect(
+          await friendRelationshipAfterResponse(
+            FriendRequestResponseOutcome.noLongerAvailable,
+            reread: reread,
+          ),
+          FriendRelationshipStatus.friends,
+        );
+        expect(reads, 2);
+        expect(
+          await friendRelationshipAfterResponse(
+            FriendRequestResponseOutcome.alreadyResolved,
+            reread: () async => throw StateError('offline'),
+          ),
+          FriendRelationshipStatus.none,
+        );
+      },
+    );
   });
 
   group('Incoming-request prompt', () {
@@ -745,6 +1007,49 @@ void main() {
       await tester.pumpAndSettle();
       expect(calls, isEmpty);
       expect(result, isNull);
+    });
+
+    testWidgets('an answer is returned however the sheet is closed', (
+      tester,
+    ) async {
+      FriendRequestResponseOutcome? result;
+      var closed = false;
+      await tester.pumpWidget(
+        _localized(
+          Scaffold(
+            body: Builder(
+              builder: (context) => FilledButton(
+                onPressed: () async {
+                  result = await showFriendRequestPrompt(
+                    context,
+                    senderId: _other,
+                    senderName: 'Ola',
+                    friendService: friendsWith(
+                      (_, _) async => <String, dynamic>{'outcome': 'declined'},
+                    ),
+                  );
+                  closed = true;
+                },
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('friend-request-prompt-decline')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Friend request declined.'), findsOneWidget);
+
+      // Dismissed through the barrier, not "Done".
+      await tester.tapAt(const Offset(20, 20));
+      await tester.pumpAndSettle();
+      expect(closed, isTrue);
+      expect(result, FriendRequestResponseOutcome.declined);
+      expect(calls, hasLength(1));
     });
   });
 
@@ -830,6 +1135,8 @@ void main() {
         ),
       );
       await tester.pump(const Duration(milliseconds: 400));
+      // The pair arms 500 ms after the 300 ms entrance (arrival guard).
+      await tester.pump(const Duration(milliseconds: 500));
 
       await tester.tap(
         find.byKey(const ValueKey('yo-top-notification-accept')),
@@ -845,6 +1152,141 @@ void main() {
         findsNothing,
       );
       controller.clear();
+      await tester.pump(const Duration(seconds: 6));
+    });
+
+    testWidgets('a tap as the card arrives never answers; the pair arms '
+        'once the card has settled', (tester) async {
+      final controller = await pumpHost(tester);
+      controller.show(
+        friendRequestCard(
+          friends: friendsWith(
+            (_, _) async => <String, dynamic>{'outcome': 'accepted'},
+          ),
+          onOpen: () {},
+        ),
+      );
+      final accept = find.byKey(const ValueKey('yo-top-notification-accept'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(accept, warnIfMissed: false);
+      await tester.pump();
+      expect(calls, isEmpty, reason: 'a tap during the entrance is ignored');
+
+      // 300 ms after show: the entrance has only just finished.
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.tap(accept, warnIfMissed: false);
+      await tester.pump();
+      expect(calls, isEmpty, reason: 'still inside the settle window');
+
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.tap(accept);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(calls, hasLength(1));
+      expect(calls.single.data['accept'], isTrue);
+      controller.clear();
+      await tester.pump(const Duration(seconds: 6));
+    });
+
+    testWidgets('a new banner during an in-flight decision is never left '
+        'busy, still auto-dismisses, and the first answer is not lost', (
+      tester,
+    ) async {
+      final controller = await pumpHost(tester);
+      final gate = Completer<Map<String, dynamic>>();
+      controller.show(
+        friendRequestCard(
+          friends: friendsWith((_, _) => gate.future),
+          onOpen: () {},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 900));
+      await tester.tap(
+        find.byKey(const ValueKey('yo-top-notification-accept')),
+      );
+      await tester.pump();
+      expect(calls, hasLength(1));
+
+      // Another request arrives while the first answer is still running.
+      expect(
+        controller.show(
+          YoTopNotification(
+            title: 'Kai sent you a friend request',
+            type: NotificationType.friendRequest,
+            onOpen: () {},
+            decision: friendRequestBannerDecision(
+              type: NotificationType.friendRequest,
+              senderId: 'kai-uid',
+              senderName: 'Kai',
+              friendService: () => friendsWith(null),
+            ),
+          ),
+        ),
+        isTrue,
+      );
+      await tester.pump(const Duration(milliseconds: 900));
+      expect(find.text('Kai sent you a friend request'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.byKey(const ValueKey('yo-top-notification-accept')),
+            )
+            .onPressed,
+        isNotNull,
+        reason: 'the new card is not busy with the old card\'s call',
+      );
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+
+      gate.complete(<String, dynamic>{'outcome': 'accepted'});
+      await tester.pump();
+      expect(
+        find.text('Kai sent you a friend request'),
+        findsOneWidget,
+        reason: 'the older answer never cuts the newer card short',
+      );
+      expect(find.text('You and Ola are now friends.'), findsNothing);
+
+      // The newer card keeps its normal 5 s window and then closes...
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump(const Duration(milliseconds: 400));
+      for (var pump = 0; pump < 4; pump++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('Kai sent you a friend request'), findsNothing);
+      // ...and the first answer is shown after it.
+      expect(find.text('You and Ola are now friends.'), findsOneWidget);
+      expect(calls, hasLength(1));
+      controller.clear();
+      await tester.pump(const Duration(seconds: 6));
+    });
+
+    testWidgets('an answer that finishes after a session clear says nothing', (
+      tester,
+    ) async {
+      final controller = await pumpHost(tester);
+      final gate = Completer<Map<String, dynamic>>();
+      controller.show(
+        friendRequestCard(
+          friends: friendsWith((_, _) => gate.future),
+          onOpen: () {},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 900));
+      await tester.tap(
+        find.byKey(const ValueKey('yo-top-notification-accept')),
+      );
+      await tester.pump();
+      controller.clear();
+      await tester.pump();
+      gate.complete(<String, dynamic>{'outcome': 'accepted'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('You and Ola are now friends.'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('yo-top-notification-card')),
+        findsNothing,
+      );
       await tester.pump(const Duration(seconds: 6));
     });
 

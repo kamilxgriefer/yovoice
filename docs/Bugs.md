@@ -250,9 +250,21 @@ survives the row's deletion.
 
 **Still open / UNVERIFIED:** why Kamil got no system push is runtime state
 (most likely the app was in the foreground, where the in-app banner replaces
-the system notification); the receipt makes the next case answerable. The
-Yeel chip keeps a single labelled "Accept" for `requestReceived` (no room for
-a pair in the footer). Nothing here has run on a device or simulator.
+the system notification); the receipt makes the next case answerable. Nothing here has run on a device
+or simulator.
+
+**Fix round (same day).** Review found seven more holes, all fixed in source:
+the Yeel footer chip still accepted `requestReceived` on one tap over a
+playing video (it now reads "Respond" and opens the prompt); a banner that
+replaced one whose Accept was still running stayed busy and never
+auto-dismissed, and the first answer was dropped (the flag now resets with
+the card and the answer is shown after the newer card); the banner's pair took
+taps from its first frame (it now arms after the entrance plus 500 ms); the
+pair's spoken labels had no tap action or enabled state for screen readers;
+the prompt returned nothing when swiped or tapped away after an answer; a
+stale answer was mapped to "not friends" even when the two were friends; and
+the bell cached a row's result by sender, hiding the buttons of a newer
+request from the same person.
 
 ## FIXED IN SOURCE — the voice message bubble drew a different waveform per message from its duration (2026-09-19, Slim phase 0)
 

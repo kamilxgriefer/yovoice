@@ -1825,50 +1825,40 @@ class _ReelFriendButtonState extends State<_ReelFriendButton> {
     super.dispose();
   }
 
+  /// True while this chip's Accept / Decline prompt is open, so a second
+  /// tap cannot stack another one.
+  bool _prompting = false;
+
   Future<void> _act() async {
     final entry = _entry;
     final previous = entry?.status;
     if (entry == null ||
         entry.busy ||
+        _prompting ||
         (previous != FriendRelationshipStatus.none &&
             previous != FriendRelationshipStatus.requestReceived)) {
       return;
     }
     final messenger = ScaffoldMessenger.maybeOf(context);
     final copy = AppLocalizations.of(context);
+    // An incoming request is a consent decision (ADR "friend requests are an
+    // explicit consent decision"). The chip sits over a playing Yeel, so it
+    // never answers on one tap: it opens the labelled Accept / Decline
+    // prompt, and only a button in that prompt answers.
+    if (previous == FriendRelationshipStatus.requestReceived) {
+      messenger?.hideCurrentSnackBar();
+      await _promptIncoming(entry, messenger, copy);
+      return;
+    }
     try {
       final next = await entry.submit(displayName: widget.displayName);
       if (!mounted) return;
-      final sent = previous == FriendRelationshipStatus.none
-          ? entry.lastSend
-          : null;
+      final sent = entry.lastSend;
       // "Add friend" found the author had already asked: nothing changed,
       // and the decision is made in the explicit Accept / Decline prompt.
       if (sent != null && sent.incomingPending) {
         messenger?.hideCurrentSnackBar();
-        final outcome = await showFriendRequestPrompt(
-          context,
-          senderId: widget.userId,
-          senderName: widget.displayName,
-          friendService: entry.friendService,
-        );
-        if (outcome != null) {
-          entry.applyResponse(outcome);
-          messenger
-            ?..hideCurrentSnackBar()
-            ..showSnackBar(
-              SnackBar(
-                behavior: SnackBarBehavior.floating,
-                content: Text(
-                  friendRequestResponseMessage(
-                    copy,
-                    outcome,
-                    name: widget.displayName,
-                  ),
-                ),
-              ),
-            );
-        }
+        await _promptIncoming(entry, messenger, copy);
         return;
       }
       messenger
@@ -1909,6 +1899,45 @@ class _ReelFriendButtonState extends State<_ReelFriendButton> {
     }
   }
 
+  /// The explicit Accept / Decline prompt for an author who asked first.
+  /// Closing it without an answer changes nothing; an answer is recorded on
+  /// the shared entry so every card for this author agrees.
+  Future<void> _promptIncoming(
+    ReelFriendRelationshipEntry entry,
+    ScaffoldMessengerState? messenger,
+    AppLocalizations copy,
+  ) async {
+    setState(() => _prompting = true);
+    final FriendRequestResponseOutcome? outcome;
+    try {
+      outcome = await showFriendRequestPrompt(
+        context,
+        senderId: widget.userId,
+        senderName: widget.displayName,
+        friendService: entry.friendService,
+      );
+    } finally {
+      if (mounted) setState(() => _prompting = false);
+    }
+    if (outcome == null) return;
+    entry.applyResponse(outcome);
+    if (!mounted) return;
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            friendRequestResponseMessage(
+              copy,
+              outcome,
+              name: widget.displayName,
+            ),
+          ),
+        ),
+      );
+  }
+
   void _retry() {
     final entry = _entry;
     if (entry == null || entry.loading) return;
@@ -1943,13 +1972,14 @@ class _ReelFriendButtonState extends State<_ReelFriendButton> {
     if (status == null) return const SizedBox.shrink();
     final requested = status == FriendRelationshipStatus.requestSent;
     final received = status == FriendRelationshipStatus.requestReceived;
-    final enabled = !entry.busy && !requested;
+    final enabled = !entry.busy && !requested && !_prompting;
     final label = entry.busy
         ? copy.text('Sending…', 'Wysyłanie…')
         : requested
         ? copy.text('Requested', 'Wysłano zaproszenie')
         : received
-        ? copy.text('Accept', 'Akceptuj')
+        // Opens the labelled Accept / Decline prompt; never accepts itself.
+        ? copy.text('Respond', 'Odpowiedz')
         : copy.text('Add friend', 'Dodaj znajomego');
     final semanticLabel = entry.busy
         ? copy.template(
@@ -1965,8 +1995,8 @@ class _ReelFriendButtonState extends State<_ReelFriendButton> {
           )
         : received
         ? copy.template(
-            'Accept friend request from {name}',
-            'Akceptuj zaproszenie od {name}',
+            'Respond to friend request from {name}',
+            'Odpowiedz na zaproszenie od {name}',
             values: <String, Object>{'name': widget.displayName},
           )
         : copy.template(
@@ -1998,7 +2028,7 @@ class _ReelFriendButtonState extends State<_ReelFriendButton> {
             requested
                 ? Icons.hourglass_top_rounded
                 : received
-                ? Icons.check_circle_rounded
+                ? Icons.reply_rounded
                 : Icons.person_add_alt_1_rounded,
             size: 18,
           );

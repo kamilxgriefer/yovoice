@@ -517,16 +517,16 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
     }
   }
 
-  void _requestResolved(FriendRequestResponseOutcome outcome) {
+  Future<void> _requestResolved(FriendRequestResponseOutcome outcome) async {
     if (!mounted) return;
-    setState(() {
-      _relationship = switch (outcome) {
-        FriendRequestResponseOutcome.accepted ||
-        FriendRequestResponseOutcome.alreadyFriends =>
-          FriendRelationshipStatus.friends,
-        _ => FriendRelationshipStatus.none,
-      };
-    });
+    // A stale answer re-reads the relationship: a request that was accepted
+    // on another device must not offer "Add friend" to a friend.
+    final next = await friendRelationshipAfterResponse(
+      outcome,
+      reread: () => _friends.getRelationshipStatus(widget.userId),
+    );
+    if (!mounted) return;
+    setState(() => _relationship = next);
   }
 
   Future<void> _toggleFollow(bool isFollowing, UserProfile profile) async {

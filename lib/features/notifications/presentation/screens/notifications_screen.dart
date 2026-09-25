@@ -98,13 +98,22 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   /// the same person, so neither can start a second call.
   final Map<String, bool> _processingRequests = <String, bool>{};
 
-  /// What an Accept / Decline on this screen resolved to, by senderId. The
+  /// What an Accept / Decline on this screen resolved to, by senderId,
+  /// together with the `createdAt` of the request that was answered. The
   /// server removes the request and its activity row in one transaction, but
   /// the two streams do not update in the same frame; this keeps the row
   /// honest ("You and Ada are now friends") instead of flashing a stale
-  /// state in between.
-  final Map<String, FriendRequestResponseOutcome> _resolvedRequests =
-      <String, FriendRequestResponseOutcome>{};
+  /// state in between. A newer request from the same person (a different
+  /// `createdAt`) is a new decision and shows the buttons again.
+  final Map<
+    String,
+    ({FriendRequestResponseOutcome outcome, DateTime? requestCreatedAt})
+  >
+  _resolvedRequests =
+      <
+        String,
+        ({FriendRequestResponseOutcome outcome, DateTime? requestCreatedAt})
+      >{};
   int _notificationsLimit = 50;
   StreamSubscription<int>? _unreadCountSubscription;
   bool _isVisible = false;
@@ -176,11 +185,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  Future<void> _acceptRequest(FriendRequest request) =>
-      _respondToRequest(request.senderId, request.senderName, accept: true);
+  Future<void> _acceptRequest(FriendRequest request) => _respondToRequest(
+    request.senderId,
+    request.senderName,
+    accept: true,
+    requestCreatedAt: request.createdAt,
+  );
 
-  Future<void> _declineRequest(FriendRequest request) =>
-      _respondToRequest(request.senderId, request.senderName, accept: false);
+  Future<void> _declineRequest(FriendRequest request) => _respondToRequest(
+    request.senderId,
+    request.senderName,
+    accept: false,
+    requestCreatedAt: request.createdAt,
+  );
 
   /// The inbox answers "who is this?" the same way every other surface
   /// does. Injected services are forwarded when a test supplied them;
@@ -208,6 +225,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     String senderId,
     String senderName, {
     required bool accept,
+    required DateTime? requestCreatedAt,
   }) async {
     if (_processingRequests.containsKey(senderId)) return;
     setState(() => _processingRequests[senderId] = accept);
@@ -218,7 +236,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         accept: accept,
       );
       if (!mounted) return;
-      setState(() => _resolvedRequests[senderId] = outcome);
+      setState(
+        () => _resolvedRequests[senderId] = (
+          outcome: outcome,
+          requestCreatedAt: requestCreatedAt,
+        ),
+      );
       _showMessage(
         friendRequestResponseMessage(
           AppLocalizations.of(context),
@@ -664,7 +687,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (notification.type != NotificationType.friendRequest) return null;
     final senderId = notification.actorId;
     if (senderId.isEmpty) return null;
-    final resolved = _resolvedRequests[senderId];
     FriendRequest? pending;
     for (final request in requests) {
       if (request.senderId == senderId) {
@@ -672,6 +694,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         break;
       }
     }
+    final answered = _resolvedRequests[senderId];
+    // The answer only covers the request it was given to. A pending request
+    // with a different createdAt was sent after it (say, after a Decline),
+    // so it gets its own Accept / Decline again.
+    final resolved =
+        answered != null &&
+            (pending == null || pending.createdAt == answered.requestCreatedAt)
+        ? answered.outcome
+        : null;
     if (pending == null && resolved == null && !requestsKnown) return null;
     final name = notification.actorName;
     return _RequestDecision(
@@ -683,10 +714,22 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               ? FriendRequestResponseOutcome.noLongerAvailable
               : null),
       pendingDecision: _processingRequests[senderId],
-      onAccept: () =>
-          unawaited(_respondToRequest(senderId, name, accept: true)),
-      onDecline: () =>
-          unawaited(_respondToRequest(senderId, name, accept: false)),
+      onAccept: () => unawaited(
+        _respondToRequest(
+          senderId,
+          name,
+          accept: true,
+          requestCreatedAt: pending?.createdAt,
+        ),
+      ),
+      onDecline: () => unawaited(
+        _respondToRequest(
+          senderId,
+          name,
+          accept: false,
+          requestCreatedAt: pending?.createdAt,
+        ),
+      ),
     );
   }
 

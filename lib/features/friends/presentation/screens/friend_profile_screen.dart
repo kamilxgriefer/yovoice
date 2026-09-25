@@ -1019,17 +1019,19 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             profileMediaService: _profileMediaService,
             showIdentity: false,
             keyPrefix: 'friend-profile-request',
-            onResolved: (outcome) {
+            onResolved: (outcome) async {
               if (!mounted) return;
-              setState(() {
-                _requestPanelAnswered = true;
-                _relationship = switch (outcome) {
-                  FriendRequestResponseOutcome.accepted ||
-                  FriendRequestResponseOutcome.alreadyFriends =>
-                    FriendRelationshipStatus.friends,
-                  _ => FriendRelationshipStatus.none,
-                };
-              });
+              setState(() => _requestPanelAnswered = true);
+              // A stale answer re-reads the relationship: a request that was
+              // accepted on another device must not read as "not friends".
+              final next = await friendRelationshipAfterResponse(
+                outcome,
+                reread: () =>
+                    (widget.relationshipStatusResolver ??
+                    _friendService.getRelationshipStatus)(widget.friend.id),
+              );
+              if (!mounted) return;
+              setState(() => _relationship = next);
             },
           ),
         ),

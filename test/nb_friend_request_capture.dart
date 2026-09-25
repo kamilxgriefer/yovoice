@@ -342,6 +342,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       await _capturePng(tester, 'banner-390-${pearl ? 'pearl' : 'dark'}');
       if (!pearl) {
+        // The banner's pair arms 500 ms after its entrance (arrival guard).
+        await tester.pump(const Duration(milliseconds: 500));
         await tester.tap(
           find.byKey(const ValueKey('yo-top-notification-accept')),
         );
