@@ -6,6 +6,7 @@ const { getMessaging } = require("firebase-admin/messaging");
 const { logger } = require("firebase-functions/v2");
 
 const { db } = require("../utils/firestore");
+const { eventLedgerReference } = require("./canonical");
 const { buildPushMessage } = require("./push_payload");
 const { isCurrentNotificationGeneration } = require("./push_generation");
 const {
@@ -27,6 +28,85 @@ const TERMINAL_PUSH_DELIVERY_STATUSES = new Set([
   "skipped",
   "permanent-failure",
 ]);
+
+// Actionable rows are deleted the moment they are answered: a friend request
+// row disappears on accept, decline, cancel or block, and with it the
+// pushDeliveryStatus / pushSkipReason that said whether a system notification
+// was ever sent. For these types the same decision is also kept on a
+// short-lived receipt in notificationDeliveryEvents (already TTL-managed on
+// expiresAt), so "I never got a notification" can still be answered after
+// the request was resolved. It records only the decision — no token, no
+// title, no body — and it never changes who receives a push.
+const PUSH_DECISION_LEDGER_TYPES = new Set(["friendRequest"]);
+const PUSH_DECISION_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+
+function pushDecisionLedgerReference(userId, notificationId, firestore = db) {
+  return eventLedgerReference(
+    `pushDecision\u0000${userId}\u0000${notificationId}`,
+    firestore,
+  );
+}
+
+function notificationDigest(userId, notificationId) {
+  return crypto
+    .createHash("sha256")
+    .update(`${userId}\u0000${notificationId}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+/**
+ * Keeps the push decision for an actionable type on its short-lived receipt.
+ *
+ * Written only after the row itself recorded the same decision, and never
+ * allowed to fail delivery: it is evidence, not part of the send. A lost
+ * receipt write is logged and the push path carries on unchanged.
+ */
+async function recordPushDecision({
+  userId,
+  notificationId,
+  type,
+  pushDeliveryStatus,
+  pushSkipReason = null,
+  now = Timestamp.now(),
+  firestore = db,
+}) {
+  if (!PUSH_DECISION_LEDGER_TYPES.has(type)) return false;
+  if (!userId || !notificationId) return false;
+  const notification = notificationDigest(userId, notificationId);
+  // Structured and uid-free: the digest joins a log line to its receipt.
+  logger.info("Push decision", {
+    type,
+    pushDeliveryStatus,
+    pushSkipReason,
+    notification,
+  });
+  try {
+    await pushDecisionLedgerReference(userId, notificationId, firestore).set(
+      {
+        kind: "pushDecision",
+        recipientId: userId,
+        notificationId: String(notificationId).slice(0, 320),
+        type,
+        pushDeliveryStatus,
+        pushSkipReason,
+        decidedAt: now,
+        expiresAt: Timestamp.fromMillis(
+          now.toMillis() + PUSH_DECISION_RETENTION_MS,
+        ),
+      },
+      { merge: true },
+    );
+    return true;
+  } catch (error) {
+    logger.warn("Push decision receipt was not written", {
+      type,
+      notification,
+      code: error?.code ?? null,
+    });
+    return false;
+  }
+}
 
 function pushDeliveryAttemptId({
   userId,
@@ -272,6 +352,19 @@ async function handleNotificationCreated(event, {
     notificationId,
     notificationSnapshot: snapshot,
   };
+  // The receipt mirrors a decision the row has just recorded, so it is
+  // written only when that row write happened.
+  const skip = async (reason) => {
+    if (await skipPushDelivery(deliveryArgs, reason)) {
+      await recordPushDecision({
+        userId,
+        notificationId,
+        type,
+        pushDeliveryStatus: "skipped",
+        pushSkipReason: reason,
+      });
+    }
+  };
 
   const buildTitle = PUSH_TITLES[type];
   if (!buildTitle) {
@@ -306,7 +399,7 @@ async function handleNotificationCreated(event, {
         await skipPushDelivery(deliveryArgs, "unregistered-type");
         return;
       }
-      await skipPushDelivery(deliveryArgs, "invalid-source");
+      await skip("invalid-source");
       currentNotification = await snapshot.ref.get();
       await cleanupInvalidSource({
         snapshot,
@@ -322,7 +415,7 @@ async function handleNotificationCreated(event, {
     // still expected while the app is backgrounded; active-conversation
     // foreground suppression is a client concern and does not alter delivery.
     if (preferences[type] === false) {
-      await skipPushDelivery(deliveryArgs, "preference-disabled");
+      await skip("preference-disabled");
       return;
     }
 
@@ -334,7 +427,7 @@ async function handleNotificationCreated(event, {
       .limit(MAX_FCM_TOKEN_DOCUMENT_READS)
       .get();
     if (tokensSnap.empty) {
-      await skipPushDelivery(deliveryArgs, "no-token");
+      await skip("no-token");
       return;
     }
 
@@ -345,7 +438,7 @@ async function handleNotificationCreated(event, {
     const title = buildTitle(actorName, currentData.targetLabel || null);
     const plan = planTokenDocuments(tokensSnap.docs);
     if (plan.tokens.length === 0) {
-      await skipPushDelivery(deliveryArgs, "no-usable-token");
+      await skip("no-usable-token");
       return;
     }
 
@@ -363,6 +456,13 @@ async function handleNotificationCreated(event, {
     });
     if (acquisition.state !== "claimed") {
       if (acquisition.reason === "invalid-source") {
+        await recordPushDecision({
+          userId,
+          notificationId,
+          type,
+          pushDeliveryStatus: "skipped",
+          pushSkipReason: "invalid-source",
+        });
         currentNotification = await snapshot.ref.get();
         await cleanupInvalidSource({
           snapshot,
@@ -374,6 +474,14 @@ async function handleNotificationCreated(event, {
     }
     claimed = true;
     const claim = acquisition.claim;
+    // "dispatching" first: if the completion write is lost, the receipt
+    // still says FCM was about to be called.
+    await recordPushDecision({
+      userId,
+      notificationId,
+      type,
+      pushDeliveryStatus: "dispatching",
+    });
 
     const delivery = await sendMulticastInChunks({
       tokens: plan.tokens,
@@ -404,9 +512,16 @@ async function handleNotificationCreated(event, {
           delivery.staleTokens.length === delivery.attempted
         ? "skipped"
         : "permanent-failure";
-    await completePushDelivery(deliveryArgs, claim, {
+    if (await completePushDelivery(deliveryArgs, claim, {
       status: terminalStatus,
-    });
+    })) {
+      await recordPushDecision({
+        userId,
+        notificationId,
+        type,
+        pushDeliveryStatus: terminalStatus,
+      });
+    }
 
     const staleReferences = delivery.staleTokens
       .map((token) => plan.tokenReferences.get(token))
@@ -456,6 +571,8 @@ exports.onNotificationCreated = onDocumentCreated(
 
 module.exports = {
   onNotificationCreated: exports.onNotificationCreated,
+  PUSH_DECISION_LEDGER_TYPES,
+  PUSH_DECISION_RETENTION_MS,
   PUSH_TITLES,
   claimPushDelivery,
   completePushDelivery,
@@ -464,7 +581,9 @@ module.exports = {
   isCurrentNotificationGeneration,
   isLegacySocialNotificationId,
   notificationSourceIsCurrent,
+  pushDecisionLedgerReference,
   pushDeliveryAttemptId,
+  recordPushDecision,
   skipPushDelivery,
   socialNotificationSourceIsCurrent,
 };
