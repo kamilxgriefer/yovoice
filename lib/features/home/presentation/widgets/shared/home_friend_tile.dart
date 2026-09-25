@@ -164,6 +164,13 @@ class HomeFriendTile extends StatelessWidget {
     String label, {
     required bool showCaret,
   }) {
+    final caret = showCaret ? _caretExtent(context) : 0.0;
+    return (_widestStatusWord(context, label) + caret).ceilToDouble() + 1;
+  }
+
+  /// The width of [label]'s longest word in the status line's own style and
+  /// text scale.
+  static double _widestStatusWord(BuildContext context, String label) {
     final scaler = MediaQuery.textScalerOf(context);
     final style = DefaultTextStyle.of(context).style.merge(
       const TextStyle(fontSize: _statusFontSize, fontWeight: FontWeight.w600),
@@ -181,9 +188,12 @@ class HomeFriendTile extends StatelessWidget {
       widest = math.max(widest, painter.width);
       painter.dispose();
     }
-    final caret = showCaret ? scaler.scale(12) + 2 : 0.0;
-    return (widest + caret).ceilToDouble() + 1;
+    return widest;
   }
+
+  /// The availability caret and its 2 px gap, at the reader's text scale.
+  static double _caretExtent(BuildContext context) =>
+      MediaQuery.textScalerOf(context).scale(12) + 2;
 
   @override
   Widget build(BuildContext context) {
@@ -266,6 +276,7 @@ class HomeFriendTile extends StatelessWidget {
                             : 'Voice ${content.durationLabel}',
                         foreground: palette.textSecondary,
                         showCaret: showChangeCaret,
+                        columnWidth: columnWidth,
                       ),
                     ],
                   ),
@@ -349,22 +360,38 @@ class HomeFriendTile extends StatelessWidget {
 
 /// The tile's second line: the presence word, or the Moment's length, with
 /// the availability caret when this is the reader's own tile.
+///
+/// It wraps to two lines at word boundaries. A friend's column is the rail's
+/// shared pitch, though, and Flutter breaks a word that is wider than its
+/// line in the middle ("Nie przeszk / adzać"). When any word of [label] is
+/// wider than the line, the label stays on ONE line and ends in an ellipsis
+/// instead ("Nie przeszk…"): cut, never split. The tile's semantics already
+/// read the full presence word.
 class _StatusLine extends StatelessWidget {
   const _StatusLine({
     required this.label,
     required this.foreground,
     required this.showCaret,
+    required this.columnWidth,
   });
 
   final String label;
   final Color foreground;
   final bool showCaret;
 
+  /// The tile's label column; the caret, when shown, takes its share.
+  final double columnWidth;
+
   @override
   Widget build(BuildContext context) {
+    final line =
+        columnWidth - (showCaret ? HomeFriendTile._caretExtent(context) : 0);
+    final wordTooWide = HomeFriendTile._widestStatusWord(context, label) > line;
     final text = Text(
       label,
-      maxLines: 2,
+      key: const ValueKey('home-friend-status'),
+      maxLines: wordTooWide ? 1 : 2,
+      softWrap: !wordTooWide,
       textAlign: TextAlign.center,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(

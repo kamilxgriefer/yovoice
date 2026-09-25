@@ -127,6 +127,11 @@ class _HomeLiveNowSectionState extends State<HomeLiveNowSection> {
   /// again on every rebuild; a new repository clears the set.
   final Set<String> _refused = {};
 
+  /// Keeps the section's subtree (the cards' hover, press and ignite state)
+  /// when the arrival wrapper comes or goes — e.g. Start's tab pausing its
+  /// tickers while hidden.
+  final GlobalKey _contentKey = GlobalKey(debugLabel: 'home-live-now-content');
+
   @override
   void initState() {
     super.initState();
@@ -209,17 +214,20 @@ class _HomeLiveNowSectionState extends State<HomeLiveNowSection> {
           HomeLiveChannel(server: server, channel: channel),
     ];
     final arriving = entries.isNotEmpty;
-    final content = arriving
-        ? _buildSection(context, entries)
-        : const SizedBox(width: double.infinity);
-    final duration = AppMotion.resolve(
-      context,
-      arriving ? AppMotion.entrance : AppMotion.standard,
+    final content = KeyedSubtree(
+      key: _contentKey,
+      child: arriving
+          ? _buildSection(context, entries)
+          : const SizedBox(width: double.infinity),
     );
-    // Reduce Motion: the section simply is (or is not) there. A zero-length
-    // AnimatedSize would finish inside its own layout pass, which Flutter
-    // rejects, so the size animation is left out altogether.
-    if (duration == Duration.zero) return content;
+    // Reduce Motion, a screen reader (accessible navigation) or paused
+    // tickers: the section simply is (or is not) there — spec §5's motion
+    // predicate, the same one the ignite uses — so focus below it never
+    // rides a growing box. A zero-length AnimatedSize would also finish
+    // inside its own layout pass, which Flutter rejects, so the size
+    // animation is left out altogether.
+    if (!AppMotion.decorative(context)) return content;
+    final duration = arriving ? AppMotion.entrance : AppMotion.standard;
     // The section's box eases to its content's height instead of jumping.
     // `RenderAnimatedSize` clips only while its content overflows the
     // animating box, so at rest the card's under-glow is never cut; during
@@ -343,6 +351,7 @@ class _HomeLiveChannelCardState extends State<HomeLiveChannelCard>
   bool _igniteChecked = false;
   bool _hovered = false;
   bool _pressed = false;
+  bool _focused = false;
   Duration _glowDuration = AppMotion.quick;
   Curve _glowCurve = AppMotion.standardCurve;
 
@@ -391,6 +400,11 @@ class _HomeLiveChannelCardState extends State<HomeLiveChannelCard>
       _glowDuration = AppMotion.quick;
       _glowCurve = AppMotion.standardCurve;
     });
+  }
+
+  void _setFocused(bool value) {
+    if (_focused == value) return;
+    setState(() => _focused = value);
   }
 
   void _setPressed(bool value) {
@@ -451,6 +465,7 @@ class _HomeLiveChannelCardState extends State<HomeLiveChannelCard>
             ),
           Positioned.fill(
             child: AnimatedContainer(
+              key: const ValueKey('home-live-thumbnail'),
               duration: AppMotion.resolve(context, AppMotion.quick),
               curve: AppMotion.standardCurve,
               decoration: BoxDecoration(
@@ -460,13 +475,19 @@ class _HomeLiveChannelCardState extends State<HomeLiveChannelCard>
                 ),
                 borderRadius: AppRadius.block,
               ),
+              // Keyboard focus swaps the live rim for the block's 2 px focus
+              // ring (R2), painted as a foreground so nothing shifts. The
+              // InkWell's own focus wash can only show around the caption,
+              // under the opaque thumbnail.
               foregroundDecoration: BoxDecoration(
                 borderRadius: AppRadius.block,
-                border: AppFinish.liveRim(
-                  palette,
-                  hovered: _hovered,
-                  highContrast: highContrast,
-                ),
+                border: _focused
+                    ? Border.all(color: palette.focus, width: 2)
+                    : AppFinish.liveRim(
+                        palette,
+                        hovered: _hovered,
+                        highContrast: highContrast,
+                      ),
               ),
               child: ClipRRect(
                 borderRadius: AppRadius.block,
@@ -569,6 +590,7 @@ class _HomeLiveChannelCardState extends State<HomeLiveChannelCard>
           child: InkWell(
             onTap: widget.onOpen,
             onHover: _setHovered,
+            onFocusChange: _setFocused,
             onHighlightChanged: _setPressed,
             borderRadius: AppRadius.block,
             child: Column(

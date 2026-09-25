@@ -178,8 +178,16 @@ class AppPalette extends ThemeExtension<AppPalette> {
   /// A hovered block or control edge.
   Color get hairlineHover => borderStrong.withValues(alpha: .55);
 
-  /// The neutral tonal fill ("glass").
-  Color get glass => textPrimary.withValues(alpha: isDark ? .07 : .05);
+  /// The neutral tonal fill ("glass"). Dark surfaces emit, so Dark's glass
+  /// is a faint textPrimary tint (.07). Pearl surfaces RECEIVE light, so
+  /// Pearl's glass is lit paper — `surfaceRaised` at .80 — never an ink
+  /// wash: textPrimary @ .05 read as a flat grey-lilac that looked disabled
+  /// beside the gradient CTA (review round, D1). The control hairline stays
+  /// the edge; hover and press move the edge or lay a wash over the fill
+  /// (`AppFinish.glass`) instead of darkening it.
+  Color get glass => isDark
+      ? textPrimary.withValues(alpha: .07)
+      : surfaceRaised.withValues(alpha: .80);
 
   /// The lit top of a block's fill.
   Color get blockTop =>

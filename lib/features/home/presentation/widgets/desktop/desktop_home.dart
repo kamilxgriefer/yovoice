@@ -39,6 +39,7 @@ import 'package:yovoice/features/servers/data/models/server.dart';
 import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -309,8 +310,11 @@ class _DesktopHomeState extends State<DesktopHome> {
         slot >= DesktopHome.twoColumnThreshold + extraScale * 260;
     final contextWidth = (300 + extraScale * 40).clamp(280.0, 344.0);
 
-    // With no server yet the empty invitation carries the page's one lifted
-    // "Stwórz serwer"; the quick action keeps its gradient without a lift.
+    // Desktop Start always sits beside the rail, whose own "Stwórz serwer"
+    // is the screen's one lifted CTA: Start's create keeps the matching
+    // gradient without a second lift. With no server yet the empty
+    // invitation carries Start's violet "Stwórz serwer", so the quick action
+    // steps down to the same neutral glass as "Znajomi".
     final serversEmpty =
         serverSnapshot.hasData &&
         !serverSnapshot.hasError &&
@@ -319,7 +323,9 @@ class _DesktopHomeState extends State<DesktopHome> {
       key: _quickActionsKey,
       onCreateRoom: _openServers,
       onFriends: widget.onViewAllFriends,
-      liftCreate: !serversEmpty,
+      createEmphasis: serversEmpty
+          ? YoActionEmphasis.neutral
+          : YoActionEmphasis.flat,
     );
     final conversationSection = Column(
       key: _conversationKey,
@@ -335,6 +341,8 @@ class _DesktopHomeState extends State<DesktopHome> {
           onOpenServer: widget.onOpenServer,
           onRetry: _retryServers,
           expanded: true,
+          // The rail owns the screen's one lift (see the quick actions).
+          liftCreate: false,
         ),
         const SizedBox(height: AppRhythm.item),
         quickActions,

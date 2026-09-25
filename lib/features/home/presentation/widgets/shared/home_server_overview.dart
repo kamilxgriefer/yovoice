@@ -28,6 +28,7 @@ class HomeServerConversationCard extends StatelessWidget {
     required this.onRetry,
     this.onOpenServer,
     this.expanded = false,
+    this.liftCreate = true,
     super.key,
   });
 
@@ -36,6 +37,11 @@ class HomeServerConversationCard extends StatelessWidget {
   final VoidCallback onRetry;
   final ValueChanged<Server>? onOpenServer;
   final bool expanded;
+
+  /// Whether the empty invitation's "Stwórz serwer" carries the screen's
+  /// one CTA lift. Desktop passes false: the rail's own lifted "Stwórz
+  /// serwer" is on the same screen, so Start keeps the gradient only.
+  final bool liftCreate;
 
   @override
   Widget build(BuildContext context) {
@@ -61,6 +67,7 @@ class HomeServerConversationCard extends StatelessWidget {
         key: const ValueKey('home-servers-empty'),
         onOpenServers: onOpenServers,
         expanded: expanded,
+        liftCreate: liftCreate,
       );
     }
     return _ServerContinueCard(
@@ -299,18 +306,21 @@ class _ServerEmptyCard extends StatelessWidget {
   const _ServerEmptyCard({
     required this.onOpenServers,
     required this.expanded,
+    required this.liftCreate,
     super.key,
   });
 
   final VoidCallback onOpenServers;
   final bool expanded;
+  final bool liftCreate;
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     // With no server yet, the invitation is Start's lead block: the brand
-    // violet in the corner, and the screen's one lifted action.
+    // violet in the corner, and the screen's one violet action (lifted on a
+    // phone or tablet; flat beside the desktop rail's lifted one).
     return YoCard(
       tint: AppColors.primary,
       minHeight: expanded ? 216 : null,
@@ -347,6 +357,9 @@ class _ServerEmptyCard extends StatelessWidget {
           YoGradientFilledButton(
             key: const ValueKey('home-empty-create-server'),
             onPressed: onOpenServers,
+            emphasis: liftCreate
+                ? YoActionEmphasis.lifted
+                : YoActionEmphasis.flat,
             minimumSize: const Size(0, AppSizing.minimumTouchTarget),
             padding: const EdgeInsets.symmetric(
               horizontal: AppRhythm.title,
