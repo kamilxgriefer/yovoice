@@ -228,6 +228,32 @@ one-shot wrapper for a camera capture, which is re-taken rather than re-sent.
 Not fixed, and not a defect: a *different* pick while a lease is live is still
 refused. That is the backend limit doing its job.
 
+### FIXED IN SOURCE — a friend request was accepted on one unlabelled tap, and "Add friend" could accept silently (2026-09-25, next build, `friend-request`)
+
+Reported by Kamil: no system notification for a friend request, no Accept or
+Decline, and "tapping the notification just added him". The corrected
+diagnosis (`yovoice-evidence/2026-09-25/verdict-friend-request.md`): no
+notification tap ever called a friend mutation, but the bell's Friend requests
+card answered with an **unlabelled green check** that accepted on one tap
+(`notifications_screen.dart`, the same on released 3.0.0); the activity row,
+the foreground top banner and FriendProfileScreen offered no answer at all;
+the profile preview offered a lone "Accept"; `sendFriendRequest` turned any
+"Add friend" on someone who had already asked into an acceptance; and a
+cancelled or already-answered request could only "fail". Fixed (the new ADR on
+explicit friend-request consent): one labelled Accept / Decline pair on every
+incoming-request surface, body taps only open, `sendFriendRequest` gains an
+optional `acceptIncoming` flag (the new client sends `false` and gets an
+explicit prompt on `incomingPending`), an old server's silent acceptance is
+named instead of shown as success, stale requests show an honest state, and
+the push decision for a friend request is kept on a 14-day receipt that
+survives the row's deletion.
+
+**Still open / UNVERIFIED:** why Kamil got no system push is runtime state
+(most likely the app was in the foreground, where the in-app banner replaces
+the system notification); the receipt makes the next case answerable. The
+Yeel chip keeps a single labelled "Accept" for `requestReceived` (no room for
+a pair in the footer). Nothing here has run on a device or simulator.
+
 ## FIXED IN SOURCE — the voice message bubble drew a different waveform per message from its duration (2026-09-19, Slim phase 0)
 
 Found by the phase-0 inventory for the waveform family. `_VoiceMessageContent`

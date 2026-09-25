@@ -15144,3 +15144,115 @@ matches, and web is unchanged because a Blob has no path to stream from.
   1440 px, not by looking at them.
 - **No server-side video thumbnails.** A video poster is a placeholder with
   the duration; DMs have none either, so this is parity, not a regression.
+
+## ADR-XXX: Accepting a friend request is an explicit consent decision — two labelled buttons everywhere, and "Add friend" never answers someone else's request
+
+**Date:** 2026-09-25 · **Status:** accepted (source on the `friend-request`
+item branch, based on `985dceee`) · **NOT DEPLOYED** · the integrator numbers
+this ADR.
+
+### Context
+
+A tester reported that he got no system notification for a friend request,
+saw no Accept / Decline, and that "tapping the notification just added him".
+The verified diagnosis
+(`yovoice-evidence/2026-09-25/diagnosis-friend-request.md` and its corrected
+verdict `verdict-friend-request.md`) found no notification tap that calls a
+friend mutation, and no friendRequest-specific push defect. What it did find:
+
+- The bell's own **Friend requests** card answered with an unlabelled X and an
+  unlabelled green check (tooltips only). The check accepted on one tap, at
+  the right edge of a card that looks like the notification itself. Released
+  3.0.0 has the same card.
+- The friend-request **activity row**, the **foreground top banner** (the
+  surface a user in the app actually sees, because it replaces the system
+  notification) and **FriendProfileScreen** offered no answer at all; the
+  **profile preview** offered a lone "Accept".
+- `sendFriendRequest` silently **turns "Add friend" into an acceptance** when
+  the target already sent the caller a request.
+- `friend_service` collapsed every callable error into one generic failure,
+  so a cancelled, already-answered or blocked request could only "fail".
+- The push outcome (`pushDeliveryStatus` / `pushSkipReason`) lives on the
+  inbox row, which is **deleted** the moment the request is resolved, so the
+  evidence for "I never got a notification" was gone after Kamil accepted.
+
+### Decision
+
+1. **One Accept / Decline pair.** `FriendRequestDecisionButtons`
+   (`lib/features/friends/presentation/widgets/friend_request_decision.dart`)
+   is the only way any surface answers an incoming request: two equally sized,
+   text-labelled buttons ("Accept"/"Akceptuj", "Decline"/"Odrzuć"), both
+   disabled while either call runs, stacked below 300 px or at large text,
+   capped so desktop shows a pair and never a bar. It is used by the bell's
+   Friend requests card (replacing the icon pair), the friend-request activity
+   row, FriendProfileScreen (`requestReceived`), the profile preview, the
+   foreground top banner and the prompt below. The Friends screen's request
+   list and the Add friend search row already had, or now have, labelled
+   buttons. A tap on the body of any of these only opens (the request list or
+   the requester's profile) and never answers.
+2. **`sendFriendRequest` takes an optional `acceptIncoming` flag.** Absent or
+   `true` keeps today's reciprocal accept for every installed client. `false`
+   never writes: when the target already asked, the callable returns
+   `{outcome: "incomingPending", changed: false}` and the new client opens an
+   explicit Accept / Decline prompt (`showFriendRequestPrompt`). The new client
+   **always** sends `false`.
+3. **Fail-closed against an old Functions deployment.** An old server ignores
+   the unknown key and answers `accepted`. `FriendService.requestFriendship`
+   treats `accepted` in reply to `acceptIncoming: false` as
+   `acceptedWithoutPrompt`: the relationship is shown truthfully as Friends,
+   but the copy says what happened and how to undo it — never a plain "request
+   sent" or "you are now friends" success. Deploy order still matters:
+   Functions before the app.
+4. **Stale states are outcomes, not errors.** `FriendService.respondToFriendRequest`
+   maps the server's `alreadyAccepted`, `alreadyResolved`, `not-found` and
+   blocked/inactive refusals to `FriendRequestResponseOutcome`s, and every
+   surface shows the honest line ("You are already friends", "This request is
+   no longer available", "This request is unavailable" — never which side
+   blocked) instead of a button that failed. `_mutate` now throws a
+   `SocialActionException` (still a `StateError` with the same generic
+   message) that keeps the callable's code.
+5. **The push decision for a friend request outlives its row.** After the row
+   records `pushDeliveryStatus` / `pushSkipReason`, the push trigger writes the
+   same decision to a receipt in `notificationDeliveryEvents` (the collection
+   already TTL-managed on `expiresAt`), keyed by
+   `sha256("pushDecision\0{uid}\0{notificationId}")`, kept 14 days, plus one
+   uid-free structured log line. Only `friendRequest` gets a receipt. It is
+   written outside the delivery transactions and can never fail or delay a
+   send beyond one write; nothing about who receives a push changed.
+
+### Reasoning
+
+- Consent needs words. An icon pair is fast for people who already know the
+  convention and ambiguous for everyone else, and a green check at the edge of
+  a notification-shaped card is indistinguishable from "open".
+- Keeping the flag optional and defaulting to `true` is the only way to change
+  the server without breaking installed apps whose Add button relies on the
+  reciprocal branch (ADR on backward compatibility; CLAUDE.md hard rules).
+- Detecting the old outcome shape on the client is cheaper and more robust
+  than a capability handshake, and it is exactly the case the verifier named.
+- A lock-screen Accept action was deliberately **not** added: Android
+  notification messages cannot carry actions without moving to data-only
+  pushes, and a lock-screen Accept is the accidental one-tap consent this ADR
+  removes.
+
+### Consequences
+
+- The contract "simultaneous reciprocal requests converge on one friendship"
+  (`functions/test/social_graph_security.test.js`) still holds for installed
+  clients. For new clients it is replaced by "one request stands and the other
+  caller is prompted" (`functions/test/friend_request_consent.test.js`).
+- The Yeel footer chip keeps its existing single labelled "Accept" for
+  `requestReceived` (pinned by `test/reel_footer_bar_test.dart`); its "Add
+  friend" path now opens the prompt on `incomingPending`. Giving the chip its
+  own Decline is left for a follow-up because the footer has no room for a
+  pair.
+- **Deploy order:** Functions (`sendFriendRequest`, `onNotificationCreated`)
+  before the app. The app is safe against an old deployment (point 3) but
+  would show the "already asked, so you are now friends" copy instead of the
+  prompt until Functions ship.
+- **UNVERIFIED on devices.** Every surface is proven by widget tests and by
+  frames rendered in the Flutter test renderer at 320 / 390 / 1280 px, Dark
+  and Pearl, English and Polish
+  (`yovoice-evidence/2026-09-25/friend-request/frames/`), not on a simulator
+  or phone. Why Kamil got no system push is still runtime state the code
+  cannot see; the receipt makes the next occurrence answerable.

@@ -135,6 +135,16 @@ Read back after 3b:
   counters (`stagedEmpty`, `graceRunning`, `driftRepaired`,
   `driftUnresolved`, `driftTruncated`).
 
+**3c. Friend-request consent (the new ADR on explicit friend-request
+consent) rides on 3b.** `sendFriendRequest` gains the optional
+`acceptIncoming` flag and `onNotificationCreated` writes the friend-request
+push-decision receipt into `notificationDeliveryEvents` (TTL already on
+`expiresAt`; no index, rules or schema change). Both must be live **before**
+the app: a new app talking to the old `sendFriendRequest` would not get the
+explicit Accept / Decline prompt — it detects the old `accepted` answer and
+says so instead of showing success, but the friendship would already exist.
+Read back: `firebase functions:list` shows new revisions of both names.
+
 ### 4. The app
 
 Only after 1–3 are read back. The client half of this build is
