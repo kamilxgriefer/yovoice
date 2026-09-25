@@ -18,6 +18,7 @@ class YoModalSheetChrome extends StatelessWidget {
     this.closeColor,
     this.closeBackgroundColor = Colors.transparent,
     this.horizontalPadding = 8,
+    this.leading,
     super.key,
   });
 
@@ -30,6 +31,10 @@ class YoModalSheetChrome extends StatelessWidget {
   final Color? closeColor;
   final Color closeBackgroundColor;
   final double horizontalPadding;
+
+  /// An optional compact action at the start of the 48 px chrome band,
+  /// opposite the close button. It costs the sheet no height.
+  final Widget? leading;
 
   @override
   Widget build(BuildContext context) {
@@ -73,6 +78,13 @@ class YoModalSheetChrome extends StatelessWidget {
                     ),
                   ),
                 ),
+              ),
+            if (leading != null)
+              Positioned(
+                left: horizontalPadding,
+                top: 0,
+                bottom: 0,
+                child: Center(child: leading),
               ),
             Positioned(
               right: horizontalPadding,

@@ -12,6 +12,8 @@ import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/data/staff_directory_service.dart';
 import 'package:yovoice/features/staff/data/staff_overview_service.dart';
 import 'package:yovoice/features/staff/presentation/screens/user_management_screen.dart';
+import 'package:yovoice/features/bug_reports/data/bug_report_admin_service.dart';
+import 'package:yovoice/features/staff/presentation/sections/staff_bug_reports_section.dart';
 import 'package:yovoice/features/staff/presentation/sections/staff_operations_sections.dart';
 import 'package:yovoice/features/staff/presentation/sections/staff_overview_section.dart';
 import 'package:yovoice/features/staff/presentation/sections/staff_section_shared.dart';
@@ -44,6 +46,7 @@ class StaffCenterScreen extends StatefulWidget {
     this.functions,
     this.firestore,
     this.currentUid,
+    this.bugReportService,
     super.key,
   });
 
@@ -63,6 +66,9 @@ class StaffCenterScreen extends StatefulWidget {
   final FirebaseFunctions? functions;
   final FirebaseFirestore? firestore;
 
+  /// Injected in tests; production calls the owner-only bug report callables.
+  final BugReportAdminService? bugReportService;
+
   /// Injected in tests; production reads the signed-in session.
   final String? currentUid;
 
@@ -77,7 +83,8 @@ enum StaffSection {
   rooms(Icons.podcasts_rounded),
   sanctions(Icons.gavel_rounded),
   staffRoles(Icons.badge_rounded),
-  audit(Icons.receipt_long_rounded);
+  audit(Icons.receipt_long_rounded),
+  bugReports(Icons.bug_report_rounded);
 
   const StaffSection(this.icon);
 
@@ -96,6 +103,7 @@ String _localizedSectionLabel(AppLocalizations copy, StaffSection section) =>
       StaffSection.sanctions => copy.text('Sanctions', 'Sankcje'),
       StaffSection.staffRoles => copy.text('Staff & Roles', 'Zespół i role'),
       StaffSection.audit => copy.text('Audit Log', 'Dziennik audytu'),
+      StaffSection.bugReports => copy.text('Bug reports', 'Zgłoszenia błędów'),
     };
 
 class _StaffCenterScreenState extends State<StaffCenterScreen> {
@@ -199,6 +207,8 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
     if (caps.warnUsers || caps.suspendUsers) StaffSection.sanctions,
     if (caps.manageRoles) StaffSection.staffRoles,
     if (caps.fullAuditAccess) StaffSection.audit,
+    // Owner only, like the callables behind it (requireProtectedOwner).
+    if (caps.manageRoles) StaffSection.bugReports,
   ];
 
   void _openUsers(String filter) {
@@ -617,6 +627,8 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
           initialAction: _auditAction,
           auditService: widget.auditService,
         );
+      case StaffSection.bugReports:
+        return StaffBugReportsSection(service: widget.bugReportService);
     }
   }
 }

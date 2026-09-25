@@ -7,6 +7,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
+import 'package:yovoice/features/bug_reports/presentation/bug_report_capture.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 Color _twoFactorSuccess(BuildContext context) =>
@@ -704,6 +705,17 @@ class _EnrollmentCard extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    // The setup key and QR code are a live second factor: while this card is
+    // on screen a bug report may not capture a screenshot at all.
+    return BugReportCaptureGuard(child: _card(context, copy, palette, colors));
+  }
+
+  Widget _card(
+    BuildContext context,
+    AppLocalizations copy,
+    AppPalette palette,
+    ColorScheme colors,
+  ) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(

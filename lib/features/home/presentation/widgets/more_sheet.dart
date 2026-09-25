@@ -1,10 +1,13 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/presentation/screens/achievements_screen.dart';
+import 'package:yovoice/features/bug_reports/presentation/bug_report_launcher.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_studio_screen.dart';
 import 'package:yovoice/features/creator/presentation/screens/find_creators_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
@@ -115,12 +118,18 @@ Future<MoreDestination?> showMoreSheet(
 
   final navigator = Navigator.of(context);
   final localizations = MaterialLocalizations.of(context);
+  // "Report a bug" is an ACTION, not a MoreDestination: it closes the sheet
+  // with no destination (the shell does nothing) and opens the reporter once
+  // the sheet has fully left the screen, so the screenshot shows the page and
+  // not the sheet.
+  var reportBugRequested = false;
   final route = ModalBottomSheetRoute<MoreDestination>(
     builder: (_) => MoreSheet(
       entitlements: entitlements,
       capabilityService: capabilityService,
       currentUid: currentUid,
       profileService: profileService,
+      onReportBug: () => reportBugRequested = true,
     ),
     capturedThemes: InheritedTheme.capture(
       from: context,
@@ -144,6 +153,10 @@ Future<MoreDestination?> showMoreSheet(
   // gone; otherwise a fast second tap can stack another More sheet beneath
   // the first destination.
   await route.completed;
+  if (reportBugRequested && navigator.mounted) {
+    unawaited(BugReportLauncher.open(navigator.context));
+    return null;
+  }
   return destination;
 }
 
@@ -221,7 +234,7 @@ Future<MoreDestination?> showDesktopMoreMenu(
   bool isStaff = false,
   bool isOwner = false,
   SubscriptionEntitlements entitlements = SubscriptionEntitlements.free,
-}) {
+}) async {
   final palette = context.appPalette;
   final colors = Theme.of(context).colorScheme;
   final copy = AppLocalizations.of(context);
@@ -285,7 +298,11 @@ Future<MoreDestination?> showDesktopMoreMenu(
       ),
   ];
 
-  return showMenu<MoreDestination>(
+  // "Report a bug" closes the popover with no destination, then waits for
+  // the popover's own exit animation (not just the pop) before capturing.
+  var reportBugRequested = false;
+  ModalRoute<Object?>? menuRoute;
+  final destination = await showMenu<MoreDestination>(
     context: context,
     // Anchored beside the rail item, not centered over the page.
     position: RelativeRect.fromLTRB(
@@ -366,8 +383,48 @@ Future<MoreDestination?> showDesktopMoreMenu(
             ],
           ),
         ),
+      const PopupMenuDivider(height: 9),
+      PopupMenuItem<MoreDestination>(
+        key: const ValueKey('desktop-more-report-bug'),
+        height: 48,
+        onTap: () => reportBugRequested = true,
+        child: Builder(
+          builder: (itemContext) {
+            menuRoute = ModalRoute.of(itemContext);
+            return Row(
+              children: [
+                SizedBox(
+                  width: 34,
+                  child: Icon(
+                    Icons.bug_report_outlined,
+                    size: 20,
+                    color: palette.textSecondary,
+                  ),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Text(
+                    copy.text('Report a bug', 'Zgłoś błąd'),
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
     ],
   );
+  if (reportBugRequested) {
+    await menuRoute?.completed;
+    if (context.mounted) unawaited(BugReportLauncher.open(context));
+    return null;
+  }
+  return destination;
 }
 
 /// What the MOBILE sheet's staff section shows for one account — derived
@@ -436,7 +493,13 @@ class MoreSheet extends StatefulWidget {
     this.entitlements = SubscriptionEntitlements.free,
     super.key,
     this.profileService,
+    this.onReportBug,
   });
+
+  /// Set by [showMoreSheet]: marks that "Report a bug" was chosen, just before
+  /// the sheet closes with no destination. Null (a bare sheet in a harness)
+  /// leaves the row out, so the launcher grid is exactly what it always was.
+  final VoidCallback? onReportBug;
 
   /// Injected by tests and previews; production uses the default service.
   final ProfileService? profileService;
@@ -570,6 +633,16 @@ class _MoreSheetState extends State<MoreSheet> {
                 key: ValueKey('more-sheet-drag-handle'),
                 sheetLabel: copy.text('More menu', 'Menu Więcej'),
                 surfaceColor: palette.surfaceRaised,
+                // In the chrome band, opposite Close: it adds no height, so
+                // the compact sheet still fits 320x568 without scrolling.
+                leading: widget.onReportBug == null
+                    ? null
+                    : _ReportBugAction(
+                        onTap: () {
+                          widget.onReportBug!();
+                          Navigator.pop(context);
+                        },
+                      ),
               ),
               Flexible(
                 child: SingleChildScrollView(
@@ -825,6 +898,72 @@ class _MoreSheetState extends State<MoreSheet> {
         ),
       ],
     ];
+  }
+}
+
+/// "Report a bug" in the mobile sheet: a quiet action in the chrome band,
+/// not a launcher tile — it is an action for testers, not a destination, and
+/// it carries no chevron because it opens a sheet over the current page
+/// rather than navigating anywhere. Enlarged text keeps the glyph and drops
+/// the visible words (the accessible label always carries them).
+class _ReportBugAction extends StatelessWidget {
+  const _ReportBugAction({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
+    final label = copy.text('Report a bug', 'Zgłoś błąd');
+    final compact = MediaQuery.textScalerOf(context).scale(14) / 14 > 1.3;
+    return Semantics(
+      key: const ValueKey('more-report-bug'),
+      button: true,
+      label: label,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: ConstrainedBox(
+          // Never reaches the centred drag handle, even on a 320 px phone.
+          constraints: const BoxConstraints(
+            minHeight: 44,
+            minWidth: 44,
+            maxWidth: 124,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.bug_report_outlined,
+                  size: 20,
+                  color: palette.textSecondary,
+                ),
+                if (!compact) ...[
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

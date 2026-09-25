@@ -15,6 +15,8 @@ import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/bug_reports/bug_report_config.dart';
+import 'package:yovoice/features/bug_reports/presentation/bug_report_launcher.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/blocked_users_screen.dart';
 import 'package:yovoice/features/marketing/data/services/public_showcase_consent_service.dart';
@@ -994,6 +996,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               onTap: () => _openUrl('https://yovoice.app/help-center'),
             ),
+            ...settingsBugReportRows(
+              context,
+              onReportBug: () => unawaited(BugReportLauncher.open(context)),
+            ),
             _SettingsTile(
               icon: Icons.support_agent_rounded,
               title: copy.text('Contact support', 'Skontaktuj się z pomocą'),
@@ -1434,6 +1440,50 @@ const double _settingsRowPadding = 16;
 const double _settingsLeadingBox = 40;
 const double _settingsTitleGap = 12;
 
+/// The Help group's bug-report rows: "Report a bug" for everyone and, in
+/// builds that carry the testing-period floating button, the per-device
+/// switch that shows or hides it.
+///
+/// Public so the rows can be exercised without the whole Settings screen,
+/// which needs a signed-in Firebase session to build.
+List<Widget> settingsBugReportRows(
+  BuildContext context, {
+  required VoidCallback onReportBug,
+  bool? buttonAvailable,
+}) {
+  final copy = AppLocalizations.of(context);
+  final colors = Theme.of(context).colorScheme;
+  final preferences = AppPreferencesScope.maybeOf(context);
+  return [
+    _SettingsTile(
+      key: const ValueKey('settings-report-bug'),
+      icon: Icons.bug_report_outlined,
+      title: copy.text('Report a bug', 'Zgłoś błąd'),
+      subtitle: copy.text(
+        'Describe the problem and, if you want, attach a screenshot',
+        'Opisz problem i, jeśli chcesz, dołącz zrzut ekranu',
+      ),
+      onTap: onReportBug,
+    ),
+    if ((buttonAvailable ?? bugReportButtonAvailable) && preferences != null)
+      _SettingsTile(
+        key: const ValueKey('settings-bug-button-switch'),
+        icon: Icons.touch_app_outlined,
+        title: copy.text('Show the Bug button', 'Pokazuj przycisk Bug'),
+        subtitle: copy.text(
+          'A small movable button for reporting bugs during testing',
+          'Mały, przesuwany przycisk do zgłaszania błędów w czasie testów',
+        ),
+        trailing: Switch.adaptive(
+          value: preferences.value.bugReportButtonVisible,
+          activeTrackColor: colors.primary,
+          onChanged: (visible) =>
+              unawaited(preferences.setBugReportButtonVisible(visible)),
+        ),
+      ),
+  ];
+}
+
 class _SettingsGroup extends StatelessWidget {
   const _SettingsGroup({required this.children, this.danger = false});
   final List<Widget> children;
@@ -1475,6 +1525,7 @@ class _SettingsGroup extends StatelessWidget {
 
 class _SettingsTile extends StatelessWidget {
   const _SettingsTile({
+    super.key,
     required this.icon,
     required this.title,
     this.subtitle,
