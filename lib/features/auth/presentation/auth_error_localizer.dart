@@ -7,12 +7,27 @@ import 'package:yovoice/features/auth/data/auth_service.dart';
 /// Converts authentication failures shown by the auth presentation layer into
 /// user-facing copy. Firebase's raw message is never exposed in Polish; unknown
 /// failures deliberately fall back to a safe, actionable message.
+/// Shown after the server ended every earlier session of an account whose
+/// Google/Apple sign-in inherited a password nobody verified
+/// ([FederatedSessionSecuredException]).
+String federatedSessionSecuredMessage(AppLocalizations copy) => copy.text(
+  'We secured your account and ended every earlier session, including a '
+      'password sign-in that was never verified. Sign in again to continue.',
+  'Zabezpieczyliśmy Twoje konto i zakończyliśmy wszystkie wcześniejsze '
+      'sesje, w tym logowanie hasłem, którego nikt nie potwierdził. Zaloguj '
+      'się ponownie, aby kontynuować.',
+);
+
 String localizedAuthError(
   BuildContext context,
   Object error, {
   AuthService? authService,
 }) {
   final copy = AppLocalizations.of(context);
+
+  if (error is FederatedSessionSecuredException) {
+    return federatedSessionSecuredMessage(copy);
+  }
 
   if (error is FirebaseAuthException) {
     return switch (error.code) {

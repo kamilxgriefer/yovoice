@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
@@ -34,6 +35,10 @@ enum AppleSignInAvailability {
 
 typedef AppleProviderProbe = Future<AppleSignInAvailability> Function();
 
+/// Calls `secureFederatedSignInV1` and returns its result map. Injectable so
+/// the post-sign-in takeover check can be asserted without Cloud Functions.
+typedef FederatedSignInSecurityCheck = Future<Map<String, dynamic>> Function();
+
 /// Removes this device's FCM token registration. Injectable so the
 /// sign-out ordering can be asserted without a live Firebase Messaging.
 typedef DeviceTokenUnregister = Future<void> Function();
@@ -54,6 +59,8 @@ class AuthService {
     @visibleForTesting bool? appleSignInFeatureEnabled,
     @visibleForTesting bool? appleUseWebPopup,
     @visibleForTesting AppleProviderProbe? appleProviderProbe,
+    @visibleForTesting
+    FederatedSignInSecurityCheck? federatedSignInSecurityCheck,
     @visibleForTesting PresenceService? presenceService,
     @visibleForTesting DeviceTokenUnregister? unregisterDeviceToken,
     @visibleForTesting ActiveVoiceSessionReader? activeVoiceSessionReader,
@@ -86,13 +93,22 @@ class AuthService {
              defaultValue: true,
            ),
        _appleUseWebPopup = appleUseWebPopup,
-       _appleProviderProbe = appleProviderProbe;
+       _appleProviderProbe = appleProviderProbe,
+       _injectedFederatedSignInSecurityCheck = federatedSignInSecurityCheck;
 
   final FirebaseAuth _firebaseAuth;
   final FirestoreService _firestoreService;
   final bool _appleSignInFeatureEnabled;
   final bool? _appleUseWebPopup;
   final AppleProviderProbe? _appleProviderProbe;
+  final FederatedSignInSecurityCheck? _injectedFederatedSignInSecurityCheck;
+
+  /// Upper bound on the post-sign-in takeover check. It covers a cold start of
+  /// the callable; past it the sign-in proceeds and the server sweep is the
+  /// backstop.
+  static const Duration federatedSignInSecurityCheckTimeout = Duration(
+    seconds: 20,
+  );
 
   // Resolved lazily, inside signOut() only. Building the production
   // PresenceService or touching PushNotificationService.instance eagerly in
@@ -185,6 +201,7 @@ class AuthService {
         credential,
         providerName: 'Google',
       );
+      await _secureReturningFederatedSignIn(credential);
 
       return credential;
     } on GoogleSignInException catch (error) {
@@ -280,6 +297,7 @@ class AuthService {
           : await _firebaseAuth.signInWithProvider(appleProvider);
 
       await _createSocialUserProfileIfNeeded(credential, providerName: 'Apple');
+      await _secureReturningFederatedSignIn(credential);
 
       return credential;
     } on FirebaseAuthException {
@@ -650,6 +668,66 @@ class AuthService {
     }
   }
 
+  /// Closes a pre-registered account takeover from the owner's side.
+  ///
+  /// Anyone can register a stranger's address with a password. When the
+  /// owner then signs in with Google or Apple, Firebase gives the owner that
+  /// same account — and the pre-registrant's session survives. Right after a
+  /// RETURNING Google/Apple sign-in, the owner's client is the one party the
+  /// pre-registrant cannot silence, so it asks the server to check the
+  /// account (`secureFederatedSignInV1`, functions/auth/federated_takeover.js).
+  ///
+  /// When the server remediates, it has revoked every refresh token of the
+  /// account — this device's too — and its session epoch refuses this
+  /// session's ID token for push registration. The app therefore signs out
+  /// and asks the owner to sign in once more; that new session is after the
+  /// epoch and nothing further happens. No device token is passed: this
+  /// device registers push only after the shell opens and rotates its token
+  /// on every identity change, so there is none to keep yet.
+  ///
+  /// Best-effort by design: an unreachable or not-yet-deployed function never
+  /// blocks a sign-in. The scheduled server sweep covers the account anyway.
+  Future<void> _secureReturningFederatedSignIn(
+    UserCredential credential,
+  ) async {
+    final isNewUser = credential.additionalUserInfo?.isNewUser ?? false;
+    if (isNewUser || credential.user == null) return;
+
+    final Map<String, dynamic> result;
+    try {
+      final check =
+          _injectedFederatedSignInSecurityCheck ?? _callSecureFederatedSignIn;
+      result = await check().timeout(federatedSignInSecurityCheckTimeout);
+    } catch (error) {
+      debugPrint(
+        'AuthService: the post-sign-in account check did not complete '
+        '(${error.runtimeType}). Sign-in continues; the server sweep covers '
+        'this account.',
+      );
+      return;
+    }
+
+    if (result['status'] != 'remediated') return;
+
+    try {
+      await signOut();
+    } catch (error) {
+      debugPrint(
+        'AuthService: sign-out after the account was secured failed '
+        '(${error.runtimeType}).',
+      );
+    }
+    throw const FederatedSessionSecuredException();
+  }
+
+  Future<Map<String, dynamic>> _callSecureFederatedSignIn() async {
+    final response = await FirebaseFunctions.instanceFor(
+      region: 'europe-west1',
+    ).httpsCallable('secureFederatedSignInV1').call<Object?>();
+    final data = response.data;
+    return data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+  }
+
   Future<void> _createSocialUserProfileIfNeeded(
     UserCredential credential, {
     required String providerName,
@@ -852,4 +930,17 @@ class AuthServiceException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// The server found that this Google/Apple sign-in inherited a password
+/// account its holder never verified, ended every earlier session (this
+/// device's included) and removed that password. The owner signs in once
+/// more and continues normally.
+class FederatedSessionSecuredException extends AuthServiceException {
+  const FederatedSessionSecuredException()
+    : super(
+        'We secured your account and ended every earlier session, including '
+        'a password sign-in that was never verified. Sign in again to '
+        'continue.',
+      );
 }
