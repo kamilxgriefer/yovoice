@@ -812,6 +812,48 @@ void main() {
   });
 
   testWidgets(
+    'a camera clip the camera capped at 60 s declares 60 even measured past it',
+    (tester) async {
+      final video = _UnreadableXFile(
+        'shot.mp4',
+        declaredLength: 8192,
+        mimeType: 'video/mp4',
+      );
+      // A full-length camera recording always measures a little over 60 s;
+      // inside the shared 2 s grace it is declared as the cap.
+      await pump(
+        tester,
+        service(),
+        video: video,
+        videoDuration: const Duration(milliseconds: 60_400),
+      );
+      await attach(tester, 'Record video');
+      expect(calls.first.$1, 'reserveServerChannelMessageMediaV1');
+      expect(calls.first.$2['durationSeconds'], 60);
+      expect(uploads, hasLength(1));
+
+      // Past the grace it is simply a longer video, and still refused.
+      calls.clear();
+      uploads.clear();
+      await pump(
+        tester,
+        service(),
+        video: video,
+        videoDuration: const Duration(milliseconds: 62_500),
+      );
+      await attach(tester, 'Record video');
+      expect(calls, isEmpty);
+      expect(
+        find.text(
+          'Your video could not be sent. Choose a video up to 60 seconds and '
+          'try again.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
     'a clip the review measures over the cap is refused there, not mid-send',
     (tester) async {
       final video = _UnreadableXFile(

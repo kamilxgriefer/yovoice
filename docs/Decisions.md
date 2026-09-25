@@ -15174,3 +15174,96 @@ control; making the retry a true replay fixes the client without touching it.
   1440 px, not by looking at them.
 - **No server-side video thumbnails.** A video poster is a placeholder with
   the duration; DMs have none either, so this is parity, not a regression.
+
+## ADR-XXX: A take that reaches its recorder's cap is a full-length take: the server accepts a 2 s measured grace and stores the cap
+
+**Date:** 2026-09-25 · **Status:** accepted (source on the `voice-60s`
+branch, based on `985dceee`) · **NOT DEPLOYED**
+
+### Context
+
+Kamil: "jak nagrywasz głosówkę na chat minutową to nie można jej wysłać, tak
+że samo Ci już przerywa wiadomość". The DM voice sheet stops itself when its
+Dart `Stopwatch` reads 60.000 s and declares
+`elapsed.inSeconds.clamp(1, 60)` = 60, so every declared-duration gate
+(client, reserve callable, Storage rules, reservation re-check) passes. But
+`VoiceMomentRecorder` starts that stopwatch only after the native start has
+returned and stops it before the native stop, so the `.m4a` always covers more
+than the stopwatch interval, and the trusted probe reports the **longest** of
+its container readings (AAC priming included). `validateDirectMediaProbe`
+refused any measured length over 60,000 ms as `failed-precondition` "The
+uploaded attachment tracks are invalid.", the client treats that as terminal
+("Nie wysłano"), and Retry replays the same bytes, so a one-minute voice
+message could never be delivered. The same code is on 3.0.0+34 and +35. The
+Family Memory composer has the same defect at 30 s, and the same class of
+mismatch refused a full-length **camera** video on the client
+(`ceil(60.0x) = 61 > 60`). Evidence:
+`yovoice-evidence/2026-09-25/diagnosis-voice-60s.md` and
+`verdict-voice-60s.md`.
+
+### Decision
+
+1. **The product limit stays 60 s (30 s for a Family Memory note); the
+   measurement gets a 2 s grace, and the stored value is clamped to the
+   limit.** `functions/messaging/direct_integrity.js` owns
+   `DIRECT_MEDIA_MAX_SECONDS = 60` and `DIRECT_MEDIA_DURATION_GRACE_MS =
+   2_000`; `validateDirectMediaProbe` accepts a measured 1..62,000 ms and
+   returns `min(60, max(1, ceil(ms / 1000)))`. Because the validator is
+   shared, this covers DM voice, DM video, server channel video
+   (`servers/message_media.js`) and the attachment migration.
+   `functions/servers/family_memories.js` gets `VOICE_DURATION_GRACE_MS =
+   2000` and stores `min(30_000, measured)`.
+2. **Nothing a client declares changes.** Reserve, Storage rules and the
+   canonical message / memory validators stay at 1..60 s and ≤ 30,000 ms; the
+   clamp is what keeps a 61 s file from writing `durationSeconds: 61` and
+   turning every later read into `data-loss`. The ±2 s declared-vs-measured
+   tolerance is unchanged and is checked against the clamped value, so a
+   short declaration can never borrow the grace (declared 12 s, measured 61 s
+   is still refused, and the tests now pin that reason).
+3. **The client mirrors the contract in one place.**
+   `message_service.dart` has `directMediaMaxSeconds` (with
+   `directVideoMaxSeconds` and `directVoiceMaxSeconds` defined on it),
+   `directMediaDurationGraceMs` and `directCappedTakeSeconds`, used only where
+   the camera itself capped the clip (DM `chat_screen.dart` and
+   `server_text_channel_scene.dart`). Library clips keep the strict
+   `ceil ≤ 60` check and the ADR-212 review is untouched.
+4. **The cap is announced, not silent.** Both capped recorders (DM voice,
+   Family Memory voice) show a `YoRecordingCountdown` pill in the final ten
+   seconds, give one light haptic and one polite announcement at ten seconds
+   left and again at the automatic stop, and keep the take ready to send with
+   a line saying why it ended. The pill holds its space for the whole take,
+   so the stop control never moves in the last seconds; its fade goes
+   through `AppMotion.resolve`. Voice Moments keep their own screen and are
+   unchanged.
+5. The DM sheet gains an injectable recorder (`ChatScreen.voiceRecorderFactory`,
+   the same seam the Family Memory composer already had) and a `_stopping`
+   guard against a Stop tap racing the automatic stop.
+
+### Reasoning
+
+Only the server fix reaches the released 3.0.0 builds without an app update:
+old clients already declare ≤ 60 and already send the longer file. Stopping
+the client earlier (say 59.5 s) could not be proven sufficient without
+device measurements and would not fix installed apps. 2 s is the smallest
+round number that clearly covers the causes the diagnosis names (platform
+channel latency at both ends, a blocking read finishing after stop on
+Android, ~46 ms of AAC priming) and it equals the existing declared-vs-measured
+tolerance, so the two bounds agree.
+
+### Consequences
+
+- A stored voice or video message says 1:00 while its file may run up to
+  62 s; a Family Memory note says 0:30 while its file may run up to 32 s.
+- **Deploy Functions first.** It is compatible both ways: old and new clients
+  declare ≤ 60, and it alone makes an auto-stopped take deliverable. A
+  "Nie wysłano" card left from before the deploy should deliver on Retry as
+  long as its reservation is still valid or can be rotated — to be confirmed
+  on a device. No rules, index, schema or secret change; no new Cloud
+  Function, so the pinned export counts do not move.
+- **UNVERIFIED:** the real measured overage on iOS, Android and web
+  (`record_web`), and whether 2 s covers every device. Log
+  `probe.durationMs` on finalize after the deploy, or filter Crashlytics
+  non-fatals for callable `finalizeDirectMessageAttachment`.
+- The countdown, haptics and announcements are proven by widget tests and by
+  rendered frames (`yovoice-evidence/2026-09-25/voice-60s/`, 390 and 1440 px,
+  Dark and Pearl), not on a device or simulator.
