@@ -24,7 +24,7 @@ in this order: `nb/yeels-scrub`, `nb/friend-actions`, `nb/confirm-upload`,
 `nb/server-delete`, `nb/giphy`, `nb/server-live`, `nb/notifications`. The
 split into tasks, and the decisions taken before any branch started, are in
 `docs/briefs/2026-09-19-next-build-decisions.md` on `nb/brief`. Five
-decisions came out of the work itself — ADR-210, ADR-211, ADR-212, ADR-213, ADR-214 —
+decisions came out of the work itself — ADR-211, ADR-212, ADR-213, ADR-214, ADR-215 —
 plus one amendment to ADR-180 that deliberately has no number of its own.
 The single deploy order for all of it, what stays OFF and the owner-only
 steps are in [DEPLOYMENT.md](DEPLOYMENT.md#next-build-after-300--one-deploy-order-for-the-whole-build-source-only-nothing-deployed);
@@ -39,7 +39,7 @@ migration.
 
 ### What each branch delivered
 
-- **Yeels drag-to-seek — `nb/yeels-scrub` ([ADR-210](Decisions.md#adr-210-a-finger-on-the-yeel-timeline-is-a-scrub-session-and-the-band-that-takes-it-is-translucent-and-drag-only)).**
+- **Yeels drag-to-seek — `nb/yeels-scrub` ([ADR-211](Decisions.md#adr-211-a-finger-on-the-yeel-timeline-is-a-scrub-session-and-the-band-that-takes-it-is-translucent-and-drag-only)).**
   Task 1 of the next-build split. Commits `38f29ebc` (coordinator scrub
   session), `14b8b9ce` (drag band on both Yeel stages, hairline fill fix),
   `953ccea2` (Voice story player finger-seek), `99a7817f` (review round).
@@ -81,7 +81,7 @@ migration.
   whose message privacy blocks opening the DM from the profile; a stable
   `details.reason` for the backend membership refusal (a backend change).
 
-- **Confirm before upload — `nb/confirm-upload` ([ADR-211](Decisions.md#adr-211-one-confirm-before-send-primitive-for-picked-media)).**
+- **Confirm before upload — `nb/confirm-upload` ([ADR-212](Decisions.md#adr-212-one-confirm-before-send-primitive-for-picked-media)).**
   Commits `a4515e92`, `6ba7d22a`, `3fb1097a` (review round). One review
   surface for media picked from a library: direct-message Photo library and
   Video library, and Company team files, now show what was picked, with size
@@ -111,7 +111,7 @@ migration.
   a device against the deployed backend.**
 
 - **GIPHY GIFs, option B — client search, server resolve-by-id —
-  `nb/giphy` ([ADR-213](Decisions.md#adr-213-giphy-is-searched-by-the-client-and-resolved-by-the-server-at-send-time-option-b))**
+  `nb/giphy` ([ADR-214](Decisions.md#adr-214-giphy-is-searched-by-the-client-and-resolved-by-the-server-at-send-time-option-b))**
   (**NOT DEPLOYED; STAYS OFF THROUGH THIS BUILD'S DEPLOY; OWNER STEPS
   PENDING**). Commits `0e681bc1`, `5ce945eb`, `4064cda1`. The app searches
   GIPHY directly with `rating=g` pinned and a compile-time key
@@ -129,7 +129,7 @@ migration.
   Waiting on: the GIPHY production key, the official mark files, the
   `GIPHY_API_KEY` secret, the privacy-policy update, the source flip and one
   separate deploy wave
-  ([DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-213)).
+  ([DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-214)).
 
 - **Empty server channel sessions end themselves — `nb/server-live`**
   (an amendment to [ADR-180](Decisions.md#adr-180-a-v1-generation-whose-host-vanished-is-bounded-by-a-scheduled-sweep-that-stages-it-for-end-through-the-existing-end-writer-and-worker-never-by-a-second-state-machine),
@@ -149,8 +149,8 @@ migration.
   and the provider drill are outstanding**, and so is the one-off repair run.
 
 - **Missing notifications, slice 1 — `nb/notifications` (tag
-  `nb-notifications-ready`), [ADR-212](Decisions.md#adr-212-a-comment-notifies-the-author-a-mention-is-validated-against-the-mentioned-persons-audience-and-a-reminder-finally-gets-sent)
-  and [ADR-214](Decisions.md#adr-214-a-notification-that-repeats-on-demand-is-a-channel-not-a-notice--reminders-page-re-arm-on-the-schedule-and-refuse-two-ways).**
+  `nb-notifications-ready`), [ADR-213](Decisions.md#adr-213-a-comment-notifies-the-author-a-mention-is-validated-against-the-mentioned-persons-audience-and-a-reminder-finally-gets-sent)
+  and [ADR-215](Decisions.md#adr-215-a-notification-that-repeats-on-demand-is-a-channel-not-a-notice--reminders-page-re-arm-on-the-schedule-and-refuse-two-ways).**
   Commits `cb00dfca`, `77f310b4`, `99599946`, `f0ea2867` (review round). The
   first slice of the notification gap analysis in
   `yovoice-evidence/2026-09-19/next-build-notifications-investigation.json`:
@@ -170,7 +170,7 @@ migration.
   destinations, icons, copy in 41 locales, and a "Moments & Yeels" preference
   group.
 
-  **ADR-214, the hardening round**, fixed four defects a pre-merge review
+  **ADR-215, the hardening round**, fixed four defects a pre-merge review
   found in source that was never deployed: the reminder query is now paged
   with a cursor under a 240 s wall-clock budget instead of a silent
   `limit(100)` cliff; a delivered event is stamped so a cosmetic edit cannot
@@ -726,7 +726,7 @@ their separate production-deployment gates.
   `63507816`. Visiting Activity clears its unread rows and banner, and
   **Mark all read** drains inboxes larger than 400 rows.
 
-- **GIPHY GIFs, option B (ADR-213)** — source on `nb/giphy`, merged into the
+- **GIPHY GIFs, option B (ADR-214)** — source on `nb/giphy`, merged into the
   next build. Not repeated here: the full entry is in
   [Next build after 3.0.0](#next-build-after-300--seven-branches-on-nbintegrate--source-only-nothing-deployed--2026-09-20)
   above, because it ships with that build and not with this one.

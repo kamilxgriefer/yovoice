@@ -38,7 +38,7 @@ const _kPreferenceGroups = [
       NotificationType.serverRole,
     ],
   ),
-  // Moments & Yeels (ADR-212). One switch stands for three server types —
+  // Moments & Yeels (ADR-213). One switch stands for three server types —
   // see _coveredTypes: a person who turns comments off does not expect an
   // @mention inside a comment to still ring.
   _PreferenceGroup(

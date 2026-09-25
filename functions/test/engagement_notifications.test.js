@@ -1,5 +1,5 @@
 /**
- * Comment, voice-comment and @mention notifications (ADR-212).
+ * Comment, voice-comment and @mention notifications (ADR-213).
  *
  * The properties that matter, in order:
  *   - a comment tells the parent's AUTHOR and nobody else;

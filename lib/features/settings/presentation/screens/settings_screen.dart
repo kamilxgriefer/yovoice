@@ -852,7 +852,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
-        // GIPHY disclosure (ADR-213). Always shown, not only in builds that
+        // GIPHY disclosure (ADR-214). Always shown, not only in builds that
         // search GIPHY: a GIPHY GIF someone else sent renders here too, and
         // the switch above is the control for that contact.
         Padding(

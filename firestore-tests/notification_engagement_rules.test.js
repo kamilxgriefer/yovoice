@@ -1,6 +1,6 @@
 /**
  * Rules coverage for the comment/@mention/Server notification slice
- * (ADR-212), run against the real ../firestore.rules.
+ * (ADR-213), run against the real ../firestore.rules.
  *
  * Two boundaries are asserted here:
  *

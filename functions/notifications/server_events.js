@@ -1,5 +1,5 @@
 /**
- * Server event reminders (ADR-212).
+ * Server event reminders (ADR-213).
  *
  * Family calendar entries and Podcast program entries already let a member
  * tap "remind me": `respondToServerEventV1` stores `reminderRequested` on

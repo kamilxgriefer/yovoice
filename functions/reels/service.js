@@ -3165,7 +3165,7 @@ function createReelService({
 
   async function createReelComment(request) {
     const auth = requireActor(request);
-    // `mentionUserIds` is OPTIONAL and additive (ADR-212). Absent — which is
+    // `mentionUserIds` is OPTIONAL and additive (ADR-213). Absent — which is
     // every installed client — leaves the input, its hash and the stored
     // comment byte for byte what they were.
     const data = requireExactInput(

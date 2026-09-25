@@ -1,4 +1,4 @@
-/// GIPHY copy (ADR-213): the picker's section labels, its GIPHY-only failure
+/// GIPHY copy (ADR-214): the picker's section labels, its GIPHY-only failure
 /// line and the privacy disclosure beside "Load GIFs automatically".
 ///
 /// "Powered by GIPHY" here is the accessibility label and text fallback of

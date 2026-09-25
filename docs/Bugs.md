@@ -26,7 +26,7 @@ childless box takes the smallest size it is allowed, so the fill laid out
 `200 × 0` inside a `400 × 2` track: the bar showed the unplayed track and never
 any progress. The existing tests measured only the fill's width. Fixed with
 `heightFactor: 1`; `test/reel_progress_scrubber_test.dart` now pins the
-fill's height (ADR-210).
+fill's height (ADR-211).
 
 ### FIXED IN SOURCE — Yeels had no way to seek, for anyone (2026-09-19, next build, `nb/yeels-scrub`)
 
@@ -35,7 +35,7 @@ semantics node with no increase/decrease, so a screen-reader or keyboard user
 could not move through a Yeel at all, and the coordinator had no public seek.
 Fixed by the scrub session on `ReelPlaybackCoordinator` and the drag band
 `ReelProgressScrubber` (adjustable slider node ±5 s, arrow keys, mouse click)
-on both stages, plus finger-seek on the Voice story player waveform (ADR-210).
+on both stages, plus finger-seek on the Voice story player waveform (ADR-211).
 **Still UNVERIFIED on devices:** seek latency and frame-preview smoothness,
 and the arena feel of a diagonal flick from the bottom edge.
 
@@ -86,7 +86,7 @@ of scope — the client matches the backend's message text for now.
 longer (or over-64 MB) video from the library was accepted by the picker and
 refused after the enqueue, as a snackbar. Library photos and videos in a
 direct chat, and Company team files, were queued or uploaded the moment the
-picker returned. Fixed by the media review (ADR-211): the file is shown first,
+picker returned. Fixed by the media review (ADR-212): the file is shown first,
 and a video over the limit is blocked in the review with the reason and
 "Choose another". The service and backend checks are unchanged.
 
@@ -154,10 +154,10 @@ session the classifier could not prove dead. Such a channel cannot start a new
 session until an operator repairs it by hand. The repair script reports it as
 `unresolved`; that is a review item, not a script failure.
 
-### FIXED IN SOURCE — four repeat/drop defects in the ADR-212 notification slice (2026-09-20, next build, `nb/notifications` review round)
+### FIXED IN SOURCE — four repeat/drop defects in the ADR-213 notification slice (2026-09-20, next build, `nb/notifications` review round)
 
 Found by a pre-merge review of `nb/notifications`, all four on source that was
-never deployed. Fixed on the same branch; ADR-214 has the reasoning.
+never deployed. Fixed on the same branch; ADR-215 has the reasoning.
 
 1. **The reminder worker dropped events permanently.** One
    `collectionGroup("events")` query with `limit(100)`, never paged,
@@ -195,7 +195,7 @@ the previously silent 500-response truncation is now a cursor.
 ### FIXED IN SOURCE — a failed channel photo locked out every photo and video for fifteen minutes (2026-09-20, next build, `nb/integrate` final review round)
 
 Found by the final pre-merge review of the integration branch, on the seam
-where the ADR-211 review sheet meets the server channel media pipeline —
+where the ADR-212 review sheet meets the server channel media pipeline —
 source that was never deployed.
 
 `ClubChatService.sendServerMediaMessage` minted a fresh `reserveRequestId` at

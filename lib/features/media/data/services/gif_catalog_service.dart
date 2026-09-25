@@ -11,7 +11,7 @@ import 'package:yovoice/features/media/data/services/giphy_pingbacks.dart';
 /// What the picker is showing right now.
 enum GifQueryStatus { idle, loading, ready, empty, error, unavailable }
 
-/// The GIPHY half of the picker (ADR-213). `off` whenever this build has no
+/// The GIPHY half of the picker (ADR-214). `off` whenever this build has no
 /// GIPHY key or the server cannot resolve GIPHY ids, which is exactly the
 /// Originals-only picker that shipped before GIPHY.
 enum GiphySectionStatus { off, loading, ready, error }
@@ -77,7 +77,7 @@ class GifQueryState {
 
   final GifUnavailableReason? unavailableReason;
 
-  /// GIPHY results for [query], searched by the app itself (ADR-213). Always
+  /// GIPHY results for [query], searched by the app itself (ADR-214). Always
   /// empty while [giphyStatus] is [GiphySectionStatus.off].
   final List<GifAsset> giphyItems;
   final GiphySectionStatus giphyStatus;
@@ -443,7 +443,7 @@ class GifCatalogService extends ChangeNotifier {
   }
 
   // -------------------------------------------------------------------------
-  // GIPHY (ADR-213, option B): searched here, resolved by the server at send.
+  // GIPHY (ADR-214, option B): searched here, resolved by the server at send.
   // -------------------------------------------------------------------------
 
   void _startGiphy(String query) {

@@ -867,7 +867,7 @@ through two years ahead, last at most seven days and carry a validated IANA
 timezone. `going`, `maybe` and `declined` counts change in the same transaction
 as the member's response. Family and Podcast members may additionally set the
 exact optional boolean `reminderRequested`; its count changes atomically with
-the response. Since 2026-09-19 (ADR-212) that intent is DELIVERED:
+the response. Since 2026-09-19 (ADR-213) that intent is DELIVERED:
 `sendServerEventRemindersSchedule` runs every five minutes, finds scheduled
 reminder-capable events starting within fifteen minutes through a paged
 `collectionGroup("events")` query (COLLECTION_GROUP index on
@@ -875,7 +875,7 @@ reminder-capable events starting within fifteen minutes through a paged
 `serverEventReminder` notification per opted-in member whose membership and
 channel ACL still hold. Both the event query and the opted-in responses are
 followed by a cursor until exhausted, bounded by a wall-clock budget rather
-than a document count, and an unfinished run is logged (ADR-214). The
+than a document count, and an unfinished run is logged (ADR-215). The
 notification id carries the event revision, and a server-written stamp on the
 event decides whether a reminder re-arms: a reschedule that moves the start
 further than the whole horizon does, a description or title edit does not,

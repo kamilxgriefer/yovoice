@@ -10394,7 +10394,7 @@ means this.)*
 
 **Amendment — 2026-09-19.** GIPHY is now designed as client-side search with
 server-side resolution by id at send time, per GIPHY's current terms; see
-[ADR-213](#adr-213-giphy-is-searched-by-the-client-and-resolved-by-the-server-at-send-time-option-b).
+[ADR-214](#adr-214-giphy-is-searched-by-the-client-and-resolved-by-the-server-at-send-time-option-b).
 The server-proxied search described below stays dormant.
 
 **Amendment — 2026-09-13.** The provider and rollout status below describe the
@@ -14078,7 +14078,7 @@ than a primitive built on a premise that a test or the schema contradicts.
     Roadmap 0n);
   - the two failing screenshot-harness fixtures (`docs/Bugs.md`).
 
-## ADR-210: A finger on the Yeel timeline is a scrub session, and the band that takes it is translucent and drag-only
+## ADR-211: A finger on the Yeel timeline is a scrub session, and the band that takes it is translucent and drag-only
 
 **Date:** 2026-09-19 · **Status:** accepted (in source on `nb/yeels-scrub`;
 device feel UNVERIFIED) · **Base:** `3.0.0+34` (`f71a2ae2`)
@@ -14188,7 +14188,7 @@ position on release; that is intended.
 
 ---
 
-## ADR-211: One confirm-before-send primitive for picked media
+## ADR-212: One confirm-before-send primitive for picked media
 
 **Date:** 2026-09-19 · **Status:** accepted (source on `nb/confirm-upload`,
 next build after 3.0.0+34) · **Decisions:** `docs/briefs/2026-09-19-next-build-decisions.md`
@@ -14245,10 +14245,10 @@ confirm (above) and the retired Clubs/Rooms screens are untouched.
 
 ### Amendment, 2026-09-20 — the review's second surface: server channels
 
-`6a473b27`, on `nb/integrate`. ADR-215 gave server text channels photo and
+`6a473b27`, on `nb/integrate`. ADR-216 gave server text channels photo and
 video messages, and its branch deliberately shipped **no** confirm step so
 that a second implementation would never have to be deleted at integration
-(ADR-215, deviation 7). That reservation is now spent, and this ADR's own
+(ADR-216, deviation 7). That reservation is now spent, and this ADR's own
 Consequence — "Task 2's server-channel photos and videos must open this
 review from their first commit" — is met by adoption rather than by a copy.
 
@@ -14279,7 +14279,7 @@ review from their first commit" — is met by adoption rather than by a copy.
   contract the chat passes. The pre-existing byte and duration checks stay
   ahead of the review as the backstop; nothing was moved into it.
 - **Nothing reads the pick into memory.** The bound is still measured with
-  `XFile.length()` and the upload still streams from disk on io (ADR-215,
+  `XFile.length()` and the upload still streams from disk on io (ADR-216,
   decision 5). The review previews the same `XFile` and neither moves,
   rewrites nor deletes it, which is the compatibility condition the upload
   split named.
@@ -14315,7 +14315,7 @@ idempotency (ADR-204, ADR-205) are unchanged.
 - Frames: `yovoice-evidence/2026-09-19/next-build/confirm-upload/` (390 and
   1440, Dark and Pearl), from `test/nb_confirm_upload_capture.dart`.
 
-## ADR-212: A comment notifies the author, a mention is validated against the mentioned person's audience, and a reminder finally gets sent
+## ADR-213: A comment notifies the author, a mention is validated against the mentioned person's audience, and a reminder finally gets sent
 
 **Date:** 2026-09-19
 
@@ -14418,12 +14418,12 @@ validator" from a silent unchecked push into no push at all.
   callables accept `mentionUserIds` for Yeels already; only the Moment
   composer sends one).
 
-## ADR-213: GIPHY is searched by the client and resolved by the server at send time (option B)
+## ADR-214: GIPHY is searched by the client and resolved by the server at send time (option B)
 
-*(Written as ADR-210 on branch `nb/giphy`, the next free number after ADR-209,
+*(Written as ADR-211 on branch `nb/giphy`, the next free number after ADR-209,
 and renumbered to 213 at the next-build merge in `9b941f14` because three
 branches had each taken 210. Every code comment, anchor and deployment heading
-was moved with it: this entry is ADR-213 everywhere now, and nothing still
+was moved with it: this entry is ADR-214 everywhere now, and nothing still
 cites 210 for GIPHY.)*
 
 **Context (2026-09-19).** ADR-172 designed GIPHY as a server-proxied surface:
@@ -14533,16 +14533,16 @@ secret-free deploy discovery unchanged until the secret genuinely exists.
 - **Older clients** ignore `resolvableProviders`, keep sending Originals and
   render received GIPHY messages through the existing pinned-URL path.
 - Activation steps are in
-  [DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-213).
+  [DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-214).
 
 
-## ADR-214: A notification that repeats on demand is a channel, not a notice — reminders page, re-arm on the schedule, and refuse two ways
+## ADR-215: A notification that repeats on demand is a channel, not a notice — reminders page, re-arm on the schedule, and refuse two ways
 
 **Date:** 2026-09-20
 
 ### Context
 
-[ADR-212](#adr-212-a-comment-notifies-the-author-a-mention-is-validated-against-the-mentioned-persons-audience-and-a-reminder-finally-gets-sent)
+[ADR-213](#adr-213-a-comment-notifies-the-author-a-mention-is-validated-against-the-mentioned-persons-audience-and-a-reminder-finally-gets-sent)
 shipped three new producers. A review round before the merge found four
 places where the design's own promises were not actually kept by the code.
 
@@ -14620,7 +14620,7 @@ charge it, rather than to trust that the mutation is rare.
 Deleting a row because the server does not know how to revalidate its type
 gets the failure direction backwards: a missing validator is our gap, and the
 recipient's data should not pay for it. Skipping the push is the honest
-degradation the ADR-212 text already claimed.
+degradation the ADR-213 text already claimed.
 
 ### Consequences
 
@@ -14649,11 +14649,11 @@ degradation the ADR-212 text already claimed.
   budget removes the cheap volume, and `remindableEvent` already refuses a
   zero-opt-in event before it reads a single response.
 
-## ADR-215: Server channel reactions and media are Admin-SDK-only, and the "react" permission is derived in the callable, never stored in a channel grant
+## ADR-216: Server channel reactions and media are Admin-SDK-only, and the "react" permission is derived in the callable, never stored in a channel grant
 
 **Date:** 2026-09-19 · **Status:** accepted (source on `nb/server-messaging`,
 merged into `nb/integrate` at `0fbe42d0`; the upload platform split at
-`e69b1013`, the ADR-211 review on this surface at `6a473b27`, the retry-lease
+`e69b1013`, the ADR-212 review on this surface at `6a473b27`, the retry-lease
 fix at `77264f18`) · **NOT DEPLOYED**
 
 ### Context
@@ -14689,7 +14689,7 @@ obvious way to add "may react" to a V1 channel is a new capability key in
    (`lib/features/clubs/data/services/club_media_upload_source*.dart`): io
    streams the picked file with `putFile`, web keeps `putData`. The scene
    measures the pick with `XFile.length()` and never reads it into the heap.
-6. A library pick goes through **ADR-211's `YoMediaSendReview`** before any
+6. A library pick goes through **ADR-212's `YoMediaSendReview`** before any
    byte leaves the device; a camera capture deliberately does not.
 
 ### Reasoning
@@ -14778,7 +14778,7 @@ matches, and web is unchanged because a Blob has no path to stream from.
 7. **The confirm sheet was deliberately absent at branch time** — the branch
    sent immediately, exactly as DMs did, so there would only ever be one
    confirm implementation. That reservation is now spent: `6a473b27` adopts
-   ADR-211's shared review on this surface instead of growing a second one.
+   ADR-212's shared review on this surface instead of growing a second one.
 
 ### Residual, stated rather than hidden
 

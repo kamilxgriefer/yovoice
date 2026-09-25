@@ -1,5 +1,5 @@
 // Send-time asset resolution, split out of index.js so catalog.js (which
-// hosts the ADR-213 `resolveGif` callable) can use the same authority without
+// hosts the ADR-214 `resolveGif` callable) can use the same authority without
 // a require cycle through the module's public face. Behaviour is unchanged;
 // index.js re-exports it under the same name.
 

@@ -226,7 +226,7 @@ class ReelProgressRow extends StatelessWidget {
   }
 }
 
-/// Drag-to-seek over a [ReelProgressBar] (ADR-210).
+/// Drag-to-seek over a [ReelProgressBar] (ADR-211).
 ///
 /// A band laid over the hairline, never around it: the visible bar keeps its
 /// 2 px, its key and its place, so no stage geometry moves. The band is

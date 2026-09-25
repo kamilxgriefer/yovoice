@@ -205,7 +205,7 @@ List<MentionSegment> splitMentions(String text, MentionDirectory directory) {
 /// the composer's own directory before the comment is sent. The server
 /// re-checks every id against the mentioned person's audience and both
 /// block directions, so this is a HINT about who was meant, never a claim
-/// that they may be told (ADR-212).
+/// that they may be told (ADR-213).
 List<String> mentionedUserIds(
   String text,
   MentionDirectory directory, {

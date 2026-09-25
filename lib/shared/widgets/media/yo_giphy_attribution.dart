@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
-/// GIPHY's "Powered By GIPHY" attribution mark (ADR-213).
+/// GIPHY's "Powered By GIPHY" attribution mark (ADR-214).
 ///
 /// GIPHY's terms require its official mark wherever GIPHY search or browse
 /// results appear. This widget renders the OFFICIAL artwork from the app

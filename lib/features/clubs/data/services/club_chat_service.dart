@@ -59,7 +59,7 @@ typedef ServerMediaUploader =
 /// replay of the same `requestId`. A client that minted a new id per press
 /// therefore turned a single failed upload into a quarter of an hour in which
 /// no photo or video could be sent to any channel of any server — the retry the
-/// ADR-211 review offers included. Carrying the reservation identity (and, once
+/// ADR-212 review offers included. Carrying the reservation identity (and, once
 /// they exist, the reservation and the committed generation) makes the second
 /// press a replay of the first attempt rather than a second reservation, which
 /// is what `ServerCompanyFileUploadAttempt` already does for Company Files.
@@ -357,7 +357,7 @@ class ClubChatService {
   /// identities that make every later attempt of it a replay.
   ///
   /// Hold the returned attempt for as long as the person can press Send again
-  /// for the same pick — the ADR-211 review keeps Send armed after a failure —
+  /// for the same pick — the ADR-212 review keeps Send armed after a failure —
   /// and hand the same object back to [sendServerMediaAttempt]. A fresh
   /// attempt per press would mint a fresh `requestId`, which
   /// `reserveServerChannelMessageMediaV1` reads as a *second* upload and

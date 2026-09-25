@@ -860,7 +860,7 @@ remains on the signed-out screen cannot prove ownership and the old account may
 still receive push until the next identity binding re-attempts invalidation;
 that narrow interval is logged explicitly rather than hidden.
 
-### Comment mentions and the new notification types (2026-09-19, ADR-212, source only, NOT deployed)
+### Comment mentions and the new notification types (2026-09-19, ADR-213, source only, NOT deployed)
 
 Who a comment `@`-mentions is stored in `commentMentions/{kind}_{parentId}_{commentId}`,
 written by the comment callable in the same transaction as the comment and

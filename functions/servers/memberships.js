@@ -151,7 +151,7 @@ function createServerMembershipService(dependencies) {
   const operations = createServerOperations(dependencies);
 
   // A promotion tells the member something they would otherwise only find
-  // by reopening the server (ADR-212). It is issued AFTER the membership
+  // by reopening the server (ADR-213). It is issued AFTER the membership
   // transaction commits: the canonical notification writer needs its own
   // reads, and Firestore forbids a read after a write, so folding it in
   // would mean reordering this transaction. Failure is logged and dropped

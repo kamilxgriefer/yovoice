@@ -10,7 +10,7 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_progress_row.da
 
 import 'reel_stage_test_support.dart';
 
-/// Drag-to-seek on the Yeel timeline (ADR-210): the band over the hairline.
+/// Drag-to-seek on the Yeel timeline (ADR-211): the band over the hairline.
 void main() {
   const bandKey = ValueKey<String>('reel-progress-scrub');
   const total = Duration(seconds: 20);

@@ -4802,7 +4802,7 @@ service cloud.firestore {
       }
     }
 
-    // Who a Voice Moment or Yeel comment @-mentions (ADR-212), written by
+    // Who a Voice Moment or Yeel comment @-mentions (ADR-213), written by
     // the comment callable in the SAME transaction as the comment and
     // deleted with it. Server-only in both directions, and deliberately not
     // a field on the comment: a Voice Moment comment IS readable by the

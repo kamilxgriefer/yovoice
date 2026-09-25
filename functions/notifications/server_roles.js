@@ -1,5 +1,5 @@
 /**
- * "You were given a role" / "you were made owner" (ADR-212).
+ * "You were given a role" / "you were made owner" (ADR-213).
  *
  * PROMOTIONS ONLY. A demotion, a removal or a ban is deliberately silent:
  * an admin who can strip a role can otherwise also push a notification to

@@ -2943,7 +2943,7 @@ class _OverlayFooter extends StatelessWidget {
             ),
           // Last, so it is first to see a pointer — but translucent and
           // drag-only, so every tap inside it still reaches the controls
-          // above and the playback surface below (ADR-210). The visible bar
+          // above and the playback surface below (ADR-211). The visible bar
           // above keeps its 2 px and its place.
           PositionedDirectional(
             start: 0,
@@ -2979,7 +2979,7 @@ const double _immersiveScrubBandHeight = 48;
 const double _frameScrubBandHeight = 48;
 
 /// Overlay chrome steps back while a finger scrubs the timeline, so the
-/// previewed frame is visible (ADR-210). Under Reduce Motion nothing fades:
+/// previewed frame is visible (ADR-211). Under Reduce Motion nothing fades:
 /// the chrome simply stays.
 class _ScrubChromeFade extends StatelessWidget {
   const _ScrubChromeFade({required this.scrubbing, required this.child});

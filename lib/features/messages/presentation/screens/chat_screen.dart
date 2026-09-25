@@ -131,7 +131,7 @@ class ChatScreen extends StatefulWidget {
   final DirectMessageVideoPicker? videoPicker;
   final DirectMessageVideoInspector? videoInspector;
 
-  /// Builds the local preview player in the library review (ADR-211).
+  /// Builds the local preview player in the library review (ADR-212).
   /// Production leaves this null and plays the picked file on the platform.
   final YoMediaPreviewControllerFactory? videoPreviewControllerFactory;
   final DirectMessageVoiceRecorderPresenter? voiceRecorderPresenter;
@@ -1465,7 +1465,7 @@ class _ChatScreenState extends State<ChatScreen> {
     ),
   );
 
-  /// Library picks are confirmed before anything is queued (ADR-211). The
+  /// Library picks are confirmed before anything is queued (ADR-212). The
   /// camera keeps its own OS Use/Retake step and enqueues directly.
   Future<YoMediaSendDecision?> _reviewLibraryMedia(
     YoPickedMedia item, {

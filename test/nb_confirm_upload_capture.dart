@@ -1,4 +1,4 @@
-// Developer-only visual capture for "confirm before upload" (ADR-211): the
+// Developer-only visual capture for "confirm before upload" (ADR-212): the
 // picked-media review opened from the real ChatScreen (Photo library, Video
 // library) and from the real Company files board, at 390 and 1440 px, Dark
 // and Pearl, Polish, text 1.0.

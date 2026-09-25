@@ -91,7 +91,7 @@ function inspectColdStart() {
 }
 
 // Every export of functions/index.js, sorted. 261 names.
-// 2026-09-19 (ADR-212): onMomentCommentCreated/Deleted,
+// 2026-09-19 (ADR-213): onMomentCommentCreated/Deleted,
 // onReelCommentCreated/Deleted and sendServerEventRemindersSchedule join the
 // map — the comment-notification triggers and the Server event reminder
 // worker. 2026-09-19 (ADR-180 amendment): releaseServerChannelSessionIfEmptyV1

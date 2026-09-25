@@ -1,5 +1,5 @@
 /// Copy introduced by the comment, @mention, Server event reminder and
-/// Server role notifications (ADR-212).
+/// Server role notifications (ADR-213).
 ///
 /// Every string here is a notification title the bell renders, or a label in
 /// the notification preferences screen. "Moment" and "Yeel" are product

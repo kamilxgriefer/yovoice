@@ -315,7 +315,7 @@ void main() {
   }
 
   /// Confirms the confirm-before-send review a library pick now opens
-  /// (ADR-211). A pick the backstop refused never gets that far, so the tap is
+  /// (ADR-212). A pick the backstop refused never gets that far, so the tap is
   /// conditional — the review's presence is asserted where it is the subject.
   Future<void> confirmReview(WidgetTester tester) async {
     final send = find.byKey(const ValueKey('yo-media-review-send'));

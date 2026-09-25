@@ -305,7 +305,7 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
         text: text,
         // Exactly the names this composer resolved for this viewer. The
         // server revalidates each one against the mentioned person's
-        // audience and blocks before anybody is notified (ADR-212).
+        // audience and blocks before anybody is notified (ADR-213).
         mentionUserIds: mentionedUserIds(text, _composerDirectory()),
       );
       _controller.clear();

@@ -1,5 +1,5 @@
 /**
- * Comment notifications for Voice Moments and Yeels (ADR-212).
+ * Comment notifications for Voice Moments and Yeels (ADR-213).
  *
  * The producer is a Firestore trigger on the comment subcollection, not a
  * change to the four comment callables: `createMomentComment`,

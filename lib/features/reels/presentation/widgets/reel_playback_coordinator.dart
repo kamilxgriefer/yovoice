@@ -38,7 +38,7 @@ abstract interface class ReelAudioPlayback {
 
 typedef ReelAudioPlaybackFactory = ReelAudioPlayback Function();
 
-/// What a finger on the Yeel timeline drives (ADR-210).
+/// What a finger on the Yeel timeline drives (ADR-211).
 ///
 /// A drag is one session: [beginScrub] holds playback, every [scrubTo] moves
 /// the published position at once and previews the frame through coalesced
@@ -193,7 +193,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier
   int _epoch = 0;
   int _commandVersion = 0;
 
-  // A finger on the timeline (ADR-210). While [_scrubbing] only the finger
+  // A finger on the timeline (ADR-211). While [_scrubbing] only the finger
   // publishes the position, autoplay stands down, and the engines hold still
   // apart from the coalesced preview seeks.
   bool _scrubbing = false;

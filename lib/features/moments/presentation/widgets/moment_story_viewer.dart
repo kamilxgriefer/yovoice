@@ -217,7 +217,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer>
   Duration? _duration;
   String? _playbackError;
 
-  /// Finger-seek state (ADR-210): the latest target not yet sent, whether a
+  /// Finger-seek state (ADR-211): the latest target not yet sent, whether a
   /// seek is in flight, and whether a finger holds the waveform. While either
   /// of the last two is true, engine position events are stale and ignored,
   /// so the waveform stays under the finger.
@@ -624,7 +624,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer>
     await _play(_current);
   }
 
-  /// Finger-seek on the stage waveform (ADR-210): the same transparent-slider
+  /// Finger-seek on the stage waveform (ADR-211): the same transparent-slider
   /// pattern as the feed row. Playback keeps its state; only the position
   /// moves. Offered only once the player has reported a real duration, so a
   /// Moment that never loaded cannot pretend to be seekable.

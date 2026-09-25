@@ -1,5 +1,5 @@
 /**
- * @-mentions in Voice Moment and Yeel comments (ADR-212).
+ * @-mentions in Voice Moment and Yeel comments (ADR-213).
  *
  * The four comment callables accept an OPTIONAL `mentionUserIds` input: the
  * user ids the composer resolved from the viewer's own thread participants

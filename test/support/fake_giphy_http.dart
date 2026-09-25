@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-/// A GIPHY API double for the client-side search path (ADR-213).
+/// A GIPHY API double for the client-side search path (ADR-214).
 ///
 /// It answers `/v1/gifs/trending`, `/v1/gifs/search` and `/v1/randomid` from
 /// fixtures and records every request, so a test can prove what was (and was

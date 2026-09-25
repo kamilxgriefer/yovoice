@@ -2636,7 +2636,7 @@ function createMomentIntegrityService({
 
   async function createMomentComment(request) {
     const auth = requireActor(request);
-    // `mentionUserIds` is OPTIONAL and additive (ADR-212): an installed
+    // `mentionUserIds` is OPTIONAL and additive (ADR-213): an installed
     // client that never sends it produces exactly the input, the input hash
     // and the stored comment it produced before mentions existed.
     const data = requireExactInput(

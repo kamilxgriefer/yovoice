@@ -14,7 +14,7 @@ enum NotificationType {
   missedCall,
   mention,
   reply,
-  // Engagement and Server activity (ADR-212). Server-written like every
+  // Engagement and Server activity (ADR-213). Server-written like every
   // other type: a comment trigger, the event reminder worker and the
   // membership callables produce these.
   momentComment,

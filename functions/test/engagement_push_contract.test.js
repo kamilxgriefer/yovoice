@@ -1,6 +1,6 @@
 /**
  * The push contract for the notification types added on 2026-09-19
- * (ADR-212), and the deny-by-default rule that makes adding a type safe.
+ * (ADR-213), and the deny-by-default rule that makes adding a type safe.
  *
  * Three things are asserted here and nowhere else:
  *   1. a type with no source validator is REFUSED at the push boundary.

@@ -28,7 +28,7 @@ first, and `export FUNCTIONS_DISCOVERY_TIMEOUT=120` before every deploy. See
 The build adds exactly one composite: a **COLLECTION_GROUP** index on `events`
 (`reminderOptInEnabled` ASC, `status` ASC, `startsAt` ASC), which
 `sendServerEventRemindersSchedule` queries across every Server
-(ADR-212/ADR-214). The emulator creates indexes on demand, so nothing local
+(ADR-213/ADR-215). The emulator creates indexes on demand, so nothing local
 can fail on its absence — **in production every reminder run fails with
 `FAILED_PRECONDITION` until this index reports READY**, which is why it goes
 first and why the scheduler must not be deployed before the read-back.
@@ -59,7 +59,7 @@ No `--force`. Nothing else in `firestore.indexes.json` changed in this build
 
 One additive change: an explicit `match /commentMentions/{mentionId} { allow
 read, write: if false; }` block, the server-only record of who a Voice Moment
-or Yeel comment `@`-mentions (ADR-212). `storage.rules` is byte-identical to
+or Yeel comment `@`-mentions (ADR-213). `storage.rules` is byte-identical to
 3.0.0+34 and must **not** be deployed.
 
 ```bash
@@ -73,10 +73,10 @@ moved.
 
 ### 3. Cloud Functions — the push boundary before any writer
 
-ADR-212 makes the order load-bearing: the push boundary carries the titles,
+ADR-213 makes the order load-bearing: the push boundary carries the titles,
 the sound map and the new source validators, and it now **denies by default**.
 If a writer ships first, its rows reach a boundary that does not know the type
-and are skipped as `unregistered-type` — with ADR-214's fix the row survives,
+and are skipped as `unregistered-type` — with ADR-215's fix the row survives,
 but no push is sent. If the boundary ships first, nothing is lost: there are
 no rows of the new types yet.
 
@@ -103,7 +103,7 @@ firebase functions:list --project yovoice-ec54a
 
 Expect **creations**, not updates, for the six new exports:
 `onMomentCommentCreated`, `onMomentCommentDeleted`, `onReelCommentCreated`,
-`onReelCommentDeleted`, `sendServerEventRemindersSchedule` (ADR-212) and
+`onReelCommentDeleted`, `sendServerEventRemindersSchedule` (ADR-213) and
 `releaseServerChannelSessionIfEmptyV1` (ADR-180 amendment). The last one binds
 `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`, which already exist in Secret
 Manager. `appConfig/serversV1` needs no change: the new callable uses the
@@ -144,7 +144,7 @@ the new notification types in the router and the "Moments & Yeels" preference
 group. Every already-installed client is covered by the webhook and the sweep
 without the release signal, and renders the five new notification types as
 plain, non-tappable `system` rows until it updates — accepted by the owner
-(ADR-212).
+(ADR-213).
 
 Build the client **without** `--dart-define=YOVOICE_GIPHY_API_KEY`. A build
 that carries a key still shows Originals only, because `getGifCatalog`
@@ -194,7 +194,7 @@ says so.
 1. **GIPHY developer account and API app** at developers.giphy.com. Apply for
    a production key ("Upgrade to Production") with picker screenshots that
    show the official mark. Ask GIPHY in the same application to confirm the
-   server-side `GET /v1/gifs/{id}` lookup at send time (ADR-213, option B).
+   server-side `GET /v1/gifs/{id}` lookup at send time (ADR-214, option B).
 2. **The official "Powered By GIPHY" artwork**, unmodified, placed at
    `assets/images/giphy_powered_by_on_light.png` and
    `assets/images/giphy_powered_by_on_dark.png`. The repo does not draw or
@@ -6173,7 +6173,7 @@ denied terms and per-account `resource-exhausted` responses, plus growth of
 `gifAssets`. `provider_error` and external-provider quota/key alerts are dormant
 while YO Voice Originals is selected.
 
-## GIPHY activation — option B (ADR-213)
+## GIPHY activation — option B (ADR-214)
 
 > This section is the GIPHY-specific detail: the source flip, the exact
 > activation deploy wave, the canary and the rollback. It is **not** part of

@@ -1,5 +1,5 @@
 /**
- * "You were promoted" / "you were made owner" (ADR-212).
+ * "You were promoted" / "you were made owner" (ADR-213).
  *
  * The three properties this suite exists for:
  *   - a PROMOTION notifies the member, with the server's name and the exact

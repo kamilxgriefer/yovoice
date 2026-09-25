@@ -686,7 +686,7 @@ class MomentService {
 
   /// Posts a text comment, optionally naming the people it @-mentions.
   ///
-  /// [mentionUserIds] is additive on the wire (ADR-212) and is simply the
+  /// [mentionUserIds] is additive on the wire (ADR-213) and is simply the
   /// composer's own resolved candidates. A deployment that predates mentions
   /// refuses the field outright; that refusal is recognised and the comment
   /// is posted again without it, because losing a comment to an un-deployed

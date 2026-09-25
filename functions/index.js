@@ -180,7 +180,7 @@ const {
   sweepExpiredServerInvitesSchedule,
 } = require("./notifications/invites");
 // Comments and @mentions on Voice Moments and Yeels, and the Server event
-// reminders the app has accepted opt-ins for since Servers V1 (ADR-212).
+// reminders the app has accepted opt-ins for since Servers V1 (ADR-213).
 const {
   onMomentCommentCreated,
   onMomentCommentDeleted,
@@ -611,7 +611,7 @@ Object.assign(exports, createReelFunctions({
 const { createGifFunctions } = require("./media/gif/catalog");
 const { GIF_PROVIDERS } = require("./media/gif/gif_ref");
 const deployedGifProvider = GIF_PROVIDERS.yovoice;
-// GIPHY, option B (ADR-213). Search and trending run in the CLIENT, as GIPHY's
+// GIPHY, option B (ADR-214). Search and trending run in the CLIENT, as GIPHY's
 // API terms require; the server stays the send-time authority. `resolveGif`
 // fetches one chosen GIPHY id with the GIPHY_API_KEY secret, applies the
 // rating/denylist/block filter and writes the `gifAssets` record the message
@@ -636,14 +636,14 @@ Object.assign(exports, createGifFunctions({
   resolveProviders: GIPHY_SEND_RESOLVE_ENABLED ? [GIF_PROVIDERS.giphy] : [],
   // Telemetry first: App Check is activated in clients but attestation is not
   // yet healthy on every platform, so enforcement stays off until console
-  // metrics show verified traffic on Android, iOS and Web (ADR-213).
+  // metrics show verified traffic on Android, iOS and Web (ADR-214).
   enforceAppCheck: strictBooleanEnvironment(
     "YOVOICE_ENFORCE_GIF_APP_CHECK",
   ),
 }));
 
 const stageBFunctions = createStageBFunctions({
-  // Message publication uses a source-owned allow-set (ADR-213) rather than a
+  // Message publication uses a source-owned allow-set (ADR-214) rather than a
   // missing env value, so a selectable Originals or GIPHY result always has a
   // send path that accepts its provider.
   runtime: createStageBIntegrityRuntime({

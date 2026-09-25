@@ -113,7 +113,7 @@ idempotent, so a lost network response reuses the same reservation and object
 instead of creating a duplicate message.
 
 A photo or video picked from the library is reviewed before anything is
-queued (next build after 3.0.0, ADR-211): the review shows the photo, or a
+queued (next build after 3.0.0, ADR-212): the review shows the photo, or a
 paused and muted local video with play, scrub and mute, with its size and
 length, and names the recipient. Send queues it; Cancel sends nothing. A video
 over 60 seconds or 64 MB, or a photo over 8 MB, is blocked in the review with

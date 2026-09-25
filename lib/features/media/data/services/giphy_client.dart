@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:yovoice/features/media/data/models/gif_asset.dart';
 
-/// The GIPHY search client, running in the app (ADR-213, option B).
+/// The GIPHY search client, running in the app (ADR-214, option B).
 ///
 /// GIPHY's API terms require Search and Trending to be requested from the
 /// client and forbid proxying them, so this class talks to `api.giphy.com`

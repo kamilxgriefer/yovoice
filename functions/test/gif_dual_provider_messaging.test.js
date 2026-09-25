@@ -1,4 +1,4 @@
-// ADR-213 against the REAL Firestore emulator: one send allow-set serves YO
+// ADR-214 against the REAL Firestore emulator: one send allow-set serves YO
 // Voice Originals and GIPHY on the direct, room and club paths, and a GIPHY
 // id resolved by `resolveGif` is exactly what those transactions accept.
 // Start the emulator first:  firebase emulators:start --only firestore
@@ -42,7 +42,7 @@ function request(uid, data, verified = true) {
 }
 
 // The production wiring (functions/index.js): the catalog provider stays
-// `yovoice` and the send allow-set carries both providers (ADR-213).
+// `yovoice` and the send allow-set carries both providers (ADR-214).
 function services({ database = db, providerNames = ["yovoice", "giphy"] } = {}) {
   return {
     direct: createDirectMessagingService({

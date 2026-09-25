@@ -228,7 +228,7 @@ async function main() {
             { fieldPath: "endsAt", order: "ASCENDING" },
           ],
         },
-        // ADR-212: sendServerEventRemindersSchedule queries events ACROSS
+        // ADR-213: sendServerEventRemindersSchedule queries events ACROSS
         // channels, and a collection-group query needs a COLLECTION_GROUP
         // index — automatic single-field indexes are COLLECTION scope only,
         // and the emulator enforces neither. Declared here and in

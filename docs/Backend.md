@@ -119,7 +119,7 @@ social triggers are gone, reports aggregate counts, preserves genuine legacy
 rows with a live pointer-less source, and converges source-less or upgraded-
 source duplicates that a transient event-time cleanup could have missed.
 
-### Comments, @mentions, Server event reminders and role promotions (ADR-212, source only, NOT deployed)
+### Comments, @mentions, Server event reminders and role promotions (ADR-213, source only, NOT deployed)
 
 Five notification types were added on 2026-09-19 and none of them is deployed
 yet:
@@ -141,7 +141,7 @@ yet:
   **paged with a cursor** until exhausted or until a 240 s wall-clock budget
   is spent, and a run that does not finish is logged as a WARNING; the
   earlier single `limit(100)` page was a permanent silent cliff rather than
-  backpressure (ADR-214). The notification id carries the event revision, but
+  backpressure (ADR-215). The notification id carries the event revision, but
   delivery is gated by a stamp on the event
   (`reminderDeliveredAt`/`reminderDeliveredStartsAt`/`reminderDeliveredRevision`,
   additive and Admin-SDK-only), so only a reschedule beyond the horizon —
@@ -159,7 +159,7 @@ yet:
   ownership only; a demotion, removal or ban is silent by design. Silence on
   demotion is not enough on its own — `authorizationRevision` moves on every
   role change — so the notice is also charged against a
-  per-actor-per-recipient-per-role budget (1 per 24 h, ADR-214): a cycled
+  per-actor-per-recipient-per-role budget (1 per 24 h, ADR-215): a cycled
   role announces once, a real chain announces each role, and exhausting the
   budget never fails the role change.
 
@@ -167,7 +167,7 @@ yet:
 have real validators (`functions/notifications/engagement_source.js`), the
 legacy types keep their historical paths through an explicit allow-list, and an
 unregistered type is refused instead of pushing unrevalidated. The refusal is
-**two-valued** (ADR-214): a genuinely stale source is cleaned up, while an
+**two-valued** (ADR-215): a genuinely stale source is cleaned up, while an
 unregistered type is skipped with `pushSkipReason: "unregistered-type"` and
 the recipient's bell row is left intact — `isRegisteredNotificationType` is
 the predicate, and a contract test pins every `PUSH_TITLES` key as a

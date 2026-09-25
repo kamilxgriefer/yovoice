@@ -505,7 +505,7 @@ function createServersV1Runtime({
       storage: privateCompanyFileStorage,
     }),
     invites: createServerInviteService(dependencies),
-    // Role promotions and ownership transfers announce themselves (ADR-212).
+    // Role promotions and ownership transfers announce themselves (ADR-213).
     // The notifier is injected rather than imported by the membership
     // service so a focused runtime without a default Firebase app still
     // constructs the service.

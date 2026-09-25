@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 
-// ADR-213, option B: GIPHY search runs in the client, and the server resolves
+// ADR-214, option B: GIPHY search runs in the client, and the server resolves
 // ONE chosen id at send time. These tests run with no emulator, no network and
 // no key: the runtime is an in-memory double of exactly the surface the
 // `resolveGif` handler touches, and the GIPHY adapter is the real one driven by

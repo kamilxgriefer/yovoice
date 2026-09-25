@@ -46,7 +46,7 @@ function isCanonicalMessageGif(gif) {
 
 /// The providers a send path accepts, as a set.
 ///
-/// ADR-213 (option B): the send paths serve an ALLOW-SET rather than the one
+/// ADR-214 (option B): the send paths serve an ALLOW-SET rather than the one
 /// provider the catalog searches, so YO Voice Originals (including every
 /// recent) stay sendable while GIPHY results chosen client-side are sent too.
 /// Accepts the legacy single `providerName` string or any iterable of names;

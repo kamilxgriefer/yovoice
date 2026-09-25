@@ -6,7 +6,7 @@ import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
 
-/// Drag-to-seek on the Yeel timeline (ADR-210): the coordinator's scrub
+/// Drag-to-seek on the Yeel timeline (ADR-211): the coordinator's scrub
 /// session. Video trim 5 s → 15 s (a 10 s timeline); the backing track is
 /// 6 s long and starts at 2 s, so its window is 4 s and it wraps.
 void main() {

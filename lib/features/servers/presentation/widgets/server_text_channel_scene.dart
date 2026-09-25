@@ -449,7 +449,7 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
       rethrowFailure: gallery,
     );
     // A camera capture was already seen when it was taken and goes straight
-    // through, exactly as before; a library pick is confirmed first (ADR-211).
+    // through, exactly as before; a library pick is confirmed first (ADR-212).
     if (!gallery) return send();
     final decision = await _reviewLibraryPick(
       YoPickedMedia(
@@ -561,7 +561,7 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
     minVideoDuration: Duration(milliseconds: 1),
   );
 
-  /// The one confirm-before-send surface for a library pick (ADR-211).
+  /// The one confirm-before-send surface for a library pick (ADR-212).
   ///
   /// Presentation only: [onSend] is this scene's own `_sendMedia`, run from
   /// the Send action while the sheet is still open, so the upload starts on

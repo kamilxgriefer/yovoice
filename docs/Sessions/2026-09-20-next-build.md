@@ -15,19 +15,19 @@ the product account is in [Roadmap.md](../Roadmap.md); the defects are in
 
 | What was asked | What it became | Branch | Decision |
 | --- | --- | --- | --- |
-| "Yeels can't be scrubbed" | A finger on the Yeel timeline is a scrub session: a translucent drag-only band over the hairline on both Yeel stages, an adjustable slider node (±5 s, arrow keys, mouse click) so keyboard and screen-reader users can move through a Yeel at all, and finger-seek on the Voice story player waveform. A childless fill that had always laid out `200 × 0` was fixed on the way. | `nb/yeels-scrub` | ADR-210 |
+| "Yeels can't be scrubbed" | A finger on the Yeel timeline is a scrub session: a translucent drag-only band over the hairline on both Yeel stages, an adjustable slider node (±5 s, arrow keys, mouse click) so keyboard and screen-reader users can move through a Yeel at all, and finger-seek on the Voice story player waveform. A childless fill that had always laid out `200 × 0` was fixed on the way. | `nb/yeels-scrub` | ADR-211 |
 | "I can't call someone from their profile" | Quick actions under the bio at every width (Zadzwoń, Wideo, Wiadomość, Więcej), the call launch flow extracted so the chat header and the profile run one implementation, a relationship gate that disables calls for non-friends with a visible reason, and a Więcej sheet with voice message, invite-to-server and report. | `nb/friend-actions` | none — no new architectural rule |
-| "I want to see what I'm sending before it uploads" | One confirm-before-send review for everything picked from a library: DM Photo library, DM Video library and Company team files show the file with its size and length before anything is queued, and an over-limit video is blocked *in* the review instead of being refused by a snackbar after the enqueue. Camera paths untouched. | `nb/confirm-upload` | ADR-211 |
+| "I want to see what I'm sending before it uploads" | One confirm-before-send review for everything picked from a library: DM Photo library, DM Video library and Company team files show the file with its size and length before anything is queued, and an over-limit video is blocked *in* the review instead of being refused by a snackbar after the enqueue. Camera paths untouched. | `nb/confirm-upload` | ADR-212 |
 | "brakuje opcji usuwania serwerów" | Delete or leave a server from the list itself: a `...` button, long press and secondary click; a labelled settings entry on wide; a separate danger zone in the sheet; a typed-name confirmation; legacy schema-less roots routed to `deleteClubSelf`; and a live channel turning the confirmation into "Zakończ rozmowy i usuń". | `nb/server-delete` | none — client-only use of deployed authority |
-| "zatwierdzam wszystko, opcja b" (GIFs) | GIPHY searched by the client with `rating=g` pinned, resolved by the server at send time by id, the official Powered By GIPHY mark, Action Register pingbacks gated on "Load GIFs automatically", and a dual-provider allow-set on every send path so Originals can never be stranded by a provider flip. **The whole server half is source-gated off.** | `nb/giphy` | ADR-213 |
+| "zatwierdzam wszystko, opcja b" (GIFs) | GIPHY searched by the client with `rating=g` pinned, resolved by the server at send time by id, the official Powered By GIPHY mark, Action Register pingbacks gated on "Load GIFs automatically", and a dual-provider allow-set on every send path so Originals can never be stranded by a provider flip. **The whole server half is source-gated off.** | `nb/giphy` | ADR-214 |
 | "a channel still says LIVE with nobody in it" | A session now ends one 60 s backend-observed reconnect grace after the last person leaves, through three paths into the one existing end writer: the leaving client's new `releaseServerChannelSessionIfEmptyV1`, the provider's signed `room_finished`, and the tightened five-minute sweep, which also repairs projections no live generation backs. Plus a dry-run-first repair script for the badges already stuck in production. | `nb/server-live` (Windows PC) | **an amendment to ADR-180, deliberately not a new number** |
-| "notifications are missing" | Comments on your Voice Moment and your Yeel notify you; `@mentions` inside them notify the mentioned person, validated against *their* audience; Server event reminders are finally delivered; a role promotion and an ownership transfer tell the member. Deny-by-default at the push boundary, a "Moments & Yeels" preference group, and copy in 41 locales. | `nb/notifications` | ADR-212, and ADR-214 for the hardening round |
+| "notifications are missing" | Comments on your Voice Moment and your Yeel notify you; `@mentions` inside them notify the mentioned person, validated against *their* audience; Server event reminders are finally delivered; a role promotion and an ownership transfer tell the member. Deny-by-default at the push boundary, a "Moments & Yeels" preference group, and copy in 41 locales. | `nb/notifications` | ADR-213, and ADR-215 for the hardening round |
 
-The decisions as they finally stand: **ADR-210** Yeels drag-to-seek,
-**ADR-211** confirm before upload, **ADR-212** the notification slice,
-**ADR-213** GIPHY option B, **ADR-214** the notification hardening round, plus
+The decisions as they finally stand: **ADR-211** Yeels drag-to-seek,
+**ADR-212** confirm before upload, **ADR-213** the notification slice,
+**ADR-214** GIPHY option B, **ADR-215** the notification hardening round, plus
 the **ADR-180 amendment** for empty server channel sessions. Three branches
-had each independently written "ADR-210"; `9b941f14` renumbered them and moved
+had each independently written "ADR-211"; `9b941f14` renumbered them and moved
 every anchor, deployment heading and code comment with them. The GIPHY entry's
 own note about that collision has been settled in this session — nothing cites
 210 for GIPHY any more.
@@ -65,7 +65,7 @@ integration commits followed the merges rather than the branches:
   `functions/test/cold_start_module_graph.test.js` that still said 54 three
   lines above its own recomputed assertion of 55 was corrected in the same
   commit.
-- `f0ea2867` — the ADR-214 hardening round, which is a real behaviour change
+- `f0ea2867` — the ADR-215 hardening round, which is a real behaviour change
   and has its own entries in Bugs.md and TESTING.md.
 
 ## What this session verified, on this tree

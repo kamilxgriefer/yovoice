@@ -242,7 +242,7 @@ class _DirectAttachmentReservation {
 
 /// Direct-message attachment limits. The same values are enforced by
 /// `functions/messaging/direct_integrity.js` and `storage.rules`; the picked
-/// media review (ADR-211) reads these so it can never disagree with them.
+/// media review (ADR-212) reads these so it can never disagree with them.
 const int directImageMaxBytes = 8 * 1024 * 1024;
 const int directVideoMaxBytes = 64 * 1024 * 1024;
 const int directVideoMaxSeconds = 60;

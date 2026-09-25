@@ -147,7 +147,7 @@ class _YoGifPickerState extends State<YoGifPicker> {
   }
 
   /// A GIPHY choice is registered with the server's send-time authority
-  /// before the host composer sees it (ADR-213). One at a time: a second tap
+  /// before the host composer sees it (ADR-214). One at a time: a second tap
   /// while the first is resolving is ignored rather than queued.
   Future<void> _selectGiphy(GifAsset asset) async {
     if (_preparing) return;

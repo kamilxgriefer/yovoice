@@ -116,7 +116,7 @@ const double yoMediaSendReviewDialogBreakpoint =
     YoModalSheetChrome.desktopBreakpoint;
 
 /// The one confirm-before-send surface for media picked from the device
-/// library (ADR-211). Presentation only: it never uploads. The caller keeps
+/// library (ADR-212). Presentation only: it never uploads. The caller keeps
 /// its service, owner guards and outbox, and passes them in as [onSend] and
 /// [closeWhen].
 ///

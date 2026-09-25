@@ -32,7 +32,7 @@ class GifMessageController extends ChangeNotifier {
   final String? Function() _currentUserId;
   final GifMessageInvoker _invoke;
 
-  /// GIPHY `onsent` (ADR-213). Fires only for a choice the picker armed with
+  /// GIPHY `onsent` (ADR-214). Fires only for a choice the picker armed with
   /// `onclick` while "Load GIFs automatically" was on; null or unarmed is a
   /// no-op, which is every Originals send and every build without a key.
   final GiphyPingbacks? _giphyPingbacks;

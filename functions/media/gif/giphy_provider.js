@@ -13,7 +13,7 @@
 // run client-side. `search()` and `trending()` here therefore stay dormant and
 // test-only unless YO Voice first receives written provider approval for the
 // proxy architecture. An API key by itself is not authorization to enable it.
-// Under ADR-213 (option B) the client searches GIPHY itself and only
+// Under ADR-214 (option B) the client searches GIPHY itself and only
 // `resolve()` — one GET /v1/gifs/{id} at send time, from the source-gated
 // `resolveGif` callable — is used server-side. GIPHY's confirmation that this
 // by-id lookup is acceptable is part of the production-key application.

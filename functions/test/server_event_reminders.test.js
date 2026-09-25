@@ -1,5 +1,5 @@
 /**
- * Server event reminders (ADR-212), the half of the promise the product was
+ * Server event reminders (ADR-213), the half of the promise the product was
  * already making: Family calendar entries and Podcast program entries accept
  * "remind me" and, until now, delivered nothing.
  *

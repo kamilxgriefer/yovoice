@@ -1,6 +1,6 @@
 /**
  * Source validators for the notification types added on 2026-09-19
- * (ADR-212): comments on a Voice Moment or a Yeel, @mentions inside those
+ * (ADR-213): comments on a Voice Moment or a Yeel, @mentions inside those
  * comments, Server event reminders and Server role promotions.
  *
  * Every function here answers one question — "is the thing this row

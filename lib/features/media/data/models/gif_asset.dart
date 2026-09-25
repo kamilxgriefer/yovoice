@@ -258,7 +258,7 @@ class GifCatalog {
   final int minimumQueryLength;
   final String ratingLabel;
 
-  /// Remote providers whose ids the server resolves at send time (ADR-213).
+  /// Remote providers whose ids the server resolves at send time (ADR-214).
   /// A provider the app searches itself — GIPHY under option B — is shown
   /// only when it is listed here, so a build with a client key can never offer
   /// a GIF the deployed server cannot send. Absent on older servers, which
