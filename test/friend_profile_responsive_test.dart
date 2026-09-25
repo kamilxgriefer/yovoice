@@ -387,6 +387,72 @@ void main() {
     }
   });
 
+  testWidgets('a landscape iPhone keeps Back, the identity, stats and '
+      'actions clear of the notch insets while the banner runs edge to edge', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(844, 390);
+    addTearDown(tester.view.reset);
+    const safe = EdgeInsets.only(left: 47, right: 47, bottom: 21);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.darkTheme,
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(844, 390),
+            padding: safe,
+            viewPadding: safe,
+          ),
+          child: buildScreen(),
+        ),
+      ),
+    );
+    for (var pump = 0; pump < 8; pump++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+
+    final banner = tester.getRect(find.byType(ProfileBannerButton));
+    expect(banner.left, 0);
+    expect(banner.width, 844);
+    expect(
+      tester.getRect(find.byTooltip('Back')).left,
+      greaterThanOrEqualTo(47 + 6),
+    );
+    final avatar = tester.getRect(find.byType(ProfilePhotoButton));
+    expect(avatar.left, greaterThanOrEqualTo(47 + 20 - .01));
+    expect(
+      tester.getRect(find.text(longDisplayName)).right,
+      lessThanOrEqualTo(844 - 47 - 20 + .01),
+    );
+
+    final scrollable = find
+        .descendant(
+          of: find.byKey(const ValueKey('friend-profile-content-frame')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    for (final key in const [
+      ValueKey('friend-profile-stats'),
+      ValueKey('friend-profile-quick-actions'),
+    ]) {
+      await tester.scrollUntilVisible(
+        find.byKey(key),
+        80,
+        scrollable: scrollable,
+      );
+      final rect = tester.getRect(find.byKey(key));
+      expect(rect.left, greaterThanOrEqualTo(47 + 20 - .01), reason: '$key');
+      expect(
+        rect.right,
+        lessThanOrEqualTo(844 - 47 - 20 + .01),
+        reason: '$key',
+      );
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('320px at 200% text stacks stats and actions with accessible '
       '44px targets', (tester) async {
     await enableCreatorAudience();

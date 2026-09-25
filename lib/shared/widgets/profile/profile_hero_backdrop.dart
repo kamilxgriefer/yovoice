@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
@@ -29,13 +30,20 @@ import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
 ///   backdrop's own width (124 below 600, 156 below 1100, 176 above); past
 ///   [wideReferenceWidth] the height grows with the width, so a 2560 desktop
 ///   keeps the same share of the photo as a 1440 one instead of a sliver;
-/// * never narrower than the stored 16:9 — the height is capped at
-///   `W × 9 / 16`, so a phone shows the WHOLE banner (edge to edge, nothing
-///   cropped at the sides) and wider tiers crop only top and bottom, around
-///   the centre;
 /// * never more than [maxViewportShare] of a short (landscape) viewport;
-/// * never less than the toolbar plus a [minimumClearBand] of clear photo
-///   plus the part of the melt above the text line.
+/// * never less than the toolbar plus a [minimumClearBand] of photo down to
+///   the text line;
+/// * never less than [alwaysVisibleFraction] of the photo's own height, so
+///   the crop editor's guide is true in short windows too;
+/// * and, above all of those, never narrower than the stored 16:9: the
+///   height is capped at `W × 9 / 16`, so a phone shows the WHOLE banner
+///   (nothing is ever cropped at the sides) and wider tiers crop only top
+///   and bottom, around the centre.
+///
+/// The bottom melt ([fade]) never takes a larger share of the hero than it
+/// does at the widest reference ([maxFadeShare]). Together with the floor
+/// above that keeps the upper part of the crop guide
+/// ([alwaysClearFraction]) above the melt at every size.
 @immutable
 class ProfileHeroGeometry {
   const ProfileHeroGeometry({
@@ -51,40 +59,54 @@ class ProfileHeroGeometry {
   /// Resolves the hero for a host [width] wide (the content column the route
   /// actually gets — beside the desktop sidebar, never the window).
   ///
-  /// The backdrop always spans the whole host. [windowWidth] only decides
-  /// whether a host that capped the column (the desktop shell's 1440pt
-  /// workbench frame on a very wide window) left page canvas beside it, which
-  /// earns a side melt; [viewportHeight] caps a landscape phone.
+  /// The backdrop always spans the whole host. [sideCanvas] is the page
+  /// canvas actually left beside the host on each side (see
+  /// [ResponsiveContentFrame.sideCanvasOf]); the photo melts into it only
+  /// when there is at least [sideFadeExtent] of it, so it never fades
+  /// against the desktop sidebar or the window edge. Without it, a host
+  /// capped at the workbench width is compared against [windowWidth].
+  /// [viewportHeight] caps a landscape phone.
   factory ProfileHeroGeometry.resolve({
     required double width,
     double topInset = 0,
     double? viewportHeight,
     double? windowWidth,
+    double? sideCanvas,
   }) {
     final safeWidth = width.isFinite ? math.max(0.0, width) : 0.0;
     final backdropWidth = safeWidth;
-    final (band, fade) = switch (backdropWidth) {
+    final (band, tierFade) = switch (backdropWidth) {
       < mediumBreakpoint => (narrowBand, narrowFade),
       < wideBreakpoint => (mediumBand, mediumFade),
       _ => (wideBand, wideFade),
     };
     final growth = math.max(1.0, backdropWidth / wideReferenceWidth);
     final ideal = topInset + (toolbarExtent + band) * growth;
-    var cap = backdropWidth / ProfileImageRules.banner.aspectRatio;
+    // The height at which the 16:9 photo exactly fills the width.
+    final coverHeight = backdropWidth / ProfileImageRules.banner.aspectRatio;
+    var cap = coverHeight;
     if (viewportHeight != null &&
         viewportHeight.isFinite &&
         viewportHeight > 0) {
       cap = math.min(cap, viewportHeight * maxViewportShare);
     }
     final floor =
-        topInset + toolbarExtent + minimumClearBand + fade * textFadeShare;
-    final height = math.max(floor, math.min(ideal, cap));
-    final sideFade =
-        backdropWidth >= wideReferenceWidth &&
-            windowWidth != null &&
-            windowWidth > backdropWidth + .5
-        ? sideFadeExtent
-        : 0.0;
+        topInset + toolbarExtent + minimumClearBand + tierFade * textFadeShare;
+    var height = math.max(floor, math.min(ideal, cap));
+    height = math.max(height, coverHeight * alwaysVisibleFraction);
+    height = math.min(height, coverHeight);
+    final fade = math.min(tierFade, height * maxFadeShare);
+
+    final double gap;
+    if (sideCanvas != null && sideCanvas.isFinite) {
+      gap = sideCanvas;
+    } else if (windowWidth != null &&
+        windowWidth.isFinite &&
+        backdropWidth >= wideReferenceWidth) {
+      gap = (windowWidth - backdropWidth) / 2;
+    } else {
+      gap = 0;
+    }
     return ProfileHeroGeometry(
       width: safeWidth,
       backdropLeft: (safeWidth - backdropWidth) / 2,
@@ -92,7 +114,7 @@ class ProfileHeroGeometry {
       height: height,
       topInset: topInset,
       fade: fade,
-      sideFade: sideFade,
+      sideFade: gap >= sideFadeExtent ? sideFadeExtent : 0.0,
     );
   }
 
@@ -134,7 +156,15 @@ class ProfileHeroGeometry {
   static const double mediumFade = 104;
   static const double wideFade = 112;
 
-  /// Clear photo kept between the toolbar and the melt, whatever caps apply.
+  /// Photo kept between the toolbar and the text line.
+  ///
+  /// This is NOT a promise of unaltered photo: the band runs down to the
+  /// text line, where the melt is already at 10%. On a phone the 16:9 cap
+  /// usually decides the height, and there most of this band is the melt
+  /// and the top scrim (at 393 pt under a 59 pt status bar the photo is
+  /// clear for about 10 pt). The cap wins over this floor, so on a very
+  /// narrow phone under a tall status bar the band is smaller still; the
+  /// text line never rises into the toolbar from 280 pt up.
   static const double minimumClearBand = 48;
 
   /// A landscape phone must not spend more than this share of its height on
@@ -142,6 +172,12 @@ class ProfileHeroGeometry {
   static const double maxViewportShare = .45;
 
   static const double sideFadeExtent = 48;
+
+  /// The largest share of the hero's height the bottom melt may take: its
+  /// share at the widest reference (112 of 232). Heroes squeezed by a short
+  /// viewport or a narrow window shorten the melt instead of letting it eat
+  /// the photo's middle.
+  static const double maxFadeShare = wideFade / (toolbarExtent + wideBand);
 
   /// Share of the melt that sits below the text line. At that line the photo
   /// is down to 10% alpha, i.e. text stands on at least 90% page canvas.
@@ -182,13 +218,21 @@ class ProfileHeroGeometry {
   /// The hero's height at [wideReferenceWidth] on a desktop (no status bar).
   static double get widestHeight => toolbarExtent + wideBand;
 
-  /// Share of the stored 16:9 banner's height that is on screen at the
-  /// widest ratio — reached at [wideReferenceWidth] and kept beyond it,
-  /// since wider heroes grow in proportion — and therefore at every width:
-  /// narrower heroes show more of the height and phones show all of it.
+  /// Share of the stored 16:9 banner's height that is on screen at every
+  /// width: its share at [wideReferenceWidth], where it is smallest.
+  /// Narrower heroes show more of the height, phones show all of it, wider
+  /// heroes grow in proportion, and short windows are held at it by a floor.
+  /// The band is centred (the photo is drawn with `Alignment.center`).
   static double get alwaysVisibleFraction =>
       ProfileImageRules.banner.aspectRatio /
       (wideReferenceWidth / widestHeight);
+
+  /// The upper part of the [alwaysVisibleFraction] band that stays above the
+  /// bottom melt at every width — the part a face or text can rely on. The
+  /// rest of the band, below it, is on screen but fades into the page at the
+  /// widest sizes.
+  static double get alwaysClearFraction =>
+      alwaysVisibleFraction * (widestHeight - wideFade) / widestHeight;
 
   @override
   bool operator ==(Object other) =>
@@ -231,6 +275,19 @@ class ProfileHeroFrame {
   double get width => geometry.width;
   double get columnRight => math.max(0, width - columnLeft - columnWidth);
 
+  /// Where the banner button draws its keyboard focus ring: inside the photo
+  /// the user actually sees — below the status bar, above the text line and
+  /// on the content column — so the ring never runs under the notch or as a
+  /// hard line through the handle and presence row.
+  EdgeInsets get bannerFocusInsets => EdgeInsets.fromLTRB(
+    columnLeft + focusRingInset,
+    geometry.topInset,
+    columnRight + focusRingInset,
+    math.max(0, geometry.height - geometry.textLine + focusRingInset),
+  );
+
+  static const double focusRingInset = 4;
+
   /// Horizontal padding that puts a child on the content column, with
   /// [start]/[end] extra gutter inside it.
   EdgeInsets inset({double start = 0, double end = 0}) =>
@@ -262,6 +319,11 @@ typedef ProfileHeroSlotBuilder =
 /// old header once shipped. The backdrop scrolls away 1:1 with the header —
 /// no parallax. The only motion is an iOS overscroll stretch that keeps the
 /// photo under the status bar while the list bounces; Reduce Motion drops it.
+///
+/// The backdrop is painted first but read and focused LAST: it is one big
+/// button from (0, 0) that would otherwise win both the geometric semantics
+/// sort and the reading-order focus traversal. The order is pinned instead —
+/// toolbar (Back, the page name, Edit), identity, footer, then the banner.
 class ProfileHeroLayout extends StatelessWidget {
   const ProfileHeroLayout({
     required this.contentMaxWidth,
@@ -287,8 +349,22 @@ class ProfileHeroLayout extends StatelessWidget {
 
   final ProfileHeroSlotBuilder? footer;
 
+  /// Semantics and keyboard order of the hero's parts.
+  static const double toolbarOrder = 0;
+  static const double identityOrder = 1;
+  static const double footerOrder = 2;
+  static const double backdropOrder = 3;
+
+  static Widget _ordered(double order, Widget child) => Semantics(
+    container: true,
+    explicitChildNodes: true,
+    sortKey: OrdinalSortKey(order),
+    child: FocusTraversalOrder(order: NumericFocusOrder(order), child: child),
+  );
+
   @override
   Widget build(BuildContext context) {
+    final sideCanvas = ResponsiveContentFrame.sideCanvasOf(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         final safe = MediaQuery.paddingOf(context);
@@ -298,6 +374,7 @@ class ProfileHeroLayout extends StatelessWidget {
           topInset: safe.top,
           viewportHeight: window.height,
           windowWidth: window.width,
+          sideCanvas: sideCanvas,
         );
         final column = ProfileHeroFrame.measure(
           width: geometry.width,
@@ -310,36 +387,51 @@ class ProfileHeroLayout extends StatelessWidget {
           columnWidth: column.width,
         );
         final footer = this.footer;
-        return Stack(
-          clipBehavior: Clip.none,
-          children: [
-            _StretchingBackdropSlot(
-              geometry: geometry,
-              child: backdrop(context, frame),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
+        return Semantics(
+          container: true,
+          explicitChildNodes: true,
+          child: FocusTraversalGroup(
+            policy: OrderedTraversalPolicy(),
+            child: Stack(
+              clipBehavior: Clip.none,
               children: [
-                SizedBox(height: geometry.topInset),
-                SizedBox(
-                  height: ProfileHeroGeometry.toolbarExtent,
-                  child: toolbar(context, frame),
+                _StretchingBackdropSlot(
+                  geometry: geometry,
+                  child: _ordered(backdropOrder, backdrop(context, frame)),
                 ),
-                SizedBox(
-                  height:
-                      geometry.textLine -
-                      geometry.topInset -
-                      ProfileHeroGeometry.toolbarExtent,
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(height: geometry.topInset),
+                    SizedBox(
+                      height: ProfileHeroGeometry.toolbarExtent,
+                      child: _ordered(toolbarOrder, toolbar(context, frame)),
+                    ),
+                    SizedBox(
+                      // Zero only on a hero narrower than any phone, where
+                      // the 16:9 cap leaves no photo below the toolbar.
+                      height: math.max(
+                        0.0,
+                        geometry.textLine -
+                            geometry.topInset -
+                            ProfileHeroGeometry.toolbarExtent,
+                      ),
+                    ),
+                    _ordered(
+                      identityOrder,
+                      MetaData(
+                        behavior: HitTestBehavior.opaque,
+                        child: identity(context, frame),
+                      ),
+                    ),
+                    if (footer != null)
+                      _ordered(footerOrder, footer(context, frame)),
+                  ],
                 ),
-                MetaData(
-                  behavior: HitTestBehavior.opaque,
-                  child: identity(context, frame),
-                ),
-                if (footer != null) footer(context, frame),
               ],
             ),
-          ],
+          ),
         );
       },
     );
@@ -397,18 +489,24 @@ class _StretchingBackdropSlot extends StatelessWidget {
 /// 2. the photo (`BoxFit.cover`, [imageAlignment]), fading in over the base
 ///    (instantly under Reduce Motion) together with everything that belongs
 ///    to it:
-///    * a blurred copy of the same image — `ImageFiltered` on the image, not
-///      a `BackdropFilter` over live content — masked in over the bottom melt
-///      (off under high contrast, or when [softFocus] is false);
-///    * a top scrim for the toolbar and the status bar;
+///    * a soft-focus copy of the same image, masked in over the bottom melt
+///      (off under high contrast, or when [softFocus] is false). It is
+///      rendered ONCE per photo and width into a tiny pre-blurred bitmap
+///      (one texel per [softFocusTexel] points) and simply drawn scaled up
+///      over the bottom band only — never an `ImageFiltered` or a
+///      `BackdropFilter` that a renderer without a raster cache (Impeller,
+///      web CanvasKit) would re-run on every scroll frame;
+///    * a top scrim for the toolbar and the status bar, held at full
+///      strength across the whole status-bar inset;
 ///    * a sized light status-bar region, only while the photo is on screen;
 /// 3. an alpha melt: the whole stack dissolves into whatever page canvas is
 ///    underneath over the bottom [ProfileHeroGeometry.fade] (and the sides
 ///    when a host capped the column), so there is no seam against a tinted
 ///    canvas.
 ///
-/// All of it sits in one [RepaintBoundary]: scrolling moves the recorded
-/// layer instead of repainting the photo, its blur or its masks.
+/// All of it sits in one [RepaintBoundary], so scrolling never rebuilds or
+/// repaints the photo. The two alpha masks are still composited per frame on
+/// renderers without a raster cache; nothing in the stack filters per frame.
 class ProfileHeroBackdrop extends StatelessWidget {
   const ProfileHeroBackdrop({
     required this.geometry,
@@ -440,11 +538,24 @@ class ProfileHeroBackdrop extends StatelessWidget {
   /// symmetrically, so the crop editor's centred guide stays the truth.
   static const Alignment imageAlignment = Alignment.center;
 
+  /// Blur radius of the soft focus, in points.
   static const double softFocusSigma = 14;
 
-  /// Top-scrim strength at the status bar: white icons stay ≥ 4:1 over a
-  /// pure-white photo in both themes (0.45 would fall to ~3:1).
-  static const double topScrimAlpha = .55;
+  /// Points per texel of the pre-blurred soft-focus copy. Drawing that copy
+  /// scaled up by this factor is most of the softness; [softFocusSigma] /
+  /// [softFocusTexel] texels of blur, applied once, smooth the rest.
+  static const double softFocusTexel = 7;
+
+  /// How far above the melt the soft focus starts ramping in. The copy is
+  /// drawn only over `fade + softFocusLead`, the part of the hero it shows.
+  static const double softFocusLead = 24;
+
+  /// Top-scrim strength, held across the whole status-bar inset and then
+  /// faded out over [ProfileHeroGeometry.topScrimReach]. White status icons
+  /// and the clock stay at least 4.5:1 over a pure-white photo: about 5.8:1
+  /// on the Dark scrim and 5.2:1 on the Pearl one (0.55 gave Pearl 4.1:1 at
+  /// the top pixel and under 3:1 lower in the bar, where it was fading).
+  static const double topScrimAlpha = .62;
   static const double highContrastTopScrimAlpha = .72;
 
   @override
@@ -574,72 +685,101 @@ class _PhotoLayers extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        image,
-        if (blur)
-          Positioned.fill(
-            child: ShaderMask(
-              key: const ValueKey('profile-hero-soft-focus'),
-              blendMode: BlendMode.dstIn,
-              shaderCallback: (bounds) => _softFocusRamp(bounds),
-              child: ClipRect(
-                child: ImageFiltered(
-                  imageFilter: ui.ImageFilter.blur(
-                    sigmaX: ProfileHeroBackdrop.softFocusSigma,
-                    sigmaY: ProfileHeroBackdrop.softFocusSigma,
-                    tileMode: TileMode.clamp,
+    final scrimExtent = geometry.topScrimExtent;
+    final hold = scrimExtent > 0
+        ? (geometry.topInset / scrimExtent).clamp(0.0, 1.0)
+        : 0.0;
+    final softBand = math.min(
+      geometry.height,
+      geometry.fade + ProfileHeroBackdrop.softFocusLead,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = constraints.biggest;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            image,
+            if (blur && softBand > 0)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: softBand,
+                child: ShaderMask(
+                  key: const ValueKey('profile-hero-soft-focus'),
+                  blendMode: BlendMode.dstIn,
+                  shaderCallback: _softFocusRamp,
+                  child: ClipRect(
+                    // The copy is laid out at the full hero size and
+                    // bottom-aligned, so its pixels line up with the photo
+                    // above it; only the band is drawn.
+                    child: OverflowBox(
+                      alignment: Alignment.bottomCenter,
+                      minWidth: size.width,
+                      maxWidth: size.width,
+                      minHeight: size.height,
+                      maxHeight: size.height,
+                      child: _SoftFocusCopy(
+                        provider: provider,
+                        texelWidth: math.max(
+                          1,
+                          (geometry.backdropWidth /
+                                  ProfileHeroBackdrop.softFocusTexel)
+                              .ceil(),
+                        ),
+                      ),
+                    ),
                   ),
-                  child: Image(
-                    image: provider,
-                    fit: BoxFit.cover,
-                    alignment: ProfileHeroBackdrop.imageAlignment,
-                    filterQuality: FilterQuality.low,
-                    gaplessPlayback: true,
-                    excludeFromSemantics: true,
+                ),
+              ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: scrimExtent,
+              child: DecoratedBox(
+                key: const ValueKey('profile-hero-top-scrim'),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    // Full strength under the whole status bar, where the
+                    // clock and the battery sit; only then fading out.
+                    stops: [0, hold, 1],
+                    colors: [
+                      palette.scrim.withValues(alpha: scrimAlpha),
+                      palette.scrim.withValues(alpha: scrimAlpha),
+                      palette.scrim.withValues(alpha: 0),
+                    ],
                   ),
                 ),
               ),
             ),
-          ),
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          height: geometry.topScrimExtent,
-          child: DecoratedBox(
-            key: const ValueKey('profile-hero-top-scrim'),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  palette.scrim.withValues(alpha: scrimAlpha),
-                  palette.scrim.withValues(alpha: 0),
-                ],
-              ),
+            // Light status icons while — and only while — the photo is under
+            // the status bar. Sized, so scrolling the hero away hands the bar
+            // back to the theme's own style.
+            AnnotatedRegion<SystemUiOverlayStyle>(
+              sized: true,
+              value: AppTheme.systemOverlayStyle(Brightness.dark, palette),
+              child: const SizedBox.expand(),
             ),
-          ),
-        ),
-        // Light status icons while — and only while — the photo is under the
-        // status bar. Sized, so scrolling the hero away hands the bar back to
-        // the theme's own style.
-        AnnotatedRegion<SystemUiOverlayStyle>(
-          sized: true,
-          value: AppTheme.systemOverlayStyle(Brightness.dark, palette),
-          child: const SizedBox.expand(),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
 
-  /// The blurred copy is invisible above the melt and fully in by the text
-  /// line's upper half; the melt itself then dissolves it into the canvas.
+  /// The soft copy is invisible at the top of its band and fully in by the
+  /// text line's upper half; the melt itself then dissolves it into the
+  /// canvas.
   Shader _softFocusRamp(Rect bounds) {
     final h = math.max(bounds.height, 1.0);
     final fade = geometry.fade;
-    final from = ((h - fade - 24) / h).clamp(0.0, 1.0);
+    final from = ((h - fade - ProfileHeroBackdrop.softFocusLead) / h).clamp(
+      0.0,
+      1.0,
+    );
     final to = ((h - fade * .55) / h).clamp(from, 1.0);
     return LinearGradient(
       begin: Alignment.topCenter,
@@ -652,6 +792,130 @@ class _PhotoLayers extends StatelessWidget {
         _maskInk,
       ],
     ).createShader(bounds);
+  }
+}
+
+/// The soft-focus copy of the hero photo: the same provider (an image-cache
+/// hit — no second fetch or decode) rendered once into a [texelWidth] wide,
+/// pre-blurred bitmap, then drawn with the photo's own fit and alignment.
+///
+/// The one-off render is a few thousand pixels; every later frame is a plain
+/// scaled image draw, whatever the renderer caches.
+class _SoftFocusCopy extends StatefulWidget {
+  const _SoftFocusCopy({required this.provider, required this.texelWidth});
+
+  final ImageProvider<Object> provider;
+  final int texelWidth;
+
+  @override
+  State<_SoftFocusCopy> createState() => _SoftFocusCopyState();
+}
+
+class _SoftFocusCopyState extends State<_SoftFocusCopy> {
+  ImageStream? _stream;
+  ImageStreamListener? _listener;
+  ImageInfo? _source;
+  ui.Image? _soft;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _listen();
+  }
+
+  @override
+  void didUpdateWidget(_SoftFocusCopy oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.provider != widget.provider) {
+      _listen();
+    } else if (oldWidget.texelWidth != widget.texelWidth) {
+      _render();
+    }
+  }
+
+  void _listen() {
+    final stream = widget.provider.resolve(
+      createLocalImageConfiguration(context),
+    );
+    if (_stream?.key == stream.key) return;
+    _stopListening();
+    _stream = stream;
+    final listener = _listener ??= ImageStreamListener(_onImage);
+    stream.addListener(listener);
+  }
+
+  void _stopListening() {
+    final listener = _listener;
+    if (listener != null) _stream?.removeListener(listener);
+  }
+
+  void _onImage(ImageInfo info, bool synchronousCall) {
+    _source?.dispose();
+    _source = info;
+    _render();
+  }
+
+  void _render() {
+    final source = _source?.image;
+    if (source == null) return;
+    final soft = renderProfileHeroSoftFocus(source, widget.texelWidth);
+    if (!mounted) {
+      soft.dispose();
+      return;
+    }
+    setState(() {
+      _soft?.dispose();
+      _soft = soft;
+    });
+  }
+
+  @override
+  void dispose() {
+    _stopListening();
+    _source?.dispose();
+    _soft?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RawImage(
+      key: const ValueKey('profile-hero-soft-focus-copy'),
+      image: _soft,
+      fit: BoxFit.cover,
+      alignment: ProfileHeroBackdrop.imageAlignment,
+      filterQuality: FilterQuality.medium,
+    );
+  }
+}
+
+/// Renders [source] into a [texelWidth] wide copy with the source's aspect
+/// ratio, blurred by [ProfileHeroBackdrop.softFocusSigma] expressed in
+/// texels. Visible for tests; the caller owns (and disposes) the result.
+@visibleForTesting
+ui.Image renderProfileHeroSoftFocus(ui.Image source, int texelWidth) {
+  final width = math.max(1, texelWidth);
+  final height = math.max(1, (width * source.height / source.width).round());
+  final sigma =
+      ProfileHeroBackdrop.softFocusSigma / ProfileHeroBackdrop.softFocusTexel;
+  final recorder = ui.PictureRecorder();
+  Canvas(recorder).drawImageRect(
+    source,
+    Rect.fromLTWH(0, 0, source.width.toDouble(), source.height.toDouble()),
+    Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+    Paint()
+      ..filterQuality = FilterQuality.medium
+      ..imageFilter = ui.ImageFilter.blur(
+        sigmaX: sigma,
+        sigmaY: sigma,
+        tileMode: TileMode.clamp,
+      ),
+  );
+  final picture = recorder.endRecording();
+  try {
+    return picture.toImageSync(width, height);
+  } finally {
+    picture.dispose();
   }
 }
 

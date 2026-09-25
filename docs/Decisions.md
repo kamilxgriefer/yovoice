@@ -15172,10 +15172,13 @@ rectangle. Diagnosis and verdict:
   viewport; past 1440 it grows with the width so the visible share stays
   ~28.6%, which is also the crop editor's "always visible" guide
   (`ProfileHeader.bannerSafeBandFraction`, re-derived from 23.4%).
-- The blur Kamil asked for is a blurred copy of the same image provider
-  (`ImageFiltered`, image-cache hit, no second fetch) masked in over the
-  bottom melt, inside one `RepaintBoundary`. Never a `BackdropFilter`.
-  High contrast drops it. The whole stack alpha-melts into the page canvas.
+- The blur Kamil asked for is a soft-focus copy of the same image provider
+  (image-cache hit, no second fetch), masked in over the bottom melt. It is
+  rendered once per photo and width into a tiny pre-blurred bitmap (one
+  texel per 7 pt, 2 texels of blur ≈ the former sigma 14) and drawn scaled
+  up over the bottom `fade + 24` pt only. Never a `BackdropFilter`, and no
+  per-frame `ImageFiltered` either (see the fix round below). High contrast
+  drops it. The whole stack alpha-melts into the page canvas.
 - The photo's scrim, blur and sized light status-bar region are built by a
   new `ProfileMediaImage.imageLayerBuilder`, so they exist only while the
   photo is on screen and fade in with it (instantly under Reduce Motion,
@@ -15206,8 +15209,61 @@ line).
 - Test pins re-based deliberately: `image_crop_screen_test` (safe-band
   derivation) and `friend_profile_responsive_test` (frame width; banner
   above the avatar; 768 == 1440 band height).
-- UNVERIFIED: the frame cost of the blurred copy on a low-end Android
-  device and on web CanvasKit (Impeller has no raster cache, so the masked
-  layers are re-composited while scrolling); the iOS bounce feel; how old
+- UNVERIFIED: frame cost on a low-end Android device and on web CanvasKit
+  (no device or profile run was available; after the fix round nothing in
+  the hero filters per frame, only two alpha masks are composited); the
+  iOS bounce feel; status-bar legibility on a physical iPhone; how old
   banners cropped for the 23% strip look now. Frames:
-  `yovoice-evidence/2026-09-25/profile-banner/` (flutter test renders).
+  `yovoice-evidence/2026-09-25/profile-banner/` (flutter test renders) and
+  `…/profile-banner/fix-round/` (after the fix round).
+
+### Fix round (review findings)
+
+- **Status bar.** The top scrim is held at full strength across the whole
+  status-bar inset and only then fades out over 72 pt, and its strength
+  rose from .55 to .62. Over a pure-white banner the clock and battery now
+  stand at ≥ 5.2:1 in Pearl and ≥ 5.8:1 in Dark at every row of the bar
+  (measured in the frames: 5.18–5.25 and 5.83–5.94; it was 2.5–3.5:1 where
+  the old gradient had already faded). A pixel test pins ≥ 4.5:1 at
+  `T/2` and `T − 8` in both themes.
+- **Soft focus cost.** The per-frame `ImageFiltered` over the whole hero is
+  gone: renderers without a raster cache (Impeller, web CanvasKit) re-ran
+  it on every scroll frame. The blurred copy is now computed once
+  (`renderProfileHeroSoftFocus`, ~56×32 texels on a phone, ~206×116 at
+  1440) and drawn only over the bottom band. With no per-frame filter left
+  there is nothing to switch off by platform, so `softFocus` is still only
+  turned off by high contrast; the look is unchanged in the frames.
+- **Crop guide.** The "always visible" band stays the centred ~28.6% on
+  screen at every width, but it is now split: the upper ~14.8%
+  (`alwaysClearFraction`, the band's share above the melt at the widest
+  size) is "always visible", the rest "fades into the page". Two geometry
+  rules make that true at every size instead of at 1440 only, pinned by a
+  sweep of widths 280–3840 × status bars 0–59 × viewports 320–1440 that
+  maps the stored rows onto the hero: the height never drops below the
+  guide's share (a short desktop window keeps 232 pt at 1440 instead of
+  45% of its height), and the melt never takes a larger share of the hero
+  than at the widest size (`maxFadeShare` = 112/232; landscape phones and
+  narrow windows without a status bar get a shorter melt, e.g. 84.7 pt at
+  844×390, which lowers the text line by up to ~4 pt there).
+- **16:9 on phones.** The 16:9 cap now wins over the clear-band floor, so no
+  phone ever crops the banner's sides (it could at 320 pt under a ≥ 44 pt
+  status bar). `minimumClearBand`'s doc now says what it is: photo down to
+  the text line, not unaltered photo.
+- **Side melt** is decided by the canvas actually left beside the column
+  (`ResponsiveContentFrame.sideCanvasOf`), not by the window width: beside
+  the 264 pt sidebar at a 1704 pt window the photo meets the sidebar with
+  no melt; it melts only into a gutter of at least 48 pt.
+- **Order and focus.** The backdrop is painted first but read and focused
+  last: toolbar (Back, page name, Edit) → identity → footer → banner, by
+  `OrdinalSortKey` and an `OrderedTraversalPolicy` group. The banner's
+  focus ring (`focusRingInsets`) is drawn on the visible photo — below the
+  status bar, above the text line, 4 pt inside the content column.
+- **Open product call (not changed silently):** on current phones the
+  16:9 cap decides the height, so the photo is almost entirely scrim and
+  melt — at 393 pt under the 59 pt Dynamic Island about 10 pt of it is
+  unaltered, and the avatar and name stand on the page canvas below the
+  melt, not on the photo. Kamil's "cały górny panel" may mean the photo
+  should reach behind the avatar; that needs his sign-off on
+  `fix-round/profile_393x852_*_bright_island.png` before testers. The
+  options are a shorter phone melt, or a phone hero slightly taller than
+  16:9 with a small side crop.

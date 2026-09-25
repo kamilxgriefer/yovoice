@@ -429,7 +429,8 @@ void main() {
       expect(
         surviving,
         inInclusiveRange(.15, .35),
-        reason: 'a wildly different band means the geometry changed, not a typo',
+        reason:
+            'a wildly different band means the geometry changed, not a typo',
       );
 
       final band = tester.getRect(
@@ -447,6 +448,32 @@ void main() {
         reason: 'the header centres the crop, so the guide is centred too',
       );
       expect(find.text('ALWAYS VISIBLE'), findsOneWidget);
+      // The lower part of the band is on screen but melts into the page on
+      // wide layouts, so the guide marks it apart from the clear part.
+      final clearPart = tester.getRect(
+        find.byKey(const ValueKey('banner-safe-band-clear')),
+      );
+      final meltPart = tester.getRect(
+        find.byKey(const ValueKey('banner-safe-band-melt')),
+      );
+      // Both parts sit inside the guide's 2 px padding.
+      expect(clearPart.top, closeTo(band.top + 2, .5));
+      expect(meltPart.top, closeTo(clearPart.bottom, .5));
+      expect(meltPart.bottom, closeTo(band.bottom - 2, .5));
+      expect(
+        clearPart.height / (band.height - 4),
+        closeTo(
+          ProfileHeader.bannerClearBandFraction /
+              ProfileHeader.bannerSafeBandFraction,
+          .005,
+        ),
+      );
+      expect(
+        tester.getRect(find.text('ALWAYS VISIBLE')).center.dy,
+        lessThan(clearPart.bottom),
+        reason: 'the "always visible" label sits on the clear part',
+      );
+      expect(find.text('FADES INTO THE PAGE'), findsOneWidget);
       // The guide is a picture; the same fact has to reach a screen reader.
       expect(
         find.bySemanticsLabel(
@@ -473,6 +500,7 @@ void main() {
     );
 
     expect(find.text('ZAWSZE WIDOCZNE'), findsOneWidget);
+    expect(find.text('PRZECHODZI W TŁO'), findsOneWidget);
     expect(find.text('ALWAYS VISIBLE'), findsNothing);
     expect(
       find.bySemanticsLabel(RegExp('twarze i tekst umieść')),

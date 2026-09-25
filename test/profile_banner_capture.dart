@@ -10,7 +10,10 @@
 // Matrix: 390x844 (status bar 47), 768x1024 (status bar 24) and 1440x900
 // (none), Dark and Pearl, bright / dark / no banner, own and friend profile;
 // plus the edit preview, a pending grant in Pearl, high contrast, an iPhone
-// landscape and a 2560 desktop.
+// landscape and a 2560 desktop; and a 393x852 phone under the 59 pt Dynamic
+// Island inset, a landscape iPhone with its notch-side insets, 200% text and
+// the own profile inside the desktop shell (real sidebar, 1440 workbench)
+// at 1440 and 1920.
 //
 // The filename deliberately has no `_test` suffix, so the ordinary suite
 // skips it. Run explicitly:
@@ -39,6 +42,7 @@ import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -49,6 +53,7 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 const _outDir = String.fromEnvironment(
   'YO_CAPTURE_DIR',
@@ -363,15 +368,38 @@ class _EmptyGraph implements SocialGraphService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-typedef _Frame = ({
-  String screen,
-  double width,
-  double height,
-  double top,
-  bool pearl,
-  _Banner banner,
-  bool highContrast,
-});
+class _Frame {
+  const _Frame({
+    required this.screen,
+    required this.width,
+    required this.height,
+    required this.top,
+    required this.pearl,
+    required this.banner,
+    required this.highContrast,
+    this.sides = 0,
+    this.bottom = 0,
+    this.textScale = 1,
+    this.shell = false,
+  });
+
+  final String screen;
+  final double width;
+  final double height;
+  final double top;
+  final bool pearl;
+  final _Banner banner;
+  final bool highContrast;
+
+  /// Left and right safe-area inset (a landscape iPhone's notch side).
+  final double sides;
+  final double bottom;
+  final double textScale;
+
+  /// Inside the desktop shell: the real sidebar beside a 1440pt workbench
+  /// frame, the way MoreDestinationHost presents the profile.
+  final bool shell;
+}
 
 Widget _host({
   required GlobalKey<NavigatorState> navigatorKey,
@@ -393,9 +421,21 @@ Widget _host({
     builder: (context, child) => MediaQuery(
       data: MediaQueryData(
         size: Size(frame.width, frame.height),
-        padding: EdgeInsets.only(top: frame.top),
-        viewPadding: EdgeInsets.only(top: frame.top),
-        textScaler: TextScaler.noScaling,
+        padding: EdgeInsets.fromLTRB(
+          frame.sides,
+          frame.top,
+          frame.sides,
+          frame.bottom,
+        ),
+        viewPadding: EdgeInsets.fromLTRB(
+          frame.sides,
+          frame.top,
+          frame.sides,
+          frame.bottom,
+        ),
+        textScaler: frame.textScale == 1
+            ? TextScaler.noScaling
+            : TextScaler.linear(frame.textScale),
         disableAnimations: true,
         highContrast: frame.highContrast,
       ),
@@ -469,7 +509,11 @@ void main() {
     await tester.pump();
   }
 
-  Widget screenFor(_Frame frame, FakeFirebaseFirestore db, MockFirebaseAuth a) {
+  Widget bareScreenFor(
+    _Frame frame,
+    FakeFirebaseFirestore db,
+    MockFirebaseAuth a,
+  ) {
     final media = _media(a, frame.banner);
     switch (frame.screen) {
       case 'profile':
@@ -526,6 +570,38 @@ void main() {
     }
   }
 
+  Widget screenFor(_Frame frame, FakeFirebaseFirestore db, MockFirebaseAuth a) {
+    final screen = bareScreenFor(frame, db, a);
+    if (!frame.shell) return screen;
+    return Scaffold(
+      body: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: DesktopSidebar.width,
+            child: DesktopSidebar(
+              active: null,
+              unreadConversationCount: 0,
+              unreadNotificationCount: 0,
+              onSelect: (_) {},
+              onCreateRoom: () {},
+              onCreateMoment: () {},
+              onOpenProfile: () {},
+              onOpenProfileSettings: () {},
+              profileService: ProfileService(firestore: db, auth: a),
+            ),
+          ),
+          Expanded(
+            child: ResponsiveContentFrame(
+              width: ResponsiveContentWidth.workbench,
+              child: screen,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   final frames = <_Frame>[
     for (final screen in const ['profile', 'friend-profile'])
       for (final pearl in const [false, true])
@@ -539,7 +615,7 @@ void main() {
             _Banner.dark,
             _Banner.none,
           ])
-            (
+            _Frame(
               screen: screen,
               width: width,
               height: height,
@@ -550,7 +626,7 @@ void main() {
             ),
     for (final pearl in const [false, true])
       for (final banner in const [_Banner.bright, _Banner.dark, _Banner.none])
-        (
+        _Frame(
           screen: 'edit-profile',
           width: 390.0,
           height: 844.0,
@@ -560,7 +636,7 @@ void main() {
           highContrast: false,
         ),
     for (final screen in const ['profile', 'friend-profile'])
-      (
+      _Frame(
         screen: screen,
         width: 390.0,
         height: 844.0,
@@ -570,7 +646,7 @@ void main() {
         highContrast: false,
       ),
     for (final pearl in const [false, true])
-      (
+      _Frame(
         screen: 'profile',
         width: 390.0,
         height: 844.0,
@@ -579,7 +655,7 @@ void main() {
         banner: _Banner.bright,
         highContrast: true,
       ),
-    (
+    _Frame(
       screen: 'friend-profile',
       width: 844.0,
       height: 390.0,
@@ -588,7 +664,7 @@ void main() {
       banner: _Banner.bright,
       highContrast: false,
     ),
-    (
+    _Frame(
       screen: 'friend-profile',
       width: 2560.0,
       height: 1440.0,
@@ -597,7 +673,7 @@ void main() {
       banner: _Banner.bright,
       highContrast: false,
     ),
-    (
+    _Frame(
       screen: 'profile',
       width: 2560.0,
       height: 1440.0,
@@ -606,13 +682,69 @@ void main() {
       banner: _Banner.dark,
       highContrast: false,
     ),
+    // Fix round: the 59 pt Dynamic Island inset, a landscape iPhone with
+    // its notch-side insets, 200% text and the desktop shell.
+    for (final screen in const ['profile', 'friend-profile'])
+      for (final pearl in const [false, true])
+        _Frame(
+          screen: screen,
+          width: 393,
+          height: 852,
+          top: 59,
+          pearl: pearl,
+          banner: _Banner.bright,
+          highContrast: false,
+        ),
+    for (final screen in const ['profile', 'friend-profile'])
+      _Frame(
+        screen: screen,
+        width: 844,
+        height: 390,
+        top: 0,
+        sides: 47,
+        bottom: 21,
+        pearl: true,
+        banner: _Banner.dark,
+        highContrast: false,
+      ),
+    for (final screen in const ['profile', 'friend-profile'])
+      for (final (pearl, banner) in const [
+        (true, _Banner.dark),
+        (false, _Banner.bright),
+      ])
+        _Frame(
+          screen: screen,
+          width: 390,
+          height: 844,
+          top: 47,
+          textScale: 2,
+          pearl: pearl,
+          banner: banner,
+          highContrast: false,
+        ),
+    for (final width in const [1440.0, 1920.0])
+      for (final pearl in const [false, true])
+        _Frame(
+          screen: 'profile',
+          width: width,
+          height: 900,
+          top: 0,
+          shell: true,
+          pearl: pearl,
+          banner: _Banner.bright,
+          highContrast: false,
+        ),
   ];
 
   for (final frame in frames) {
     final name =
         '${frame.screen}_${frame.width.toInt()}x${frame.height.toInt()}'
         '_${frame.pearl ? 'pearl' : 'dark'}_${frame.banner.name}'
-        '${frame.highContrast ? '_high-contrast' : ''}';
+        '${frame.highContrast ? '_high-contrast' : ''}'
+        '${frame.top == 59 ? '_island' : ''}'
+        '${frame.sides > 0 ? '_notch-insets' : ''}'
+        '${frame.textScale != 1 ? '_text${(frame.textScale * 100).round()}' : ''}'
+        '${frame.shell ? '_shell' : ''}';
     testWidgets(name, (tester) async {
       tester.view.physicalSize = Size(frame.width, frame.height);
       tester.view.devicePixelRatio = 1;

@@ -627,14 +627,23 @@ Everything above still holds.
   `lib/shared/widgets/profile/profile_hero_backdrop.dart`. Height
   `T + 56 + band` (band 124 / 156 / 176 below 600 / below 1100 / above),
   never narrower than 16:9 (a phone shows the whole banner, `Alignment.center`
-  crops only top and bottom elsewhere), at most 45% of a short viewport,
-  growing with the width past 1440. The toolbar floats over a `scrim` top
-  gradient with raised 44 px controls and no visible title (the display name
-  is the headline; a `namesRoute` node still names the page). The identity
+  crops only top and bottom elsewhere), at most 45% of a short viewport
+  (but never below the crop guide's share), growing with the width past
+  1440. The crop editor's guide marks the centred ~28.6% that is always on
+  screen and, inside it, the upper ~14.8% that is always above the melt.
+  The toolbar floats over a `scrim` top gradient with raised 44 px
+  controls and no visible title (the display name is the headline; a
+  `namesRoute` node still names the page). The identity
   row starts on the text line, where the photo has melted to ≤ 10%; the melt
-  is an alpha mask, so it dissolves into any canvas. The bottom soft focus is
-  a blurred copy of the same image (`ImageFiltered`, never `BackdropFilter`)
-  inside one `RepaintBoundary`, off under high contrast. No banner, pending
+  is an alpha mask, so it dissolves into any canvas, and it never takes more
+  than 112/232 of the hero. The top scrim holds .62 across the whole status
+  bar before fading (white status icons ≥ 4.5:1 over a white photo). The
+  bottom soft focus is a once-rendered, pre-blurred small copy of the same
+  image drawn over the bottom band only — no per-frame filter, never
+  `BackdropFilter` — off under high contrast. Read and focus order: Back,
+  page name, Edit, identity, footer, then the banner, whose focus ring sits
+  on the visible photo. The side melt appears only where at least 48 pt of
+  page canvas is left beside the column. No banner, pending
   or failed: Dark keeps `kProfileBannerFallbackGradient`, Pearl a light
   palette wash; the photo, its scrim, blur and light status-bar region fade
   in together (no fade under Reduce Motion). The banner scrolls away 1:1 (no

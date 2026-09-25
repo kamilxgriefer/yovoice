@@ -49,6 +49,16 @@ class ResponsiveContentFrame extends StatelessWidget {
   /// Keep this true for root screens whose child contains `Expanded`.
   final bool fillHeight;
 
+  /// The page canvas left on each side of the nearest enclosing frame's
+  /// content, plus whatever the frames around it left — e.g. the gutters a
+  /// 1440pt workbench frame leaves inside a 2560pt window beside the
+  /// sidebar. Null outside any frame. A full-bleed hero uses it to decide
+  /// whether its photo has canvas to melt into or meets the sidebar / the
+  /// window edge.
+  static double? sideCanvasOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_ResponsiveContentScope>()
+      ?.sideCanvas;
+
   static EdgeInsets adaptivePagePadding(double availableWidth) {
     if (availableWidth < 600) {
       return const EdgeInsets.symmetric(horizontal: 16);
@@ -102,6 +112,11 @@ class ResponsiveContentFrame extends StatelessWidget {
             ? math.max(0.0, constraints.maxHeight - resolvedPadding.vertical)
             : null;
 
+        final ownCanvas = alignment == ResponsiveContentAlignment.topLeft
+            ? 0.0
+            : math.max(0.0, (constraints.maxWidth - contentWidth) / 2);
+        final outerCanvas = sideCanvasOf(context) ?? 0;
+
         return Padding(
           padding: resolvedPadding,
           child: Align(
@@ -111,11 +126,27 @@ class ResponsiveContentFrame extends StatelessWidget {
             child: SizedBox(
               width: contentWidth,
               height: contentHeight,
-              child: child,
+              child: _ResponsiveContentScope(
+                sideCanvas: ownCanvas + outerCanvas,
+                child: child,
+              ),
             ),
           ),
         );
       },
     );
   }
+}
+
+class _ResponsiveContentScope extends InheritedWidget {
+  const _ResponsiveContentScope({
+    required this.sideCanvas,
+    required super.child,
+  });
+
+  final double sideCanvas;
+
+  @override
+  bool updateShouldNotify(_ResponsiveContentScope oldWidget) =>
+      oldWidget.sideCanvas != sideCanvas;
 }

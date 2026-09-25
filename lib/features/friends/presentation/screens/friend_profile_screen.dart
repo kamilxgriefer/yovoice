@@ -746,7 +746,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     final copy = AppLocalizations.of(context);
     return ProfileHeroLayout(
       contentMaxWidth: ResponsiveContentWidth.list.maxWidth,
-      backdrop: (context, frame) => _banner(profile, frame.geometry),
+      backdrop: (context, frame) => _banner(profile, frame),
       toolbar: (context, frame) => Padding(
         padding: frame.inset(start: 8, end: 18),
         child: Row(
@@ -789,7 +789,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   /// drew none, so the same identity read differently depending on whose
   /// profile you opened. Its size comes from [ProfileHeroGeometry]: the
   /// available width, never a device label.
-  Widget _banner(UserProfile? profile, ProfileHeroGeometry geometry) {
+  Widget _banner(UserProfile? profile, ProfileHeroFrame frame) {
     final name = profile?.displayName ?? widget.friend.displayName;
     final revision =
         profile?.profileUpdatedAt ?? widget.friend.profileUpdatedAt;
@@ -800,8 +800,11 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       mediaService: _profileMediaService,
       borderRadius: 0,
       focusContrastColor: context.appPalette.scrim,
+      // The ring stays on the visible photo, clear of the status bar and
+      // of the handle / presence row on the melt.
+      focusRingInsets: frame.bannerFocusInsets,
       child: ProfileHeroBackdrop(
-        geometry: geometry,
+        geometry: frame.geometry,
         userId: widget.friend.id,
         mediaRevision: revision,
         mediaService: _profileMediaService,

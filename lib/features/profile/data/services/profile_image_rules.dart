@@ -62,7 +62,10 @@ class ProfileImageRules {
   /// The crop editor marks that surviving strip inside the 16:9 frame
   /// (`ImageCropScreen`'s banner safe band, sized from
   /// `ProfileHeader.bannerSafeBandFraction`), so the user can see which part
-  /// always survives instead of discovering it afterwards.
+  /// always survives instead of discovering it afterwards — split into its
+  /// upper, clear part (`ProfileHeader.bannerClearBandFraction`, about 15%
+  /// of the height) and the lower part the hero's bottom melt fades into the
+  /// page on wide layouts.
   static const ProfileImageRules banner = ProfileImageRules._(
     kind: ProfileImageKind.banner,
     maxSourceBytes: 10 * 1024 * 1024,

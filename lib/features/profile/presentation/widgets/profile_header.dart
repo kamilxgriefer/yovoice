@@ -95,6 +95,12 @@ class ProfileHeader extends StatelessWidget {
   static final double bannerSafeBandFraction =
       ProfileHeroGeometry.alwaysVisibleFraction;
 
+  /// The upper part of [bannerSafeBandFraction] that stays above the hero's
+  /// bottom melt at every width — where faces and text belong. Below it the
+  /// band is still on screen but fades into the page on wide layouts.
+  static final double bannerClearBandFraction =
+      ProfileHeroGeometry.alwaysClearFraction;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
@@ -109,9 +115,11 @@ class ProfileHeader extends StatelessWidget {
         mediaRevision: profile.profileUpdatedAt,
         mediaService: mediaService,
         // A full-bleed band: square focus ring, two-tone because the photo's
-        // luminance is unknown.
+        // luminance is unknown, drawn on the visible photo only — below the
+        // status bar, above the text line, on the content column.
         borderRadius: 0,
         focusContrastColor: palette.scrim,
+        focusRingInsets: frame.bannerFocusInsets,
         child: ProfileHeroBackdrop(
           geometry: frame.geometry,
           userId: profile.uid,

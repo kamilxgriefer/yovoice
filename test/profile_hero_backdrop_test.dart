@@ -1,7 +1,10 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
@@ -14,6 +17,7 @@ import 'package:yovoice/features/profile/data/services/profile_media_service.dar
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
 import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
@@ -155,11 +159,37 @@ void main() {
               viewportHeight: viewport,
               windowWidth: width,
             );
-            expect(
-              hero.textLine - top - ProfileHeroGeometry.toolbarExtent,
-              greaterThanOrEqualTo(ProfileHeroGeometry.minimumClearBand - 1e-9),
-              reason: '$width x $viewport, status bar $top',
-            );
+            // Re-based deliberately: the 16:9 cap now wins over this floor
+            // (a phone always shows the whole banner, never a side crop), so
+            // where the floor would need more height than 16:9 allows — only
+            // a very narrow phone under a tall status bar — the pin is the
+            // whole banner plus a text line below the toolbar instead.
+            final tierFade = width < 600
+                ? ProfileHeroGeometry.narrowFade
+                : width < 1100
+                ? ProfileHeroGeometry.mediumFade
+                : ProfileHeroGeometry.wideFade;
+            final floor =
+                top +
+                ProfileHeroGeometry.toolbarExtent +
+                ProfileHeroGeometry.minimumClearBand +
+                tierFade * ProfileHeroGeometry.textFadeShare;
+            if (floor > width * 9 / 16) {
+              expect(hero.height, closeTo(width * 9 / 16, 1e-9));
+              expect(
+                hero.textLine,
+                greaterThan(top + ProfileHeroGeometry.toolbarExtent),
+                reason: '$width x $viewport, status bar $top',
+              );
+            } else {
+              expect(
+                hero.textLine - top - ProfileHeroGeometry.toolbarExtent,
+                greaterThanOrEqualTo(
+                  ProfileHeroGeometry.minimumClearBand - 1e-9,
+                ),
+                reason: '$width x $viewport, status bar $top',
+              );
+            }
             expect(hero.textLine, lessThan(hero.height));
           }
         }
@@ -200,6 +230,113 @@ void main() {
       }
     });
 
+    // The crop editor's guide is only worth drawing if it is true at every
+    // size the hero can take — short desktop windows, landscape phones,
+    // narrow phones under tall status bars — so this maps the stored 16:9
+    // rows onto the hero for each of them instead of re-deriving the
+    // guide's own formula.
+    test('the crop guide holds at every size: its band is on screen and its '
+        'upper part stays above the melt', () {
+      final visible = ProfileHeroGeometry.alwaysVisibleFraction;
+      final clear = ProfileHeroGeometry.alwaysClearFraction;
+      expect(ProfileHeader.bannerClearBandFraction, clear);
+      expect(clear, lessThan(visible));
+      final bandTop = .5 - visible / 2;
+      final bandBottom = .5 + visible / 2;
+      final clearBottom = bandTop + clear;
+      var tightestMelt = double.infinity;
+      final widths = <double>[
+        for (var width = 280.0; width <= 3840; width += 7) width,
+        320,
+        390,
+        393,
+        599,
+        600,
+        1099,
+        1100,
+        1440,
+        2560,
+      ];
+      for (final width in widths) {
+        for (final top in const <double>[0, 20, 24, 47, 59]) {
+          for (final viewport in const <double>[
+            320,
+            400,
+            500,
+            600,
+            700,
+            844,
+            1000,
+            1440,
+          ]) {
+            final hero = ProfileHeroGeometry.resolve(
+              width: width,
+              topInset: top,
+              viewportHeight: viewport,
+              windowWidth: width,
+            );
+            final reason = '$width x $viewport, status bar $top';
+            // Never narrower than 16:9: a phone shows the whole banner and
+            // nothing is ever cropped at the sides.
+            final drawn = hero.backdropWidth * 9 / 16;
+            expect(
+              hero.height,
+              lessThanOrEqualTo(drawn + 1e-9),
+              reason: reason,
+            );
+            // BoxFit.cover + Alignment.center: stored row s sits at
+            // y = offset + s * drawn.
+            final offset = (hero.height - drawn) / 2;
+            double rowAt(double y) => (y - offset) / drawn;
+            expect(rowAt(0), lessThanOrEqualTo(bandTop + 1e-9), reason: reason);
+            expect(
+              rowAt(hero.height),
+              greaterThanOrEqualTo(bandBottom - 1e-9),
+              reason: reason,
+            );
+            final meltStart = rowAt(hero.height - hero.fade);
+            expect(
+              meltStart,
+              greaterThanOrEqualTo(clearBottom - 1e-9),
+              reason: reason,
+            );
+            tightestMelt = math.min(tightestMelt, meltStart);
+          }
+        }
+      }
+      // The guide is not slack either: somewhere the melt starts right at
+      // the bottom of its clear part (the 1440 desktop).
+      expect(tightestMelt, closeTo(clearBottom, 1e-6));
+    });
+
+    test('the melt never takes more of the hero than at the widest size', () {
+      for (final (width, top, viewport) in const [
+        (390.0, 0.0, 844.0),
+        (320.0, 20.0, 568.0),
+        (844.0, 0.0, 390.0),
+        (1440.0, 0.0, 900.0),
+        (1440.0, 0.0, 500.0),
+      ]) {
+        final hero = ProfileHeroGeometry.resolve(
+          width: width,
+          topInset: top,
+          viewportHeight: viewport,
+          windowWidth: width,
+        );
+        expect(
+          hero.fade / hero.height,
+          lessThanOrEqualTo(ProfileHeroGeometry.maxFadeShare + 1e-9),
+          reason: '$width x $viewport',
+        );
+      }
+      // The phones people carry keep the full melt.
+      expect(
+        ProfileHeroGeometry.resolve(width: 393, topInset: 59).fade,
+        ProfileHeroGeometry.narrowFade,
+      );
+      expect(ProfileHeroGeometry.resolve(width: 1440).fade, 112);
+    });
+
     test('the side melt appears only when a host capped the column', () {
       expect(
         ProfileHeroGeometry.resolve(width: 1440, windowWidth: 2560).sideFade,
@@ -218,6 +355,33 @@ void main() {
         0,
         reason: 'beside the desktop sidebar the photo meets the sidebar',
       );
+      // Measured canvas beats the window heuristic: a 1704 window minus the
+      // 264 sidebar is exactly the 1440 workbench, so no canvas is left.
+      expect(
+        ProfileHeroGeometry.resolve(
+          width: 1440,
+          windowWidth: 1704,
+          sideCanvas: 0,
+        ).sideFade,
+        0,
+      );
+      expect(
+        ProfileHeroGeometry.resolve(
+          width: 1440,
+          windowWidth: 1800,
+          sideCanvas: 24,
+        ).sideFade,
+        0,
+        reason: 'a gutter narrower than the melt would fade into the sidebar',
+      );
+      expect(
+        ProfileHeroGeometry.resolve(
+          width: 1440,
+          windowWidth: 2560,
+          sideCanvas: 428,
+        ).sideFade,
+        ProfileHeroGeometry.sideFadeExtent,
+      );
     });
   });
 
@@ -225,6 +389,7 @@ void main() {
     Future<void> pumpHeader(
       WidgetTester tester, {
       double top = 0,
+      EdgeInsets? safe,
       ScrollPhysics? physics,
       bool disableAnimations = false,
       ThemeData? theme,
@@ -240,7 +405,7 @@ void main() {
         MaterialPageRoute<void>(
           builder: (context) => MediaQuery(
             data: MediaQuery.of(context).copyWith(
-              padding: EdgeInsets.only(top: top),
+              padding: safe ?? EdgeInsets.only(top: top),
               disableAnimations: disableAnimations,
             ),
             child: Scaffold(
@@ -344,6 +509,212 @@ void main() {
       await tester.pump();
       expect(focusNode.hasFocus, isTrue);
       semantics.dispose();
+    });
+
+    testWidgets('keyboard focus starts on Back and reaches the banner last', (
+      tester,
+    ) async {
+      _size(tester, const Size(390, 844));
+      await pumpHeader(tester, top: 47);
+
+      String? focusedControl() {
+        final context = FocusManager.instance.primaryFocus?.context;
+        if (context == null) return null;
+        final icon = context.findAncestorWidgetOfExactType<IconButton>();
+        if (icon != null) return icon.tooltip;
+        if (context.findAncestorWidgetOfExactType<ProfileBannerButton>() !=
+            null) {
+          return 'banner';
+        }
+        if (context.findAncestorWidgetOfExactType<ProfilePhotoButton>() !=
+            null) {
+          return 'avatar';
+        }
+        return context.widget.runtimeType.toString();
+      }
+
+      final order = <String?>[];
+      for (var i = 0; i < 8; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        order.add(focusedControl());
+        if (order.last == 'banner') break;
+      }
+      expect(order.first, 'Back', reason: 'first Tab: $order');
+      expect(order, contains('Edit profile'));
+      expect(order, contains('avatar'));
+      expect(order.last, 'banner', reason: 'the banner comes last: $order');
+      expect(
+        order.indexOf('Edit profile'),
+        lessThan(order.indexOf('avatar')),
+        reason: '$order',
+      );
+    });
+
+    testWidgets('screen readers hear Back, the page name and the identity '
+        'before the banner', (tester) async {
+      final semantics = tester.ensureSemantics();
+      _size(tester, const Size(390, 844));
+      await pumpHeader(tester, top: 47);
+
+      final labels = [
+        for (final node in tester.semantics.simulatedAccessibilityTraversal())
+          // IconButtons announce their tooltip.
+          node.label.isEmpty ? node.tooltip : node.label,
+      ];
+      int at(bool Function(String label) test, String what) {
+        final index = labels.indexWhere(test);
+        expect(index, isNonNegative, reason: '$what missing from $labels');
+        return index;
+      }
+
+      final back = at((l) => l == 'Back', 'Back');
+      final route = at((l) => l == 'Profile', 'page name');
+      final name = at((l) => l == 'Ada Lovelace', 'name');
+      final handle = at((l) => l == '@ada', 'handle');
+      final banner = at(
+        (l) => l == 'Background photo of Ada Lovelace',
+        'banner',
+      );
+      expect(back, lessThan(route), reason: '$labels');
+      expect(route, lessThan(name), reason: '$labels');
+      expect(name, lessThan(handle), reason: '$labels');
+      expect(handle, lessThan(banner), reason: '$labels');
+      semantics.dispose();
+    });
+
+    testWidgets('the banner focus ring stays on the visible photo, clear of '
+        'the status bar and the handle', (tester) async {
+      _size(tester, const Size(390, 844));
+      await pumpHeader(tester, top: 47, theme: AppTheme.lightTheme);
+
+      final bannerButton = find.byType(ProfileBannerButton);
+      Focus.of(
+        tester.element(
+          find.descendant(
+            of: bannerButton,
+            matching: find.byType(ProfileHeroBackdrop),
+          ),
+        ),
+      ).requestFocus();
+      await tester.pumpAndSettle();
+
+      final geometry = ProfileHeroGeometry.resolve(
+        width: 390,
+        topInset: 47,
+        viewportHeight: 844,
+        windowWidth: 390,
+      );
+      final rings = find.descendant(
+        of: bannerButton,
+        matching: find.byType(AnimatedContainer),
+      );
+      expect(rings, findsNWidgets(2));
+      final handle = tester.getRect(find.text('@ada'));
+      for (final ring in rings.evaluate()) {
+        final rect = tester.getRect(find.byWidget(ring.widget));
+        expect(rect.top, greaterThanOrEqualTo(47), reason: 'under the notch');
+        expect(
+          rect.bottom,
+          lessThanOrEqualTo(geometry.textLine - 4 + 1e-6),
+          reason: 'above the text line',
+        );
+        expect(rect.bottom, lessThanOrEqualTo(handle.top));
+        expect(rect.left, greaterThanOrEqualTo(4));
+        expect(rect.right, lessThanOrEqualTo(390 - 4));
+        final decoration =
+            (ring.widget as AnimatedContainer).decoration! as BoxDecoration;
+        expect(
+          (decoration.border! as Border).top.color,
+          isNot(Colors.transparent),
+          reason: 'the ring is drawn while focused',
+        );
+      }
+    });
+
+    testWidgets('a landscape iPhone keeps Back and the identity clear of the '
+        'notch insets', (tester) async {
+      _size(tester, const Size(844, 390));
+      await pumpHeader(
+        tester,
+        safe: const EdgeInsets.only(left: 47, right: 47, bottom: 21),
+      );
+
+      expect(tester.getRect(find.byType(ProfileBannerButton)).left, 0);
+      expect(tester.getRect(find.byType(ProfileBannerButton)).width, 844);
+      expect(
+        tester.getRect(find.byTooltip('Back')).left,
+        greaterThanOrEqualTo(47 + 6 - .01),
+      );
+      expect(
+        tester.getRect(find.byTooltip('Edit profile')).right,
+        lessThanOrEqualTo(844 - 47 - ProfileHeader.gutter + .01),
+      );
+      final avatar = tester.getRect(
+        find.byKey(const Key('profile-header-avatar')),
+      );
+      expect(
+        avatar.left,
+        greaterThanOrEqualTo(47 + ProfileHeader.gutter - .01),
+      );
+      expect(
+        tester.getRect(find.text('Ada Lovelace')).left,
+        greaterThan(avatar.right),
+      );
+      expect(
+        tester.getRect(find.text('Ada Lovelace')).right,
+        lessThanOrEqualTo(844 - 47 - ProfileHeader.gutter + .01),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('beside the desktop sidebar the photo melts only into real '
+        'canvas', (tester) async {
+      Future<void> pumpShell(double window) async {
+        _size(tester, Size(window, 900));
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.darkTheme,
+            home: Scaffold(
+              body: Row(
+                children: [
+                  const SizedBox(width: 264),
+                  Expanded(
+                    child: ResponsiveContentFrame(
+                      width: ResponsiveContentWidth.workbench,
+                      child: ListView(
+                        padding: EdgeInsets.zero,
+                        children: [
+                          ProfileHeader(
+                            profile: _profile(),
+                            onEdit: () {},
+                            mediaService: _service(available: false),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      // 1704 − 264 is exactly the 1440 workbench: no canvas beside it.
+      await pumpShell(1704);
+      expect(tester.getRect(find.byType(ProfileBannerButton)).width, 1440);
+      expect(
+        find.byKey(const ValueKey('profile-hero-side-melt')),
+        findsNothing,
+      );
+      // 2560 − 264 leaves 428 pt of canvas on each side of the column.
+      await pumpShell(2560);
+      expect(
+        find.byKey(const ValueKey('profile-hero-side-melt')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('an iOS bounce keeps the photo under the status bar', (
@@ -520,6 +891,146 @@ void main() {
       );
       expect(fade.duration, const Duration(milliseconds: 180));
     });
+
+    testWidgets('the soft focus is a pre-blurred copy drawn over the bottom '
+        'band only — nothing filters per frame', (tester) async {
+      await pumpBackdrop(
+        tester,
+        theme: AppTheme.darkTheme,
+        service: _service(available: true),
+      );
+      await decode(tester);
+
+      final band = tester.getRect(
+        find.byKey(const ValueKey('profile-hero-soft-focus')),
+      );
+      final hero = tester.getRect(find.byType(ProfileHeroBackdrop));
+      expect(band.bottom, closeTo(hero.bottom, .01));
+      expect(
+        band.height,
+        closeTo(geometry.fade + ProfileHeroBackdrop.softFocusLead, .01),
+      );
+      expect(band.height, lessThan(hero.height * .6));
+      expect(
+        find.descendant(
+          of: find.byType(ProfileHeroBackdrop),
+          matching: find.byType(ImageFiltered),
+        ),
+        findsNothing,
+      );
+      final copy = tester.widget<RawImage>(
+        find.byKey(const ValueKey('profile-hero-soft-focus-copy')),
+      );
+      expect(copy.image, isNotNull, reason: 'rendered from the cached photo');
+      expect(
+        copy.image!.width,
+        (390 / ProfileHeroBackdrop.softFocusTexel).ceil(),
+      );
+      // Laid out at the full hero size, so it lines up with the photo.
+      expect(
+        tester.getRect(
+          find.byKey(const ValueKey('profile-hero-soft-focus-copy')),
+        ),
+        hero,
+      );
+    });
+
+    for (final (themeName, theme) in [
+      ('Dark', AppTheme.darkTheme),
+      ('Pearl', AppTheme.lightTheme),
+    ]) {
+      testWidgets('$themeName: the status bar stays legible over a white '
+          'banner across the whole inset', (tester) async {
+        final white = MemoryImage(
+          img.encodePng(
+            img.Image(width: 16, height: 9)
+              ..clear(img.ColorRgb8(255, 255, 255)),
+          ),
+        );
+        final boundary = GlobalKey();
+        _size(tester, const Size(390, 844));
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: theme,
+            home: MediaQuery(
+              data: const MediaQueryData(
+                size: Size(390, 844),
+                disableAnimations: true,
+              ),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: RepaintBoundary(
+                  key: boundary,
+                  child: SizedBox(
+                    width: 390,
+                    height: geometry.height,
+                    child: ProfileHeroBackdrop(
+                      geometry: geometry,
+                      userId: 'u1',
+                      mediaService: _service(available: true),
+                      imageProvider: (_) => white,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+        await tester.runAsync(
+          () => precacheImage(
+            white,
+            tester.element(find.byType(ProfileHeroBackdrop)),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        final pixels = await tester.runAsync(() async {
+          final render =
+              boundary.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
+          final image = await render.toImage();
+          try {
+            final data = await image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            );
+            return (data!, image.width);
+          } finally {
+            image.dispose();
+          }
+        });
+        final (data, width) = pixels!;
+        double luminance(int x, int y) {
+          final i = (y * width + x) * 4;
+          double channel(int value) {
+            final c = value / 255;
+            return c <= .04045
+                ? c / 12.92
+                : math.pow((c + .055) / 1.055, 2.4).toDouble();
+          }
+
+          return .2126 * channel(data.getUint8(i)) +
+              .7152 * channel(data.getUint8(i + 1)) +
+              .0722 * channel(data.getUint8(i + 2));
+        }
+
+        final inset = geometry.topInset;
+        for (final y in [(inset / 2).round(), (inset - 8).round()]) {
+          for (final x in const [40, 195, 350]) {
+            final contrast = 1.05 / (luminance(x, y) + .05);
+            expect(
+              contrast,
+              greaterThanOrEqualTo(4.5),
+              reason:
+                  'white clock text at ($x, $y): '
+                  '${contrast.toStringAsFixed(2)}:1',
+            );
+          }
+        }
+      });
+    }
 
     testWidgets('Reduce Motion: the photo appears without a fade', (
       tester,
