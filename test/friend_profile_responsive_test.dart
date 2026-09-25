@@ -783,4 +783,72 @@ void main() {
       reason: 'a desktop hero takes the wide tier, not the tablet one',
     );
   });
+  // Kamil: the photo stands behind the avatar, the name and the handle too,
+  // with a stronger fade under the text.
+  testWidgets('the friend avatar stands on the photo and the name on its '
+      'veil', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    for (final size in const [
+      Size(390, 844),
+      Size(768, 1024),
+      Size(1440, 900),
+    ]) {
+      ProfileMediaService.clearAllMediaAccessCaches();
+      final media = ProfileMediaService(
+        auth: auth,
+        invoker: (_, request) async => {
+          'schemaVersion': 1,
+          'available': false,
+          'expiresAtMillis': DateTime.now()
+              .toUtc()
+              .add(const Duration(seconds: 80))
+              .millisecondsSinceEpoch,
+        },
+      );
+      tester.view.physicalSize = size;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: buildScreen(
+            key: ValueKey('veil-${size.width}'),
+            profileMediaService: media,
+          ),
+        ),
+      );
+      for (var pump = 0; pump < 8; pump++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+
+      final geometry = ProfileHeroGeometry.resolve(
+        width: size.width,
+        viewportHeight: size.height,
+        windowWidth: size.width,
+      );
+      final photo = tester.getRect(find.byType(ProfileBannerButton));
+      final avatar = tester.getRect(find.byType(ProfilePhotoButton));
+      final name = tester.getRect(find.text(longDisplayName));
+      final reason = '$size';
+      expect(avatar.top, closeTo(geometry.textLine, .01), reason: reason);
+      expect(
+        avatar.center.dy,
+        lessThan(photo.bottom),
+        reason: '$reason: the avatar stands on the photo',
+      );
+      expect(
+        name.top,
+        greaterThanOrEqualTo(geometry.nameLine - .01),
+        reason: '$reason: the name starts on the veil, not above it',
+      );
+      expect(name.top, lessThan(photo.bottom), reason: reason);
+      expect(
+        tester.getRect(find.text('@alexandra_responsive_profile_name')).top,
+        greaterThanOrEqualTo(
+          geometry.nameLine + ProfileHeroBackdrop.nameVeilBand - .01,
+        ),
+        reason: '$reason: the handle stands on the stronger veil',
+      );
+      expect(tester.takeException(), isNull, reason: reason);
+    }
+  });
 }

@@ -903,9 +903,11 @@ class _SectionLabel extends StatelessWidget {
 /// It is the phone hero in miniature, because that is what most people who
 /// open the profile see: [ProfileHeroGeometry.preview] scales a 390pt phone
 /// under a status bar, which shows the WHOLE 16:9 banner, with the same top
-/// scrim, blurred melt into the page canvas and hairline avatar cut-out on
-/// the text line. Wider screens show a centred strip of it — the crop
-/// editor's "always visible" guide marks that strip.
+/// scrim and the avatar cut-out on the text line, standing on the photo: the
+/// backdrop paints its blurred continuation and the text veil below its
+/// 16:9 box, behind the avatar, exactly as on the profile. Wider screens
+/// show a centred strip of it — the crop editor's "always visible" guide
+/// marks that strip.
 class _ProfileImagePreview extends StatelessWidget {
   const _ProfileImagePreview({
     required this.profile,
@@ -976,7 +978,7 @@ class _ProfileImagePreview extends StatelessWidget {
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: palette.background,
-                            border: Border.all(color: palette.border),
+                            border: Border.all(color: palette.borderStrong),
                           ),
                           child: pendingAvatarBytes != null
                               ? ClipOval(

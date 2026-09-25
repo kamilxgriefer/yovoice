@@ -15258,7 +15258,7 @@ line).
   `OrdinalSortKey` and an `OrderedTraversalPolicy` group. The banner's
   focus ring (`focusRingInsets`) is drawn on the visible photo — below the
   status bar, above the text line, 4 pt inside the content column.
-- **Open product call (not changed silently):** on current phones the
+- **Open product call (resolved in the second round below):** on current phones the
   16:9 cap decides the height, so the photo is almost entirely scrim and
   melt — at 393 pt under the 59 pt Dynamic Island about 10 pt of it is
   unaltered, and the avatar and name stand on the page canvas below the
@@ -15267,3 +15267,64 @@ line).
   `fix-round/profile_393x852_*_bright_island.png` before testers. The
   options are a shorter phone melt, or a phone hero slightly taller than
   16:9 with a small side crop.
+
+### Second round: the photo stands behind the identity (Kamil's decision)
+
+Kamil looked at the fix-round frames and decided: the photo must stand
+BEHIND the avatar, the name and the handle too, covering the whole header,
+with a stronger fade under the text so it stays readable.
+
+- **Layout.** `ProfileHeroGeometry` gains `nameLine` and `extent`, and
+  `textLine` now means the identity row's top — the avatar's. The text
+  keeps the line the identity had (`nameLine` = `height − 0.4 · fade`), so
+  the header is never taller than before (about 12 pt shorter on a phone,
+  where the text column is shorter than the avatar); the avatar rises
+  `nameDrop` = 30 pt above it into the photo, and the photo no longer melts away above
+  the text but runs on behind it. `minimumClearBand` (toolbar → avatar)
+  drops from 48 to 24: it was the air above an identity that stood under
+  the photo, now it keeps the avatar off the floating Back / Edit. The
+  height floor built on it only binds in very short windows (below the 45%
+  viewport cap), where the photo can now be up to 24 pt shorter; the crop
+  guide's own floor and every pinned height still hold. At 390 × 844 under
+  a 47 pt status bar the avatar spans 151–231 against the 219 pt photo; at
+  393 under the 59 pt Dynamic Island, 153–233 against 221. Both screens pad
+  the text column (and the friend's inline Follow) by `nameOffset`. A
+  36 pt rise with the text moved up was tried first; it put the own
+  avatar's centre in the header's upper half at 320 × 568 and the banner's
+  centre under the identity, which `profile_header_layout_test` and
+  `profile_banner_viewer_test` rightly reject.
+- **The photo's box does not change.** `height` is still the 16:9-capped
+  photo, the banner button's tap target and focus ring, and the crop
+  guide's truth; `ProfileHeroBackdrop` paints past it (an `OverflowBox`,
+  never clipped by the hero's Stack) down to `extent`, where the picture
+  has fully dissolved. Below the box the soft-focus copy continues: the same
+  pre-blurred bitmap through an `ImageShader` with the photo's own cover
+  mapping, mirrored past the image edge, overlapping the box by 2 pt so
+  two anti-aliased edges never leave a hairline. Still no per-frame filter.
+- **The veil** (one `dstIn` mask over the whole stack, keyed to
+  `nameLine`): opaque down to 28 pt above the name line (never above
+  `height − fade`, so the crop guide's "always visible" part stays
+  unveiled — it is now conservative), .45 on the name line, .15
+  from 22 pt lower, 0 at `extent`. Chosen from the contrast limits over the
+  worst photo per theme (white on Dark, black on Pearl), including the
+  friend profile's tinted canvas: the name (22–27 pt w800, large text)
+  ≥ 3.6:1 (≥ 4.1:1 on the plain canvas), `textPrimary` / `textSecondary`
+  for the handle and smaller ≥ 4.7:1. A pixel test renders white and black photos in both themes and
+  checks every row from the name line to the extent.
+- **Readability of the rest.** The avatar ring's hairline is now
+  `borderStrong` (4.0:1 Dark, 3.4:1 Pearl against the canvas cut-out), so
+  the ring reads over any photo. The presence chips carry their own fills
+  (`successSurface` / `surfaceMuted`, `surfaceSunken`), Back its raised
+  fill, Edit and Follow filled; the stats and action rows below the
+  identity sit where the photo is ≤ 15% or gone. High contrast drops the
+  photo 8 pt above the avatar after a 24 pt melt, so nothing of the
+  identity stands on it; the top scrim stays.
+- The crop editor's screen-reader copy now says the strip's lower part
+  fades into the page behind the avatar and name (not only on wide
+  screens).
+- Frames: `yovoice-evidence/2026-09-25/profile-banner/final/`.
+- No existing test assertion changed; new pins: the geometry (avatar in the
+  photo, text on the veil, header never taller), own and friend layout at
+  390 / 768 / 1440, the veil's contrast per row in Dark and Pearl over a
+  white and a black photo (and high contrast), the seam, and the ring.
+

@@ -82,10 +82,10 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     // phone, so the band is explained here instead.
     _ => _copy.text(
       'Banner crop preview. Your profile always shows the marked strip, '
-          'and its lower part fades into the page on wide screens; keep '
-          'faces and text inside the upper part.',
+          'and its lower part fades into the page behind your avatar and '
+          'name; keep faces and text inside the upper part.',
       'Podgląd kadru banera. W profilu zawsze widać zaznaczony pas, a jego '
-          'dolna część na szerokich ekranach przechodzi w tło strony; '
+          'dolna część przechodzi w tło strony za awatarem i imieniem; '
           'twarze i tekst umieść w górnej części.',
     ),
   };
@@ -782,9 +782,9 @@ class _RoomCoverSafeAreaOverlay extends StatelessWidget {
 /// every width, and without this guide the user composes a 16:9 picture
 /// whose top and bottom are silently discarded on a desktop.
 ///
-/// The strip is not uniformly legible either: the hero's bottom melt
-/// dissolves the lower part of it into the page on wide layouts, under the
-/// avatar and the name. So the strip is split — the upper, clear part is
+/// The strip is not uniformly legible either: the avatar and the name stand
+/// on the photo, and the hero's melt dissolves the lower part of the strip
+/// into the page behind them. So the strip is split — the upper, clear part is
 /// labelled "always visible", the lower part "fades into the page" — both
 /// derived in `ProfileHeroGeometry`, never hand-copied here.
 ///

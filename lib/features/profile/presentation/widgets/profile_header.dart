@@ -20,8 +20,9 @@ import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 /// The profile hero: the user's banner is the full-bleed background of the
 /// whole header — edge to edge, under the status bar — with the toolbar
 /// (Back when the route can pop, Edit) floating over it on a scrim, and the
-/// identity block (avatar + name + username + badges) standing in the
-/// photo's blurred bottom melt. See [ProfileHeroLayout] and
+/// identity block (avatar + name + username + badges) standing on the photo,
+/// which continues behind it as a blurred copy under a veil that keeps the
+/// text legible. See [ProfileHeroLayout] and
 /// [ProfileHeroBackdrop] for the geometry and the layers; the decision is
 /// recorded in docs/Decisions.md ("The profile banner is the header's
 /// full-bleed background").
@@ -147,6 +148,7 @@ class ProfileHeader extends StatelessWidget {
             avatarRadius: avatarRadius,
             ringPadding: ringPadding,
             isWide: frame.columnWidth >= 900,
+            nameOffset: frame.geometry.nameOffset,
           ),
         );
       },
@@ -251,6 +253,7 @@ class ProfileHeader extends StatelessWidget {
     required double avatarRadius,
     required double ringPadding,
     required bool isWide,
+    double nameOffset = 0,
   }) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
@@ -278,13 +281,16 @@ class ProfileHeader extends StatelessWidget {
               child: Container(
                 key: const Key('profile-header-avatar'),
                 padding: EdgeInsets.all(ringPadding),
-                // Slim: a flat canvas-coloured cut-out with a 1 px hairline
-                // separates the avatar from the photo's melt. The ring stays
-                // free of decorative gradients (it is not a Moment ring).
+                // Slim: a flat canvas-coloured cut-out separates the avatar
+                // from the photo it stands on. Its 1 px hairline is
+                // `borderStrong`, ≥ 3:1 against that cut-out in both
+                // themes, so the ring reads over a white, a black or no
+                // photo alike. It stays free of decorative gradients (it is
+                // not a Moment ring).
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: palette.background,
-                  border: Border.all(color: palette.border),
+                  border: Border.all(color: palette.borderStrong),
                 ),
                 child: UserAvatar(
                   radius: avatarRadius,
@@ -300,12 +306,16 @@ class ProfileHeader extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Align(
+              child: Container(
+                // The avatar rises into the photo; the text starts lower, on
+                // the hero's name line, where the veil keeps it legible.
+                padding: EdgeInsets.only(top: nameOffset),
                 alignment: Alignment.centerLeft,
-                // The name block starts on the hero's text line, where the
-                // photo has melted to at most 10% under the page canvas, so
-                // it needs no plate of its own (the former raised plate was
-                // a card-in-card whose only job was legibility over the old
+                // The name block starts on the hero's name line, on the
+                // photo, where the veil has already taken it down to at most
+                // 45% (15% from the handle down) over the page canvas, so it
+                // needs no plate of its own (the former raised plate was a
+                // card-in-card whose only job was legibility over the old
                 // band). It still rides over the banner's tap target: opaque
                 // keeps a tap between its words from opening the banner
                 // viewer, while the availability chip inside still wins

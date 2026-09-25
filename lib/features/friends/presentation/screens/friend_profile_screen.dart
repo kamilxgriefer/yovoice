@@ -779,7 +779,11 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       ),
       identity: (context, frame) => Padding(
         padding: frame.inset(start: 20, end: 20),
-        child: _identity(profile, isFollowing),
+        child: _identity(
+          profile,
+          isFollowing,
+          nameOffset: frame.geometry.nameOffset,
+        ),
       ),
     );
   }
@@ -825,13 +829,15 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       mediaService: _profileMediaService,
       minimumSize: Size(extent, extent),
       // Slim: a flat hairline ring from the palette (the former violet →
-      // magenta hex gradient was decoration, not state).
+      // magenta hex gradient was decoration, not state). It stands on the
+      // photo, so the hairline is `borderStrong` — ≥ 3:1 against the
+      // canvas-coloured cut-out in both themes, whatever the photo does.
       child: Container(
         padding: const EdgeInsets.all(ring),
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: context.appPalette.background,
-          border: Border.all(color: context.appPalette.border),
+          border: Border.all(color: context.appPalette.borderStrong),
         ),
         child: UserAvatar(
           radius: radius,
@@ -895,7 +901,14 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       // keep the Unfollow action so opting out never traps a relationship.
       (profile?.canExposeCreatorAudience == true || isFollowing);
 
-  Widget _identity(UserProfile? profile, bool isFollowing) {
+  /// The avatar rises into the photo; the name (and a Follow beside it)
+  /// start [nameOffset] lower, on the hero's name line, where the veil keeps
+  /// them legible.
+  Widget _identity(
+    UserProfile? profile,
+    bool isFollowing, {
+    double nameOffset = 0,
+  }) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final trailingFollow =
@@ -961,12 +974,20 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           children: [
             _avatar(profile, radius: radius),
             const SizedBox(width: 14),
-            Expanded(child: details),
+            Expanded(
+              child: Padding(
+                padding: EdgeInsets.only(top: nameOffset),
+                child: details,
+              ),
+            ),
             if (trailingFollow) ...[
               const SizedBox(width: 12),
-              ProfileActionBar(
-                key: const ValueKey('friend-profile-actions'),
-                primary: _followButton(isFollowing),
+              Padding(
+                padding: EdgeInsets.only(top: nameOffset),
+                child: ProfileActionBar(
+                  key: const ValueKey('friend-profile-actions'),
+                  primary: _followButton(isFollowing),
+                ),
               ),
             ],
           ],

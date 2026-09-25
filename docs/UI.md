@@ -633,14 +633,25 @@ Everything above still holds.
   screen and, inside it, the upper ~14.8% that is always above the melt.
   The toolbar floats over a `scrim` top gradient with raised 44 px
   controls and no visible title (the display name is the headline; a
-  `namesRoute` node still names the page). The identity
-  row starts on the text line, where the photo has melted to ≤ 10%; the melt
-  is an alpha mask, so it dissolves into any canvas, and it never takes more
-  than 112/232 of the hero. The top scrim holds .62 across the whole status
+  `namesRoute` node still names the page). The photo stands behind the
+  identity (Kamil, second round): the name and handle keep their line
+  (`nameLine`, so the header is no taller), the avatar's top (`textLine`)
+  rises 30 pt above it into the photo — on a phone most of the avatar
+  stands on the photo's 16:9 box — and the text sits on a veil. The backdrop
+  keeps painting below its box, a mirrored continuation of the blurred copy,
+  down to `extent` (`nameLine` + 112 / 120 / 128). The veil is one alpha
+  mask, so it dissolves into any canvas: the photo is opaque down to the
+  melt (never shorter than the crop guide's clear part), .45 on the name
+  line (the name is large text: ≥ 3:1 over a white photo in Dark or a black
+  one in Pearl), .15 from 22 pt lower (handle, chip, badges: ≥ 4.5:1), and
+  gone at `extent`. The avatar ring is a canvas cut-out with a
+  `borderStrong` hairline (≥ 3:1 against the cut-out in both themes), so it
+  reads over any photo. High contrast drops the photo before the identity
+  row. The melt never takes more than 112/232 of the photo's box. The top scrim holds .62 across the whole status
   bar before fading (white status icons ≥ 4.5:1 over a white photo). The
   bottom soft focus is a once-rendered, pre-blurred small copy of the same
-  image drawn over the bottom band only — no per-frame filter, never
-  `BackdropFilter` — off under high contrast. Read and focus order: Back,
+  image drawn over the bottom band and its continuation only — no per-frame
+  filter, never `BackdropFilter` — off under high contrast. Read and focus order: Back,
   page name, Edit, identity, footer, then the banner, whose focus ring sits
   on the visible photo. The side melt appears only where at least 48 pt of
   page canvas is left beside the column. No banner, pending
@@ -648,7 +659,8 @@ Everything above still holds.
   palette wash; the photo, its scrim, blur and light status-bar region fade
   in together (no fade under Reduce Motion). The banner scrolls away 1:1 (no
   parallax); an iOS bounce stretches it upward instead of opening a canvas
-  strip. The edit-profile preview is the phone hero in miniature. Readable
+  strip. The edit-profile preview is the phone hero in miniature, avatar
+  on the photo included. Readable
   content keeps its measure through `ProfileMeasuredSliverPadding`
   (`ResponsiveContentWidth.fullBleed` exists only for such hero scroll
   views).

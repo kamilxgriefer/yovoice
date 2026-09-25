@@ -19,10 +19,13 @@ import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
 ///
 /// The banner is the background of the whole profile header: edge to edge,
 /// starting at y = 0 under the status bar, with the toolbar floating over it
-/// and the identity row sitting in its bottom melt. Every number the own
-/// profile, the friend profile, the edit-profile preview and the crop
-/// editor's "always visible" guide need is derived here, so they cannot
-/// drift apart the way the old inset card and the crop guide once did.
+/// and the identity row (avatar, name, handle, presence) standing ON the
+/// photo, which continues behind it as a blurred copy under a veil that
+/// strengthens under the text (see [textLine], [nameLine] and [extent]).
+/// Every number the own profile, the friend profile, the edit-profile
+/// preview and the crop editor's "always visible" guide need is derived
+/// here, so they cannot drift apart the way the old inset card and the crop
+/// guide once did.
 ///
 /// Height, for a backdrop `W` wide under a status bar `T` tall:
 ///
@@ -40,7 +43,16 @@ import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
 ///   (nothing is ever cropped at the sides) and wider tiers crop only top
 ///   and bottom, around the centre.
 ///
-/// The bottom melt ([fade]) never takes a larger share of the hero than it
+/// That height is the PHOTO's box: where the sharp 16:9 image is drawn, the
+/// banner's tap target and the crop guide's truth. The picture does not stop
+/// there. The identity row starts on [textLine], inside the photo (on a
+/// phone most of the avatar stands on it), its text on [nameLine], and the
+/// backdrop keeps painting below the box — a blurred continuation of the
+/// same image — down to [extent], under a veil that dissolves it into the
+/// page (see [ProfileHeroBackdrop]).
+///
+/// The photo stays fully opaque down to `height − fade` and only then starts
+/// to melt ([fade]). The melt never takes a larger share of the hero than it
 /// does at the widest reference ([maxFadeShare]). Together with the floor
 /// above that keeps the upper part of the crop guide
 /// ([alwaysClearFraction]) above the melt at every size.
@@ -54,6 +66,9 @@ class ProfileHeroGeometry {
     required this.topInset,
     required this.fade,
     required this.sideFade,
+    required this.textLine,
+    required this.nameLine,
+    required this.extent,
   });
 
   /// Resolves the hero for a host [width] wide (the content column the route
@@ -96,6 +111,22 @@ class ProfileHeroGeometry {
     height = math.max(height, coverHeight * alwaysVisibleFraction);
     height = math.min(height, coverHeight);
     final fade = math.min(tierFade, height * maxFadeShare);
+    final veilTail = switch (backdropWidth) {
+      < mediumBreakpoint => narrowVeilTail,
+      < wideBreakpoint => mediumVeilTail,
+      _ => wideVeilTail,
+    };
+    // The text keeps the line it has always had — the header is never
+    // taller than before — but the photo no longer melts away above it: it
+    // runs on behind the text under the veil (see ProfileHeroBackdrop).
+    final nameLine = height - fade * textFadeShare;
+    // The avatar rises beside it, [nameDrop] into the unveiled photo — but
+    // never into the toolbar's clear band, and never below the text.
+    final clearTop = topInset + toolbarExtent + minimumClearBand;
+    final textLine = math.min(
+      nameLine,
+      math.max(nameLine - nameDrop, clearTop),
+    );
 
     final double gap;
     if (sideCanvas != null && sideCanvas.isFinite) {
@@ -115,6 +146,9 @@ class ProfileHeroGeometry {
       topInset: topInset,
       fade: fade,
       sideFade: gap >= sideFadeExtent ? sideFadeExtent : 0.0,
+      textLine: textLine,
+      nameLine: nameLine,
+      extent: math.max(height, nameLine + veilTail),
     );
   }
 
@@ -135,6 +169,9 @@ class ProfileHeroGeometry {
       topInset: reference.topInset * scale,
       fade: reference.fade * scale,
       sideFade: 0,
+      textLine: reference.textLine * scale,
+      nameLine: reference.nameLine * scale,
+      extent: reference.extent * scale,
     );
   }
 
@@ -156,16 +193,34 @@ class ProfileHeroGeometry {
   static const double mediumFade = 104;
   static const double wideFade = 112;
 
-  /// Photo kept between the toolbar and the text line.
+  /// Photo kept between the toolbar and the text line (the avatar's top).
   ///
-  /// This is NOT a promise of unaltered photo: the band runs down to the
-  /// text line, where the melt is already at 10%. On a phone the 16:9 cap
-  /// usually decides the height, and there most of this band is the melt
-  /// and the top scrim (at 393 pt under a 59 pt status bar the photo is
-  /// clear for about 10 pt). The cap wins over this floor, so on a very
-  /// narrow phone under a tall status bar the band is smaller still; the
-  /// text line never rises into the toolbar from 280 pt up.
-  static const double minimumClearBand = 48;
+  /// This is NOT a promise of unaltered photo: part of the band is the top
+  /// scrim. It is the air that keeps the avatar off the floating Back / Edit
+  /// controls now that the avatar stands on the photo (it was 48 while the
+  /// identity stood below the photo). The 16:9 cap wins over the height
+  /// floor built on it, so on a very narrow phone under a tall status bar
+  /// the band is smaller still; the text line never rises into the toolbar
+  /// from 280 pt up.
+  static const double minimumClearBand = 24;
+
+  /// Over how much height above [nameLine] the veil closes, from the fully
+  /// opaque photo to [ProfileHeroBackdrop.nameVeilPhotoAlpha] (never
+  /// starting above the photo's melt, `height − fade`).
+  static const double nameLead = 28;
+
+  /// How far the avatar's top rises above the text, into the photo: over a
+  /// third of a phone avatar, so the avatar clearly stands on the picture
+  /// while the name sits beside it on the veil. The avatar's centre still
+  /// sits in the lower half of the header (profile_header_layout_test).
+  static const double nameDrop = 30;
+
+  /// How far below [nameLine] the photo keeps going before it has fully
+  /// dissolved into the page ([extent]): through the name, the handle, the
+  /// presence chip and the rest of the avatar.
+  static const double narrowVeilTail = 112;
+  static const double mediumVeilTail = 120;
+  static const double wideVeilTail = 128;
 
   /// A landscape phone must not spend more than this share of its height on
   /// imagery before any identity is drawn.
@@ -207,9 +262,27 @@ class ProfileHeroGeometry {
   /// left canvas beside it.
   final double sideFade;
 
-  /// The first y at which text may stand: the photo is at most 10% opaque
-  /// from here down.
-  double get textLine => height - fade * textFadeShare;
+  /// Where the identity row starts — the top of the avatar, standing on the
+  /// photo. Nothing readable is drawn above [nameLine].
+  final double textLine;
+
+  /// Where the identity's text starts (the display name, and a Follow
+  /// button beside it) — the line the whole identity started on while it
+  /// stood below the photo, where that photo had melted to 10%. Now the
+  /// photo runs on behind it, and from here down the veil keeps text
+  /// legible: the photo is at most [ProfileHeroBackdrop.nameVeilPhotoAlpha]
+  /// opaque on this line and at most [ProfileHeroBackdrop.textVeilPhotoAlpha]
+  /// from [ProfileHeroBackdrop.nameVeilBand] below it.
+  final double nameLine;
+
+  /// How far the identity's text column starts below the avatar's top: the
+  /// top padding hosts give the column beside the avatar.
+  double get nameOffset => nameLine - textLine;
+
+  /// Where the backdrop ends: the blurred continuation of the photo below
+  /// its box has fully dissolved into the page canvas here. Never above
+  /// [height]; the backdrop paints below its box down to this line.
+  final double extent;
 
   /// Height of the top scrim that keeps status icons and the toolbar
   /// legible over a bright photo.
@@ -243,7 +316,10 @@ class ProfileHeroGeometry {
       other.height == height &&
       other.topInset == topInset &&
       other.fade == fade &&
-      other.sideFade == sideFade;
+      other.sideFade == sideFade &&
+      other.textLine == textLine &&
+      other.nameLine == nameLine &&
+      other.extent == extent;
 
   @override
   int get hashCode => Object.hash(
@@ -254,6 +330,9 @@ class ProfileHeroGeometry {
     topInset,
     fade,
     sideFade,
+    textLine,
+    nameLine,
+    extent,
   );
 }
 
@@ -343,7 +422,9 @@ class ProfileHeroLayout extends StatelessWidget {
   /// Laid out in a [ProfileHeroGeometry.toolbarExtent] tall row.
   final ProfileHeroSlotBuilder toolbar;
 
-  /// Starts on [ProfileHeroGeometry.textLine]. Opaque to hit tests, so a tap
+  /// Starts on [ProfileHeroGeometry.textLine] (the avatar's top); its text
+  /// column starts [ProfileHeroGeometry.nameOffset] lower, on
+  /// [ProfileHeroGeometry.nameLine]. Opaque to hit tests, so a tap
   /// between its words never falls through to the banner viewer.
   final ProfileHeroSlotBuilder identity;
 
@@ -479,30 +560,46 @@ class _StretchingBackdropSlot extends StatelessWidget {
 
 /// The profile banner drawn as the header's full-bleed background.
 ///
-/// Drawing only — the caller owns placement, the tap target and copy. Layers,
-/// bottom to top:
+/// Drawing only — the caller owns placement, the tap target and copy. The
+/// widget's own box is the PHOTO's box ([ProfileHeroGeometry.height], plus
+/// any bounce stretch); it paints on below that box, down to
+/// [ProfileHeroGeometry.extent], so the picture stands behind the avatar,
+/// the name and the handle while the box — the banner's tap target, and
+/// the 16:9 the crop guide describes — stays the photo itself. Hosts must
+/// not clip right under the box (the profile hero's Stack does not).
+///
+/// Layers, bottom to top:
 ///
 /// 1. the no-photo base, shown while the grant is pending, when there is no
 ///    banner and when it failed: Dark keeps the brand fallback gradient;
 ///    Pearl gets a light theme wash, so a Pearl profile without a banner
-///    never flashes a dark slab first;
-/// 2. the photo (`BoxFit.cover`, [imageAlignment]), fading in over the base
-///    (instantly under Reduce Motion) together with everything that belongs
-///    to it:
-///    * a soft-focus copy of the same image, masked in over the bottom melt
-///      (off under high contrast, or when [softFocus] is false). It is
+///    never flashes a dark slab first. It fills the whole extent, so the
+///    identity stands on the same veil in every state;
+/// 2. the photo (`BoxFit.cover`, [imageAlignment]) in its box, fading in
+///    over the base (instantly under Reduce Motion) together with everything
+///    that belongs to it:
+///    * a soft-focus copy of the same image (off under high contrast, or
+///      when [softFocus] is false), masked in over the photo's bottom melt
+///      and then CONTINUED below the box behind the identity — a mirrored
+///      extension of the same blurred pixels, so there is no seam. It is
 ///      rendered ONCE per photo and width into a tiny pre-blurred bitmap
-///      (one texel per [softFocusTexel] points) and simply drawn scaled up
-///      over the bottom band only — never an `ImageFiltered` or a
-///      `BackdropFilter` that a renderer without a raster cache (Impeller,
-///      web CanvasKit) would re-run on every scroll frame;
+///      (one texel per [softFocusTexel] points) and simply drawn scaled up —
+///      never an `ImageFiltered` or a `BackdropFilter` that a renderer
+///      without a raster cache (Impeller, web CanvasKit) would re-run on
+///      every scroll frame;
 ///    * a top scrim for the toolbar and the status bar, held at full
 ///      strength across the whole status-bar inset;
 ///    * a sized light status-bar region, only while the photo is on screen;
-/// 3. an alpha melt: the whole stack dissolves into whatever page canvas is
-///    underneath over the bottom [ProfileHeroGeometry.fade] (and the sides
-///    when a host capped the column), so there is no seam against a tinted
-///    canvas.
+/// 3. the veil: an alpha mask that dissolves the whole stack into whatever
+///    page canvas is underneath. The photo is fully opaque down to the start
+///    of its melt — behind the top of the avatar — then
+///    [nameVeilPhotoAlpha] on the name line, [textVeilPhotoAlpha] from
+///    [nameVeilBand] below it (the handle and everything smaller), and gone
+///    at the extent. That keeps the name at ≥ 3:1 (large text) and every
+///    smaller text colour of the theme at ≥ 4.5:1 over a white or a black
+///    photo in Dark and Pearl. Under high contrast the photo is gone before
+///    the identity row: nothing of it stands on the photo. Hosts that
+///    capped the column also get a side melt.
 ///
 /// All of it sits in one [RepaintBoundary], so scrolling never rebuilds or
 /// repaints the photo. The two alpha masks are still composited per frame on
@@ -531,7 +628,9 @@ class ProfileHeroBackdrop extends StatelessWidget {
   /// pending pick). Replaces the grant path entirely when set.
   final ImageProvider<Object>? localImage;
 
-  /// The blurred bottom. High contrast always turns it off.
+  /// The blurred bottom and its continuation behind the identity. High
+  /// contrast always turns it off. Without it the photo dissolves within its
+  /// own box.
   final bool softFocus;
 
   /// Phones get the whole 16:9 banner; wider heroes crop only top and bottom,
@@ -546,8 +645,8 @@ class ProfileHeroBackdrop extends StatelessWidget {
   /// [softFocusTexel] texels of blur, applied once, smooth the rest.
   static const double softFocusTexel = 7;
 
-  /// How far above the melt the soft focus starts ramping in. The copy is
-  /// drawn only over `fade + softFocusLead`, the part of the hero it shows.
+  /// How far above the melt the soft focus starts ramping in. Inside the
+  /// photo's box the copy is drawn only over `fade + softFocusLead`.
   static const double softFocusLead = 24;
 
   /// Top-scrim strength, held across the whole status-bar inset and then
@@ -557,6 +656,29 @@ class ProfileHeroBackdrop extends StatelessWidget {
   /// the top pixel and under 3:1 lower in the bar, where it was fading).
   static const double topScrimAlpha = .62;
   static const double highContrastTopScrimAlpha = .72;
+
+  /// Photo opacity left on [ProfileHeroGeometry.nameLine], where the display
+  /// name starts. The name is large text (22–27 pt, w800), which needs 3:1;
+  /// over a pure-white photo on the Dark canvas, or a pure-black one on the
+  /// Pearl canvas, `textPrimary` keeps ≥ 3.6:1 here even on the friend
+  /// profile's tinted canvas (≥ 4.1:1 on the plain one), and more below,
+  /// where the veil keeps closing.
+  static const double nameVeilPhotoAlpha = .45;
+
+  /// Photo opacity from [nameVeilBand] below the name line down: the handle,
+  /// the presence chip, the badges. `textSecondary` keeps ≥ 4.5:1 over a
+  /// white photo in Dark and a black one in Pearl, on both canvases.
+  static const double textVeilPhotoAlpha = .15;
+
+  /// The name's first line: the handle never starts higher than this below
+  /// the name line (a 22 pt name at line height 1.02, plus its 2 pt gap).
+  static const double nameVeilBand = 22;
+
+  /// Under high contrast the photo is gone this far above the identity row
+  /// (the avatar's top), after a short melt: nothing of the identity stands
+  /// on it.
+  static const double highContrastTextGap = 8;
+  static const double highContrastMelt = 24;
 
   @override
   Widget build(BuildContext context) {
@@ -583,66 +705,117 @@ class ProfileHeroBackdrop extends StatelessWidget {
       ),
     );
 
-    Widget layers(
-      BuildContext context,
-      Widget image,
-      ImageProvider<Object> provider,
-    ) => _PhotoLayers(
-      geometry: geometry,
-      image: image,
-      provider: provider,
-      blur: blur,
-      scrimAlpha: highContrast ? highContrastTopScrimAlpha : topScrimAlpha,
-    );
+    return ExcludeSemantics(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // The photo's box: the geometry's height, plus the bounce stretch
+          // when the host grows it upward.
+          final box = constraints.biggest;
+          final shift = box.height - geometry.height;
+          // Below the box the soft copy continues the photo down to the
+          // extent; without it the photo dissolves inside its own box.
+          final below = blur ? geometry.extent - geometry.height : 0.0;
+          final painted = Size(box.width, box.height + below);
 
-    final local = localImage;
-    final Widget photo = local != null
-        ? _LocalHeroPhoto(image: local, fallback: base, layers: layers)
-        : ProfileBanner(
-            userId: userId,
-            mediaRevision: mediaRevision,
-            mediaService: mediaService,
-            imageProvider: imageProvider,
-            alignment: imageAlignment,
-            fallback: base,
-            imageLayerBuilder: layers,
+          Widget layers(
+            BuildContext context,
+            Widget image,
+            ImageProvider<Object> provider,
+          ) => _PhotoLayers(
+            geometry: geometry,
+            photoHeight: box.height,
+            image: image,
+            provider: provider,
+            blur: blur,
+            scrimAlpha: highContrast
+                ? highContrastTopScrimAlpha
+                : topScrimAlpha,
           );
 
-    Widget melted = ShaderMask(
-      key: const ValueKey('profile-hero-melt'),
-      blendMode: BlendMode.dstIn,
-      shaderCallback: (bounds) => _bottomMelt(bounds, geometry.fade),
-      child: photo,
-    );
-    if (geometry.sideFade > 0) {
-      melted = ShaderMask(
-        key: const ValueKey('profile-hero-side-melt'),
-        blendMode: BlendMode.dstIn,
-        shaderCallback: (bounds) => _sideMelt(bounds, geometry.sideFade),
-        child: melted,
-      );
-    }
-    return ExcludeSemantics(
-      child: RepaintBoundary(
-        child: SizedBox.expand(child: ClipRect(child: melted)),
+          final local = localImage;
+          final Widget photo = local != null
+              ? _LocalHeroPhoto(image: local, fallback: base, layers: layers)
+              : ProfileBanner(
+                  userId: userId,
+                  mediaRevision: mediaRevision,
+                  mediaService: mediaService,
+                  imageProvider: imageProvider,
+                  alignment: imageAlignment,
+                  fallback: base,
+                  imageLayerBuilder: layers,
+                );
+
+          Widget melted = ShaderMask(
+            key: const ValueKey('profile-hero-melt'),
+            blendMode: BlendMode.dstIn,
+            shaderCallback: (bounds) => _veil(
+              bounds,
+              meltStart: geometry.height - geometry.fade + shift,
+              textLine: geometry.textLine + shift,
+              nameLine: geometry.nameLine + shift,
+              end: painted.height,
+              highContrast: highContrast,
+            ),
+            child: photo,
+          );
+          if (geometry.sideFade > 0) {
+            melted = ShaderMask(
+              key: const ValueKey('profile-hero-side-melt'),
+              blendMode: BlendMode.dstIn,
+              shaderCallback: (bounds) => _sideMelt(bounds, geometry.sideFade),
+              child: melted,
+            );
+          }
+          return OverflowBox(
+            alignment: Alignment.topCenter,
+            minWidth: painted.width,
+            maxWidth: painted.width,
+            minHeight: painted.height,
+            maxHeight: painted.height,
+            child: RepaintBoundary(child: ClipRect(child: melted)),
+          );
+        },
       ),
     );
   }
 
-  static Shader _bottomMelt(Rect bounds, double fade) {
+  /// The veil, in the painted box's coordinates (see the class doc).
+  static Shader _veil(
+    Rect bounds, {
+    required double meltStart,
+    required double textLine,
+    required double nameLine,
+    required double end,
+    required bool highContrast,
+  }) {
     final h = math.max(bounds.height, 1.0);
-    double at(double fromBottom) => ((h - fromBottom) / h).clamp(0.0, 1.0);
+    var last = 0.0;
+    // Stops must never run backwards, whatever a squeezed hero does.
+    double at(double y) => last = (y / h).clamp(last, 1.0);
+    final List<double> stops;
+    final List<double> alphas;
+    if (highContrast) {
+      final gone = textLine - highContrastTextGap;
+      stops = [0, at(gone - highContrastMelt), at(gone), 1];
+      alphas = const [1, 1, 0, 0];
+    } else {
+      // Fully opaque down to the melt — never shorter than the crop guide's
+      // clear part promises — then the veil keyed to the text.
+      stops = [
+        0,
+        at(math.max(meltStart, nameLine - ProfileHeroGeometry.nameLead)),
+        at(nameLine),
+        at(nameLine + nameVeilBand),
+        at(end),
+        1,
+      ];
+      alphas = const [1, 1, nameVeilPhotoAlpha, textVeilPhotoAlpha, 0, 0];
+    }
     return LinearGradient(
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
-      stops: [0, at(fade), at(fade * .65), at(fade * .4), 1],
-      colors: [
-        _opaque,
-        _opaque,
-        _opaque.withValues(alpha: .45),
-        _opaque.withValues(alpha: .10),
-        _opaque.withValues(alpha: 0),
-      ],
+      stops: stops,
+      colors: [for (final alpha in alphas) _opaque.withValues(alpha: alpha)],
     ).createShader(bounds);
   }
 
@@ -670,6 +843,7 @@ const Color _maskInk = AppColors.black;
 class _PhotoLayers extends StatelessWidget {
   const _PhotoLayers({
     required this.geometry,
+    required this.photoHeight,
     required this.image,
     required this.provider,
     required this.blur,
@@ -677,6 +851,10 @@ class _PhotoLayers extends StatelessWidget {
   });
 
   final ProfileHeroGeometry geometry;
+
+  /// Height of the photo's box (the top of this layer stack); the rest of
+  /// the stack is the continuation below it.
+  final double photoHeight;
   final Widget image;
   final ImageProvider<Object> provider;
   final bool blur;
@@ -690,47 +868,86 @@ class _PhotoLayers extends StatelessWidget {
         ? (geometry.topInset / scrimExtent).clamp(0.0, 1.0)
         : 0.0;
     final softBand = math.min(
-      geometry.height,
+      photoHeight,
       geometry.fade + ProfileHeroBackdrop.softFocusLead,
     );
     return LayoutBuilder(
       builder: (context, constraints) {
-        final size = constraints.biggest;
+        final width = constraints.maxWidth;
+        final below = math.max(0.0, constraints.maxHeight - photoHeight);
         return Stack(
           fit: StackFit.expand,
           children: [
-            image,
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: photoHeight,
+              child: image,
+            ),
             if (blur && softBand > 0)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                height: softBand,
-                child: ShaderMask(
-                  key: const ValueKey('profile-hero-soft-focus'),
-                  blendMode: BlendMode.dstIn,
-                  shaderCallback: _softFocusRamp,
-                  child: ClipRect(
-                    // The copy is laid out at the full hero size and
-                    // bottom-aligned, so its pixels line up with the photo
-                    // above it; only the band is drawn.
-                    child: OverflowBox(
-                      alignment: Alignment.bottomCenter,
-                      minWidth: size.width,
-                      maxWidth: size.width,
-                      minHeight: size.height,
-                      maxHeight: size.height,
-                      child: _SoftFocusCopy(
-                        provider: provider,
-                        texelWidth: math.max(
-                          1,
-                          (geometry.backdropWidth /
-                                  ProfileHeroBackdrop.softFocusTexel)
-                              .ceil(),
+              _SoftFocusSource(
+                provider: provider,
+                texelWidth: math.max(
+                  1,
+                  (geometry.backdropWidth / ProfileHeroBackdrop.softFocusTexel)
+                      .ceil(),
+                ),
+                builder: (context, soft) => Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: photoHeight - softBand,
+                      height: softBand,
+                      child: ShaderMask(
+                        key: const ValueKey('profile-hero-soft-focus'),
+                        blendMode: BlendMode.dstIn,
+                        shaderCallback: _softFocusRamp,
+                        child: ClipRect(
+                          // The copy is laid out at the photo's box and
+                          // bottom-aligned, so its pixels line up with the
+                          // photo above it; only the band is drawn.
+                          child: OverflowBox(
+                            alignment: Alignment.bottomCenter,
+                            minWidth: width,
+                            maxWidth: width,
+                            minHeight: photoHeight,
+                            maxHeight: photoHeight,
+                            child: RawImage(
+                              key: const ValueKey(
+                                'profile-hero-soft-focus-copy',
+                              ),
+                              image: soft,
+                              fit: BoxFit.cover,
+                              alignment: ProfileHeroBackdrop.imageAlignment,
+                              filterQuality: FilterQuality.medium,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
+                    if (below > 0 && soft != null)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        // Overlaps the band by a few rows of identical
+                        // pixels: two anti-aliased edges meeting on a
+                        // fractional row would let the base show through as
+                        // a hairline.
+                        top: photoHeight - _seamOverlap,
+                        height: below + _seamOverlap,
+                        child: CustomPaint(
+                          key: const ValueKey('profile-hero-soft-extension'),
+                          painter: _SoftExtensionPainter(
+                            image: soft,
+                            photoBox: Size(width, photoHeight),
+                            top: photoHeight - _seamOverlap,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
             Positioned(
@@ -770,9 +987,11 @@ class _PhotoLayers extends StatelessWidget {
     );
   }
 
+  static const double _seamOverlap = 2;
+
   /// The soft copy is invisible at the top of its band and fully in by the
-  /// text line's upper half; the melt itself then dissolves it into the
-  /// canvas.
+  /// old text line's upper half, so at the bottom of the photo's box it is
+  /// all that is left and its continuation below starts without a seam.
   Shader _softFocusRamp(Rect bounds) {
     final h = math.max(bounds.height, 1.0);
     final fade = geometry.fade;
@@ -795,23 +1014,93 @@ class _PhotoLayers extends StatelessWidget {
   }
 }
 
-/// The soft-focus copy of the hero photo: the same provider (an image-cache
-/// hit — no second fetch or decode) rendered once into a [texelWidth] wide,
-/// pre-blurred bitmap, then drawn with the photo's own fit and alignment.
+/// Continues the soft-focus copy below the photo's box: the same pre-blurred
+/// bitmap, mapped exactly as `RawImage(fit: cover, alignment: center)` maps
+/// it into the box, so at the box's bottom edge the pixels match. Where the
+/// box cropped the photo (wide heroes) the rows it cut off come next; past
+/// the image's own edge it is mirrored, which for a blur reads as the photo
+/// simply going on. One shader draw, no filter.
+class _SoftExtensionPainter extends CustomPainter {
+  _SoftExtensionPainter({
+    required this.image,
+    required this.photoBox,
+    required this.top,
+  });
+
+  final ui.Image image;
+  final Size photoBox;
+
+  /// Where this canvas starts, measured from the top of the photo's box.
+  final double top;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty || photoBox.isEmpty) return;
+    final imageSize = Size(image.width.toDouble(), image.height.toDouble());
+    final fitted = applyBoxFit(BoxFit.cover, imageSize, photoBox);
+    final source = ProfileHeroBackdrop.imageAlignment.inscribe(
+      fitted.source,
+      Offset.zero & imageSize,
+    );
+    final destination = ProfileHeroBackdrop.imageAlignment.inscribe(
+      fitted.destination,
+      Offset.zero & photoBox,
+    );
+    final scaleX = destination.width / source.width;
+    final scaleY = destination.height / source.height;
+    // Image pixels → this canvas, whose origin is [top] below the box's top.
+    final matrix = Matrix4.identity()
+      ..translateByDouble(
+        destination.left - source.left * scaleX,
+        destination.top - source.top * scaleY - top,
+        0,
+        1,
+      )
+      ..scaleByDouble(scaleX, scaleY, 1, 1);
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..filterQuality = FilterQuality.medium
+        ..shader = ImageShader(
+          image,
+          TileMode.mirror,
+          TileMode.mirror,
+          matrix.storage,
+          filterQuality: FilterQuality.medium,
+        ),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_SoftExtensionPainter oldDelegate) =>
+      oldDelegate.image != image ||
+      oldDelegate.photoBox != photoBox ||
+      oldDelegate.top != top;
+}
+
+/// Resolves the hero photo's provider (an image-cache hit — no second fetch
+/// or decode) and renders it once into a [texelWidth] wide, pre-blurred
+/// bitmap for [builder]: the soft band inside the photo's box and its
+/// continuation below share that one bitmap.
 ///
 /// The one-off render is a few thousand pixels; every later frame is a plain
 /// scaled image draw, whatever the renderer caches.
-class _SoftFocusCopy extends StatefulWidget {
-  const _SoftFocusCopy({required this.provider, required this.texelWidth});
+class _SoftFocusSource extends StatefulWidget {
+  const _SoftFocusSource({
+    required this.provider,
+    required this.texelWidth,
+    required this.builder,
+  });
 
   final ImageProvider<Object> provider;
   final int texelWidth;
+  final Widget Function(BuildContext context, ui.Image? soft) builder;
 
   @override
-  State<_SoftFocusCopy> createState() => _SoftFocusCopyState();
+  State<_SoftFocusSource> createState() => _SoftFocusSourceState();
 }
 
-class _SoftFocusCopyState extends State<_SoftFocusCopy> {
+class _SoftFocusSourceState extends State<_SoftFocusSource> {
   ImageStream? _stream;
   ImageStreamListener? _listener;
   ImageInfo? _source;
@@ -824,7 +1113,7 @@ class _SoftFocusCopyState extends State<_SoftFocusCopy> {
   }
 
   @override
-  void didUpdateWidget(_SoftFocusCopy oldWidget) {
+  void didUpdateWidget(_SoftFocusSource oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.provider != widget.provider) {
       _listen();
@@ -878,15 +1167,7 @@ class _SoftFocusCopyState extends State<_SoftFocusCopy> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return RawImage(
-      key: const ValueKey('profile-hero-soft-focus-copy'),
-      image: _soft,
-      fit: BoxFit.cover,
-      alignment: ProfileHeroBackdrop.imageAlignment,
-      filterQuality: FilterQuality.medium,
-    );
-  }
+  Widget build(BuildContext context) => widget.builder(context, _soft);
 }
 
 /// Renders [source] into a [texelWidth] wide copy with the source's aspect

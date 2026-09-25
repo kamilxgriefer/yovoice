@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -1072,6 +1073,327 @@ void main() {
     });
   });
 
+  // Kamil, after the first frames: the photo must stand BEHIND the avatar,
+  // the name and the handle, covering the whole header, with a stronger fade
+  // under the text. These pin that the picture really reaches behind the
+  // identity, and that every text role still meets contrast over the worst
+  // photo for its theme.
+  group('the photo stands behind the identity', () {
+    test('the avatar rises into the photo and the text sits on its veil', () {
+      for (final (width, top) in const [
+        (360.0, 24.0),
+        (390.0, 47.0),
+        (393.0, 59.0),
+        (430.0, 47.0),
+        (768.0, 24.0),
+        (1100.0, 0.0),
+        (1440.0, 0.0),
+        (2560.0, 0.0),
+      ]) {
+        final hero = ProfileHeroGeometry.resolve(
+          width: width,
+          topInset: top,
+          viewportHeight: 1440,
+          windowWidth: width,
+        );
+        final reason = '$width, status bar $top';
+        // The text keeps the line the identity had when it stood below the
+        // photo, so the header never grows.
+        expect(
+          hero.nameLine,
+          closeTo(
+            hero.height - hero.fade * ProfileHeroGeometry.textFadeShare,
+            1e-9,
+          ),
+          reason: reason,
+        );
+        expect(hero.textLine, lessThanOrEqualTo(hero.nameLine));
+        expect(
+          hero.nameOffset,
+          closeTo(ProfileHeroGeometry.nameDrop, 1e-9),
+          reason: reason,
+        );
+        // The avatar's top clears the floating toolbar …
+        expect(
+          hero.textLine - top - ProfileHeroGeometry.toolbarExtent,
+          greaterThanOrEqualTo(ProfileHeroGeometry.minimumClearBand - 1e-9),
+          reason: reason,
+        );
+        // … and stands inside the photo's box, as does the name.
+        expect(hero.nameLine, lessThan(hero.height), reason: reason);
+        // The photo continues below its box behind the identity.
+        expect(
+          hero.extent,
+          greaterThanOrEqualTo(
+            hero.nameLine + ProfileHeroGeometry.narrowVeilTail - 1e-9,
+          ),
+          reason: reason,
+        );
+      }
+      // On the phones people carry, the 80 pt phone avatar stands on the
+      // photo's box: its centre, and more, is inside it.
+      for (final top in const <double>[47, 59]) {
+        final hero = ProfileHeroGeometry.resolve(width: 393, topInset: top);
+        expect(hero.textLine + 40, lessThan(hero.height - 20));
+      }
+    });
+
+    testWidgets('own profile: avatar on the photo, name and handle on the '
+        'veil, the photo continued below its box', (tester) async {
+      for (final (size, top) in const [
+        (Size(390, 844), 47.0),
+        (Size(768, 1024), 24.0),
+        (Size(1440, 900), 0.0),
+      ]) {
+        _size(tester, size);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.darkTheme,
+            home: MediaQuery(
+              data: MediaQueryData(
+                size: size,
+                padding: EdgeInsets.only(top: top),
+              ),
+              child: Scaffold(
+                body: ListView(
+                  padding: EdgeInsets.zero,
+                  children: [
+                    ProfileHeader(
+                      key: ValueKey(size),
+                      profile: _profile(),
+                      onEdit: () {},
+                      mediaService: _service(available: false),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final geometry = ProfileHeroGeometry.resolve(
+          width: size.width,
+          topInset: top,
+          viewportHeight: size.height,
+          windowWidth: size.width,
+        );
+        final reason = '${size.width}';
+        final photo = tester.getRect(find.byType(ProfileBannerButton));
+        final avatar = tester.getRect(
+          find.byKey(const Key('profile-header-avatar')),
+        );
+        final name = tester.getRect(find.text('Ada Lovelace'));
+        final handle = tester.getRect(find.text('@ada'));
+        expect(photo.height, closeTo(geometry.height, .01), reason: reason);
+        expect(avatar.top, closeTo(geometry.textLine, .01), reason: reason);
+        expect(avatar.top, lessThan(photo.bottom), reason: reason);
+        expect(
+          avatar.center.dy,
+          lessThan(photo.bottom),
+          reason: '$reason: the avatar stands on the photo, not below it',
+        );
+        expect(
+          name.top,
+          greaterThanOrEqualTo(geometry.nameLine - .01),
+          reason: '$reason: no text above the veil',
+        );
+        expect(name.top, lessThan(photo.bottom), reason: reason);
+        expect(
+          handle.top,
+          greaterThanOrEqualTo(
+            geometry.nameLine + ProfileHeroBackdrop.nameVeilBand - .01,
+          ),
+          reason: '$reason: the handle stands on the stronger veil',
+        );
+        expect(tester.takeException(), isNull, reason: reason);
+      }
+    });
+
+    testWidgets('the avatar ring holds 3:1 against its cut-out in both '
+        'themes', (tester) async {
+      for (final (theme, palette) in [
+        (AppTheme.darkTheme, AppPalette.dark),
+        (AppTheme.lightTheme, AppPalette.light),
+      ]) {
+        expect(
+          _contrast(palette.borderStrong, palette.background),
+          greaterThanOrEqualTo(3),
+        );
+        _size(tester, const Size(390, 844));
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: theme,
+            home: Scaffold(
+              body: ListView(
+                children: [
+                  ProfileHeader(
+                    key: ValueKey(theme.brightness),
+                    profile: _profile(),
+                    onEdit: () {},
+                    mediaService: _service(available: false),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final ring =
+            tester
+                    .widget<Container>(
+                      find.byKey(const Key('profile-header-avatar')),
+                    )
+                    .decoration!
+                as BoxDecoration;
+        expect(ring.color, palette.background);
+        expect((ring.border! as Border).top.color, palette.borderStrong);
+      }
+    });
+
+    testWidgets('the continuation below the photo box has no seam', (
+      tester,
+    ) async {
+      final geometry = ProfileHeroGeometry.resolve(width: 390, topInset: 47);
+      // Dark rows over white ones, on the Dark canvas: the white rows at the
+      // photo's bottom edge are what the continuation must pick up, and a
+      // gap in it shows as a dark hairline.
+      final source = img.Image(width: 160, height: 90);
+      for (var y = 0; y < 90; y++) {
+        for (var x = 0; x < 160; x++) {
+          final v = (255 * y / 89).round();
+          source.setPixelRgb(x, y, v, v, v);
+        }
+      }
+      final photo = MemoryImage(img.encodePng(source));
+      final pixels = await _renderHero(
+        tester,
+        theme: AppTheme.darkTheme,
+        canvas: AppPalette.dark.background,
+        geometry: geometry,
+        photo: photo,
+      );
+      // 390 × 9 / 16 = 219.375: the box ends on a fractional row, where two
+      // anti-aliased edges could leave a hairline.
+      final edge = geometry.height.floor();
+      for (final x in const [20, 195, 370]) {
+        for (var y = edge - 3; y <= edge + 3; y++) {
+          final upper = pixels.at(x, y);
+          final lower = pixels.at(x, y + 1);
+          // Row to row the veil changes a pixel by about 0.2%; a missing,
+          // misplaced or hairline-split continuation by far more.
+          expect(
+            _distance(upper, lower),
+            lessThan(.006),
+            reason: 'seam at ($x, $y): $upper -> $lower',
+          );
+        }
+      }
+    });
+
+    for (final (themeName, theme, palette) in [
+      ('Dark', AppTheme.darkTheme, AppPalette.dark),
+      ('Pearl', AppTheme.lightTheme, AppPalette.light),
+    ]) {
+      for (final (photoName, photoColor) in [
+        ('white', img.ColorRgb8(255, 255, 255)),
+        ('black', img.ColorRgb8(0, 0, 0)),
+      ]) {
+        for (final highContrast in const [false, true]) {
+          testWidgets('$themeName, $photoName photo'
+              '${highContrast ? ', high contrast' : ''}: text meets contrast '
+              'on the veil', (tester) async {
+            final geometry = ProfileHeroGeometry.resolve(
+              width: 390,
+              topInset: 47,
+            );
+            final photo = MemoryImage(
+              img.encodePng(img.Image(width: 16, height: 9)..clear(photoColor)),
+            );
+            final pixels = await _renderHero(
+              tester,
+              theme: theme,
+              canvas: palette.background,
+              geometry: geometry,
+              photo: photo,
+              highContrast: highContrast,
+            );
+            final canvas = palette.background;
+            // The picture really reaches behind the avatar and below its
+            // own box — unless high contrast took it away.
+            final avatarTop = pixels.at(40, geometry.textLine.round() + 2);
+            final belowBox = pixels.at(40, geometry.height.round() + 6);
+            if (highContrast) {
+              for (
+                var y = geometry.textLine.round() - 7;
+                y < geometry.extent.round();
+                y += 3
+              ) {
+                for (final x in const [10, 195, 380]) {
+                  expect(
+                    _distance(pixels.at(x, y), canvas),
+                    lessThan(.02),
+                    reason: 'no photo behind the identity at ($x, $y)',
+                  );
+                }
+              }
+              return;
+            }
+            final photoInk = photoName == 'white'
+                ? AppColors.white
+                : AppColors.black;
+            expect(
+              _distance(avatarTop, canvas),
+              greaterThan(_distance(photoInk, canvas) * .5),
+              reason: 'the photo stands behind the top of the avatar',
+            );
+            if (_distance(photoInk, canvas) > .5) {
+              expect(
+                _distance(belowBox, canvas),
+                greaterThan(.01),
+                reason: 'the photo continues below its box',
+              );
+            }
+            for (
+              var y = geometry.nameLine.round();
+              y < geometry.extent.round() + 4;
+              y += 2
+            ) {
+              final large =
+                  y < geometry.nameLine + ProfileHeroBackdrop.nameVeilBand;
+              for (final x in const [10, 120, 195, 300, 380]) {
+                final ground = pixels.at(x, y);
+                if (large) {
+                  expect(
+                    _contrast(palette.textPrimary, ground),
+                    greaterThanOrEqualTo(3),
+                    reason: 'name (large text) at ($x, $y)',
+                  );
+                } else {
+                  for (final (role, ink) in [
+                    ('textPrimary', palette.textPrimary),
+                    ('textSecondary', palette.textSecondary),
+                  ]) {
+                    expect(
+                      _contrast(ink, ground),
+                      greaterThanOrEqualTo(4.5),
+                      reason: '$role at ($x, $y)',
+                    );
+                  }
+                }
+              }
+            }
+            // Fully dissolved into the page at the extent.
+            expect(
+              _distance(pixels.at(195, geometry.extent.round() + 2), canvas),
+              lessThan(.01),
+            );
+          });
+        }
+      }
+    }
+  });
+
   testWidgets('the edit-profile preview is the phone hero in miniature', (
     tester,
   ) async {
@@ -1110,4 +1432,117 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+}
+
+double _linear(double channel) => channel <= .04045
+    ? channel / 12.92
+    : math.pow((channel + .055) / 1.055, 2.4).toDouble();
+
+double _luminance(Color color) =>
+    .2126 * _linear(color.r) +
+    .7152 * _linear(color.g) +
+    .0722 * _linear(color.b);
+
+double _contrast(Color a, Color b) {
+  final la = _luminance(a);
+  final lb = _luminance(b);
+  return (math.max(la, lb) + .05) / (math.min(la, lb) + .05);
+}
+
+double _distance(Color a, Color b) =>
+    ((a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs()) / 3;
+
+class _Pixels {
+  _Pixels(this.data, this.width);
+
+  final ByteData data;
+  final int width;
+
+  Color at(int x, int y) {
+    final i = (y * width + x) * 4;
+    return Color.fromARGB(
+      255,
+      data.getUint8(i),
+      data.getUint8(i + 1),
+      data.getUint8(i + 2),
+    );
+  }
+}
+
+/// Renders the hero backdrop the way the header hosts it — its box is the
+/// photo, on the page canvas, with room below for what it paints past that
+/// box — and returns the pixels.
+Future<_Pixels> _renderHero(
+  WidgetTester tester, {
+  required ThemeData theme,
+  required Color canvas,
+  required ProfileHeroGeometry geometry,
+  required ImageProvider<Object> photo,
+  bool highContrast = false,
+}) async {
+  final boundary = GlobalKey();
+  final width = geometry.width;
+  final height = geometry.extent + 24;
+  _size(tester, Size(width, 844));
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: theme,
+      home: MediaQuery(
+        data: MediaQueryData(
+          size: Size(width, 844),
+          disableAnimations: true,
+          highContrast: highContrast,
+        ),
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: RepaintBoundary(
+            key: boundary,
+            child: ColoredBox(
+              color: canvas,
+              child: SizedBox(
+                width: width,
+                height: height,
+                child: Stack(
+                  children: [
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      height: geometry.height,
+                      child: ProfileHeroBackdrop(
+                        geometry: geometry,
+                        userId: 'u1',
+                        mediaService: _service(available: true),
+                        imageProvider: (_) => photo,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await tester.runAsync(
+    () =>
+        precacheImage(photo, tester.element(find.byType(ProfileHeroBackdrop))),
+  );
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
+  final result = await tester.runAsync(() async {
+    final render =
+        boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final image = await render.toImage();
+    try {
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      return _Pixels(data!, image.width);
+    } finally {
+      image.dispose();
+    }
+  });
+  return result!;
 }
