@@ -17,6 +17,17 @@ Run log: [Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md).
 Where an entry below says UNVERIFIED, it has not been looked at on a device
 or a simulator — nothing in this build was.
 
+### FIXED IN SOURCE — a podcast "Poproś o głos" was invisible to the host, and approval dropped the listener (2026-09-25, next build, `podcast-host`)
+
+Nothing read the raised-hand queue the rules allowed (a stale "contract gap
+G3" comment), the listener was told "Prowadzący widzą Twoją prośbę.", there
+was no decline, a hand outlived its owner leaving, and any role or mute change
+ended in "Połączenie zostało przerwane." Fixed per ADR-XXX (request to speak):
+host/moderator queue in the studio, the dock and a waiting dot on the channel
+row; `answerServerSessionHandV1`; `handDecision` approved / declined /
+lowered; departure webhook lowers stale hands; in-place re-mint on promotion,
+demotion and mutes. Also on released 3.0.0. UNVERIFIED on devices.
+
 ### FIXED IN SOURCE — the Yeel hairline never drew its played part (2026-09-19, next build, `nb/yeels-scrub`)
 
 `ReelProgressBar` (`lib/features/reels/presentation/widgets/reel_progress_row.dart`)

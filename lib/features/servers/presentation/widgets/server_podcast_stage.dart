@@ -635,6 +635,10 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
     final String message;
     if (widget.server.isHeld) {
       message = copy.serverHeldBody;
+    } else if (_inRoom && widget.session.reauthorization != null) {
+      // Between two tokens the provider reports nobody to this device; that
+      // is a reconnect, not an empty studio.
+      message = copy.serverReconnectingFor(widget.session.reauthorization);
     } else if (_inRoom) {
       message = copy.serverPodcastNobodyOnAir;
     } else if (widget.channel.liveness.isLive) {

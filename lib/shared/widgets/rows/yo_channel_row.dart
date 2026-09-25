@@ -205,8 +205,9 @@ class YoVoiceChannelRow extends StatelessWidget {
 
   /// A small marker the caller builds when something in this channel waits
   /// for this person (the Servers "waiting" dot over a stage's raised hands).
-  /// Drawn first among the trailing markers, and carrying its own spoken
-  /// label. Null draws nothing.
+  /// Drawn first among the trailing markers; it carries its own spoken label
+  /// and its own spacing. Null (the only value while nothing waits) draws
+  /// nothing and leaves the row's layout exactly as it was.
   final Widget? attention;
 
   /// The `NA ŻYWO` marker, built by the caller so its counted key lives in
@@ -319,7 +320,7 @@ class YoVoiceChannelRow extends StatelessWidget {
               )
             : clockText;
         final markers = <Widget>[
-          if (attention != null) ...[attention!, const SizedBox(width: 6)],
+          ?attention,
           if (connected)
             Icon(
               Icons.graphic_eq_rounded,

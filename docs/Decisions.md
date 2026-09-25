@@ -15144,3 +15144,86 @@ matches, and web is unchanged because a Blob has no path to stream from.
   1440 px, not by looking at them.
 - **No server-side video thumbnails.** A video poster is a placeholder with
   the duration; DMs have none either, so this is parity, not a regression.
+
+## ADR-XXX: Request to speak end to end — the host reads the queue, a decline is its own callable, and an authority change re-mints in place
+
+**Status:** accepted, 2026-09-25 (next build, `podcast-host`, part 1 of 2). Amends ADR-181.
+
+**Context.** Kamil: "jak ktoś prosi o głos na podcaście nigdzie tego nie widać".
+A listener's `setServerSessionHandV1` wrote `isHandRaised` and ADR-181's rules
+already let the session host and moderate-capable roles list exactly the
+raised hands of the live generation, but no Flutter code ever ran that query:
+the client was built on a stale "contract gap G3" comment claiming the
+participant document was unreadable. The listener was told "Prowadzący widzą
+Twoją prośbę." (false), approval was a blind per-avatar menu item with no
+decline, and every role or mute change (promotion, demotion, host or moderator
+mute) revoked the person's LiveKit token by design and the client turned that
+into the red "Połączenie zostało przerwane." with no re-mint, although ADR-181
+requires one. A hand also survived its owner leaving. Same on released 3.0.0.
+
+**Decision.**
+1. *Host queue.* `ServerSessionController` (not a stage widget) owns, per
+   joined generation, the listener's own-document subscription, the viewer's
+   role subscription and — only for the session host or a member whose role
+   carries `moderate` — the raised-hand query with exactly the rule's four
+   equalities and no `orderBy` (sorted on the client). The queue is limited to
+   identities the provider still reports. It is shown in the studio (name,
+   time waited, Approve / Decline), in the conversation dock from any channel
+   (a sheet), and as one shared `ServerWaitingDot` on the connected channel
+   row and the dock control. `ServerWaitingDot` is the product's single
+   "somebody waits for you" mark; the listener-questions work reuses it.
+2. *Decline.* New callable `answerServerSessionHandV1 {serverId, channelId,
+   sessionId, participantId, decision: "declined", requestId}` with the role
+   callable's standing (host over peers and below, moderator over members it
+   strictly outranks). It lowers the hand and writes additive
+   `handDecision / handDecidedAt / handDecidedById`; no revision moves, no
+   outbox job, no revocation; an already-lowered hand is a `changed: false`
+   receipt. A promotion that answers a raised hand records
+   `handDecision: "approved"`; a new raise or the person's own withdrawal
+   clears the decision. It ships as a separate registration extension
+   (`SESSION_HAND_CALLABLE_METHODS`, like the message-parity one) so the
+   frozen 62/56/55 manifest and its activation phase plan do not move; the
+   cold-start export pin moves 261 → 262.
+3. *Stale hands.* A signed LiveKit `participant_left` /
+   `participant_connection_aborted` for a `srv_` generation reaches an
+   optional `onParticipantLeft` half of the webhook's server lifecycle hook
+   (behind `workersEnabled`), which lowers a hand raised before the departure
+   with `handDecision: "lowered"` unless the provider still lists the
+   identity or cannot answer. The client also withdraws its own raised hand on
+   an explicit leave, and the host's queue never offers an absent requester.
+4. *Re-mint in place.* When the listener's own document shows a higher
+   `authorizationRevision` under the same `tokenAuthorityFingerprint` (an
+   authority change the held token no longer matches), or the provider
+   reports `participantRemoved` while that document is still readable, the
+   controller tears down only the link and re-requests a token for the same
+   generation with a new request id after a 1.5 s barrier, retrying
+   `failed-precondition` (still being revoked) and transient codes with
+   back-off (about 12.5 s in all), then reconnects. It never goes through
+   `leave()`: device claim, keep-alive, realtime-audio lease and
+   subscriptions stay, no release signal is sent. The phase is
+   `reconnecting` with a `reauthorization` reason, so every surface says
+   "Wchodzisz na scenę…", "Przechodzisz do publiczności…" or the access line
+   instead of "connection lost". The microphone stays off. The Android
+   keep-alive is re-asked only when the publish grant changed. A generation
+   that ended (own document unreadable) or a refusal fails into the old
+   honest failure with its retry.
+5. *Listener truth.* Pending, declined, lowered and on-stage are read from the
+   own document (the receipt only bridges the moment after a press); the copy
+   never claims a host saw the request. `handDecidedById` is not parsed or
+   shown by the client.
+
+**Reasoning.** Everything needed was already authorized by ADR-181's rules;
+the missing half was client reads and one additive, non-authority write. The
+revoke-on-change design stays (no in-place LiveKit permission update), and
+the client finally performs the re-mint ADR-181 asked of it. Keeping the
+decline outside the frozen manifest follows the precedent the message-parity
+extension set.
+
+**Consequences.** Deploy Functions (the extension and the webhook) before the
+client; an older backend answers the decline with `not-found`, which the
+queue shows as one sentence. The listener's own document still carries
+`handDecidedById` (like `lastModeratedById` before it) and a determined
+listener could read it with the SDK. The re-mint path, audio route and
+Android keep-alive type update are unverified on devices. The Community stage
+gets the same truthful listener status and inline queue through the shared
+controller.

@@ -577,74 +577,133 @@ class _PanelChannelRow extends StatelessWidget {
     final joinLabel = onJoin == null || server.isHeld || restricted || connected
         ? null
         : serverJoinLabel(copy, channel, live: live, role: role);
-    YoVoiceChannelRow row(
-      List<YoVoiceRowParticipant> people, {
-      int waitingHands = 0,
-    }) => YoVoiceChannelRow(
-      tileKey: ValueKey('server-channel-${channel.id}'),
-      label: channel.name,
-      icon: icon,
-      iconSemanticLabel: iconLabel,
-      selected: selected,
-      selectedForeground: colors.selectedForeground,
-      selectedWash: colors.selectedWash,
-      // The same key as the header's pill: one finder addresses every
-      // live marker in the shell, so "nothing claims liveness" can be
-      // asserted once instead of per surface.
-      liveBadge: live ? ServerLivePill(label: copy.serverLivePill) : null,
-      liveSince: live && channel.liveness.startedAt != null
-          ? copy.serverLiveSinceShort(
-              serverLiveClock(context, channel.liveness.startedAt!),
-            )
-          : null,
-      connected: connected,
-      connectedLabel: copy.serverConnected,
-      avatarBackground: colors.iconSurface,
-      participants: people,
-      onJoin: joinLabel == null ? null : () => onJoin!(channel),
-      joinLabel: joinLabel,
-      joinIcon: serverJoinIcon(channel, live: live),
-      // Never `server-join`: the scene's single full-size CTA is counted
-      // by that key, and this row is one more way to the same call.
-      joinKey: ValueKey('server-channel-join-${channel.id}'),
-      // Raised hands the viewer may answer wait in the channel they are
-      // connected to; the dot is the entry's own reminder of them.
-      attention: waitingHands > 0
-          ? ServerWaitingDot(
-              key: ValueKey('server-channel-waiting-${channel.id}'),
-              semanticLabel: copy.serverHandWaitingLabel(waitingHands),
-            )
-          : null,
-      onTap: onTap,
-    );
+    YoVoiceChannelRow row(List<YoVoiceRowParticipant> people, int waiting) =>
+        YoVoiceChannelRow(
+          tileKey: ValueKey('server-channel-${channel.id}'),
+          label: channel.name,
+          icon: icon,
+          iconSemanticLabel: iconLabel,
+          selected: selected,
+          selectedForeground: colors.selectedForeground,
+          selectedWash: colors.selectedWash,
+          // The same key as the header's pill: one finder addresses every
+          // live marker in the shell, so "nothing claims liveness" can be
+          // asserted once instead of per surface.
+          liveBadge: live ? ServerLivePill(label: copy.serverLivePill) : null,
+          liveSince: live && channel.liveness.startedAt != null
+              ? copy.serverLiveSinceShort(
+                  serverLiveClock(context, channel.liveness.startedAt!),
+                )
+              : null,
+          connected: connected,
+          connectedLabel: copy.serverConnected,
+          avatarBackground: colors.iconSurface,
+          participants: people,
+          onJoin: joinLabel == null ? null : () => onJoin!(channel),
+          joinLabel: joinLabel,
+          joinIcon: serverJoinIcon(channel, live: live),
+          // Never `server-join`: the scene's single full-size CTA is counted
+          // by that key, and this row is one more way to the same call.
+          joinKey: ValueKey('server-channel-join-${channel.id}'),
+          // Raised hands the viewer may answer wait in the channel they are
+          // in; the dot is the entry's own reminder of them.
+          attention: waiting > 0
+              ? Padding(
+                  padding: const EdgeInsetsDirectional.only(end: 6),
+                  child: ServerWaitingDot(
+                    key: ValueKey('server-channel-waiting-${channel.id}'),
+                    semanticLabel: copy.serverHandWaitingLabel(waiting),
+                  ),
+                )
+              : null,
+          onTap: onTap,
+        );
 
     final controller = session;
-    if (!connected || controller == null) {
-      return row(const <YoVoiceRowParticipant>[]);
+    if (controller == null) return row(const <YoVoiceRowParticipant>[], 0);
+    int waiting() =>
+        controller.isIn(channel.id) ? controller.raisedHands.length : 0;
+    if (!connected) {
+      // This row is not rebuilt when a join or a raised hand changes the
+      // session, so it follows the waiting count itself — and only that, so
+      // a speaking tick never repaints it.
+      return _WaitingCount(
+        session: controller,
+        count: waiting,
+        builder: (count) => row(const <YoVoiceRowParticipant>[], count),
+      );
     }
     return ListenableBuilder(
       listenable: controller,
-      builder: (context, _) => row(
-        waitingHands: controller.raisedHands.length,
-        <YoVoiceRowParticipant>[
-          for (final person in controller.participants)
-            YoVoiceRowParticipant(
-              userId: person.identity,
-              displayName: person.isLocal ? copy.serverYou : person.name,
-              isSpeaking: person.isSpeaking,
-              isMicrophoneEnabled: person.isMicrophoneEnabled,
-              semanticLabel: <String>[
-                person.isLocal ? copy.serverYou : person.name,
-                if (person.isSpeaking)
-                  copy.serverSpeaking
-                else if (!person.isMicrophoneEnabled)
-                  copy.serverMicrophoneOff,
-              ].join(', '),
-            ),
-        ],
-      ),
+      builder: (context, _) => row(<YoVoiceRowParticipant>[
+        for (final person in controller.participants)
+          YoVoiceRowParticipant(
+            userId: person.identity,
+            displayName: person.isLocal ? copy.serverYou : person.name,
+            isSpeaking: person.isSpeaking,
+            isMicrophoneEnabled: person.isMicrophoneEnabled,
+            semanticLabel: <String>[
+              person.isLocal ? copy.serverYou : person.name,
+              if (person.isSpeaking)
+                copy.serverSpeaking
+              else if (!person.isMicrophoneEnabled)
+                copy.serverMicrophoneOff,
+            ].join(', '),
+          ),
+      ], waiting()),
     );
   }
+}
+
+/// Rebuilds [builder] only when [count] changes — the raised hands waiting
+/// on a row this viewer is in.
+class _WaitingCount extends StatefulWidget {
+  const _WaitingCount({
+    required this.session,
+    required this.count,
+    required this.builder,
+  });
+
+  final ServerSessionController session;
+  final int Function() count;
+  final Widget Function(int count) builder;
+
+  @override
+  State<_WaitingCount> createState() => _WaitingCountState();
+}
+
+class _WaitingCountState extends State<_WaitingCount> {
+  late int _count = widget.count();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.session.addListener(_onSession);
+  }
+
+  @override
+  void didUpdateWidget(covariant _WaitingCount oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session != widget.session) {
+      oldWidget.session.removeListener(_onSession);
+      widget.session.addListener(_onSession);
+    }
+    _count = widget.count();
+  }
+
+  @override
+  void dispose() {
+    widget.session.removeListener(_onSession);
+    super.dispose();
+  }
+
+  void _onSession() {
+    final next = widget.count();
+    if (next != _count && mounted) setState(() => _count = next);
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(_count);
 }
 
 IconData serverChannelIcon(ServerChannelKind kind) => switch (kind) {
