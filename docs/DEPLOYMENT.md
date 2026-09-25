@@ -4,559 +4,664 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
-## Next build after 3.0.0 — one deploy order for the whole build (source only, NOTHING DEPLOYED)
+## Build 36 (YO Voice 3.1.0+36) — one deploy order for the whole build (source only, NOTHING DEPLOYED)
 
-Source: `nb/integrate`, based on `main` `f71a2ae2` (YO Voice 3.0.0+34). It
-merges eight branches — `nb/yeels-scrub`, `nb/friend-actions`,
-`nb/confirm-upload`, `nb/server-delete`, `nb/giphy`, `nb/server-live`,
-`nb/notifications` and `nb/server-messaging` (server channel emoji, reactions,
-photos and videos, ADR-216) — and main's 3.0.0+35 (the Velvet Mallet sound
-pack, ADR-210, a client-only change with no step in this order). **Merging
-this source deploys nothing.**
+Source: `nb/integrate` at `5d514a79` (the build 36 review round) plus this
+documentation commit. It carries everything that is not yet in production:
 
-**Where production stands (2026-09-25).** This branch waited while `main`
-shipped 3.0.0+35 and took it in on 2026-09-25 (`985dceee`). That release is
-sounds only: `32c9dd9b` replaced the product-sound pack, `738ecc4a` set
-`3.0.0+35`, the web serves `main @ 32c9dd9` since Hosting run 36038221140
-(the owner confirmed the site works), and the store upload of build 35 is the
-owner's step, not recorded as done anywhere in this repository. Between
-`f71a2ae2` and `87a2f996` nothing under `firestore.rules`, `storage.rules`,
-`firestore.indexes.json` or `firebase.json` changed, and the only file under
-`functions/` that changed is one test (`functions/test/push_payload.test.js`);
-no Functions were deployed for it. **So the production backend is still the
-one 3.0.0+34 shipped with, and this build still carries every backend change
-listed below** — none of them reached production with 3.0.0+35. Every claim
-below is about what a deploy would do, not about something observed in
-production.
+- **the eight next-build branches** (built 2026-09-19/20): `nb/yeels-scrub`
+  (ADR-211), `nb/friend-actions`, `nb/confirm-upload` (ADR-212),
+  `nb/server-delete`, `nb/giphy` (ADR-214, stays off), `nb/server-live` (the
+  ADR-180 amendment), `nb/notifications` (ADR-213, ADR-215) and
+  `nb/server-messaging` (ADR-216);
+- **main's 3.0.0+35** (the Velvet Mallet sound pack, ADR-210), merged in on
+  2026-09-25 (`985dceee`); client only, no step below;
+- **the eight merges of 2026-09-25**: `voice-60s` (ADR-217), `friend-request`
+  (ADR-218), `profile-banner` (ADR-219, client only), `podcast-host` (ADR-220,
+  ADR-221), `account-takeover` Phase 1 (ADR-222), `report-bug` (ADR-223,
+  ADR-224), `release-ci` (ADR-225, no deploy step; see
+  [Store builds from GitHub Actions](#store-builds-from-github-actions-source-only-never-run))
+  and `stats-exclusion` (no ADR), then the review round `5d514a79`.
 
-This is the *only* deploy order for this build. The per-branch runbooks the
-branches carried (GIPHY activation, the empty-channel liveness fix, section 7
-of the server channel messaging brief) are folded into it; where an older
-section of this file still describes a per-branch order, this one wins.
+**Where production stands (2026-09-26).** The web serves 3.0.0+35
+(`main @ 32c9dd9`, Hosting run 36038221140). The backend is still the one
+3.0.0+34 shipped with: 3.0.0+35 changed no rule, index or deployed Function,
+the last Functions deploy was the Build 32 round (2026-09-19, 245 functions in
+production), the Firestore ruleset was last released on 2026-09-19 and the
+Storage ruleset on 2026-09-14. The store builds testers have are 3.0.0 (34);
+build 35 was never recorded as uploaded, and `main` is expected to move to
+`3.1.0+36` when this branch lands (`pubspec.yaml` here still reads
+`3.0.0+35`). Every claim below is about what a deploy would do, not about
+something observed in production. **Merging this source deploys nothing.**
 
-Two prerequisites learned on 2026-09-16 apply to every Functions step below
-and are not repeated: run `npm ci` in the deploy worktree's `functions/`
-first, and `export FUNCTIONS_DISCOVERY_TIMEOUT=120` before every deploy. See
-[Deploy prerequisites learned on 2026-09-16](#deploy-prerequisites-learned-on-2026-09-16).
+This is the **only** deploy order for build 36. It replaces the next-build
+order, the account-takeover Phase 1 order and the "Base feature" order of the
+in-app bug reports section; where any other section of this file describes a
+per-branch order for these changes, this one wins. The feature sections
+further down ([In-app bug reports](#in-app-bug-reports-and-their-alerts-adr-223),
+[GIPHY activation](#giphy-activation--option-b-adr-214)) keep their detail.
 
-### 1. Firestore indexes — first, and READY before anything schedules
+### What the deploy changes, counted
 
-The build adds exactly one composite: a **COLLECTION_GROUP** index on `events`
-(`reminderOptInEnabled` ASC, `status` ASC, `startsAt` ASC), which
-`sendServerEventRemindersSchedule` queries across every Server
-(ADR-213/ADR-215). The emulator creates indexes on demand, so nothing local
-can fail on its absence — **in production every reminder run fails with
-`FAILED_PRECONDITION` until this index reports READY**, which is why it goes
-first and why the scheduler must not be deployed before the read-back.
+| Surface | Change vs. production (= `main`) |
+| --- | --- |
+| `firestore.indexes.json` | **+4 composites** (47 → 51; 13 field overrides unchanged): the `events` COLLECTION_GROUP `(reminderOptInEnabled, status, startsAt)` for the reminder worker (ADR-213/215), and three `bugReports` COLLECTION composites `(status, createdAt DESC)`, `(reporterId, createdAt DESC)`, `(reporterId, status, createdAt DESC)` for the owner's inbox (ADR-223/224) |
+| `firestore.rules` | **+11 deny-all blocks** (`commentMentions`; the five `serverMessageMedia*` collections; `authPasswordLedger`, `authTakeoverAudit`, `authTakeoverSweep`; `bugReports`, `bugReportUploadReservations`), **+1 owner block** `users/{uid}/serverQuestionSeen/{cursorId}` (owner get/create/update, forward-only `seenAt`, ADR-221), and **one tightened write**: `users/{uid}/fcmTokens` create/update also requires `!sessionPredatesAuthEpoch()` (ADR-222) |
+| `storage.rules` | **+2 reservation-bound upload paths**, `server_message_media/{serverId}/{channelId}/{userId}/{fileName}` (ADR-216) and `bug_reports/{userId}/{fileName}` (ADR-223); **`isActiveUser` tightened** by the same session-epoch test (ADR-222) |
+| Cloud Functions | **273 exports in source** (248 on `main`): **25 new** — 13 from the next build, `answerServerSessionHandV1`, `onAuthUserCreated`, `secureFederatedSignInV1`, `sweepFederatedTakeoverSchedule` and eight bug-report exports — and behaviour changes in many existing ones. **13 exports are held out** (below), so the deploy names **260** |
+| Secrets | **none new.** The selector binds only `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` and `YOVOICE_PROTECTED_OWNER_UID`, which exist. `GIPHY_API_KEY`, `RESEND_API_KEY` and `GITHUB_BUG_REPORT_TOKEN` are declared only behind source gates that are off |
+| Schema | additive only: new server-only collections, the owner cursor, `users/{uid}.authSessionEpoch` (Admin-only), optional `acceptIncoming` on `sendFriendRequest`, `handDecision`/`handDecidedAt` on session participants, `reactions`/`media` on server channel messages, event reminder stamps, `channelSessions.emptyObservation`. No rename, no removal, no migration |
+
+**Held out of every selector in this build — 13 names.** They are exported by
+the source, so a bare `firebase deploy --only functions` would move them. It is
+forbidden here, as it has been since 2026-09-16 (see the Functions row of the
+deployables table under [Summary](#summary)):
+
+- `acceptDirectCall` — source declares `minInstances: 1`; production keeps
+  `minInstances: 0` by owner decision until a verified cost quote exists
+  ([ADR-197](Decisions.md#adr-197-the-2026-09-16-owner-decisions-on-servers-exposure-warm-instances-and-the-obs-canary)).
+  The other ten warm exports in the selector
+  (`createDirectCallToken`, `createLiveKitToken`, `finalizeReelDraftV2`,
+  `openDirectConversation`, `reserveReelDraftV2`, `sendDirectMessage`,
+  `sendRoomMessage`, `setOwnRoomParticipantMute`, `startDirectCall`,
+  `startRoomVoice`) are already warm in production ("warm instances 10 → 10",
+  2026-09-16), so the selector adds no warm instance;
+- the three Reel voice-comment exports that production has never had —
+  `reserveReelVoiceCommentDraft`, `finalizeReelVoiceCommentDraft`,
+  `expireAbandonedReelVoiceCommentDraftsSchedule` — and the nine functions
+  pinned on their 2026-09-08 revision until that slice ships as a unit:
+  `getReelViewV2`, `getReelMediaAccessV2`, `deleteReelComment`,
+  `removeReelComment`, `createReelCommentReport`,
+  `processPendingReelCleanupSchedule`, `onReelCleanupOutboxCreated`,
+  `expirePublishedReelsSchedule`, `moderateReport`
+  ([Pending, not yet deployed: Reel voice comments](#pending-not-yet-deployed-reel-voice-comments-adr-187-adr-191)).
+  Moving `getReelViewV2` alone would switch the Yeel microphone on against
+  absent publish callables.
+
+Consequences of the hold, all accepted: an `@mention` inside a Reel **voice**
+comment is not delivered (there are no Reel voice comments in production);
+comment notifications are retired on deletion by the new
+`onMomentCommentDeleted` / `onReelCommentDeleted` triggers, which do not depend
+on the pinned delete callables; a GIPHY GIF blocked through `moderateReport`
+is a question for the GIPHY wave, not for this deploy.
+
+*(Correction, 2026-09-26: the next-build order this section replaces said
+"deploy the whole surface" with `firebase deploy --only functions` and
+expected thirteen creations. On this source that command would have created
+sixteen functions — the three held Reel voice-comment exports too — moved the
+nine pinned reader functions and warmed `acceptDirectCall`. The selector below
+is what this build deploys.)*
+
+### 0. Before anything is deployed — environment, snapshots and gates
+
+Environment, in every terminal used below (Firebase CLI and `gcloud` on this
+Mac):
 
 ```bash
-firebase deploy --only firestore:indexes --project yovoice-ec54a
+export GOOGLE_CLOUD_QUOTA_PROJECT=yovoice-ec54a
+export FUNCTIONS_DISCOVERY_TIMEOUT=120
+export CLOUDSDK_AUTH_ACCESS_TOKEN="$(gcloud auth application-default print-access-token)"
+```
+
+The quota project is required for every Firebase CLI call on this Mac; the
+discovery timeout and the ADC token are the
+[2026-09-16 prerequisites](#deploy-prerequisites-learned-on-2026-09-16).
+
+1. **One commit for every step.** Deploy from a clean, detached worktree at
+   the commit that becomes `main`'s 3.1.0+36 (this branch's head once it
+   lands), record its SHA, and run
+   `npm ci --omit=dev --ignore-scripts --no-audit --no-fund` in that
+   worktree's `functions/` (never in the shared development checkouts).
+   `firebase.json` declares no Functions predeploy hook, which is what makes
+   `--omit=dev` safe.
+2. **Snapshots (the rollback record).**
+   `gcloud functions list --v2 --regions=europe-west1 --project=yovoice-ec54a --format=json > functions-PRE.json`
+   (expect 245 functions, all ACTIVE — `main`'s 248 exports minus the three
+   held Reel voice-comment names; `acceptDirectCall` at `2026-09-08T20:19:45Z`
+   with `minInstances` 0; any other count means production moved since
+   2026-09-19: stop and reconcile), and the released Firestore
+   and Storage rulesets fetched through the Rules API
+   ([Reading the deployed ruleset](#reading-the-deployed-ruleset-the-verification-standard)).
+   Diff the two rulesets against `git show main:firestore.rules` and
+   `git show main:storage.rules`. **If production has drifted from `main`,
+   stop and reconcile** — a rules deploy publishes the whole file.
+3. **The signBlob precondition (for step 3b).**
+   `getServerChannelMessageMediaAccessV1` and `getBugReportV1` sign V4 URLs,
+   so the Functions runtime service account needs
+   `iam.serviceAccounts.signBlob` on itself
+   (`roles/iam.serviceAccountTokenCreator`). Treat it as missing until read
+   back — the [2026-09-01 audit](SECURITY_AUDIT_2026-09-01.md) found it
+   missing. Read the identity with
+   `gcloud functions describe getServerCompanyFileAccessV1 --region=europe-west1 --project=yovoice-ec54a --format='value(serviceConfig.serviceAccountEmail)'`,
+   then
+   `gcloud iam service-accounts get-iam-policy <that account> --project=yovoice-ec54a --format=json`.
+   Without the binding every server channel photo/video and every bug-report
+   screenshot uploads and never loads. Granting it is an owner step
+   ([Steps only Kamil can do](#steps-only-kamil-can-do), item 2).
+4. **The Storage service agent.** Both new Storage paths (and the tightened
+   `isActiveUser`) read Firestore cross-service; run the check in
+   [Storage rules (manual)](#storage-rules-manual). An empty result fails
+   every Firestore-backed Storage rule closed.
+5. **The Auth linking setting** (read-only, owner): Firebase Console →
+   Authentication → Settings → User account linking reads "Link accounts that
+   use the same email". ADR-222 assumes it; if it reads otherwise, stop and
+   re-read ADR-222 before step 3b.
+6. **The functions selector.** Generate it from the commit being deployed —
+   module evaluation, never grep:
+
+   ```bash
+   cd functions
+   env -u STRIPE_BILLING_EXPORTS -u K_SERVICE -u FUNCTION_TARGET GCLOUD_PROJECT=yovoice-ec54a \
+     FIREBASE_CONFIG='{"projectId":"yovoice-ec54a","storageBucket":"yovoice-ec54a.firebasestorage.app"}' \
+     node -e '
+   const held = new Set(["acceptDirectCall", "reserveReelVoiceCommentDraft",
+     "finalizeReelVoiceCommentDraft", "expireAbandonedReelVoiceCommentDraftsSchedule",
+     "getReelViewV2", "getReelMediaAccessV2", "deleteReelComment", "removeReelComment",
+     "createReelCommentReport", "processPendingReelCleanupSchedule",
+     "onReelCleanupOutboxCreated", "expirePublishedReelsSchedule", "moderateReport",
+     "onNotificationCreated"]);
+   const names = Object.keys(require("./index.js")).sort();
+   const absent = [...held].filter((n) => !names.includes(n));
+   if (names.length !== 273 || absent.length) {
+     console.error("STOP: unexpected export set", names.length, absent); process.exit(1);
+   }
+   const selector = names.filter((n) => !held.has(n));
+   console.error("3b selector:", selector.length, "names");
+   process.stdout.write(selector.map((n) => "functions:" + n).join(","));
+   ' > "$TMPDIR/build36-3b-selector.txt"
+   shasum -a 256 "$TMPDIR/build36-3b-selector.txt"
+   ```
+
+   On `5d514a79` it prints **259 names** and the file's SHA-256 is
+   `0bf27f537c06749222fe4efa045623734672d175df923f380c9e74e90154c0b8`
+   (generated read-only on 2026-09-26; no deploy). A different count or hash
+   means the source moved: stop and re-review. `onNotificationCreated` is
+   excluded from the file only because step 3a deploys it first.
+7. **Gate for step 3: the bug-report privacy text is live.** Owner item 3
+   below. The "Report a bug" row is shown to everyone (the public web app
+   too), and the reporter links to the privacy page, so neither the functions
+   nor any client that shows the row may go live before that page describes
+   bug reports. Read the live page back before step 3.
+
+### 1. Firestore indexes — first, and READY before anything queries them
+
+```bash
+firebase deploy --only firestore:indexes --project yovoice-ec54a --non-interactive
 firebase firestore:indexes --project yovoice-ec54a --json
 gcloud firestore indexes composite list --project=yovoice-ec54a \
-  --format="table(name,queryScope,fields,state)"
+  --format="table(name,collectionGroup,queryScope,fields,state)"
 ```
 
-Read back, before step 3b:
+No `--force`: the index deploy must never delete anything. Read back, before
+step 3:
 
-- the CLI list contains the `events` COLLECTION_GROUP composite above;
-- `gcloud` (or Firestore → Indexes in the Console) reports that index
-  **READY**, not `CREATING`. An index build is asynchronous and this is the
-  only place its state is visible; the Firebase CLI prints the declared set,
-  not the build state;
-- the managed TTL field override on `notificationDeliveryEvents.expiresAt`
-  is still present and still `ttl:true`. The reminder worker writes its
-  per-recipient delivery ledger there, and an index deploy is the operation
-  that has previously disturbed managed TTL.
+- **51** composites declared, and the four new ones present: the `events`
+  COLLECTION_GROUP and the three `bugReports` composites;
+- all four **READY** in `gcloud` (or Firestore → Indexes), not `CREATING`. An
+  index build is asynchronous and the Firebase CLI prints the declared set,
+  not the build state. `sendServerEventRemindersSchedule` fails every run
+  with `FAILED_PRECONDITION`, and the owner's bug-report list fails, until
+  their index is READY — the emulator creates indexes on demand, so no local
+  suite can see this (the 2026-09-19 `FAILED_PRECONDITION` burst in the
+  production error log was exactly this);
+- every TTL field override still `ttl:true`, in particular
+  `notificationDeliveryEvents.expiresAt`: the reminder worker's delivery
+  ledger and the new friend-request push-decision receipts (14 days, ADR-218)
+  are written there, and an index deploy is the operation that has disturbed
+  managed TTL before.
 
-No `--force`. Nothing else in `firestore.indexes.json` changed in this build
-(48 composites, 13 field overrides).
-
-### 2. Firestore Rules — after the index, before the Functions
-
-Six additive blocks, each `allow read, write: if false;` — Admin-SDK-only
-documents that no client, staff included, may read or write:
-
-- `match /commentMentions/{mentionId}`, the server-only record of who a Voice
-  Moment or Yeel comment `@`-mentions (ADR-213);
-- the five server channel media collections (ADR-216):
-  `serverMessageMediaUploadReservations/{messageId}`,
-  `serverMessageMediaUploadLeases/{userId}`,
-  `serverMessageMediaUploadBudgets/{budgetId}`,
-  `serverMessageMediaDeletionJobs/{jobId}` and
-  `serverMessageMediaObjects/{messageId}`.
-
-Default-deny already covers all six, so this deploy is hygiene and an explicit
-record rather than a blocker; it goes here because nothing about it can break
-a writer.
+### 2. Firestore Rules — after the indexes, before any Function
 
 ```bash
-firebase deploy --only firestore:rules --project yovoice-ec54a
+firebase deploy --only firestore:rules --project yovoice-ec54a --non-interactive
 ```
 
-Read the deployed ruleset back — see
-[Reading the deployed ruleset](#reading-the-deployed-ruleset-the-verification-standard) —
-diff it against `firestore.rules`, and confirm the six blocks above are
-present and that no other rule moved.
+Fetch the released source and diff it against `firestore.rules` at the
+deployed commit (no difference), and against `git show main:firestore.rules`
+(exactly the changes in the table above).
 
-**Precondition for step 3b, checked here: the runtime service account can
-sign V4 URLs.** `getServerChannelMessageMediaAccessV1` issues 90-second
-generation-bound V4 read URLs through `signBlob`, so the Functions runtime
-service account needs `iam.serviceAccounts.signBlob` on itself (normally
-`roles/iam.serviceAccountTokenCreator`) — the same grant `getServerCompanyFileAccessV1` and the Voice Moment
-private-media plan
-([VOICE_MOMENT_PRIVATE_MEDIA.md](VOICE_MOMENT_PRIVATE_MEDIA.md)) depend on.
-**Treat it as missing until read back:** the
-[2026-09-01 audit](SECURITY_AUDIT_2026-09-01.md) found that the runtime
-service account could *not* call `signBlob`, and nothing in this repository
-records the grant since. Read the runtime identity from the function
-(`serviceAccountEmail` in `gcloud functions describe
-getServerCompanyFileAccessV1 --region=europe-west1 --project=yovoice-ec54a`),
-then its policy:
+Why here, in both directions:
+
+- the eleven deny-all blocks change nothing a client can do (default-deny
+  already covers them); they are the explicit record;
+- **`serverQuestionSeen` must be live before any client writes the cursor**
+  (ADR-221) — an older ruleset refuses the write and the questions dot never
+  clears;
+- **the `fcmTokens` epoch check must be live before the takeover functions**
+  (ADR-222): the remediation writes `users/{uid}.authSessionEpoch` and then
+  purges push tokens, and this rule is what stops a stale session re-planting
+  one. It reads a field no document has yet, so it changes nothing until the
+  first remediation.
+
+### 2b. Storage Rules — the upload paths before any Function that issues a reservation
 
 ```bash
-gcloud iam service-accounts get-iam-policy <runtime-service-account> \
-  --project=yovoice-ec54a --format=json
+firebase deploy --only storage --project yovoice-ec54a --non-interactive
 ```
 
-and confirm a `roles/iam.serviceAccountTokenCreator` binding that includes the
-account itself. Without it every media read fails `failed-precondition`:
-uploads succeed and the bubbles never load. Granting it is an IAM change and
-therefore an owner step (Steps only Kamil can do, item 12), not something
-this runbook does.
+Read the released Storage ruleset back and diff it against `storage.rules`
+at the deployed commit (no difference) and against `git show main:storage.rules`
+(the two new paths and the `isActiveUser` epoch clause, nothing else). This is
+the first Storage Rules deploy since 2026-09-14.
 
-### 2b. Storage rules — the upload path before any function that issues a reservation
+**Why before step 3b.** Each path accepts a create only when a live
+server-issued reservation matches it
+(`serverMessageMediaUploadReservations/{messageId}`,
+`bugReportUploadReservations/{reportId}`), and only
+`reserveServerChannelMessageMediaV1` and `submitBugReportV1` write those.
+Until they exist the paths admit nothing: inert, not open. The reverse order
+is the unsafe one: a reservation granted against a path with no rule is
+refused by default-deny, and each refusal holds that member's one-upload
+lease for up to 15 minutes (server media) or wastes the report's screenshot.
+Reads are unaffected in every order — viewers read through V4 URLs the Admin
+SDK signs.
 
-`storage.rules` is **not** byte-identical to 3.0.0+34 any more: it gains one
-block, `match /server_message_media/{serverId}/{channelId}/{userId}/{fileName}`
-(ADR-216). A create is allowed only for a verified, active uploader with a
-live, server-issued reservation
-(`serverMessageMediaUploadReservations/{messageId}`) and exact metadata —
-image jpeg/png/webp 128 B–8 MiB, video mp4/quicktime/webm 1 KiB–64 MiB and
-1–60 s; get is uploader-only while reserved; list, update and delete are
-never allowed. Viewers never read bytes through the rules; reads are the V4
-grants from step 2's precondition.
+The `isActiveUser` epoch clause is inert for every account without
+`authSessionEpoch` (all of them, until the first remediation).
 
-This is the first Storage Rules deploy since 2026-09-14, and it must land
-**before** step 3b deploys `reserveServerChannelMessageMediaV1`. Without the
-block the path has no rule, so default-deny refuses every upload *after* a
-reservation was granted — and each refusal holds that member's one-upload
-lease for up to 15 minutes. The block reads the reservation document
-cross-service, exactly as the existing Storage rules already do for the
-account-status read. That cross-service read depends on the Firebase Storage
-service agent holding `roles/firebaserules.firestoreServiceAgent`; run the
-check in [Storage rules (manual)](#storage-rules-manual) before this deploy —
-an empty result there fails every Firestore-backed Storage rule closed, this
-one included.
+### 3. Cloud Functions — the push boundary alone, then the reviewed selector
 
-**Why this position is safe in both directions.**
-
-- *The rule before any function that issues reservations* (the order here):
-  the block accepts a create only when a live
-  `serverMessageMediaUploadReservations/{messageId}` document matches it, and
-  that collection is `allow read, write: if false` for every client — only
-  `reserveServerChannelMessageMediaV1` writes it. Until step 3b deploys that
-  callable, no such document can exist, so the new block admits nothing: it
-  is inert, not open. No installed client knows the path either. Reads are
-  unaffected in every order, because viewers never read these objects through
-  the rules — `getServerChannelMessageMediaAccessV1` signs V4 URLs through
-  the Admin SDK, which bypasses Storage rules.
-- *The reverse order* (functions first, rule second) is the unsafe one: the
-  callable would grant a reservation and start a member's 15-minute
-  one-upload lease, then default-deny would refuse the upload on a path with
-  no rule. Every attempt in that window costs the member their lease until it
-  expires. That is why 2b precedes 3b and why a rollback removes the media
-  Functions before it rolls Storage back (see Rollback).
-- A Storage deploy publishes the **whole** `storage.rules` file, not one
-  block. Read the deployed ruleset back **before** this deploy as well and
-  diff it against `git show f71a2ae2:storage.rules`; if production has drifted
-  from that base, stop and reconcile first, because the deploy would silently
-  replace whatever differs.
+**3a. `onNotificationCreated` alone.** ADR-213 makes the push boundary deny by
+default and gives it the titles, sound map and source validators of the new
+notification types; it also writes the friend-request push-decision receipt
+(ADR-218) and skips any push token registered before the account's session
+epoch (ADR-222). A writer that ships first has its rows skipped as
+`unregistered-type` (the row survives, no push); the boundary first loses
+nothing.
 
 ```bash
-firebase deploy --only storage --project yovoice-ec54a
+firebase deploy --only functions:onNotificationCreated --project yovoice-ec54a --non-interactive --dry-run
+firebase deploy --only functions:onNotificationCreated --project yovoice-ec54a --non-interactive
 ```
 
-Read the deployed ruleset back — see
-[Reading the deployed ruleset](#reading-the-deployed-ruleset-the-verification-standard) —
-and diff it twice: against `storage.rules` on this revision (no difference
-at all), and against `git show f71a2ae2:storage.rules` (the
-`server_message_media` block and nothing else).
+If the dry run refuses only with "Pass the --force option to deploy functions
+with a failure policy", add `--force` (safe with a name-scoped `--only`: the
+CLI considers only the named function and plans no deletion). Read back: one
+new ACTIVE revision in `europe-west1`.
 
-### 3. Cloud Functions — the push boundary before any writer
-
-ADR-213 makes the order load-bearing: the push boundary carries the titles,
-the sound map and the new source validators, and it now **denies by default**.
-If a writer ships first, its rows reach a boundary that does not know the type
-and are skipped as `unregistered-type` — with ADR-215's fix the row survives,
-but no push is sent. If the boundary ships first, nothing is lost: there are
-no rows of the new types yet.
-
-**3a. The boundary, alone.**
+**3b. The other 259 names, after 3a, after the four indexes read READY, after
+2 and 2b are read back, after the step 0 signBlob precondition holds and after
+the privacy gate (step 0.7).**
 
 ```bash
-firebase deploy --only functions:onNotificationCreated --project yovoice-ec54a
-firebase functions:list --project yovoice-ec54a
+firebase deploy --only "$(cat "$TMPDIR/build36-3b-selector.txt")" --project yovoice-ec54a --non-interactive --dry-run
+firebase deploy --only "$(cat "$TMPDIR/build36-3b-selector.txt")" --project yovoice-ec54a --non-interactive --force
 ```
 
-Confirm one new ACTIVE revision in `europe-west1` and keep the prior revision
-name for rollback.
+`--force` is expected here — new triggers such as `onAuthUserCreated` declare
+a failure policy — and is safe only because the selector is name-scoped:
+confirm from the dry run that nothing else is refused and that no deletion is
+planned. One command, not waves: `functions/notifications/canonical.js` is
+shared by every notification producer, so a partial deploy would leave
+producers on an older copy of the shared writer. If the CLI reports some
+functions failed (quota, a transient build error), re-run the same command
+limited to the failed names it printed.
 
-**3b. Everything else, after 3a and after the index reads READY.**
+**Expect 25 creations:**
 
-`functions/notifications/canonical.js` is shared by every notification
-producer, so a narrow selector would leave producers running against an older
-copy of the shared writer. Deploy the whole surface:
+- next build (13): `onMomentCommentCreated`, `onMomentCommentDeleted`,
+  `onReelCommentCreated`, `onReelCommentDeleted`,
+  `sendServerEventRemindersSchedule` (ADR-213/215),
+  `releaseServerChannelSessionIfEmptyV1` (ADR-180 amendment; binds the two
+  LiveKit secrets), `setServerChannelMessageReactionV1`,
+  `reserveServerChannelMessageMediaV1`, `finalizeServerChannelMessageMediaV1`,
+  `getServerChannelMessageMediaAccessV1`, `deleteServerChannelMessageV1`,
+  `expireServerChannelMessageMediaReservations`,
+  `processServerChannelMessageMediaDeletionJobs` (ADR-216);
+- request to speak (1): `answerServerSessionHandV1` (ADR-220);
+- account takeover (3): `onAuthUserCreated` (a gen1 Auth `onCreate` trigger,
+  standard Firebase Auth, no Identity Platform), `secureFederatedSignInV1`,
+  `sweepFederatedTakeoverSchedule` (every 5 minutes, `maxInstances` 1)
+  (ADR-222);
+- bug reports (8): `submitBugReportV1`, `attachBugReportScreenshotV1`,
+  `listBugReportsV1`, `getBugReportV1`, `updateBugReportStatusV1`,
+  `deleteBugReportV1`, `deleteBugReportScreenshotV1`,
+  `sweepBugReportRetentionSchedule` (hourly) (ADR-223/224).
 
-```bash
-firebase deploy --only functions --project yovoice-ec54a
-firebase functions:list --project yovoice-ec54a
-```
+**And 234 updates**, among them these behaviour changes:
 
-3b runs only after steps 2 and 2b are read back and the step 2 signBlob
-precondition holds.
+- `sendFriendRequest` (optional `acceptIncoming`, ADR-218);
+  `respondToFriendRequest`, `removeFriend`, `setFollow`, `setUserBlock`,
+  `sendDirectMessage`, `openDirectConversation` and `submitBugReportV1`
+  refuse a session older than the account's epoch (ADR-222);
+- `finalizeDirectMessageAttachment` and `finalizeServerFamilyMemoryV1` accept
+  a full-length take with a 2 s measured grace and store the cap (ADR-217);
+  the new server media finalize shares the validator. These carry
+  `reels/probe.js`, which Build 31 kept out of its selector because of the
+  open F-1 over-count ([Bugs.md](Bugs.md), F-1). F-1 still over-reports a
+  fragmented B-frame video by up to ~2 s and fails closed; it is not a
+  regression against production, and ADR-217 needs these functions, so they
+  move now;
+- `setServerSessionHandV1`, `setServerSessionParticipantRoleV1` (decline
+  cooldown, no `handDecidedById`) and `receiveLiveKitAchievementWebhook`
+  (lowers a hand its owner left behind; `room_finished` for empty channels)
+  (ADR-220, ADR-180 amendment);
+- `moderateClubMessage`, `onServerControlOutboxCreated`,
+  `processPendingServerControlOutboxSchedule`, `onAccountDeletionOutboxCreated`
+  and `processAccountDeletionOutboxSchedule` (media deletion jobs; account
+  deletion also sweeps `serverMessageMediaObjects`, `serverQuestionSeen`,
+  `bug_reports/{uid}/` and the account's reports) (ADR-216, ADR-221, ADR-223);
+- the comment callables (`createMomentComment`, `finalizeVoiceCommentDraft`,
+  `createReelComment`) accept `mentionUserIds`; `setServerMemberRoleV1`,
+  `transferServerOwnershipV1` and `createServerEventV1` feed the role notice
+  and the event budget (ADR-213/215);
+- the session surface (`startServerChannelSessionV1`,
+  `endServerChannelSessionV1`, `createServerChannelTokenV1`,
+  `sweepStaleServerChannelSessionsSchedule`) and the GIF allow-set path
+  (`getGifCatalog`, `sendDirectMessage`, `sendRoomMessage`,
+  `sendClubMessage`), inert until a GIPHY record exists (ADR-214);
+- `publishPublicStatsSchedule` subtracts the Apple App Review demo account
+  from `publicStats/live.activeAccounts` (stats-exclusion).
 
-Expect **creations**, not updates, for thirteen new exports:
+`appConfig/serversV1` needs no change: the new Servers callables use the
+existing `callableAccess` cohort and the new schedules the existing
+`workersEnabled`. `appConfig/bugReports` needs no document (missing means
+submission on, alert channels off).
 
-- six from the notification and liveness branches:
-  `onMomentCommentCreated`, `onMomentCommentDeleted`, `onReelCommentCreated`,
-  `onReelCommentDeleted`, `sendServerEventRemindersSchedule` (ADR-213) and
-  `releaseServerChannelSessionIfEmptyV1` (ADR-180 amendment). The last one
-  binds `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`, which already exist in
-  Secret Manager;
-- seven from `nb/server-messaging` (ADR-216, `SERVER_MESSAGE_EXPORT_NAMES` in
-  `functions/servers/registration.js`): the callables
-  `setServerChannelMessageReactionV1`, `reserveServerChannelMessageMediaV1`,
-  `finalizeServerChannelMessageMediaV1`,
-  `getServerChannelMessageMediaAccessV1` and `deleteServerChannelMessageV1`,
-  and the schedules `expireServerChannelMessageMediaReservations` and
-  `processServerChannelMessageMediaDeletionJobs`.
+### 3c. Read back after 3b
 
-Expect **updates** with a behaviour change, from the same branch, on
-`moderateClubMessage` (a removed media message queues its object for
-deletion), `onServerControlOutboxCreated` and
-`processPendingServerControlOutboxSchedule` (channel and server deletion
-write durable media prefix sweep jobs), and `onAccountDeletionOutboxCreated`
-and `processAccountDeletionOutboxSchedule` (account deletion now sweeps the
-author's `server_message_media` objects through `serverMessageMediaObjects`).
+Functions, from `gcloud functions list --v2` (the CLI list carries no
+`updateTime`):
 
-`appConfig/serversV1` needs no change: the new callables — the release
-callable and the five message callables — use the existing `callableAccess`
-cohort, and the sweeps, the webhook and the two media schedules use the
-existing `workersEnabled`.
+- **270** functions in `europe-west1`, all ACTIVE: the 245 before plus the 25
+  creations;
+- **exactly 260** carry an `updateTime` after the 3a start — the selector and
+  `onNotificationCreated`, nothing else;
+- the ten held names that exist keep their PRE `updateTime`;
+  `acceptDirectCall` is still `minInstances` 0; the three held Reel
+  voice-comment names are still absent;
+- `secretEnvironmentVariables`: the two LiveKit secrets on
+  `releaseServerChannelSessionIfEmptyV1`; only `YOVOICE_PROTECTED_OWNER_UID`
+  on the owner bug-report callables; **no** `GIPHY_API_KEY`,
+  `RESEND_API_KEY` or `GITHUB_BUG_REPORT_TOKEN` anywhere;
+  `answerServerSessionHandV1` has none bound and `minInstances` 0;
+- unauthenticated probes of the new callables answer 401, never 500.
 
-If a narrower plan is genuinely wanted, the minimum that must move together
-is the four comment callables that now accept `mentionUserIds`
-(`createMomentComment`, `finalizeVoiceCommentDraft`, `createReelComment`,
-`finalizeReelVoiceCommentDraft`), the thirteen new exports above, the five
-changed moderation, outbox and account-deletion functions named with them, the Servers
-callables the role notice and the event budget touch
-(`setServerMemberRoleV1`, `transferServerOwnershipV1`, `createServerEventV1`),
-the session surface (`startServerChannelSessionV1`,
-`endServerChannelSessionV1`, `createServerChannelTokenV1`,
-`sweepStaleServerChannelSessionsSchedule`),
-`receiveLiveKitAchievementWebhook`, and the GIF allow-set path
-(`getGifCatalog`, `sendDirectMessage`, `sendRoomMessage`, `sendClubMessage`).
+Logs, over the first runs:
 
-Read back after 3b:
-
-- all thirteen new names ACTIVE in `europe-west1`, and a new revision on each
-  of the five changed functions above;
-- `secretEnvironmentVariables` on `releaseServerChannelSessionIfEmptyV1`
-  contains the two LiveKit secrets and **no** `GIPHY_API_KEY` appears
-  anywhere;
-- the first `expireServerChannelMessageMediaReservations` and
-  `processServerChannelMessageMediaDeletionJobs` runs complete without an
-  error (both drain empty collections on the first run);
-- the next `sendServerEventRemindersSchedule` run logs no
-  `FAILED_PRECONDITION` and reports its paging counters
-  (`pages`, `hasMore`, `budgetExhausted`);
-- the next `sweepStaleServerChannelSessionsSchedule` line carries the new
-  counters (`stagedEmpty`, `graceRunning`, `driftRepaired`,
-  `driftUnresolved`, `driftTruncated`).
-
-**3c. Friend-request consent (ADR-218, explicit friend-request
-consent) rides on 3b.** `sendFriendRequest` gains the optional
-`acceptIncoming` flag and `onNotificationCreated` writes the friend-request
-push-decision receipt into `notificationDeliveryEvents` (TTL already on
-`expiresAt`; no index, rules or schema change). Both must be live **before**
-the app: a new app talking to the old `sendFriendRequest` would not get the
-explicit Accept / Decline prompt — it detects the old `accepted` answer and
-says so instead of showing success, but the friendship would already exist.
-Read back: `firebase functions:list` shows new revisions of both names.
-
-### 3d. Request to speak and the listener-questions dot (`podcast-host`)
-
-Two records, ADR-220 ("Request to speak end to end") and ADR-221 ("Listener
-questions dot"), need their backend half live **before** any client that uses it. The
-full-surface deploys in steps 2 and 3b already carry all of it; this is what
-to check, and the order if it is ever deployed on its own:
-
-1. **Rules first.** The deployed ruleset must contain the
-   `users/{userId}/serverQuestionSeen/{cursorId}` block (owner `get`,
-   `create`, `update`; no `list`, no `delete`; forward-only `seenAt`).
-   Without it the questions dot fails closed: the cursor read is denied, so
-   the dot never lights and never clears.
-2. **Then Functions**, together:
-   - `answerServerSessionHandV1` — a **new** export (a creation, not an
-     update), the host's or a moderator's Decline. Without it every "Odrzuć"
-     shows "Nie udało się odpowiedzieć na prośbę.";
-   - `setServerSessionHandV1` and `setServerSessionParticipantRoleV1` — the
-     one-minute cooldown after a decline, no `handDecidedById` on the
-     listener-readable participant document, and Approve answering a guest's
-     leftover hand;
-   - `receiveLiveKitAchievementWebhook` — the new `participant_left` /
-     `participant_connection_aborted` handling that lowers a hand its owner
-     left behind (and not one that is only being re-minted);
-   - the account-deletion stage (`onAccountDeletionOutboxCreated`,
-     `processAccountDeletionOutboxSchedule`), which now sweeps
-     `serverQuestionSeen`.
-3. **Then the client and the web build.**
-
-Read back after it:
-
-- `answerServerSessionHandV1` is ACTIVE in `europe-west1` with **no**
-  `secretEnvironmentVariables` bound and `minInstances` 0;
-- the deployed ruleset shows the `serverQuestionSeen` block;
+- `expireServerChannelMessageMediaReservations`,
+  `processServerChannelMessageMediaDeletionJobs` and
+  `sweepBugReportRetentionSchedule` complete without error (they drain empty
+  collections);
+- `sendServerEventRemindersSchedule` logs no `FAILED_PRECONDITION` and reports
+  `pages`, `hasMore`, `budgetExhausted`;
+- `sweepStaleServerChannelSessionsSchedule` carries `stagedEmpty`,
+  `graceRunning`, `driftRepaired`, `driftUnresolved`, `driftTruncated`;
+- `sweepFederatedTakeoverSchedule`: the first runs backfill
+  `authPasswordLedger` through the bounded `listUsers` walk (no script). Each
+  run logs `federated takeover sweep` with `ledgerPages`, `ledgerChecked` and
+  `ledgerUnconfirmed`; every remediation logs `federated takeover remediated`
+  (also an `authTakeoverAudit` row); `pending password verified beside a
+  Google/Apple identity; left untouched` is the ambiguous case;
+  `the owner's address is taken by another account; manual review needed`
+  needs a human (ledger `needsReview`); once per completed walk,
+  `never-verified password-only accounts older than 7 days` is a report only.
+  A non-null `authTakeoverSweep/state.ledgerCursor` after a run means the
+  pending ledger no longer fits one run (ADR-222, Consequences);
 - the next `receiveLiveKitAchievementWebhook` departure for a `srv_` room
   logs "livekit server lifecycle handled a departure" with a closed-set
-  `outcome`.
+  `outcome` (this also needs owner item 5);
+- `publicStats/live.activeAccounts` on its next publish: one lower than the
+  last value if the App Review account still has its `publicProfiles`
+  document, otherwise unchanged; it is floored at zero;
+- `finalizeDirectMessageAttachment`: no `failed-precondition` "The uploaded
+  attachment tracks are invalid." for a one-minute voice note. The real
+  per-platform overage is UNVERIFIED; watch the finalize logs or Crashlytics
+  non-fatals for that callable (ADR-217).
 
-Not measured yet: how long a promoted listener waits between the promotion
-and a token the backend will issue again. The client now retries for about
-30 s (it used to give up after about 12.5 s); the two-device test should
-record the real number.
+The deployed rules from steps 2 and 2b are read back again, unchanged.
 
-### 4. The app
+### 4. The website changes that go with this deploy (`yovoice-website`, Vercel)
 
-Only after 1–3 are read back. The client half of this build is
-`ServerSessionController.leave()`'s release signal, the media review, the Yeel
-scrubber, the friend-profile quick actions, the server delete/leave entries,
-the new notification types in the router, the "Moments & Yeels" preference
-group, and server channel emoji, reactions, photos and videos (the actions
-sheet, the reaction pill, the attach flow through ADR-212's review, and
-io uploads streamed from disk). Every already-installed client is covered by the webhook and the sweep
-without the release signal, and renders the five new notification types as
-plain, non-tappable `system` rows until it updates — accepted by the owner
-(ADR-213). Installed clients also ignore `reactions` on server channel
-messages and render a media message as its server-written 'Photo' or 'Video'
-line (ADR-216). A client shipped **before** step 3b would see every attach
-and reaction refused; the UI maps that to "This part of YO Voice is still
-being prepared", never a raw error — which is why the app goes last.
+- **Before step 3** (the gate in step 0.7): the bug-report text on
+  yovoice.app/privacy and the deletion line on yovoice.app/delete-account,
+  exactly as given in
+  [SECURITY.md](SECURITY.md#privacy-policy-text-for-yovoiceappprivacy-website-repo-not-edited-here)
+  (re-check the section numbering against the live page).
+- **After 3c:** remove server channel photos and videos from the "what
+  deleting your account does not do" list on `/delete-account` — account
+  deletion sweeps them now (ADR-216). The other four prefixes stay listed
+  ([Bugs.md](Bugs.md), account deletion gaps). Changing it earlier would
+  promise a deletion production does not perform.
+- **After 3c:** the takeover integrator change for the website sign-in
+  (`secureReturningFederatedSignIn` and the error copy), exactly as written in
+  [ADR-222](Decisions.md#adr-222-a-google-or-apple-sign-in-that-inherits-a-password-nobody-verified-ends-every-earlier-session-pre-registered-account-takeover-phase-1),
+  "Website". Before the callable exists the website would log a failed check
+  and continue, so this order is safe but not load-bearing.
+- **Not now:** the GIPHY privacy text on branch `privacy/giphy` is published
+  only when GIPHY is actually live.
 
-Smoke after the release, in a test server: react in a text channel and in an
-announcements channel as an ordinary member (both must work) and as a guest
-(must fail); send a photo and a 5-second video; reopen the thread on a second
-account to prove the grant path; retract your own media message and confirm
-the object is gone; have a moderator remove another member's media message
-and confirm the deletion job drains within one sweep. Two checks come from the
-final review passes: a photo or video picked from the library must open the
-ADR-212 review ("Send this photo?") before anything uploads, while a camera
-capture goes straight through; and a send that fails (go offline mid-upload,
-press Send in the review again once back online) must go through on the
-retry, not answer "We're a little overloaded right now" for fifteen minutes
-(`77264f18`, [Bugs.md](Bugs.md)).
+### 5. The app — last
 
-Build the client **without** `--dart-define=YOVOICE_GIPHY_API_KEY`. A build
-that carries a key still shows Originals only, because `getGifCatalog`
-answers `resolvableProviders: []` while the resolver is gated off — but
-shipping the key before GIPHY is live has no purpose and puts an extractable
-credential in a store binary.
+Only after 1–3c are read back. A client shipped before step 3b would see
+every server channel attach and reaction refused (mapped to "This part of YO
+Voice is still being prepared"), a Decline answered `not-found`, and an old
+`sendFriendRequest` answering `accepted` where the new app expects the
+explicit prompt (it says so instead of claiming success). Installed 3.0.0
+clients keep working throughout: the new notification types render as plain
+`system` rows, `reactions` and media are shown as the server-written
+"Photo"/"Video" line, and the webhook and sweep end empty channels without the
+new release signal.
+
+1. **Release commit on `main`:** `pubspec.yaml` `3.1.0+36` (36 is the next
+   free build number; 35 went to `main` for the sound pack and was never
+   recorded as uploaded).
+2. **Web:** the Hosting `workflow_dispatch` on that commit, after the privacy
+   gate; fingerprint the served `main.dart.js` and `version.json` (3.1.0, 36).
+3. **Stores:** TestFlight and Play from the same commit — from the Mac as
+   before, or through the store-release workflow once it is set up
+   (`backend_confirmed=true` is honest only after 3c). Build **without**
+   `--dart-define=YOVOICE_GIPHY_API_KEY`. Tester builds keep the default
+   `YOVOICE_BUG_BUTTON` (the floating Bug button is on); any **public** store
+   build passes `--dart-define=YOVOICE_BUG_BUTTON=false`.
+
+Smoke after the release, on test accounts in a test server:
+
+- react in a text channel and an announcements channel as a member (both
+  work) and as a guest (refused); send a photo and a 5-second video; reopen
+  the thread on a second account; retract your own media message; have a
+  moderator remove another member's media message and watch the deletion job
+  drain; a library pick opens "Send this photo?" first, a camera capture does
+  not; go offline mid-upload and retry — it must go through, not answer "We're
+  a little overloaded right now";
+- record a DM voice note to the automatic 1:00 stop and send it; the last ten
+  seconds show the countdown;
+- send a friend request to an account that already asked you: you get the
+  Accept / Decline prompt, not a friendship;
+- in a Podcast server, raise a hand as a listener: the host sees it, Declines
+  (the listener sees the one-minute cooldown) and then Approves; the listener
+  stays connected on stage — record how long the promotion takes to reach a
+  new token (the client retries for about 30 s; the real number has never
+  been measured); ask a question as a listener and check the host's dot
+  appears and clears;
+- file a bug report with a screenshot and read it in Staff Center → Bug
+  reports as the owner;
+- leave a voice channel and check LIVE clears within about a minute (only
+  proven after owner item 5).
 
 ### What stays OFF after this deploy — say it plainly
 
-- **GIPHY's `resolveGif` is source-gated off.** `GIPHY_SEND_RESOLVE_ENABLED =
-  false` in `functions/index.js`, so the resolver is not exported, no
-  `GIPHY_API_KEY` secret is declared, and `getGifCatalog` answers
-  `resolvableProviders: []`. The GIF picker behaves **exactly** like today's
-  Originals-only picker, in every build, with or without a client key.
-  Turning it on is a reviewed source change (flip the constant, add
-  `resolveGif` to the pinned export list in
-  `functions/test/cold_start_module_graph.test.js`, update
-  `functions/test/optional_secret_discovery.test.js`) **plus** the
-  `GIPHY_API_KEY` secret existing first — and then its own deploy wave. It is
-  not part of this build's deploy. The dual-provider allow-set on the send
-  paths ships now and is inert until a GIPHY record exists.
-- **App Check stays telemetry-only.** `YOVOICE_ENFORCE_GIF_APP_CHECK`,
-  `YOVOICE_ENFORCE_REELS_APP_CHECK` and `YOVOICE_ENFORCE_STAGE_B_APP_CHECK`
-  are unset, which `strictBooleanEnvironment` reads as `false`. Attestation is
-  not healthy on any platform (Android tokens fail to decode, iOS lacks the
-  App Attest entitlement, web has no reCAPTCHA site key), so enforcing now
-  would refuse most real traffic. Enforcement is a later, separate redeploy
-  after the console shows verified traffic per platform.
-- **Podcast recording / Egress** stays source-disabled, as before.
-- **`appConfig/serversV1`** is not touched by this build.
+- **GIPHY's `resolveGif` is source-gated off** (`GIPHY_SEND_RESOLVE_ENABLED =
+  false`): not exported, no `GIPHY_API_KEY` declared, `getGifCatalog` answers
+  `resolvableProviders: []`, so the picker behaves exactly like today's
+  Originals-only picker in every build. Turning it on is a reviewed source
+  change plus the secret plus its own wave
+  ([GIPHY activation](#giphy-activation--option-b-adr-214)).
+- **Bug-report e-mail and GitHub alerts are source-gated off**
+  (`BUG_REPORT_EMAIL_DELIVERY_ENABLED` and
+  `BUG_REPORT_GITHUB_DELIVERY_ENABLED` are `false`), so `deliverBugReportV1`
+  is not exported and neither secret is declared. Reports are stored and
+  listed in Staff Center only. Each channel needs its secret, a source flip,
+  its own deploy and a runtime switch in `appConfig/bugReports`
+  ([In-app bug reports](#in-app-bug-reports-and-their-alerts-adr-223)).
+- **Account takeover Phase 2 is not built.** The blocking functions
+  (`beforeUserSignedIn`, `beforeUserCreated`) need the irreversible Identity
+  Platform upgrade first (ADR-222, "Phase 2"). Phase 1 — the owner's
+  post-sign-in callable and the 5-minute sweeper — is what deploys.
+- **App Check stays telemetry-only.** `YOVOICE_ENFORCE_GIF_APP_CHECK=false`
+  in `functions/.env`; `YOVOICE_ENFORCE_REELS_APP_CHECK` and
+  `YOVOICE_ENFORCE_STAGE_B_APP_CHECK` unset, read as `false`. Attestation is
+  not healthy on any platform; enforcing would refuse most real traffic.
+- **Held functions:** the 13 names above, including the Reel voice-comment
+  slice and the warm `acceptDirectCall`.
+- **Podcast recording / Egress** and **Stripe** stay source-disabled.
+- **`appConfig/serversV1`** is not touched.
 
 ### Rollback
 
-Functions roll back by redeploying the pinned prior revisions named in the
-`functions:list` output taken before step 3a. Rules roll back from the version
-history — Firestore and Storage separately; rolling Storage back before the
-Functions would reproduce the upload failure step 2b exists to prevent, so
-roll back the media Functions first. The new index can be left in place — it is additive and costs one
-composite. If the reminder scheduler misbehaves, the smallest safe stop is to
-redeploy `sendServerEventRemindersSchedule` from the prior source; there is no
-runtime kill switch for it, which is worth knowing before step 3b.
+- **Functions.** There is no one-command return to production's mixed set of
+  revisions; `functions-PRE.json` from step 0 is the record. A misbehaving
+  new export is deleted
+  (`firebase functions:delete <name> --region europe-west1 --project yovoice-ec54a`);
+  a misbehaving changed one is redeployed by name from `f71a2ae2` (the
+  3.0.0+34 backend source). Remove the media Functions **before** rolling
+  Storage back, or reservations are granted against a path with no rule.
+  `sendServerEventRemindersSchedule` and `sweepFederatedTakeoverSchedule`
+  have no runtime kill switch; deleting them is the stop.
+- **Bug reports:** `appConfig/bugReports = { enabled: false }` pauses
+  submission at once (write the boolean; a missing document means on).
+- **Rules:** from the version history, Firestore and Storage separately.
+  Rolling back Firestore removes the push-token epoch check; the takeover
+  functions must be deleted first or a remediation's purge can be raced.
+- **Indexes** stay: they are additive.
+- A takeover remediation already done is not undone by any rollback (the
+  pre-registrant's password stays unlinked, which is the intended state).
 
 ### Steps only Kamil can do
 
-These are not in the deploy order above because nothing in the repository can
-perform them. Nothing in this list is a precondition for steps 1–4 unless it
-says so.
+Nothing in the repository can do these. The items marked **before** are gates
+in the order above; everything else can follow the deploy.
 
-1. **GIPHY developer account and API app** at developers.giphy.com. Apply for
-   a production key ("Upgrade to Production") with picker screenshots that
-   show the official mark. Ask GIPHY in the same application to confirm the
-   server-side `GET /v1/gifs/{id}` lookup at send time (ADR-214, option B).
-2. **The official "Powered By GIPHY" artwork**, unmodified, placed at
-   `assets/images/giphy_powered_by_on_light.png` and
-   `assets/images/giphy_powered_by_on_dark.png`. The repo does not draw or
-   approximate it; until the files exist the picker renders GIPHY's wording as
-   plain text, so attribution is never missing.
-3. **The `GIPHY_API_KEY` secret**, once the production key exists. Paste it at
-   the hidden prompt, never as an argument, and approve the IAM grant the CLI
-   offers:
-   `firebase functions:secrets:set GIPHY_API_KEY --project yovoice-ec54a`
-4. **The client build define.** `--dart-define=YOVOICE_GIPHY_API_KEY=<client
-   key>` from the CI secret store, never committed — and only for the build
-   that ships *after* GIPHY goes live.
-5. **The privacy disclosure.** The privacy policy and the yovoice.app privacy
-   page must say what Settings already says in 41 locales: GIPHY receives the
-   IP address and device information of anyone who loads a GIPHY GIF,
-   recipients included, and "Load GIFs automatically" turns automatic loading
-   and GIPHY analytics off. The `yovoice-website` branch `privacy/giphy`
-   carries that copy and **must not be published until GIPHY is actually
-   live** — publishing it first would describe data sharing that is not
-   happening.
-6. **App Check console steps**, in this order and none of them from the repo:
-   enable the Play Integrity API for the Android app, add the App Attest
-   entitlement to the iOS app in the Apple Developer portal and register it,
-   and create a reCAPTCHA Enterprise site key for web. Only when the App Check
-   console shows verified traffic on all three does enforcing become a
-   separate, later redeploy.
-7. **Confirm the LiveKit webhook is actually accepted.** The URL
+**Before or during the deploy**
+
+1. **Confirm the Auth linking setting** (step 0.5): "Link accounts that use
+   the same email".
+2. **The signBlob grant**, only if step 0.3 does not show it:
+   `roles/iam.serviceAccountTokenCreator` on the Functions runtime service
+   account, granted to itself. Blocks step 3b.
+3. **Publish the bug-report privacy text** on yovoice.app/privacy and the
+   deletion line on yovoice.app/delete-account — **before step 3** and before
+   any build that shows "Report a bug" (step 4). The server channel media line
+   on `/delete-account` changes only **after** 3c; the GIPHY text only when
+   GIPHY is live.
+4. **Before anything of today's work is pushed:** commit `ebfb04a1` (the
+   stats-exclusion change) still carries the App Review account's address in
+   its history, and the repository is public. None of the 42 commits since
+   `origin/nb/integrate` is pushed; deciding how that history reaches GitHub
+   is Kamil's call (Bugs.md, build 36 review round).
+
+**After the deploy**
+
+5. **Confirm the LiveKit webhook is accepted.** The URL
    `https://europe-west1-yovoice-ec54a.cloudfunctions.net/receiveLiveKitAchievementWebhook`
-   was registered in the LiveKit Cloud dashboard on **2026-09-19**, signed
-   with the same `LIVEKIT_API_KEY` the function already binds. Acceptance of
-   that signature is **UNVERIFIED**: `firebase functions:log` returned only
-   deployment audit entries, no delivery. After step 3b, join a real Server
-   voice channel from a device, leave it, and then read:
-   `firebase functions:log --only receiveLiveKitAchievementWebhook --project yovoice-ec54a`
-   A `room_finished` for a `srv_` room logs
-   `livekit server lifecycle handled room_finished` with an outcome of
-   `pending`, `ended`, `occupied`, `not-live` or `unbound`. The same delivery
-   also starts voice-time accounting, which has never run — watch for
-   unexpected achievement volume. Until a delivery is read back, treat
-   `voiceMinutes` and the provider-driven end of an empty channel as not
-   working.
-8. **Repair the existing stale server LIVE badges.** Needs operator
-   Application Default Credentials; the script holds no provider credential
-   and is idempotent. Dry run first:
-   ```bash
-   node functions/scripts/repair_stale_server_channel_liveness.js --project yovoice-ec54a
-   ```
-   It writes nothing and prints one line per live projection, classified
-   `ok-live`, `ok-idle`, `reset-null-session`, `reset-terminal-session`,
-   `unresolved` or `changed`. Review the classifications, then:
-   ```bash
-   node functions/scripts/repair_stale_server_channel_liveness.js --project yovoice-ec54a --apply
-   ```
-   and finally the dry run again, which must report `writes: 0` and no
-   `reset-*` lines. `unresolved` lines are deliberately left to the sweep and
-   to review; they are not a script failure. A 24-hour-old unprovable
-   projection has its badge reset by the sweep but keeps its private
-   `activeSessionId`, and such a channel cannot start a new session until an
-   operator repairs it by hand.
-9. **The provider drill** (Servers activation precondition 4 in
-   [Servers.md](Servers.md)). Against real LiveKit Cloud, observe and record:
-   whether `ListParticipants` still lists a cleanly disconnected participant
-   and for how long; how long after the last departure `room_finished`
-   arrives; and whether an OBS ingress participant and an Egress recorder
-   appear in `ListParticipants`. Every local suite proves these paths against
-   a stub adapter only.
-10. **The Firestore TTL policy on `notificationDeliveryEvents.expiresAt`.**
-    It is declared in `firestore.indexes.json` and was enabled in production
-    on 2026-08-28 (the direct-chat reliability round); the owner step is to confirm it still reads back
-    `ttl:true` after step 1, because the reminder worker's per-recipient
-    delivery ledger is written there and would otherwise grow without bound.
-11. **The website `/delete-account` copy** (`yovoice-website`, manual),
-    only once step 3b is read back: remove server channel photos and videos
-    from the "what deleting your account does not do" list — account deletion
-    sweeps them now (ADR-216). The other four prefixes stay listed. Changing
-    it before the deploy would promise a deletion production does not yet
-    perform.
-12. **The signBlob grant**, only if step 2's read-back does not show it:
-    grant `roles/iam.serviceAccountTokenCreator` on the Functions runtime
-    service account to itself. It is a precondition for step 3b.
-13. **In-app bug reports: the privacy text and store labels (ADR-223).**
-    Publish the bug-report text on yovoice.app/privacy and the deletion line
-    on yovoice.app/delete-account (SECURITY.md, "In-app bug reports") **before
-    the bug-report functions deploy and before any build that shows "Report a
-    bug"**; update the App Store privacy labels and the Play Data safety form
-    before store submission; answer the open legal questions before any alert
-    channel is switched on. Details:
-    [In-app bug reports and their alerts](#in-app-bug-reports-and-their-alerts-adr-223).
-14. **Store and web release**, as always separate from all of the above.
-15. **A new build number before any store build of this branch.** Since the
-    3.0.0+35 merge, `pubspec.yaml` here reads `3.0.0+35` — the number `main`
-    took for the Velvet Mallet sound pack. Build 35 is main's to upload; a
-    store build of this branch needs the next free build number (36, unless
-    35's upload consumed more) set in its own release commit. The version is
-    deliberately not changed on `nb/integrate`.
+   was registered in LiveKit Cloud on 2026-09-19; no delivery has been read
+   back. Join a real Server voice channel from a device, leave, then
+   `firebase functions:log --only receiveLiveKitAchievementWebhook --project yovoice-ec54a`:
+   a `room_finished` for a `srv_` room logs
+   `livekit server lifecycle handled room_finished` with `pending`, `ended`,
+   `occupied`, `not-live` or `unbound`. The same delivery starts voice-time
+   accounting for the first time — watch achievement volume. If deliveries
+   are refused, switch the dashboard's signing key to the other API key.
+   Until one is read back, treat `voiceMinutes`, the provider-driven end of an
+   empty channel and the stale-hand lowering as not working.
+6. **Repair the stale LIVE badges already in production.** Operator ADC; the
+   script holds no provider credential and is idempotent:
+   `node functions/scripts/repair_stale_server_channel_liveness.js --project yovoice-ec54a`
+   (dry run: one line per live projection — `ok-live`, `ok-idle`,
+   `reset-null-session`, `reset-terminal-session`, `unresolved`, `changed`),
+   review, then the same with `--apply`, then the dry run again, which must
+   report `writes: 0` and no `reset-*` line. `unresolved` is left to the sweep
+   and to review, not a failure (Bugs.md, the 24-hour unprovable projection).
+7. **The provider drill** (Servers activation precondition 4,
+   [Servers.md](Servers.md)): how long `ListParticipants` keeps a cleanly
+   disconnected participant, when `room_finished` arrives after the last
+   departure, and whether an OBS ingress participant and an Egress recorder are
+   listed. Every local suite uses a stub adapter.
+8. **Firestore TTL policies.** Confirm `notificationDeliveryEvents.expiresAt`
+   still reads `ttl:true` after step 1 (enabled 2026-08-28; the reminder
+   ledger and the friend-request receipts live there). Optional backstops for
+   bug reports: a TTL policy on `bugReports.expiresAt` **and** a GCS lifecycle
+   rule deleting `bug_reports/` objects older than 100 days (a TTL deletion
+   does not delete the Storage object). The hourly sweep already enforces
+   both limits. A TTL added in the console is backported to
+   `firestore.indexes.json` the same day
+   ([ADR-106](Decisions.md#adr-106-firestoreindexesjson-mirrors-the-deployed-index-state-exactly--a-console-created-exemption-is-backported-to-the-repo-the-day-it-is-found)).
+9. **Website after 3c**: the `/delete-account` server channel media line and
+   the ADR-222 sign-in change (step 4).
+10. **Optional, recommended:** Google Cloud Console → IAM & Admin → Audit Logs
+    → Identity Toolkit API → Data Read / Data Write, so a future takeover
+    leaves a trail.
 
-## Pre-registered account takeover, Phase 1 (ADR-222) — deploy order and owner steps (source only, NOTHING DEPLOYED)
+**The release**
 
-Source: branch `nb2-account-takeover` (from `a136ea2a` on). Why and what:
-[Decisions.md](Decisions.md) ADR-222, [SECURITY.md](SECURITY.md). Nothing here
-has been deployed and no console was touched.
+11. **Build 36.** `3.1.0+36` in the release commit; no GIPHY define; public
+    store builds pass `YOVOICE_BUG_BUTTON=false`; update the App Store privacy
+    labels and the Play Data safety form ("diagnostics / user content (bug
+    reports)", linked to the account, not used for tracking) before a build
+    carrying the reporter goes to store review (step 5).
+12. **The store-release workflow, one-time setup** (only if store builds are
+    to come from GitHub Actions; until then the Mac procedure stays),
+    exactly as in [RELEASE_CI.md](RELEASE_CI.md): the protected
+    `store-release` environment (required reviewer `kamilxgriefer`, branch
+    `main` only, no admin bypass) and the same reviewer on the existing
+    unprotected `production` environment; the **nine** environment secrets
+    (`ANDROID_UPLOAD_KEYSTORE_BASE64`, `ANDROID_UPLOAD_KEY_PASSWORD`,
+    `PLAY_SERVICE_ACCOUNT_JSON`, `ASC_KEY_ID`, `ASC_ISSUER_ID`,
+    `ASC_PRIVATE_KEY_P8`, `IOS_DIST_CERT_P12_BASE64`,
+    `IOS_DIST_CERT_P12_PASSWORD`, `IOS_APPSTORE_PROFILE_BASE64`), piped
+    straight into `gh secret set`, never pasted into a chat; a dedicated Play
+    service account with "Release apps to testing tracks"; the first
+    `store-build-<N>` baseline tag (35 if it was ever built from the Mac,
+    otherwise `store-build-34` on `f71a2ae2`); and, for the reviewer gate to
+    bind a session at all, a fine-grained token for sessions without
+    Workflows, Deployments or Environments permission. Then a dry run, then a
+    first real run as a Play draft.
 
-Order (each step is safe without the next):
+**Decisions and later waves**
 
-1. **Rules first** — `firebase deploy --only firestore:rules,storage`. The
-   epoch check reads a field no document has yet, so it changes nothing until
-   the first remediation; deploying it before the functions is what keeps the
-   push-token purge from being raced.
-2. **Functions** — `onAuthUserCreated`, `secureFederatedSignInV1`,
-   `sweepFederatedTakeoverSchedule` (three new exports; the pinned list is 264).
-   The first sweeps backfill `authPasswordLedger` for existing unverified
-   password accounts through the `listUsers` walk; no separate script. No new
-   index, no secret.
-3. **App build** with the `AuthService` call. Before step 2 it gets NOT_FOUND
-   and continues silently, so the order between 2 and 3 is not load-bearing.
-4. **Website** — the integrator change listed in ADR-222 ("Website").
-
-After deploying, read the sweeper's logs: `federated takeover remediated`
-(every remediation, also in `authTakeoverAudit`), `pending password verified
-beside a Google/Apple identity; left untouched` (the ambiguous case — only a
-password verified by link with nothing changed since), `the owner's address is
-taken by another account; manual review needed` (an `authTakeoverAudit` row
-with `ownerEmailRestored: false`, ledger `needsReview`), and once per completed
-walk `never-verified password-only accounts older than 7 days` (report only).
-The per-run `federated takeover sweep` counts include `ledgerPages`,
-`ledgerChecked` and `ledgerUnconfirmed`; if a run stops reaching the end of
-the pending ledger (a non-null `authTakeoverSweep/state.ledgerCursor` after a
-run), the sweeper's delay has started to scale with the backlog (ADR-222).
-
-Canary additions for Phase 2 (ADR-222, "Phase 2" step 4): record `isNewUser`
-on the takeover sign-in, whether `tokensValidAfterTime` moved at the takeover,
-and whether a password set from the stranger's session needs a recent login;
-confirm the remediation still runs after that session re-links a password or
-moves the address.
-
-Owner steps (console; Claude does none of these):
-
-- Confirm Firebase Console → Authentication → Settings → User account linking
-  reads "Link accounts that use the same email" (the whole analysis assumes
-  it).
-- Optional, recommended: Google Cloud Console → IAM & Admin → Audit Logs →
-  Identity Toolkit API → enable Data Read/Data Write, so a future takeover
-  leaves a trail (none exists for the past).
-- Decide on deleting never-verified accounts (ADR-222, last section).
-- Phase 2: the irreversible Identity Platform upgrade, then the blocking
-  functions and the canary (ADR-222, "Phase 2").
-
-Rollback: redeploying the previous rules removes the epoch check; deleting the
-three functions stops remediation. Neither undoes a remediation already done
-(the pre-registrant's password stays unlinked, which is the intended state).
+13. **GIPHY** (only when it goes live, as its own wave): a developer account
+    and API app at developers.giphy.com, a production key ("Upgrade to
+    Production", screenshots showing the official mark, and GIPHY's
+    confirmation of the server-side `GET /v1/gifs/{id}` lookup); the
+    unmodified "Powered By GIPHY" artwork at
+    `assets/images/giphy_powered_by_on_light.png` and
+    `assets/images/giphy_powered_by_on_dark.png`;
+    `firebase functions:secrets:set GIPHY_API_KEY --project yovoice-ec54a`
+    (paste at the hidden prompt); the client key as a CI build define, never
+    committed; the privacy text from `privacy/giphy` published the day it
+    goes live. Until then the release notes say only that GIFs are coming.
+14. **Bug alerts** (after the legal questions in
+    [SECURITY.md](SECURITY.md#open-questions-for-legal-review-before-an-alert-channel-is-switched-on)
+    are answered). E-mail: a Verified sending domain in Resend, an API key
+    restricted to it,
+    `firebase functions:secrets:set RESEND_API_KEY --project yovoice-ec54a`,
+    the source flip and deploy, then `appConfig/bugReports.emailEnabled`,
+    `emailTo` (the Workspace team mailbox, not a consumer Gmail) and
+    `emailFrom` in the console. GitHub: alerts are link-only whatever the
+    repository, but a **private** `kamilxgriefer/yovoice-bug-inbox` is still
+    recommended so the public repository is not filled with alerts; a
+    fine-grained token limited to that repository (Issues read/write, 90-day
+    expiry),
+    `firebase functions:secrets:set GITHUB_BUG_REPORT_TOKEN --project yovoice-ec54a`,
+    the source flip and deploy, then `githubEnabled` and `githubRepo`.
+15. **Account takeover Phase 2 and never-verified accounts.** The Identity
+    Platform upgrade (Firebase Console → Authentication → Settings; it
+    **cannot be undone**; check pricing first; TOTP waits for the same
+    upgrade), then the blocking functions as a separate change, their
+    registration under Authentication → Settings → Blocking functions, and the
+    owner-account canary (ADR-222, "Phase 2"). Separately, decide whether
+    never-verified password accounts are deleted: the age (the sweeper reports
+    7 days; it must exceed the verification link's lifetime), grandfathering
+    and a warning e-mail for existing testers, and the mechanism (the
+    app-deletion transaction, never the bare outbox). The sweeper deletes
+    nothing.
+16. **App Check console steps**, none from the repository: the Play Integrity
+    API for the Android app, the App Attest entitlement for the iOS app in the
+    Apple Developer portal, a reCAPTCHA Enterprise site key for web. Enforcing
+    is a later, separate redeploy once the console shows verified traffic on
+    all three.
+17. **The held functions:** a cost decision on the warm `acceptDirectCall`
+    (ADR-197) and the Reel voice-comment slice as one unit (ADR-187/191).
 
 ## Build 33 release round — web deployed, iOS with testers, Play upload outstanding (2026-09-19)
 
@@ -4574,6 +4679,12 @@ non-Server waves and the SHA-and-manifest-anchored Server selectors in the
 [Build 27 backend runbook](#gif-rollout--yo-voice-originals-adr-172173). A bare
 or blanket Functions deploy, including the npm script, is forbidden there.
 
+**Build 36 exception:** the same holds for build 36. Its source exports
+thirteen names that must not move (the warm `acceptDirectCall` and the Reel
+voice-comment slice), so it deploys the generated, name-scoped selector in
+[its deploy order](#build-36-yo-voice-31036--one-deploy-order-for-the-whole-build-source-only-nothing-deployed),
+step 3b — never the command below.
+
 For a different release that has been explicitly reviewed and authorized to
 redeploy every Function, the top-level command is:
 
@@ -4978,8 +5089,8 @@ from `functions/index.js` and has been deployed since 2026-09-07. What the
 row above describes is the Build-19-era state. What is still missing is the
 provider side: the URL was registered in the LiveKit Cloud project on
 2026-09-19, but no delivery has been read back, so acceptance of its
-signature is UNVERIFIED. See the next-build deploy order at the top of this
-file.)*
+signature is UNVERIFIED. See the build 36 deploy order at the top of this
+file, "Steps only Kamil can do", item 5.)*
 
 **The index deploy fixed a live defect.** `entitlements(isPremium,
 currentPeriodEnd)` backs the scheduled `expirePremiumIdentity` query at
@@ -6491,6 +6602,15 @@ while YO Voice Originals is selected.
 
 ## In-app bug reports and their alerts (ADR-223)
 
+> For build 36 the deploy order of this feature is folded into
+> [Build 36 — one deploy order for the whole build](#build-36-yo-voice-31036--one-deploy-order-for-the-whole-build-source-only-nothing-deployed):
+> the privacy text is its step 0.7 gate, the indexes, rules and Storage path
+> are its steps 1, 2 and 2b, and the eight functions ride in its step 3b
+> selector. Where the "Base feature" order below differs (it lists rules
+> before indexes), the build 36 order wins. The rest of this section — the
+> kill switch, the store labels, the retention backstops and the alert
+> channels — is the feature's detail.
+
 **Step 0 — BLOCKING: publish the privacy text first.** Before any deploy below
 and before any client build that shows "Report a bug" (to testers or on the
 public web app — the Settings row is shown to everyone), publish the
@@ -6568,10 +6688,11 @@ its author, so e-mail stays the alert.
 
 > This section is the GIPHY-specific detail: the source flip, the exact
 > activation deploy wave, the canary and the rollback. It is **not** part of
-> the next build's deploy order — GIPHY stays off through that deploy. The
-> owner prerequisites below are also listed, consolidated with every other
-> owner step of this build, under
-> [Steps only Kamil can do](#steps-only-kamil-can-do).
+> the build 36 deploy order — GIPHY stays off through that deploy. The owner
+> prerequisites below are also listed, consolidated with every other owner
+> step of build 36, under [Steps only Kamil can do](#steps-only-kamil-can-do)
+> (item 13). The canary below blocks a GIF through `moderateReport`, which
+> build 36 holds on its 2026-09-08 revision; settle that before the wave.
 
 **Nothing here is deployed by merging the source.** The committed source keeps
 `GIPHY_SEND_RESOLVE_ENABLED = false` in `functions/index.js`, so `resolveGif`

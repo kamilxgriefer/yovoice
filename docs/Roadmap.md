@@ -14,75 +14,59 @@ someone decide what to pick up next.
 
 ---
 
-## In-app bug reporter — source on `nb2/report-bug` — NOTHING DEPLOYED — 2026-09-25
+## YO Voice 3.1.0 (36) — build 36 on `nb/integrate`: the eight next-build branches and the eight merges of 2026-09-25 — source only, NOTHING DEPLOYED
 
-Done in source (ADR-223): "Report a bug" in Settings > Help, the mobile More
-sheet and the desktop More popover; a movable, hideable testing-period Bug
-button (`YOVOICE_BUG_BUTTON`, default on, never on web) that stays clear of the
-dock and gesture edges; a reporter with a required description, allowlisted
-device context and a preview-and-confirm screenshot step; server-written,
-owner-read `bugReports` with a reserved private screenshot upload, rate limits,
-a retention sweep and account-deletion coverage; an owner-only Staff Center
-inbox with rights-request tools (find by account, delete a report, remove a
-screenshot, each audited); link-only e-mail (Resend) and GitHub alert channels
-source-gated off. Eight new exports (261 -> 269), three composite indexes, two
-deny-all Rules blocks, one Storage path. The yovoice.app privacy text must be
-published before the deploy (docs/DEPLOYMENT.md). Not verified on a device or
-simulator.
+**Status: done in source and verified on the integrated tree (`5d514a79` plus
+the documentation commit). Nothing of it is on `main`, nothing is deployed,
+nothing is with testers, and none of the 42 commits since
+`origin/nb/integrate` is pushed.** Production runs 3.0.0+35 on the web
+(sounds only) and the 3.0.0+34 backend; testers have 3.0.0 (34) from the
+stores. Build 36 goes to `main` as `3.1.0+36` (`pubspec.yaml` here still reads
+`3.0.0+35`). The one deploy order, what stays OFF and every owner step:
+[DEPLOYMENT.md](DEPLOYMENT.md#build-36-yo-voice-31036--one-deploy-order-for-the-whole-build-source-only-nothing-deployed).
+Run logs: [Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md)
+(the next-build branches) and
+[Sessions/2026-09-25-build-36.md](Sessions/2026-09-25-build-36.md) (today's
+merges, the verification and the release notes).
 
-## Next build after 3.0.0 — eight branches on `nb/integrate` — source only, NOTHING DEPLOYED — built 2026-09-19/20, merged with 3.0.0+35 on 2026-09-25
-
-**The sequence, oldest first** (the two entries below this line are one
-story):
+**The sequence, oldest first:**
 
 1. **2026-09-19** — 3.0.0+34, the Slim redesign, released to testers
    (release commit `176ec120`; `f71a2ae2` is the `main` tip this build
    started from; entry further down).
-2. **2026-09-19/20** — this build is done in source on `nb/integrate`, on top
-   of `f71a2ae2`: eight branches, ADRs then numbered 210–215, and the final
-   review fixes up to `77264f18`. It then waited.
+2. **2026-09-19/20** — the next build is done in source on `nb/integrate`, on
+   top of `f71a2ae2`: eight branches, ADRs then numbered 210–215, and the
+   final review fixes up to `77264f18`. It then waited, unmerged.
 3. **2026-09-24** — `main` gains the Velvet Mallet v6 sound pack (`32c9dd9b`,
    ADR-210) and the web serves it (Hosting run 36038221140).
-4. **2026-09-25** — `main` sets `3.0.0+35` (`738ecc4a`, next entry). The same
-   day this branch renumbers its own records 211–216 to make room for the
-   sound pack's ADR-210 (`2d1bfdef`), merges 3.0.0+35 in (`985dceee`), and
-   corrects the deploy order for the Storage Rules step (`afa9dc03`).
+4. **2026-09-25** — `main` sets `3.0.0+35` (`738ecc4a`, next entry). This
+   branch renumbers its records 211–216 (`2d1bfdef`), merges 3.0.0+35 in
+   (`985dceee`) and corrects the Storage Rules step (`afa9dc03`). The same
+   day eight more branches are built from Kamil's tester reports and merged
+   (`f59edf99` … `d6fb1032`, ADR-217 to ADR-225).
+5. **2026-09-26** — the build 36 review round (`5d514a79`) and this
+   documentation pass: one deploy order, which now holds thirteen functions
+   out of the deploy instead of deploying the whole Functions surface.
 
-3.0.0+35 is sounds only — no rules, index or deployed Functions change — so
-the production backend is still 3.0.0+34's and every backend change of this
-build is still ahead of it.
+**Backend surface build 36 adds** (counted against `main`): four Firestore
+composites (the `events` COLLECTION_GROUP index and three on `bugReports`;
+47 → 51); eleven deny-all Firestore Rules blocks, the owner-only
+`serverQuestionSeen` cursor and a session-epoch check on push-token writes;
+two reservation-bound Storage paths (`server_message_media`, `bug_reports`)
+and the same epoch check in `isActiveUser`; 25 new Function exports
+(248 → 273), of which the deploy moves every name except thirteen held ones
+(the warm `acceptDirectCall` and the Reel voice-comment slice); no new
+secret. Every schema change is additive: no rename, no removal, no migration.
 
-**Status: done in source, integrated on `nb/integrate` (based on `main`
-`f71a2ae2`, YO Voice 3.0.0+34, with `main`'s 3.0.0+35 merged in on
-2026-09-25). Nothing is on `main`, nothing is deployed, nothing is with
-testers.** Eight
-branches were built in parallel across the Mac and the Windows PC and merged
-in this order: `nb/yeels-scrub`, `nb/friend-actions`, `nb/confirm-upload`,
+### The eight next-build branches (2026-09-19/20)
+
+The split into tasks, and the decisions taken before any branch started, are
+in `docs/briefs/2026-09-19-next-build-decisions.md` on `nb/brief`. Six
+decisions came out of the work — ADR-211 to ADR-216 — plus one amendment to
+ADR-180 that deliberately has no number of its own. Merge order:
+`nb/yeels-scrub`, `nb/friend-actions`, `nb/confirm-upload`,
 `nb/server-delete`, `nb/giphy`, `nb/server-live`, `nb/notifications`,
-`nb/server-messaging`; `main`'s 3.0.0+35 (the Velvet Mallet sound pack,
-ADR-210) was merged in afterwards. The
-split into tasks, and the decisions taken before any branch started, are in
-`docs/briefs/2026-09-19-next-build-decisions.md` on `nb/brief`. Six
-decisions came out of the work itself — ADR-211, ADR-212, ADR-213, ADR-214,
-ADR-215, ADR-216 — plus one amendment to ADR-180 that deliberately has no
-number of its own.
-The single deploy order for all of it, what stays OFF and the owner-only
-steps are in [DEPLOYMENT.md](DEPLOYMENT.md#next-build-after-300--one-deploy-order-for-the-whole-build-source-only-nothing-deployed);
-the run log is in [Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md).
-
-**Backend surface this build adds:** one Firestore composite (the
-COLLECTION_GROUP index on `events`); six Firestore Rules blocks, all
-server-only (`commentMentions` and the five server channel media
-collections); one Storage Rules block (`server_message_media`, the first
-Storage Rules deploy since 2026-09-14); thirteen new Function exports plus
-behaviour changes in the club-message moderation, Servers control-outbox and
-account-deletion functions; three additive server-written fields on
-`events`, one additive server-written field on `channelSessions`, one
-additive optional field on notification rows, and additive `reactions` and
-`media` fields (plus the `image`/`video` values of the existing `type`) on
-server channel messages. No rename, no removal, no migration.
-
-### What each branch delivered
+`nb/server-messaging`.
 
 - **Yeels drag-to-seek — `nb/yeels-scrub` ([ADR-211](Decisions.md#adr-211-a-finger-on-the-yeel-timeline-is-a-scrub-session-and-the-band-that-takes-it-is-translucent-and-drag-only)).**
   Task 1 of the next-build split. Commits `38f29ebc` (coordinator scrub
@@ -252,7 +236,7 @@ server channel messages. No rename, no removal, no migration.
   Storage Rules block. **Deploy order matters:** Storage Rules before the
   Functions that issue reservations, and the runtime service account's
   `signBlob` grant read back first
-  ([DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-path-before-any-function-that-issues-a-reservation)).
+  ([DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-paths-before-any-function-that-issues-a-reservation)).
   The website's `/delete-account` copy changes only after the Functions are
   live. **Deferred:** hover-revealed reactions and a side-sheet actions menu
   on wide screens (the adaptive modal is used at every width, opened by
@@ -262,24 +246,107 @@ server channel messages. No rename, no removal, no migration.
   the attach flow and the media bubbles are proven by widget tests at 390 /
   768 / 1440 px, not on a device or simulator.
 
+### The eight merges of 2026-09-25 (ADR-217 to ADR-225)
+
+Built from Kamil's tester reports and the 2026-09-24 handover, one branch
+each, diagnosed and independently verified first
+(`yovoice-evidence/2026-09-25/diagnosis-*.md`, `verdict-*.md`), then merged
+in this order.
+
+- **A one-minute voice message can be sent — `voice-60s`
+  ([ADR-217](Decisions.md#adr-217-a-take-that-reaches-its-recorders-cap-is-a-full-length-take-the-server-accepts-a-2-s-measured-grace-and-stores-the-cap)).**
+  Commits `1c1fda37`, `44215c8a`, `ad1543c8`, `657e21eb`; merged `f59edf99`.
+  A take that reaches the recorder's cap measured a little over it and was
+  refused for good ("Nie wysłano"); the server now accepts a 2 s measured
+  grace and stores the cap (DM voice and video, server channel video, Family
+  Memory at 30 s), a camera-capped clip is declared as 60, and the last ten
+  seconds show a countdown with one haptic and one announcement. The
+  Functions deploy alone fixes voice notes on installed 3.0.0 builds.
+  **Open:** a library clip measuring 60.0x s is still blocked in the ADR-212
+  review (3.0.1 decision); the real per-platform overage is UNVERIFIED.
+- **Accept or decline a friend request explicitly — `friend-request`
+  ([ADR-218](Decisions.md#adr-218-accepting-a-friend-request-is-an-explicit-consent-decision--two-labelled-buttons-everywhere-and-add-friend-never-answers-someone-elses-request)).**
+  Commits `b724cf7f`, `12295e8a`, `076ae6fe`, `f0d6242e`; merged `47513787`.
+  One labelled Accept / Decline pair on every incoming-request surface (the
+  bell card, the activity row, the top banner, the friend's profile, the
+  preview, the Friends list, a prompt), body taps only open, "Add friend" on
+  someone who already asked opens the prompt (`acceptIncoming: false`), stale
+  requests say what happened, and the push decision for a request is kept on
+  a 14-day receipt.
+- **The profile photo across the whole header — `profile-banner`
+  ([ADR-219](Decisions.md#adr-219-the-profile-banner-is-the-headers-full-bleed-background-softened-by-a-blurred-copy-of-itself)).**
+  Commits `d374a5b6`, `1f96d1eb`, `b49dd724`, `d19cf16b`, `fd1eae79`; merged
+  `ac1d2f8e`. Client only. The banner is the full-bleed background of both
+  profile headers, softened by a pre-blurred copy of itself (no per-frame
+  filter), with a legible status bar; by Kamil's decision the photo runs on
+  behind the avatar, name and handle under a veil chosen from contrast
+  limits. The crop editor's guide tells the truth about what stays visible.
+- **Hosts see raised hands and new listener questions — `podcast-host`
+  ([ADR-220](Decisions.md#adr-220-request-to-speak-end-to-end--the-host-reads-the-queue-a-decline-is-its-own-callable-and-an-authority-change-re-mints-in-place),
+  [ADR-221](Decisions.md#adr-221-listener-questions-dot--a-per-host-cursor-one-waiting-mark-no-push)).**
+  Commits `42866077`, `1e628c21`, `b20a1c2d`, `004cfc97`, `028c83e2`,
+  `aeb74d60`, `c3f2d711`; merged `d315a7f8`. A raised hand now reaches the
+  host's queue (studio, dock, a waiting dot), with Approve and a new Decline
+  (`answerServerSessionHandV1`, a one-minute cooldown, the decider kept
+  private); a departed listener's hand is lowered by the webhook; promotion,
+  demotion and mutes re-mint the connection in place instead of dropping it.
+  Hosts also get one small dot for listener questions they have not seen,
+  from an owner-private cursor (`users/{uid}/serverQuestionSeen`), with no
+  push.
+- **Pre-registered account takeover, Phase 1 — `account-takeover`
+  ([ADR-222](Decisions.md#adr-222-a-google-or-apple-sign-in-that-inherits-a-password-nobody-verified-ends-every-earlier-session-pre-registered-account-takeover-phase-1)).**
+  Commits `a136ea2a`, `1c248efb`, `a213195d`, `0df2008d`; merged `9cad1222`;
+  hardened in `5d514a79`. When a Google or Apple sign-in inherits a password
+  nobody verified, the server unlinks it, ends every earlier session, sets a
+  session epoch and purges planted push tokens — triggered by the owner's app
+  right after the sign-in and by a 5-minute sweeper for the website and old
+  builds. **Phase 2** (blocking functions) waits for Kamil's Identity
+  Platform upgrade; the website needs the integrator change written in the
+  ADR.
+- **Report a bug from the app — `report-bug`
+  ([ADR-223](Decisions.md#adr-223-in-app-bug-reports-are-server-written-and-owner-read-alerts-are-source-gated-channels-that-never-carry-the-screenshot-or-the-uid),
+  [ADR-224](Decisions.md#adr-224-bug-report-alerts-are-link-only-and-rights-requests-have-an-owner-tool)).**
+  Commits `50cb6174`, `91c440be`, `67a29a01`, `66378b3b`; merged `59a0e987`.
+  "Report a bug" in Settings > Help, the mobile More sheet and the desktop
+  More popover; a movable, hideable testing-period Bug button
+  (`YOVOICE_BUG_BUTTON`, default on, never on web); a required description,
+  allowlisted device context and a preview-and-confirm screenshot;
+  server-written, owner-read `bugReports` with rate limits, retention and
+  account-deletion coverage; an owner-only Staff Center inbox with
+  rights-request tools. Link-only e-mail and GitHub alerts are source-gated
+  off. The yovoice.app privacy text must be live before the deploy.
+- **Store builds from GitHub Actions — `release-ci`
+  ([ADR-225](Decisions.md#adr-225-store-builds-come-from-a-manually-dispatched-reviewer-gated-workflow-that-never-publishes-a-binary)).**
+  Commits `af89d182`, `e44e220c`, `9e1162c0`; merged `34b24849`. Source only,
+  never run; status and the remaining owner setup are under **In Progress**
+  below.
+- **The App Review account leaves the public count; Premium copy is current
+  — `stats-exclusion`** (no ADR). Commit `ebfb04a1`; merged `d6fb1032`.
+  `publicStats/live.activeAccounts` subtracts an explicit list of service
+  accounts (today only the Apple App Review demo account); the account keeps
+  working for App Review. Premium no longer says Server allowances apply
+  "after launch": Servers have been open to everyone since 16 September 2026.
+  Together with the 2026-09-25 clean-up of 13 Claude test accounts (public
+  count 43 → 34), the website's number counts people.
+
+The build 36 review round (`5d514a79`) then fixed what the integrated-tree
+review found; see [Bugs.md](Bugs.md).
+
 ### What is verified, and what is not
 
-Last fully verified state: `cd30afea` (2026-09-20) — Flutter 5505, Functions
-2480 and rules 781, all green, as reported by the integrating session;
-`firestore.rules`, `storage.rules` and `firestore.indexes.json` reviewed
-against what the branches claim. After it came the retry fix `77264f18`, the
-documentation commits and the 3.0.0+35 merge `985dceee`, whose only code
-overlap was `push_notification_service.dart` and
-`test/notification_sound_profile_test.dart`. What was re-run after each, with
-exact counts and commands:
-[Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md).
+Verified on `5d514a79` on 2026-09-26, all green: `flutter analyze` clean;
+Flutter **5737** tests across 450 files (2704 + 3033); Functions **2589**
+across 186 files in four slices under fresh emulators; rules 585 + 4 + 6,
+Storage 76 + 2, family media 11, server channel media 9, bug reports 7,
+notification engagement 3, Servers 72; release tooling 98. The Functions
+selector (259 + 1 names) was generated read-only. Details:
+[Sessions/2026-09-25-build-36.md](Sessions/2026-09-25-build-36.md).
 
-**Not verified, for the whole build:** nothing was run on a real device or a
-simulator in the integration session, nothing is deployed, no production data
-was read, and no provider (LiveKit, GIPHY) was contacted. The LiveKit webhook
-was registered on 2026-09-19 but **no delivery has been read back**, so
-acceptance of its signature is UNVERIFIED and both voice-time accounting and
-the provider-driven end of an empty channel remain unproven in production.
+**Not verified, for the whole build:** nothing was run on a real device, a
+simulator or a real browser; nothing is deployed; no provider was contacted.
+The LiveKit webhook has never had a delivery read back, so voice-time
+accounting, the provider-driven end of an empty channel and the lowering of
+a departed listener's hand are unproven in production.
 
 ---
 
@@ -893,7 +960,7 @@ their separate production-deployment gates.
 
 - **GIPHY GIFs, option B (ADR-214)** — source on `nb/giphy`, merged into the
   next build. Not repeated here: the full entry is in
-  [Next build after 3.0.0](#next-build-after-300--eight-branches-on-nbintegrate--source-only-nothing-deployed--built-2026-09-1920-merged-with-30035-on-2026-09-25)
+  [YO Voice 3.1.0 (36)](#yo-voice-310-36--build-36-on-nbintegrate-the-eight-next-build-branches-and-the-eight-merges-of-2026-09-25--source-only-nothing-deployed)
   above, because it ships with that build and not with this one.
 
 - **GIFs in the composer — production-original catalog complete in source
@@ -3316,10 +3383,10 @@ regression test pinning the contract.
   `voiceMinutes` is still zero for every account. Creator Studio's "Voice
   time" tile and the whole voice achievement category must not be read as
   measurements until a real delivery is observed.
-- **What closes it**: after the next-build Functions deploy, join and leave a
+- **What closes it**: after the build 36 Functions deploy, join and leave a
   real Server voice channel from a device and read
   `firebase functions:log --only receiveLiveKitAchievementWebhook`. See
-  [DEPLOYMENT.md](DEPLOYMENT.md#steps-only-kamil-can-do), owner step 7.
+  [DEPLOYMENT.md](DEPLOYMENT.md#steps-only-kamil-can-do), item 5.
 - **Priority**: Medium-High, and it now also gates the provider-driven end of
   an empty server channel session (the ADR-180 amendment's `room_finished`
   path). It still unblocks `publishPublicStatsSchedule`, whose current data

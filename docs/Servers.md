@@ -643,7 +643,7 @@ same reserve and finalize request ids, `77264f18`), so the one-lease rule is
 never met by the member's own retry. Security model:
 [SECURITY.md](SECURITY.md#server-channel-reactions-and-media-2026-09-19-adr-216-source-only-not-deployed);
 deploy order:
-[DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-path-before-any-function-that-issues-a-reservation).
+[DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-paths-before-any-function-that-issues-a-reservation).
 
 ### The admin and staff surface on a versioned root (ADR-188)
 

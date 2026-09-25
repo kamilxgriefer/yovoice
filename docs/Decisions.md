@@ -15109,7 +15109,11 @@ control; making the retry a true replay fixes the client without touching it.
   source-disabled Podcast-recording names) and, outside it, the 7
   message-parity names in `SERVER_MESSAGE_EXPORT_NAMES`. They can be named by
   two selectors; this build's deploy order deploys the whole Functions
-  surface at once (DEPLOYMENT.md step 3b). *(Corrected 2026-09-25: this line
+  surface at once (DEPLOYMENT.md step 3b). *(Corrected 2026-09-26: build 36
+  deploys every export except thirteen held names — the warm
+  `acceptDirectCall` and the Reel voice-comment slice — through one
+  name-scoped selector, still in one command, step 3b of the build 36 deploy
+  order.)* *(Corrected 2026-09-25: this line
   first read "55 base + 1 broadcast + 1 last-leave release + 7", which counted
   the broadcast and release callables twice.)*
 - A **different** pick while a lease is live is still refused
@@ -15126,7 +15130,7 @@ control; making the retry a true replay fixes the client without touching it.
 - `storage.rules` is no longer byte-identical to 3.0.0+34, so this build has a
   Storage Rules deploy step for the first time since 2026-09-14. It must land
   **before** the Functions that issue reservations — see
-  [DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-path-before-any-function-that-issues-a-reservation).
+  [DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-paths-before-any-function-that-issues-a-reservation).
 
 ### Deviations from the investigation's design, with reasons
 
@@ -15688,7 +15692,7 @@ decline outside the frozen manifest follows the precedent the message-parity
 extension set.
 
 **Consequences.** Deploy Functions (the extension and the webhook) before the
-client (docs/DEPLOYMENT.md, step 3c); an older backend answers the decline
+client (docs/DEPLOYMENT.md, build 36 deploy order, steps 2 and 3b); an older backend answers the decline
 with `not-found`, which the queue shows as one sentence. The decider of a
 decline is no longer readable by the person declined; `lastModeratedById`
 still names whoever promoted, demoted or muted somebody, as it did before

@@ -1392,7 +1392,7 @@ Both are **Admin-SDK-only writes on the existing club message store**:
 `firestore.rules`'s `clubs/{clubId}/channels/{channelId}/messages` match is
 unchanged — `create: if false`, V1 `update` false, `delete` false — so no
 client predicate was widened to ship either feature. Deploy order:
-[DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-path-before-any-function-that-issues-a-reservation).
+[DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-paths-before-any-function-that-issues-a-reservation).
 
 - **Who may react is derived inside the callable, never stored as a
   capability.** `setServerChannelMessageReactionV1` requires the channel's
@@ -1438,7 +1438,7 @@ client predicate was widened to ship either feature. Deploy order:
   90-second generation-bound V4 URLs, and the whole batch re-authorized after
   signing (a revision or descriptor change answers `aborted`). This is the
   Company Files pattern, and it needs the runtime service account's `signBlob`
-  grant (DEPLOYMENT.md step 2).
+  grant (DEPLOYMENT.md, build 36 deploy order, step 0.3).
 - **Publication is server-owned end to end.** Finalize validates metadata,
   runs the trusted GCS probe under the DM contract (real image/video bytes,
   track presence, duration within 1–60 s and within 2 s of the declaration),

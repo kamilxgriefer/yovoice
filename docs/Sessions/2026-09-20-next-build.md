@@ -9,7 +9,7 @@ is with testers, nothing was run on a real device or a simulator.** Built on
 2026-09-19/20; the branch then waited while `main` shipped 3.0.0+35 and was
 merged with it on 2026-09-25 (see "Waiting for 3.0.0+35" below). The single
 deploy order and the owner-only steps live in
-[DEPLOYMENT.md](../DEPLOYMENT.md#next-build-after-300--one-deploy-order-for-the-whole-build-source-only-nothing-deployed);
+[DEPLOYMENT.md](../DEPLOYMENT.md#build-36-yo-voice-31036--one-deploy-order-for-the-whole-build-source-only-nothing-deployed);
 the product account is in [Roadmap.md](../Roadmap.md); the defects are in
 [Bugs.md](../Bugs.md).
 
@@ -253,7 +253,10 @@ recomputed from the merged code.
 
 The full list, with commands, is
 [DEPLOYMENT.md, "Steps only Kamil can do"](../DEPLOYMENT.md#steps-only-kamil-can-do);
-the deploy order itself is steps 1 → 2 → 2b → 3a → 3b → 4 there. In short:
+the deploy order itself is steps 1 → 2 → 2b → 3a → 3b → 4 there. *(Superseded
+on 2026-09-26 by the build 36 order, which deploys a name-scoped selector
+instead of the whole Functions surface; see
+[Sessions/2026-09-25-build-36.md](2026-09-25-build-36.md).)* In short:
 read back (or grant) the Functions runtime `signBlob` permission before 3b;
 confirm one LiveKit webhook delivery after 3b; dry-run, apply and re-check
 the stale-LIVE repair script; run the provider drill; confirm the
