@@ -12,6 +12,7 @@ import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 
 /// One composed assertive error channel for a Home surface (ADR-058).
 ///
@@ -230,77 +231,72 @@ class _HomeSectionErrorContentState extends State<_HomeSectionErrorContent> {
     if (_channel != channel) _channel?.remove(this);
     _channel = channel;
     channel?.report(this, context, safeMessage);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: AppRadius.lg,
-        border: Border.all(color: palette.border),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(AppRhythm.title),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Semantics(
-              container: true,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ExcludeSemantics(
-                    child: Icon(
-                      Icons.cloud_off_outlined,
+    // The R2 block, like every other Start section: a failed read keeps the
+    // shape of the section it stands in for, never a louder one.
+    return YoCard(
+      padding: const EdgeInsets.all(AppRhythm.title),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Semantics(
+            container: true,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ExcludeSemantics(
+                  child: Icon(
+                    Icons.cloud_off_outlined,
+                    color: palette.textSecondary,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: AppRhythm.item),
+                Expanded(
+                  child: Text(
+                    safeMessage,
+                    style: AppTypography.bodyMedium.copyWith(
                       color: palette.textSecondary,
-                      size: 24,
                     ),
                   ),
-                  const SizedBox(width: AppRhythm.item),
-                  Expanded(
-                    child: Text(
-                      safeMessage,
-                      style: AppTypography.bodyMedium.copyWith(
-                        color: palette.textSecondary,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-            if (widget.onRetry != null) ...[
-              const SizedBox(height: AppRhythm.item),
-              OutlinedButton.icon(
-                onPressed: widget.onRetry,
-                icon: const Icon(Icons.refresh_rounded, size: 20),
-                label: Text(copy.text('Try again', 'Spróbuj ponownie')),
-                style:
-                    OutlinedButton.styleFrom(
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: VisualDensity.standard,
-                      minimumSize: const Size(
-                        AppSizing.minimumTouchTarget,
-                        AppSizing.minimumTouchTarget,
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppRhythm.title,
-                        vertical: AppRhythm.tight,
-                      ),
-                      shape: const RoundedRectangleBorder(
-                        borderRadius: AppRadius.pill,
-                      ),
-                    ).copyWith(
-                      side: WidgetStateProperty.resolveWith(
-                        (states) => BorderSide(
-                          color: states.contains(WidgetState.focused)
-                              ? palette.focus
-                              : palette.borderStrong,
-                          width: states.contains(WidgetState.focused) ? 2 : 1,
-                        ),
+          ),
+          if (widget.onRetry != null) ...[
+            const SizedBox(height: AppRhythm.item),
+            OutlinedButton.icon(
+              onPressed: widget.onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 20),
+              label: Text(copy.text('Try again', 'Spróbuj ponownie')),
+              style:
+                  OutlinedButton.styleFrom(
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.standard,
+                    minimumSize: const Size(
+                      AppSizing.minimumTouchTarget,
+                      AppSizing.minimumTouchTarget,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppRhythm.title,
+                      vertical: AppRhythm.tight,
+                    ),
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: AppRadius.pill,
+                    ),
+                  ).copyWith(
+                    side: WidgetStateProperty.resolveWith(
+                      (states) => BorderSide(
+                        color: states.contains(WidgetState.focused)
+                            ? palette.focus
+                            : palette.borderStrong,
+                        width: states.contains(WidgetState.focused) ? 2 : 1,
                       ),
                     ),
-              ),
-            ],
+                  ),
+            ),
           ],
-        ),
+        ],
       ),
     );
   }

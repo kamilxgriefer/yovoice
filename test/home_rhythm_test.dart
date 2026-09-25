@@ -33,6 +33,7 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 
 import 'support/material_icons_font.dart';
@@ -1298,7 +1299,20 @@ Rect? _inkBounds(Element root) {
       }
     }
     final widget = element.widget;
+    // The bare brand mark (refine-look W1) is ink for exactly its box: the
+    // picture fills that box whether or not the PNG has decoded yet, and
+    // its bloom / contact shadow are light painted past the box on purpose
+    // (spec §4: the layout box is always the mark), not ink.
+    if (widget is YoBrandMark) {
+      add(element.renderObject, inherited);
+      return;
+    }
     if (widget is Material && _materialPaints(widget)) {
+      add(element.renderObject, inherited);
+    }
+    // An `Ink` decoration paints on its Material exactly like a fill: the
+    // gradient primary action (refine-look R5) lays its gradient this way.
+    if (widget is Ink && _decorationPaints(widget.decoration)) {
       add(element.renderObject, inherited);
     }
     if (object is RenderBox && _paintsInk(object)) add(object, inherited);

@@ -5,6 +5,15 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
 
+/// Which width a [YoWaveform.playedGradient] is spread across.
+///
+/// * [played] — across the played run only (the original behaviour): the
+///   whole gradient is always visible and compresses as playback starts.
+/// * [full] — across the whole waveform and REVEALED up to the playhead
+///   (refine-look R13), so a bar keeps one colour for the whole play-through
+///   and the sweep never shimmers.
+enum YoWaveformGradientSpan { played, full }
+
 /// The one bar waveform (Slim redesign, phase 0, ADR-209).
 ///
 /// Every row of rounded bars that stands for audio in the app is this widget:
@@ -33,7 +42,10 @@ import 'package:yovoice/core/theme/app_colors.dart';
 ///
 /// Both read from the leading edge (mirrored under RTL, played edge included),
 /// paint a bar as played only once `(index + 0.5) / count <= progress` so the
-/// fill advances one whole bar at a time, and size exactly to [height] and
+/// fill advances one whole bar at a time — or, with [continuousProgress],
+/// clip the played paint at the exact playhead so the bar under it fills
+/// partially (the "pour"; the caller tweens toward each REAL position event
+/// and never extrapolates) — and size exactly to [height] and
 /// [width] with no padding of their own (tests measure the box). The widget
 /// is excluded from semantics — it says nothing a reader needs; a caller that
 /// wants a label wraps it in `Semantics` — and carries no key of its own, so
@@ -53,6 +65,8 @@ class YoWaveform extends StatelessWidget {
     this.barCount,
     this.barGap = 3,
     this.barRadius,
+    this.continuousProgress = false,
+    this.gradientSpan = YoWaveformGradientSpan.played,
     super.key,
   });
 
@@ -69,8 +83,9 @@ class YoWaveform extends StatelessWidget {
   /// [playedGradient] is null.
   final Color playedColor;
 
-  /// When set, the played bars are painted with this gradient swept across the
-  /// PLAYED width (the palette's `audioProgressGradient`); wins over
+  /// When set, the played bars are painted with this gradient (the palette's
+  /// `audioProgressGradient`), swept across the PLAYED width by default or
+  /// across the whole run with [gradientSpan] `full`; wins over
   /// [playedColor].
   final LinearGradient? playedGradient;
 
@@ -99,6 +114,15 @@ class YoWaveform extends StatelessWidget {
   /// Corner radius; default half the bar width (flex) or 2 (tiled). Always
   /// clamped to a pill so an oversized radius cannot distort a bar.
   final double? barRadius;
+
+  /// Opt-in: paint the played run up to the exact playhead, filling the bar
+  /// under it partially, instead of whole bars. Default false (unchanged).
+  final bool continuousProgress;
+
+  /// Opt-in: [YoWaveformGradientSpan.full] spreads [playedGradient] across
+  /// the whole run and reveals it. Default [YoWaveformGradientSpan.played]
+  /// (unchanged).
+  final YoWaveformGradientSpan gradientSpan;
 
   /// The 30-entry story silhouette: one source for every decorative waveform.
   static const bars = <double>[
@@ -159,6 +183,8 @@ class YoWaveform extends StatelessWidget {
             barCount: barCount,
             barGap: barGap,
             barRadius: barRadius,
+            continuousProgress: continuousProgress,
+            gradientSpan: gradientSpan,
             textDirection: Directionality.of(context),
           ),
         ),
@@ -186,6 +212,8 @@ class _YoWaveformPainter extends CustomPainter {
     required this.barCount,
     required this.barGap,
     required this.barRadius,
+    required this.continuousProgress,
+    required this.gradientSpan,
     required this.textDirection,
   });
 
@@ -198,6 +226,8 @@ class _YoWaveformPainter extends CustomPainter {
   final int? barCount;
   final double barGap;
   final double? barRadius;
+  final bool continuousProgress;
+  final YoWaveformGradientSpan gradientSpan;
   final TextDirection textDirection;
 
   @override
@@ -226,7 +256,9 @@ class _YoWaveformPainter extends CustomPainter {
     final start = (size.width - runWidth) / 2;
     final rtl = textDirection == TextDirection.rtl;
     final playedFraction = progress;
-    final playedWidth = playedFraction == null ? 0.0 : runWidth * playedFraction;
+    final playedWidth = playedFraction == null
+        ? 0.0
+        : runWidth * playedFraction;
     final playedRect = rtl
         ? Rect.fromLTWH(
             start + runWidth - playedWidth,
@@ -240,19 +272,21 @@ class _YoWaveformPainter extends CustomPainter {
       ..style = PaintingStyle.fill;
     final gradient = playedGradient;
     if (gradient != null && playedWidth > 0) {
+      final shaderRect = gradientSpan == YoWaveformGradientSpan.full
+          ? Rect.fromLTWH(start, 0, runWidth, size.height)
+          : playedRect;
       playedPaint.shader = LinearGradient(
         begin: rtl ? Alignment.centerRight : Alignment.centerLeft,
         end: rtl ? Alignment.centerLeft : Alignment.centerRight,
         colors: gradient.colors,
         stops: gradient.stops,
-      ).createShader(playedRect);
+      ).createShader(shaderRect);
     }
     final idlePaint = Paint()
       ..color = color
       ..style = PaintingStyle.fill;
     final radius = barRadius ?? defaultRadius;
-    for (var i = 0; i < count; i++) {
-      final logical = rtl ? count - 1 - i : i;
+    RRect barAt(int i, int logical) {
       final amplitude = silhouette[logical % silhouette.length].clamp(0.0, 1.0);
       final barHeight = size.height * amplitude;
       final rect = Rect.fromLTWH(
@@ -261,17 +295,37 @@ class _YoWaveformPainter extends CustomPainter {
         bar,
         barHeight,
       );
+      return RRect.fromRectAndRadius(
+        rect,
+        Radius.circular(math.min(radius, math.min(bar, barHeight) / 2)),
+      );
+    }
+
+    if (continuousProgress) {
+      // The pour: every bar in idle ink, then the played paint clipped at
+      // the exact playhead, so the bar under it fills partially. The bar
+      // heights never change.
+      for (var i = 0; i < count; i++) {
+        canvas.drawRRect(barAt(i, rtl ? count - 1 - i : i), idlePaint);
+      }
+      if (playedWidth > 0) {
+        canvas.save();
+        canvas.clipRect(playedRect);
+        for (var i = 0; i < count; i++) {
+          canvas.drawRRect(barAt(i, rtl ? count - 1 - i : i), playedPaint);
+        }
+        canvas.restore();
+      }
+      return;
+    }
+
+    for (var i = 0; i < count; i++) {
+      final logical = rtl ? count - 1 - i : i;
       // A bar is played once its leading edge is behind the playhead, so the
       // fill advances one bar at a time and never paints a half bar.
       final played =
           playedFraction != null && (logical + 0.5) / count <= playedFraction;
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          rect,
-          Radius.circular(math.min(radius, math.min(bar, barHeight) / 2)),
-        ),
-        played ? playedPaint : idlePaint,
-      );
+      canvas.drawRRect(barAt(i, logical), played ? playedPaint : idlePaint);
     }
   }
 
@@ -286,6 +340,8 @@ class _YoWaveformPainter extends CustomPainter {
       oldDelegate.barCount != barCount ||
       oldDelegate.barGap != barGap ||
       oldDelegate.barRadius != barRadius ||
+      oldDelegate.continuousProgress != continuousProgress ||
+      oldDelegate.gradientSpan != gradientSpan ||
       oldDelegate.textDirection != textDirection;
 }
 

@@ -4,9 +4,12 @@ import 'dart:math' as math;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -39,6 +42,7 @@ import 'package:yovoice/features/servers/data/models/server.dart';
 import 'package:yovoice/features/servers/data/services/server_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/layout/status_bar_scrim.dart';
 
@@ -146,6 +150,7 @@ class _MobileHomeState extends State<MobileHome> {
   Stream<List<Server>>? _servers;
   ServerRepository? _serverRepository;
   final Map<String, Stream<String>> _recentChatPhotoStreams = {};
+  bool _brandWarmed = false;
 
   String get _resolvedUserId {
     final injected = widget.currentUserId;
@@ -169,6 +174,36 @@ class _MobileHomeState extends State<MobileHome> {
     _loadChats();
     _loadServers();
     widget.isVisible?.addListener(_handleVisibility);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Warm the real logo and its pre-baked bloom so the Start lockup has its
+    // mark on the first frame (refine-look §4). The mark decodes at its own
+    // `cacheWidth`, which is part of the image cache key, so the warm-up
+    // asks for exactly the sizes the lockup will paint. A failed warm-up is
+    // not an error here: the mark's own errorBuilder owns a missing asset.
+    if (_brandWarmed) return;
+    _brandWarmed = true;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final mark = YoBrandLockup.markSizeFor(
+      MediaQuery.sizeOf(context).width >= 600
+          ? HomeGreetingHeader.brandMarkSizeMedium
+          : HomeGreetingHeader.brandMarkSize,
+      MediaQuery.textScalerOf(context),
+    );
+    for (final (asset, logical) in [
+      (YoBrandMark.markAsset, mark),
+      (YoBrandMark.bloomAsset, mark * 1.6),
+    ]) {
+      final image = ResizeImage.resizeIfNeeded(
+        YoBrandMark.cacheWidthFor(logical, dpr),
+        null,
+        AssetImage(asset),
+      );
+      unawaited(precacheImage(image, context, onError: (_, _) {}));
+    }
   }
 
   void _loadFriends() {
@@ -325,136 +360,238 @@ class _MobileHomeState extends State<MobileHome> {
             viewedMomentIds: viewedIds,
             now: DateTime.now(),
           );
+    // With no server yet the empty invitation carries the page's one lifted
+    // "Stwórz serwer"; the quick action keeps its gradient without a lift.
+    final serversEmpty =
+        serverSnapshot.hasData &&
+        !serverSnapshot.hasError &&
+        (serverSnapshot.data?.isEmpty ?? false);
     final quickActions = HomeQuickActions(
       createRoomKey: widget.createRoomKey,
       onCreateRoom: _openServers,
       onFriends: widget.onOpenFriends,
+      liftCreate: !serversEmpty,
     );
 
-    return StatusBarScrim(
-      child: ListView(
-        key: const ValueKey('mobile-home-server-first'),
-        padding: EdgeInsets.fromLTRB(
-          0,
-          MediaQuery.paddingOf(context).top + AppRhythm.title,
-          0,
-          AppRhythm.page,
-        ),
-        children: [
-          _Gutter(
-            margin: margin,
-            child: HomeGreetingHeader(
-              profile: _profile,
-              onOpenNotifications: widget.onOpenNotifications,
-              onOpenProfile: widget.onOpenProfile,
-              unreadNotificationCount: widget.unreadNotificationCount,
-            ),
+    return _BottomSeamFade(
+      child: StatusBarScrim(
+        child: ListView(
+          key: const ValueKey('mobile-home-server-first'),
+          padding: EdgeInsets.fromLTRB(
+            0,
+            MediaQuery.paddingOf(context).top + AppRhythm.title,
+            0,
+            AppRhythm.page,
           ),
-          _Rail(
-            frameInset: frameInset,
-            child: HomePeopleStrip(
-              friendsSnapshot: _friends == null ? null : friendSnapshot,
-              friends: _friends,
-              profile: _profile,
-              presenceService: widget.presenceService,
-              horizontalPadding: gutter,
-              avatarRadius: 28,
-              voiceByFriendId: voiceByFriend,
-              onOpenVoice: widget.onOpenChain,
-              onRetry: _retryFriends,
-              onSeeAll: widget.onOpenFriends,
-            ),
-          ),
-          // Slim phase 1: live channels of the viewer's own servers, only
-          // when a channel document says live. Absent otherwise.
-          _Rail(
-            frameInset: frameInset,
-            child: HomeLiveNowSection(
-              servers: serverSnapshot.hasError
-                  ? const <Server>[]
-                  : serverSnapshot.data ?? const <Server>[],
-              repository: _serverRepository,
-              onOpenServer: (server) {
-                final openServer = widget.onOpenServer;
-                if (openServer != null) {
-                  openServer(server);
-                } else {
-                  _openServers();
-                }
-              },
-              horizontalPadding: gutter,
-            ),
-          ),
-          _Gutter(
-            margin: margin,
-            child: HomeSectionHeader(title: copy.homeHereNow),
-          ),
-          _Gutter(
-            margin: margin,
-            child: HomeServerConversationCard(
-              snapshot: serverSnapshot,
-              onOpenServers: _openServers,
-              onOpenServer: widget.onOpenServer,
-              onRetry: _retryServers,
-              expanded: MediaQuery.sizeOf(context).width >= 600,
-            ),
-          ),
-          const SizedBox(height: AppRhythm.item),
-          _Gutter(margin: margin, child: quickActions),
-          if (serverSnapshot.hasData &&
-              !serverSnapshot.hasError &&
-              (serverSnapshot.data?.isNotEmpty ?? false)) ...[
-            const SizedBox(height: AppRhythm.section),
+          children: [
             _Gutter(
               margin: margin,
-              child: HomeServersOverview(
+              child: HomeGreetingHeader(
+                profile: _profile,
+                onOpenNotifications: widget.onOpenNotifications,
+                onOpenProfile: widget.onOpenProfile,
+                unreadNotificationCount: widget.unreadNotificationCount,
+              ),
+            ),
+            _Rail(
+              frameInset: frameInset,
+              child: HomePeopleStrip(
+                friendsSnapshot: _friends == null ? null : friendSnapshot,
+                friends: _friends,
+                profile: _profile,
+                presenceService: widget.presenceService,
+                horizontalPadding: gutter,
+                avatarRadius: 28,
+                voiceByFriendId: voiceByFriend,
+                onOpenVoice: widget.onOpenChain,
+                onRetry: _retryFriends,
+                onSeeAll: widget.onOpenFriends,
+              ),
+            ),
+            // Slim phase 1: live channels of the viewer's own servers, only
+            // when a channel document says live. Absent otherwise.
+            _Rail(
+              frameInset: frameInset,
+              child: HomeLiveNowSection(
+                servers: serverSnapshot.hasError
+                    ? const <Server>[]
+                    : serverSnapshot.data ?? const <Server>[],
+                repository: _serverRepository,
+                onOpenServer: (server) {
+                  final openServer = widget.onOpenServer;
+                  if (openServer != null) {
+                    openServer(server);
+                  } else {
+                    _openServers();
+                  }
+                },
+                horizontalPadding: gutter,
+              ),
+            ),
+            _Gutter(
+              margin: margin,
+              child: HomeSectionHeader(title: copy.homeHereNow),
+            ),
+            _Gutter(
+              margin: margin,
+              child: HomeServerConversationCard(
                 snapshot: serverSnapshot,
                 onOpenServers: _openServers,
                 onOpenServer: widget.onOpenServer,
+                onRetry: _retryServers,
+                expanded: MediaQuery.sizeOf(context).width >= 600,
+              ),
+            ),
+            const SizedBox(height: AppRhythm.item),
+            _Gutter(margin: margin, child: quickActions),
+            if (serverSnapshot.hasData &&
+                !serverSnapshot.hasError &&
+                (serverSnapshot.data?.isNotEmpty ?? false)) ...[
+              const SizedBox(height: AppRhythm.section),
+              _Gutter(
+                margin: margin,
+                child: HomeServersOverview(
+                  snapshot: serverSnapshot,
+                  onOpenServers: _openServers,
+                  onOpenServer: widget.onOpenServer,
+                ),
+              ),
+            ],
+            const SizedBox(height: AppRhythm.section),
+            _Gutter(
+              margin: margin,
+              child: HomeRecordMomentCard(
+                onCreateMoment: widget.onCreateMoment,
+              ),
+            ),
+            _Gutter(
+              margin: margin,
+              child: HomeSectionHeader(
+                title: copy.text('Your recent chats', 'Ostatnie czaty'),
+                onSeeAll: widget.onSeeAllChats,
+              ),
+            ),
+            _Gutter(
+              key: const ValueKey('home-recent-chats'),
+              margin: margin,
+              child: StreamBuilder<List<Conversation>>(
+                stream: _conversations,
+                builder: (context, snapshot) => snapshot.hasError
+                    ? HomeSectionError(
+                        key: const ValueKey('home-chats-error'),
+                        error: snapshot.error,
+                        message: copy.text(
+                          'Your recent chats could not be loaded.',
+                          'Nie udało się wczytać ostatnich czatów.',
+                        ),
+                        onRetry: _retryChats,
+                      )
+                    : RecentChats(
+                        snapshot: snapshot,
+                        currentUserId: _resolvedUserId,
+                        onOpenConversation: widget.onOpenConversation,
+                        onFindFriends: widget.onOpenFriends,
+                        photoStreamForUser: _profiles == null
+                            ? null
+                            : _recentChatPhotoStream,
+                        profileMediaService: widget.profileMediaService,
+                      ),
               ),
             ),
           ],
-          const SizedBox(height: AppRhythm.section),
-          _Gutter(
-            margin: margin,
-            child: HomeRecordMomentCard(onCreateMoment: widget.onCreateMoment),
-          ),
-          _Gutter(
-            margin: margin,
-            child: HomeSectionHeader(
-              title: copy.text('Your recent chats', 'Ostatnie czaty'),
-              onSeeAll: widget.onSeeAllChats,
-            ),
-          ),
-          _Gutter(
-            key: const ValueKey('home-recent-chats'),
-            margin: margin,
-            child: StreamBuilder<List<Conversation>>(
-              stream: _conversations,
-              builder: (context, snapshot) => snapshot.hasError
-                  ? HomeSectionError(
-                      key: const ValueKey('home-chats-error'),
-                      error: snapshot.error,
-                      message: copy.text(
-                        'Your recent chats could not be loaded.',
-                        'Nie udało się wczytać ostatnich czatów.',
-                      ),
-                      onRetry: _retryChats,
-                    )
-                  : RecentChats(
-                      snapshot: snapshot,
-                      currentUserId: _resolvedUserId,
-                      onOpenConversation: widget.onOpenConversation,
-                      onFindFriends: widget.onOpenFriends,
-                      photoStreamForUser: _profiles == null
-                          ? null
-                          : _recentChatPhotoStream,
-                      profileMediaService: widget.profileMediaService,
-                    ),
-            ),
-          ),
-        ],
+        ),
       ),
+    );
+  }
+}
+
+/// The page's lower edge above the dock (refine-look §8.1, "seam").
+///
+/// While there is more of Start below the fold, the last 24 px of the list
+/// dissolve into the canvas instead of ending on a hard horizontal cut. At
+/// the end of the page the fade is gone, so the last block is never dimmed.
+/// Decoration only: it never takes a pointer or a semantics node, and it
+/// listens to the page's own vertical scroll (depth 0) — never to the
+/// horizontal rails inside it. The dock and the shell are untouched.
+class _BottomSeamFade extends StatefulWidget {
+  const _BottomSeamFade({required this.child});
+
+  final Widget child;
+
+  static const double height = 24;
+
+  @override
+  State<_BottomSeamFade> createState() => _BottomSeamFadeState();
+}
+
+class _BottomSeamFadeState extends State<_BottomSeamFade> {
+  final ValueNotifier<bool> _moreBelow = ValueNotifier<bool>(false);
+
+  @override
+  void dispose() {
+    _moreBelow.dispose();
+    super.dispose();
+  }
+
+  bool _track(ScrollMetrics metrics, int depth) {
+    if (depth != 0 || metrics.axis != Axis.vertical) return false;
+    final moreBelow = metrics.extentAfter > .5;
+    if (moreBelow == _moreBelow.value) return false;
+    // A scroll position can notify from inside layout (new content
+    // dimensions start a ballistic settle); the fade then follows on the
+    // next frame instead of rebuilding in the middle of this one.
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _moreBelow.value = moreBelow;
+      });
+    } else {
+      _moreBelow.value = moreBelow;
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canvas = context.appPalette.background;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        NotificationListener<ScrollMetricsNotification>(
+          onNotification: (n) => _track(n.metrics, n.depth),
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (n) => _track(n.metrics, n.depth),
+            child: widget.child,
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: _BottomSeamFade.height,
+          child: IgnorePointer(
+            child: ExcludeSemantics(
+              child: ValueListenableBuilder<bool>(
+                valueListenable: _moreBelow,
+                builder: (context, moreBelow, _) => AnimatedOpacity(
+                  key: const ValueKey('mobile-home-seam-fade'),
+                  opacity: moreBelow ? 1 : 0,
+                  duration: AppMotion.resolve(context, AppMotion.quick),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [canvas.withValues(alpha: 0), canvas],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

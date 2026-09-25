@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_icons.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
@@ -9,6 +11,7 @@ import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// Two real routes, with no permission request or media connection on Home.
@@ -16,16 +19,27 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// One 44 px pill row rather than two 66 px cards: the routes are the same
 /// (`home-quick-create-server`, `home-quick-friends`), the former subtitles
 /// survive as tooltips, and Home gives the space back to people and servers.
+///
+/// Refine-look R5 / R7: "Stwórz serwer" is the screen's labelled primary
+/// action — the rail CTA's gradient and tight lift, the lift being paint only
+/// so the measured 12 px gaps stay exact — and "Znajomi" is the neutral glass
+/// tonal action with a hairline edge.
 class HomeQuickActions extends StatelessWidget {
   const HomeQuickActions({
     required this.onCreateRoom,
     required this.onFriends,
     this.createRoomKey,
+    this.liftCreate = true,
     super.key,
   });
 
   final VoidCallback onCreateRoom;
   final VoidCallback onFriends;
+
+  /// Whether the create pill carries the screen's one CTA lift. Start passes
+  /// false while its empty-servers invitation shows its own lifted "Stwórz
+  /// serwer", so the page never has two (the light budget in `AppFinish`).
+  final bool liftCreate;
 
   /// The guided tour's mobile Create anchor. Attached to the create pill's
   /// box (not its ink) so the spotlight frames the whole control; null when
@@ -36,6 +50,8 @@ class HomeQuickActions extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         final scaler = MediaQuery.textScalerOf(context);
@@ -70,25 +86,23 @@ class HomeQuickActions extends StatelessWidget {
           color: colors.onPrimary,
           child: Tooltip(
             message: copy.homeStartConversation,
-            child: FilledButton.icon(
+            // Shrink-wrapped inside the primitive: Material otherwise
+            // inflates the LAYOUT box to 48 px around a 44 px control, and
+            // those two invisible pixels turned Home's declared 12 px gap
+            // into a measured 14. The 44 px target is the `minimumSize`.
+            child: YoGradientFilledButton(
               key: const ValueKey('home-quick-create-server'),
               onPressed: onCreateRoom,
-              style: FilledButton.styleFrom(
-                // Shrink-wrapped: Material otherwise inflates the LAYOUT
-                // box to 48 px around a 44 px control, and those two
-                // invisible pixels turned Home's declared 12 px gap into a
-                // measured 14. The 44 px target is the `minimumSize`.
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.standard,
-                minimumSize: const Size(0, AppSizing.minimumTouchTarget),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppRhythm.title,
-                  vertical: AppRhythm.tight,
-                ),
-                shape: const StadiumBorder(),
+              style: const ButtonStyle(visualDensity: VisualDensity.standard),
+              minimumSize: const Size(0, AppSizing.minimumTouchTarget),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppRhythm.title,
+                vertical: AppRhythm.tight,
               ),
+              // No lift while another lifted CTA owns the page.
+              lift: liftCreate,
               icon: const Icon(Icons.add_rounded, size: 20),
-              label: Text(copy.homeCreateServer, textAlign: TextAlign.center),
+              child: Text(copy.homeCreateServer, textAlign: TextAlign.center),
             ),
           ),
         );
@@ -102,17 +116,20 @@ class HomeQuickActions extends StatelessWidget {
             child: OutlinedButton.icon(
               key: const ValueKey('home-quick-friends'),
               onPressed: onFriends,
-              style: OutlinedButton.styleFrom(
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.standard,
-                minimumSize: const Size(0, AppSizing.minimumTouchTarget),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppRhythm.title,
-                  vertical: AppRhythm.tight,
-                ),
-                shape: const StadiumBorder(),
-              ),
-              icon: const Icon(Icons.person_add_alt_1_rounded, size: 20),
+              style:
+                  OutlinedButton.styleFrom(
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.standard,
+                    minimumSize: const Size(0, AppSizing.minimumTouchTarget),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppRhythm.title,
+                      vertical: AppRhythm.tight,
+                    ),
+                    shape: const StadiumBorder(),
+                  ).merge(
+                    AppFinish.tonalNeutral(palette, highContrast: highContrast),
+                  ),
+              icon: const Icon(AppIcons.addFriend, size: 20),
               label: Text(copy.friends, textAlign: TextAlign.center),
             ),
           ),

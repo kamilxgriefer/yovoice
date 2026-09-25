@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_live_now.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
@@ -92,10 +93,14 @@ Future<void> _pump(
   await tester.pump();
 }
 
-/// Stream events land on a microtask; give them two frames to show up.
+/// Stream events land on a microtask; give them two frames to show up, then
+/// let the section's arrival finish: refine-look W2 grows the section over
+/// [AppMotion.entrance] instead of jumping, and a card is only fully inside
+/// its (hit-testable) box once that has run.
 Future<void> _settle(WidgetTester tester) async {
   await tester.pump();
   await tester.pump();
+  await tester.pump(AppMotion.entrance);
 }
 
 void main() {

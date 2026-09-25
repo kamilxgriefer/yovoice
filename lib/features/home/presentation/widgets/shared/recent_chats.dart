@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
+import 'package:yovoice/shared/widgets/badges/yo_count_badge.dart';
+import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -151,18 +155,14 @@ class RecentChats extends StatelessWidget {
           // Narrower than that, the rail keeps two full cards and a real
           // 32 px slice of the third — a peek that stays inside the column
           // and is reachable by trackpad, Shift+wheel and keyboard focus,
-          // which scrolls the focused card into view.
+          // which scrolls the focused card into view. While there is more
+          // to scroll to, the peek fades out instead of ending on a hard,
+          // mid-word cut at the column edge.
           const peek = 32.0;
           final cardWidth = (constraints.maxWidth - (gap * 2) - peek) / 2;
           return SizedBox(
             height: cardHeight,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              // Nothing may paint over the column beside it, so the
-              // overflow this rail scrolls through is clipped to its box.
-              clipBehavior: Clip.hardEdge,
-              child: row(cardWidth),
-            ),
+            child: _PeekFadeRail(fadeExtent: peek + gap, child: row(cardWidth)),
           );
         }
 
@@ -228,64 +228,60 @@ class _RecentChatCard extends StatelessWidget {
     final palette = context.appPalette;
     final otherUserId = conversation.otherUserId(currentUserId);
     final unread = conversation.unreadCountFor(currentUserId);
-    return Material(
-      color: palette.surface,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: palette.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    // Refine-look §8.1: the R2 block (lit fill, hairline, radius 20) with
+    // the brand-finished avatar and the one gradient count.
+    return YoCard(
+      padding: const EdgeInsets.all(AppRhythm.item),
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  _LiveRecentChatAvatar(
-                    displayName: conversation.displayNameFor(otherUserId),
-                    conversationPhotoUrl: conversation.photoUrlFor(otherUserId),
-                    userId: otherUserId,
-                    photoStreamForUser: photoStreamForUser,
-                    profileMediaService: profileMediaService,
-                  ),
-                  const Spacer(),
-                  if (unread > 0) _UnreadBadge(count: unread, compact: true),
-                ],
+              _LiveRecentChatAvatar(
+                displayName: conversation.displayNameFor(otherUserId),
+                conversationPhotoUrl: conversation.photoUrlFor(otherUserId),
+                userId: otherUserId,
+                photoStreamForUser: photoStreamForUser,
+                profileMediaService: profileMediaService,
               ),
               const Spacer(),
-              Text(
-                conversation.displayNameFor(otherUserId),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 13.5,
-                  height: 1.15,
-                  fontWeight: FontWeight.w800,
+              if (unread > 0)
+                YoCountBadge(
+                  key: ValueKey('recent-chat-unread-${conversation.id}'),
+                  count: unread,
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                conversationPreview(
-                  conversation,
-                  currentUserId,
-                  AppLocalizations.of(context),
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: palette.textSecondary,
-                  fontSize: 11,
-                  height: 1.2,
-                ),
-              ),
             ],
           ),
-        ),
+          const Spacer(),
+          Text(
+            conversation.displayNameFor(otherUserId),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontSize: 13.5,
+              height: 1.15,
+              letterSpacing: -.1,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            conversationPreview(
+              conversation,
+              currentUserId,
+              AppLocalizations.of(context),
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: palette.textSecondary,
+              fontSize: 11,
+              height: 1.2,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -316,6 +312,7 @@ class _LiveRecentChatAvatar extends StatelessWidget {
     mediaRevision: revision,
     mediaService: profileMediaService,
     radius: 20,
+    finish: UserAvatarFinish.brand,
   );
 
   @override
@@ -346,6 +343,8 @@ class _LiveRecentChatAvatar extends StatelessWidget {
 }
 
 class _BackdropRecentChatCard extends StatelessWidget {
+  static const double _tileRadius = 20;
+
   const _BackdropRecentChatCard({
     required this.conversation,
     required this.currentUserId,
@@ -379,22 +378,34 @@ class _BackdropRecentChatCard extends StatelessWidget {
       previewLabel,
     ].join('. ');
 
+    final palette = context.appPalette;
     return AccessibleTapRegion(
       onTap: onTap,
       semanticLabel: semanticLabel,
       tooltip: openLabel,
-      borderRadius: 18,
+      borderRadius: _tileRadius,
       // This artwork can be any uploaded photo. AccessibleTapRegion draws
       // the complementary white ring too, so black is the robust paired
       // focus treatment over arbitrary light and dark pixels.
       focusContrastColor: Colors.black,
       child: ExcludeSemantics(
+        // Refine-look §8.1: the block radius (20), the Dark canvas roles
+        // instead of literals, a white @ .10 edge painted OVER the artwork
+        // (under it, a full-bleed photo hid the edge entirely), and Pearl's
+        // block shadow so the dark tile sits on the paper.
         child: Container(
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
-            color: const Color(0xFF181122),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: const Color(0xFF3A2B4B)),
+            color: AppPalette.dark.surface,
+            borderRadius: BorderRadius.circular(_tileRadius),
+            boxShadow: AppFinish.blockShadows(
+              palette,
+              highContrast: MediaQuery.highContrastOf(context),
+            ),
+          ),
+          foregroundDecoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(_tileRadius),
+            border: Border.all(color: AppColors.white.withValues(alpha: .10)),
           ),
           child: Stack(
             fit: StackFit.expand,
@@ -414,7 +425,15 @@ class _BackdropRecentChatCard extends StatelessWidget {
                 child: unread > 0
                     ? Align(
                         alignment: Alignment.topRight,
-                        child: _UnreadBadge(count: unread),
+                        child: YoCountBadge(
+                          key: ValueKey(
+                            'recent-chat-unread-${conversation.id}',
+                          ),
+                          count: unread,
+                          // Over media the ring is a white hairline, not
+                          // the canvas colour.
+                          ring: AppColors.white.withValues(alpha: .28),
+                        ),
                       )
                     : const SizedBox.shrink(),
               ),
@@ -465,7 +484,7 @@ class _BackdropRecentChatCard extends StatelessWidget {
                               fontSize: 14,
                               height: 1.12,
                               letterSpacing: -.1,
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w700,
                               shadows: [
                                 Shadow(
                                   color: Color(0xCC08050E),
@@ -529,11 +548,14 @@ class _ChatBackdrop extends StatelessWidget {
   final RecentChatPhotoStream? photoStreamForUser;
   final ProfileMediaService? profileMediaService;
 
+  /// The fallback's light comes from the brand family only — the logo's
+  /// violet and magenta, the voice violet and the navigation violet — never
+  /// a random pink or blue per person.
   static const _accents = <Color>[
-    Color(0xFF9D20FF),
-    Color(0xFF6347E8),
-    Color(0xFFE23D94),
-    Color(0xFF188BD1),
+    AppColors.primary,
+    AppColors.secondary,
+    AppColors.voice,
+    AppColors.navigationPrimary,
   ];
 
   int get _stableConversationHash {
@@ -554,11 +576,11 @@ class _ChatBackdrop extends StatelessWidget {
 
   Widget _fallback() => DecoratedBox(
     key: ValueKey('recent-chat-fallback-$conversationId'),
-    decoration: const BoxDecoration(
+    decoration: BoxDecoration(
       gradient: LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
-        colors: [Color(0xFF191122), Color(0xFF0F0B16)],
+        colors: [AppPalette.dark.surface, AppPalette.dark.surfaceSunken],
       ),
     ),
     child: Stack(
@@ -583,10 +605,10 @@ class _ChatBackdrop extends StatelessWidget {
           child: Text(
             _initial,
             style: TextStyle(
-              color: Colors.white.withValues(alpha: .16),
+              color: Colors.white.withValues(alpha: .10),
               fontSize: 76,
               height: 1,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ),
@@ -655,47 +677,6 @@ class _ChatScrim extends StatelessWidget {
   );
 }
 
-class _UnreadBadge extends StatelessWidget {
-  const _UnreadBadge({required this.count, this.compact = false});
-
-  final int count;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    constraints: BoxConstraints(
-      minWidth: compact ? 20 : 22,
-      minHeight: compact ? 0 : 22,
-    ),
-    padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 7, vertical: 3),
-    decoration: BoxDecoration(
-      color: const Color(0xFF9D20FF),
-      borderRadius: BorderRadius.circular(99),
-      border: compact
-          ? null
-          : Border.all(color: Colors.white.withValues(alpha: .28)),
-      boxShadow: compact
-          ? null
-          : const [
-              BoxShadow(
-                color: Color(0x66000000),
-                blurRadius: 8,
-                offset: Offset(0, 2),
-              ),
-            ],
-    ),
-    child: Text(
-      count > 99 ? '99+' : '$count',
-      textAlign: TextAlign.center,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 10,
-        fontWeight: FontWeight.w800,
-      ),
-    ),
-  );
-}
-
 class _RecentChatsMessage extends StatelessWidget {
   const _RecentChatsMessage({
     required this.icon,
@@ -713,14 +694,10 @@ class _RecentChatsMessage extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    return Container(
-      constraints: const BoxConstraints(minHeight: 104),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: palette.border),
-      ),
+    // The R2 block, the same shape as the cards it stands in for.
+    return YoCard(
+      minHeight: 104,
+      padding: const EdgeInsets.all(AppRhythm.title),
       child: LayoutBuilder(
         builder: (context, constraints) {
           // At enlarged text — or simply in a language whose label is
@@ -758,6 +735,88 @@ class _RecentChatsMessage extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+}
+
+/// A horizontal rail that fades its trailing peek out while there is more to
+/// scroll to (refine-look §8.1), so the column never ends on a hard cut
+/// through the next card's words.
+///
+/// The fade covers the last [fadeExtent] px of the viewport (the peek plus
+/// its gap) through a `dstIn` mask, mirrored under RTL. It is decided from
+/// the scroll position at paint time, so it costs no extra frame: once the
+/// rail reaches its end (or cannot scroll at all) the mask turns fully
+/// opaque and fades nothing.
+/// Pointer, keyboard and semantics behaviour are the scroll view's own.
+class _PeekFadeRail extends StatefulWidget {
+  const _PeekFadeRail({required this.fadeExtent, required this.child});
+
+  final double fadeExtent;
+  final Widget child;
+
+  @override
+  State<_PeekFadeRail> createState() => _PeekFadeRailState();
+}
+
+class _PeekFadeRailState extends State<_PeekFadeRail> {
+  final ScrollController _controller = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// Unknown until the first layout: assume the rail can scroll (this branch
+  /// only exists when a card is cut) and let the paint-time check decide.
+  bool get _hasMoreAfter {
+    if (!_controller.hasClients) return true;
+    final position = _controller.position;
+    if (!position.hasContentDimensions || !position.hasPixels) return true;
+    return position.extentAfter > .5;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rtl = Directionality.of(context) == TextDirection.rtl;
+    final rail = SingleChildScrollView(
+      controller: _controller,
+      scrollDirection: Axis.horizontal,
+      // Nothing may paint over the column beside it, so the overflow this
+      // rail scrolls through is clipped to its box.
+      clipBehavior: Clip.hardEdge,
+      child: widget.child,
+    );
+    // Rebuilt on every scroll tick so the mask re-reads the position: the
+    // viewport is its own repaint boundary and would not repaint the mask.
+    // The mask stays in the tree at the end of the rail (fully opaque there)
+    // so the scroll view below it is never re-parented and never loses its
+    // offset.
+    return ListenableBuilder(
+      listenable: _controller,
+      builder: (context, child) {
+        return ShaderMask(
+          key: const ValueKey('recent-chats-peek-fade'),
+          blendMode: BlendMode.dstIn,
+          shaderCallback: (bounds) {
+            if (!_hasMoreAfter || bounds.width <= widget.fadeExtent) {
+              return const LinearGradient(
+                colors: [Colors.white, Colors.white],
+              ).createShader(bounds);
+            }
+            final start = 1 - widget.fadeExtent / bounds.width;
+            return LinearGradient(
+              begin: rtl ? Alignment.centerRight : Alignment.centerLeft,
+              end: rtl ? Alignment.centerLeft : Alignment.centerRight,
+              colors: const [Colors.white, Colors.white, Colors.transparent],
+              stops: [0, start, 1],
+            ).createShader(bounds);
+          },
+          child: child,
+        );
+      },
+      child: rail,
     );
   }
 }

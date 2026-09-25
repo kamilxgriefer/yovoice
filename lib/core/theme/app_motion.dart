@@ -15,6 +15,26 @@ class AppMotion {
   static const Curve standardCurve = Curves.easeOut;
   static const Curve entranceCurve = Curves.easeOutCubic;
 
+  /// A press settling in (`YoPressFeedback`).
+  static const Duration press = Duration(milliseconds: 90);
+
+  /// A press letting go, with a small overshoot.
+  static const Duration release = Duration(milliseconds: 240);
+  static const Curve releaseCurve = Curves.easeOutBack;
+
+  /// One pass of light across the logo's glass.
+  static const Duration glint = Duration(milliseconds: 900);
+  static const Curve glintCurve = Curves.easeInOutCubic;
+
   static Duration resolve(BuildContext context, Duration duration) =>
       MediaQuery.disableAnimationsOf(context) ? Duration.zero : duration;
+
+  /// Whether decorative motion (a glint, a glow fade, a press scale) may run
+  /// here: never under Reduce Motion, accessible navigation or a paused
+  /// [TickerMode]. Motion only ever starts from a real event; this predicate
+  /// decides whether it is animated or snapped.
+  static bool decorative(BuildContext context) =>
+      !MediaQuery.disableAnimationsOf(context) &&
+      !MediaQuery.accessibleNavigationOf(context) &&
+      TickerMode.valuesOf(context).enabled;
 }

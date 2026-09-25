@@ -8,6 +8,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 
 /// Compact is the phone ramp (17 px title); expanded is the desktop one
 /// (19 px). Only the type ramp changes — the rhythm is identical.
@@ -234,14 +235,20 @@ class HomeSectionHeader extends StatelessWidget {
               // than any Home heading needs at 200 % text on a 320 px phone.
               maxLines: 3,
               overflow: TextOverflow.visible,
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: _titleSize,
-                // Explicit, so the ink box is arithmetic rather than a font
-                // metric the rhythm cannot see.
-                height: _titleLineHeight,
-                fontWeight: FontWeight.w800,
-              ),
+              // The refine-look section role (17 / 19, w700, -0.25): calm
+              // type, one weight cap. Its size is `_titleSize`, so the rhythm
+              // arithmetic below still reads the number that renders.
+              style:
+                  (_compact
+                          ? AppTypography.sectionTitle
+                          : AppTypography.sectionTitleExpanded)
+                      .copyWith(
+                        color: palette.textPrimary,
+                        fontSize: _titleSize,
+                        // Explicit, so the ink box is arithmetic rather than
+                        // a font metric the rhythm cannot see.
+                        height: _titleLineHeight,
+                      ),
             ),
           ),
         ),

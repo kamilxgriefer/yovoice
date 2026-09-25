@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_icons.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/shared/widgets/badges/yo_count_badge.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
@@ -36,7 +39,8 @@ class HomeGreetingHeader extends StatelessWidget {
   final VoidCallback onOpenProfile;
   final int unreadNotificationCount;
 
-  /// Desktop ramp (26 px heading) rather than the phone's 22.
+  /// Desktop ramp (`greetingWide`, 30 px) rather than the phone's
+  /// `screenTitle` (22 px).
   final bool expanded;
 
   /// The YO Voice lockup (mark + wordmark) above the greeting. Start on a
@@ -46,8 +50,13 @@ class HomeGreetingHeader extends StatelessWidget {
   /// default rather than printing the brand twice on one screen.
   final bool showBrand;
 
-  /// The brand mark's box: 28 px with a radius of 8 (Slim brief).
-  static const double brandMarkSize = 28;
+  /// The bare brand mark's box on a phone (refine-look W1): 32 px, about
+  /// 26 px of ink, no tile.
+  static const double brandMarkSize = 32;
+
+  /// The mark's box from 600 px up to the desktop shell (which leaves the
+  /// brand to its rail).
+  static const double brandMarkSizeMedium = 36;
 
   /// The control row's height: the 46 px discs are its tallest members, so
   /// the header is exactly as tall before the profile arrives as after.
@@ -92,7 +101,7 @@ class HomeGreetingHeader extends StatelessWidget {
                       child: Text(
                         '👋',
                         style: TextStyle(
-                          fontSize: expanded ? 22 : 19,
+                          fontSize: expanded ? 26 : 19,
                           height: 1,
                         ),
                       ),
@@ -103,16 +112,19 @@ class HomeGreetingHeader extends StatelessWidget {
             ),
             semanticsLabel: greeting,
             maxLines: 2,
-            style:
-                (expanded
-                        ? AppTypography.headlineLarge
-                        : constraints.maxWidth < 320
-                        ? AppTypography.headlineSmall
-                        : AppTypography.headlineMedium)
-                    .copyWith(
-                      color: palette.textPrimary,
-                      fontWeight: FontWeight.w800,
-                    ),
+            // The refine-look title roles (w700, tight tracking): 22 px on
+            // a phone. The words share their row with two 46 px controls, so
+            // the column is ~250 px on a 390 px phone; only a column under
+            // 240 px (a 320 px phone) steps down to 20 px so a long Polish
+            // name still keeps to two lines.
+            style: expanded
+                ? AppTypography.greetingWide.copyWith(
+                    color: palette.textPrimary,
+                  )
+                : AppTypography.screenTitle.copyWith(
+                    color: palette.textPrimary,
+                    fontSize: constraints.maxWidth < 240 ? 20 : null,
+                  ),
           ),
         );
 
@@ -125,7 +137,7 @@ class HomeGreetingHeader extends StatelessWidget {
         );
 
         final bell = HomeHeaderDisc(
-          icon: Icons.notifications_none_rounded,
+          icon: AppIcons.notifications,
           onTap: onOpenNotifications,
           tooltip: unreadNotificationCount > 0
               ? copy.template(
@@ -149,12 +161,14 @@ class HomeGreetingHeader extends StatelessWidget {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
+                  // A hairline ring (refine-look §8.1), not an outline: the
+                  // same brand-finished avatar the friends row shows for "Ty".
                   Container(
                     width: controlHeight,
                     height: controlHeight,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      border: Border.all(color: palette.borderStrong),
+                      border: Border.all(color: palette.hairline),
                     ),
                     child: Padding(
                       padding: const EdgeInsets.all(1),
@@ -165,6 +179,7 @@ class HomeGreetingHeader extends StatelessWidget {
                         mediaRevision: data?.profileUpdatedAt,
                         displayName: data?.displayName,
                         fallbackIcon: Icons.person_rounded,
+                        finish: UserAvatarFinish.brand,
                       ),
                     ),
                   ),
@@ -240,71 +255,39 @@ class HomeGreetingHeader extends StatelessWidget {
   }
 }
 
-/// The YO Voice mark before the wordmark, as one quiet line.
+/// The YO Voice lockup on Start: the real logo, bare, before the wordmark.
 ///
-/// The mark sits on a filled 28 px tile (radius 8) so it reads as the app's
-/// icon on both Dark and Pearl and so the line has ink from its first frame,
-/// before the PNG decodes. The wordmark is the product name, not copy, so it
-/// is not localized; the line is one semantics node that reads the name once.
+/// Refine-look W1: the grey 28 px tile is gone. The full-colour mark sits in
+/// a 32 px box on phones (36 px from 600 px wide), about 26 px of ink, 10 px
+/// before the unchanged w800 wordmark. Dark gives it a static bloom; Pearl a
+/// plum contact shadow so the glossy object sits on the paper. Light is
+/// paint only — the layout box is exactly the mark — and there is no glint
+/// at this size. At ≥ 1.6 × text the mark follows the wordmark (clamped to
+/// 48). The wordmark is the product name, not copy, so it is not localized;
+/// the line is one semantics node that reads the name once.
 class HomeBrandLockup extends StatelessWidget {
   const HomeBrandLockup({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    const size = HomeGreetingHeader.brandMarkSize;
-    return Semantics(
+    final medium = MediaQuery.sizeOf(context).width >= 600;
+    return YoBrandLockup(
       key: const ValueKey('home-brand-lockup'),
-      container: true,
-      label: 'YO Voice',
-      excludeSemantics: true,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            key: const ValueKey('home-brand-mark'),
-            width: size,
-            height: size,
-            padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(
-              color: palette.surfaceRaised,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: palette.border),
-            ),
-            child: Image.asset(
-              'assets/images/logo.png',
-              fit: BoxFit.contain,
-              filterQuality: FilterQuality.medium,
-              errorBuilder: (_, _, _) => Icon(
-                Icons.graphic_eq_rounded,
-                size: 18,
-                color: palette.interactiveForeground,
-              ),
-            ),
-          ),
-          const SizedBox(width: AppRhythm.tight),
-          Flexible(
-            child: Text(
-              'YO Voice',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTypography.titleMedium.copyWith(
-                color: palette.textPrimary,
-                fontWeight: FontWeight.w800,
-                height: 1.2,
-              ),
-            ),
-          ),
-        ],
-      ),
+      markKey: const ValueKey('home-brand-mark'),
+      size: medium
+          ? HomeGreetingHeader.brandMarkSizeMedium
+          : HomeGreetingHeader.brandMarkSize,
     );
   }
 }
 
 /// A 46 px header control with the real unread count on it.
 ///
-/// The count is a fact the shell already holds; a bare dot would be a lossy
-/// view of the same fact, so the badge prints the number (99+ above that).
+/// Refine-look §8.1: a neutral glass disc with a hairline edge (never an
+/// outline) and a `textPrimary` glyph. The count is a fact the shell already
+/// holds; a bare dot would be a lossy view of the same fact, so the badge
+/// prints the number (99+ above that) as the one [YoCountBadge], ringed in
+/// the canvas colour so it reads as cut out of the disc.
 class HomeHeaderDisc extends StatelessWidget {
   const HomeHeaderDisc({
     required this.icon,
@@ -322,6 +305,7 @@ class HomeHeaderDisc extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
     return AccessibleTapRegion(
       onTap: onTap,
       semanticLabel: tooltip,
@@ -331,40 +315,29 @@ class HomeHeaderDisc extends StatelessWidget {
         child: Container(
           width: HomeGreetingHeader.controlHeight,
           height: HomeGreetingHeader.controlHeight,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: palette.surfaceRaised,
-            border: Border.all(color: palette.border),
-          ),
+          decoration:
+              AppFinish.glassDecoration(
+                palette,
+                shape: BoxShape.circle,
+                highContrast: highContrast,
+              ).copyWith(
+                border: Border.all(
+                  color: highContrast ? palette.borderStrong : palette.hairline,
+                ),
+              ),
           child: Stack(
             clipBehavior: Clip.none,
             alignment: Alignment.center,
             children: [
               Icon(icon, color: palette.textPrimary, size: 21),
               if (badgeCount > 0)
-                Positioned(
+                PositionedDirectional(
                   top: -4,
-                  right: -4,
-                  child: Container(
-                    constraints: const BoxConstraints(
-                      minWidth: 20,
-                      minHeight: 20,
-                    ),
-                    alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(horizontal: 5),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: palette.background, width: 2),
-                    ),
-                    child: Text(
-                      badgeCount > 99 ? '99+' : '$badgeCount',
-                      style: const TextStyle(
-                        color: AppColors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
+                  end: -4,
+                  child: YoCountBadge(
+                    key: const ValueKey('home-bell-count'),
+                    count: badgeCount,
+                    ring: palette.background,
                   ),
                 ),
             ],

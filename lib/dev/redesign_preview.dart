@@ -1740,6 +1740,25 @@ Widget _still(BuildContext context, Uri mediaUri, Reel reel) {
 // App + shell
 // ---------------------------------------------------------------------------
 
+/// Which ServerType owns Start's live stage (refine-look §10 harness gap):
+/// `YO_PREVIEW_LIVE_TYPE=friends|community|podcast|family|company`. The
+/// default keeps today's fixture (the podcast studio is live). Any other
+/// type re-types the second preview server and puts ITS channel live, so the
+/// W2 live tile can be captured in each of the five identities.
+const _liveTypeName = String.fromEnvironment(
+  'YO_PREVIEW_LIVE_TYPE',
+  defaultValue: 'podcast',
+);
+
+ServerType get _liveType => ServerType.values.firstWhere(
+  (type) => type.name == _liveTypeName,
+  orElse: () => ServerType.podcast,
+);
+
+/// The preview server whose channel is live.
+String get _liveServerId =>
+    _liveType == ServerType.friends ? 'preview-friends' : 'preview-podcast';
+
 /// Replayable local Server authority for the live preview. Home, the Server
 /// directory and the creation flow all read the same list, so the desktop and
 /// mobile compositions exercise the production hierarchy without contacting
@@ -1770,7 +1789,7 @@ class _PreviewServerRepository implements ServerRepository {
         name: longNames ? 'Studio głosu i rozmów bez skrótów' : 'Studio głosu',
         description: 'Odcinki, pytania słuchaczy i rozmowy na żywo.',
         ownerId: _me,
-        type: ServerType.podcast,
+        type: _liveType == ServerType.friends ? ServerType.podcast : _liveType,
         privacy: ServerPrivacy.public,
         defaultLanguage: 'Polish',
         memberCount: 126,
@@ -1865,9 +1884,10 @@ class _PreviewServerRepository implements ServerRepository {
   /// Channel lists for Start's "Na żywo teraz" (Slim phase 1). Only the
   /// populated fixture has a live stage, with a start instant 25 minutes ago;
   /// every other state lists quiet channels, so the section stays absent.
+  /// `YO_PREVIEW_LIVE_TYPE` picks which server's channel is the live one.
   @override
   Stream<List<ServerChannel>> watchChannels(String serverId) {
-    final live = _state == _State.populated && serverId == 'preview-podcast';
+    final live = _state == _State.populated && serverId == _liveServerId;
     return Stream<List<ServerChannel>>.value([
       ServerChannel(
         id: serverId == 'preview-podcast' ? 'studio' : 'lounge',

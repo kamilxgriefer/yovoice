@@ -17,6 +17,7 @@ class YoEmptyState extends StatelessWidget {
     this.actionLabel,
     this.onAction,
     this.compact = false,
+    this.leading,
   });
 
   final IconData icon;
@@ -28,6 +29,10 @@ class YoEmptyState extends StatelessWidget {
   /// Tighter vertical padding for use inside sheets/cards rather than a
   /// full page.
   final bool compact;
+
+  /// Replaces the 76 px icon circle when set (the real logo on the two
+  /// first-run invitations). [icon] is then unused.
+  final Widget? leading;
 
   @override
   Widget build(BuildContext context) {
@@ -55,22 +60,29 @@ class YoEmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Container(
-              width: 76,
-              height: 76,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: <Color>[
-                    colors.primary.withValues(alpha: 0.18),
-                    colors.secondary.withValues(alpha: 0.1),
-                  ],
+            if (leading case final leading?)
+              leading
+            else
+              Container(
+                width: 76,
+                height: 76,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: <Color>[
+                      colors.primary.withValues(alpha: 0.18),
+                      colors.secondary.withValues(alpha: 0.1),
+                    ],
+                  ),
+                  shape: BoxShape.circle,
                 ),
-                shape: BoxShape.circle,
+                child: Icon(
+                  icon,
+                  size: 34,
+                  color: palette.interactiveForeground,
+                ),
               ),
-              child: Icon(icon, size: 34, color: palette.interactiveForeground),
-            ),
             const SizedBox(height: AppSpacing.lg),
             Semantics(
               header: true,

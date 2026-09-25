@@ -153,6 +153,96 @@ class AppPalette extends ThemeExtension<AppPalette> {
     stops: const [0, .72],
   );
 
+  // ---------------------------------------------------------------------
+  // Finish roles (refine-look spec §6). DERIVED getters only: no new
+  // constructor field, so the 27-role raw-literal source guard, `copyWith`
+  // and `lerp` stay untouched and every value below lerps for free with the
+  // roles it is computed from. No existing role value changes. The recipes
+  // that combine these live in `AppFinish`.
+  // ---------------------------------------------------------------------
+
+  /// Dark or Pearl, read from the canvas itself so a lerped palette resolves
+  /// the side it is closer to.
+  bool get isDark => background.computeLuminance() < .5;
+
+  /// The decorative 1 px edge of a block: textPrimary @ .09 (Dark) / the
+  /// plum shadow @ .12 (Pearl). Text inputs keep [borderStrong].
+  Color get hairline => isDark
+      ? textPrimary.withValues(alpha: .09)
+      : shadow.withValues(alpha: .12);
+
+  /// The 1 px edge of a neutral control (tonal action, chip, icon button).
+  Color get hairlineControl =>
+      textPrimary.withValues(alpha: isDark ? .14 : .16);
+
+  /// A hovered block or control edge.
+  Color get hairlineHover => borderStrong.withValues(alpha: .55);
+
+  /// The neutral tonal fill ("glass").
+  Color get glass => textPrimary.withValues(alpha: isDark ? .07 : .05);
+
+  /// The lit top of a block's fill.
+  Color get blockTop =>
+      isDark ? Color.lerp(surface, surfaceRaised, .55)! : surfaceRaised;
+
+  /// A block's soft top-lit fill: [blockTop] into [surface].
+  LinearGradient get blockGradient => LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [blockTop, surface],
+  );
+
+  /// A block's lift. Dark: none (a shadow on the near-black canvas is
+  /// invisible). Pearl: a plum contact line plus a soft, pulled-in drop.
+  List<BoxShadow> get blockShadows => isDark
+      ? const <BoxShadow>[]
+      : <BoxShadow>[
+          BoxShadow(
+            color: shadow.withValues(alpha: .06),
+            blurRadius: 2,
+            offset: const Offset(0, 1),
+          ),
+          BoxShadow(
+            color: shadow.withValues(alpha: .16),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+            spreadRadius: -14,
+          ),
+        ];
+
+  /// Peak alpha of a lead block's corner tint.
+  double get tintAlpha => isDark ? .16 : .09;
+
+  /// The contact shadow under a resting bead or a bare logo.
+  Color get contactShadow => shadow.withValues(alpha: isDark ? .28 : .12);
+
+  /// Emitted brand light: a lit voice bead, the icon-disc lift.
+  Color get brandGlow => isDark
+      ? AppColors.secondary.withValues(alpha: .42)
+      : AppColors.primary.withValues(alpha: .22);
+
+  /// The under-glow of a block that is really LIVE.
+  Color get liveGlow => AppColors.live.withValues(alpha: isDark ? .34 : .18);
+
+  /// A specular top hairline on a lit surface.
+  Color get specular => AppColors.white.withValues(alpha: isDark ? .22 : .70);
+
+  /// Unplayed waveform bars, at rest and while playing.
+  Color get waveUnplayed => textPrimary.withValues(alpha: isDark ? .28 : .22);
+
+  /// The Chats / Friends canvas radial, promoted unchanged (pixel-identical
+  /// to the recipe those two screens paint inline today).
+  RadialGradient canvasGlow(Color primary) => RadialGradient(
+    center: const Alignment(-.86, -.96),
+    radius: 1.25,
+    colors: [
+      Color.lerp(backgroundTop, primary, isDark ? .18 : .055)!,
+      backgroundTop,
+      background,
+    ],
+    stops: const [0, .38, 1],
+  );
+
   @override
   AppPalette copyWith({
     Color? background,

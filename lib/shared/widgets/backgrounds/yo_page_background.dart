@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
 
 /// Optional locally bundled scenery for the five normal product destinations.
 /// These are decorative environments, not user uploads or live-room covers.
@@ -20,11 +21,23 @@ enum YoPageSection {
 
 /// A static, hit-test-free environment. Decode size and contrast are bounded;
 /// no network fetch, animation, blur pass or background media player is used.
+///
+/// The scenery dissolves into the canvas over its bottom [dissolveFraction]
+/// (refine-look R1), so a page never ends on a hard edge of furniture above
+/// the navigation dock. The dissolve is a plain gradient painted inside the
+/// same repaint boundary as the art — no ShaderMask, no extra layer.
 class YoAtmosphereArt extends StatelessWidget {
   const YoAtmosphereArt({required this.section, super.key});
 
   static const darkOpacity = .18;
-  static const pearlOpacity = .07;
+
+  /// Pearl receives light rather than emitting it: the scenery stays a
+  /// whisper (.07 → .05) so it never reads as grey haze on the paper.
+  static const pearlOpacity = .05;
+
+  /// The share of the art's height that fades out into `palette.background`.
+  static const dissolveFraction = .18;
+
   final YoPageSection section;
 
   @override
@@ -42,20 +55,43 @@ class YoAtmosphereArt extends StatelessWidget {
                             MediaQuery.devicePixelRatioOf(context))
                         .ceil()
                         .clamp(320, 864);
-                return Image.asset(
-                  section.asset,
-                  key: ValueKey('yo-atmosphere-${section.name}'),
-                  width: constraints.maxWidth,
-                  height: constraints.maxHeight,
-                  cacheWidth: decodeWidth,
-                  fit: BoxFit.cover,
-                  alignment: const Alignment(.15, .2),
-                  opacity: AlwaysStoppedAnimation(
-                    dark ? darkOpacity : pearlOpacity,
-                  ),
-                  filterQuality: FilterQuality.low,
-                  excludeFromSemantics: true,
-                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                final canvas = context.appPalette.background;
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.asset(
+                      section.asset,
+                      key: ValueKey('yo-atmosphere-${section.name}'),
+                      width: constraints.maxWidth,
+                      height: constraints.maxHeight,
+                      cacheWidth: decodeWidth,
+                      fit: BoxFit.cover,
+                      alignment: const Alignment(.15, .2),
+                      opacity: AlwaysStoppedAnimation(
+                        dark ? darkOpacity : pearlOpacity,
+                      ),
+                      filterQuality: FilterQuality.low,
+                      excludeFromSemantics: true,
+                      errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                    ),
+                    if (constraints.maxHeight.isFinite)
+                      Positioned(
+                        key: const ValueKey('yo-atmosphere-dissolve'),
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        height: constraints.maxHeight * dissolveFraction,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [canvas.withValues(alpha: 0), canvas],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 );
               },
             ),
@@ -79,7 +115,9 @@ class YoPageBackground extends StatelessWidget {
     super.key,
   });
 
-  static const logoAsset = 'assets/images/yo-voice-favicon-512.png';
+  /// The real logo (refine-look §4): the in-app mark is always
+  /// `logo.png`; the favicon stays with the platform configs.
+  static const logoAsset = YoBrandMark.markAsset;
 
   final Widget child;
   final YoPageSection? section;
