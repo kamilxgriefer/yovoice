@@ -44,6 +44,12 @@ const MAX_VOICE_BYTES = 8 * 1024 * 1024;
 const MIN_VOICE_DURATION_MS = 1000;
 const MAX_VOICE_DURATION_MS = 30_000;
 const VOICE_DURATION_TOLERANCE_MS = 2000;
+// The composer stops on a Dart stopwatch at exactly 30 s while native capture
+// runs a little longer on both ends, and the trusted probe reports the longest
+// container reading, so a note that hits the cap always measures slightly over
+// 30,000 ms. It is accepted up to this grace and stored clamped to the 30 s
+// product limit, which is what the reservation and memory validators require.
+const VOICE_DURATION_GRACE_MS = 2000;
 const ACCESS_LIMIT = Object.freeze({ maxEvents: 120, windowMs: 60_000 });
 const GENERATION_PATTERN = /^[0-9]{1,30}$/u;
 const PHOTO_TYPES = Object.freeze({
@@ -356,12 +362,12 @@ function validateTrustedProbe(probe, descriptor, kind) {
   }
   if (!Number.isSafeInteger(probe.durationMs) ||
       probe.durationMs < MIN_VOICE_DURATION_MS ||
-      probe.durationMs > MAX_VOICE_DURATION_MS ||
+      probe.durationMs > MAX_VOICE_DURATION_MS + VOICE_DURATION_GRACE_MS ||
       Math.abs(probe.durationMs - descriptor.durationMs) > VOICE_DURATION_TOLERANCE_MS ||
       !probe.hasAudio || probe.hasVideo) {
     fail("failed-precondition", "The Family Memory voice note is invalid.");
   }
-  return probe.durationMs;
+  return Math.min(MAX_VOICE_DURATION_MS, probe.durationMs);
 }
 
 function safeGrantUrl(value) {
@@ -1162,6 +1168,7 @@ module.exports = {
   MIN_VOICE_BYTES,
   MIN_VOICE_DURATION_MS,
   PHOTO_TYPES,
+  VOICE_DURATION_GRACE_MS,
   VOICE_DURATION_TOLERANCE_MS,
   VOICE_TYPES,
   canonicalFamilyMemoryId,

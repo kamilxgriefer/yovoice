@@ -56,6 +56,21 @@ const DEFAULT_LIMITS = Object.freeze({
   typing: { maxEvents: 120, windowMs: 60_000 },
 });
 const DIRECT_UPLOAD_TTL_MS = 15 * 60_000;
+// The product limit for a direct voice or video message, and for a server
+// channel video (servers/message_media.js shares the probe validator below).
+// Declarations, Storage rules and every stored durationSeconds stay 1..60.
+const DIRECT_MEDIA_MAX_SECONDS = 60;
+// How far the trusted probe's *measured* length may run past that limit. The
+// app's recorder stops on a Dart stopwatch at exactly 60 s, but native capture
+// starts before the stopwatch and ends after it, and the probe reports the
+// longest container reading (AAC priming included), so a full-length take
+// always measures slightly over 60,000 ms. Without this grace such a take was
+// refused as terminal and Retry could never succeed. A take accepted inside
+// the grace is stored as 60 s, so the bubble reads 1:00 while the file may run
+// up to 62 s.
+const DIRECT_MEDIA_DURATION_GRACE_MS = 2_000;
+const DIRECT_MEDIA_MAX_MEASURED_MS =
+  DIRECT_MEDIA_MAX_SECONDS * 1000 + DIRECT_MEDIA_DURATION_GRACE_MS;
 const DIRECT_MEDIA_TYPES = Object.freeze({
   image: Object.freeze({
     contentTypes: Object.freeze(["image/jpeg", "image/png", "image/webp"]),
@@ -308,7 +323,7 @@ function validateDirectMediaReservation(value, {
   const durationIsValid = value.type === "image"
     ? value.durationSeconds === null
     : Number.isSafeInteger(value.durationSeconds) &&
-      value.durationSeconds >= 1 && value.durationSeconds <= 60;
+      value.durationSeconds >= 1 && value.durationSeconds <= DIRECT_MEDIA_MAX_SECONDS;
   if (
     keys.length !== DIRECT_RESERVATION_KEYS.length ||
     keys.some((key, index) => key !== DIRECT_RESERVATION_KEYS[index]) ||
@@ -404,12 +419,18 @@ function validateDirectMediaProbe(probe, reservation, media) {
     return null;
   }
   if (!Number.isSafeInteger(probe.durationMs) ||
-      probe.durationMs < 1 || probe.durationMs > 60_000 ||
+      probe.durationMs < 1 || probe.durationMs > DIRECT_MEDIA_MAX_MEASURED_MS ||
       (reservation.type === "voice" && (!probe.hasAudio || probe.hasVideo)) ||
       (reservation.type === "video" && !probe.hasVideo)) {
     fail("failed-precondition", "The uploaded attachment tracks are invalid.");
   }
-  const trustedDurationSeconds = Math.max(1, Math.ceil(probe.durationMs / 1000));
+  // Clamped to the product limit: a take measured inside the grace is a
+  // full-length take, and the canonical message validators (here and in
+  // servers/message_media_contract.js) only ever accept 1..60.
+  const trustedDurationSeconds = Math.min(
+    DIRECT_MEDIA_MAX_SECONDS,
+    Math.max(1, Math.ceil(probe.durationMs / 1000)),
+  );
   if (Math.abs(trustedDurationSeconds - reservation.durationSeconds) > 2) {
     fail("failed-precondition", "The uploaded attachment duration does not match.");
   }
@@ -698,12 +719,12 @@ function validateMessage(snapshot, conversationId) {
         (data.content !== "" || typeof data.mediaUrl !== "string" ||
           !/^(gs:\/\/|https:\/\/)/u.test(data.mediaUrl) ||
           !Number.isSafeInteger(data.durationSeconds) ||
-          data.durationSeconds < 1 || data.durationSeconds > 60)) ||
+          data.durationSeconds < 1 || data.durationSeconds > DIRECT_MEDIA_MAX_SECONDS)) ||
       (data.type === "video" &&
         (data.content !== "Video" || typeof data.mediaUrl !== "string" ||
           !/^(gs:\/\/|https:\/\/)/u.test(data.mediaUrl) ||
           !Number.isSafeInteger(data.durationSeconds) ||
-          data.durationSeconds < 1 || data.durationSeconds > 60)) ||
+          data.durationSeconds < 1 || data.durationSeconds > DIRECT_MEDIA_MAX_SECONDS)) ||
       (data.isDeleted &&
         (data.content !== "" || data.mediaUrl !== null ||
           data.durationSeconds !== null || Object.keys(data.reactions).length !== 0))) {
@@ -1314,7 +1335,10 @@ function createDirectMessagingService({
       fail("invalid-argument", "contentType is not supported for this attachment.");
     }
     const durationSeconds = type === "voice" || type === "video"
-      ? requireSafeInteger(data.durationSeconds, "durationSeconds", { min: 1, max: 60 })
+      ? requireSafeInteger(data.durationSeconds, "durationSeconds", {
+        min: 1,
+        max: DIRECT_MEDIA_MAX_SECONDS,
+      })
       : null;
     if (type === "image" && data.durationSeconds !== undefined &&
         data.durationSeconds !== null) {
@@ -2931,6 +2955,8 @@ function createDirectMessagingService({
 module.exports = {
   ALLOWED_DIRECT_REACTIONS,
   DEFAULT_LIMITS,
+  DIRECT_MEDIA_DURATION_GRACE_MS,
+  DIRECT_MEDIA_MAX_SECONDS,
   // Server channel photo/video messages reuse the image and video bounds.
   DIRECT_MEDIA_TYPES,
   DIRECT_MESSAGE_TYPES,

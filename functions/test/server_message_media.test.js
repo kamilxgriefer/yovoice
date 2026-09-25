@@ -57,8 +57,9 @@ const emulatorTest = (name, fn) => test(`Server message media: ${name}`, {
   timeout: 90_000,
 }, fn);
 const request = (uid, data, verified = true) => ({ auth: { uid, token: { email_verified: verified } }, data });
-const rejects = (promise, code) => assert.rejects(promise, (error) => {
+const rejects = (promise, code, reason = null) => assert.rejects(promise, (error) => {
   assert.equal(error.code, code, `${error.code}: ${error.message}`);
+  if (reason !== null) assert.equal(error.message, reason);
   return true;
 });
 
@@ -398,6 +399,26 @@ emulatorTest("finalize trusts the probed video duration and publishes Video", as
   assert.equal(message.media.durationSeconds, 14);
 });
 
+emulatorTest("a camera clip capped at 60 s that measures just past it publishes as 60 s", async () => {
+  const f = await fixture();
+  for (const durationMs of [60_000, 60_400, 61_900]) {
+    const reserved = await f.reserve("member", "text", "video", { durationSeconds: 60 });
+    f.storage.upload(reserved, "301", { probe: { durationMs } });
+    await f.service.finalizeServerChannelMessageMediaV1(request(f.users.member, f.finalizeData(reserved)));
+    const message = (await f.messageDoc(f.channels.text, reserved.messageId).get()).data();
+    assert.equal(message.media.durationSeconds, 60, `measured ${durationMs} ms`);
+    // The canonical read path accepts the clamped value.
+    const access = await f.access("member", "text", [reserved.messageId]);
+    assert.deepEqual(access.grants.map((grant) => grant.messageId), [reserved.messageId]);
+    assert.deepEqual(access.unavailable, []);
+  }
+  const over = await f.reserve("member", "text", "video", { durationSeconds: 60 });
+  f.storage.upload(over, "301", { probe: { durationMs: 62_100 } });
+  await rejects(f.service.finalizeServerChannelMessageMediaV1(request(f.users.member, f.finalizeData(over))),
+    "failed-precondition", "The uploaded attachment tracks are invalid.");
+  assert.equal((await f.messageDoc(f.channels.text, over.messageId).get()).exists, false);
+});
+
 emulatorTest("finalize refuses a wrong generation, drifted metadata, mismatched bytes and an unsecured object", async () => {
   const f = await fixture();
   const cases = [
@@ -417,11 +438,18 @@ emulatorTest("finalize refuses a wrong generation, drifted metadata, mismatched 
     assert.equal((await f.messageDoc(f.channels.text, reserved.messageId).get()).exists, false);
     f.clock.nowMs += SERVER_MESSAGE_MEDIA_RESERVATION_TTL_MS + 1;
   }
-  for (const probe of [{ hasVideo: false }, { durationMs: 20_000 }, { durationMs: 61_000 }]) {
+  // Every clip here is declared 12 s. 61 s is inside the 60 s + 2 s measured
+  // grace, so it must be refused by the declared-vs-measured tolerance, and
+  // the reason is pinned so a relaxed length cap cannot hide behind it.
+  for (const [probe, reason] of [
+    [{ hasVideo: false }, "The uploaded attachment tracks are invalid."],
+    [{ durationMs: 20_000 }, "The uploaded attachment duration does not match."],
+    [{ durationMs: 61_000 }, "The uploaded attachment duration does not match."],
+  ]) {
     const reserved = await f.reserve("member", "text", "video");
     f.storage.upload(reserved, "301", { probe });
     await rejects(f.service.finalizeServerChannelMessageMediaV1(request(f.users.member, f.finalizeData(reserved))),
-      "failed-precondition");
+      "failed-precondition", reason);
     f.clock.nowMs += SERVER_MESSAGE_MEDIA_RESERVATION_TTL_MS + 1;
   }
   // The object is replaced while the probe runs.

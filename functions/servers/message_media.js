@@ -467,7 +467,8 @@ function createServerMessageMediaService(dependencies) {
       kind: reservation.type,
     });
     // The direct-message probe contract: real image/video bytes, track
-    // presence, duration within 1-60 s and within 2 s of the declaration.
+    // presence, a measured duration within 1-60 s (plus the shared 2 s
+    // measured grace, stored clamped to 60) and within 2 s of the declaration.
     const trustedDurationSeconds = validateDirectMediaProbe(probe, reservation, stored);
     // A probe may take seconds: re-read so a replaced object cannot publish.
     const finalMetadata = await storage.getMetadata(reservation.storagePath);
