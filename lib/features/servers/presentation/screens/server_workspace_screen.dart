@@ -23,6 +23,7 @@ import '../../data/services/server_family_memory_service.dart';
 import '../../data/services/server_follow_service.dart';
 import '../../data/services/server_media_connector.dart';
 import '../../data/services/server_podcast_episode_repository.dart';
+import '../../data/services/server_question_attention.dart';
 import '../../data/services/server_screen_share_capability.dart';
 import '../../data/services/server_service.dart';
 import '../../data/services/server_session_controller.dart';
@@ -49,6 +50,7 @@ import '../widgets/server_podcast_episodes_board.dart';
 import '../widgets/server_scrolling_details.dart';
 import '../widgets/server_shared_list_board.dart';
 import '../widgets/server_text_channel_scene.dart';
+import '../widgets/server_waiting_dot.dart';
 import '../widgets/server_whiteboard_board.dart';
 
 export '../widgets/server_channel_scene.dart' show ServerChannelEmptyState;
@@ -98,6 +100,7 @@ class ServerWorkspaceScreen extends StatefulWidget {
     this.shareServer,
     this.isVisible,
     this.onOpenServer,
+    this.questionAttention,
     super.key,
   });
   final String serverId;
@@ -162,6 +165,12 @@ class ServerWorkspaceScreen extends StatefulWidget {
   /// the server it was joined in and ends with it.
   final ValueChanged<Server>? onOpenServer;
 
+  /// Which podcast servers have listener questions this host has not seen.
+  /// The directory that hosts or pushes this workspace hands over its own, so
+  /// the tile, the rail and the dots in here read one set of listeners; left
+  /// null, the workspace keeps one of its own for its lifetime.
+  final ServerQuestionAttention? questionAttention;
+
   /// Phone below, tablet from here.
   static const tabletBreakpoint = 768.0;
 
@@ -214,6 +223,16 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
   List<Server> _myServers = const [];
   StreamSubscription<List<Server>>? _myServersSubscription;
   Object? _joinError;
+
+  /// Listener questions this host has not seen, across the account's podcast
+  /// servers (ADR "listener questions dot").
+  ServerQuestionAttention? _ownAttention;
+  ServerQuestionAttention get _attention =>
+      widget.questionAttention ??
+      (_ownAttention ??= ServerQuestionAttention(
+        repository: _repository,
+        isVisible: widget.isVisible,
+      ));
 
   ServerCompanyFileRepository get _companyFiles {
     final supplied = widget.companyFileRepository;
@@ -311,9 +330,14 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     _selectedId = widget.initialChannelId;
     _listen();
     widget.isVisible?.addListener(_onVisibilityChanged);
+    _attention
+      ..claim(widget.serverId)
+      ..addListener(_onAttention);
     try {
       _myServersSubscription = _repository.watchMyServers().listen((servers) {
-        if (mounted) setState(() => _myServers = servers);
+        if (!mounted) return;
+        _attention.trackDirectory(servers);
+        setState(() => _myServers = servers);
       }, onError: (Object _) {});
     } on Object {
       // A repository without the account list simply has no rail beyond
@@ -370,6 +394,32 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     if (_session.isActive) unawaited(_session.leave());
   }
 
+  void _onAttention() {
+    if (mounted) setState(() {});
+  }
+
+  /// The Questions channel this viewer is told about: a Podcast server that
+  /// is not held, a role that may moderate it, and the channel `Pytania`
+  /// actually opens beside the studio.
+  static ServerChannel? _hostedQuestions(
+    Server server,
+    List<ServerChannel> channels,
+    ServerMemberRole? role,
+  ) {
+    if (server.type != ServerType.podcast ||
+        server.isHeld ||
+        !(role?.canModerate ?? false)) {
+      return null;
+    }
+    return channels
+        .where((channel) => channel.kind == ServerChannelKind.questions)
+        .firstOrNull;
+  }
+
+  /// The Questions channel whose new questions wait for this host, or null.
+  String? _waitingQuestions(Server server) =>
+      _attention.isWaiting(server.id) ? _attention.watchedChannel(server.id) : null;
+
   void _listen() {
     _server = _repository.watchServer(widget.serverId);
     // Channel LIST authority begins at membership. A public non-member can
@@ -391,6 +441,24 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
       oldWidget.isVisible?.removeListener(_onVisibilityChanged);
       widget.isVisible?.addListener(_onVisibilityChanged);
     }
+    if (oldWidget.questionAttention != widget.questionAttention) {
+      final previous = oldWidget.questionAttention ?? _ownAttention;
+      previous
+        ?..removeListener(_onAttention)
+        ..release(oldWidget.serverId);
+      if (widget.questionAttention != null) {
+        _ownAttention?.dispose();
+        _ownAttention = null;
+      }
+      _attention
+        ..claim(widget.serverId)
+        ..addListener(_onAttention)
+        ..trackDirectory(_myServers);
+    } else if (oldWidget.serverId != widget.serverId) {
+      _attention
+        ..release(oldWidget.serverId)
+        ..claim(widget.serverId);
+    }
     if (oldWidget.serverId != widget.serverId) {
       _selectedId = widget.initialChannelId;
       _localTab = 0;
@@ -411,6 +479,10 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     // conversation instead of keeping a microphone open behind no UI.
     widget.isVisible?.removeListener(_onVisibilityChanged);
     _myServersSubscription?.cancel();
+    _attention
+      ..removeListener(_onAttention)
+      ..release(widget.serverId);
+    _ownAttention?.dispose();
     _session.dispose();
     super.dispose();
   }
@@ -683,6 +755,13 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
   ) {
     final home = _homeSelected(server);
     final selected = home ? null : _selected(server, channels);
+    // The live role and channel list answer for this server; the directory's
+    // guess steps aside while it is open.
+    _attention.pin(
+      server.id,
+      questionsChannelId: _hostedQuestions(server, channels, role)?.id,
+    );
+    final waitingQuestions = _waitingQuestions(server);
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
@@ -806,7 +885,14 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
           final localTabs =
               communityStage || selected == null || !selected.kind.isMedia
               ? const <ServerLocalTab>[]
-              : _sceneTabs(context, server, selected, channels, phone: true);
+              : _sceneTabs(
+                  context,
+                  server,
+                  selected,
+                  channels,
+                  phone: true,
+                  waitingQuestions: waitingQuestions,
+                );
           // Board 04's phone strip is `Spotkanie | Czat | Kanały`, so the
           // meeting's strip owns the entry to the channel list and the
           // header drops its pill — one entry, exactly as the family board
@@ -827,6 +913,13 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                   onChannels: () => _openChannels(context, server, role),
                   showChannelsButton:
                       boardTabs == null && !communityStage && !tabsOwnChannels,
+                  // The Questions row waits inside the channel list; its way
+                  // in says so, unless the Questions board is already on
+                  // screen or a closer `Pytania` tab carries the dot.
+                  channelsWaiting:
+                      waitingQuestions != null &&
+                      selected?.id != waitingQuestions &&
+                      !localTabs.any((tab) => tab.attentionLabel != null),
                   tabs:
                       boardTabs ??
                       (localTabs.isEmpty
@@ -890,7 +983,14 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         final wideTabs =
             selected == null || desktop || !selected.kind.isMedia || meeting
             ? const <ServerLocalTab>[]
-            : _sceneTabs(context, server, selected, channels, phone: false);
+            : _sceneTabs(
+                context,
+                server,
+                selected,
+                channels,
+                phone: false,
+                waitingQuestions: waitingQuestions,
+              );
         return Column(
           children: [
             Expanded(
@@ -901,6 +1001,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                     servers: _railServers(server),
                     selectedId: server.id,
                     onOpen: _openServer,
+                    questionsWaiting: _attention.isWaiting,
                   ),
                   VerticalDivider(width: 1, color: context.appPalette.border),
                   SizedBox(
@@ -926,6 +1027,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                       },
                       onHome: _hasHomeBoard(server) ? _selectHome : null,
                       homeSelected: home,
+                      questionsWaitingChannelId: waitingQuestions,
                     ),
                   ),
                   VerticalDivider(width: 1, color: context.appPalette.border),
@@ -1117,6 +1219,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         repository: _repository,
         role: role,
         compact: compact,
+        isVisible: widget.isVisible,
       );
     }
     if (server.type == ServerType.podcast &&
@@ -1269,6 +1372,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
               repository: _repository,
               role: role,
               compact: true,
+              isVisible: widget.isVisible,
             ),
           )
         : ServerTextChannelScene(
@@ -1383,6 +1487,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     ServerChannel channel,
     List<ServerChannel> channels, {
     required bool phone,
+    String? waitingQuestions,
   }) {
     final copy = AppLocalizations.of(context);
     // Board 04's phone strip: the meeting, its conversation and the way into
@@ -1420,6 +1525,13 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         channel,
         conversationLabel: conversation?.kind == prefer
             ? conversation?.name
+            : null,
+        // Board 05's `Pytania` tab carries the host's "new questions" dot.
+        attentionLabel:
+            waitingQuestions != null &&
+                conversation?.kind == prefer &&
+                conversation?.id == waitingQuestions
+            ? copy.serverQuestionsWaitingLabel
             : null,
       ),
       if (server.type == ServerType.friends &&
@@ -1607,11 +1719,15 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         heightFactor: .88,
         child: _WithServerRail(
           rail: showRail
-              ? _ServerRail(
-                  servers: railServers,
-                  selectedId: server.id,
-                  onOpen: (target) =>
-                      Navigator.of(sheetContext).pop(_ServerRequest(target)),
+              ? ListenableBuilder(
+                  listenable: _attention,
+                  builder: (context, _) => _ServerRail(
+                    servers: railServers,
+                    selectedId: server.id,
+                    onOpen: (target) =>
+                        Navigator.of(sheetContext).pop(_ServerRequest(target)),
+                    questionsWaiting: _attention.isWaiting,
+                  ),
                 )
               : null,
           child: StreamBuilder<List<ServerChannel>>(
@@ -1627,34 +1743,46 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return _loading(AppLocalizations.of(context));
               }
-              return ServerPanel(
-                server: server,
-                channels: snapshot.data ?? const [],
-                selectedId: _selectedId,
-                role: role,
-                onSelected: (channel) =>
-                    Navigator.of(sheetContext).pop(channel),
-                onInvite: invite == null
-                    ? null
-                    : () => Navigator.of(sheetContext).pop(_SheetAction.invite),
-                onAddChannel: addChannel == null
-                    ? null
-                    : () => Navigator.of(sheetContext).pop(_SheetAction.add),
-                onManage:
-                    !(role?.canModerate ?? false) ||
-                        _repository is! ServerManagementRepository
-                    ? null
-                    : () => Navigator.of(
-                        sheetContext,
-                      ).pop(_ManageRequest(snapshot.data ?? const [])),
-                connectedChannelId: _session.isActive
-                    ? _session.channel?.id
-                    : null,
-                session: _session,
-                // The sheet closes onto the channel it joins, so the join runs
-                // on the screen's own controller, not the sheet's context.
-                onJoin: (channel) =>
-                    Navigator.of(sheetContext).pop(_JoinRequest(channel)),
+              return ListenableBuilder(
+                listenable: _attention,
+                builder: (context, _) {
+                  final channels = snapshot.data ?? const <ServerChannel>[];
+                  return ServerPanel(
+                    server: server,
+                    channels: channels,
+                    selectedId: _selectedId,
+                    role: role,
+                    onSelected: (channel) =>
+                        Navigator.of(sheetContext).pop(channel),
+                    onInvite: invite == null
+                        ? null
+                        : () => Navigator.of(
+                            sheetContext,
+                          ).pop(_SheetAction.invite),
+                    onAddChannel: addChannel == null
+                        ? null
+                        : () => Navigator.of(
+                            sheetContext,
+                          ).pop(_SheetAction.add),
+                    onManage:
+                        !(role?.canModerate ?? false) ||
+                            _repository is! ServerManagementRepository
+                        ? null
+                        : () => Navigator.of(
+                            sheetContext,
+                          ).pop(_ManageRequest(channels)),
+                    connectedChannelId: _session.isActive
+                        ? _session.channel?.id
+                        : null,
+                    session: _session,
+                    // The sheet closes onto the channel it joins, so the join
+                    // runs on the screen's own controller, not the sheet's
+                    // context.
+                    onJoin: (channel) =>
+                        Navigator.of(sheetContext).pop(_JoinRequest(channel)),
+                    questionsWaitingChannelId: _waitingQuestions(server),
+                  );
+                },
               );
             },
           ),
@@ -1696,17 +1824,22 @@ class _ServerRequest {
 }
 
 /// The server rail: the account's servers as [YoServerRailItem] squircles in
-/// a 64 px column. No unread badge, counter or dot: server channels have no
-/// read cursor (ADR-209).
+/// a 64 px column. No unread badge or counter: server channels have no read
+/// cursor (ADR-209). The one mark is the shared waiting dot on another
+/// podcast server whose listener questions this host has not seen — that has
+/// a real cursor behind it (ADR "listener questions dot"). The open server
+/// shows its own inside the workspace instead.
 class _ServerRail extends StatelessWidget {
   const _ServerRail({
     required this.servers,
     required this.selectedId,
     required this.onOpen,
+    this.questionsWaiting,
   });
   final List<Server> servers;
   final String selectedId;
   final ValueChanged<Server> onOpen;
+  final bool Function(String serverId)? questionsWaiting;
 
   @override
   Widget build(BuildContext context) {
@@ -1731,6 +1864,14 @@ class _ServerRail extends StatelessWidget {
                   : server.name,
               selected: server.id == selectedId,
               onTap: () => onOpen(server),
+              attention:
+                  server.id != selectedId &&
+                      (questionsWaiting?.call(server.id) ?? false)
+                  ? ServerWaitingDot(
+                      key: ValueKey('server-rail-questions-waiting-${server.id}'),
+                      semanticLabel: copy.serverQuestionsWaitingLabel,
+                    )
+                  : null,
             );
           },
         ),
@@ -1820,9 +1961,14 @@ class _PhoneSurface extends StatelessWidget {
     this.onBack,
     this.tabs,
     this.intro,
+    this.channelsWaiting = false,
   });
   final Server server;
   final ServerChannel? selected;
+
+  /// Something in the channel list waits for the viewer (new listener
+  /// questions), so `Kanały` carries the shared waiting dot.
+  final bool channelsWaiting;
 
   /// Present only when this workspace is hosted over the directory, where
   /// nothing else on a phone-width surface leads back to it.
@@ -1968,7 +2114,14 @@ class _PhoneSurface extends StatelessWidget {
                               style: IconButton.styleFrom(
                                 minimumSize: const Size(48, 48),
                               ),
-                              icon: const Icon(Icons.tag_rounded),
+                              icon: ServerWaitingDot.on(
+                                waiting: channelsWaiting,
+                                semanticLabel: copy.serverQuestionsWaitingLabel,
+                                dotKey: const ValueKey(
+                                  'server-open-channels-waiting',
+                                ),
+                                child: const Icon(Icons.tag_rounded),
+                              ),
                             )
                           else
                             OutlinedButton.icon(
@@ -1980,7 +2133,14 @@ class _PhoneSurface extends StatelessWidget {
                                   horizontal: 12,
                                 ),
                               ),
-                              icon: const Icon(Icons.tag_rounded, size: 18),
+                              icon: ServerWaitingDot.on(
+                                waiting: channelsWaiting,
+                                semanticLabel: copy.serverQuestionsWaitingLabel,
+                                dotKey: const ValueKey(
+                                  'server-open-channels-waiting',
+                                ),
+                                child: const Icon(Icons.tag_rounded, size: 18),
+                              ),
                               label: Text(copy.serverChannels),
                             ),
                         ],

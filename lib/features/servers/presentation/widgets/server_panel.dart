@@ -46,6 +46,7 @@ class ServerPanel extends StatefulWidget {
     this.onJoin,
     this.onHome,
     this.homeSelected = false,
+    this.questionsWaitingChannelId,
     super.key,
   });
 
@@ -93,6 +94,11 @@ class ServerPanel extends StatefulWidget {
   /// carries no channel id and nothing is seeded for it.
   final VoidCallback? onHome;
   final bool homeSelected;
+
+  /// The Questions channel whose listener questions this host has not seen
+  /// (`ServerQuestionAttention`), or null. Its row carries the shared waiting
+  /// dot unless it is the selected row, whose board is already on screen.
+  final String? questionsWaitingChannelId;
 
   /// Only board 04 draws a search field.
   bool get searchable => server.type == ServerType.company;
@@ -420,6 +426,8 @@ class _ServerPanelState extends State<ServerPanel> {
                   role: widget.role,
                   session: widget.session,
                   onJoin: widget.onJoin,
+                  questionsWaiting:
+                      channel.id == widget.questionsWaitingChannelId,
                   onTap: () => widget.onSelected(channel),
                 ),
               ),
@@ -530,6 +538,7 @@ class _PanelChannelRow extends StatelessWidget {
     this.role,
     this.session,
     this.onJoin,
+    this.questionsWaiting = false,
   });
   final Server server;
   final ServerChannel channel;
@@ -538,6 +547,10 @@ class _PanelChannelRow extends StatelessWidget {
   final ServerIdentityVisuals colors;
   final VoidCallback onTap;
   final ServerMemberRole? role;
+
+  /// Listener questions in this channel wait for the viewer (see
+  /// [ServerPanel.questionsWaitingChannelId]).
+  final bool questionsWaiting;
 
   /// Present only where the host holds a session; the roster is read from it
   /// for the connected row alone (ADR-177).
@@ -566,6 +579,12 @@ class _PanelChannelRow extends StatelessWidget {
         selected: selected,
         selectedForeground: colors.selectedForeground,
         selectedWash: colors.selectedWash,
+        trailing: questionsWaiting && !selected
+            ? ServerWaitingDot(
+                key: ValueKey('server-channel-questions-waiting-${channel.id}'),
+                semanticLabel: copy.serverQuestionsWaitingLabel,
+              )
+            : null,
         onTap: onTap,
       );
     }

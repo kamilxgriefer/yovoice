@@ -374,6 +374,36 @@ abstract interface class ServerPodcastQuestionsRepository {
   });
 }
 
+/// A podcast host's "new listener questions" signal (ADR "listener questions
+/// dot").
+///
+/// Two small reads and one owner-private write: the newest question of the
+/// channel (`orderBy createdAt desc, limit 1`), the host's own cursor at
+/// `users/{uid}/serverQuestionSeen/{serverId}_{channelId}`, and that cursor
+/// moved forward when the host has actually looked at the list. Nothing here
+/// counts questions, and nothing is read per question.
+///
+/// Kept apart from [ServerPodcastQuestionsRepository] so an integration that
+/// can show the board does not have to claim the cursor too; without it the
+/// app simply draws no dot.
+abstract interface class ServerQuestionAttentionRepository {
+  /// True while the channel's newest question is later than the viewer's
+  /// cursor (or there is no cursor yet) and was asked by somebody else. A
+  /// read that fails, a newest document that does not parse, or no questions
+  /// at all settle on false: the dot fails quiet, never stuck on.
+  Stream<bool> watchPodcastQuestionsUnseen(String serverId, String channelId);
+
+  /// Moves the viewer's cursor to [newestCreatedAt] — the newest question the
+  /// host was shown, never "now", so a question committed during the write is
+  /// not swallowed. Only ever forward; a value at or before the cursor this
+  /// client already knows writes nothing.
+  Future<void> markPodcastQuestionsSeen({
+    required String serverId,
+    required String channelId,
+    required DateTime newestCreatedAt,
+  });
+}
+
 typedef ServerCallable =
     Future<Map<Object?, Object?>> Function(
       String name,
@@ -390,6 +420,7 @@ class ServerService
         ServerEventsRepository,
         ServerPodcastEpisodeRepository,
         ServerPodcastQuestionsRepository,
+        ServerQuestionAttentionRepository,
         ServerWhiteboardRepository {
   ServerService({
     FirebaseFirestore? firestore,
@@ -1301,6 +1332,101 @@ class ServerService
     });
   }
 
+  /// The listener-questions cursors this client has read or written, keyed
+  /// `uid/{serverId}_{channelId}`, so a mark that would not move a cursor
+  /// forward is never sent.
+  final _questionSeenCursors = <String, DateTime>{};
+
+  @override
+  Stream<bool> watchPodcastQuestionsUnseen(String serverId, String channelId) {
+    _requireId(serverId);
+    _requireId(channelId);
+    final cursorId = serverQuestionSeenId(serverId, channelId);
+    if (cursorId == null) return Stream<bool>.value(false);
+    return _switchMap(_watchAccountId(), (uid) {
+      if (uid == null) return Stream<bool>.value(false);
+      final newest = _firestore
+          .collection('clubs')
+          .doc(serverId)
+          .collection('channels')
+          .doc(channelId)
+          .collection('questions')
+          .orderBy('createdAt', descending: true)
+          .limit(1)
+          .snapshots()
+          .map((snapshot) {
+            if (snapshot.docs.isEmpty) return const _NewestQuestion.none();
+            try {
+              final question = ServerPodcastQuestion.fromFirestore(
+                snapshot.docs.first,
+                serverId: serverId,
+                channelId: channelId,
+              );
+              return _NewestQuestion(question.createdAt, question.authorId);
+            } on FormatException {
+              // The board skips a document it cannot parse, so the host
+              // could never "see" it; it must not hold a dot on forever.
+              return const _NewestQuestion.none();
+            }
+          });
+      final key = '$uid/$cursorId';
+      final cursor = _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('serverQuestionSeen')
+          .doc(cursorId)
+          .snapshots()
+          .map((document) {
+            final seenAt = document.data()?['seenAt'];
+            final value = seenAt is Timestamp ? seenAt.toDate().toUtc() : null;
+            final known = _questionSeenCursors[key];
+            if (value != null && (known == null || value.isAfter(known))) {
+              _questionSeenCursors[key] = value;
+            }
+            return value;
+          });
+      return _latestUnseen(newest, cursor, uid);
+    }).distinct();
+  }
+
+  @override
+  Future<void> markPodcastQuestionsSeen({
+    required String serverId,
+    required String channelId,
+    required DateTime newestCreatedAt,
+  }) async {
+    _requireId(serverId);
+    _requireId(channelId);
+    final cursorId = serverQuestionSeenId(serverId, channelId);
+    final uid = currentUserId;
+    if (cursorId == null || uid.isEmpty) return;
+    final key = '$uid/$cursorId';
+    final seenAt = newestCreatedAt.toUtc();
+    final known = _questionSeenCursors[key];
+    if (known != null && !seenAt.isAfter(known)) return;
+    _questionSeenCursors[key] = seenAt;
+    try {
+      await _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('serverQuestionSeen')
+          .doc(cursorId)
+          .set({'seenAt': Timestamp.fromDate(seenAt)});
+    } catch (_) {
+      // Another device may already have moved the cursor further (the rules
+      // refuse a backwards write); forget the optimistic value either way so
+      // the next snapshot is what this client believes.
+      if (_questionSeenCursors[key] == seenAt) {
+        if (known == null) {
+          _questionSeenCursors.remove(key);
+        } else {
+          _questionSeenCursors[key] = known;
+        }
+      }
+      rethrow;
+    }
+  }
+
   @override
   Future<void> createPodcastQuestion({
     required String serverId,
@@ -2046,6 +2172,77 @@ Stream<List<T>> _combineNullable<T>(List<Stream<T?>> sources) {
         subscriptions.map((subscription) => subscription.cancel()),
       );
     },
+  );
+  return controller.stream;
+}
+
+/// The newest listener question of a channel, reduced to what the
+/// "new questions" dot needs. [createdAt] is null when there is none (or none
+/// that parses).
+class _NewestQuestion {
+  const _NewestQuestion(this.createdAt, this.authorId);
+  const _NewestQuestion.none() : createdAt = null, authorId = null;
+  final DateTime? createdAt;
+  final String? authorId;
+}
+
+/// Combines the newest question and the host's cursor into the dot's value.
+///
+/// It speaks only once both reads have answered, and an error in either
+/// settles on false and stops listening: a cursor that cannot be read must
+/// not leave a permanent dot, and a denied question list means there is
+/// nothing this host may be told about.
+Stream<bool> _latestUnseen(
+  Stream<_NewestQuestion> newest,
+  Stream<DateTime?> cursor,
+  String viewerId,
+) {
+  late StreamController<bool> controller;
+  StreamSubscription<_NewestQuestion>? newestSubscription;
+  StreamSubscription<DateTime?>? cursorSubscription;
+  _NewestQuestion? latest;
+  DateTime? seenAt;
+  var cursorKnown = false;
+  var failed = false;
+
+  Future<void> cancel() async {
+    await newestSubscription?.cancel();
+    await cursorSubscription?.cancel();
+  }
+
+  void emit() {
+    final question = latest;
+    if (failed || question == null || !cursorKnown) return;
+    controller.add(
+      serverPodcastQuestionsUnseen(
+        newestCreatedAt: question.createdAt,
+        newestAuthorId: question.authorId,
+        seenAt: seenAt,
+        viewerId: viewerId,
+      ),
+    );
+  }
+
+  void fail(Object _) {
+    if (failed) return;
+    failed = true;
+    controller.add(false);
+    unawaited(cancel());
+  }
+
+  controller = StreamController<bool>(
+    onListen: () {
+      newestSubscription = newest.listen((value) {
+        latest = value;
+        emit();
+      }, onError: fail);
+      cursorSubscription = cursor.listen((value) {
+        seenAt = value;
+        cursorKnown = true;
+        emit();
+      }, onError: fail);
+    },
+    onCancel: cancel,
   );
   return controller.stream;
 }

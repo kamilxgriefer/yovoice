@@ -9,6 +9,7 @@ import '../../data/models/server_channel.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
 import 'server_panel.dart';
+import 'server_waiting_dot.dart';
 
 /// One local tab of the phone surface.
 @immutable
@@ -17,12 +18,22 @@ class ServerLocalTab {
     required this.label,
     required this.icon,
     required this.key,
+    this.attentionLabel,
+    this.attentionKey,
   });
   final String label;
   final IconData icon;
 
   /// Applied to the tab's tappable region.
   final Key key;
+
+  /// When something behind this tab waits for the viewer (new listener
+  /// questions behind `Pytania`), the sentence that says so. The tab then
+  /// carries the shared [ServerWaitingDot] — keyed [attentionKey] — and reads
+  /// the sentence after its name. It is never drawn on the selected tab: the
+  /// person is already looking at what it points to. Null draws nothing.
+  final String? attentionLabel;
+  final Key? attentionKey;
 }
 
 /// The shell's own two local tabs: the channel's scene and the conversation
@@ -31,10 +42,13 @@ class ServerLocalTab {
 /// [conversationLabel] names the second tab when the conversation beside this
 /// scene is not the server's ordinary chat — board 05 reads its listeners'
 /// questions there, so the tab says so instead of `Czat`.
+/// [attentionLabel] puts the shared waiting dot on that second tab (a
+/// podcast host's unseen listener questions).
 List<ServerLocalTab> serverSceneAndChatTabs(
   BuildContext context,
   ServerChannel channel, {
   String? conversationLabel,
+  String? attentionLabel,
 }) => [
   ServerLocalTab(
     key: const ValueKey('server-tab-scene'),
@@ -45,6 +59,8 @@ List<ServerLocalTab> serverSceneAndChatTabs(
     key: const ValueKey('server-tab-chat'),
     label: conversationLabel ?? AppLocalizations.of(context).serverChat,
     icon: Icons.forum_outlined,
+    attentionLabel: attentionLabel,
+    attentionKey: const ValueKey('server-tab-chat-waiting'),
   ),
 ];
 
@@ -93,12 +109,8 @@ class ServerLocalTabs extends StatelessWidget {
           width: double.infinity,
           fontSize: 12,
           segments: [
-            for (final tab in tabs)
-              YoSegmentedPillSegment(
-                key: tab.key,
-                label: tab.label,
-                icon: roomy ? tab.icon : null,
-              ),
+            for (var index = 0; index < tabs.length; index++)
+              _segment(tabs[index], roomy, index == selectedIndex),
           ],
           selectedIndex: selectedIndex,
           onSelected: onSelected,
@@ -117,6 +129,23 @@ class ServerLocalTabs extends StatelessWidget {
       );
     },
   );
+
+  static YoSegmentedPillSegment _segment(
+    ServerLocalTab tab,
+    bool roomy,
+    bool selected,
+  ) {
+    final attention = selected ? null : tab.attentionLabel;
+    return YoSegmentedPillSegment(
+      key: tab.key,
+      label: tab.label,
+      icon: roomy ? tab.icon : null,
+      semanticLabel: attention == null ? null : '${tab.label}, $attention',
+      badge: attention == null
+          ? null
+          : ServerWaitingDot(key: tab.attentionKey, semanticLabel: attention),
+    );
+  }
 }
 
 class _IconLabelRow extends StatelessWidget {
@@ -187,10 +216,13 @@ class _IconLabelTabState extends State<_IconLabelTab> {
         ? (widget.colors?.selectedForeground ?? scheme.primary)
         : palette.textSecondary;
     final wash = widget.colors?.selectedWash ?? scheme.primaryContainer;
+    final attention = selected ? null : widget.tab.attentionLabel;
     return Semantics(
       button: true,
       selected: selected,
-      label: widget.tab.label,
+      label: attention == null
+          ? widget.tab.label
+          : '${widget.tab.label}, $attention',
       onTap: widget.onTap,
       excludeSemantics: true,
       child: Material(
@@ -218,7 +250,12 @@ class _IconLabelTabState extends State<_IconLabelTab> {
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(widget.tab.icon, size: 20, color: foreground),
+                ServerWaitingDot.on(
+                  waiting: attention != null,
+                  semanticLabel: attention ?? '',
+                  dotKey: widget.tab.attentionKey,
+                  child: Icon(widget.tab.icon, size: 20, color: foreground),
+                ),
                 const SizedBox(height: 3),
                 Text(
                   widget.tab.label,

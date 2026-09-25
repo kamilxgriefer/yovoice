@@ -1063,6 +1063,10 @@ extension ServerLocalizedCopy on AppLocalizations {
   String get serverListenerQuestions =>
       text('Listener questions', 'Pytania słuchaczy');
 
+  /// The spoken half of the "new listener questions" waiting dot.
+  String get serverQuestionsWaitingLabel =>
+      text('New listener questions', 'Nowe pytania słuchaczy');
+
   String get serverRecording => text('Recording', 'Nagrywanie audycji');
   String get serverPodcastRecordingIdle => text(
     'This live session is not being recorded.',

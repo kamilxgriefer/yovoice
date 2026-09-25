@@ -63,6 +63,7 @@ class TestServerRepository
         ServerEventsRepository,
         ServerPodcastEpisodeRepository,
         ServerPodcastQuestionsRepository,
+        ServerQuestionAttentionRepository,
         ServerFamilyCheckInRepository,
         ServerFamilyMemoryRepository,
         ServerSharedListRepository,
@@ -92,7 +93,91 @@ class TestServerRepository
   int familyMemoryPublishes = 0;
   bool followsCommunity = false;
   List<ServerPodcastQuestion> podcastQuestions = const [];
+
+  /// When set, the board's question list follows this stream instead of a
+  /// one-shot [podcastQuestions] snapshot.
+  Stream<List<ServerPodcastQuestion>>? podcastQuestionsStream;
   final podcastQuestionVotes = <String, bool>{};
+
+  /// The host's listener-questions cursors, keyed `serverId_channelId`, as
+  /// `markPodcastQuestionsSeen` moves them.
+  final questionSeenAt = <String, DateTime>{};
+
+  /// Every cursor write, in order: `(serverId, channelId, seenAt)`.
+  final questionSeenWrites = <(String, String, DateTime)>[];
+
+  /// Unseen listeners currently open, and every one ever opened.
+  int openUnseenWatches = 0;
+  int unseenWatchCount = 0;
+
+  /// Makes every unseen read fail, as a denied cursor read would.
+  Object? unseenError;
+  final _questionsChanged = StreamController<void>.broadcast();
+
+  /// Replaces the questions and tells every open unseen listener, as a new
+  /// Firestore snapshot would.
+  void setPodcastQuestions(List<ServerPodcastQuestion> questions) {
+    podcastQuestions = questions;
+    _questionsChanged.add(null);
+  }
+
+  bool _unseen(String serverId, String channelId) {
+    ServerPodcastQuestion? newest;
+    for (final question in podcastQuestions) {
+      if (question.serverId != serverId || question.channelId != channelId) {
+        continue;
+      }
+      if (newest == null || question.createdAt.isAfter(newest.createdAt)) {
+        newest = question;
+      }
+    }
+    return serverPodcastQuestionsUnseen(
+      newestCreatedAt: newest?.createdAt,
+      newestAuthorId: newest?.authorId,
+      seenAt: questionSeenAt['${serverId}_$channelId'],
+      viewerId: currentUserId,
+    );
+  }
+
+  @override
+  Stream<bool> watchPodcastQuestionsUnseen(String serverId, String channelId) {
+    late StreamController<bool> controller;
+    StreamSubscription<void>? changes;
+    controller = StreamController<bool>(
+      onListen: () {
+        openUnseenWatches++;
+        unseenWatchCount++;
+        final error = unseenError;
+        if (error != null) {
+          controller.addError(error);
+          return;
+        }
+        controller.add(_unseen(serverId, channelId));
+        changes = _questionsChanged.stream.listen(
+          (_) => controller.add(_unseen(serverId, channelId)),
+        );
+      },
+      onCancel: () {
+        openUnseenWatches--;
+        return changes?.cancel();
+      },
+    );
+    return controller.stream.distinct();
+  }
+
+  @override
+  Future<void> markPodcastQuestionsSeen({
+    required String serverId,
+    required String channelId,
+    required DateTime newestCreatedAt,
+  }) async {
+    final key = '${serverId}_$channelId';
+    final known = questionSeenAt[key];
+    if (known != null && !newestCreatedAt.isAfter(known)) return;
+    questionSeenWrites.add((serverId, channelId, newestCreatedAt));
+    questionSeenAt[key] = newestCreatedAt;
+    _questionsChanged.add(null);
+  }
   List<ServerPodcastEpisode> podcastEpisodes = const [];
   ServerPodcastRecordingState? podcastRecording;
   Stream<ServerPodcastRecordingState?>? podcastRecordingStream;
@@ -229,7 +314,7 @@ class TestServerRepository
   Stream<List<ServerPodcastQuestion>> watchPodcastQuestions(
     String serverId,
     String channelId,
-  ) => Stream.value(
+  ) => podcastQuestionsStream ?? Stream.value(
     podcastQuestions
         .where(
           (question) =>

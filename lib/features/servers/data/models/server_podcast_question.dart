@@ -122,3 +122,32 @@ String? _text(Object? value, {required int maxLength, bool safeId = false}) {
   }
   return value;
 }
+
+/// The document id of a podcast host's listener-questions cursor,
+/// `users/{uid}/serverQuestionSeen/{serverId}_{channelId}`. Null when the two
+/// ids cannot form one the rules accept, in which case nothing is read or
+/// written and no dot is drawn.
+String? serverQuestionSeenId(String serverId, String channelId) {
+  final id = '${serverId}_$channelId';
+  if (id.length > 300 || !_questionSeenIdPattern.hasMatch(id)) return null;
+  return id;
+}
+
+final _questionSeenIdPattern = RegExp(r'^[A-Za-z0-9-]+(_[A-Za-z0-9-]+)+$');
+
+/// Whether a podcast host has listener questions they have not looked at.
+///
+/// Only the newest question is known ([newestCreatedAt], [newestAuthorId]),
+/// and [seenAt] is the host's own cursor. Unseen means the newest question is
+/// later than the cursor, or there is no cursor yet. A question the viewer
+/// asked themselves is not news to them, so it never lights the dot.
+bool serverPodcastQuestionsUnseen({
+  required DateTime? newestCreatedAt,
+  required String? newestAuthorId,
+  required DateTime? seenAt,
+  required String viewerId,
+}) {
+  if (newestCreatedAt == null) return false;
+  if (viewerId.isNotEmpty && newestAuthorId == viewerId) return false;
+  return seenAt == null || newestCreatedAt.isAfter(seenAt);
+}
