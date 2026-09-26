@@ -679,3 +679,27 @@ test("every target refuses the real ping with 401 before any Firestore, Auth, St
     assert.equal(line.status, 401);
   }
 });
+
+// Regression (CI run 36217098826, Node 22): the ping's timeout used
+// AbortSignal.timeout(), whose timer is unref'd, so on a runner where nothing
+// else held the event loop open the process could finish before the timer
+// fired and the ping never settled ("Promise resolution is still pending but
+// the event loop has already resolved"). The timeout is now a ref'd timer
+// raced against the fetch, so a ping settles as "timeout" even when the fetch
+// never answers AND ignores its abort signal.
+test("a ping settles as a timeout even when the fetch never answers and ignores its signal", async () => {
+  const neverSettles = () => new Promise(() => {});
+  const { entries, log } = recordingLog();
+  const results = await pingKeepWarmTargets({
+    env: PRODUCTION_ENV,
+    fetchImpl: neverSettles,
+    log,
+    timeoutMs: 30,
+  });
+  assert.equal(results.length, EXPECTED_TARGETS.length);
+  for (const result of results) {
+    assert.equal(result.status, "timeout");
+    assert.ok(result.ms >= 0);
+  }
+  assert.ok(entries.every((entry) => entry.severity === "INFO"));
+});

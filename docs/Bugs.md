@@ -5,6 +5,20 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED — the keep-warm pinger's tests hung on Node 22 in CI (2026-09-26, `nb3/cost-cuts`, ADR-226)
+
+CI run 36217098826 on main `e09aeb07` failed "Run Firebase Functions tests": 2598 pass, 0 fail, 4 cancelled,
+all in `functions/test/keep_warm.test.js` with "Promise resolution is still pending but the event loop has
+already resolved". Cause, in the code and not the test: `pingKeepWarmTarget` used `AbortSignal.timeout()`,
+whose timer is unref'd, so when nothing else held the event loop open (Node 22 on the runner) the process
+could finish before the timeout fired and a ping to a target that never answered never settled; the other
+three tests were cancelled by the parent. It passed locally on Node 26. Fixed with a ref'd timer that both
+aborts the request and is raced against the fetch, always cleared, so a ping settles as `timeout` even if a
+fetch ignores its signal; the fetch is still issued synchronously (all twelve in flight at once). Regression
+test: "a ping settles as a timeout even when the fetch never answers and ignores its signal". Production was
+not affected in practice (a Cloud Run request keeps the loop alive), but the same hang was possible in a
+quiet runtime.
+
 ## Build 36 (YO Voice 3.1.0+36) — fixed in source on `nb/integrate`, NOT DEPLOYED
 
 Everything under this heading was found and fixed for build 36: first in the

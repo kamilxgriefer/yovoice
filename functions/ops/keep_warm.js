@@ -127,23 +127,48 @@ async function pingKeepWarmTarget(target, url, {
   const startedAt = now();
   let status;
   let response = null;
+  // A REF'D timer, not AbortSignal.timeout(): that one is unref'd, so when
+  // nothing else holds the event loop open (Node 22 in CI, a quiet runtime)
+  // the process can finish before it fires and the ping never settles. This
+  // timer both aborts the request and, through the race below, settles the
+  // ping even if a fetch ignores its signal. It is always cleared.
+  const controller = new AbortController();
+  let timer;
+  const timedOut = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const reason = new DOMException(
+        `keep-warm ping exceeded ${timeoutMs} ms`,
+        "TimeoutError",
+      );
+      controller.abort(reason);
+      reject(reason);
+    }, timeoutMs);
+  });
+  timedOut.catch(() => {});
   try {
-    response = await fetchImpl(url, {
-      method: "POST",
-      // Deliberately no Authorization and no App Check header.
-      headers: {
-        "content-type": "application/json",
-        "user-agent": KEEP_WARM_USER_AGENT,
-      },
-      body: KEEP_WARM_REQUEST_BODY,
-      redirect: "manual",
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    // fetchImpl is called synchronously (all twelve pings are in flight at
+    // once); a synchronous throw lands in the catch below.
+    response = await Promise.race([
+      fetchImpl(url, {
+        method: "POST",
+        // Deliberately no Authorization and no App Check header.
+        headers: {
+          "content-type": "application/json",
+          "user-agent": KEEP_WARM_USER_AGENT,
+        },
+        body: KEEP_WARM_REQUEST_BODY,
+        redirect: "manual",
+        signal: controller.signal,
+      }),
+      timedOut,
+    ]);
     status = Number.isSafeInteger(response?.status)
       ? response.status
       : "invalid-response";
   } catch (error) {
     status = classifyFailure(error);
+  } finally {
+    clearTimeout(timer);
   }
   const ms = Math.max(0, Math.round(now() - startedAt));
   // Release the connection; the few bytes of the 401 body are not needed.
