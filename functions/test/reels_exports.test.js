@@ -100,15 +100,14 @@ test("Reel export map registers bounded callables and private maintenance", () =
   assert.equal(created.options.retry, true);
 });
 
-test("only the two Reel publish callables keep a warm instance", () => {
-  // reserveReelDraftV2 and finalizeReelDraftV2 are the two server hops of a
-  // Reel publish; every other Reel callable scales to zero. Each name is its
-  // own Cloud Run service, so a warm instance is a per-name recurring charge
-  // (docs/DEPLOYMENT.md) and the set must not grow by accident.
-  assert.deepEqual(
-    [...REEL_WARM_CALLABLES].sort(),
-    ["finalizeReelDraftV2", "reserveReelDraftV2"],
-  );
+test("no Reel callable keeps a warm instance", () => {
+  // reserveReelDraftV2 and finalizeReelDraftV2, the two server hops of a Reel
+  // publish, kept one 512 MiB instance each until ADR-XXX; the keep-warm
+  // pinger (ops/keep_warm.js) keeps them and listReelsV2 warm instead. Each
+  // name is its own Cloud Run service, so a warm instance is a per-name
+  // recurring charge (docs/DEPLOYMENT.md) and the set must not grow by
+  // accident.
+  assert.deepEqual([...REEL_WARM_CALLABLES], []);
   const functions = createReelFunctions({
     runtime: fakeRuntime(),
     registrars: fakeRegistrars([]),

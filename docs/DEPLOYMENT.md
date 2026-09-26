@@ -4,6 +4,73 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## Cost cuts after build 36 (ADR-XXX) — source only, NOTHING DEPLOYED
+
+Source: branch `nb3/cost-cuts` on top of `main` 3.1.0+36 (`3fb4e3e4`), whose
+backend is in production. What it changes, per
+[ADR-XXX](Decisions.md#adr-xxx-no-callable-keeps-a-warm-instance-one-keep-warm-ping-holds-the-hot-paths):
+eleven exports go from `minInstances: 1` to an explicit `0` and one schedule,
+`keepWarmHotPathsSchedule`, is new. No other option of any function changes (the
+endpoint manifests of all 273 existing exports are identical apart from
+`minInstances`), and there is no rule, index, secret or schema change.
+
+**The selector names the ten functions that are warm in production plus the
+schedule — never a bare `--only functions`.** `acceptDirectCall` is not in
+it: production already runs it at 0 on its 2026-09-08 revision, and moving it
+to current code is not part of this step. Deploy in **batches of at most
+four**, because the Cloud Run regional CPU allocation is near its 200 vCPU
+quota (the build 36 deploy failed with "Quota exceeded for total allowable CPU
+per project per region" on larger batches). Use the step 0 environment of the
+build 36 order below, from a clean worktree at this branch's merged commit
+with `npm ci --omit=dev --ignore-scripts --no-audit --no-fund` in its
+`functions/`. The order keeps the direct-message and call paths warm
+throughout: the pinger is live before their minimum instance goes.
+
+```bash
+# 1. The four retired Rooms callables (C1). Not pinged.
+firebase deploy --project yovoice-ec54a --only functions:createLiveKitToken,functions:sendRoomMessage,functions:startRoomVoice,functions:setOwnRoomParticipantMute
+# 2. The pinger (creates one Cloud Scheduler job) and the Reel publish pair.
+firebase deploy --project yovoice-ec54a --only functions:keepWarmHotPathsSchedule,functions:reserveReelDraftV2,functions:finalizeReelDraftV2
+# 3. The direct-message and direct-call paths, once step 2's first run has logged 401s.
+firebase deploy --project yovoice-ec54a --only functions:startDirectCall,functions:createDirectCallToken,functions:sendDirectMessage,functions:openDirectConversation
+```
+
+No `--force`: nothing is deleted and no warm instance is added. If the CLI
+asks about anything else, stop.
+
+**Read back (read-only):**
+
+1. `minInstances` 0 on all ten, and `acceptDirectCall` unchanged:
+   `gcloud functions list --v2 --regions=europe-west1 --project=yovoice-ec54a --format=json > functions-POST-cost.json`,
+   then count the entries with `serviceConfig.minInstanceCount > 0`: **0**
+   (it was 10). `acceptDirectCall` still shows `updateTime`
+   `2026-09-08T20:19:45Z` and 0. Expect 271 functions (270 + the schedule).
+2. The job exists:
+   `gcloud scheduler jobs describe firebase-schedule-keepWarmHotPathsSchedule-europe-west1 --location=europe-west1 --project=yovoice-ec54a`
+   shows `every 5 minutes`, `UTC`, `retryCount` 0 (or unset).
+3. The first runs log a 401 from all twelve targets:
+   `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="keepwarmhotpathsschedule" AND jsonPayload.message="keep-warm ping"' --project=yovoice-ec54a --freshness=20m --format='value(severity,jsonPayload.target,jsonPayload.status,jsonPayload.ms)'`
+   — twelve INFO lines per run, every `status` 401. A `timeout`,
+   `network-error`, 404 or 5xx on any target: stop and read that target. A
+   `ms` above about 1,500 is a cold start; one per target right after a
+   deploy is expected.
+4. The alerts stay quiet. The targets' request logs for these pings
+   (`httpRequest.userAgent="yovoice-keepwarm"`) are status 401 at severity
+   WARNING; `severity>=ERROR` on `cloud_run_revision` gains nothing, so
+   "Backend ERROR logs" does not fire. A 401 is `response_code_class="4xx"`,
+   which "Backend 5xx" does not count; **no 4xx can reach the 5xx alert.**
+   Only a real 5xx from a target would, which is the alert doing its job.
+5. The next day in Billing: the two Min-Instance SKUs (CPU and memory) at
+   0.00 PLN/day, from 8.02 + 2.41 today. Over the following week the
+   `functions module evaluated` count per pinged target should fall to about
+   one a day (deploys), and the pinger's `ms` p95 stay below about 500 ms.
+
+**Rollback:** redeploy the same three batches from `3fb4e3e4` (the ten
+return to `minInstances: 1`, which needs `--force` and about 10 vCPU of the
+regional quota), then delete the schedule with
+`firebase functions:delete keepWarmHotPathsSchedule --region europe-west1 --project yovoice-ec54a`
+(a deletion: owner approval).
+
 ## Build 36 (YO Voice 3.1.0+36) — one deploy order for the whole build (source only, NOTHING DEPLOYED)
 
 Source: `nb/integrate` at `5d514a79` (the build 36 review round) plus this
@@ -2682,7 +2749,9 @@ redeployed) then `firebase deploy --only functions --force` — **180
 functions updated, 0 failed**. The `--force` was required and is a real
 cost decision: the always-on set doubles from five warm callables to ten
 (all 256 MiB), roughly **15-25 USD/month more**, on the order of 30-50 USD
-total. Reversible by redeploying those five with `minInstances: 0`. The
+total. *(Corrected 2026-09-26, ADR-XXX: each warm instance idles a full
+vCPU, about 30 PLN per 30 days at 256 MiB and 36 PLN at 512 MiB; the ten
+cost ~313 PLN per 30 days. None is warm after the cost cuts above.)* Reversible by redeploying those five with `minInstances: 0`. The
 newly warm five are `sendDirectMessage`, `sendRoomMessage`,
 `openDirectConversation`, `startRoomVoice` and `setOwnRoomParticipantMute`,
 alongside `reserveReelDraftV2` / `finalizeReelDraftV2`; see ADR-166.
@@ -2962,7 +3031,9 @@ Two options, both reversible, neither applied yet:
    privileged instance). Rough recurring cost at europe-west1 idle pricing:
    about 3–5 USD per 256 MiB instance per month, roughly 12–18 USD for the
    1 GiB one — on the order of 45–60 USD/month for the full list, less if
-   the staff pair is left cold. Update `functions/test/stage_b_bindings.test.js`
+   the staff pair is left cold. *(Corrected 2026-09-26, ADR-XXX: the real
+   figure is about 30 PLN per 256 MiB instance per 30 days, because each
+   idles a full vCPU.)* Update `functions/test/stage_b_bindings.test.js`
    (pins the two-name list) and this file; deploy with
    `firebase deploy --only functions:<names>`.
 2. **Make cold starts cheap** — split the hot callables into their own

@@ -90,9 +90,11 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 273 names (build 36
+// Every export of functions/index.js, sorted. 274 names (build 36
 // integration: 261 at the common base, +1 request to speak, +3 account
-// takeover, +8 in-app bug reports).
+// takeover, +8 in-app bug reports; then +1 keep-warm pinger).
+// 2026-09-26 (ADR-XXX, cost plan C3): keepWarmHotPathsSchedule joins the map
+// — the one schedule that replaces every minInstances warm instance.
 // 2026-09-25 (account-takeover Phase 1): onAuthUserCreated,
 // secureFederatedSignInV1 and sweepFederatedTakeoverSchedule join the map —
 // the unverified-password ledger trigger, the owner's post-sign-in
@@ -223,6 +225,7 @@ const EXPORT_NAMES = Object.freeze([
   "getVoiceMomentsFeedV2",
   "inventoryProfileMediaObjects",
   "joinServerV1",
+  "keepWarmHotPathsSchedule",
   "leaveRoomSelf",
   "leaveServerV1",
   "listAdminAuditLogs",
@@ -388,28 +391,13 @@ const EXPORT_NAMES = Object.freeze([
   "verifyPurchase",
 ]);
 
-// The complete warm set — every callable deployed with minInstances > 0 —
-// and nothing else. Each entry is one always-on Cloud Run instance billed
-// whether or not it serves a request (docs/DEPLOYMENT.md has the per-name
-// cost). Call setup: startDirectCall, acceptDirectCall,
-// createDirectCallToken and createLiveKitToken. Send paths: sendDirectMessage,
-// sendRoomMessage.
-// Chat open: openDirectConversation. Dormant-room join: startRoomVoice.
-// Unmute: setOwnRoomParticipantMute. Reel publish: reserveReelDraftV2,
-// finalizeReelDraftV2.
-const WARM_SET = Object.freeze([
-  ["acceptDirectCall", 1],
-  ["createDirectCallToken", 1],
-  ["createLiveKitToken", 1],
-  ["finalizeReelDraftV2", 1],
-  ["openDirectConversation", 1],
-  ["reserveReelDraftV2", 1],
-  ["sendDirectMessage", 1],
-  ["sendRoomMessage", 1],
-  ["setOwnRoomParticipantMute", 1],
-  ["startDirectCall", 1],
-  ["startRoomVoice", 1],
-]);
+// The complete warm set — every export deployed with minInstances > 0 — and
+// nothing else. Empty since ADR-XXX (2026-09-26): each warm instance idled a
+// full vCPU (about 30 PLN per 30 days at 256 MiB, 36 PLN at 512 MiB), ten of
+// them were 93% of the bill, and together they served 91 requests in 7 days.
+// The hot paths are kept warm by keepWarmHotPathsSchedule (ops/keep_warm.js)
+// instead. Adding an entry here is a recurring charge and an owner decision.
+const WARM_SET = Object.freeze([]);
 
 // Static Servers registration deliberately loads this exact reviewed graph on
 // every cold start. Pinning the file set makes an accidental eager provider SDK
@@ -487,8 +475,16 @@ test("Servers exposes exactly 55 base exports and no Podcast recording surface",
   assert.deepEqual(inspectColdStart().podcastRecordingExports, []);
 });
 
-test("exactly the intended callables keep a warm instance", () => {
+test("no export keeps a warm instance", () => {
   assert.deepEqual(inspectColdStart().warm, WARM_SET.map((entry) => [...entry]));
+});
+
+test("every keep-warm target is a deployed export", () => {
+  const { KEEP_WARM_TARGETS } = require("../ops/keep_warm");
+  const exported = new Set(inspectColdStart().exportNames);
+  for (const target of KEEP_WARM_TARGETS) {
+    assert.ok(exported.has(target), `${target} is not exported`);
+  }
 });
 
 test("late environment values cannot change the static Servers or GIF surface", () => {

@@ -646,7 +646,9 @@ const createLiveKitToken = onCall(
     memory: "256MiB",
     timeoutSeconds: 30,
     maxInstances: 50,
-    minInstances: 1,
+    // Retired Rooms entry point (0 requests in 7 days, cost plan C1): no warm
+    // instance (ADR-XXX). Old installs still work and pay one cold start.
+    minInstances: 0,
     secrets: [livekitApiKey, livekitApiSecret],
   },
   (request) => createLiveKitTokenHandler(request),

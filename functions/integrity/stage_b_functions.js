@@ -13,18 +13,15 @@ const {
 const { createStageBIntegrityRuntime } = require("./stage_b_runtime");
 
 const REGION = "europe-west1";
-// One warm instance each. sendDirectMessage/sendRoomMessage are the send
-// paths; openDirectConversation is the first callable on chat open and
-// startRoomVoice the first on a dormant-room join. Each name is its own
-// Cloud Run service, so warming is strictly per name. Cost is recorded in
-// docs/DEPLOYMENT.md; the list is pinned by test/stage_b_bindings.test.js and
-// test/cold_start_module_graph.test.js.
-const LATENCY_CRITICAL_USER_CALLABLES = Object.freeze([
-  "sendDirectMessage",
-  "sendRoomMessage",
-  "openDirectConversation",
-  "startRoomVoice",
-]);
+// Callables that keep one always-on instance. Empty since ADR-XXX
+// (2026-09-26): each warm instance idled a full vCPU, about 30 PLN per 30
+// days, and the two retired Rooms names (sendRoomMessage, startRoomVoice)
+// served 0 requests in 7 days. sendDirectMessage, openDirectConversation,
+// sendClubMessage and getVoiceMomentsFeedV2 are kept warm by the keep-warm
+// pinger (ops/keep_warm.js) instead. Adding a name here is a recurring
+// charge and an owner decision; the list is pinned by
+// test/stage_b_bindings.test.js and test/cold_start_module_graph.test.js.
+const LATENCY_CRITICAL_USER_CALLABLES = Object.freeze([]);
 
 function callableOptions({
   enforceAppCheck,

@@ -171,18 +171,21 @@ test("Stage B export map registers every callable, schedule and trigger", () => 
         : "scale to zero"}`,
     );
   }
-  // The warm set is exactly the two send paths plus the first callable of a
-  // chat open and of a dormant-room join. Anything added here is a recurring
-  // Cloud Run charge (docs/DEPLOYMENT.md) and must be a deliberate decision.
-  assert.deepEqual(
-    LATENCY_CRITICAL_USER_CALLABLES,
-    [
-      "sendDirectMessage",
-      "sendRoomMessage",
-      "openDirectConversation",
-      "startRoomVoice",
-    ],
-  );
+  // No Stage B callable keeps a warm instance since ADR-XXX: the direct
+  // message, Servers text and Home feed paths are kept warm by the keep-warm
+  // pinger (ops/keep_warm.js) and the two retired Rooms paths scale to zero.
+  // Anything added here is a recurring Cloud Run charge of about 30 PLN per
+  // 30 days (docs/DEPLOYMENT.md) and must be a deliberate owner decision.
+  assert.deepEqual(LATENCY_CRITICAL_USER_CALLABLES, []);
+  for (const name of [
+    "sendDirectMessage",
+    "sendRoomMessage",
+    "openDirectConversation",
+    "startRoomVoice",
+  ]) {
+    // Explicit 0, so the deploy writes it over the previous warm instance.
+    assert.equal(functions[name].options.minInstances, 0, name);
+  }
   for (const name of callableNames.filter((name) =>
     !Object.hasOwn(USER_CALLABLE_METHODS, name))) {
     assert.equal(functions[name].options.minInstances, 0);

@@ -517,8 +517,10 @@ const CALLABLE_OPTIONS = {
   timeoutSeconds: 120,
 };
 
-// Self-mute is the unmute tap's only server hop, so it keeps one warm
-// instance. It never touches the LiveKit control plane (see
+// Self-mute is the unmute tap's only server hop in a legacy room. It kept one
+// warm instance until Rooms were retired; with 0 requests in 7 days it now
+// scales to zero like every other callable (ADR-XXX, cost plan C1), and old
+// installs pay one cold start. It never touches the LiveKit control plane (see
 // executeSetOwnParticipantMute), so it binds no LiveKit secrets either: a
 // future LiveKit call added there fails with an incomplete-configuration
 // error at runtime, by design, rather than silently mounting secrets it does
@@ -527,7 +529,7 @@ const SELF_MUTE_CALLABLE_OPTIONS = Object.freeze({
   region: REGION,
   enforceAppCheck: false,
   timeoutSeconds: 120,
-  minInstances: 1,
+  minInstances: 0,
 });
 
 // firebase-functions v2 invokes every onCall handler as handler(request,

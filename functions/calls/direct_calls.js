@@ -1621,7 +1621,9 @@ const startDirectCall = onCall(
     // after an attested client build has reached the whole tester cohort.
     enforceAppCheck: false,
     maxInstances: 50,
-    minInstances: 1,
+    // No warm instance (ADR-XXX): ops/keep_warm.js pings this path every five
+    // minutes instead. Explicit 0 so a deploy writes the value.
+    minInstances: 0,
   },
   startDirectCallHandler,
 );
@@ -1630,10 +1632,11 @@ const acceptDirectCall = onCall(
     region: REGION,
     enforceAppCheck: false,
     // Answer is on the human-perceived critical path before either peer can
-    // request its installation-bound LiveKit token. One idle 256 MiB instance
-    // removes that avoidable cold start while preserving the same handler and
-    // authorization boundary.
-    minInstances: 1,
+    // request its installation-bound LiveKit token. Production has kept this
+    // at 0 since ADR-197 (2026-09-16); source now agrees, so an accidental
+    // unscoped deploy cannot add a billed warm instance. Warmth comes from the
+    // keep-warm pinger instead (ops/keep_warm.js, ADR-XXX).
+    minInstances: 0,
   },
   (request) => transitionDirectCall(request, "accept"),
 );
@@ -1656,7 +1659,8 @@ const createDirectCallToken = onCall(
     memory: "256MiB",
     timeoutSeconds: 30,
     maxInstances: 50,
-    minInstances: 1,
+    // No warm instance (ADR-XXX): kept warm by ops/keep_warm.js.
+    minInstances: 0,
     secrets: [livekitApiKey, livekitApiSecret],
   },
   (request) => createDirectCallTokenHandler(request),

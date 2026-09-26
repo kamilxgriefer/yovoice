@@ -43,11 +43,20 @@ function boundSecretNames(callable) {
     .map((secret) => secret.key);
 }
 
-test("only latency-critical call setup and answer endpoints stay warm", () => {
-  assert.equal(minInstances(createLiveKitToken), 1);
-  assert.equal(minInstances(startDirectCall), 1);
-  assert.equal(minInstances(acceptDirectCall), 1);
-  assert.equal(minInstances(createDirectCallToken), 1);
+test("no call endpoint keeps a warm instance (ADR-XXX)", () => {
+  // The four formerly warm call endpoints, and acceptDirectCall (cold in
+  // production since ADR-197), declare an EXPLICIT 0: with an explicit value
+  // the deploy writes minInstances 0 instead of leaving a live warm instance
+  // in place. The keep-warm pinger (ops/keep_warm.js) keeps the call paths
+  // warm; createLiveKitToken is the retired Rooms join and is not pinged.
+  for (const callable of [
+    createLiveKitToken,
+    startDirectCall,
+    acceptDirectCall,
+    createDirectCallToken,
+  ]) {
+    assert.equal(callable.__endpoint.minInstances, 0);
+  }
 
   for (const callable of [
     declineDirectCall,
@@ -58,15 +67,16 @@ test("only latency-critical call setup and answer endpoints stay warm", () => {
   }
 });
 
-test("self-mute is the only warm room-participant callable and mounts no LiveKit secrets", () => {
+test("self-mute scales to zero and mounts no LiveKit secrets", () => {
   // Unmute is server-first (ADR-149): the tap waits on this callable before
-  // the microphone opens, so it keeps one warm instance. Its handler never
-  // reaches the LiveKit control plane, so it binds no LiveKit secrets — a
-  // future LiveKit call added there must bring its own options object rather
-  // than silently reusing CALLABLE_OPTIONS.
-  assert.equal(SELF_MUTE_CALLABLE_OPTIONS.minInstances, 1);
+  // the microphone opens. It kept one warm instance until Rooms were retired;
+  // since ADR-XXX it declares an explicit 0 (0 requests in 7 days). Its
+  // handler never reaches the LiveKit control plane, so it binds no LiveKit
+  // secrets — a future LiveKit call added there must bring its own options
+  // object rather than silently reusing CALLABLE_OPTIONS.
+  assert.equal(SELF_MUTE_CALLABLE_OPTIONS.minInstances, 0);
   assert.equal(SELF_MUTE_CALLABLE_OPTIONS.secrets, undefined);
-  assert.equal(minInstances(setOwnRoomParticipantMute), 1);
+  assert.equal(setOwnRoomParticipantMute.__endpoint.minInstances, 0);
   assert.deepEqual(boundSecretNames(setOwnRoomParticipantMute), []);
   assert.equal(
     setOwnRoomParticipantMute.__endpoint.secretEnvironmentVariables,

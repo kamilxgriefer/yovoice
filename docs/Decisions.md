@@ -16436,3 +16436,136 @@ reviewer or the keys.
   first dry run and first real run: Xcode 26.6 on `macos-26`, the first Linux
   Gradle release build, the Play API behaviour for this app, and the
   one-approval behaviour.
+
+## ADR-XXX: No callable keeps a warm instance; one keep-warm ping holds the hot paths
+
+**Date:** 2026-09-26 · **Status:** accepted (owner: "Cut both", C1 and C3 of
+the cost plan; C2 needed no approval) · source only, **NOTHING DEPLOYED** ·
+**Supersedes** only the warm-instance part of
+[ADR-166](#adr-166-latency-is-attacked-at-the-cold-start-not-by-making-the-client-optimistic)
+(the ten-name warm set) and of
+[ADR-197](#adr-197-the-2026-09-16-owner-decisions-on-servers-exposure-warm-instances-and-the-obs-canary)
+(the ten stay warm, `acceptDirectCall` stays cold until a cost quote exists).
+The lazy SDK loading and the `functions module evaluated` log of ADR-166, and
+the Servers exposure, call-test waiver and OBS decisions of ADR-197, are
+unchanged.
+
+### Context
+
+The cost audit of 2026-09-26
+(`yovoice-evidence/2026-09-26/cost-audit/cost-plan.md`, read-only, list
+prices from the Cloud Billing Catalog) is the verified quote ADR-197 waited
+for:
+
+- The bill had been flat at **10.43 PLN/day** since 9 September: exactly 10.00
+  vCPU and 3.00 GiB, 24 hours a day. The ten `minInstances: 1` services held
+  **99.66%** of all billable instance time and cost **312.7 PLN per 30 days,
+  about 93% of the ~336 PLN total**. Real usage by the testers and the public
+  web costs about 24 PLN.
+- Each warm instance idles a **full 1 vCPU** (request-based billing is already
+  on for all 255 services): 0.802 PLN/day for the vCPU plus 0.200 PLN/day at
+  256 MiB or 0.401 PLN/day at 512 MiB, about **30 PLN (256 MiB) or 36 PLN
+  (512 MiB) per instance per 30 days**. `docs/DEPLOYMENT.md` had estimated
+  3-5 USD.
+- In 7 days the ten served **91 requests**. The four retired Rooms callables
+  (`createLiveKitToken`, `sendRoomMessage`, `startRoomVoice`,
+  `setOwnRoomParticipantMute`, 120.3 PLN) served **0**.
+- Meanwhile the paths people use were cold: the Servers voice join was cold on
+  **80%** (`startServerChannelSessionV1`) and **33%**
+  (`createServerChannelTokenV1`) of calls, `listReelsV2` on 51%,
+  `getVoiceMomentsFeedV2` on 13%. A cold module graph costs p50 **1,816 ms**,
+  p90 2,346 ms, p99 2,930 ms (n = 2,061 instance starts in 8 days), so about
+  2-3 s user-visible.
+- Under request-based billing an idle instance **above** the minimum is not
+  billed, and a request at least every 10 minutes kept one alive in practice:
+  the 1-, 2-, 5- and 10-minute schedules had 1-4 instance starts in 8 days
+  (all at deploys), the 15-minute ones were cold on 6% of runs.
+- The trial credit ends on **2026-10-21**; after that the full bill is charged.
+
+### Decision
+
+1. **C1.** The four retired Rooms callables declare `minInstances: 0`. They
+   stay deployed; old installs pay one cold start.
+2. **C2.** `acceptDirectCall` declares `minInstances: 0` in source, matching
+   production since ADR-197, so an unscoped deploy can no longer add a billed
+   instance.
+3. **C3.** The six remaining warm callables (`startDirectCall`,
+   `createDirectCallToken`, `sendDirectMessage`, `openDirectConversation`,
+   `reserveReelDraftV2`, `finalizeReelDraftV2`) declare `minInstances: 0`, and
+   one new schedule, `keepWarmHotPathsSchedule` (`functions/ops/keep_warm.js`:
+   every 5 minutes, `maxInstances` 1, 256 MiB, 60 s, `retryCount` 0), POSTs
+   `{"data":null}` with **no Authorization and no App Check header** to twelve
+   hot paths in parallel, each with a 10 s timeout:
+   `sendDirectMessage`, `openDirectConversation`, `startDirectCall`,
+   `acceptDirectCall`, `createDirectCallToken`, `startServerChannelSessionV1`,
+   `createServerChannelTokenV1`, `sendClubMessage`, `reserveReelDraftV2`,
+   `finalizeReelDraftV2`, `getVoiceMomentsFeedV2`, `listReelsV2`. The URL is
+   `https://<region>-<projectId>.cloudfunctions.net/<name>`, the form the
+   client SDK uses for `instanceFor(region: 'europe-west1')` and the one
+   `docs/DEPLOYMENT.md` records for the LiveKit webhook, with the project id
+   read in the order `scripts/servers_migration_apply_dry_run.js` reads it
+   (`GCLOUD_PROJECT`, `GOOGLE_CLOUD_PROJECT`, then `FIREBASE_CONFIG`). For
+   `yovoice-ec54a` it equals the `url` field of all twelve targets in the
+   post-build-36 read-back
+   (`yovoice-evidence/2026-09-26/build36-deploy/functions-POST.json`: all
+   twelve `ACTIVE`, ingress `ALLOW_ALL`). It logs one INFO line per
+   target, `{target, status, ms}`, and nothing else.
+4. Every export is `minInstances` 0 (the warm-set pins in
+   `test/cold_start_module_graph.test.js`, `stage_b_bindings`,
+   `reels_exports` and `latency_critical_configuration` say so). A warm
+   instance comes back only by a new owner decision.
+
+### Reasoning
+
+- **A ping can never do work.** Each target refuses an unauthenticated call
+  before any I/O: `requireAuthentication` is the first statement of
+  `startDirectCallHandler`, `transitionDirectCall` (also at the 2026-09-08
+  revision `acceptDirectCall` still runs, `585740dc`) and
+  `createDirectCallTokenHandler`; the Stage B, Reels and Servers bindings call
+  `requireActor` in `authBoundRequest` before the service or the Servers
+  activation read. `test/keep_warm.test.js` proves it on the **real export
+  map**: it serves every target through the real callable wrapper over HTTP,
+  runs the real pinger against it with every Firestore and Auth entry point
+  tripwired, and requires twelve `401 UNAUTHENTICATED` answers with zero
+  tripwire hits (a negative control shows the tripwires fire; moving one read
+  before the auth check turns the test red).
+- **The alerts stay quiet.** The callable wrapper does not log a handler's
+  `HttpsError`, and `unauthenticated` is not one of the codes `fail()` logs.
+  The only wrapper line is a DEBUG verification line. A GET or a malformed
+  body would be logged by the wrapper, so the ping is a valid POST. A 401 is a
+  4xx: Cloud Run writes a 4xx request log at WARNING (5xx at ERROR), below
+  the `severity>=ERROR` of "Backend ERROR logs", and "Backend 5xx" counts
+  only `response_code_class="5xx"`. No expected answer can reach either
+  alert; the deploy read-back confirms the WARNING severity on the first
+  runs. A real 5xx from a target would, which is the alert doing its job.
+- **Cost.** About 104,000 pings per month at one 100 ms slice each (~0.95
+  PLN), the pinger's own runs (~0.8 PLN) and one Scheduler job (0.29 PLN):
+  **about 2 PLN per month** instead of 192.3 PLN for the six instances. End
+  state **~26 PLN per 30 days (about 6 EUR) instead of ~336**, inside the
+  owner's 15 EUR ceiling for warm cost.
+- **Latency.** The DM, call and Reel publish paths keep the warmth they had
+  while the ping holds. The Servers voice join, `sendClubMessage`, call
+  accept and both feeds become warm for the first time.
+
+### Consequences
+
+- **Warmth is best-effort.** Cloud Run may recycle an idle instance at any
+  time and, unlike with `minInstances`, does not replace it proactively. The
+  pinger's `ms` is the monitor: a 401 slower than about 1.5 s was a cold
+  start. If misses appear, the interval goes to 3 minutes (about 0.6 PLN more
+  per month). The hybrid the plan offered (keep `startDirectCall` and
+  `createDirectCallToken` at 1, 60.1 PLN) was not chosen.
+- A new code path runs every 5 minutes. It never throws (a failed ping is a
+  status string, a throwing logger is swallowed) and skips itself with one
+  INFO line under the emulator or without a project id.
+- Cloud Run request logs gain about 104,000 WARNING-level 401 entries per
+  month, and the pinger about as many INFO lines: inside the Logging free
+  tier. Any future 4xx-rate alert must exclude
+  `httpRequest.userAgent="yovoice-keepwarm"`.
+- A ping to `createDirectCallToken` loads `livekit-server-sdk` on that
+  instance (the handler's default parameter requires it before the auth
+  check). That is a module load, not I/O, and a warm instance then already
+  has it.
+- Deploying the change is a name-scoped, batched deploy of the ten services
+  plus the schedule ([DEPLOYMENT.md](DEPLOYMENT.md#cost-cuts-after-build-36-adr-xxx--source-only-nothing-deployed)).
+  `acceptDirectCall` is not in it: production is already 0.

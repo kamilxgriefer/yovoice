@@ -48,13 +48,13 @@ const REEL_CALLABLE_METHODS = Object.freeze({
   reserveReelVoiceCommentDraft: "reserveReelVoiceCommentDraft",
   finalizeReelVoiceCommentDraft: "finalizeReelVoiceCommentDraft",
 });
-// The two callables on the Reel publish path keep one warm instance each;
-// every other Reel callable scales to zero. Pinned by
+// Reel callables that keep one always-on instance. Empty since ADR-XXX
+// (2026-09-26): the publish pair (reserveReelDraftV2, finalizeReelDraftV2) and
+// the feed (listReelsV2) are kept warm by the keep-warm pinger
+// (ops/keep_warm.js) instead of two 512 MiB minimum instances. Adding a name
+// is a recurring charge and an owner decision. Pinned by
 // test/reels_exports.test.js and test/cold_start_module_graph.test.js.
-const REEL_WARM_CALLABLES = Object.freeze(new Set([
-  "reserveReelDraftV2",
-  "finalizeReelDraftV2",
-]));
+const REEL_WARM_CALLABLES = Object.freeze(new Set());
 
 function createReelRuntime({
   db = null,

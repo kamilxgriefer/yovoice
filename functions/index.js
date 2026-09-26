@@ -765,6 +765,18 @@ Object.assign(exports, createBugReportFunctions({
   enforceAppCheck: false,
 }));
 
+/*
+|--------------------------------------------------------------------------
+| Keep-warm pinger (ADR-XXX, cost plan C3)
+|--------------------------------------------------------------------------
+| No callable keeps a minimum instance. Instead one schedule sends every five
+| minutes an unauthenticated, empty callable request to twelve hot paths,
+| each of which refuses it with 401 before any I/O; the idle instance that
+| request leaves behind is not billed under request-based billing.
+*/
+const { keepWarmHotPathsSchedule } = require("./ops/keep_warm");
+exports.keepWarmHotPathsSchedule = keepWarmHotPathsSchedule;
+
 // Cold-start observability. Emitted once per instance start, only inside the
 // Cloud Run / Functions runtime (K_SERVICE and FUNCTION_TARGET are set there
 // and nowhere else): tests that require this module in a child process read
