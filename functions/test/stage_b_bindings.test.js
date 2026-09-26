@@ -171,7 +171,7 @@ test("Stage B export map registers every callable, schedule and trigger", () => 
         : "scale to zero"}`,
     );
   }
-  // No Stage B callable keeps a warm instance since ADR-XXX: the direct
+  // No Stage B callable keeps a warm instance since ADR-226: the direct
   // message, Servers text and Home feed paths are kept warm by the keep-warm
   // pinger (ops/keep_warm.js) and the two retired Rooms paths scale to zero.
   // Anything added here is a recurring Cloud Run charge of about 30 PLN per

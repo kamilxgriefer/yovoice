@@ -767,7 +767,7 @@ Object.assign(exports, createBugReportFunctions({
 
 /*
 |--------------------------------------------------------------------------
-| Keep-warm pinger (ADR-XXX, cost plan C3)
+| Keep-warm pinger (ADR-226, cost plan C3)
 |--------------------------------------------------------------------------
 | No callable keeps a minimum instance. Instead one schedule sends every five
 | minutes an unauthenticated, empty callable request to twelve hot paths,

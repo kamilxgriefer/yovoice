@@ -1,7 +1,7 @@
 const { logger } = require("firebase-functions/v2");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 
-// Keep-warm pinger (ADR-XXX, cost plan C3). It replaces `minInstances: 1` on
+// Keep-warm pinger (ADR-226, cost plan C3). It replaces `minInstances: 1` on
 // the latency-critical callables: under request-based billing an idle Cloud
 // Run instance above the minimum is not billed, and a request at least every
 // ten minutes was measured to keep a min-0 instance alive (the 1-10 minute

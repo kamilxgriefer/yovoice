@@ -16437,7 +16437,7 @@ reviewer or the keys.
   Gradle release build, the Play API behaviour for this app, and the
   one-approval behaviour.
 
-## ADR-XXX: No callable keeps a warm instance; one keep-warm ping holds the hot paths
+## ADR-226: No callable keeps a warm instance; one keep-warm ping holds the hot paths
 
 **Date:** 2026-09-26 · **Status:** accepted (owner: "Cut both", C1 and C3 of
 the cost plan; C2 needed no approval) · source only, **NOTHING DEPLOYED** ·
@@ -16589,5 +16589,5 @@ for:
 - Deploying the change is a name-scoped deploy of the ten services plus the
   schedule, in batches of at most three (the only size measured to succeed
   under the regional CPU quota during the build 36 deploy), with the
-  schedule deployed alone and read back before any warm path goes to 0 ([DEPLOYMENT.md](DEPLOYMENT.md#cost-cuts-after-build-36-adr-xxx--source-only-nothing-deployed)).
+  schedule deployed alone and read back before any warm path goes to 0 ([DEPLOYMENT.md](DEPLOYMENT.md#cost-cuts-after-build-36-adr-226--source-only-nothing-deployed)).
   `acceptDirectCall` is not in it: production is already 0.

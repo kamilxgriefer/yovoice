@@ -1,6 +1,6 @@
 "use strict";
 
-// The keep-warm pinger (ops/keep_warm.js, ADR-XXX, cost plan C3) replaces
+// The keep-warm pinger (ops/keep_warm.js, ADR-226, cost plan C3) replaces
 // every minInstances warm instance with one five-minute schedule that sends
 // an unauthenticated, empty callable request to twelve hot paths. Three
 // properties make that safe, and each is proved here:

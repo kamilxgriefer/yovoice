@@ -519,7 +519,7 @@ const CALLABLE_OPTIONS = {
 
 // Self-mute is the unmute tap's only server hop in a legacy room. It kept one
 // warm instance until Rooms were retired; with 0 requests in 7 days it now
-// scales to zero like every other callable (ADR-XXX, cost plan C1), and old
+// scales to zero like every other callable (ADR-226, cost plan C1), and old
 // installs pay one cold start. It never touches the LiveKit control plane (see
 // executeSetOwnParticipantMute), so it binds no LiveKit secrets either: a
 // future LiveKit call added there fails with an incomplete-configuration

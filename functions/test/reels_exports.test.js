@@ -102,7 +102,7 @@ test("Reel export map registers bounded callables and private maintenance", () =
 
 test("no Reel callable keeps a warm instance", () => {
   // reserveReelDraftV2 and finalizeReelDraftV2, the two server hops of a Reel
-  // publish, kept one 512 MiB instance each until ADR-XXX; the keep-warm
+  // publish, kept one 512 MiB instance each until ADR-226; the keep-warm
   // pinger (ops/keep_warm.js) keeps them and listReelsV2 warm instead. Each
   // name is its own Cloud Run service, so a warm instance is a per-name
   // recurring charge (docs/DEPLOYMENT.md) and the set must not grow by

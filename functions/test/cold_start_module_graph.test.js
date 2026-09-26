@@ -93,7 +93,7 @@ function inspectColdStart() {
 // Every export of functions/index.js, sorted. 274 names (build 36
 // integration: 261 at the common base, +1 request to speak, +3 account
 // takeover, +8 in-app bug reports; then +1 keep-warm pinger).
-// 2026-09-26 (ADR-XXX, cost plan C3): keepWarmHotPathsSchedule joins the map
+// 2026-09-26 (ADR-226, cost plan C3): keepWarmHotPathsSchedule joins the map
 // — the one schedule that replaces every minInstances warm instance.
 // 2026-09-25 (account-takeover Phase 1): onAuthUserCreated,
 // secureFederatedSignInV1 and sweepFederatedTakeoverSchedule join the map —
@@ -392,7 +392,7 @@ const EXPORT_NAMES = Object.freeze([
 ]);
 
 // The complete warm set — every export deployed with minInstances > 0 — and
-// nothing else. Empty since ADR-XXX (2026-09-26): each warm instance idled a
+// nothing else. Empty since ADR-226 (2026-09-26): each warm instance idled a
 // full vCPU (about 30 PLN per 30 days at 256 MiB, 36 PLN at 512 MiB), ten of
 // them were 93% of the bill, and together they served 91 requests in 7 days.
 // The hot paths are kept warm by keepWarmHotPathsSchedule (ops/keep_warm.js)

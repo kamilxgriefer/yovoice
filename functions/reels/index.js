@@ -48,7 +48,7 @@ const REEL_CALLABLE_METHODS = Object.freeze({
   reserveReelVoiceCommentDraft: "reserveReelVoiceCommentDraft",
   finalizeReelVoiceCommentDraft: "finalizeReelVoiceCommentDraft",
 });
-// Reel callables that keep one always-on instance. Empty since ADR-XXX
+// Reel callables that keep one always-on instance. Empty since ADR-226
 // (2026-09-26): the publish pair (reserveReelDraftV2, finalizeReelDraftV2) and
 // the feed (listReelsV2) are kept warm by the keep-warm pinger
 // (ops/keep_warm.js) instead of two 512 MiB minimum instances. Adding a name

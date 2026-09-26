@@ -43,7 +43,7 @@ function boundSecretNames(callable) {
     .map((secret) => secret.key);
 }
 
-test("no call endpoint keeps a warm instance (ADR-XXX)", () => {
+test("no call endpoint keeps a warm instance (ADR-226)", () => {
   // The four formerly warm call endpoints, and acceptDirectCall (cold in
   // production since ADR-197), declare an EXPLICIT 0: with an explicit value
   // the deploy writes minInstances 0 instead of leaving a live warm instance
@@ -70,7 +70,7 @@ test("no call endpoint keeps a warm instance (ADR-XXX)", () => {
 test("self-mute scales to zero and mounts no LiveKit secrets", () => {
   // Unmute is server-first (ADR-149): the tap waits on this callable before
   // the microphone opens. It kept one warm instance until Rooms were retired;
-  // since ADR-XXX it declares an explicit 0 (0 requests in 7 days). Its
+  // since ADR-226 it declares an explicit 0 (0 requests in 7 days). Its
   // handler never reaches the LiveKit control plane, so it binds no LiveKit
   // secrets — a future LiveKit call added there must bring its own options
   // object rather than silently reusing CALLABLE_OPTIONS.

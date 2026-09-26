@@ -13,7 +13,7 @@ const {
 const { createStageBIntegrityRuntime } = require("./stage_b_runtime");
 
 const REGION = "europe-west1";
-// Callables that keep one always-on instance. Empty since ADR-XXX
+// Callables that keep one always-on instance. Empty since ADR-226
 // (2026-09-26): each warm instance idled a full vCPU, about 30 PLN per 30
 // days, and the two retired Rooms names (sendRoomMessage, startRoomVoice)
 // served 0 requests in 7 days. sendDirectMessage, openDirectConversation,

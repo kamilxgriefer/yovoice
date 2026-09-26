@@ -4,11 +4,11 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
-## Cost cuts after build 36 (ADR-XXX) — source only, NOTHING DEPLOYED
+## Cost cuts after build 36 (ADR-226) — source only, NOTHING DEPLOYED
 
 Source: branch `nb3/cost-cuts` on top of `main` 3.1.0+36 (`3fb4e3e4`), whose
 backend is in production. What it changes, per
-[ADR-XXX](Decisions.md#adr-xxx-no-callable-keeps-a-warm-instance-one-keep-warm-ping-holds-the-hot-paths):
+[ADR-226](Decisions.md#adr-226-no-callable-keeps-a-warm-instance-one-keep-warm-ping-holds-the-hot-paths):
 eleven exports go from `minInstances: 1` to an explicit `0` and one schedule,
 `keepWarmHotPathsSchedule`, is new. No other option of any function changes (the
 endpoint manifests of all 273 existing exports are identical apart from
@@ -2780,7 +2780,7 @@ redeployed) then `firebase deploy --only functions --force` — **180
 functions updated, 0 failed**. The `--force` was required and is a real
 cost decision: the always-on set doubles from five warm callables to ten
 (all 256 MiB), roughly **15-25 USD/month more**, on the order of 30-50 USD
-total. *(Corrected 2026-09-26, ADR-XXX: each warm instance idles a full
+total. *(Corrected 2026-09-26, ADR-226: each warm instance idles a full
 vCPU, about 30 PLN per 30 days at 256 MiB and 36 PLN at 512 MiB; the ten
 cost ~313 PLN per 30 days. None is warm after the cost cuts above.)* Reversible by redeploying those five with `minInstances: 0`. The
 newly warm five are `sendDirectMessage`, `sendRoomMessage`,
@@ -3062,7 +3062,7 @@ Two options, both reversible, neither applied yet:
    privileged instance). Rough recurring cost at europe-west1 idle pricing:
    about 3–5 USD per 256 MiB instance per month, roughly 12–18 USD for the
    1 GiB one — on the order of 45–60 USD/month for the full list, less if
-   the staff pair is left cold. *(Corrected 2026-09-26, ADR-XXX: the real
+   the staff pair is left cold. *(Corrected 2026-09-26, ADR-226: the real
    figure is about 30 PLN per 256 MiB instance per 30 days, because each
    idles a full vCPU.)* Update `functions/test/stage_b_bindings.test.js`
    (pins the two-name list) and this file; deploy with
