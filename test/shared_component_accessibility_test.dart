@@ -143,7 +143,9 @@ void main() {
                 .decoration!
             as BoxDecoration;
     expect(disabledDecoration.gradient, isNull);
-    expect(disabledDecoration.color, AppPalette.light.surfaceMuted);
+    // Refine-look R5: a disabled primary action is a flat `surfaceSunken`
+    // fill (it was `surfaceMuted` with a 1 px edge before batch 3).
+    expect(disabledDecoration.color, AppPalette.light.surfaceSunken);
 
     final enabledDecoration =
         tester
@@ -170,6 +172,8 @@ void main() {
 
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.pump();
+    // The focus ring is painted as the foreground since refine-look batch 3
+    // (so focusing never moves the label); same 2 px `onPrimary` ring.
     final focusedDecoration =
         tester
                 .widget<AnimatedContainer>(
@@ -180,7 +184,7 @@ void main() {
                       )
                       .first,
                 )
-                .decoration!
+                .foregroundDecoration!
             as BoxDecoration;
     expect(
       (focusedDecoration.border! as Border).top.color,
