@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
@@ -22,6 +25,7 @@ class ServerPodcastQuestionsBoard extends StatefulWidget {
     required this.repository,
     required this.role,
     this.compact = false,
+    this.isVisible,
     super.key,
   });
 
@@ -31,20 +35,51 @@ class ServerPodcastQuestionsBoard extends StatefulWidget {
   final ServerMemberRole? role;
   final bool compact;
 
+  /// Whether the shell slot holding this board is on screen (the workspace's
+  /// own `isVisible`). A host's "seen" cursor moves only while the list is
+  /// actually in front of them: this is true, the app is resumed and no route
+  /// covers the board. Null means always visible.
+  final ValueListenable<bool>? isVisible;
+
+  /// How long a burst of new questions is gathered before the host's cursor
+  /// moves once, to the newest of them.
+  static const seenDebounce = Duration(milliseconds: 800);
+
   @override
   State<ServerPodcastQuestionsBoard> createState() =>
       _ServerPodcastQuestionsBoardState();
 }
 
 class _ServerPodcastQuestionsBoardState
-    extends State<ServerPodcastQuestionsBoard> {
+    extends State<ServerPodcastQuestionsBoard>
+    with WidgetsBindingObserver {
   final _composer = TextEditingController();
   String? _busyId;
   String? _error;
 
+  /// One subscription for the life of this channel, not one per rebuild.
+  Stream<List<ServerPodcastQuestion>>? _stream;
+  String? _streamKey;
+
+  /// The ticker switch the overlay and the retained slots already set: off
+  /// while a route covers this board or its slot is hidden.
+  ValueListenable<TickerModeData>? _ticker;
+  bool _resumed = true;
+
+  /// The newest question shown and not yet written to the host's cursor, the
+  /// last value written, and the debounce between them.
+  DateTime? _unmarked;
+  DateTime? _marked;
+  Timer? _seenTimer;
+
   ServerPodcastQuestionsRepository? get _questions =>
       widget.repository is ServerPodcastQuestionsRepository
       ? widget.repository as ServerPodcastQuestionsRepository
+      : null;
+
+  ServerQuestionAttentionRepository? get _attention =>
+      widget.repository is ServerQuestionAttentionRepository
+      ? widget.repository as ServerQuestionAttentionRepository
       : null;
 
   bool get _canAsk =>
@@ -52,10 +87,126 @@ class _ServerPodcastQuestionsBoardState
       widget.role != ServerMemberRole.guest &&
       !widget.server.isHeld;
 
+  bool get _hostsQuestions =>
+      (widget.role?.canModerate ?? false) &&
+      !widget.server.isHeld &&
+      _attention != null;
+
+  bool get _onScreen =>
+      _resumed &&
+      (widget.isVisible?.value ?? true) &&
+      (_ticker?.value.enabled ?? true);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _resumed = lifecycle == null || lifecycle == AppLifecycleState.resumed;
+    widget.isVisible?.addListener(_scheduleSeen);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final ticker = TickerMode.getValuesNotifier(context);
+    if (!identical(ticker, _ticker)) {
+      _ticker?.removeListener(_scheduleSeen);
+      _ticker = ticker..addListener(_scheduleSeen);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ServerPodcastQuestionsBoard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isVisible != widget.isVisible) {
+      oldWidget.isVisible?.removeListener(_scheduleSeen);
+      widget.isVisible?.addListener(_scheduleSeen);
+    }
+    if (oldWidget.server.id != widget.server.id ||
+        oldWidget.channel.id != widget.channel.id) {
+      _seenTimer?.cancel();
+      _unmarked = null;
+      _marked = null;
+    }
+    _scheduleSeen();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _resumed = state == AppLifecycleState.resumed;
+    _scheduleSeen();
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    widget.isVisible?.removeListener(_scheduleSeen);
+    _ticker?.removeListener(_scheduleSeen);
+    _seenTimer?.cancel();
     _composer.dispose();
     super.dispose();
+  }
+
+  Stream<List<ServerPodcastQuestion>> _questionsOf(
+    ServerPodcastQuestionsRepository service,
+  ) {
+    final key = '${widget.server.id}/${widget.channel.id}';
+    if (_stream == null || _streamKey != key) {
+      _streamKey = key;
+      _stream = service.watchPodcastQuestions(
+        widget.server.id,
+        widget.channel.id,
+      );
+    }
+    return _stream!;
+  }
+
+  /// The host has this list in front of them: remember its newest question
+  /// so the "new questions" dot can clear (ADR "listener questions dot").
+  void _noteShown(List<ServerPodcastQuestion> questions) {
+    if (!_hostsQuestions || questions.isEmpty) return;
+    // The list is ordered by votes, not by time.
+    var newest = questions.first.createdAt;
+    for (final question in questions) {
+      if (question.createdAt.isAfter(newest)) newest = question.createdAt;
+    }
+    final known = _unmarked ?? _marked;
+    if (known != null && !newest.isAfter(known)) return;
+    _unmarked = newest;
+    _scheduleSeen();
+  }
+
+  void _scheduleSeen() {
+    if (!mounted) return;
+    if (_unmarked == null || !_hostsQuestions || !_onScreen) {
+      _seenTimer?.cancel();
+      _seenTimer = null;
+      return;
+    }
+    _seenTimer ??= Timer(ServerPodcastQuestionsBoard.seenDebounce, _markSeen);
+  }
+
+  void _markSeen() {
+    _seenTimer = null;
+    final attention = _attention;
+    final newest = _unmarked;
+    if (!mounted || attention == null || newest == null) return;
+    if (!_hostsQuestions || !_onScreen) return;
+    _unmarked = null;
+    _marked = newest;
+    unawaited(
+      attention
+          .markPodcastQuestionsSeen(
+            serverId: widget.server.id,
+            channelId: widget.channel.id,
+            newestCreatedAt: newest,
+          )
+          .catchError((Object _) {
+            // A refused or failed write leaves the dot to its next snapshot;
+            // nothing here is worth an error line over the list.
+          }),
+    );
   }
 
   Future<bool> _run(String id, Future<void> Function() action) async {
@@ -111,10 +262,7 @@ class _ServerPodcastQuestionsBoardState
     return Material(
       color: Colors.transparent,
       child: StreamBuilder<List<ServerPodcastQuestion>>(
-        stream: service.watchPodcastQuestions(
-          widget.server.id,
-          widget.channel.id,
-        ),
+        stream: _questionsOf(service),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return Center(
@@ -131,6 +279,7 @@ class _ServerPodcastQuestionsBoardState
             return const Center(child: CircularProgressIndicator());
           }
           final questions = snapshot.data!;
+          _noteShown(questions);
           final horizontal = widget.compact ? 12.0 : 16.0;
           return CustomScrollView(
             key: const ValueKey('server-podcast-questions-board'),

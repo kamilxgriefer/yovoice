@@ -23,7 +23,16 @@ service firebase.storage {
           firestore.get(userPath).data.get('disabled', false) != true &&
           firestore.get(userPath).data.get('deleted', false) != true &&
           firestore.get(userPath).data.get('status', '') != 'deleted' &&
-          !firestore.get(userPath).data.keys().hasAny(['authDeletedAt']);
+          !firestore.get(userPath).data.keys().hasAny(['authDeletedAt']) &&
+          // Session epoch (pre-registered account takeover, Phase 1): a
+          // session that signed in before the account was remediated is
+          // refused here, as it is on the push-token write in
+          // firestore.rules. Same document, so no extra cross-service read.
+          !(
+            firestore.get(userPath).data.get('authSessionEpoch', null) is int &&
+            request.auth.token.get('auth_time', 0) <
+              firestore.get(userPath).data.authSessionEpoch
+          );
     }
 
     function isAllowedImageType() {
@@ -492,6 +501,166 @@ service firebase.storage {
       allow list: if false;
       allow create: if resource == null && isVerified() && isActiveUser(userId) &&
           exactReservedFile(
+            request.resource.size,
+            request.resource.contentType,
+            request.resource.metadata
+          );
+      allow update, delete: if false;
+    }
+
+    // Photo and video messages in Servers V1 text channels. The upload
+    // capability is ONE live, server-issued reservation
+    // (serverMessageMediaUploadReservations/{messageId}, written only by
+    // reserveServerChannelMessageMediaV1 after the channel's write check); the
+    // path alone grants nothing. The reservation is the second and last
+    // cross-service document (the first is the account-status read), so these
+    // rules cannot evaluate the channel ACL: a viewer never reads bytes here.
+    // Published media is served only by getServerChannelMessageMediaAccessV1,
+    // which re-runs the channel ACL and returns 90-second generation-bound V4
+    // URLs. Bounds are the direct-message ones: image jpeg/png/webp
+    // 128 B-8 MiB, video mp4/quicktime/webm 1 KiB-64 MiB, 1-60 s.
+    match /server_message_media/{serverId}/{channelId}/{userId}/{fileName} {
+      function reservationPath(metadata) {
+        return /databases/(default)/documents/serverMessageMediaUploadReservations/$(metadata.get('yovoiceMessageId', ''));
+      }
+
+      function exactMetadata(metadata) {
+        let messageId = metadata.get('yovoiceMessageId', '');
+        return metadata.keys().hasOnly([
+              'yovoiceServerId', 'yovoiceChannelId', 'yovoiceOwnerUid',
+              'yovoiceMessageId', 'yovoiceMessagePath', 'yovoiceMediaType'
+            ]) &&
+            metadata.get('yovoiceServerId', '') == serverId &&
+            metadata.get('yovoiceChannelId', '') == channelId &&
+            metadata.get('yovoiceOwnerUid', '') == userId &&
+            messageId.matches('cm_[a-f0-9]{40}') &&
+            metadata.get('yovoiceMessagePath', '') ==
+              'clubs/' + serverId + '/channels/' + channelId + '/messages/' + messageId &&
+            metadata.get('yovoiceMediaType', '') in ['image', 'video'];
+      }
+
+      function boundedMedia(size, contentType, metadata) {
+        let messageId = metadata.get('yovoiceMessageId', '');
+        let type = metadata.get('yovoiceMediaType', '');
+        return (
+              type == 'image' && size >= 128 && size <= 8 * 1024 * 1024 &&
+              (
+                (fileName == messageId + '.jpg' && contentType == 'image/jpeg') ||
+                (fileName == messageId + '.png' && contentType == 'image/png') ||
+                (fileName == messageId + '.webp' && contentType == 'image/webp')
+              )
+            ) || (
+              type == 'video' && size >= 1024 && size <= 64 * 1024 * 1024 &&
+              (
+                (fileName == messageId + '.mp4' && contentType == 'video/mp4') ||
+                (fileName == messageId + '.mov' && contentType == 'video/quicktime') ||
+                (fileName == messageId + '.webm' && contentType == 'video/webm')
+              )
+            );
+      }
+
+      function liveReservation(metadata, size, contentType) {
+        let path = reservationPath(metadata);
+        let reservation = firestore.get(path).data;
+        return firestore.exists(path) &&
+            reservation.keys().hasOnly([
+              'schemaVersion', 'kind', 'serverId', 'channelId', 'messageId',
+              'ownerId', 'requestId', 'type', 'contentType', 'size',
+              'durationSeconds', 'storagePath', 'status', 'createdAt', 'expiresAt'
+            ]) &&
+            reservation.schemaVersion == 1 &&
+            reservation.kind == 'serverChannelMessageMedia' &&
+            reservation.serverId == serverId &&
+            reservation.channelId == channelId &&
+            reservation.messageId == metadata.get('yovoiceMessageId', '') &&
+            reservation.ownerId == userId &&
+            reservation.storagePath ==
+              'server_message_media/' + serverId + '/' + channelId + '/' + userId + '/' + fileName &&
+            reservation.contentType == contentType &&
+            reservation.size == size &&
+            reservation.type == metadata.get('yovoiceMediaType', '') &&
+            (
+              (reservation.type == 'image' && reservation.durationSeconds == null) ||
+              (
+                reservation.type == 'video' &&
+                reservation.durationSeconds is int &&
+                reservation.durationSeconds >= 1 &&
+                reservation.durationSeconds <= 60
+              )
+            ) &&
+            reservation.status == 'uploading' &&
+            reservation.expiresAt is timestamp &&
+            reservation.expiresAt > request.time;
+      }
+
+      function exactReservedMedia(size, contentType, metadata) {
+        return exactMetadata(metadata) &&
+            boundedMedia(size, contentType, metadata) &&
+            liveReservation(metadata, size, contentType);
+      }
+
+      // Upload recovery only: the uploader, while their reservation is live.
+      allow get: if isActiveUser(userId) && resource != null &&
+          exactReservedMedia(resource.size, resource.contentType, resource.metadata);
+      allow list: if false;
+      allow create: if resource == null && isVerified() && isActiveUser(userId) &&
+          exactReservedMedia(
+            request.resource.size,
+            request.resource.contentType,
+            request.resource.metadata
+          );
+      allow update, delete: if false;
+    }
+
+    // In-app bug report screenshots. The upload capability is ONE live,
+    // server-issued reservation (bugReportUploadReservations/{reportId},
+    // written only by submitBugReportV1 after its rate limits); the path alone
+    // grants nothing. Exactly one JPEG of 128 B-1.5 MB, named after the
+    // report, with exactly the reserved metadata. The reservation is the
+    // second and last cross-service document (the first is the account-status
+    // read). E-mail verification is deliberately NOT required: a tester stuck
+    // before verification must be able to report, and the server-side rate
+    // limit on reservations bounds the surface. The owner reads the bytes only
+    // through getBugReportV1's 5-minute generation-bound V4 URL; the uploader
+    // may read their own object back only while the reservation is live
+    // (upload recovery). Nobody lists, updates or deletes.
+    match /bug_reports/{userId}/{fileName} {
+      function reservationPath(metadata) {
+        return /databases/(default)/documents/bugReportUploadReservations/$(metadata.get('yovoiceReportId', ''));
+      }
+
+      function exactReservedScreenshot(size, contentType, metadata) {
+        let reportId = metadata.get('yovoiceReportId', '');
+        let path = reservationPath(metadata);
+        let reservation = firestore.get(path).data;
+        return metadata.keys().hasOnly(['yovoiceOwnerUid', 'yovoiceReportId']) &&
+            metadata.get('yovoiceOwnerUid', '') == userId &&
+            reportId.matches('br_[a-f0-9]{40}') &&
+            fileName == reportId + '.jpg' &&
+            contentType == 'image/jpeg' &&
+            size >= 128 && size <= 1500000 &&
+            firestore.exists(path) &&
+            reservation.keys().hasOnly([
+              'schemaVersion', 'kind', 'reportId', 'ownerId', 'contentType',
+              'size', 'storagePath', 'status', 'createdAt', 'expiresAt'
+            ]) &&
+            reservation.schemaVersion == 1 &&
+            reservation.kind == 'bugReportScreenshot' &&
+            reservation.reportId == reportId &&
+            reservation.ownerId == userId &&
+            reservation.storagePath == 'bug_reports/' + userId + '/' + fileName &&
+            reservation.contentType == contentType &&
+            reservation.size == size &&
+            reservation.status == 'uploading' &&
+            reservation.expiresAt is timestamp &&
+            reservation.expiresAt > request.time;
+      }
+
+      allow get: if isActiveUser(userId) && resource != null &&
+          exactReservedScreenshot(resource.size, resource.contentType, resource.metadata);
+      allow list: if false;
+      allow create: if resource == null && isActiveUser(userId) &&
+          exactReservedScreenshot(
             request.resource.size,
             request.resource.contentType,
             request.resource.metadata

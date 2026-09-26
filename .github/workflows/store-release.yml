@@ -1,0 +1,927 @@
+name: Store release (Play internal + TestFlight)
+
+# Manual only. Builds YO Voice for the stores from one commit that is already
+# on main, signs it, and uploads it: Android to the Play INTERNAL testing
+# track, iOS to App Store Connect / TestFlight. Dry run is the default and
+# builds with no secret at all. Setup, secrets and the release procedure:
+# docs/RELEASE_CI.md. Decision record: docs/Decisions.md (ADR-225, "Store builds
+# come from a manually dispatched, reviewer-gated workflow").
+#
+# Rules this file keeps, because the repository is PUBLIC (logs and artifacts
+# are world-readable):
+# - Inputs reach scripts only through env:. No ${{ }} expression appears inside
+#   a run: block (tool/test/release_workflow.test.mjs enforces this).
+# - Secrets live only in the protected "store-release" environment, are passed
+#   to the single step that needs them, are written under RUNNER_TEMP with
+#   umask 077 and removed in always() steps. Nothing echoes them, and there is
+#   no `set -x` anywhere.
+# - No signed binary, and no binary at all, is uploaded as an artifact. Hashes
+#   go to the job summary instead.
+# - No cache is read or written by any job, so nothing a fork pull request run
+#   could influence reaches a job that holds a signing key.
+# - The release tooling (tool/release) always comes from the workflow commit on
+#   main; the app comes from `ref`. Tooling is never run from `ref`.
+# - One approval per release: the Android and iOS jobs both wait on
+#   "store-release" at the same moment, right after preflight, and one review
+#   approves both. Processing is polled inside the iOS job, so no later job asks
+#   again.
+
+run-name: >-
+  Store release ${{ inputs.build_number }}
+  (${{ inputs.dry_run && 'dry run' || 'REAL' }}, ${{ inputs.platforms }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Full 40-character SHA of the commit on main to release.
+        required: true
+        type: string
+      build_number:
+        description: Build number. Must equal the +N in pubspec.yaml at ref.
+        required: true
+        type: string
+      platforms:
+        description: Which stores.
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - android
+          - ios
+      dry_run:
+        description: Dry run. Builds unsigned with no secret and uploads nothing. Untick only for a real release.
+        required: true
+        default: true
+        type: boolean
+      play_release_status:
+        description: Status of the Play internal-track release. draft = uploaded but not rolled out.
+        required: true
+        default: draft
+        type: choice
+        options:
+          - draft
+          - completed
+      backend_confirmed:
+        description: Functions, rules or indexes changed since the last store release and were deployed and read back first.
+        required: true
+        default: false
+        type: boolean
+      web_confirmed:
+        description: Hosting was deployed from this SHA outside the deploy_hosting job, or the web/store skew is deliberate.
+        required: true
+        default: false
+        type: boolean
+      since_ref:
+        description: Optional baseline SHA for the backend check. Empty = the newest store-build-N tag below this build.
+        required: false
+        default: ''
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: yovoice-store-release-${{ inputs.dry_run && 'dry-run' || 'release' }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  FLUTTER_VERSION: 3.44.6
+  XCODE_VERSION: '26.6'
+  COCOAPODS_VERSION: 1.17.0
+  ANDROID_PACKAGE: app.yovoice
+  IOS_BUNDLE_ID: app.yovoice
+  APPLE_TEAM_ID: C3R59P53KB
+  ASC_APP_ID: '6801898909'
+  IOS_PROFILE_NAME: YO Voice App Store
+  # The upload certificate Google Play has registered for app.yovoice
+  # (docs/DEPLOYMENT.md, Build 33 Android record). Public by nature.
+  UPLOAD_CERT_SHA256: 75:3A:AC:CB:B2:8E:65:0B:54:A5:EB:F0:F2:A6:CB:AA:23:3C:5E:B0:EF:00:FB:37:90:83:8E:6E:44:51:AE:1E
+
+jobs:
+  preflight:
+    name: Preflight (no secrets)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      checks: read
+      # Workflow runs on ref: only check runs from push or dispatch runs on
+      # main count toward the CI and Hosting gates (tool/release/preflight.mjs).
+      actions: read
+    outputs:
+      sha: ${{ steps.gates.outputs.sha }}
+      build_name: ${{ steps.gates.outputs.build_name }}
+      build_number: ${{ steps.gates.outputs.build_number }}
+
+    steps:
+      - name: Check out main with full history and tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Test the release tooling
+        run: node --test tool/test/release_*.test.mjs
+
+      - name: Run the release gates
+        id: gates
+        env:
+          RELEASE_REF: ${{ inputs.ref }}
+          RELEASE_BUILD_NUMBER: ${{ inputs.build_number }}
+          RELEASE_PLATFORMS: ${{ inputs.platforms }}
+          RELEASE_DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_PLAY_STATUS: ${{ inputs.play_release_status }}
+          RELEASE_BACKEND_CONFIRMED: ${{ inputs.backend_confirmed }}
+          RELEASE_WEB_CONFIRMED: ${{ inputs.web_confirmed }}
+          RELEASE_SINCE_REF: ${{ inputs.since_ref }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tool/release/preflight.mjs
+
+  # ---------------------------------------------------------------------------
+  # Dry run: no environment, no secret referenced anywhere in these two jobs.
+
+  android_dry_run:
+    name: Android dry run (throwaway key, no upload)
+    needs: preflight
+    if: ${{ inputs.dry_run && inputs.platforms != 'ios' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out the release tooling (workflow commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tooling
+          sparse-checkout: tool/release
+          persist-credentials: false
+
+      - name: Check out the app at the release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          path: app
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: false
+
+      - name: Install dependencies and verify generated sound assets
+        working-directory: app
+        run: |
+          flutter --version
+          flutter pub get
+          python3 tool/generate_ui_sounds.py --check
+
+      # android/app/build.gradle.kts refuses to configure without a keystore at
+      # android/app/yovoice-upload-keystore.jks and, off macOS, without
+      # YOVOICE_UPLOAD_KEY_PASSWORD. This key is generated here, has nothing to
+      # do with the upload key, and dies with the runner.
+      - name: Create a throwaway signing key (not the upload key)
+        run: |
+          umask 077
+          password="$(openssl rand -hex 24)"
+          echo "::add-mask::${password}"
+          keytool -genkeypair -keystore "${RUNNER_TEMP}/throwaway.jks" -storetype PKCS12 \
+            -alias upload -keyalg RSA -keysize 2048 -validity 2 \
+            -dname "CN=YO Voice CI dry run, O=Not the upload key" \
+            -storepass "${password}" -keypass "${password}" >/dev/null 2>&1
+          ln -s "${RUNNER_TEMP}/throwaway.jks" app/android/app/yovoice-upload-keystore.jks
+          echo "YOVOICE_UPLOAD_KEY_PASSWORD=${password}" >> "${GITHUB_ENV}"
+
+      # The Crashlytics Gradle plugin uploads the R8 mapping file of a minified
+      # release build to the live Firebase project. A dry run ships nothing, so
+      # this runner-only init script (no android/ edit) disables every
+      # uploadCrashlyticsMappingFile* task and records which ones it saw. The
+      # real Android job does not get it: real releases keep their mappings.
+      - name: Keep the dry run from uploading a Crashlytics mapping file
+        run: |
+          init_dir="${GRADLE_USER_HOME:-${HOME}/.gradle}/init.d"
+          mkdir -p "${init_dir}"
+          cat > "${init_dir}/yovoice-dry-run-no-crashlytics-upload.gradle" <<'GRADLE'
+          def marker = new File(System.getenv('RUNNER_TEMP'), 'crashlytics-upload-disabled.txt')
+          allprojects {
+            tasks.matching { it.name.startsWith('uploadCrashlyticsMappingFile') }.configureEach { task ->
+              task.enabled = false
+              marker.append("${task.path}\n")
+            }
+          }
+          GRADLE
+
+      - name: Build the release App Bundle (no --dart-define)
+        working-directory: app
+        env:
+          BUILD_NAME: ${{ needs.preflight.outputs.build_name }}
+          BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+        run: flutter build appbundle --release --build-name="${BUILD_NAME}" --build-number="${BUILD_NUMBER}"
+
+      - name: Verify the bundle
+        env:
+          BUILD_NAME: ${{ needs.preflight.outputs.build_name }}
+          BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+        run: |
+          aab_dir="app/build/app/outputs/bundle/release"
+          count="$(find "${aab_dir}" -maxdepth 1 -type f -name '*.aab' | wc -l | tr -d ' ')"
+          if [ "${count}" != "1" ]; then
+            echo "::error::Expected exactly one .aab in ${aab_dir}, found ${count}"
+            exit 1
+          fi
+          aab="$(find "${aab_dir}" -maxdepth 1 -type f -name '*.aab')"
+          # Captured first: grep -q closing a pipe early would trip pipefail.
+          verify_output="$(jarsigner -verify "${aab}" 2>&1 || true)"
+          if ! grep -qx 'jar verified.' <<<"${verify_output}"; then
+            echo "::error::jarsigner could not verify the bundle signature"
+            exit 1
+          fi
+          certificates="$(keytool -printcert -jarfile "${aab}")"
+          fingerprint="$(awk '/^[[:space:]]*SHA256: /{sub(/^[[:space:]]*SHA256: /, ""); print; exit}' <<<"${certificates}")"
+          if [ "${fingerprint}" = "${UPLOAD_CERT_SHA256}" ]; then
+            echo "::error::A dry run produced a bundle signed with the real upload key. Stop and investigate."
+            exit 1
+          fi
+          unzip -p "${aab}" base/manifest/AndroidManifest.xml > "${RUNNER_TEMP}/aab-manifest.pb"
+          node tooling/tool/release/aab_manifest.mjs --manifest "${RUNNER_TEMP}/aab-manifest.pb" \
+            --expect-package "${ANDROID_PACKAGE}" --expect-version-code "${BUILD_NUMBER}" \
+            --expect-version-name "${BUILD_NAME}"
+          sha256="$(sha256sum "${aab}" | cut -d ' ' -f 1)"
+          size="$(stat -c %s "${aab}")"
+          marker="${RUNNER_TEMP}/crashlytics-upload-disabled.txt"
+          if [ -s "${marker}" ]; then
+            crashlytics="disabled ($(sort -u "${marker}" | paste -sd ' ' -))"
+          else
+            crashlytics="no upload task was configured in this build (check the log if the plugin changed)"
+            echo "::warning::No uploadCrashlyticsMappingFile task was seen. If the Crashlytics plugin renamed it, the dry run may have uploaded a mapping file to Firebase."
+          fi
+          {
+            echo "### Android dry run"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Version | ${BUILD_NAME} (${BUILD_NUMBER}) |"
+            echo "| Signed with | a throwaway key generated on the runner (not the upload key, not uploadable) |"
+            echo "| AAB sha256 / size | \`${sha256}\` / ${size} B |"
+            echo "| Uploaded | no (dry run; no artifact either) |"
+            echo "| Crashlytics mapping upload | ${crashlytics} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Remove the throwaway key
+        if: always()
+        run: |
+          rm -f app/android/app/yovoice-upload-keystore.jks "${RUNNER_TEMP}/throwaway.jks" "${RUNNER_TEMP}/aab-manifest.pb"
+          rm -f "${GRADLE_USER_HOME:-${HOME}/.gradle}/init.d/yovoice-dry-run-no-crashlytics-upload.gradle" \
+            "${RUNNER_TEMP}/crashlytics-upload-disabled.txt"
+          if [ -x app/android/gradlew ]; then (cd app/android && ./gradlew --stop >/dev/null 2>&1) || true; fi
+
+  ios_dry_run:
+    name: iOS dry run (--no-codesign, no upload)
+    needs: preflight
+    if: ${{ inputs.dry_run && inputs.platforms != 'android' }}
+    runs-on: macos-26
+    timeout-minutes: 90
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out the app at the release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          path: app
+          persist-credentials: false
+
+      - name: Select and assert Xcode
+        run: |
+          xcode_app="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ ! -d "${xcode_app}" ]; then
+            echo "::error::Xcode ${XCODE_VERSION} is not on this runner image. Installed:"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "${xcode_app}/Contents/Developer"
+          version_lines="$(xcodebuild -version)"
+          actual="${version_lines%%$'\n'*}"
+          if [ "${actual}" != "Xcode ${XCODE_VERSION}" ]; then
+            echo "::error::Selected ${actual}, expected Xcode ${XCODE_VERSION}"
+            exit 1
+          fi
+          xcodebuild -version
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: false
+
+      - name: Pin CocoaPods to the Podfile.lock version
+        run: |
+          current="$(pod --version 2>/dev/null || echo none)"
+          if [ "${current}" != "${COCOAPODS_VERSION}" ]; then
+            gem uninstall cocoapods --all --executables --ignore-dependencies >/dev/null 2>&1 || true
+            gem install cocoapods -v "${COCOAPODS_VERSION}" --no-document
+          fi
+          actual="$(pod --version)"
+          if [ "${actual}" != "${COCOAPODS_VERSION}" ]; then
+            echo "::error::pod is ${actual}, expected ${COCOAPODS_VERSION} (ios/Podfile.lock)"
+            exit 1
+          fi
+
+      - name: Install dependencies and verify generated sound assets
+        working-directory: app
+        run: |
+          flutter --version
+          flutter pub get
+          python3 tool/generate_ui_sounds.py --check
+
+      - name: Build the release archive without signing (no --dart-define)
+        working-directory: app
+        env:
+          BUILD_NAME: ${{ needs.preflight.outputs.build_name }}
+          BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+        run: flutter build ipa --release --no-codesign --build-name="${BUILD_NAME}" --build-number="${BUILD_NUMBER}"
+
+      - name: Verify the archive
+        env:
+          BUILD_NAME: ${{ needs.preflight.outputs.build_name }}
+          BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+        run: |
+          archive="app/build/ios/archive/Runner.xcarchive"
+          info="${archive}/Info.plist"
+          app_info="${archive}/Products/Applications/Runner.app/Info.plist"
+          version="$(plutil -extract ApplicationProperties.CFBundleVersion raw -o - "${info}")"
+          short="$(plutil -extract ApplicationProperties.CFBundleShortVersionString raw -o - "${info}")"
+          bundle_id="$(plutil -extract CFBundleIdentifier raw -o - "${app_info}")"
+          if [ "${version}" != "${BUILD_NUMBER}" ] || [ "${short}" != "${BUILD_NAME}" ] || [ "${bundle_id}" != "${IOS_BUNDLE_ID}" ]; then
+            echo "::error::Archive is ${bundle_id} ${short} (${version}), expected ${IOS_BUNDLE_ID} ${BUILD_NAME} (${BUILD_NUMBER})"
+            exit 1
+          fi
+          {
+            echo "### iOS dry run"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Xcode | $(xcodebuild -version | tr '\n' ' ') |"
+            echo "| Archive | ${bundle_id} ${short} (${version}), unsigned (--no-codesign) |"
+            echo "| Uploaded | no (dry run; no artifact either) |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  # ---------------------------------------------------------------------------
+  # Real release: both jobs wait on the protected "store-release" environment
+  # (required reviewer: Kamil; deployment branches: main). Configure it in
+  # GitHub settings first; YAML cannot enforce a reviewer.
+
+  android:
+    name: Android (sign, upload to Play internal)
+    needs: preflight
+    if: ${{ !inputs.dry_run && github.ref == 'refs/heads/main' && inputs.platforms != 'ios' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: store-release
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out the release tooling (workflow commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tooling
+          sparse-checkout: tool/release
+          persist-credentials: false
+
+      - name: Check out the app at the release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          path: app
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: false
+
+      - name: Install dependencies and verify generated sound assets
+        working-directory: app
+        run: |
+          flutter --version
+          flutter pub get
+          python3 tool/generate_ui_sounds.py --check
+
+      - name: Stage the upload keystore outside the workspace
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "${KEYSTORE_BASE64}" ]; then
+            echo "::error::ANDROID_UPLOAD_KEYSTORE_BASE64 is not set in the store-release environment"
+            exit 1
+          fi
+          umask 077
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/upload.jks"
+          if [ ! -s "${RUNNER_TEMP}/upload.jks" ]; then
+            echo "::error::ANDROID_UPLOAD_KEYSTORE_BASE64 did not decode to a keystore"
+            exit 1
+          fi
+          ln -s "${RUNNER_TEMP}/upload.jks" app/android/app/yovoice-upload-keystore.jks
+
+      - name: Build the signed release App Bundle (no --dart-define)
+        working-directory: app
+        env:
+          UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+          BUILD_NAME: ${{ needs.preflight.outputs.build_name }}
+          BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+        run: |
+          if [ -z "${UPLOAD_KEY_PASSWORD}" ]; then
+            echo "::error::ANDROID_UPLOAD_KEY_PASSWORD is not set in the store-release environment"
+            exit 1
+          fi
+          # build.gradle.kts reads this name; one password serves key and store.
+          YOVOICE_UPLOAD_KEY_PASSWORD="${UPLOAD_KEY_PASSWORD%$'\n'}"
+          export YOVOICE_UPLOAD_KEY_PASSWORD
+          unset UPLOAD_KEY_PASSWORD
+          flutter build appbundle --release --build-name="${BUILD_NAME}" --build-number="${BUILD_NUMBER}"
+
+      # Before anything talks to Play: the key and the password-holding Gradle
+      # daemon are gone once the bundle exists.
+      - name: Remove the upload keystore and stop Gradle
+        if: always()
+        run: |
+          if [ -x app/android/gradlew ]; then (cd app/android && ./gradlew --stop >/dev/null 2>&1) || true; fi
+          pkill -f 'org.gradle.launcher.daemon' || true
+          pkill -f 'KotlinCompileDaemon' || true
+          rm -f app/android/app/yovoice-upload-keystore.jks "${RUNNER_TEMP}/upload.jks"
+
+      - name: Verify the bundle before upload
+        env:
+          BUILD_NAME: ${{ needs.preflight.outputs.build_name }}
+          BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+        run: |
+          aab_dir="app/build/app/outputs/bundle/release"
+          count="$(find "${aab_dir}" -maxdepth 1 -type f -name '*.aab' | wc -l | tr -d ' ')"
+          if [ "${count}" != "1" ]; then
+            echo "::error::Expected exactly one .aab in ${aab_dir}, found ${count}"
+            exit 1
+          fi
+          aab="$(find "${aab_dir}" -maxdepth 1 -type f -name '*.aab')"
+          # Captured first: grep -q closing a pipe early would trip pipefail.
+          verify_output="$(jarsigner -verify "${aab}" 2>&1 || true)"
+          if ! grep -qx 'jar verified.' <<<"${verify_output}"; then
+            echo "::error::jarsigner could not verify the bundle signature"
+            exit 1
+          fi
+          certificates="$(keytool -printcert -jarfile "${aab}")"
+          fingerprint="$(awk '/^[[:space:]]*SHA256: /{sub(/^[[:space:]]*SHA256: /, ""); print; exit}' <<<"${certificates}")"
+          if [ "${fingerprint}" != "${UPLOAD_CERT_SHA256}" ]; then
+            echo "::error::The bundle is signed by ${fingerprint:-nothing}, not the registered upload key. Not uploading."
+            exit 1
+          fi
+          unzip -p "${aab}" base/manifest/AndroidManifest.xml > "${RUNNER_TEMP}/aab-manifest.pb"
+          node tooling/tool/release/aab_manifest.mjs --manifest "${RUNNER_TEMP}/aab-manifest.pb" \
+            --expect-package "${ANDROID_PACKAGE}" --expect-version-code "${BUILD_NUMBER}" \
+            --expect-version-name "${BUILD_NAME}"
+          sha256="$(sha256sum "${aab}" | cut -d ' ' -f 1)"
+          size="$(stat -c %s "${aab}")"
+          echo "AAB_PATH=${aab}" >> "${GITHUB_ENV}"
+          {
+            echo "### Android bundle"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Version | ${BUILD_NAME} (${BUILD_NUMBER}) |"
+            echo "| Upload certificate SHA-256 | \`${fingerprint}\` (matches Play) |"
+            echo "| AAB sha256 / size | \`${sha256}\` / ${size} B |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload to the Play internal testing track (one attempt, never retried)
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PLAY_RELEASE_STATUS: ${{ inputs.play_release_status }}
+          BUILD_NAME: ${{ needs.preflight.outputs.build_name }}
+          BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+        run: |
+          if [ -z "${PLAY_SERVICE_ACCOUNT_JSON}" ]; then
+            echo "::error::PLAY_SERVICE_ACCOUNT_JSON is not set in the store-release environment"
+            exit 1
+          fi
+          umask 077
+          printf '%s' "${PLAY_SERVICE_ACCOUNT_JSON}" > "${RUNNER_TEMP}/play-service-account.json"
+          unset PLAY_SERVICE_ACCOUNT_JSON
+          node tooling/tool/release/play.mjs upload \
+            --service-account "${RUNNER_TEMP}/play-service-account.json" \
+            --package "${ANDROID_PACKAGE}" --aab "${AAB_PATH}" \
+            --version-code "${BUILD_NUMBER}" --version-name "${BUILD_NAME}" \
+            --track internal --status "${PLAY_RELEASE_STATUS}"
+
+      - name: Remove credentials
+        if: always()
+        run: |
+          rm -f "${RUNNER_TEMP}/play-service-account.json" "${RUNNER_TEMP}/upload.jks" \
+            "${RUNNER_TEMP}/aab-manifest.pb" app/android/app/yovoice-upload-keystore.jks
+
+  ios:
+    name: iOS (sign, upload to TestFlight)
+    needs: preflight
+    if: ${{ !inputs.dry_run && github.ref == 'refs/heads/main' && inputs.platforms != 'android' }}
+    runs-on: macos-26
+    timeout-minutes: 160
+    environment: store-release
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out the release tooling (workflow commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tooling
+          sparse-checkout: tool/release
+          persist-credentials: false
+
+      - name: Check out the app at the release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          path: app
+          persist-credentials: false
+
+      - name: Select and assert Xcode
+        run: |
+          xcode_app="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ ! -d "${xcode_app}" ]; then
+            echo "::error::Xcode ${XCODE_VERSION} is not on this runner image. Installed:"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "${xcode_app}/Contents/Developer"
+          version_lines="$(xcodebuild -version)"
+          actual="${version_lines%%$'\n'*}"
+          if [ "${actual}" != "Xcode ${XCODE_VERSION}" ]; then
+            echo "::error::Selected ${actual}, expected Xcode ${XCODE_VERSION}"
+            exit 1
+          fi
+          xcodebuild -version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: false
+
+      - name: Pin CocoaPods to the Podfile.lock version
+        run: |
+          current="$(pod --version 2>/dev/null || echo none)"
+          if [ "${current}" != "${COCOAPODS_VERSION}" ]; then
+            gem uninstall cocoapods --all --executables --ignore-dependencies >/dev/null 2>&1 || true
+            gem install cocoapods -v "${COCOAPODS_VERSION}" --no-document
+          fi
+          actual="$(pod --version)"
+          if [ "${actual}" != "${COCOAPODS_VERSION}" ]; then
+            echo "::error::pod is ${actual}, expected ${COCOAPODS_VERSION} (ios/Podfile.lock)"
+            exit 1
+          fi
+
+      - name: Install dependencies and verify generated sound assets
+        working-directory: app
+        run: |
+          flutter --version
+          flutter pub get
+          python3 tool/generate_ui_sounds.py --check
+
+      - name: Install the distribution certificate and the App Store profile
+        env:
+          P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.IOS_DIST_CERT_P12_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 }}
+        run: |
+          for name in P12_BASE64 P12_PASSWORD PROFILE_BASE64; do
+            if [ -z "${!name}" ]; then
+              echo "::error::A signing secret is missing from the store-release environment (${name})"
+              exit 1
+            fi
+          done
+          umask 077
+          signing_dir="${RUNNER_TEMP}/ios-signing"
+          mkdir -p "${signing_dir}"
+          printf '%s' "${P12_BASE64}" | base64 --decode > "${signing_dir}/distribution.p12"
+          printf '%s' "${PROFILE_BASE64}" | base64 --decode > "${signing_dir}/profile.mobileprovision"
+
+          # The profile must be the App Store profile for this app and team,
+          # not expired, with the entitlements the Release build signs with.
+          profile_plist="${signing_dir}/profile.plist"
+          security cms -D -i "${signing_dir}/profile.mobileprovision" > "${profile_plist}"
+          field() { plutil -extract "$1" raw -o - "${profile_plist}"; }
+          profile_uuid="$(field UUID)"
+          if ! grep -Eq '^[0-9A-Fa-f-]{36}$' <<<"${profile_uuid}"; then
+            echo "::error::The provisioning profile has no valid UUID"
+            exit 1
+          fi
+          problems=""
+          [ "$(field Name)" = "${IOS_PROFILE_NAME}" ] || problems="${problems} name"
+          [ "$(field TeamIdentifier.0)" = "${APPLE_TEAM_ID}" ] || problems="${problems} team"
+          [ "$(field Entitlements.application-identifier)" = "${APPLE_TEAM_ID}.${IOS_BUNDLE_ID}" ] || problems="${problems} app-id"
+          [ "$(field Entitlements.aps-environment 2>/dev/null)" = "production" ] || problems="${problems} aps-environment"
+          [ "$(field Entitlements.get-task-allow 2>/dev/null)" = "false" ] || problems="${problems} get-task-allow"
+          # PlistBuddy, because this key contains dots that plutil would split on.
+          /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.applesignin' "${profile_plist}" >/dev/null 2>&1 \
+            || problems="${problems} sign-in-with-apple"
+          if /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "${profile_plist}" >/dev/null 2>&1; then
+            problems="${problems} has-devices(not-app-store)"
+          fi
+          expiry="$(field ExpirationDate)"
+          if ! expiry_epoch="$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "${expiry}" +%s 2>/dev/null)"; then
+            problems="${problems} unreadable-expiry"
+          elif [ "${expiry_epoch}" -le "$(( $(date -u +%s) + 86400 ))" ]; then
+            problems="${problems} expires-${expiry}"
+          fi
+          if [ -n "${problems}" ]; then
+            echo "::error::IOS_APPSTORE_PROFILE_BASE64 is not the '${IOS_PROFILE_NAME}' App Store profile for ${APPLE_TEAM_ID}.${IOS_BUNDLE_ID}:${problems}"
+            exit 1
+          fi
+
+          # A temporary keychain with a per-run password, removed in always().
+          keychain="${RUNNER_TEMP}/yovoice-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          echo "::add-mask::${keychain_password}"
+          security create-keychain -p "${keychain_password}" "${keychain}"
+          echo "SIGNING_KEYCHAIN=${keychain}" >> "${GITHUB_ENV}"
+          security set-keychain-settings -lut 21600 "${keychain}"
+          security unlock-keychain -p "${keychain_password}" "${keychain}"
+          security import "${signing_dir}/distribution.p12" -k "${keychain}" -f pkcs12 \
+            -P "${P12_PASSWORD}" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          rm -f "${signing_dir}/distribution.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "${keychain_password}" "${keychain}" >/dev/null 2>&1
+          security list-keychains -d user -s "${keychain}" "${HOME}/Library/Keychains/login.keychain-db"
+          identities="$(security find-identity -v -p codesigning "${keychain}")"
+          if ! grep -q "Apple Distribution: .*(${APPLE_TEAM_ID})" <<<"${identities}"; then
+            echo "::error::IOS_DIST_CERT_P12_BASE64 does not hold a valid Apple Distribution identity for ${APPLE_TEAM_ID}"
+            exit 1
+          fi
+
+          # Install exactly this profile, and refuse if any other profile with
+          # the same name is on the machine (the duplicate that made four
+          # manual builds depend on luck, docs/DEPLOYMENT.md).
+          for dir in "${HOME}/Library/MobileDevice/Provisioning Profiles" \
+                     "${HOME}/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "${dir}"
+            for existing in "${dir}"/*.mobileprovision; do
+              [ -e "${existing}" ] || continue
+              [ "$(basename "${existing}")" = "${profile_uuid}.mobileprovision" ] && continue
+              other_name="$(security cms -D -i "${existing}" 2>/dev/null | plutil -extract Name raw -o - - 2>/dev/null || true)"
+              if [ "${other_name}" = "${IOS_PROFILE_NAME}" ]; then
+                echo "::error::Another '${IOS_PROFILE_NAME}' profile is installed on the runner: $(basename "${existing}")"
+                exit 1
+              fi
+            done
+            cp "${signing_dir}/profile.mobileprovision" "${dir}/${profile_uuid}.mobileprovision"
+          done
+
+          # Pin the profile by UUID in a copy of ios/ExportOptions.plist; the
+          # repository file is not edited.
+          export_options="${RUNNER_TEMP}/ExportOptions.plist"
+          cp app/ios/ExportOptions.plist "${export_options}"
+          /usr/libexec/PlistBuddy -c "Set :provisioningProfiles:${IOS_BUNDLE_ID} ${profile_uuid}" "${export_options}"
+          if [ "$(plutil -extract destination raw -o - "${export_options}")" != "export" ]; then
+            echo "::error::ExportOptions.plist must use destination=export (never the upload destination)"
+            exit 1
+          fi
+          {
+            echo "PROFILE_UUID=${profile_uuid}"
+            echo "EXPORT_OPTIONS=${export_options}"
+          } >> "${GITHUB_ENV}"
+          echo "Installed profile ${profile_uuid}, expires ${expiry}"
+
+      - name: Build and sign the IPA (no --dart-define)
+        working-directory: app
+        env:
+          BUILD_NAME: ${{ needs.preflight.outputs.build_name }}
+          BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+        run: |
+          if [ -e build/ios/ipa ]; then
+            echo "::error::build/ios/ipa exists before the build; refusing a possibly stale IPA"
+            exit 1
+          fi
+          flutter build ipa --release --build-name="${BUILD_NAME}" --build-number="${BUILD_NUMBER}" \
+            --export-options-plist="${EXPORT_OPTIONS}"
+
+      - name: Verify the IPA before upload
+        env:
+          BUILD_NAME: ${{ needs.preflight.outputs.build_name }}
+          BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+        run: |
+          ipa_dir="app/build/ios/ipa"
+          count="$(find "${ipa_dir}" -maxdepth 1 -type f -name '*.ipa' | wc -l | tr -d ' ')"
+          if [ "${count}" != "1" ]; then
+            echo "::error::Expected exactly one .ipa in ${ipa_dir}, found ${count}"
+            exit 1
+          fi
+          ipa="$(find "${ipa_dir}" -maxdepth 1 -type f -name '*.ipa')"
+          archive_version="$(plutil -extract ApplicationProperties.CFBundleVersion raw -o - app/build/ios/archive/Runner.xcarchive/Info.plist)"
+          check_dir="${RUNNER_TEMP}/ipa-check"
+          rm -rf "${check_dir}"
+          mkdir -p "${check_dir}"
+          ditto -x -k "${ipa}" "${check_dir}"
+          app_dir="${check_dir}/Payload/Runner.app"
+          plist="${app_dir}/Info.plist"
+          version="$(plutil -extract CFBundleVersion raw -o - "${plist}")"
+          short="$(plutil -extract CFBundleShortVersionString raw -o - "${plist}")"
+          bundle_id="$(plutil -extract CFBundleIdentifier raw -o - "${plist}")"
+          problems=""
+          [ "${archive_version}" = "${BUILD_NUMBER}" ] || problems="${problems} archive-CFBundleVersion=${archive_version}"
+          [ "${version}" = "${BUILD_NUMBER}" ] || problems="${problems} CFBundleVersion=${version}"
+          [ "${short}" = "${BUILD_NAME}" ] || problems="${problems} CFBundleShortVersionString=${short}"
+          [ "${bundle_id}" = "${IOS_BUNDLE_ID}" ] || problems="${problems} CFBundleIdentifier=${bundle_id}"
+          codesign --verify --deep --strict "${app_dir}" || problems="${problems} codesign-verify"
+          details="$(codesign -dvv "${app_dir}" 2>&1)"
+          authority="$(awk '/^Authority=/{sub(/^Authority=/, ""); print; exit}' <<<"${details}")"
+          grep -qx "TeamIdentifier=${APPLE_TEAM_ID}" <<<"${details}" || problems="${problems} team"
+          case "${authority}" in
+            "Apple Distribution: "*"(${APPLE_TEAM_ID})") ;;
+            *) problems="${problems} authority=${authority}" ;;
+          esac
+          codesign -d --entitlements - --xml "${app_dir}" > "${check_dir}/entitlements.plist" 2>/dev/null \
+            || problems="${problems} entitlements-unreadable"
+          [ "$(plutil -extract aps-environment raw -o - "${check_dir}/entitlements.plist")" = "production" ] \
+            || problems="${problems} aps-environment"
+          [ "$(plutil -extract get-task-allow raw -o - "${check_dir}/entitlements.plist")" = "false" ] \
+            || problems="${problems} get-task-allow"
+          embedded_uuid="$(security cms -D -i "${app_dir}/embedded.mobileprovision" | plutil -extract UUID raw -o - - || true)"
+          [ "${embedded_uuid}" = "${PROFILE_UUID}" ] || problems="${problems} embedded-profile=${embedded_uuid}"
+          if [ -n "${problems}" ]; then
+            echo "::error::The IPA failed its pre-upload checks:${problems}. Not uploading."
+            exit 1
+          fi
+          sha256="$(shasum -a 256 "${ipa}" | cut -d ' ' -f 1)"
+          size="$(stat -f %z "${ipa}")"
+          echo "IPA_PATH=${ipa}" >> "${GITHUB_ENV}"
+          {
+            echo "### iOS IPA"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Version | ${bundle_id} ${short} (${version}) |"
+            echo "| Xcode | $(xcodebuild -version | tr '\n' ' ') |"
+            echo "| Signed by | ${authority} |"
+            echo "| Profile | ${IOS_PROFILE_NAME} \`${embedded_uuid}\` |"
+            echo "| Entitlements | aps-environment=production, get-task-allow=false |"
+            echo "| IPA sha256 / size | \`${sha256}\` / ${size} B |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload to App Store Connect (one attempt, never retried)
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY_P8: ${{ secrets.ASC_PRIVATE_KEY_P8 }}
+          BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+        run: |
+          if [ -z "${ASC_KEY_ID}" ] || [ -z "${ASC_ISSUER_ID}" ] || [ -z "${ASC_PRIVATE_KEY_P8}" ]; then
+            echo "::error::ASC_KEY_ID, ASC_ISSUER_ID and ASC_PRIVATE_KEY_P8 must all be set in the store-release environment"
+            exit 1
+          fi
+          if ! grep -Eq '^[A-Z0-9]{10}$' <<<"${ASC_KEY_ID}"; then
+            echo "::error::ASC_KEY_ID has an unexpected format"
+            exit 1
+          fi
+          umask 077
+          key_dir="${HOME}/.appstoreconnect/private_keys"
+          mkdir -p "${key_dir}"
+          key_file="${key_dir}/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "${ASC_PRIVATE_KEY_P8}" > "${key_file}"
+          unset ASC_PRIVATE_KEY_P8
+          node tooling/tool/release/asc.mjs assert-build-free --key-file "${key_file}" \
+            --key-id "${ASC_KEY_ID}" --issuer-id "${ASC_ISSUER_ID}" \
+            --app-id "${ASC_APP_ID}" --build-number "${BUILD_NUMBER}"
+          set +e
+          xcrun altool --upload-app --type ios -f "${IPA_PATH}" \
+            --apiKey "${ASC_KEY_ID}" --apiIssuer "${ASC_ISSUER_ID}"
+          status=$?
+          set -e
+          if [ "${status}" -ne 0 ]; then
+            echo "::error::altool exited ${status}. The binary may or may not have reached Apple. Look for build ${BUILD_NUMBER} in App Store Connect before doing anything else, and never re-run this job blindly: a duplicate upload ends in Redundant Binary Upload."
+            exit "${status}"
+          fi
+
+      - name: Wait for App Store Connect processing (up to 45 minutes)
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          BUILD_NAME: ${{ needs.preflight.outputs.build_name }}
+          BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+        run: |
+          node tooling/tool/release/asc.mjs wait-valid \
+            --key-file "${HOME}/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            --key-id "${ASC_KEY_ID}" --issuer-id "${ASC_ISSUER_ID}" \
+            --app-id "${ASC_APP_ID}" --build-number "${BUILD_NUMBER}" --version-name "${BUILD_NAME}" \
+            --timeout-minutes 45 --interval-seconds 60
+
+      - name: Remove signing material and credentials
+        if: always()
+        run: |
+          if [ -n "${SIGNING_KEYCHAIN:-}" ]; then security delete-keychain "${SIGNING_KEYCHAIN}" || true; fi
+          if [ -n "${PROFILE_UUID:-}" ]; then
+            rm -f "${HOME}/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision" \
+              "${HOME}/Library/Developer/Xcode/UserData/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
+          fi
+          rm -rf "${RUNNER_TEMP}/ios-signing" "${RUNNER_TEMP}/ipa-check" "${RUNNER_TEMP}/ExportOptions.plist" \
+            "${HOME}/.appstoreconnect/private_keys" app/build/ios/ipa
+
+  # ---------------------------------------------------------------------------
+  # After every requested platform uploaded, tag the commit store-build-<N>.
+  # The next preflight diffs the backend against that tag. This job runs no
+  # repository code and holds no secret; contents: write is only for the tag.
+
+  record:
+    name: Tag the released commit
+    needs: [preflight, android, ios]
+    if: >-
+      ${{ always() && !inputs.dry_run && needs.preflight.result == 'success'
+      && (needs.android.result == 'success' || needs.android.result == 'skipped')
+      && (needs.ios.result == 'success' || needs.ios.result == 'skipped')
+      && !(needs.android.result == 'skipped' && needs.ios.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Create or confirm the store-build tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+          BUILD_NAME: ${{ needs.preflight.outputs.build_name }}
+          BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
+          ANDROID_RESULT: ${{ needs.android.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
+        run: |
+          tag="store-build-${BUILD_NUMBER}"
+          existing="$(gh api "repos/${REPOSITORY}/git/ref/tags/${tag}" --jq '.object.sha' 2>/dev/null || true)"
+          if [ -z "${existing}" ]; then
+            gh api --method POST "repos/${REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${tag}" -f sha="${RELEASE_SHA}" >/dev/null
+            outcome="created"
+          elif [ "${existing}" = "${RELEASE_SHA}" ]; then
+            outcome="already present on this commit"
+          else
+            echo "::error::${tag} already points at ${existing}, not ${RELEASE_SHA}"
+            exit 1
+          fi
+          {
+            echo "### Release recorded"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Tag | \`${tag}\` -> \`${RELEASE_SHA}\` (${outcome}) |"
+            echo "| Version | ${BUILD_NAME} (${BUILD_NUMBER}) |"
+            echo "| Android | ${ANDROID_RESULT} |"
+            echo "| iOS | ${IOS_RESULT} |"
+            echo ""
+            echo "Still manual: read back Play and TestFlight, roll out a draft Play release, attach the build to the external TestFlight group and hand testers the Play opt-in link (docs/RELEASE_CI.md)."
+          } >> "${GITHUB_STEP_SUMMARY}"

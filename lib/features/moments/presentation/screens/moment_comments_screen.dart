@@ -300,7 +300,14 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
 
     setState(() => _sending = true);
     try {
-      await service.createTextComment(momentId: _moment.id, text: text);
+      await service.createTextComment(
+        momentId: _moment.id,
+        text: text,
+        // Exactly the names this composer resolved for this viewer. The
+        // server revalidates each one against the mentioned person's
+        // audience and blocks before anybody is notified (ADR-213).
+        mentionUserIds: mentionedUserIds(text, _composerDirectory()),
+      );
       _controller.clear();
       await _loadComments(trigger: _MomentCommentsRefreshTrigger.mutation);
     } catch (error) {

@@ -8,7 +8,7 @@ const { test } = require("node:test");
 // of a cold start is invisible once anything else in this process has loaded
 // an SDK, and the export map is what `firebase deploy` reads — a renamed or
 // dropped export is a NOT_FOUND on every client that calls it. The fourth is
-// the source-static functions/servers graph: its exact cost and its 54 base
+// the source-static functions/servers graph: its exact cost and its 55 base
 // exports must change only in a deliberate, reviewed revision.
 
 const FUNCTIONS_DIR = path.resolve(__dirname, "..");
@@ -90,16 +90,39 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 248 names.
+// Every export of functions/index.js, sorted. 273 names (build 36
+// integration: 261 at the common base, +1 request to speak, +3 account
+// takeover, +8 in-app bug reports).
+// 2026-09-25 (account-takeover Phase 1): onAuthUserCreated,
+// secureFederatedSignInV1 and sweepFederatedTakeoverSchedule join the map —
+// the unverified-password ledger trigger, the owner's post-sign-in
+// remediation callable and its sweeper backstop.
+// 2026-09-19 (ADR-213): onMomentCommentCreated/Deleted,
+// onReelCommentCreated/Deleted and sendServerEventRemindersSchedule join the
+// map — the comment-notification triggers and the Server event reminder
+// worker. 2026-09-19 (ADR-180 amendment): releaseServerChannelSessionIfEmptyV1
+// joins it too. 2026-09-19: the Server channel media and reaction callables
+// join it as well. 2026-09-25 (request to speak): answerServerSessionHandV1,
+// the host's decline of a raised hand, joins it as its own extension (261 ->
+// 262 on its branch). 2026-09-25 (in-app bug reports): submitBugReportV1,
+// attachBugReportScreenshotV1, listBugReportsV1, getBugReportV1,
+// updateBugReportStatusV1 and sweepBugReportRetentionSchedule join it (261 +
+// 6 = 267 on its branch). 2026-09-25 (bug report rights requests): the
+// owner-only deleteBugReportV1 and deleteBugReportScreenshotV1 join it (267 +
+// 2 = 269 on its branch). `deliverBugReportV1` is NOT in it: both of its
+// delivery channels are source-gated off in index.js. Extending this list is
+// the deliberate review step the header describes, not a drive-by edit.
 const EXPORT_NAMES = Object.freeze([
   "acceptDirectCall",
   "adminDeleteClub",
   "adminDeleteMessage",
   "adminDeleteRoom",
   "adminSetPremiumEntitlements",
+  "answerServerSessionHandV1",
   "applySanction",
   "archiveServerChannelV1",
   "assignUserRole",
+  "attachBugReportScreenshotV1",
   "bootstrapSuperAdmin",
   "cancelDirectCall",
   "cancelFriendRequest",
@@ -128,6 +151,8 @@ const EXPORT_NAMES = Object.freeze([
   "createServerWhiteboardStrokeV1",
   "declineDirectCall",
   "deleteAccountSelfV1",
+  "deleteBugReportScreenshotV1",
+  "deleteBugReportV1",
   "deleteClubSelf",
   "deleteDirectConversationForMe",
   "deleteDirectMessage",
@@ -136,6 +161,7 @@ const EXPORT_NAMES = Object.freeze([
   "deleteReel",
   "deleteReelComment",
   "deleteRoomSelf",
+  "deleteServerChannelMessageV1",
   "deleteServerChannelV1",
   "deleteServerCompanyFileV1",
   "deleteServerFamilyCheckInV1",
@@ -155,6 +181,7 @@ const EXPORT_NAMES = Object.freeze([
   "expirePremiumIdentity",
   "expirePublishedReelsSchedule",
   "expireRoomCoverUploadReservationsSchedule",
+  "expireServerChannelMessageMediaReservations",
   "expireVoiceMomentsSchedule",
   "finalizeClubMedia",
   "finalizeDirectMessageAttachment",
@@ -164,6 +191,7 @@ const EXPORT_NAMES = Object.freeze([
   "finalizeReelDraftV2",
   "finalizeReelVoiceCommentDraft",
   "finalizeRoomCoverUpload",
+  "finalizeServerChannelMessageMediaV1",
   "finalizeServerCompanyFileV1",
   "finalizeServerFamilyMemoryV1",
   "finalizeVoiceCommentDraft",
@@ -173,6 +201,7 @@ const EXPORT_NAMES = Object.freeze([
   "getAdminDashboard",
   "getAdminRoom",
   "getAuditLogFilters",
+  "getBugReportV1",
   "getFriendSuggestions",
   "getGifCatalog",
   "getMutualFriends",
@@ -184,6 +213,7 @@ const EXPORT_NAMES = Object.freeze([
   "getReelMediaAccessV2",
   "getReelViewV2",
   "getRoomCoverMediaAccess",
+  "getServerChannelMessageMediaAccessV1",
   "getServerCompanyFileAccessV1",
   "getServerFamilyMemoryMediaAccessV1",
   "getStaffOverview",
@@ -199,6 +229,7 @@ const EXPORT_NAMES = Object.freeze([
   "listAdminClubs",
   "listAdminRooms",
   "listAdminUsers",
+  "listBugReportsV1",
   "listReels",
   "listReelsV2",
   "listReportAuditTrail",
@@ -222,6 +253,7 @@ const EXPORT_NAMES = Object.freeze([
   "onAchievementRoomMemberCreated",
   "onAchievementRoomMessageCreated",
   "onAchievementUserSocialCountersChanged",
+  "onAuthUserCreated",
   "onAuthUserDeleted",
   "onClubInviteCreated",
   "onClubMemberCreated",
@@ -233,12 +265,16 @@ const EXPORT_NAMES = Object.freeze([
   "onDirectoryVipGrantChanged",
   "onGlobalMessageModerated",
   "onModerationVoiceEnforcementCreated",
+  "onMomentCommentCreated",
+  "onMomentCommentDeleted",
   "onNotificationCreated",
   "onPinnedCreatorEntitlementChanged",
   "onPinnedCreatorProfileChanged",
   "onPinnedMomentEligibilityChanged",
   "onProfileIdentityChanged",
   "onReelCleanupOutboxCreated",
+  "onReelCommentCreated",
+  "onReelCommentDeleted",
   "onRoomLiveChanged",
   "onRoomLiveFanoutOutboxWritten",
   "onServerControlOutboxCreated",
@@ -251,10 +287,12 @@ const EXPORT_NAMES = Object.freeze([
   "processPendingContentCleanupSchedule",
   "processPendingReelCleanupSchedule",
   "processPendingServerControlOutboxSchedule",
+  "processServerChannelMessageMediaDeletionJobs",
   "publishPublicShowcaseSchedule",
   "publishPublicStatsSchedule",
   "receiveLiveKitAchievementWebhook",
   "reconcileAchievementsV1",
+  "releaseServerChannelSessionIfEmptyV1",
   "removeClubMember",
   "removeClubMemberSelf",
   "removeFriend",
@@ -271,6 +309,7 @@ const EXPORT_NAMES = Object.freeze([
   "reserveReelDraftV2",
   "reserveReelVoiceCommentDraft",
   "reserveRoomCoverUpload",
+  "reserveServerChannelMessageMediaV1",
   "reserveServerCompanyFileV1",
   "reserveServerFamilyMemoryV1",
   "reserveVoiceCommentDraft",
@@ -288,12 +327,14 @@ const EXPORT_NAMES = Object.freeze([
   "searchGifs",
   "searchPublicProfiles",
   "searchUserDirectory",
+  "secureFederatedSignInV1",
   "selectMyAchievementTitle",
   "sendClubInvite",
   "sendClubMessage",
   "sendDirectMessage",
   "sendFriendRequest",
   "sendRoomMessage",
+  "sendServerEventRemindersSchedule",
   "setClubMemberBan",
   "setClubModerationStatus",
   "setCommunityServerFollowV1",
@@ -313,6 +354,7 @@ const EXPORT_NAMES = Object.freeze([
   "setRoomStatusSelf",
   "setRoomVisibilitySelf",
   "setServerChannelAccessV1",
+  "setServerChannelMessageReactionV1",
   "setServerMemberBanV1",
   "setServerMemberRoleV1",
   "setServerPodcastQuestionOnAirV1",
@@ -325,7 +367,10 @@ const EXPORT_NAMES = Object.freeze([
   "startDirectCall",
   "startRoomVoice",
   "startServerChannelSessionV1",
+  "submitBugReportV1",
+  "sweepBugReportRetentionSchedule",
   "sweepExpiredServerInvitesSchedule",
+  "sweepFederatedTakeoverSchedule",
   "sweepServerCompanyFileMaintenanceSchedule",
   "sweepServerFamilyMemoryMaintenanceSchedule",
   "sweepStaleServerChannelSessionsSchedule",
@@ -334,6 +379,7 @@ const EXPORT_NAMES = Object.freeze([
   "transferClubOwnershipSelf",
   "transferServerOwnershipV1",
   "undoServerWhiteboardStrokeV1",
+  "updateBugReportStatusV1",
   "updateMyDisplayName",
   "updateServerChannelV1",
   "updateServerEventV1",
@@ -391,6 +437,9 @@ const COLD_START_SERVERS_MODULES = Object.freeze([
   "servers/invites.js",
   "servers/management.js",
   "servers/memberships.js",
+  "servers/message_media.js",
+  "servers/message_media_contract.js",
+  "servers/message_reactions.js",
   "servers/operations.js",
   "servers/podcast_episodes.js",
   "servers/podcast_questions.js",
@@ -433,8 +482,8 @@ test("the deployed export map is exactly the pinned name list", () => {
   assert.deepEqual(inspectColdStart().exportNames, [...EXPORT_NAMES]);
 });
 
-test("Servers exposes exactly 54 base exports and no Podcast recording surface", () => {
-  assert.equal(inspectColdStart().serverExports.length, 54);
+test("Servers exposes exactly 55 base exports and no Podcast recording surface", () => {
+  assert.equal(inspectColdStart().serverExports.length, 55);
   assert.deepEqual(inspectColdStart().podcastRecordingExports, []);
 });
 

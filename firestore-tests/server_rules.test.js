@@ -205,7 +205,7 @@ async function main() {
     fixtures[`rooms/legacy-public`] = { hostId: OWNER, visibility: "public", status: "active", name: "Legacy" };
     await seed(fixtures);
 
-    await check("Server event listing has both committed scheduled-event composites", async () => {
+    await check("Server event listing has its committed scheduled-event composites, including the reminder collection group", async () => {
       const indexes = JSON.parse(fs.readFileSync(
         path.join(__dirname, "../firestore.indexes.json"),
         "utf8",
@@ -226,6 +226,21 @@ async function main() {
           fields: [
             { fieldPath: "status", order: "ASCENDING" },
             { fieldPath: "endsAt", order: "ASCENDING" },
+          ],
+        },
+        // ADR-213: sendServerEventRemindersSchedule queries events ACROSS
+        // channels, and a collection-group query needs a COLLECTION_GROUP
+        // index — automatic single-field indexes are COLLECTION scope only,
+        // and the emulator enforces neither. Declared here and in
+        // functions/test/server_event_reminders.test.js, which also runs the
+        // real cross-parent query (ADR-007).
+        {
+          collectionGroup: "events",
+          queryScope: "COLLECTION_GROUP",
+          fields: [
+            { fieldPath: "reminderOptInEnabled", order: "ASCENDING" },
+            { fieldPath: "status", order: "ASCENDING" },
+            { fieldPath: "startsAt", order: "ASCENDING" },
           ],
         },
       ]);
@@ -1792,6 +1807,57 @@ async function main() {
         [`clubs/${ACTIVE}/channels/${SALON}/accessGrants/${OWNER}`]: null,
         [`clubs/${ACTIVE}/channels/${SALON}/accessGrants/${MEMBER}`]: null,
         [`clubs/${ACTIVE}/channels/${SALON}/accessGrants/${LISTENER}`]: null });
+    });
+    await check("a hand decision (request to speak) is readable only by its subject, never widens the queue and is never client-written", async () => {
+      const DECLINED = "server-declined";
+      const APPROVED = "server-approved";
+      await seed({
+        [`users/${DECLINED}`]: { displayName: DECLINED, banned: false, disabled: false },
+        [`users/${APPROVED}`]: { displayName: APPROVED, banned: false, disabled: false },
+        [`clubs/${ACTIVE}/members/${DECLINED}`]: member(DECLINED, "member"),
+        [`clubs/${ACTIVE}/members/${APPROVED}`]: member(APPROVED, "member"),
+        // Deliberately updated (podcast-host fix round): exactly what the
+        // callables now write — no `handDecidedById`. The subject can read
+        // this whole document, so who answered them is kept out of it (the
+        // Functions suite proves no hand path writes the field).
+        [own(DECLINED)]: participant(DECLINED, "listener", { isHandRaised: false, handRaisedAt: null,
+          handDecision: "declined", handDecidedAt: new Date(3) }),
+        [own(APPROVED)]: participant(APPROVED, "guest", { authorizationRevision: 2, isHandRaised: false,
+          handRaisedAt: null, handDecision: "approved", handDecidedAt: new Date(4) }),
+      });
+      // The subject reads the answer on their own live-generation document,
+      // and nothing in it names the moderator who gave it.
+      const declined = await assertSucceeds(read(DECLINED, own(DECLINED)));
+      assert.equal(declined.data().handDecision, "declined");
+      assert.equal(declined.data().isHandRaised, false);
+      assert.equal("handDecidedById" in declined.data(), false);
+      const approved = await assertSucceeds(read(APPROVED, own(APPROVED)));
+      assert.equal(approved.data().handDecision, "approved");
+      assert.equal(approved.data().role, "guest");
+      assert.equal("handDecidedById" in approved.data(), false);
+      // Nobody else point-reads an answered document, and the host's queue
+      // still names only the hand that is up.
+      for (const uid of [OWNER, MEMBER, ADMIN, LISTENER]) {
+        await assertFails(read(uid, own(DECLINED)));
+        await assertFails(read(uid, own(APPROVED)));
+      }
+      for (const uid of [MEMBER, OWNER, ADMIN]) {
+        assert.deepEqual((await assertSucceeds(hands(uid))).docs.map((item) => item.id), [LISTENER]);
+      }
+      // An answer is callable-only: the subject cannot clear, forge or
+      // re-raise it, and nobody else can write one.
+      await assertFails(updateDoc(doc(db(DECLINED), own(DECLINED)), { handDecision: null }));
+      await assertFails(updateDoc(doc(db(DECLINED), own(DECLINED)), { isHandRaised: true, handDecision: null,
+        updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(doc(db(MEMBER), own(LISTENER)), { isHandRaised: false, handDecision: "declined",
+        handDecidedAt: serverTimestamp(), handDecidedById: MEMBER }));
+      await assertFails(updateDoc(doc(db(ADMIN), own(LISTENER)), { handDecision: "approved" }));
+      // An ended generation closes the answer too.
+      await seed({ [`clubs/${ACTIVE}/channels/${SALON}`]: salon({ activeSessionId: null, liveness: idle() }),
+        [`rooms/${ANCHOR}`]: anchor({ isLive: false, voiceSessionId: null, livekitRoomName: null, serverSessionCleanupId: GENERATION }) });
+      await assertFails(read(DECLINED, own(DECLINED)));
+      await seed({ [`clubs/${ACTIVE}/channels/${SALON}`]: salon(), [`rooms/${ANCHOR}`]: anchor(),
+        [own(DECLINED)]: null, [own(APPROVED)]: null });
     });
     await check("no client writes a V1 participation document: hand, role, mutes and revision are callable-only", async () => {
       for (const [uid, role] of [[LISTENER, "listener"], [MEMBER, "host"], [ADMIN, "guest"], [OWNER, "listener"]]) {

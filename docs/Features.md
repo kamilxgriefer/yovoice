@@ -112,6 +112,15 @@ through the authenticated Firebase Storage SDK. Upload and finalization are
 idempotent, so a lost network response reuses the same reservation and object
 instead of creating a duplicate message.
 
+A photo or video picked from the library is reviewed before anything is
+queued (next build after 3.0.0, ADR-212): the review shows the photo, or a
+paused and muted local video with play, scrub and mute, with its size and
+length, and names the recipient. Send queues it; Cancel sends nothing. A video
+over 60 seconds or 64 MB, or a photo over 8 MB, is blocked in the review with
+the reason and a "Choose another" that reopens the library. Taking a photo or
+recording a video with the camera keeps the camera's own Use/Retake step.
+Company team files use the same review before an upload.
+
 Confirmed friends can also place a real-time 1:1 voice call from the phone
 action in a DM. The callee sees an app-level incoming-call screen and can answer
 or decline; the caller can cancel while ringing, either participant can mute or
@@ -371,6 +380,17 @@ More controls on the current mobile or desktop shell; users can skip it at any
 time and replay **Quick app tour** from Settings. Completion and Skip are kept
 locally per Firebase uid and tour version, so the guide does not add profile
 data or interrupt established accounts on a new device. See ADR-132.
+
+### Report a bug (ADR-223, source only, not deployed)
+
+"Report a bug" / "Zgłoś błąd" in Settings > Help, the More sheet and the
+desktop More popover, plus a movable "Bug" button for the testing period
+(hide it with a long press or Settings > Help > Show the Bug button). The
+reporter takes a description, sends the app version, platform, OS, language,
+theme, screen size and screen name, and — only after the person previews it
+(full size, with zoom) and confirms it — a screenshot. Reports reach only the
+owner, in Staff Center > Bug reports, who can also find one account's reports
+and delete a report or its screenshot on request.
 
 ## Notifications
 

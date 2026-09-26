@@ -1,12 +1,36 @@
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:yovoice/features/media/data/models/gif_asset.dart';
 import 'package:yovoice/features/media/data/services/gif_transport.dart';
+import 'package:yovoice/features/media/data/services/giphy_client.dart';
+import 'package:yovoice/features/media/data/services/giphy_pingbacks.dart';
 
 /// What the picker is showing right now.
 enum GifQueryStatus { idle, loading, ready, empty, error, unavailable }
+
+/// The GIPHY half of the picker (ADR-214). `off` whenever this build has no
+/// GIPHY key or the server cannot resolve GIPHY ids, which is exactly the
+/// Originals-only picker that shipped before GIPHY.
+enum GiphySectionStatus { off, loading, ready, error }
+
+/// What preparing a chosen GIF for sending produced.
+enum GifPrepareOutcome {
+  /// Send it.
+  ready,
+
+  /// The server refused this asset (blocked, not rated G, filtered, gone).
+  refused,
+
+  /// Busy, offline or not configured: nothing was sent, try again later.
+  failed,
+}
+
+/// Registers one GIPHY id with the server's send-time authority
+/// (`resolveGif`). Returns the callable's data.
+typedef GifResolveInvoker = Future<Object?> Function(Map<String, Object?> data);
 
 /// The picker's whole observable state, in one immutable value.
 ///
@@ -25,6 +49,9 @@ class GifQueryState {
     this.degraded = false,
     this.rateLimitedRetrySeconds,
     this.unavailableReason,
+    this.giphyItems = const <GifAsset>[],
+    this.giphyStatus = GiphySectionStatus.off,
+    this.giphyNextOffset,
   });
 
   static const initial = GifQueryState(
@@ -50,8 +77,15 @@ class GifQueryState {
 
   final GifUnavailableReason? unavailableReason;
 
+  /// GIPHY results for [query], searched by the app itself (ADR-214). Always
+  /// empty while [giphyStatus] is [GiphySectionStatus.off].
+  final List<GifAsset> giphyItems;
+  final GiphySectionStatus giphyStatus;
+  final int? giphyNextOffset;
+
   bool get isTrending => query.isEmpty;
-  bool get hasResults => items.isNotEmpty;
+  bool get hasResults => items.isNotEmpty || giphyItems.isNotEmpty;
+  bool get showsGiphy => giphyStatus != GiphySectionStatus.off;
 
   GifQueryState copyWith({
     GifQueryStatus? status,
@@ -64,6 +98,10 @@ class GifQueryState {
     int? rateLimitedRetrySeconds,
     bool clearRateLimit = false,
     GifUnavailableReason? unavailableReason,
+    List<GifAsset>? giphyItems,
+    GiphySectionStatus? giphyStatus,
+    int? giphyNextOffset,
+    bool clearGiphyNextOffset = false,
   }) {
     return GifQueryState(
       status: status ?? this.status,
@@ -76,6 +114,11 @@ class GifQueryState {
           ? null
           : (rateLimitedRetrySeconds ?? this.rateLimitedRetrySeconds),
       unavailableReason: unavailableReason ?? this.unavailableReason,
+      giphyItems: giphyItems ?? this.giphyItems,
+      giphyStatus: giphyStatus ?? this.giphyStatus,
+      giphyNextOffset: clearGiphyNextOffset
+          ? null
+          : (giphyNextOffset ?? this.giphyNextOffset),
     );
   }
 }
@@ -101,9 +144,35 @@ class GifCatalogService extends ChangeNotifier {
     required GifTransport transport,
     Duration debounce = const Duration(milliseconds: 350),
     String locale = 'en',
+    GiphyClient? giphy,
+    bool useBuildGiphyKey = true,
+    GiphyPingbacks? giphyPingbacks,
+    GifResolveInvoker? resolveGif,
   }) : _transport = transport,
        _debounce = debounce,
-       _locale = locale;
+       _locale = locale,
+       _giphy =
+           giphy ?? (useBuildGiphyKey ? GiphyClient.fromEnvironment() : null),
+       _explicitPingbacks = giphyPingbacks,
+       _resolveGif = resolveGif ?? _callResolveGif {
+    final client = _giphy;
+    _pingbacks =
+        _explicitPingbacks ??
+        (client == null
+            ? null
+            : giphy == null
+            // The build's own client shares the app-wide registry, so the
+            // send controllers can register `onsent` for choices made here.
+            ? GiphyPingbackRegistry.instance
+            : GiphyPingbacks(client: client));
+  }
+
+  static Future<Object?> _callResolveGif(Map<String, Object?> data) async {
+    final result = await FirebaseFunctions.instanceFor(
+      region: 'europe-west1',
+    ).httpsCallable('resolveGif').call<Object?>(data);
+    return result.data;
+  }
 
   static const int minimumQueryLength = 2;
   static const int _memoCapacity = 40;
@@ -111,6 +180,28 @@ class GifCatalogService extends ChangeNotifier {
   final GifTransport _transport;
   final Duration _debounce;
   String _locale;
+
+  final GiphyClient? _giphy;
+  final GiphyPingbacks? _explicitPingbacks;
+  GiphyPingbacks? _pingbacks;
+  final GifResolveInvoker _resolveGif;
+  int _giphyGeneration = 0;
+  bool _giphyPaging = false;
+  final Map<String, GiphyPage> _giphyMemo = <String, GiphyPage>{};
+
+  /// True when this picker shows GIPHY: the build carries a key AND the
+  /// server advertises it can resolve GIPHY ids at send time.
+  bool get giphyActive =>
+      _giphy != null && _catalog?.canResolve(GiphyClient.provider) == true;
+
+  /// `AppPreferences.gifAutoLoadEnabled`, pushed in by the picker. Off means
+  /// no GIPHY trending request on open and no pingbacks at all; a search the
+  /// person types still runs, and its results render tap-to-load.
+  bool giphyAutoLoad = true;
+
+  /// Whether a GIF from [provider] can be sent from this picker right now.
+  bool canSend(String provider) =>
+      provider != GiphyClient.provider || giphyActive;
 
   GifQueryState _state = GifQueryState.initial;
   GifQueryState get state => _state;
@@ -133,6 +224,7 @@ class GifCatalogService extends ChangeNotifier {
     // results, and serving the old ones would be a stale answer that looks
     // like a fresh one.
     _memo.clear();
+    _giphyMemo.clear();
   }
 
   /// Fetch availability, then the first trending page if it is available.
@@ -222,6 +314,10 @@ class GifCatalogService extends ChangeNotifier {
   /// the results — an infinite scroll has no error state to show there.
   Future<void> loadMore() async {
     final cursor = _state.nextCursor;
+    if (cursor == null && _state.status != GifQueryStatus.loading) {
+      // Originals are exhausted; GIPHY (when shown) is the next section.
+      return _loadMoreGiphy();
+    }
     if (_disposed ||
         cursor == null ||
         _state.status == GifQueryStatus.loading ||
@@ -253,6 +349,7 @@ class GifCatalogService extends ChangeNotifier {
     if (!immediate) {
       _emit(_state.copyWith(status: GifQueryStatus.loading, query: query));
     }
+    if (!append) _startGiphy(query);
 
     final key = '$query|${cursor ?? ''}';
     if (!bypassMemo && _memo.containsKey(key)) {
@@ -327,6 +424,9 @@ class GifCatalogService extends ChangeNotifier {
         catalog: _catalog,
         nextCursor: page.nextCursor,
         degraded: page.degraded,
+        giphyItems: _state.giphyItems,
+        giphyStatus: _state.giphyStatus,
+        giphyNextOffset: _state.giphyNextOffset,
       ),
     );
   }
@@ -340,6 +440,188 @@ class GifCatalogService extends ChangeNotifier {
     while (_memo.length > _memoCapacity) {
       _memo.remove(_memo.keys.first);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // GIPHY (ADR-214, option B): searched here, resolved by the server at send.
+  // -------------------------------------------------------------------------
+
+  void _startGiphy(String query) {
+    final token = ++_giphyGeneration;
+    _giphyPaging = false;
+    if (!giphyActive) {
+      if (_state.showsGiphy) {
+        _emit(
+          _state.copyWith(
+            giphyItems: const <GifAsset>[],
+            giphyStatus: GiphySectionStatus.off,
+            clearGiphyNextOffset: true,
+          ),
+        );
+      }
+      return;
+    }
+    if (query.isEmpty && !giphyAutoLoad) {
+      // Opening the tab is not a request to contact GIPHY when the person
+      // has turned automatic loading off. A typed search still is.
+      _emit(
+        _state.copyWith(
+          giphyItems: const <GifAsset>[],
+          giphyStatus: GiphySectionStatus.off,
+          clearGiphyNextOffset: true,
+        ),
+      );
+      return;
+    }
+    _emit(
+      _state.copyWith(
+        giphyItems: const <GifAsset>[],
+        giphyStatus: GiphySectionStatus.loading,
+        clearGiphyNextOffset: true,
+      ),
+    );
+    unawaited(_fetchGiphy(query, offset: 0, token: token, append: false));
+  }
+
+  Future<void> _loadMoreGiphy() async {
+    final offset = _state.giphyNextOffset;
+    if (_disposed ||
+        !giphyActive ||
+        _giphyPaging ||
+        offset == null ||
+        _state.giphyStatus != GiphySectionStatus.ready) {
+      return;
+    }
+    _giphyPaging = true;
+    final token = _giphyGeneration;
+    try {
+      await _fetchGiphy(
+        _state.query,
+        offset: offset,
+        token: token,
+        append: true,
+      );
+    } finally {
+      if (token == _giphyGeneration) _giphyPaging = false;
+    }
+  }
+
+  Future<void> _fetchGiphy(
+    String query, {
+    required int offset,
+    required int token,
+    required bool append,
+  }) async {
+    final client = _giphy;
+    if (client == null) return;
+    final limit = _catalog?.pageSize ?? 24;
+    final key = '$query|$offset';
+    try {
+      final page =
+          _giphyMemo[key] ??
+          (query.isEmpty
+              ? await client.trending(limit: limit, offset: offset)
+              : await client.search(
+                  query: query,
+                  language: _locale,
+                  limit: limit,
+                  offset: offset,
+                ));
+      if (_disposed || token != _giphyGeneration || query != _state.query) {
+        return;
+      }
+      _giphyMemo[key] = page;
+      while (_giphyMemo.length > _memoCapacity) {
+        _giphyMemo.remove(_giphyMemo.keys.first);
+      }
+      _pingbacks?.remember(page.results);
+      final fresh = page.results.map((result) => result.asset);
+      final items = append
+          ? <GifAsset>[
+              ..._state.giphyItems,
+              ...fresh.where((item) => !_state.giphyItems.contains(item)),
+            ]
+          : fresh.toList();
+      _emit(
+        _state.copyWith(
+          giphyItems: List<GifAsset>.unmodifiable(items),
+          giphyStatus: GiphySectionStatus.ready,
+          giphyNextOffset: page.nextOffset,
+          clearGiphyNextOffset: page.nextOffset == null,
+        ),
+      );
+    } catch (_) {
+      if (_disposed || token != _giphyGeneration || query != _state.query) {
+        return;
+      }
+      // A GIPHY failure never costs the Originals section: only the GIPHY
+      // half says it is unavailable, and it keeps a page it already showed.
+      _emit(
+        _state.copyWith(
+          giphyStatus: append && _state.giphyItems.isNotEmpty
+              ? GiphySectionStatus.ready
+              : GiphySectionStatus.error,
+          clearGiphyNextOffset: true,
+        ),
+      );
+    }
+  }
+
+  /// A GIPHY result became visible. Registers the `onload` pingback once,
+  /// and only while automatic loading is on.
+  void giphyShown(GifAsset asset) {
+    if (asset.provider != GiphyClient.provider) return;
+    unawaited(_pingbacks?.loaded(asset.id, enabled: giphyAutoLoad));
+  }
+
+  /// Everything that has to happen between a tap and a send.
+  ///
+  /// Originals need nothing. A GIPHY choice registers `onclick` (arming the
+  /// matching `onsent`) and is then handed to the server's send-time
+  /// authority, which fetches that id with its own key, applies the rating,
+  /// denylist and block checks and writes the record the send transaction
+  /// reads. Only `{provider, id}` crosses to the server.
+  Future<GifPrepareOutcome> prepareForSend(GifAsset asset) async {
+    if (asset.provider != GiphyClient.provider) return GifPrepareOutcome.ready;
+    if (!giphyActive || !asset.hasPinnedUrl) return GifPrepareOutcome.failed;
+    await _pingbacks?.clicked(asset.id, enabled: giphyAutoLoad);
+    try {
+      final data = await _resolveGif(<String, Object?>{
+        'provider': asset.provider,
+        'id': asset.id,
+      }).timeout(const Duration(seconds: 15));
+      final resolved = data is Map ? GifAsset.fromMessage(data['asset']) : null;
+      if (resolved == null || resolved != asset) {
+        _pingbacks?.disarm(asset.id);
+        return GifPrepareOutcome.failed;
+      }
+      return GifPrepareOutcome.ready;
+    } on FirebaseFunctionsException catch (error) {
+      _pingbacks?.disarm(asset.id);
+      return error.code == 'failed-precondition' ||
+              error.code == 'invalid-argument'
+          ? (_isAssetRefusal(error)
+                ? GifPrepareOutcome.refused
+                : GifPrepareOutcome.failed)
+          : GifPrepareOutcome.failed;
+    } catch (_) {
+      _pingbacks?.disarm(asset.id);
+      return GifPrepareOutcome.failed;
+    }
+  }
+
+  static bool _isAssetRefusal(FirebaseFunctionsException error) {
+    final details = error.details;
+    final code = details is Map ? details['code'] : null;
+    return const {
+          'blocked',
+          'rating',
+          'filtered',
+          'unknown_asset',
+          'invalid_record',
+          'invalid_target',
+        }.contains(code) ||
+        error.code == 'invalid-argument';
   }
 
   /// Report one asset. Returns true when the queue accepted it.

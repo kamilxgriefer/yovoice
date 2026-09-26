@@ -1,7 +1,7 @@
 const { createHash } = require("node:crypto");
 
 const { logger } = require("firebase-functions/v2");
-const { defineSecret } = require("firebase-functions/params");
+const { defineSecret, defineString } = require("firebase-functions/params");
 const { onRequest } = require("firebase-functions/v2/https");
 
 const { isValidOpaqueUid } = require("./identity");
@@ -54,6 +54,9 @@ const SKIPPED_UNBOUND_RTC_NAME = "skipped:unbound-rtc-name";
 
 const livekitAchievementApiKey = defineSecret("LIVEKIT_API_KEY");
 const livekitAchievementApiSecret = defineSecret("LIVEKIT_API_SECRET");
+// Redeclared exactly as servers/registration.js redeclares it: the params
+// registry keeps one declaration per name, and it is read inside a request.
+const livekitServerUrl = defineString("LIVEKIT_URL");
 
 class VoiceAchievementStoreError extends Error {
   constructor(message) {
@@ -834,17 +837,85 @@ function rawBodyByteLength(rawBody) {
   return null;
 }
 
+/**
+ * The server channel lifecycle half of a `room_finished` delivery for a `srv_`
+ * generation: the provider's signal that the room emptied, handed to the
+ * empty-generation grace in servers/session_staleness.js. Isolated from voice
+ * accounting in both directions — it runs after the achievement close
+ * whatever that close did, and nothing it does or throws can change the HTTP
+ * answer LiveKit receives. `outcome` is a closed set of server constants.
+ */
+async function runServerLifecycle(serverLifecycle, webhook) {
+  if (serverLifecycle === null || !isServerRtcNamespace(webhook?.roomName)) return;
+  if (["participant_left", "participant_connection_aborted"].includes(webhook?.type)) {
+    await runServerParticipantLeft(serverLifecycle, webhook);
+    return;
+  }
+  if (webhook?.type !== "room_finished") return;
+  try {
+    const result = await serverLifecycle.onRoomFinished({
+      livekitRoomName: webhook.roomName,
+      finishedAtMs: webhook.createdAtMs,
+    });
+    logger.info("livekit server lifecycle handled room_finished", {
+      eventType: webhook.type,
+      outcome: typeof result?.outcome === "string" ? result.outcome : null,
+    });
+  } catch (error) {
+    logger.warn("livekit server lifecycle could not handle room_finished", {
+      eventType: webhook.type,
+      errorName: error?.name ?? null,
+      errorCode: typeof error?.code === "string" || Number.isSafeInteger(error?.code) ? error.code : null,
+    });
+  }
+}
+
+/**
+ * The raised-hand half of a participant departure from a `srv_` generation:
+ * a hand the person left behind is lowered (session_staleness.js
+ * lowerDepartedHand). Optional on the hook, isolated exactly like the
+ * `room_finished` half — nothing it does or throws changes the HTTP answer.
+ */
+async function runServerParticipantLeft(serverLifecycle, webhook) {
+  if (typeof serverLifecycle?.onParticipantLeft !== "function") return;
+  try {
+    const result = await serverLifecycle.onParticipantLeft({
+      livekitRoomName: webhook.roomName,
+      participantIdentity: webhook.participantIdentity,
+      leftAtMs: webhook.createdAtMs,
+    });
+    logger.info("livekit server lifecycle handled a departure", {
+      eventType: webhook.type,
+      outcome: typeof result?.outcome === "string" ? result.outcome : null,
+    });
+  } catch (error) {
+    logger.warn("livekit server lifecycle could not handle a departure", {
+      eventType: webhook.type,
+      errorName: error?.name ?? null,
+      errorCode: typeof error?.code === "string" || Number.isSafeInteger(error?.code) ? error.code : null,
+    });
+  }
+}
+
 function createLiveKitAchievementWebhookHandler({
   apiKeyProvider,
   apiSecretProvider,
   receiver = null,
   store = new FirestoreVoiceAchievementStore(),
   now = () => Date.now(),
+  serverLifecycle = null,
 } = {}) {
   if (typeof apiKeyProvider !== "function" ||
       typeof apiSecretProvider !== "function" ||
       !store || typeof store.handle !== "function") {
     throw new TypeError("Webhook secrets and a voice achievement store are required.");
+  }
+  if (serverLifecycle !== null && typeof serverLifecycle?.onRoomFinished !== "function") {
+    throw new TypeError("A server lifecycle hook must handle room_finished.");
+  }
+  if (serverLifecycle !== null && serverLifecycle?.onParticipantLeft !== undefined &&
+      typeof serverLifecycle.onParticipantLeft !== "function") {
+    throw new TypeError("A server lifecycle departure hook must be a function.");
   }
   return async function liveKitAchievementWebhook(request, response) {
     if (request?.method !== "POST") {
@@ -883,8 +954,19 @@ function createLiveKitAchievementWebhookHandler({
       response.status(204).send("");
       return;
     }
+    let result = null;
+    let failure = null;
     try {
-      const result = await store.handle(webhook);
+      result = await store.handle(webhook);
+    } catch (error) {
+      failure = error;
+    }
+    // After the achievement close and before the answer, whatever the close
+    // did: a failed or partial close must not keep a finished room LIVE, and
+    // the lifecycle can never turn an accepted delivery into a 4xx/5xx.
+    await runServerLifecycle(serverLifecycle, webhook);
+    try {
+      if (failure !== null) throw failure;
       // `type` and `outcome` are both closed sets of server-authored constants.
       // No uid, room id, room/participant SID, event id or session id is ever
       // logged: this endpoint's observability must not become a second copy of
@@ -926,6 +1008,73 @@ function createLiveKitAchievementWebhookHandler({
   };
 }
 
+/**
+ * The production lifecycle hook: the reviewed Servers staleness service over
+ * the webhook's own LiveKit secrets, behind the same server-owned
+ * `appConfig/serversV1.workersEnabled` switch every Servers worker obeys.
+ * Everything is resolved on first use inside a delivery, so a cold start of
+ * this endpoint loads no Servers runtime and reads no secret; the modules it
+ * requires are already on the index graph (servers/registration.js).
+ */
+function createServerChannelLifecycle({
+  db = null,
+  Timestamp = null,
+  livekit = null,
+  activationGate = null,
+  clock = Date.now,
+} = {}) {
+  let resolved = null;
+  function build() {
+    if (resolved !== null) return resolved;
+    const firestore = db ?? require("../utils/firestore").db;
+    const { createServersV1ActivationGate } = require("../servers/registration");
+    const { createServerLiveKitAdapter } = require("../servers/session_livekit");
+    const { createServerSessionStalenessService } = require("../servers/session_staleness");
+    const adapter = livekit ?? createServerLiveKitAdapter({
+      apiKey: () => livekitAchievementApiKey.value(),
+      apiSecret: () => livekitAchievementApiSecret.value(),
+      serverUrl: () => livekitServerUrl.value(),
+      clock,
+    });
+    resolved = {
+      activation: activationGate ?? createServersV1ActivationGate({ db: firestore }),
+      staleness: createServerSessionStalenessService({
+        db: firestore,
+        Timestamp: Timestamp ?? require("firebase-admin/firestore").Timestamp,
+        livekit: adapter,
+        clock,
+      }),
+    };
+    return resolved;
+  }
+  return Object.freeze({
+    async onRoomFinished({ livekitRoomName, finishedAtMs }) {
+      const { activation, staleness } = build();
+      let enabled = false;
+      try {
+        enabled = await activation.workersEnabled();
+      } catch {
+        // The activation reader already logged a non-sensitive diagnostic;
+        // paused is the fail-closed answer, and the sweep revisits later.
+      }
+      if (enabled !== true) return { outcome: "workers-paused" };
+      return staleness.stageFinishedProviderRoom({ livekitRoomName, finishedAtMs });
+    },
+    async onParticipantLeft({ livekitRoomName, participantIdentity, leftAtMs }) {
+      const { activation, staleness } = build();
+      let enabled = false;
+      try {
+        enabled = await activation.workersEnabled();
+      } catch {
+        // Paused is the fail-closed answer; the host's queue already hides a
+        // requester the provider no longer reports.
+      }
+      if (enabled !== true) return { outcome: "workers-paused" };
+      return staleness.lowerDepartedHand({ livekitRoomName, participantIdentity, leftAtMs });
+    },
+  });
+}
+
 // Deliberately public: LiveKit's SFU signs each delivery with the shared API
 // secret and cannot present a Firebase ID token or an App Check token. The
 // HMAC over the exact raw body IS the authentication boundary here — see
@@ -940,6 +1089,7 @@ const receiveLiveKitAchievementWebhook = onRequest({
 }, createLiveKitAchievementWebhookHandler({
   apiKeyProvider: () => livekitAchievementApiKey.value(),
   apiSecretProvider: () => livekitAchievementApiSecret.value(),
+  serverLifecycle: createServerChannelLifecycle(),
 }));
 
 module.exports = {
@@ -956,6 +1106,7 @@ module.exports = {
   VoiceAchievementStoreError,
   authorizationHeader,
   createLiveKitAchievementWebhookHandler,
+  createServerChannelLifecycle,
   livekitAchievementApiKey,
   livekitAchievementApiSecret,
   normalizeOpenSession,

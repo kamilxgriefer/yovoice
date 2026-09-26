@@ -6,7 +6,10 @@ const {
   Timestamp,
 } = require("firebase-admin/firestore");
 
-const { requireAuthentication } = require("../utils/auth");
+const {
+  assertSessionNotBeforeEpoch,
+  requireAuthentication,
+} = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
 const {
   canonicalNotificationData,
@@ -1049,9 +1052,29 @@ const getFriendSuggestions = onCall(
 );
 
 /**
- * Creates a request, or accepts the other party's existing request. Every
- * mirror, counter and notification is part of one Admin transaction; clients
- * cannot pick persisted identity fields or timestamps.
+ * Whether a send may turn the other party's pending request into a
+ * friendship. Absent means true: every installed client predates the flag and
+ * keeps today's reciprocal behaviour. A client that sends `false` never makes
+ * a friendship through "Add friend"; it gets `incomingPending` and asks the
+ * user with an explicit Accept / Decline instead.
+ */
+function acceptIncomingFrom(request) {
+  const value = request.data?.acceptIncoming;
+  if (value === undefined || value === null) return true;
+  if (typeof value !== "boolean") {
+    throw new HttpsError(
+      "invalid-argument",
+      "acceptIncoming must be a boolean.",
+    );
+  }
+  return value;
+}
+
+/**
+ * Creates a request, or — only for callers that allow it — accepts the other
+ * party's existing request. Every mirror, counter and notification is part of
+ * one Admin transaction; clients cannot pick persisted identity fields or
+ * timestamps.
  */
 const sendFriendRequest = onCall(
   { region: REGION, enforceAppCheck: false },
@@ -1060,6 +1083,7 @@ const sendFriendRequest = onCall(
     await consumeSocialRateLimit(auth.uid, "mutation");
     requireVerified(auth);
     const targetUserId = targetIdFrom(request);
+    const acceptIncoming = acceptIncomingFrom(request);
     if (targetUserId === auth.uid) {
       throw new HttpsError("invalid-argument", "You cannot add yourself.");
     }
@@ -1154,6 +1178,7 @@ const sendFriendRequest = onCall(
         targetCapacitySnapshot,
       );
       const actor = profileData(actorSnapshot, "Your");
+      assertSessionNotBeforeEpoch(actor, auth);
       const target = profileData(targetSnapshot, "The selected");
       ensureNotRestricted(actorRestriction, "Your");
       ensureNotRestricted(targetRestriction, "The selected");
@@ -1219,6 +1244,12 @@ const sendFriendRequest = onCall(
             "data-loss",
             "The pending friend request is not canonical.",
           );
+        }
+        if (!acceptIncoming) {
+          // A friendship is a consent decision. "Add friend" on someone who
+          // already asked must not answer for the user: nothing is written,
+          // and the client shows an explicit Accept / Decline prompt.
+          return { outcome: "incomingPending", changed: false };
         }
         const timestamp = FieldValue.serverTimestamp();
         requireCapacity(
@@ -1457,6 +1488,7 @@ const respondToFriendRequest = onCall(
         senderCapacitySnapshot,
       );
       const actor = profileData(actorSnapshot, "Your");
+      assertSessionNotBeforeEpoch(actor, auth);
 
       if (!pending.exists) {
         if (
@@ -1728,6 +1760,7 @@ const removeFriend = onCall(
           theirGuardRef,
         );
       const actor = profileData(actorSnapshot, "Your");
+      assertSessionNotBeforeEpoch(actor, auth);
       if (
         !mine.exists &&
         !theirs.exists &&
@@ -1833,6 +1866,7 @@ const setFollow = onCall(
         targetEntitlementRef,
       );
       const actor = profileData(actorSnapshot, "Your");
+      assertSessionNotBeforeEpoch(actor, auth);
       if (followingEdge.exists !== followerEdge.exists) {
         throw new HttpsError(
           "data-loss",
@@ -1974,7 +2008,7 @@ const setUserBlock = onCall(
       return db.runTransaction(async (transaction) => {
         const [actor, existingBlock, actorCapacitySnapshot] =
           await transaction.getAll(actorRef, blockRef, actorCapacityRef);
-        profileData(actor, "Your");
+        assertSessionNotBeforeEpoch(profileData(actor, "Your"), auth);
         const actorCapacity = socialCapacityState(
           auth.uid,
           actorCapacitySnapshot,
@@ -2017,6 +2051,7 @@ const setUserBlock = onCall(
         targetCapacityRef,
       );
       const actor = profileData(snapshots[0], "Your");
+      assertSessionNotBeforeEpoch(actor, auth);
       const targetSnapshot = snapshots[1];
       profileData(targetSnapshot, "The selected");
       const existingBlock = snapshots[2];

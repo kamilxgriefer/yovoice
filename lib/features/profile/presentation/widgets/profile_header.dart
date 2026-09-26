@@ -6,27 +6,32 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/achievements/presentation/widgets/title_badge.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
-import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
-import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
+import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/availability_picker.dart';
 
-/// The profile hero — compact edition: a toolbar row (Back when the
-/// route can pop, the screen title, Edit), a SLIM banner accent card,
-/// and one readable identity block (avatar + name + username + badges).
+/// The profile hero: the user's banner is the full-bleed background of the
+/// whole header — edge to edge, under the status bar — with the toolbar
+/// (Back when the route can pop, Edit) floating over it on a scrim, and the
+/// identity block (avatar + name + username + badges) standing on the photo,
+/// which continues behind it as a blurred copy under a veil that keeps the
+/// text legible. See [ProfileHeroLayout] and
+/// [ProfileHeroBackdrop] for the geometry and the layers; the decision is
+/// recorded in docs/Decisions.md ("The profile banner is the header's
+/// full-bleed background").
 ///
-/// The previous incarnation was a fixed 300–320px banner Stack: at
-/// desktop sizes most of it was empty gradient with a lone Back arrow
-/// floating in the corner. The banner is now a bounded accent (104px on
-/// phones, 132px wide) that the avatar overlaps, and the header sizes
-/// itself to its content instead of claiming a fixed viewport share.
+/// History: a fixed 300–320px banner Stack (mostly empty gradient on
+/// desktop) became, in the Slim redesign, a 104/132px inset rounded card
+/// below a separate toolbar row. That read as "a rectangle"; the photo now
+/// owns the whole top panel while the header still sizes itself to its
+/// content instead of claiming a fixed viewport share.
 ///
 /// Public (not private to profile_screen.dart) so the same widget — not a
 /// hand-mirrored copy — is rendered by the Profile screen, the
@@ -75,100 +80,114 @@ class ProfileHeader extends StatelessWidget {
   final ProfileMediaService? mediaService;
 
   /// Matches the 18px gutter of the content panels below
-  /// (profile_screen's SliverPadding), so the toolbar and banner card
-  /// line up with the rest of the page instead of the screen edge.
+  /// (profile_screen's measured SliverPadding), so the identity, stats and
+  /// actions line up with the rest of the page. The photo alone ignores it.
   static const double gutter = 18;
-
-  /// The band the header actually paints the banner into: a fixed height at
-  /// content width, NOT the 16:9 the upload pipeline stores. Public because
-  /// the crop editor has to mark the strip of that 16:9 which survives here;
-  /// two hand-copied numbers are exactly how the crop and the header drifted
-  /// apart in the first place.
-  static const double bannerHeightCompact = 104;
-  static const double bannerHeightWide = 132;
 
   /// Fraction of the stored banner's height that is still on screen at the
   /// WIDEST presentation, i.e. the part a user can rely on at every width.
   ///
-  /// The band is drawn with `BoxFit.cover` and `Alignment.center`, so the
-  /// wider the band gets the less of the 16:9 source fits inside it: roughly
-  /// 52% of it survives on a 390pt phone and only ~23% at the 1040pt feed
-  /// cap. Derived from the three sources that decide it — the stored ratio,
-  /// the widest content measure and the wide band height — so a redesign
-  /// that changes any of them moves the crop editor's guide with it.
+  /// The hero draws the 16:9 source with `BoxFit.cover` and
+  /// `Alignment.center`. Phones show all of it (the hero is never narrower
+  /// than 16:9); wider heroes crop top and bottom, down to ~29% from 1440pt
+  /// up. Derived in [ProfileHeroGeometry] from the stored ratio, the wide
+  /// reference width and its height, so a redesign that changes any of them
+  /// moves the crop editor's guide with it.
   static final double bannerSafeBandFraction =
-      ProfileImageRules.banner.aspectRatio /
-      ((ResponsiveContentWidth.feed.maxWidth - gutter * 2) / bannerHeightWide);
+      ProfileHeroGeometry.alwaysVisibleFraction;
+
+  /// The upper part of [bannerSafeBandFraction] that stays above the hero's
+  /// bottom melt at every width — where faces and text belong. Below it the
+  /// band is still on screen but fades into the page on wide layouts.
+  static final double bannerClearBandFraction =
+      ProfileHeroGeometry.alwaysClearFraction;
 
   @override
   Widget build(BuildContext context) {
-    // Breakpoint via LayoutBuilder — available width, never device
-    // labels. Inside the screen's ResponsiveContentFrame (1040px feed
-    // measure) the 1100 self-cap is a no-op; it exists so bare hosts
-    // (the dev harness, tests) never stretch the header across 1440px.
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 900;
-        final bannerHeight = isWide ? bannerHeightWide : bannerHeightCompact;
-        final (avatarRadius, ringPadding) = switch (constraints.maxWidth) {
+    final palette = context.appPalette;
+    // Breakpoints come from the content column the host actually hands the
+    // header — available width, never device labels. The photo runs across
+    // the whole host; everything readable stays on the 1040pt feed measure.
+    return ProfileHeroLayout(
+      contentMaxWidth: ResponsiveContentWidth.feed.maxWidth,
+      backdrop: (context, frame) => ProfileBannerButton(
+        userId: profile.uid,
+        displayName: profile.displayName,
+        mediaRevision: profile.profileUpdatedAt,
+        mediaService: mediaService,
+        // A full-bleed band: square focus ring, two-tone because the photo's
+        // luminance is unknown, drawn on the visible photo only — below the
+        // status bar, above the text line, on the content column.
+        borderRadius: 0,
+        focusContrastColor: palette.scrim,
+        focusRingInsets: frame.bannerFocusInsets,
+        child: ProfileHeroBackdrop(
+          geometry: frame.geometry,
+          userId: profile.uid,
+          mediaRevision: profile.profileUpdatedAt,
+          mediaService: mediaService,
+        ),
+      ),
+      toolbar: (context, frame) => Padding(
+        // Back sits 6px inside the content column, as it always has; Edit
+        // keeps the 18px gutter.
+        padding: frame.inset(start: 6, end: gutter),
+        child: _toolbar(context),
+      ),
+      identity: (context, frame) {
+        final (avatarRadius, ringPadding) = switch (frame.columnWidth) {
           < 360 => (33.0, 3.0),
           < 600 => (37.0, 3.0),
           < 900 => (41.0, 3.0),
           _ => (44.0, 4.0),
         };
-        final avatarOverlap = avatarRadius + ringPadding;
-
-        return Align(
-          alignment: Alignment.topCenter,
-          heightFactor: 1,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1100),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _toolbar(context),
-                const SizedBox(height: 6),
-                _bannerAndIdentity(
-                  context: context,
-                  bannerHeight: bannerHeight,
-                  avatarOverlap: avatarOverlap,
-                  avatarRadius: avatarRadius,
-                  ringPadding: ringPadding,
-                  isWide: isWide,
-                ),
-                if (stats != null || actions != null)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(gutter, 12, gutter, 0),
-                    child: Align(
-                      alignment: AlignmentDirectional.centerStart,
-                      // On wide canvases the counters and buttons keep a
-                      // readable measure instead of stretching to 1040 px.
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 640),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            if (stats != null)
-                              ProfileStatsRow(
-                                containerKey: const ValueKey(
-                                  'profile-header-stats',
-                                ),
-                                stats: stats!,
-                              ),
-                            if (stats != null && actions != null)
-                              const SizedBox(height: 12),
-                            ?actions,
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 8),
-              ],
-            ),
+        return Padding(
+          padding: frame.inset(start: gutter, end: gutter),
+          child: _identityBlock(
+            context,
+            avatarRadius: avatarRadius,
+            ringPadding: ringPadding,
+            isWide: frame.columnWidth >= 900,
+            nameOffset: frame.geometry.nameOffset,
           ),
         );
       },
+      footer: (context, frame) => Padding(
+        padding: frame.inset(start: gutter, end: gutter),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (stats != null || actions != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  // On wide canvases the counters and buttons keep a
+                  // readable measure instead of stretching to 1040 px.
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 640),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (stats != null)
+                          ProfileStatsRow(
+                            containerKey: const ValueKey(
+                              'profile-header-stats',
+                            ),
+                            stats: stats!,
+                          ),
+                        if (stats != null && actions != null)
+                          const SizedBox(height: 12),
+                        ?actions,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
     );
   }
 
@@ -177,135 +196,54 @@ class ProfileHeader extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final canPop = Navigator.of(context).canPop();
-    return SafeArea(
-      bottom: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(6, 6, gutter, 0),
-        child: Row(
-          children: [
-            // A physical Back control whenever there IS somewhere to go
-            // back to. Profile is pushed as a route from the avatar, the
-            // profile card and More, and previously offered no way out
-            // but a system gesture — which desktop web does not have.
-            if (canPop)
-              Padding(
-                padding: const EdgeInsets.only(right: 4),
-                child: IconButton(
-                  onPressed: () => Navigator.of(context).maybePop(),
-                  icon: const Icon(Icons.arrow_back_rounded),
-                  color: palette.textPrimary,
-                  tooltip: copy.text('Back', 'Wstecz'),
-                  constraints: const BoxConstraints(
-                    minWidth: 44,
-                    minHeight: 44,
-                  ),
-                  style: IconButton.styleFrom(
-                    backgroundColor: palette.surfaceRaised.withValues(
-                      alpha: .92,
-                    ),
-                  ),
-                ),
-              )
-            else
-              // Keeps the title on the 18px content gutter when there is
-              // no Back button (6 + 12 = 18).
-              const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                copy.profile,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            // The action bar, when present, carries Edit as the primary CTA.
-            if (actions == null)
-              IconButton.filled(
-                onPressed: onEdit,
-                tooltip: copy.text('Edit profile', 'Edytuj profil'),
-                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-                style: IconButton.styleFrom(backgroundColor: colors.primary),
-                icon: Icon(Icons.edit_rounded, color: colors.onPrimary),
-              )
-            else
-              // Keeps the toolbar row at its 44 px target height.
-              const SizedBox(height: 44),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Slim banner accent + identity block. The Stack is sized by the
-  /// (non-positioned) Column, never by the banner: the banner is a
-  /// Positioned backdrop with an explicit height, so this layout cannot
-  /// reproduce the collapsed-Stack avatar-clipping bug.
-  Widget _bannerAndIdentity({
-    required BuildContext context,
-    required double bannerHeight,
-    required double avatarOverlap,
-    required double avatarRadius,
-    required double ringPadding,
-    required bool isWide,
-  }) {
-    final palette = context.appPalette;
-    // Bottom-weighted scrim: keeps the banner's lower edge dark enough
-    // that the name stays legible when it rides over the card's bottom
-    // seam, on the gradient fallback and on user-uploaded images alike.
-    final scrim = LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      stops: const [0, .55, 1],
-      colors: [
-        palette.scrim.withValues(alpha: .04),
-        palette.scrim.withValues(alpha: .16),
-        palette.scrim.withValues(alpha: .68),
-      ],
-    );
-
-    return Stack(
+    return Row(
       children: [
-        Positioned(
-          top: 0,
-          left: gutter,
-          right: gutter,
-          height: bannerHeight,
-          child: ProfileBannerButton(
-            userId: profile.uid,
-            displayName: profile.displayName,
-            mediaRevision: profile.profileUpdatedAt,
-            mediaService: mediaService,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: ProfileBanner(
-                userId: profile.uid,
-                bannerUrl: profile.bannerUrl,
-                mediaRevision: profile.profileUpdatedAt,
-                mediaService: mediaService,
-                overlay: scrim,
+        // A physical Back control whenever there IS somewhere to go back
+        // to. Profile is pushed as a route from the avatar, the profile card
+        // and More, and previously offered no way out but a system gesture —
+        // which desktop web does not have. Its raised fill keeps it legible
+        // on any photo.
+        if (canPop)
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: IconButton(
+              onPressed: () => Navigator.of(context).maybePop(),
+              icon: const Icon(Icons.arrow_back_rounded),
+              color: palette.textPrimary,
+              tooltip: copy.text('Back', 'Wstecz'),
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              style: IconButton.styleFrom(
+                backgroundColor: palette.surfaceRaised.withValues(alpha: .92),
               ),
             ),
+          )
+        else
+          // Keeps the toolbar's start on the 18px content gutter when there
+          // is no Back button (6 + 12 = 18).
+          const SizedBox(width: 12),
+        // No visible title over the photo: an ink title cannot be guaranteed
+        // legible over an arbitrary image, and the display name below is the
+        // page's one headline. Screen readers still hear the page named.
+        Expanded(
+          child: Semantics(
+            container: true,
+            namesRoute: true,
+            label: copy.profile,
+            child: const SizedBox(height: 44),
           ),
         ),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(height: bannerHeight - avatarOverlap),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(gutter, 0, gutter, 0),
-              child: _identityBlock(
-                context,
-                avatarRadius: avatarRadius,
-                ringPadding: ringPadding,
-                isWide: isWide,
-              ),
-            ),
-          ],
-        ),
+        // The action bar, when present, carries Edit as the primary CTA.
+        if (actions == null)
+          IconButton.filled(
+            onPressed: onEdit,
+            tooltip: copy.text('Edit profile', 'Edytuj profil'),
+            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+            style: IconButton.styleFrom(backgroundColor: colors.primary),
+            icon: Icon(Icons.edit_rounded, color: colors.onPrimary),
+          )
+        else
+          // Keeps the toolbar row at its 44 px target height.
+          const SizedBox(height: 44),
       ],
     );
   }
@@ -315,6 +253,7 @@ class ProfileHeader extends StatelessWidget {
     required double avatarRadius,
     required double ringPadding,
     required bool isWide,
+    double nameOffset = 0,
   }) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
@@ -324,7 +263,9 @@ class ProfileHeader extends StatelessWidget {
       children: [
         Row(
           key: const Key('profile-header-identity-row'),
-          crossAxisAlignment: CrossAxisAlignment.center,
+          // Top-anchored on the hero's text line: a two-line name or 200%
+          // text grows downward, never back up over the photo.
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ProfilePhotoButton(
               userId: profile.uid,
@@ -340,13 +281,16 @@ class ProfileHeader extends StatelessWidget {
               child: Container(
                 key: const Key('profile-header-avatar'),
                 padding: EdgeInsets.all(ringPadding),
-                // Slim: a flat canvas-coloured cut-out with a 1 px hairline
-                // separates the avatar from the banner. The ring stays free
-                // of decorative gradients (it is not a Moment ring).
+                // Slim: a flat canvas-coloured cut-out separates the avatar
+                // from the photo it stands on. Its 1 px hairline is
+                // `borderStrong`, ≥ 3:1 against that cut-out in both
+                // themes, so the ring reads over a white, a black or no
+                // photo alike. It stays free of decorative gradients (it is
+                // not a Moment ring).
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: palette.background,
-                  border: Border.all(color: palette.border),
+                  border: Border.all(color: palette.borderStrong),
                 ),
                 child: UserAvatar(
                   radius: avatarRadius,
@@ -362,23 +306,25 @@ class ProfileHeader extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Align(
+              child: Container(
+                // The avatar rises into the photo; the text starts lower, on
+                // the hero's name line, where the veil keeps it legible.
+                padding: EdgeInsets.only(top: nameOffset),
                 alignment: Alignment.centerLeft,
-                // The plate rides over the banner band, and a decorated
-                // Container does not answer hit tests — without this the
-                // user's own name fell through and opened the banner viewer.
-                // Opaque still lets the availability chip inside win first.
+                // The name block starts on the hero's name line, on the
+                // photo, where the veil has already taken it down to at most
+                // 45% (15% from the handle down) over the page canvas, so it
+                // needs no plate of its own (the former raised plate was a
+                // card-in-card whose only job was legibility over the old
+                // band). It still rides over the banner's tap target: opaque
+                // keeps a tap between its words from opening the banner
+                // viewer, while the availability chip inside still wins
+                // first.
                 child: MetaData(
                   behavior: HitTestBehavior.opaque,
-                  child: Container(
+                  child: ConstrainedBox(
                     key: const Key('profile-header-name-plate'),
                     constraints: const BoxConstraints(maxWidth: 420),
-                    padding: const EdgeInsets.fromLTRB(10, 6, 10, 7),
-                    decoration: BoxDecoration(
-                      color: palette.surfaceRaised.withValues(alpha: .94),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: palette.border),
-                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
@@ -400,7 +346,8 @@ class ProfileHeader extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         // Availability sits on the username line so the
-                        // plate keeps its height budget (profile_header_compact_test).
+                        // name block keeps its height budget
+                        // (profile_header_compact_test).
                         Wrap(
                           spacing: 8,
                           runSpacing: 4,
@@ -764,6 +711,337 @@ class ProfileActionIconButton extends StatelessWidget {
         ),
       ),
       icon: Icon(icon, size: 22),
+    );
+  }
+}
+
+/// How loudly a [ProfileQuickAction] speaks: the screen's one violet accent,
+/// or a neutral hairline tile.
+enum ProfileQuickActionEmphasis { primary, neutral }
+
+/// One slot of [ProfileQuickActions]. The caller owns the key, the callback,
+/// the busy state and every string (ADR-209: the primitive only draws).
+class ProfileQuickAction {
+  const ProfileQuickAction({
+    required this.key,
+    required this.icon,
+    required this.label,
+    required this.semanticLabel,
+    required this.onPressed,
+    this.emphasis = ProfileQuickActionEmphasis.neutral,
+    this.busy = false,
+    this.busyLabel,
+    this.disabledHint,
+    this.iconOnlyWhenWide = false,
+  });
+
+  final Key key;
+  final IconData icon;
+  final String label;
+
+  /// The spoken name, which carries the person's name ("Call Ola").
+  final String semanticLabel;
+
+  /// Null renders the slot disabled.
+  final VoidCallback? onPressed;
+  final ProfileQuickActionEmphasis emphasis;
+
+  /// Swaps the icon for a spinner and the label for [busyLabel], announced
+  /// as a live region.
+  final bool busy;
+  final String? busyLabel;
+
+  /// Why a disabled slot is disabled, exposed as the semantic hint.
+  final String? disabledHint;
+
+  /// The trailing "More" slot: a 44 px square icon button on wide layouts.
+  final bool iconOnlyWhenWide;
+}
+
+/// The friend profile's quick actions row (call, video, message, more).
+///
+/// Layout comes from the available width and the text scale, never a device
+/// label:
+/// * scaled body >= 21 (about 150 % text and up): one full-width row per
+///   action, labels wrap, nothing truncates;
+/// * width >= [wideFromWidth]: a start-aligned toolbar of 44 px icon + label
+///   buttons that hug their labels (tablet and desktop — not four phone tiles
+///   stretched across 840 px);
+/// * width < [gridBelowWidth]: the compact tiles in a 2 x 2 grid;
+/// * otherwise: one row of equal 64 px tiles.
+class ProfileQuickActions extends StatelessWidget {
+  const ProfileQuickActions({required this.actions, super.key});
+
+  final List<ProfileQuickAction> actions;
+
+  static const double wideFromWidth = 560;
+  static const double gridBelowWidth = 300;
+  static const double tileHeight = 64;
+  static const double listRowHeight = 52;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scaledBody = MediaQuery.textScalerOf(context).scale(14);
+        if (scaledBody >= 21) return _list(context);
+        if (constraints.maxWidth >= wideFromWidth) return _wide(context);
+        if (constraints.maxWidth < gridBelowWidth) return _grid(context);
+        // Equal-height tiles even when one label is busy or scaled down.
+        return IntrinsicHeight(child: _tileRow(context, actions));
+      },
+    );
+  }
+
+  ButtonStyle _style(
+    BuildContext context,
+    ProfileQuickAction action, {
+    required Size minimumSize,
+    required EdgeInsetsGeometry padding,
+    AlignmentGeometry? alignment,
+  }) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final primary = action.emphasis == ProfileQuickActionEmphasis.primary;
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(ProfileActionBar.radius),
+    );
+    // A busy slot is disabled but keeps its own colours, so the spinner
+    // reads as progress rather than as "unavailable".
+    final busy = action.busy;
+    final background = primary ? colors.primary : palette.surface;
+    final foreground = primary ? colors.onPrimary : palette.textPrimary;
+    return ButtonStyle(
+      minimumSize: WidgetStatePropertyAll(minimumSize),
+      padding: WidgetStatePropertyAll(padding),
+      alignment: alignment,
+      shape: WidgetStatePropertyAll(shape),
+      elevation: const WidgetStatePropertyAll(0),
+      tapTargetSize: MaterialTapTargetSize.padded,
+      backgroundColor: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.disabled) && !busy
+            ? palette.surfaceMuted
+            : background,
+      ),
+      foregroundColor: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.disabled) && !busy
+            ? palette.textTertiary
+            : foreground,
+      ),
+      overlayColor: WidgetStatePropertyAll(foreground.withValues(alpha: .08)),
+      side: WidgetStateProperty.resolveWith(
+        (states) => primary || (states.contains(WidgetState.disabled) && !busy)
+            ? BorderSide.none
+            : BorderSide(color: palette.border),
+      ),
+    );
+  }
+
+  Widget _spinner(double size) => SizedBox(
+    width: size,
+    height: size,
+    child: const CircularProgressIndicator(strokeWidth: 2),
+  );
+
+  Widget _button(
+    BuildContext context,
+    ProfileQuickAction action, {
+    required ButtonStyle style,
+    required Widget child,
+    bool tooltip = false,
+  }) {
+    final label = action.busy
+        ? (action.busyLabel ?? action.semanticLabel)
+        : action.semanticLabel;
+    final hint = action.onPressed == null && !action.busy
+        ? action.disabledHint
+        : null;
+    Widget button = TextButton(
+      key: action.key,
+      onPressed: action.onPressed,
+      style: style,
+      child: Semantics(
+        label: label,
+        hint: hint,
+        liveRegion: action.busy,
+        child: ExcludeSemantics(child: child),
+      ),
+    );
+    if (tooltip) {
+      button = Tooltip(
+        message: action.semanticLabel,
+        excludeFromSemantics: true,
+        child: button,
+      );
+    }
+    return button;
+  }
+
+  Widget _tile(BuildContext context, ProfileQuickAction action) {
+    final text = action.busy
+        ? (action.busyLabel ?? action.label)
+        : action.label;
+    return _button(
+      context,
+      action,
+      style: _style(
+        context,
+        action,
+        minimumSize: const Size(0, tileHeight),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: 22,
+            child: Center(
+              child: action.busy ? _spinner(18) : Icon(action.icon, size: 22),
+            ),
+          ),
+          const SizedBox(height: 4),
+          // Fits the tile at 100 % text the same way ProfileStatsRow fits
+          // its labels; larger text switches to the list layout instead.
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              text,
+              maxLines: 1,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 16 / 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tileRow(BuildContext context, List<ProfileQuickAction> slots) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < slots.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          Expanded(child: _tile(context, slots[i])),
+        ],
+      ],
+    );
+  }
+
+  Widget _grid(BuildContext context) {
+    final rows = <List<ProfileQuickAction>>[
+      for (var i = 0; i < actions.length; i += 2)
+        actions.sublist(i, i + 2 > actions.length ? actions.length : i + 2),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < rows.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          IntrinsicHeight(child: _tileRow(context, rows[i])),
+        ],
+      ],
+    );
+  }
+
+  Widget _list(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < actions.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          _button(
+            context,
+            actions[i],
+            style: _style(
+              context,
+              actions[i],
+              minimumSize: const Size(0, listRowHeight),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              alignment: AlignmentDirectional.centerStart,
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 22,
+                  child: Center(
+                    child: actions[i].busy
+                        ? _spinner(18)
+                        : Icon(actions[i].icon, size: 22),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    actions[i].busy
+                        ? (actions[i].busyLabel ?? actions[i].label)
+                        : actions[i].label,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _wide(BuildContext context) {
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          for (final action in actions)
+            if (action.iconOnlyWhenWide)
+              ProfileActionIconButton(
+                key: action.key,
+                icon: action.icon,
+                tooltip: action.semanticLabel,
+                onPressed: action.onPressed,
+              )
+            else
+              _button(
+                context,
+                action,
+                tooltip: true,
+                style: _style(
+                  context,
+                  action,
+                  minimumSize: const Size(0, ProfileActionBar.buttonHeight),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: action.busy
+                          ? _spinner(18)
+                          : Icon(action.icon, size: 18),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      action.busy
+                          ? (action.busyLabel ?? action.label)
+                          : action.label,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+              ),
+        ],
+      ),
     );
   }
 }

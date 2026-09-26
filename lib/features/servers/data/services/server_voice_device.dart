@@ -54,6 +54,7 @@ class PlatformServerVoiceDevice implements ServerVoiceDevice {
 
   final VoiceSessionKeepAlive _keepAlive;
   bool _keepAliveActive = false;
+  bool? _keepAliveCanPublish;
 
   @override
   Future<void> preferSpeakerOutput() async {
@@ -72,8 +73,13 @@ class PlatformServerVoiceDevice implements ServerVoiceDevice {
     required String body,
     required bool canPublish,
   }) async {
-    if (_keepAliveActive) return;
+    // A running service is asked again only when the publish grant changed
+    // (a listener promoted onto a stage, a guest moved to the audience): the
+    // Android service reads a repeated start as a type update and keeps its
+    // current type if the platform refuses the new one.
+    if (_keepAliveActive && _keepAliveCanPublish == canPublish) return;
     _keepAliveActive = true;
+    _keepAliveCanPublish = canPublish;
     await _keepAlive.start(title: title, body: body, canPublish: canPublish);
   }
 
@@ -81,6 +87,7 @@ class PlatformServerVoiceDevice implements ServerVoiceDevice {
   Future<void> stopKeepAlive() async {
     if (!_keepAliveActive) return;
     _keepAliveActive = false;
+    _keepAliveCanPublish = null;
     await _keepAlive.stop();
   }
 }

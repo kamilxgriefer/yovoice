@@ -13,6 +13,8 @@ import '../../data/services/server_session_controller.dart';
 import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
+import 'server_stage_requests.dart';
+import 'server_waiting_dot.dart';
 
 /// The persistent conversation dock. It exists only while a join is in
 /// flight or a link is up, and it says "połączono" only while the provider
@@ -99,6 +101,8 @@ class ServerConversationDock extends StatelessWidget {
       final sharing = controller.isScreenShareEnabled;
       final cameraEnabled = controller.isCameraEnabled;
       final canUseCamera = controller.canPublishCamera;
+      // Only requests this person can answer ask anything of them.
+      final waitingHands = controller.answerableHandCount;
       final controls = [
         if (publishing)
           _DockControl(
@@ -170,6 +174,21 @@ class ServerConversationDock extends StatelessWidget {
                 : copy.serverChannelKindTitle(ServerChannelKind.whiteboard),
             semanticLabel: copy.serverMeetingBoard,
             onPressed: onOpenWhiteboard,
+          ),
+        // Raised hands wait for the host and moderators wherever they are in
+        // the server — the dock is the one surface that is always there — so
+        // the queue is reachable from any channel, not only from the studio.
+        if (live && waitingHands > 0)
+          _DockControl(
+            key: const ValueKey('server-dock-requests'),
+            icon: Icons.back_hand_outlined,
+            label: compact ? null : copy.serverHandQueueShort,
+            semanticLabel:
+                '${copy.serverHandQueueCount(waitingHands)}. '
+                '${copy.serverHandWaitingLabel(waitingHands)}',
+            waiting: true,
+            onPressed: () =>
+                showServerStageRequestsSheet(context, controller).ignore(),
           ),
         if (live && (controller.isSessionHost || canModerateSession))
           _DockControl(
@@ -380,7 +399,9 @@ class ServerConversationDock extends StatelessWidget {
           : controller.channel?.kind == ServerChannelKind.stage
           ? copy.serverStageOnAir
           : copy.serverConnected,
-    ServerSessionPhase.reconnecting => copy.serverReconnecting,
+    ServerSessionPhase.reconnecting => copy.serverReconnectingFor(
+      controller.reauthorization,
+    ),
     ServerSessionPhase.leaving => copy.serverLeaving,
     ServerSessionPhase.failed =>
       controller.error is ServerSessionDisconnected
@@ -463,6 +484,7 @@ class _DockControl extends StatelessWidget {
     this.label,
     this.active = false,
     this.destructive = false,
+    this.waiting = false,
     super.key,
   });
   final IconData icon;
@@ -470,6 +492,10 @@ class _DockControl extends StatelessWidget {
   final String? label;
   final bool active;
   final bool destructive;
+
+  /// Pins the shared "waiting" dot to the control. The count is already in
+  /// [semanticLabel], so the dot itself adds nothing to the spoken form.
+  final bool waiting;
   final VoidCallback? onPressed;
 
   @override
@@ -517,7 +543,13 @@ class _DockControl extends StatelessWidget {
                 // colour ownership), so it brings its own on-colour ring.
                 side: serverFocusRing(foreground),
               ),
-          icon: Icon(icon, size: 22),
+          icon: ServerWaitingDot.on(
+            waiting: waiting,
+            // The outer node already speaks the count.
+            semanticLabel: '',
+            dotKey: const ValueKey('server-dock-requests-dot'),
+            child: Icon(icon, size: 22),
+          ),
         ),
       ),
     );

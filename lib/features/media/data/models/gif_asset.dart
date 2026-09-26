@@ -224,6 +224,7 @@ class GifCatalog {
     required this.pageSize,
     required this.minimumQueryLength,
     required this.ratingLabel,
+    this.resolvableProviders = const <String>[],
   });
 
   /// The unavailable catalog used before the server has answered, and whenever
@@ -237,7 +238,8 @@ class GifCatalog {
       categories = const <String>[],
       pageSize = 24,
       minimumQueryLength = 2,
-      ratingLabel = 'g';
+      ratingLabel = 'g',
+      resolvableProviders = const <String>[];
 
   final bool available;
   final GifUnavailableReason? reason;
@@ -255,6 +257,16 @@ class GifCatalog {
   final int pageSize;
   final int minimumQueryLength;
   final String ratingLabel;
+
+  /// Remote providers whose ids the server resolves at send time (ADR-214).
+  /// A provider the app searches itself — GIPHY under option B — is shown
+  /// only when it is listed here, so a build with a client key can never offer
+  /// a GIF the deployed server cannot send. Absent on older servers, which
+  /// therefore keep showing Originals only.
+  final List<String> resolvableProviders;
+
+  bool canResolve(String provider) =>
+      available && resolvableProviders.contains(provider);
 
   static GifCatalog fromWire(Object? value) {
     if (value is! Map) {
@@ -281,6 +293,11 @@ class GifCatalog {
           ? map['minimumQueryLength'] as int
           : 2,
       ratingLabel: map['ratingLabel'] as String? ?? 'g',
+      resolvableProviders: map['resolvableProviders'] is List
+          ? List<String>.unmodifiable(
+              (map['resolvableProviders'] as List).whereType<String>(),
+            )
+          : const <String>[],
     );
   }
 }

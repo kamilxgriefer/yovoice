@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/profile/data/services/image_crop.dart';
 import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
@@ -80,10 +81,12 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     // user, and the footer has no vertical budget left at 200% text on a
     // phone, so the band is explained here instead.
     _ => _copy.text(
-      'Banner crop preview. Your profile always shows the marked strip; '
-          'keep faces and text inside it.',
-      'Podgląd kadru banera. W profilu zawsze widać zaznaczony pas; '
-          'twarze i tekst umieść właśnie w nim.',
+      'Banner crop preview. Your profile always shows the marked strip, '
+          'and its lower part fades into the page behind your avatar and '
+          'name; keep faces and text inside the upper part.',
+      'Podgląd kadru banera. W profilu zawsze widać zaznaczony pas, a jego '
+          'dolna część przechodzi w tło strony za awatarem i imieniem; '
+          'twarze i tekst umieść w górnej części.',
     ),
   };
   double get _imageWidth => widget.image.width.toDouble();
@@ -771,20 +774,32 @@ class _RoomCoverSafeAreaOverlay extends StatelessWidget {
   }
 }
 
-/// The stored banner is 16:9, but the profile header paints it into a fixed
-/// band at content width — roughly 3.4:1 on a phone and ~7.6:1 at the feed's
-/// 1040pt cap — with `BoxFit.cover` and `Alignment.center`. Only the centre
-/// strip therefore survives every width, and without this guide the user
-/// composes a 16:9 picture whose top and bottom are silently discarded.
+/// The stored banner is 16:9, and the profile hero paints it full bleed
+/// with `BoxFit.cover` and `Alignment.center`. A phone shows all of it (the
+/// hero is never narrower than 16:9, so nothing is cut at the sides); wider
+/// heroes are wider than 16:9 — about 6.2:1 from 1440pt up — and crop the
+/// top and bottom symmetrically. Only the centre strip therefore survives
+/// every width, and without this guide the user composes a 16:9 picture
+/// whose top and bottom are silently discarded on a desktop.
+///
+/// The strip is not uniformly legible either: the avatar and the name stand
+/// on the photo, and the hero's melt dissolves the lower part of the strip
+/// into the page behind them. So the strip is split — the upper, clear part is
+/// labelled "always visible", the lower part "fades into the page" — both
+/// derived in `ProfileHeroGeometry`, never hand-copied here.
 ///
 /// The frame still stores the full 16:9 on purpose: it is the superset, so a
 /// later band change needs no re-upload.
 class _BannerSafeBandOverlay extends StatelessWidget {
   const _BannerSafeBandOverlay();
 
-  /// What `ProfileHeader` keeps at its widest — derived there, never a second
-  /// hand-copied number here.
+  /// What the profile hero keeps on screen at its widest —
+  /// `ProfileHeader.bannerSafeBandFraction`.
   static final double _bandFraction = ProfileHeader.bannerSafeBandFraction;
+
+  /// The upper part of it that stays above the melt —
+  /// `ProfileHeader.bannerClearBandFraction`.
+  static final double _clearFraction = ProfileHeader.bannerClearBandFraction;
 
   static const double _labelSize = 7.5;
 
@@ -800,6 +815,7 @@ class _BannerSafeBandOverlay extends StatelessWidget {
         child: const ColoredBox(color: Color(0x520D0618)),
       ),
     );
+    final clearFlex = (_clearFraction / _bandFraction * 1000).round();
 
     return Stack(
       fit: StackFit.expand,
@@ -825,52 +841,43 @@ class _BannerSafeBandOverlay extends StatelessWidget {
                       horizontal: BorderSide(color: Colors.white, width: 2),
                     ),
                   ),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      // The band is a fraction of the frame, so on a narrow
-                      // phone at large text sizes it is shorter than its own
-                      // label. A clipped pill is worse than none: the dimmed
-                      // band and the preview's semantics still carry the
-                      // meaning, so the label simply steps aside.
-                      final pillHeight =
-                          MediaQuery.textScalerOf(context).scale(_labelSize) *
-                              1.4 +
-                          6;
-                      if (constraints.maxHeight < pillHeight + 4) {
-                        return const SizedBox.expand();
-                      }
-                      // Left, not centred: the middle of the band is where
-                      // the subject usually is.
-                      return Align(
-                        alignment: Alignment.centerLeft,
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: 8),
-                          child: DecoratedBox(
-                            decoration: const BoxDecoration(
-                              color: Color(0xD90D0618),
-                              borderRadius: BorderRadius.all(
-                                Radius.circular(999),
-                              ),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 3,
-                              ),
-                              child: Text(
-                                copy.text('ALWAYS VISIBLE', 'ZAWSZE WIDOCZNE'),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: _labelSize,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: .35,
-                                ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        flex: clearFlex,
+                        child: KeyedSubtree(
+                          key: const ValueKey('banner-safe-band-clear'),
+                          child: _guideLabel(
+                            context,
+                            copy.text('ALWAYS VISIBLE', 'ZAWSZE WIDOCZNE'),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        flex: 1000 - clearFlex,
+                        child: DecoratedBox(
+                          key: const ValueKey('banner-safe-band-melt'),
+                          // A lighter veil than the cropped-away rows: this
+                          // part is on screen, just fading into the page.
+                          decoration: BoxDecoration(
+                            color: AppColors.black.withValues(alpha: .16),
+                            border: Border(
+                              top: BorderSide(
+                                color: AppColors.white.withValues(alpha: .7),
                               ),
                             ),
                           ),
+                          child: _guideLabel(
+                            context,
+                            copy.text(
+                              'FADES INTO THE PAGE',
+                              'PRZECHODZI W TŁO',
+                            ),
+                          ),
                         ),
-                      );
-                    },
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -880,6 +887,48 @@ class _BannerSafeBandOverlay extends StatelessWidget {
       ],
     );
   }
+
+  /// A pill on the left of its part of the band — the middle is where the
+  /// subject usually is. The band is a fraction of the frame, so on a narrow
+  /// phone at large text sizes a part is shorter than its own label; a
+  /// clipped pill is worse than none (the preview's semantics still carry
+  /// the meaning), so the label simply steps aside.
+  Widget _guideLabel(BuildContext context, String text) => LayoutBuilder(
+    builder: (context, constraints) {
+      final pillHeight =
+          MediaQuery.textScalerOf(context).scale(_labelSize) * 1.4 + 6;
+      if (constraints.maxHeight < pillHeight + 4) {
+        return const SizedBox.expand();
+      }
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              color: Color(0xD90D0618),
+              borderRadius: BorderRadius.all(Radius.circular(999)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.fade,
+                softWrap: false,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: _labelSize,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: .35,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class _CropControlGroup extends StatelessWidget {

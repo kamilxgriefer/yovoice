@@ -102,6 +102,26 @@ class MomentService {
     return error is FirebaseFunctionsException && error.code == 'unimplemented';
   }
 
+  /// At most five ids, deduplicated, matching the server's own cap.
+  static List<String> _boundedMentionIds(List<String> mentionUserIds) {
+    final bounded = <String>[];
+    for (final id in mentionUserIds) {
+      final clean = id.trim();
+      if (clean.isEmpty || clean.contains('/') || bounded.contains(clean)) {
+        continue;
+      }
+      bounded.add(clean);
+      if (bounded.length == 5) break;
+    }
+    return bounded;
+  }
+
+  /// True when the deployed callable does not know `mentionUserIds` yet.
+  /// `requireExactInput` answers an unknown field with exactly this refusal.
+  static bool _rejectedMentionInput(FirebaseFunctionsException error) =>
+      error.code == 'invalid-argument' &&
+      (error.message ?? '').contains('mentionUserIds');
+
   /// Resolves a canonical Moment object to a short-lived, server-authorized
   /// media grant. Firestore download-token URLs are deliberately ignored:
   /// the callable rechecks publication, expiry, account restrictions and
@@ -664,9 +684,17 @@ class MomentService {
     );
   }
 
+  /// Posts a text comment, optionally naming the people it @-mentions.
+  ///
+  /// [mentionUserIds] is additive on the wire (ADR-213) and is simply the
+  /// composer's own resolved candidates. A deployment that predates mentions
+  /// refuses the field outright; that refusal is recognised and the comment
+  /// is posted again without it, because losing a comment to an un-deployed
+  /// notification feature would be the worse failure.
   Future<String> createTextComment({
     required String momentId,
     required String text,
+    List<String> mentionUserIds = const <String>[],
   }) async {
     final user = _auth.currentUser;
     if (user == null) {
@@ -688,13 +716,22 @@ class MomentService {
         );
       }
       final callable = functions.httpsCallable('createMomentComment');
-      final response = await callable.call<Map<Object?, Object?>>({
+      final payload = <String, Object?>{
         'momentId': momentId,
         'text': trimmedText,
         'requestId': requestId,
-      });
+      };
+      final mentions = _boundedMentionIds(mentionUserIds);
+      if (mentions.isNotEmpty) payload['mentionUserIds'] = mentions;
+      Map<Object?, Object?> data;
+      try {
+        data = (await callable.call<Map<Object?, Object?>>(payload)).data;
+      } on FirebaseFunctionsException catch (error) {
+        if (mentions.isEmpty || !_rejectedMentionInput(error)) rethrow;
+        payload.remove('mentionUserIds');
+        data = (await callable.call<Map<Object?, Object?>>(payload)).data;
+      }
 
-      final data = response.data;
       final commentId = data['commentId'];
       if (commentId == null || commentId is! String || commentId.isEmpty) {
         throw StateError('Malformed server response for comment creation.');

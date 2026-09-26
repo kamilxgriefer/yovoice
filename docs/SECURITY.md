@@ -100,6 +100,10 @@ direct integrity 38/38 and browser media/crop/Reels 39/39. See
   `request.auth.token.email_verified` is checked directly in Firestore
   rules and Cloud Functions before allowing outbound/content-creation
   actions (posting, creating rooms/clubs/moments, admin bootstrap).
+  Because a Google/Apple sign-in can inherit an account a stranger
+  pre-registered with a password, that claim is only as good as the
+  takeover remediation below
+  ([Pre-registered account takeover](#pre-registered-account-takeover-2026-09-25-adr-222-phase-1--source-only-not-deployed)).
 - **Two-factor authentication uses Firebase TOTP, not an app-owned secret or
   SMS code.** Enrollment and sign-in assertions are created by the Firebase
   Auth SDK. The app keeps an enrollment secret only in memory until setup is
@@ -291,6 +295,56 @@ change that enables those names requires its own secret review, provider canary
 and deployment approval. See [ADR-176](Decisions.md#adr-176-servers-v1-exports-are-static-and-activation-is-a-server-owned-runtime-decision)
 and the [phased runbook](DEPLOYMENT.md#servers-v1-static-registration-and-runtime-activation).
 
+### Ending an empty server channel session (ADR-180 amendment, source only, NOT deployed)
+
+A channel that says LIVE with nobody in it is a false claim about people, so
+the fix had to end generations sooner without ever ending one somebody is in.
+What holds:
+
+- **The reconnect grace is a backend clock.** The decision reads an
+  `emptyObservation` the backend wrote on the private
+  `channelSessions/{sessionId}` document, never a timestamp, duration or
+  "I left" claim from a client. The new callable's only inputs are the exact
+  four ids of `sessionInput`; its answer to a client is a closed set of
+  outcome words.
+- **Who may signal a leave.** `releaseServerChannelSessionIfEmptyV1` requires
+  an active, verified, unrestricted account that is a member with `joinVoice`
+  on that channel **and** holds a `tokenRecipients` document for that exact
+  generation. A member who never joined cannot use it to probe whether a room
+  is empty or to end a conversation they were never in, and a session id from
+  another channel does not bind. Every refusal is the same
+  `permission-denied`.
+- **A release can only ever end an empty room.** The provider is read outside
+  the transaction (excluding the caller, whose clean disconnect LiveKit may
+  not have processed); completion additionally requires nobody at all in the
+  room and no token issued since the observation, and the staging transaction
+  re-proves the whole reciprocal graph and compares
+  `maxTokenExpiresAtMillis`. A provider error is `unknown` and writes nothing.
+  Acting on a generation the caller does not name, or on a newer one, is not
+  expressible.
+- **Cost is bounded.** Each release charges a dedicated actor-only budget
+  (12 per uid per minute) before any target read, and costs at most one
+  `ListParticipants`. The budget is separate from the token budget so leaving
+  can never starve a rejoin.
+- **The webhook boundary is unchanged.** `room_finished` still authenticates
+  by HMAC over the exact raw body inside its freshness window; the lifecycle
+  hook trusts nothing else from the event, is gated on
+  `appConfig/serversV1.workersEnabled`, and cannot change the HTTP answer —
+  so a lifecycle fault can never drop voice-time accounting, and a failed
+  accounting close can never keep a finished room LIVE.
+- **Drift repair writes only provably dead projections**, in a transaction
+  that re-reads channel, anchor and session, and never clears a projection
+  that names a live generation — the same fence `session_control.js` applies
+  on a late terminal ACK. The one-off repair script is dry run by default,
+  holds no provider credential, and is idempotent.
+- **Schema and Rules.** One additive, server-only field on a document no
+  client can read (`channelSessions` stays `if false`), no Rules change, no
+  new index, and no new client-writable surface. Clients still learn liveness
+  only from the channel's own `liveness` projection.
+- **Accepted trade-off, stated plainly:** a token holder who has not
+  connected for more than 30 s can be ended under, and must start a new
+  session. See the [ADR-180 amendment](Decisions.md#amendment--2026-09-19-an-empty-generation-ends-one-reconnect-grace-after-the-backend-observed-it-empty-never-on-a-clients-word).
+
 ### Community OBS ingress, screen sources and the meeting data plane (ADR-192/193, source only, NOT deployed)
 
 - **The Stream Key is a bearer credential.** Anyone holding it can publish
@@ -411,7 +465,10 @@ the repo, never sent to a client. `LIVEKIT_URL` is a plain `defineString`,
 not a secret, since it's just the public WebSocket endpoint every client
 needs to connect (equivalent to a hostname, not a credential). No other
 Cloud Function in this project currently holds a secret — see
-[Backend.md](Backend.md) for the full function inventory.
+[Backend.md](Backend.md) for the full function inventory. The in-app bug
+report alert channels declare `RESEND_API_KEY` and `GITHUB_BUG_REPORT_TOKEN`
+only when their source gates in `functions/index.js` are flipped; both are
+off, so neither is required to deploy.
 
 Direct calls use a server-authored `mediaType`. Audio-call JWTs allow the
 declared microphone source; video-call JWTs allow declared microphone and
@@ -810,6 +867,36 @@ remains on the signed-out screen cannot prove ownership and the old account may
 still receive push until the next identity binding re-attempts invalidation;
 that narrow interval is logged explicitly rather than hidden.
 
+### Comment mentions and the new notification types (2026-09-19, ADR-213, source only, NOT deployed)
+
+Who a comment `@`-mentions is stored in `commentMentions/{kind}_{parentId}_{commentId}`,
+written by the comment callable in the same transaction as the comment and
+denied to every client in both directions. It is deliberately NOT a field on
+the comment: a Voice Moment comment is readable by the Moment's audience, so a
+mention list stored there would publish to every reader of the thread, and
+every comment reader validates an exact key set that an additive field would
+fail.
+
+A mention is a HINT from the composer, never a claim. The callable proves only
+that the list is well formed (opaque uids, caller removed, deduplicated, at
+most five). Whether a listed person may be told is decided twice by the server:
+inside the notification writer's transaction and again inside the push claim
+transaction. The mentioned person must pass the parent's OWN audience check —
+this is what stops a mention from announcing the existence of a friends-only
+Moment to somebody who cannot open it — plus both block directions and active
+account state. An ineligible id is dropped silently, so the response cannot be
+used to probe who has blocked whom. Fan-out is charged against a per-actor
+hourly budget.
+
+`notificationSourceIsCurrent` now denies by default. Before this change a type
+with no validator branch fell through to `return true` and pushed with no
+revalidation at all; the legacy types keep their historical paths through an
+explicit allow-list, and anything unregistered is refused. Server event
+reminders recheck membership and the channel ACL (including restricted-channel
+grants) per recipient at write time and at push time; role promotions recheck
+the exact membership authorization revision, so a promotion that was undone
+never rings. Demotions, removals and bans deliberately notify nobody.
+
 ## Room and club membership authority (hardened 2026-08-16)
 
 Room deletion has two deliberately separate authorities. A room owner uses
@@ -881,7 +968,7 @@ ordering on Home never advances from non-host conversation. See
 
 Everything in this section is **fixed in source and not deployed**. Until
 the rules deploy in
-[DEPLOYMENT.md](DEPLOYMENT.md#pending-release-the-2026-08-1920-reachability-wave),
+[DEPLOYMENT.md](DEPLOYMENT.md#released-2026-08-20-the-reachability-wave),
 production still runs the pre-`b3c27fd` ruleset.
 
 **Room chat was the largest unguarded client write surface in the product.**
@@ -1296,6 +1383,119 @@ specific message is the existing per-surface removal
 (`adminDeleteMessage`, `moderateClubMessage`).
 
 
+## Server channel reactions and media (2026-09-19, ADR-216, source only, NOT deployed)
+
+Server text channels now carry direct-message-style reactions and private
+photos and videos
+([ADR-216](Decisions.md#adr-216-server-channel-reactions-and-media-are-admin-sdk-only-and-the-react-permission-is-derived-in-the-callable-never-stored-in-a-channel-grant)).
+Both are **Admin-SDK-only writes on the existing club message store**:
+`firestore.rules`'s `clubs/{clubId}/channels/{channelId}/messages` match is
+unchanged — `create: if false`, V1 `update` false, `delete` false — so no
+client predicate was widened to ship either feature. Deploy order:
+[DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-paths-before-any-function-that-issues-a-reservation).
+
+- **Who may react is derived inside the callable, never stored as a
+  capability.** `setServerChannelMessageReactionV1` requires the channel's
+  `read` capability (including a current restricted-channel grant), a
+  non-guest role, an active profile, a verified e-mail and no communication
+  mute. A `react` key was deliberately NOT added to `capabilitiesFor`
+  (`functions/servers/authority.js`): `grantMatches` compares a stored
+  `accessGrants` document against `capabilitiesFor` with an exact key count,
+  so a new key would invalidate every stored grant and lock members out of
+  their private channels. Ordinary members may therefore react in
+  announcements and rules channels, where only moderators may post.
+- **The reaction map is bounded and validated, never repaired.** One reaction
+  per person from the fixed direct-message six (imported from
+  `ALLOWED_DIRECT_REACTIONS`, not copied), at most 500 reactors per message
+  (a new reactor past the cap is `resource-exhausted`; changing or removing
+  an existing one is not), 60 reactions per minute per account, and a
+  malformed stored map fails `data-loss` rather than being rewritten.
+- **Upload authority is one live reservation, never the path.**
+  `storage.rules`'s new
+  `server_message_media/{serverId}/{channelId}/{userId}/{fileName}` accepts a
+  create only for a verified, active uploader whose exact custom metadata set
+  {`yovoiceServerId`, `yovoiceChannelId`, `yovoiceOwnerUid`,
+  `yovoiceMessageId`, `yovoiceMessagePath`, `yovoiceMediaType`} matches the
+  path and whose `serverMessageMediaUploadReservations/{messageId}` document
+  (the second and last cross-service read) matches on every field, including
+  `status: 'uploading'` and `expiresAt > request.time`. Bounds are the DM
+  ones: image jpeg/png/webp 128 B–8 MiB, video mp4/quicktime/webm
+  1 KiB–64 MiB, duration 1–60 s. `list`, `update` and `delete` are false, and
+  `get` exists only for the uploader while their reservation is live (upload
+  recovery). A member holds one live upload lease at a time (15 minutes) and
+  512 MiB a day.
+- **A retry replays, it does not re-reserve.** The client mints one
+  `ServerMediaSendAttempt` per pick and replays its reservation and committed
+  generation on a retry (`77264f18`), so the one-lease rule above is enforced
+  unchanged and a failed send no longer locks the member out for fifteen
+  minutes. A different pick while a lease is live is still refused.
+- **Viewers never read bytes through Storage rules.** The two-document
+  cross-service budget cannot evaluate a V1 channel ACL (root + member +
+  profile + channel + grant), so playback uses
+  `getServerChannelMessageMediaAccessV1`: up to 20 message ids per call, the
+  channel ACL and mute re-checked, removed, non-media or missing ids reported
+  `unavailable`, object metadata re-verified against the stored descriptor,
+  90-second generation-bound V4 URLs, and the whole batch re-authorized after
+  signing (a revision or descriptor change answers `aborted`). This is the
+  Company Files pattern, and it needs the runtime service account's `signBlob`
+  grant (DEPLOYMENT.md, build 36 deploy order, step 0.3).
+- **Publication is server-owned end to end.** Finalize validates metadata,
+  runs the trusted GCS probe under the DM contract (real image/video bytes,
+  track presence, duration within 1–60 s and within 2 s of the declaration),
+  re-reads metadata, revokes the durable download token generation-guarded,
+  then in one transaction re-authorizes `write`, consumes the same
+  `club.message.send.{server}.{channel}` bucket `sendClubMessage` uses and
+  writes `{type, mediaUrl: 'gs://…', media: {schemaVersion, storagePath,
+  generation, contentType, size, durationSeconds}}` plus the
+  `content: 'Photo'|'Video'` fallback installed clients render.
+- **The client never holds more than the file handle.** On io the upload
+  streams the picked file with `putFile`; web keeps `putData`
+  (`club_media_upload_source*.dart`). A library pick is shown in ADR-212's
+  review before any byte leaves the device; a camera capture is not. Neither
+  changes what may be sent: the reservation and the rule above decide that.
+- **Removal.** A moderator uses the existing `moderateClubMessage`, which now
+  also deletes `media`, `mediaUrl` and `reactions` and writes a durable,
+  generation-guarded object deletion job in the same transaction; its rank
+  ordering and owner protection are unchanged. An author uses the new
+  `deleteServerChannelMessageV1` (author only, allowed while muted or
+  unverified, like the legacy author branch of the club-chat rule), which
+  closes the long-standing gap that a V1 author could not retract anything.
+  Staff removal (`adminDeleteMessage`) needed no change: the object metadata
+  binds `yovoiceMessagePath` and `yovoiceOwnerUid`, which is exactly what its
+  attachment sweep requires.
+- **Deletion reaches the bytes.** Channel and server deletion write prefix
+  sweep jobs (`server_message_media/{serverId}/{channelId}/` and
+  `server_message_media/{serverId}/`) drained page by page, generation
+  guarded, by `processServerChannelMessageMediaDeletionJobs` (every 10
+  minutes); abandoned uploads are removed by
+  `expireServerChannelMessageMediaReservations` (every 10 minutes); and
+  account deletion sweeps the account's own objects across every server
+  through the Admin-only `serverMessageMediaObjects` owner index (the uid is
+  the fourth path segment, so no uid prefix delete could reach them). Both
+  schedules run only while `appConfig/serversV1.workersEnabled` is true.
+- **Residual, stated rather than hidden.** An issued V4 URL remains a bearer
+  capability for at most 90 seconds after a ban, a leave or a removal — the
+  same residual the private-media section already accepts.
+  `adminDeleteMessage` leaves the now-unreferenced `media` descriptor on its
+  tombstone (path and generation only; the object is deleted). Reaction
+  writes are a transaction on the message document, so a very popular
+  announcement can see retries; the upgrade path is a `reactions/{uid}`
+  subcollection and needs its own ADR. Five new collections
+  (`serverMessageMediaUploadReservations`, `…Leases`, `…Budgets`,
+  `serverMessageMediaDeletionJobs`, `serverMessageMediaObjects`) are
+  `allow read, write: if false` for every client, staff included.
+
+Evidence. On the branch (`nb/server-messaging`, 2026-09-19):
+`firestore-tests/server_message_media_rules.test.js` 9/9, storage 76/0 and
+firestore 577/0 unchanged; Functions `server_message_reactions` 14/14,
+`server_message_media` 21/21, `server_message_media_admin_delete` 2/2,
+moderation 8/8, account deletion 46/46. On the integrated tree the whole
+Functions suite is 2480/2480
+([Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md)).
+Everything here is emulator and unit evidence; nothing is deployed and no
+device or simulator has run it.
+
+
 ## Account deletion (2026-09-18, ADR-206)
 
 Self-service deletion is a **mark-and-sweep** pipeline, and the security
@@ -1341,3 +1541,255 @@ wrong rather than when it goes right.
   the honest retained set and for the four categories that currently survive a
   deletion; they are tracked in [Bugs.md](Bugs.md) and are not claimed by any
   user-facing copy.
+
+## Pre-registered account takeover (2026-09-25, ADR-222, Phase 1 — source only, NOT deployed)
+
+**Threat.** A stranger registers the owner's address with a password; when the
+owner later signs in with Google or Apple, Firebase hands the owner the same
+uid and unlinks the unverified password, but the stranger's session survives,
+its refreshed ID tokens say `email_verified: true`, and the push tokens it
+planted keep receiving the owner's notifications. Full analysis, emulator
+evidence and Phase 2 in [Decisions.md](Decisions.md) (ADR-222).
+
+**Control (server-only; no client is trusted).** `functions/auth/federated_takeover.js`
+is the single remediation authority. It acts on an account whose Google/Apple
+identity is on the owner's address and which still carries an unverified
+password — or, while the ledger row is still pending, whose password vanished,
+whose address moved away from the one the ledger recorded, or whose
+credentials changed since (Auth `tokensValidAfterTime` past the ledger's
+baseline). The decision rests on the ledger's evidence, **never** on the
+current `emailVerified` or address: after a takeover the stranger's surviving
+session can re-link a password or move the account to their own address before
+any trigger runs, and both used to pass as "the owner's verified password".
+Only a password verified by link with nothing changed since, then Google, is
+left alone (the owner's own race). Order: unlink the password and foreign
+identities and remove enrolled second factors → revoke refresh tokens →
+`users/{uid}.authSessionEpoch` → purge `fcmTokens` → put the owner's address
+back if it moved (or was cleared with the password) → audit
+(`authTakeoverAudit`) and ledger (`authPasswordLedger`) in one batch. The
+epoch write records a checkpoint on the ledger row, so revocation and the
+epoch happen **once** per takeover: a retry resumes at the purge instead of
+signing the owner out again, and a purge that exceeds its per-call budget
+(an abusive volume of planted rows) returns `securing` and continues on the
+next call or sweep. Push delivery ignores every `fcmTokens` document written
+before the epoch, so a planted token receives nothing while the purge runs.
+Triggers: the owner's own client after every Google/Apple sign-in
+(`secureFederatedSignInV1`, remediates the caller only; awaited up to 8 s for a
+returning sign-in, in the background for a new one, a late "remediated" still
+signs the device out) and a 5-minute sweeper (`sweepFederatedTakeoverSchedule`,
+`maxInstances: 1`) whose ledger pass pages through every pending row until its
+180 s share of the budget runs out. The Auth `onCreate` trigger and the
+sweeper's `listUsers` walk record unverified passwords — with a SHA-256 of the
+address, never the address, and the credential baseline — while they are
+still visible, because Firebase removes them before anything else can see the
+account.
+
+**Rules.** `authSessionEpoch` is absent from both `users/{uid}` client
+allowlists. The `fcmTokens` create/update rule and Storage `isActiveUser()`
+refuse any ID token whose `auth_time` predates it. It is deliberately **not**
+in `isActiveAccount()`: that was measured to exceed the 1000-expression budget
+of an existing Servers list rule. The callables whose effects outlive the hour
+and whose transaction already reads `users/{auth.uid}` refuse such a token
+too (`assertSessionNotBeforeEpoch`, utils/auth.js): friend request, answer,
+unfriend, follow, block, direct-message send and open, bug-report submit. `authPasswordLedger`, `authTakeoverAudit` and
+`authTakeoverSweep` are `allow read, write: if false` for every client.
+
+**Residual, stated plainly.**
+
+- The sweeper's delay is one 5-minute run while a pass over the pending ledger
+  fits in 180 s (emulator: 651 rows in ~2 s; production UNMEASURED); beyond
+  that it scales with the number of pending rows, which never-verified
+  accounts keep in the rotation. The owner's app (trigger A) does not wait for
+  the sweeper.
+- A stranger who strips the owner's Google/Apple identity (or whose password
+  reset does) before any trigger observes the takeover leaves nothing to
+  anchor a remediation; the row stays pending (`unconfirmedPassword`) and the
+  owner's next Google/Apple sign-in on it is remediated. Phase 2 closes it.
+- An ID token the stranger already holds stays valid until it expires (up to
+  one hour): the remaining callables (calls and LiveKit tokens, billing,
+  request cancel, attachments, read markers, server and moment callables),
+  owner-only reads that never consult account state (notifications, incoming
+  calls, DMs, the private profile) and other `isActiveAccount()` writes accept
+  it until then. Of those, the writes persist after the hour and are not
+  rolled back: profile fields, presence, moments, comments and reactions,
+  server messages and memberships the rules allow the account. Only Phase 2's
+  `beforeUserSignedIn` (Identity Platform upgrade) removes the window between
+  the owner's sign-in and the remediation; nothing revokes a minted ID token.
+- The purge matters more in the next build: it adds push types that carry
+  actor names and server labels.
+- A Google identity the stranger linked before the takeover can survive as a
+  stale federated index in the emulator; production is UNVERIFIED (canary).
+- An owner who clicks the verification link the stranger triggered verifies
+  the stranger's password — indistinguishable from a legitimate account.
+- Accounts taken over before deployment left no evidence.
+- Never-verified password-only accounts older than 7 days are **reported**, not
+  deleted; deletion is the owner's decision (ADR-222 lists what it must reuse).
+
+## In-app bug reports (2026-09-25, ADR-223, source only, NOT deployed)
+
+- **Server-written, owner-read.** `bugReports/{reportId}` and
+  `bugReportUploadReservations/{reportId}` are `allow read, write: if false`
+  for every client, the reporter and staff included
+  (`firestore-tests/bug_report_rules.test.js`). Reports are written only by
+  `submitBugReportV1` / `attachBugReportScreenshotV1` and read only by
+  `listBugReportsV1` / `getBugReportV1` / `updateBugReportStatusV1` /
+  `deleteBugReportV1` / `deleteBugReportScreenshotV1`, which call
+  `requireProtectedOwner` — the uid must equal `YOVOICE_PROTECTED_OWNER_UID`
+  and hold a live super-admin claim and record. The Staff Center section is
+  shown for `manageRoles` (owner-confirmed); that is presentation only.
+- **What a report holds.** The reporter's own description (10-2000 UTF-16
+  code units, control characters stripped; the client counts the same way),
+  the session uid (never a client value), and an exact device context: app
+  version and build, platform, OS version string, locale, theme and
+  brightness, the visible screen's CLASS NAME (pattern-bound, so no ids can
+  pass) and route depth, viewport size and text scale. Never message content,
+  other people's ids or names, tokens, signed URLs, the e-mail address, IP
+  address or device identifiers. The only way another person's content can
+  reach a report is a screenshot the reporter chose to attach after a preview
+  that says so and that opens full size with pinch-to-zoom, so what is shared
+  can actually be read before it is shared.
+- **Screenshot upload** follows the reservation pattern: one server-issued,
+  15-minute reservation per report; `storage.rules`
+  (`match /bug_reports/{userId}/{fileName}`) accepts exactly the reserved JPEG
+  (exact metadata keys, 128 B-1.5 MB, `br_…jpg` name) from an active account.
+  E-mail verification is deliberately not required (a tester stuck before
+  verification must be able to report); reservations are issued only after
+  the callable's rate limits. Attach verifies metadata, generation and JPEG
+  magic bytes and strips the download token. The owner sees the image only
+  through a 5-minute, generation-bound V4 URL, decoded at a bounded width
+  (`cacheWidth: 1280`) so a small file declaring huge dimensions cannot
+  exhaust memory on the owner's device. The 2FA enrollment card blocks
+  capture on the client.
+- **Banned accounts** may report in words (a bug in the ban flow is still a
+  bug) but may NOT attach a screenshot: `storage.rules`' `isActiveUser`
+  refuses a banned uploader, so the server issues no reservation and records
+  the screenshot as `refused`. The reporter sees "the screenshot could not be
+  attached, but your description arrived".
+- **Abuse bounds.** 5 reports per 10 minutes and 20 per day per account. There
+  is NO project-wide ceiling on the report itself: a shared fixed-window
+  bucket let about fifteen throwaway accounts lock every real tester out for
+  a day. The shared buckets bound only the alert channels — 200 e-mails and
+  50 GitHub issues per day (sentinel key `bug-report-global-sentinel`, not a
+  uid); a report over a channel's budget is stored and listed, only not
+  announced (`delivery.<channel>.status = "throttled"`).
+  `appConfig/bugReports.enabled = false` pauses submission immediately.
+- **Alert channels are off twice** (source gate in `functions/index.js`, then
+  `appConfig/bugReports`). Their secrets, `RESEND_API_KEY` and
+  `GITHUB_BUG_REPORT_TOKEN`, are declared only when a gate is flipped. Both
+  channels are **link-only**: an alert carries the report id, platform, app
+  version and build, the screen name and whether a screenshot was requested
+  or attached — never the description, the uid, the screenshot, the OS
+  version or the locale, whatever the repository's visibility (the former
+  `githubIncludeDescription` switch is retired and ignored). A copy in a
+  mailbox, in Resend's sent-mail log or in a GitHub issue is outside the
+  180-day sweep, the owner's delete and account deletion, so nothing the
+  reporter wrote or showed is ever copied there. Provider calls time out after
+  15 s; a live lease from another attempt makes the trigger throw and retry
+  rather than report success; a GitHub retry looks for the issue an earlier
+  attempt created before opening another. Any agent that reads those issues
+  (a Claude Code routine or action) must treat the body as data, run
+  read-only against `yovoice`, hold no deploy or store credentials and push
+  only to `claude/*` branches if at all.
+- **Rights requests.** In the Staff Center (Bug reports) the owner can list
+  one account's reports ("Find by account ID", `listBugReportsV1` with
+  `reporterId`) to answer an access request, delete one report now
+  (`deleteBugReportV1`: document, reservation and object) and remove only a
+  screenshot (`deleteBugReportScreenshotV1`), e.g. for a third party shown in
+  it. Both deletions write an `adminAuditLogs` entry (`bug_report.deleted`,
+  `bug_report.screenshot_removed`) in the same transaction, carrying the
+  reporter uid and statuses but never the description or the image.
+- **Retention.** Abandoned uploads are deleted after their reservation
+  expires, screenshots after 90 days, reports after 180 days (hourly
+  `sweepBugReportRetentionSchedule` — hourly since build 36's review round,
+  so an abandoned upload's bytes and download token live about an hour past
+  its reservation instead of a day; it drains page after page within a
+  240 s budget and logs `backlog: true` if it could not finish); account
+  deletion removes the `bug_reports/{uid}/` prefix and the account's reports.
+  Optional backstops, a Kamil console step: a GCS lifecycle rule deleting
+  `bug_reports/` objects older than 100 days, and a Firestore TTL policy on
+  `bugReports.expiresAt` (docs/DEPLOYMENT.md, "In-app bug reports").
+  Not covered: GCS soft-delete keeps a deleted object for the bucket's
+  soft-delete window, and `privateRateLimits` documents keyed to a uid
+  (including the two bug-report scopes) are not removed by account deletion
+  (pre-existing, all scopes).
+
+### Privacy policy text for yovoice.app/privacy (website repo, not edited here)
+
+**This text must be published before the functions deploy and before any
+build that shows "Report a bug"** (docs/DEPLOYMENT.md). The reporter links to
+`https://yovoice.app/privacy`, and the Settings row is shown on the public web
+app as well as to testers. The headings below are the page's real sections
+(`yovoice-website/src/app/(marketing)/privacy/page.tsx`, read 2026-09-25):
+3 "Information we collect", 4 "Why we use your information", 5 "Who processes
+your data", 8 (retention) and 9 (deletion). Re-check the numbering against
+the live page before pasting.
+
+Section 3, "Information we collect" — add:
+
+> **Bug reports.** If you choose "Report a bug" in the app, we receive the
+> description you write, your YO Voice account ID, and technical details about
+> the app and device: app version and build, platform and operating-system
+> version, language, theme, screen size and text size, and the name of the
+> screen you were on. If you choose to attach a screenshot, we also receive
+> that image, which may show anything that was on your screen, including other
+> people's names, photos or messages; you see it full size and decide before
+> it is sent. A bug report never collects your messages or calls, except what
+> is visible in a screenshot you choose to attach.
+
+Section 4, "Why we use your information" — add: "to investigate and fix
+problems you report to us". Once counsel confirms the lawful basis (see the
+open questions below), add it here, for example "(our legitimate interest in
+keeping the app working; the screenshot only if you choose to attach it)".
+
+Section 5, "Who processes your data" — add (Resend already appears for
+sign-in e-mail):
+
+> Bug reports are stored in Google Firebase and read only by the YO Voice
+> owner in our internal tools. When a report arrives, **Resend** may send our
+> team a short notification containing only the report's reference number,
+> the app version, the platform and the name of the screen — never your
+> description, your screenshot or your account ID.
+
+Only if the GitHub route is switched on, also add:
+
+> **GitHub** may hold the same short notification (reference number, app
+> version, platform and screen name) as an issue in our project tracker.
+
+Section 8 (retention) — add:
+
+> Bug reports are kept for up to 180 days and screenshots attached to them for
+> up to 90 days, then deleted automatically. We can delete a report or its
+> screenshot sooner on request (privacy@yovoice.app). The short notifications
+> described above stay in our team mailbox (and, if used, our project
+> tracker) under their own retention; they contain no description,
+> screenshot or account ID.
+
+Section 9 (deletion) — add:
+
+> Deleting your account deletes the bug reports you sent and any screenshots
+> attached to them.
+
+The same line goes on `yovoice.app/delete-account` ("what deleting your
+account does"); the in-app list already carries it
+(`delete_account_consequences.dart`).
+
+### Open questions for legal review before an alert channel is switched on
+
+These are questions, not verified defects:
+
+1. The privacy page states no lawful basis for any purpose. Bug reports need
+   one per purpose — likely legitimate interest for the report, and the
+   reporter's choice for the screenshot.
+2. Third parties shown in a screenshot get no notice: confirm the basis for
+   processing their data and how their requests are honoured (the owner's
+   remove-screenshot and delete actions are the mechanism).
+3. Resend (and GitHub, or Anthropic if a Claude route is used) are US
+   processors: confirm the DPA and transfer terms. `emailTo` should be the
+   Google Workspace mailbox (under a DPA), not a consumer Gmail.
+4. The page allows users from age 13 (section 11); Poland and some other EU
+   states set 16 for consent-based processing — relevant if the screenshot
+   choice is framed as consent.
+5. `privateRateLimits` documents keyed to a uid are not removed by account
+   deletion (pre-existing, every scope).
+6. GCS soft-delete may keep deleted screenshots for the bucket's soft-delete
+   window.

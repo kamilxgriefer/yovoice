@@ -289,11 +289,11 @@ test("QA binding: every malformed or missing Auth context is `unauthenticated` b
   assert.equal(calls, 1);
 });
 
-test("QA binding: App Check enforcement and limited-use consumption flip together on all fifty-five callables, and only for a boolean true", () => {
+test("QA binding: App Check enforcement and limited-use consumption flip together on all fifty-six callables, and only for a boolean true", () => {
   for (const [value, expected] of [[true, true], [false, false], [undefined, false], ["true", false], [1, false]]) {
     const { list } = build({ enforceAppCheck: value });
     const callables = list.filter((entry) => entry.kind === "callable");
-    assert.equal(callables.length, 55);
+    assert.equal(callables.length, 56);
     for (const entry of callables) {
       assert.equal(entry.options.enforceAppCheck, expected, `enforceAppCheck=${String(value)}`);
       assert.equal(entry.options.consumeAppCheckToken, expected, `enforceAppCheck=${String(value)}`);
@@ -304,11 +304,11 @@ test("QA binding: App Check enforcement and limited-use consumption flip togethe
   }
 });
 
-test("QA binding: the registered map is exactly the sixty-one names with the documented options and secret bindings", () => {
+test("QA binding: the registered map is exactly the sixty-two names with the documented options and secret bindings", () => {
   const { functions, list } = build();
   assert.deepEqual(Object.keys(functions).sort(), [...SERVERS_V1_EXPORT_NAMES].sort());
   assert.ok(Object.isFrozen(functions));
-  assert.equal(list.length, 61);
+  assert.equal(list.length, 62);
   for (const entry of list) {
     assert.equal(entry.options.region, "europe-west1");
     assert.equal(typeof entry.handler, "function");
@@ -326,7 +326,8 @@ test("QA binding: the registered map is exactly the sixty-one names with the doc
       ]);
       assert.equal(entry.options.memory, "512MiB");
       assert.equal(entry.options.timeoutSeconds, 120);
-    } else if (["createServerChannelTokenV1", "endServerChannelSessionV1", "createServerBroadcastIngressV1"].includes(name)) {
+    } else if (["createServerChannelTokenV1", "endServerChannelSessionV1", "createServerBroadcastIngressV1",
+      "releaseServerChannelSessionIfEmptyV1"].includes(name)) {
       assert.deepEqual(secretNames(entry), ["LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"]);
       assert.equal(entry.options.timeoutSeconds, 120);
     } else if (

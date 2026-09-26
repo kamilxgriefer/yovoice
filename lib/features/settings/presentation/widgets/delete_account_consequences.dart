@@ -74,6 +74,20 @@ List<DeleteAccountConsequence> deleteAccountConsequences(
           'zostaną usunięte.',
     ),
   ),
+  // functions/account/stages.js: the `records` stage's step 5
+  // (deleteBugReports) and the bug_reports/{uid}/ Storage prefix; proved by
+  // functions/test/bug_reports.test.js ("account deletion sweeps …"). Team
+  // alerts about a report carry only its reference, platform, version and
+  // screen name, never the words or the screenshot (bug_reports/delivery.js).
+  DeleteAccountConsequence(
+    icon: Icons.bug_report_outlined,
+    text: copy.text(
+      'Bug reports you sent, and any screenshots you attached to them, are '
+          'deleted.',
+      'Wysłane przez Ciebie zgłoszenia błędów oraz dołączone do nich zrzuty '
+          'ekranu zostaną usunięte.',
+    ),
+  ),
   DeleteAccountConsequence(
     icon: Icons.key_off_outlined,
     text: copy.text(

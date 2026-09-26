@@ -4,11 +4,11 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
-import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/friends/presentation/friend_request_error_copy.dart';
+import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
 import 'package:yovoice/features/friends/presentation/widgets/friend_suggestion_card.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -74,16 +74,22 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     super.dispose();
   }
 
+  /// "Add" never accepts: an `incomingPending` answer opens the explicit
+  /// Accept / Decline prompt; a later tap on the same card reopens it.
   Future<void> _addSuggestion(SuggestedFriend suggestion) async {
     if (_processingIds.contains(suggestion.uid)) return;
     final previous = _suggestionStatuses[suggestion.uid];
+    if (previous == FriendRelationshipStatus.requestReceived) {
+      await _promptIncomingSuggestion(suggestion);
+      return;
+    }
     setState(() {
       _processingIds.add(suggestion.uid);
       _suggestionStatuses[suggestion.uid] =
           FriendRelationshipStatus.requestSent;
     });
     try {
-      final relationship = await _friendService.sendFriendRequest(
+      final result = await _friendService.requestFriendship(
         FriendUser(
           id: suggestion.uid,
           displayName: suggestion.displayName,
@@ -95,15 +101,25 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         ),
       );
       if (!mounted) return;
-      setState(() => _suggestionStatuses[suggestion.uid] = relationship);
+      setState(() => _suggestionStatuses[suggestion.uid] = result.status);
+      if (result.incomingPending) {
+        await _promptIncomingSuggestion(suggestion);
+        return;
+      }
+      final copy = AppLocalizations.of(context);
       _showMessage(
-        relationship == FriendRelationshipStatus.friends
-            ? AppLocalizations.of(context).template(
+        result.acceptedWithoutPrompt
+            ? friendRequestAcceptedWithoutPromptMessage(
+                copy,
+                name: suggestion.displayName,
+              )
+            : result.status == FriendRelationshipStatus.friends
+            ? copy.template(
                 'You and {name} are now friends.',
                 'Ty i {name} jesteście teraz znajomymi.',
                 values: {'name': suggestion.displayName},
               )
-            : AppLocalizations.of(context).template(
+            : copy.template(
                 'Friend request sent to {name}.',
                 'Wysłano zaproszenie do {name}.',
                 values: {'name': suggestion.displayName},
@@ -123,6 +139,30 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     } finally {
       if (mounted) setState(() => _processingIds.remove(suggestion.uid));
     }
+  }
+
+  Future<void> _promptIncomingSuggestion(SuggestedFriend suggestion) async {
+    final outcome = await showFriendRequestPrompt(
+      context,
+      senderId: suggestion.uid,
+      senderName: suggestion.displayName,
+      friendService: _friendService,
+      profileMediaService: widget.profileMediaService,
+    );
+    if (!mounted || outcome == null) return;
+    final next = await friendRelationshipAfterResponse(
+      outcome,
+      reread: () => _friendService.getRelationshipStatus(suggestion.uid),
+    );
+    if (!mounted) return;
+    setState(() => _suggestionStatuses[suggestion.uid] = next);
+    _showMessage(
+      friendRequestResponseMessage(
+        AppLocalizations.of(context),
+        outcome,
+        name: suggestion.displayName,
+      ),
+    );
   }
 
   void _onSearchChanged(String value) {
@@ -238,46 +278,77 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         // reciprocal sendFriendRequest — "Accept" relying on the server's
         // reciprocal-accept branch is exactly how sending auto-created a
         // friendship. Mirrors ProfilePreviewSheet's accept wiring.
-        await _friendService.acceptFriendRequest(
-          FriendRequest(
-            senderId: user.id,
-            senderName: user.displayName,
-            senderEmail: user.email,
-            senderPhotoUrl: user.photoUrl,
-            createdAt: null,
-          ),
+        final outcome = await _friendService.respondToFriendRequest(
+          user.id,
+          accept: true,
         );
 
         if (!mounted) return;
-        setState(() {
-          _relationshipStatuses[user.id] = FriendRelationshipStatus.friends;
-        });
+        final next = await friendRelationshipAfterResponse(
+          outcome,
+          reread: () => _friendService.getRelationshipStatus(user.id),
+        );
+        if (!mounted) return;
+        setState(() => _relationshipStatuses[user.id] = next);
         _showMessage(
-          AppLocalizations.of(context).template(
-            'You and {name} are now friends.',
-            'Ty i {name} jesteście teraz znajomymi.',
-            values: {'name': user.displayName},
+          friendRequestResponseMessage(
+            AppLocalizations.of(context),
+            outcome,
+            name: user.displayName,
           ),
         );
         return;
       }
 
-      final relationship = await _friendService.sendFriendRequest(user);
+      final result = await _friendService.requestFriendship(user);
 
       if (!mounted) return;
 
       setState(() {
-        _relationshipStatuses[user.id] = relationship;
+        _relationshipStatuses[user.id] = result.status;
       });
 
+      if (result.incomingPending) {
+        // Nothing changed: they had already asked. The row now shows Accept
+        // and Decline, and the explicit prompt asks right away.
+        final outcome = await showFriendRequestPrompt(
+          context,
+          senderId: user.id,
+          senderName: user.displayName,
+          friendService: _friendService,
+          profileMediaService: widget.profileMediaService,
+        );
+        if (!mounted || outcome == null) return;
+        final next = await friendRelationshipAfterResponse(
+          outcome,
+          reread: () => _friendService.getRelationshipStatus(user.id),
+        );
+        if (!mounted) return;
+        setState(() => _relationshipStatuses[user.id] = next);
+        _showMessage(
+          friendRequestResponseMessage(
+            AppLocalizations.of(context),
+            outcome,
+            name: user.displayName,
+          ),
+        );
+        return;
+      }
+
+      final copy = AppLocalizations.of(context);
       _showMessage(
-        relationship == FriendRelationshipStatus.friends
-            ? AppLocalizations.of(context).template(
+        result.acceptedWithoutPrompt
+            ? friendRequestAcceptedWithoutPromptMessage(
+                copy,
+                name: user.displayName,
+              )
+            : result.status == FriendRelationshipStatus.friends
+            ? copy.template(
                 'You and {name} are now friends.',
                 'Ty i {name} jesteście teraz znajomymi.',
                 values: {'name': user.displayName},
               )
-            : AppLocalizations.of(context).template(
+            : copy.template(
                 'Friend request sent to {name}.',
                 'Wysłano zaproszenie do {name}.',
                 values: {'name': user.displayName},
@@ -328,16 +399,28 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     });
 
     try {
-      await _friendService.declineFriendRequest(user.id);
+      final outcome = await _friendService.respondToFriendRequest(
+        user.id,
+        accept: false,
+      );
 
       if (!mounted) return;
-      setState(() {
-        _relationshipStatuses[user.id] = FriendRelationshipStatus.none;
-      });
+      final next = await friendRelationshipAfterResponse(
+        outcome,
+        reread: () => _friendService.getRelationshipStatus(user.id),
+      );
+      if (!mounted) return;
+      setState(() => _relationshipStatuses[user.id] = next);
       _showMessage(
-        AppLocalizations.of(
-          context,
-        ).text('Friend request declined.', 'Odrzucono zaproszenie.'),
+        outcome == FriendRequestResponseOutcome.declined
+            ? AppLocalizations.of(
+                context,
+              ).text('Friend request declined.', 'Odrzucono zaproszenie.')
+            : friendRequestResponseMessage(
+                AppLocalizations.of(context),
+                outcome,
+                name: user.displayName,
+              ),
       );
     } catch (error) {
       if (mounted) {
@@ -785,27 +868,38 @@ class _UserResultCard extends StatelessWidget {
               ],
             ),
     );
+    // A received request always shows both choices as words, never an
+    // icon-only X beside a labelled Accept (friend-request consent ADR).
     final decline =
         relationshipStatus == FriendRelationshipStatus.requestReceived
-        ? SizedBox(
-            width: 44,
-            height: 44,
-            child: IconButton(
+        ? Tooltip(
+            message: copy.text('Decline friend request', 'Odrzuć zaproszenie'),
+            child: OutlinedButton.icon(
+              key: ValueKey('friend-search-decline-${user.id}'),
               onPressed: isProcessing ? null : onDecline,
-              tooltip: copy.text(
-                'Decline friend request',
-                'Odrzuć zaproszenie',
-              ),
-              style: IconButton.styleFrom(
-                backgroundColor: palette.dangerSurface,
-                disabledBackgroundColor: palette.surfaceMuted,
-                foregroundColor: palette.dangerForeground,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(0, 44),
+                foregroundColor: palette.textPrimary,
                 disabledForegroundColor: palette.textTertiary,
+                side: BorderSide(color: palette.borderStrong),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              icon: const Icon(Icons.close_rounded, size: 22),
+              icon: const Icon(Icons.close_rounded, size: 18),
+              label: Text(
+                copy.text('Decline', 'Odrzuć'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
             ),
           )
         : null;
@@ -828,7 +922,10 @@ class _UserResultCard extends StatelessWidget {
           final actions = Row(
             children: [
               Expanded(child: primary),
-              if (decline != null) ...[const SizedBox(width: 8), decline],
+              if (decline != null) ...[
+                const SizedBox(width: 8),
+                Expanded(child: decline),
+              ],
             ],
           );
           if (stack) {
@@ -842,7 +939,10 @@ class _UserResultCard extends StatelessWidget {
               Expanded(child: identity),
               const SizedBox(width: 10),
               Flexible(child: primary),
-              if (decline != null) ...[const SizedBox(width: 6), decline],
+              if (decline != null) ...[
+                const SizedBox(width: 6),
+                Flexible(child: decline),
+              ],
             ],
           );
         },

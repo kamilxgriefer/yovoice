@@ -126,6 +126,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Photo library'));
     await tester.pumpAndSettle();
+    // Library picks are confirmed in the media review first (ADR-212).
+    await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
+    await tester.pumpAndSettle();
 
     expect(sources, [ImageSource.camera, ImageSource.gallery]);
     expect(service.sentImages, hasLength(2));
@@ -166,6 +169,9 @@ void main() {
     await tester.tap(find.byTooltip('Add photo or video'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Video library'));
+    await tester.pumpAndSettle();
+    // Library picks are confirmed in the media review first (ADR-212).
+    await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
     await tester.pumpAndSettle();
 
     expect(sources, [ImageSource.camera, ImageSource.gallery]);
@@ -248,6 +254,125 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(service.sentVideos, isEmpty);
+  });
+
+  testWidgets('library photo is reviewed: Cancel sends nothing, Send queues', (
+    tester,
+  ) async {
+    final service = _ActionMessageService(firestore, auth);
+    await tester.pumpWidget(
+      host(
+        service,
+        photoPicker: (source) async => XFile.fromData(
+          Uint8List(4096),
+          mimeType: 'image/jpeg',
+          name: 'library.jpg',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add photo or video'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Photo library'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('yo-media-review')), findsOneWidget);
+    expect(find.text('Send this photo?'), findsWidgets);
+    expect(find.text('To Them'), findsOneWidget);
+    expect(service.sentImages, isEmpty);
+
+    await tester.tap(find.byKey(const ValueKey('yo-media-review-cancel')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('yo-media-review')), findsNothing);
+    expect(service.sentImages, isEmpty);
+
+    await tester.tap(find.byTooltip('Add photo or video'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Photo library'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
+    await tester.pumpAndSettle();
+    expect(service.sentImages, hasLength(1));
+    expect(find.byKey(const ValueKey('yo-media-review')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('library video over 60 s is blocked in review, never queued', (
+    tester,
+  ) async {
+    final service = _ActionMessageService(firestore, auth);
+    var picks = 0;
+    await tester.pumpWidget(
+      host(
+        service,
+        videoPicker: (source) async {
+          picks += 1;
+          return XFile.fromData(
+            Uint8List(4096),
+            mimeType: 'video/mp4',
+            name: 'long.mp4',
+          );
+        },
+        videoInspector: (_) async => const Duration(seconds: 90),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add photo or video'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Video library'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('This video is 1:30. Videos can be up to 60 seconds.'),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('yo-media-review-send')),
+      warnIfMissed: false,
+    );
+    await tester.pumpAndSettle();
+    expect(service.sentVideos, isEmpty);
+
+    // "Choose another" reopens the same library picker.
+    await tester.tap(
+      find.byKey(const ValueKey('yo-media-review-choose-another')),
+    );
+    await tester.pumpAndSettle();
+    expect(picks, 2);
+    expect(find.byKey(const ValueKey('yo-media-review')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('yo-media-review-cancel')));
+    await tester.pumpAndSettle();
+    expect(service.sentVideos, isEmpty);
+  });
+
+  testWidgets('account switch while the review is open queues nothing', (
+    tester,
+  ) async {
+    final service = _ActionMessageService(firestore, auth);
+    await tester.pumpWidget(
+      host(
+        service,
+        photoPicker: (_) async => XFile.fromData(
+          Uint8List(4096),
+          mimeType: 'image/jpeg',
+          name: 'account-a-photo.jpg',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add photo or video'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Photo library'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('yo-media-review')), findsOneWidget);
+
+    auth.mockUser = MockUser(uid: 'account-b');
+    await auth.signInWithCredential(null);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('yo-media-review')), findsNothing);
+    expect(service.sentImages, isEmpty);
   });
 
   testWidgets('account switch rejects and discards recorder callback audio', (

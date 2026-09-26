@@ -12,6 +12,7 @@ import 'package:yovoice/features/profile/data/services/profile_image_rules.dart'
 import 'package:yovoice/features/profile/presentation/screens/image_crop_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
 
 Future<ui.Image> _solidImage(int width, int height) async {
   final recorder = ui.PictureRecorder();
@@ -410,12 +411,15 @@ void main() {
         reason: 'the stored crop stays the 16:9 superset',
       );
 
-      // What the profile header can still show at its widest: the band is
-      // ResponsiveContentWidth.feed minus two gutters, at the wide band
-      // height, and the 16:9 source is drawn into it with BoxFit.cover.
+      // What the profile header can still show at its widest: the hero is
+      // full bleed up to ResponsiveContentWidth.workbench (1440pt) and, on a
+      // desktop with no status bar, the toolbar row plus the wide band tall;
+      // the 16:9 source is drawn into it with BoxFit.cover. (Re-based from the
+      // retired inset card — feed minus two gutters at 132pt — when the
+      // banner became the header's full-bleed background.)
       final widestHeaderBand =
-          (ResponsiveContentWidth.feed.maxWidth - ProfileHeader.gutter * 2) /
-          ProfileHeader.bannerHeightWide;
+          ResponsiveContentWidth.workbench.maxWidth /
+          (ProfileHeroGeometry.toolbarExtent + ProfileHeroGeometry.wideBand);
       final surviving = ProfileImageRules.banner.aspectRatio / widestHeaderBand;
       expect(
         ProfileHeader.bannerSafeBandFraction,
@@ -425,7 +429,8 @@ void main() {
       expect(
         surviving,
         inInclusiveRange(.15, .35),
-        reason: 'a wildly different band means the geometry changed, not a typo',
+        reason:
+            'a wildly different band means the geometry changed, not a typo',
       );
 
       final band = tester.getRect(
@@ -443,6 +448,32 @@ void main() {
         reason: 'the header centres the crop, so the guide is centred too',
       );
       expect(find.text('ALWAYS VISIBLE'), findsOneWidget);
+      // The lower part of the band is on screen but melts into the page on
+      // wide layouts, so the guide marks it apart from the clear part.
+      final clearPart = tester.getRect(
+        find.byKey(const ValueKey('banner-safe-band-clear')),
+      );
+      final meltPart = tester.getRect(
+        find.byKey(const ValueKey('banner-safe-band-melt')),
+      );
+      // Both parts sit inside the guide's 2 px padding.
+      expect(clearPart.top, closeTo(band.top + 2, .5));
+      expect(meltPart.top, closeTo(clearPart.bottom, .5));
+      expect(meltPart.bottom, closeTo(band.bottom - 2, .5));
+      expect(
+        clearPart.height / (band.height - 4),
+        closeTo(
+          ProfileHeader.bannerClearBandFraction /
+              ProfileHeader.bannerSafeBandFraction,
+          .005,
+        ),
+      );
+      expect(
+        tester.getRect(find.text('ALWAYS VISIBLE')).center.dy,
+        lessThan(clearPart.bottom),
+        reason: 'the "always visible" label sits on the clear part',
+      );
+      expect(find.text('FADES INTO THE PAGE'), findsOneWidget);
       // The guide is a picture; the same fact has to reach a screen reader.
       expect(
         find.bySemanticsLabel(
@@ -469,6 +500,7 @@ void main() {
     );
 
     expect(find.text('ZAWSZE WIDOCZNE'), findsOneWidget);
+    expect(find.text('PRZECHODZI W TŁO'), findsOneWidget);
     expect(find.text('ALWAYS VISIBLE'), findsNothing);
     expect(
       find.bySemanticsLabel(RegExp('twarze i tekst umieść')),

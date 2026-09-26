@@ -1,3 +1,5 @@
+const { logger } = require("firebase-functions/v2");
+
 const {
   activeProfile, assertNotRestricted, fail, requireUid, timestampMillis, transactionGetAll,
 } = require("../integrity/guards");
@@ -145,8 +147,26 @@ async function pendingInvitation({ db, transaction, reference, server, uid, nowM
 }
 
 function createServerMembershipService(dependencies) {
-  const { db } = dependencies;
+  const { db, notifyServerRolePromotion = null } = dependencies;
   const operations = createServerOperations(dependencies);
+
+  // A promotion tells the member something they would otherwise only find
+  // by reopening the server (ADR-213). It is issued AFTER the membership
+  // transaction commits: the canonical notification writer needs its own
+  // reads, and Firestore forbids a read after a write, so folding it in
+  // would mean reordering this transaction. Failure is logged and dropped
+  // by the notifier — a committed role change is never reported as an error
+  // because its notice did not go out.
+  async function announcePromotion(promotion) {
+    if (!promotion || !notifyServerRolePromotion) return;
+    try {
+      await notifyServerRolePromotion(promotion);
+    } catch (error) {
+      logger.error("Server role promotion notice failed", {
+        code: error?.code ?? "unknown",
+      });
+    }
+  }
 
   async function admission(request, respond) {
     const input = mutationInput(request.data, respond ? ["response"] : []);
@@ -261,7 +281,9 @@ function createServerMembershipService(dependencies) {
     const input = mutationInput(request.data, ["memberId", "role"]);
     input.memberId = requireUid(request.data.memberId, "memberId");
     input.role = requireEnum(request.data.role, ROLES.filter((role) => role !== "owner"), "role");
-    return operations.execute(request, "server.member.role.v1", input, async ({ transaction, auth, prior, now, identity }) => {
+    let promotion = null;
+    const result = await operations.execute(request, "server.member.role.v1", input, async ({ transaction, auth, prior, now, identity }) => {
+      promotion = null;
       const access = await readServerAccess({ db, transaction, uid: auth.uid, serverId: input.serverId, allowHeld: true });
       if (auth.uid === input.memberId || !["owner", "coOwner"].includes(access.member.role)) denied();
       const memberReference = access.reference.collection("members").doc(input.memberId);
@@ -285,14 +307,23 @@ function createServerMembershipService(dependencies) {
       transaction.update(access.reference, { revision: access.server.revision + 1, updatedAt: now });
       membershipOutbox({ db, transaction, identity, serverId: input.serverId, uid: input.memberId, revision: nextRevision,
         kind: "memberRoleChanged", bindings, now });
+      promotion = {
+        serverId: input.serverId, memberId: input.memberId, actorId: auth.uid,
+        previousRole: member.role, nextRole: input.role,
+        membershipRevision: nextRevision, serverName: access.server.name ?? null,
+      };
       return { serverId: input.serverId, memberId: input.memberId, role: input.role, membershipRevision: nextRevision, cleanupPending: true };
     });
+    await announcePromotion(promotion);
+    return result;
   }
 
   async function transferServerOwnershipV1(request) {
     const input = mutationInput(request.data, ["newOwnerId"]);
     input.newOwnerId = requireUid(request.data.newOwnerId, "newOwnerId");
-    return operations.execute(request, "server.ownership.transfer.v1", input, async ({ transaction, auth, prior, now, identity }) => {
+    let promotion = null;
+    const result = await operations.execute(request, "server.ownership.transfer.v1", input, async ({ transaction, auth, prior, now, identity }) => {
+      promotion = null;
       if (prior) {
         const [root, membership] = await transactionGetAll(transaction,
           db.doc(`clubs/${input.serverId}`), db.doc(`clubs/${input.serverId}/members/${auth.uid}`));
@@ -397,8 +428,15 @@ function createServerMembershipService(dependencies) {
         status: "pending", cursor: null, createdAt: now, updatedAt: now,
         ...convergenceState(rtcTargets, { grantsComplete: false }),
       });
+      promotion = {
+        serverId: input.serverId, memberId: input.newOwnerId, actorId: auth.uid,
+        previousRole: target.role, nextRole: "owner",
+        membershipRevision: newRevision, serverName: access.server.name ?? null,
+      };
       return { serverId: input.serverId, ownerId: input.newOwnerId, cleanupPending: true, propagationPending: true };
     });
+    await announcePromotion(promotion);
+    return result;
   }
 
   return {

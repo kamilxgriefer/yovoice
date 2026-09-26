@@ -3679,7 +3679,7 @@ diagnose precisely because nothing looks wrong.
   undeployed behind three preconditions, and
   `receiveLiveKitAchievementWebhook` is unexported. Neither should be
   swept into the next blanket `--only functions` deploy without reading
-  [DEPLOYMENT.md](DEPLOYMENT.md#deliberately-held-back-publishpublicstatsschedule).
+  [DEPLOYMENT.md](DEPLOYMENT.md#released-2026-08-20-publishpublicstatsschedule).
 - `npm run deploy` inside `functions/` is a full `--only functions` deploy
   with no `--project` pin, and now deploys 111 functions. PROJECT_STRUCTURE.md
   described it as a single-function convenience script until this date.
@@ -3884,7 +3884,7 @@ be picked, and only one of them would be checked against the server.
   `validateMoment()` requires exactly **20** and fails `data-loss` on a
   mismatch. Latent only because Stage B is deployed. It needs a deliberate
   decision — delete it or write the canonical shape —
-  [Roadmap 0j](Roadmap.md#0j-decide-the-fate-of-_publishrecordedmomentlegacy).
+  [Roadmap 0j](Roadmap.md#0j-decide-the-fate-of-_publishrecordedmomentlegacy-done).
 - **UNVERIFIED**: Safari, Firefox's panel in a real Firefox, real
   microphone capture, and an end-to-end publish into production Storage
   and Firestore. Chromium 148's MIME negotiation was checked directly;
@@ -10398,6 +10398,11 @@ by the Reel feed ranking entry, and 171 was then taken by the Home vertical
 rhythm entry, so it is 172. Anything citing "ADR-167, GIFs" or "ADR-171, GIFs"
 means this.)*
 
+**Amendment — 2026-09-19.** GIPHY is now designed as client-side search with
+server-side resolution by id at send time, per GIPHY's current terms; see
+[ADR-214](#adr-214-giphy-is-searched-by-the-client-and-resolved-by-the-server-at-send-time-option-b).
+The server-proxied search described below stays dormant.
+
 **Amendment — 2026-09-13.** The provider and rollout status below describe the
 original third-party design and are superseded for the current release by
 **YO Voice Originals**. Sixteen original G-rated animations ship in the app at
@@ -10835,7 +10840,7 @@ emulator creates indexes on demand, so this query passes every local suite and
 would fail only in production with `FAILED_PRECONDITION`, on the client's first
 real channel list — the same failure mode that kept Premium expiry silently
 broken. It is recorded as a third named activation precondition in
-[Servers.md](Servers.md); [ADR-176](#adr-176-servers-v1-registers-behind-one-exact-environment-gate-dispatches-its-outbox-read-only-and-still-has-no-activation-writer)
+[Servers.md](Servers.md); [ADR-176](#adr-176-servers-v1-exports-are-static-and-activation-is-a-server-owned-runtime-decision)
 named two, and that entry's count is superseded here rather than rewritten.
 
 ## ADR-178: V1 invitations are written by `createServerInviteV1` and revoked by a status transition, refuse held servers entirely, and are discovered through a private pointer in the `serverChannelRefs` posture
@@ -10991,6 +10996,137 @@ in the emulator, so they are recorded as activation precondition 4 in
 place, never an eviction. Twenty-one V1 exports; the registration and QA
 suites pin the new schedule's options. Nothing is deployed and
 `YOVOICE_SERVERS_V1` stays absent.
+
+### Amendment — 2026-09-19: an empty generation ends one reconnect grace after the backend observed it empty, never on a client's word
+
+*(An amendment to this entry, not a new decision; it has no number of its own.
+Source on `nb/server-live`, merged into the next build after 3.0.0+34. NOT
+deployed.)*
+
+**Context.** ADR-180 bounded a generation whose host vanished, and it did that
+job: the sweep needs every token to have expired plus one grace period before
+it will act, which is what made a single occupancy reading safe. But "bounded
+in about fifteen minutes" is also what a member sees — a channel that says
+LIVE with nobody in it — and `CLAUDE.md` forbids exactly that kind of
+false-but-number-free signal. Two further gaps were measured while
+investigating it: leaving a channel told the backend nothing at all, and a
+projection left `isLive: true` while its anchor was not live was outside every
+sweep's candidate query (`rooms.isLive == true`), so it never expired.
+
+**Decision.** The session ends when the last participant leaves, after a short
+reconnect grace (`EMPTY_GENERATION_GRACE_MS = 60_000`), and the whole grace is
+observed and timed by the backend.
+
+`functions/servers/session_staleness.js` records an `emptyObservation`
+`{schemaVersion, source, observedAtMillis, maxTokenExpiresAtMillis}` on the
+private `channelSessions/{sessionId}` document — a server-clock instant plus
+the token bound it was taken at. It is written only when the provider reports
+nobody else in the generation's `srv_` room and no `tokenRecipients`
+`lastIssuedAt` falls inside `ADMISSION_WINDOW_MS = 30_000`. The generation is
+staged for end only when, at least one grace later, the room is **still**
+empty (nobody at all, not even the caller) and no token was issued since the
+observation. A rejoin inside the grace mints a token, which moves
+`maxTokenExpiresAtMillis` and therefore supersedes the observation, so nothing
+ends; a departure after a rejoin records a fresh observation and the grace
+starts again. Somebody present clears the observation.
+
+Three paths feed that one engine, and all three end a generation through the
+**same** writer and worker every authorized end uses —
+`stageConvergenceSessionEnd` plus the `sessionEnd` outbox job the existing
+dispatcher drains (shared `stageEmptyGeneration`, identity
+`digest("server.session.empty.v1", binding)`, so a generation is staged at
+most once):
+
+1. **The new callable `releaseServerChannelSessionIfEmptyV1`** (ledger kind
+   `server.session.release.v1`), which a client calls after it has left. Its
+   authority is an active member with `joinVoice` on the channel **and** a
+   `tokenRecipients` record of this exact generation, so a member who never
+   joined can neither probe nor end somebody else's session. The provider is
+   read once, outside any transaction, with the caller's own identity excluded
+   (a clean disconnect may not have reached LiveKit yet). It answers
+   `ended | pending | occupied | changed | unknown`, never errors on an
+   occupied room, and on `pending` reports how much of the grace is left so a
+   live client can ask once more instead of waiting for the next sweep.
+2. **The provider's `room_finished`**, consumed by the already-verified
+   `receiveLiveKitAchievementWebhook` for `srv_` names and gated on
+   `workersEnabled`. It is isolated from voice-time accounting in both
+   directions: it runs after the achievement close whatever that close did,
+   and nothing it does or throws can change the HTTP answer LiveKit receives.
+   The provider's own timestamp may only widen the admission window; it can
+   never shorten the grace.
+3. **`sweepStaleServerChannelSessionsSchedule`**, which completes an elapsed
+   observation, never cuts a running grace short, and keeps ADR-180's
+   token-expiry rule unchanged as the fallback for a generation nobody
+   observed emptying. The same sweep now also repairs projection drift: it
+   pages `clubs where serverSchemaVersion == 1`, reads each server's
+   `channels where liveness.isLive == true`, and writes only two provably dead
+   shapes — no generation claims the channel (the exact fence
+   `session_control.js` applies on a late terminal ACK, projection only), or
+   the pointer names an ending/ended/failed/missing session while the anchor
+   is idle (pointer and projection cleared, `revision + 1`, like every end
+   writer). A live-looking generation whose anchor is idle and whose badge is
+   older than `MAX_UNPROVEN_LIVE_AGE_MS` (24 h) has its badge reset only after
+   the provider reports its room empty. Everything else is counted
+   (`driftUnresolved`) and never written.
+
+**Reasoning.** A grace is the difference between "the room is empty" and "the
+conversation is over": a dropped connection, a tunnel, a phone call are all
+the same twenty seconds, and ending on the first empty reading would make
+rejoining impossible in exactly the moments people need it. But a grace can
+only be measured by a clock nobody can lie about, so the observation is a
+server-written field on a document no client can read or write, and every
+decision re-reads it inside the staging transaction along with the whole
+reciprocal graph. Storing the token bound with the observation is what makes
+a rejoin self-evident: `maxTokenExpiresAtMillis` moves on every issuance, so
+an observation that no longer matches it describes a generation that has been
+joined since, and no separate presence state machine is needed. Reusing the
+existing end writer keeps the recipient revocation ledger, the terminal
+DeleteRoom and every fence reviewed under ADR-174/176/177 applying unchanged;
+this amendment still only decides *when*.
+
+The one new field is additive and private. No Rules change is required
+(`channelSessions` is denied to clients, `noClientChannelLiveness` keeps them
+out of the projection), and no new index: `tokenRecipients.lastIssuedAt`,
+`channels.liveness.isLive` and `clubs.serverSchemaVersion` ordered by document
+id are all automatic single-field indexes. A collection-group scan for drifted
+projections was deliberately avoided for that reason.
+
+**Consequences.**
+
+- A badge now clears about one grace after the last person leaves when the
+  leaving client is alive to ask (the callable and its single re-check), about
+  one grace plus one sweep cadence when only the provider webhook saw it, and
+  on ADR-180's original bound when neither did (an old client with the webhook
+  unregistered). The 15-minute figure in ADR-180's Consequences stands only
+  for that last case.
+- **Accepted eviction trade-off.** Somebody whose token was issued more than
+  `ADMISSION_WINDOW_MS` ago and who has still not connected — a very slow
+  network, an app suspended between token and connect — can have the
+  generation ended under them by a release or a `room_finished` for the
+  otherwise empty room. They are revoked by the end worker like everybody
+  else and must start a new session; they are never left with a live token
+  against a dead generation. The 30 s recent-issuance window and the
+  `maxTokenExpiresAtMillis` compare-and-set are the mitigations, and the
+  window is deliberately not longer: a window long enough to cover every
+  pathological connect would keep an empty badge alive for exactly as long.
+- Every uncertainty still fails towards honesty debt rather than eviction: a
+  provider error is `unknown` and writes nothing, an answer that cannot prove
+  who is in the room counts as occupied, a malformed observation is treated as
+  absent, and a projection the classifier cannot prove dead is counted and
+  left alone.
+- The ADR-180 token rule, kept as the fallback, can still end a generation
+  less than a grace after its last departure, but only when no release call
+  and no webhook observed the emptiness and no token was issued for at least
+  a token TTL plus a grace (about 10 minutes). Closing that last gap needs
+  the webhook registered, which is an operator action, not a code change.
+- One extra callable: **62 Servers V1 exports** (55 base plus the seven
+  Podcast-recording names), and 56 registered callables. The documented
+  54-callable table in [Servers.md](Servers.md) is unchanged: like
+  `createServerBroadcastIngressV1`, the release signal lives in its own
+  registration table. Its options match the other provider-touching
+  callables — LiveKit secrets bound, 120 s timeout, `minInstances: 0`, App
+  Check as source-configured — and it passes the same runtime activation gate.
+- Nothing is deployed and `appConfig/serversV1` is unchanged.
 
 ## ADR-181: Session participation is three callables over the participant document token issuance already writes, every authority change revokes the bearer through the existing convergence worker, and clients read only their own document and the raised-hand queue
 
@@ -13083,6 +13219,11 @@ them was built as drawn, and none will be until the named backend exists:
   the DM `_UnreadBadge` in `messages_screen.dart`. `YoServerRailItem` has no
   badge parameter, and `test/yo_server_rail_item_test.dart` asserts that none
   is drawn.
+  *Amended 2026-09-25 (ADR-221, listener questions dot):* the Podcast
+  Questions channel now has a real per-host cursor, so owners, admins and
+  moderators get the shared waiting dot for unseen listener questions — on
+  the rail item too, through an optional `attention` slot that is absent by
+  default. Still no counter, and no mark for any other channel.
 - **Avatars or a head count in a voice-channel row before joining.**
   `rooms/{roomId}`, `participants` and `channelSessions` are closed to the
   client (ADR-177). `YoVoiceChannelRow` drops `participants` unless
@@ -14287,3 +14428,2011 @@ now writes.
     and every other cue is under the 2 s timeout.
 - **Web:** the Hosting build serves the new `audio/ui/v6/` path on its next
   deploy. No deploy was made here.
+
+## ADR-211: A finger on the Yeel timeline is a scrub session, and the band that takes it is translucent and drag-only
+
+**Date:** 2026-09-19 · **Status:** accepted (in source on `nb/yeels-scrub`;
+device feel UNVERIFIED) · **Base:** `3.0.0+34` (`f71a2ae2`)
+
+### Context
+
+The Yeel progress bar (`ReelProgressBar`, the 2 px hairline of ADR-209) only
+displayed progress. It had no gesture, no adjustable semantics and no keyboard
+path, and `ReelPlaybackCoordinator` had no public seek: the only seeks were
+internal resets to the trim start. A 2 px target is far below the 44–48 px
+minimum, and the bar sits on top of the media's tap-to-pause and
+double-tap-to-like, under the action rail and the identity block, inside a
+vertical feed pager. The investigation and decisions are in
+`docs/briefs/2026-09-19-next-build-*.{md,json}` on `nb/brief` (Task 1).
+
+### Decision
+
+1. **The coordinator owns a scrub session** (`ReelScrubTarget`, implemented by
+   `ReelPlaybackCoordinator`). `beginScrub` records whether the Yeel was
+   playing, bumps the command version and pauses both engines; it is not a
+   hand-pause (`_viewerPaused` untouched). `scrubTo` publishes the finger's
+   offset at once and previews through a pump that keeps one native seek in
+   flight, newest target winning (the `ReelDraftPreviewState.scrub` pattern).
+   `endScrub` commits the video to `trimStart + offset` and the backing track
+   to `_expectedAudioPosition` (audio trim + window modulo), then resumes only
+   if the Yeel was playing and nothing took over since. `seekBy` is the same
+   session in one step (keyboard, screen-reader adjust, mouse click). A finger
+   that lands again before the release committed re-opens the same hold and
+   keeps the original resume decision.
+2. **Guards in existing paths:** autoplay is blocked while scrubbing;
+   `_publishPosition` ignores every source but the finger while scrubbing;
+   `synchronizeVideoTick` neither counts watch time nor loops nor corrects
+   drift during a scrub; a release is clamped 40 ms short of the trim end (a
+   tick there would loop, a play would rewind); `setActive(false)`,
+   `detachVideo`, `pause()` (hence a suspension), `toggle()`, `play()` and
+   `dispose` cancel the scrub without resuming. A photo Yeel scrubbed before
+   its lazy audio load keeps the offset and applies it right after the load.
+3. **The band is an overlay, translucent and drag-only.**
+   `ReelProgressScrubber` is the last child of the phone footer Stack (48 px,
+   a full touch target; 40 px before the review round) and of the card
+   stage's frame controls (48 px). Its only recognizers are a
+   `HorizontalDragGestureRecognizer` (`DragStartBehavior.down`) and a
+   tap recognizer limited to mouse and trackpad. On the phone stage the rail
+   and identity block (bottom 12) and the horizontal action row (bottom 8)
+   overlap the band, and a band tap recognizer would win the arena sweep
+   against them, so there the click — and the spoken slider node — keep to
+   the bottom 8 px strip under every control (`controlClearance`); a pointer
+   above it never joins the arena. Touch taps fall
+   through to the rail, the identity block, tap-to-pause and
+   double-tap-to-like; a vertical swipe still turns the page. It uses no
+   `FocusableActionDetector` (its `MouseRegion` is opaque and would swallow
+   those taps) and draws its feedback under `IgnorePointer`. The finger is
+   mapped onto the visible bar's own rect through a `GlobalKey`, so padding,
+   the times beside the bar, RTL and the Android edge-gesture inset (the
+   phone band steps inside `systemGestureInsets`) need no special cases. The
+   visible bar keeps key `reel-progress-bar`, its 2 px and its place, so no
+   frame geometry, `ReelOverlayMeasure` height or stage test number moves.
+4. **Feedback:** while scrubbing the track grows to 4 px with a 12 px thumb;
+   on the phone stage (no times printed) a floating `0:11 / 0:18` label rides
+   above the thumb. On the phone stage the hairline is the frame's bottom
+   edge, so the track and thumb grow upward instead of being cut in half. The
+   overlay chrome (identity, rail, sound controls) fades out while
+   scrubbing; **under Reduce Motion it does not fade at all** (our reading of
+   the decision "none under reduced motion": no fade, rather than an instant
+   disappearance). The centred play glyph is hidden under the finger.
+5. **One spoken node:** while the timeline can be moved the band is an
+   adjustable slider ("Playback position", `{position} of {total}`, ±5 s like
+   `MomentTransportControls`) and the bar stops announcing itself; while it
+   cannot, the bar keeps its read-only node. Focused, ArrowLeft/Right step
+   ±5 s (mirrored in RTL) with a 2 px `palette.focus` ring; Space and Enter
+   stay with `ReelPlaybackSurface`.
+6. **Voice:** the full-screen story player's stage waveform gets the feed
+   row's transparent `Slider` pattern (drag, tap, screen-reader adjust),
+   enabled only after the player reported a duration. Its seeks follow the
+   same rules as the coordinator's: clamped 40 ms short of the end (a seek to
+   the end can raise completion and auto-advance the chain under the
+   finger), coalesced to one seek in flight with the newest target winning,
+   committed on `onChangeEnd`, and engine position events are ignored while
+   the finger is down or a seek is in flight. The segmented bars stay
+   previous/next chain navigation and the story's arrow keys still walk the
+   chain. Yeels and Voice do not share one widget: same need, different
+   control shape.
+
+### Reasoning
+
+Resume-if-was-playing is what the platform players and the familiar
+short-video apps do. Keeping the band out of the Column is what lets every
+existing geometry assertion stand unedited. The backing track is not
+previewed during a drag (both engines are paused) and snaps to the aligned
+position on release; that is intended.
+
+### Consequences
+
+- Latency and frame-preview smoothness were **not measured**. `video_player`
+  seeks exactly on iOS (AVPlayer, zero tolerance) and Android (ExoPlayer),
+  and web sets `currentTime`; coalescing bounds the queue, not the per-seek
+  latency. Measure seek round-trips per drag event on an iPhone, a mid-range
+  Android and Chrome before any smoothness claim.
+- Arena feel (a diagonal flick from the very bottom) can only be judged on a
+  device; widget tests prove the rules, not the feel.
+- `MomentDetailPanel` (wide docked Voice panel) keeps tap-to-seek only; the
+  investigation's slider swap there was not part of the decisions and is
+  deferred.
+- Found on the way: the hairline's played fill laid out 0 px tall (a
+  childless box under the Stack's loose height), so the bar never showed
+  progress. Fixed with `heightFactor: 1` (`docs/Bugs.md`).
+
+---
+
+## ADR-212: One confirm-before-send primitive for picked media
+
+**Date:** 2026-09-19 · **Status:** accepted (source on `nb/confirm-upload`,
+next build after 3.0.0+34) · **Decisions:** `docs/briefs/2026-09-19-next-build-decisions.md`
+on `nb/brief`, T4
+
+### Context
+
+A photo or video picked from the device library in a direct chat was queued the
+moment the picker returned, and a file picked for Company team files uploaded
+the same way. Nobody saw what they had picked before it left. A library video
+over 60 s or 64 MB was accepted by the picker (`pickVideo(maxDuration)` limits
+only the camera) and refused only after the enqueue, as a snackbar. Family
+memories, profile avatar and banner, the Yeels composer and the Room cover
+already had their own confirm step (preview, crop or edit, then an explicit
+Save).
+
+### Decision
+
+`YoMediaSendReview` (`lib/shared/widgets/media/yo_media_send_review.dart`,
+opened with `showYoMediaSendReview`) is **the only review surface for media
+picked from a library**. No feature grows a private copy.
+
+- Presentation only. The caller keeps its service, owner guards and outbox and
+  passes them in: `onSend` (the durable hand-off, awaited while the review is
+  open; a throw keeps the review open with the error and Send armed, so a
+  retry needs no re-pick) and `closeWhen` (a stream whose event closes the
+  review with nothing sent — chat passes "the signed-in account is no longer
+  the one that picked", the voice recorder sheet's contract).
+- Limits come from the destination's own constants (`YoMediaSendLimits`):
+  `directImageMaxBytes`, `directVideoMaxBytes`, `directVideoMaxSeconds` in
+  `message_service.dart` (values unchanged, now named) and
+  `serverCompanyFileMaxBytes`. A breach blocks Send in the review with the
+  reason first and a "Choose another" that reopens the same picker; the
+  service and backend checks stay as they were.
+- A video previews locally (`VideoPlayerController.file` on io, the picker's
+  blob URL on web, through `picked_media_video_controller*.dart`), paused and
+  muted, never autoplayed, with play/pause, scrub and mute. Its duration comes
+  from the existing inspector and, if that fails, from the preview player. If
+  the preview cannot play (a desktop without a video plugin, an HEVC file in
+  Chrome), a static card and "Preview unavailable" replace it; the video is
+  still sendable when its duration is known and blocked when it is not.
+- Layout by available width: a bottom sheet below 1100 px (constrained to
+  560 px from 600 px), a centered 640 px dialog at 1100 px and wider with
+  Enter to send and Esc to cancel. The body scrolls; the action row is pinned.
+- `YoMetricPill` gains a `danger` tone (`dangerSurface` / `dangerForeground`)
+  for the size or duration that breaks a limit (ADR-209's "extend the
+  canonical in place").
+
+Adopted by: direct messages → Photo library and Video library; Company team
+files; **server text channels → Photo library and Video library** (amended
+2026-09-20, see below). **Not** adopted, by decision: the camera (`Take
+photo`, `Record video`) keeps the OS Use/Retake step; surfaces that already
+confirm (above) and the retired Clubs/Rooms screens are untouched.
+
+### Amendment, 2026-09-20 — the review's second surface: server channels
+
+`6a473b27`, on `nb/integrate`. ADR-216 gave server text channels photo and
+video messages, and its branch deliberately shipped **no** confirm step so
+that a second implementation would never have to be deleted at integration
+(ADR-216, deviation 7). That reservation is now spent, and this ADR's own
+Consequence — "Task 2's server-channel photos and videos must open this
+review from their first commit" — is met by adoption rather than by a copy.
+
+- **A library pick opens this review.** `_reviewLibraryPick` in
+  `lib/features/servers/presentation/widgets/server_text_channel_scene.dart`
+  opens `showYoMediaSendReview` for `ImageSource.gallery` on both the photo
+  and the video path, with the channel name as the destination label.
+- **A camera capture deliberately bypasses it.** `_sendPickedPhoto` /
+  `_sendPickedVideo` branch on `source == ImageSource.gallery` and a
+  non-gallery pick goes straight to `_sendMedia`. The shot was already seen
+  when it was taken, and this ADR leaves camera paths alone everywhere.
+- **The bounds are the direct-message ones, because `storage.rules` says
+  so.** `_reviewLimits` is built from `directImageMaxBytes`,
+  `directVideoMaxBytes` and `directVideoMaxSeconds` — the same constants the
+  DM review reads — because the `server_message_media` match block declares
+  exactly those bounds (image jpeg/png/webp 128 B–8 MiB, video
+  mp4/quicktime/webm 1 KiB–64 MiB, 1–60 s) and
+  `reserveServerChannelMessageMediaV1` enforces them again. The review can
+  therefore neither offer to send something the reservation would refuse nor
+  refuse something it allows. One deliberate difference:
+  `minVideoDuration` is 1 ms rather than the review's default full second,
+  because a clip is declared in whole seconds rounded up with a floor of one,
+  so a half-second clip this channel accepts today must not be blocked.
+- **Presentation only, as everywhere else.** `onSend` is the scene's own
+  `_sendMedia` — the single reserve/upload/finalize path — run while the
+  sheet is open, so a failure returns into the sheet with Send armed
+  (`rethrowFailure: gallery`). `closeWhen` is the same account-switch
+  contract the chat passes. The pre-existing byte and duration checks stay
+  ahead of the review as the backstop; nothing was moved into it.
+- **Nothing reads the pick into memory.** The bound is still measured with
+  `XFile.length()` and the upload still streams from disk on io (ADR-216,
+  decision 5). The review previews the same `XFile` and neither moves,
+  rewrites nor deletes it, which is the compatibility condition the upload
+  split named.
+- **Retry cost.** Keeping Send armed after a failure exposed a lease defect
+  on this surface: a second press minted a fresh `reserveRequestId` and was
+  read as a second upload, refused `resource-exhausted` for up to fifteen
+  minutes. Fixed on the client in `77264f18` — `ServerMediaSendAttempt` is
+  minted once per pick and replays the reservation and committed generation
+  it already holds. The one-upload-at-a-time lease is the deliberate control
+  and was not relaxed. See [Bugs.md](Bugs.md).
+
+### Reasoning
+
+One primitive means one set of limits, one blocked-state vocabulary and one
+account-switch contract. Running the enqueue inside the review (instead of
+after it closes) is what lets a failure stay in front of the person with the
+file still selected. The review never uploads, so the outbox's durability and
+idempotency (ADR-204, ADR-205) are unchanged.
+
+### Consequences
+
+- One item per pick and no caption in this build. DM attachments have no
+  caption field (`finalizeDirectMessageAttachment` takes ids only); a caption
+  or multi-select needs its own decision and, for captions, backend work.
+- Task 2's server-channel photos and videos must open this review from their
+  first commit. **Met at `6a473b27`** rather than at the branch's first
+  commit — see the amendment above for why the order was reversed and what
+  the adoption cost.
+- Company files still read and type-check the whole selection before the
+  review (`_pickCompanyFile`), so an over-25 MB file still surfaces as the
+  board error rather than in the review. The review enforces the same limit
+  for any other picker.
+- Frames: `yovoice-evidence/2026-09-19/next-build/confirm-upload/` (390 and
+  1440, Dark and Pearl), from `test/nb_confirm_upload_capture.dart`.
+
+## ADR-213: A comment notifies the author, a mention is validated against the mentioned person's audience, and a reminder finally gets sent
+
+**Date:** 2026-09-19
+
+### Context
+
+The notification surface covered friendships, follows, Server invitations,
+direct messages and calls. The three loops the product is actually built on
+did not notify at all: a comment (text or voice) on your Voice Moment or your
+Yeel, an `@Name` typed into one of those comments, and the "remind me" a
+Family or Podcast member taps on a Server event — `respondToServerEventV1`
+stored the intent and counted it transactionally, and
+`docs/Servers.md` said out loud that nothing delivered it. A Moment lives 24
+hours by default, so an author who only discovers a comment by reopening the
+Moment usually discovers it after the conversation is over. Server roles
+changed silently as well.
+
+Two properties of the existing pipeline shaped the design. First,
+`onNotificationCreated` skips any type with no `PUSH_TITLES` entry and, until
+this change, revalidated only a known list of types: every other type fell
+through to `return true`, so a new type would have pushed with NO source
+recheck. Second, an installed client maps an unknown type to `system`, which
+renders as a plain, non-tappable row.
+
+### Decision
+
+- Comments produce notifications from a **Firestore trigger on the comment
+  subcollection** (`voiceMoments/{id}/comments/{id}`, `reels/{id}/comments/{id}`),
+  not from a change to the four comment callables. One create trigger covers
+  the text and the voice path of each surface, and the matching delete trigger
+  retires the rows when the comment is deleted — by its author, by the Yeel's
+  author, or by a parent's deletion cascade.
+- Only the **parent's author** is notified about a comment in this build, never
+  the commenter and never other participants of the thread.
+- `@mentions` are sent by the composer as an OPTIONAL `mentionUserIds` input on
+  the four comment callables, capped at five, deduplicated and stripped of the
+  caller. The callable stores the list in a **server-only
+  `commentMentions/{kind}_{parentId}_{commentId}` document written in the same
+  transaction as the comment** — not as a field on the comment, because a Voice
+  Moment comment is readable by the Moment's audience and every comment reader
+  validates an exact key set. Eligibility (audience, blocks, account state) is
+  decided by the notification writer and again at push time, never by the
+  callable, and an ineligible id is dropped silently so the response cannot be
+  used to probe who blocked whom. The list participates in the idempotency
+  input hash only when present, so an installed client's request, hash and
+  stored comment are byte for byte what they were.
+- Server event reminders are a **5-minute scheduled worker** running one
+  `collectionGroup("events")` query over a 15-minute horizon, with a new
+  COLLECTION_GROUP composite index. The notification id carries the event's
+  revision, so rescheduling re-arms the reminder and a redelivery is a no-op;
+  cancelling removes the event from the query and fails the source validator.
+- Server roles notify on **promotion and ownership transfer only**. A demotion,
+  removal or ban is silent: an admin who can cycle a role would otherwise have
+  a repeatable way to push at somebody. The write happens immediately after the
+  membership transaction commits, through an injected notifier, because the
+  canonical writer needs eight reads and Firestore forbids a read after a
+  write.
+- The push boundary now **denies by default**: `notificationSourceIsCurrent`
+  routes the five new types to real validators, keeps every legacy type on its
+  historical path through an explicit allow-list, and refuses anything else.
+- Preferences gain one "Moments & Yeels" group with a single "Comments and
+  mentions" switch covering `momentComment`, `reelComment` and
+  `commentMention`, plus "Server events" and "Your server role" under Servers.
+  One switch writes every key it covers in one update; the push boundary still
+  reads one key per type.
+- Push payloads gain an optional `targetSubId` (the comment, the channel).
+  The lock-screen body stays the generic "Tap to open YO Voice" and a comment's
+  words never enter a notification, a push or a `targetLabel`.
+
+### Reasoning
+
+Deriving the row from the committed comment means the notification cannot
+drift from what was actually written, and leaves four transactional,
+idempotency-ledgered callables untouched. Keeping the mention list beside the
+comment rather than in it avoids both a leak (to every reader of the thread)
+and an outage (an exact-key validator refusing a comment with an extra field).
+Validating a mention against the MENTIONED person's audience is what stops a
+mention from announcing the existence of a friends-only Moment to somebody who
+cannot open it — the one genuinely new disclosure risk in this slice.
+Deny-by-default at the push boundary converts "somebody forgot to add a
+validator" from a silent unchecked push into no push at all.
+
+### Consequences
+
+- New Firestore collection `commentMentions` (server-only, explicit deny in
+  `firestore.rules`), new optional notification fields `targetSubId` and
+  `sourcePath`, and a new COLLECTION_GROUP index on `events`. All additive.
+- Five new exported Functions: `onMomentCommentCreated`,
+  `onMomentCommentDeleted`, `onReelCommentCreated`, `onReelCommentDeleted`,
+  `sendServerEventRemindersSchedule`.
+- Deploy order matters: Functions (titles, sound map, validators) before any
+  writer, and the index before the scheduler. A row of an unknown type is
+  skipped as `unknown-type`, so an app shipped first simply sees nothing.
+- Installed clients (Build 34 and older) render the five new types as plain,
+  non-tappable `system` rows until they update. Accepted by the owner.
+- Preferences still gate PUSH only; the bell row is written either way, which
+  is the existing behaviour of every toggle.
+- Not in this slice: like/follow aggregation (needs an update-in-place row, a
+  `sortAt` field and an index), Server channel mentions, the friend-is-live
+  fan-out, DM reactions, and an @-picker in the Yeel comment composer (the
+  callables accept `mentionUserIds` for Yeels already; only the Moment
+  composer sends one).
+
+## ADR-214: GIPHY is searched by the client and resolved by the server at send time (option B)
+
+*(Written as ADR-211 on branch `nb/giphy`, the next free number after ADR-209,
+and renumbered to 213 at the next-build merge in `9b941f14` because three
+branches had each taken 210. Every code comment, anchor and deployment heading
+was moved with it: this entry is ADR-214 everywhere now, and nothing still
+cites 210 for GIPHY.)*
+
+**Context (2026-09-19).** ADR-172 designed GIPHY as a server-proxied surface:
+`searchGifs` would call GIPHY with a Secret Manager key and return metadata.
+Re-reading GIPHY's current API documentation found that design in conflict with
+the terms: Search and Trending must be requested **from the client**, and the
+docs say not to proxy API calls or media loads. The GIPHY adapter
+(`functions/media/gif/giphy_provider.js`) was therefore dormant behind an
+activation hold. Two further gaps blocked any GIPHY launch: the send path
+(`resolveMessageGif`) accepted exactly one provider, so switching the catalog to
+GIPHY would have made every YO Voice Original — including every Originals
+recent — unsendable; and GIPHY's Action Register pingbacks (`onload`, `onclick`,
+`onsent`) and official "Powered By GIPHY" mark were not implemented. Kamil chose
+option B on 2026-09-19 ("zatwierdzam wszystko, opcja b").
+
+**Decision.**
+
+- **Search and Trending run in the app.** `GiphyClient`
+  (`lib/features/media/data/services/giphy_client.dart`) calls
+  `api.giphy.com/v1/gifs/{search,trending}` directly with `rating=g` pinned as a
+  constant, `bundle=messaging_non_clips`, and re-filters every result to rating
+  `g`. It derives the message URL from the id with the same template as
+  `gif_ref.js`, drops ids outside the shared grammar, holds preview and
+  analytics URLs to `https` on `giphy.com`, and mirrors the server's static
+  query denylist so a denied term never reaches GIPHY from the app either.
+- **The client key is a compile-time define: `YOVOICE_GIPHY_API_KEY`.** No
+  define means `GiphyClient.fromEnvironment()` is null and the picker is exactly
+  the Originals-only picker that shipped before. The key is never logged,
+  stored, or sent to YO Voice; `GiphyClientException` carries only a status.
+- **The server stays the send-time authority.** The client sends only
+  `{provider: "giphy", id}`. A new callable, `resolveGif`, fetches that one id
+  (`GET /v1/gifs/{id}`) with the server's `GIPHY_API_KEY` secret, refuses a
+  non-`g` rating, a title that trips the static denylist, a blocked or
+  suppressed asset, and a mismatched answer, then writes the `gifAssets` record
+  (the pinned CDN URL is recomputed, never copied) that the message transaction
+  already reads. It charges the per-account bucket first and a separate hourly
+  provider budget (default 90, under a beta key's 100/hour) before any provider
+  call; an existing record answers without contacting GIPHY, so a GIF costs one
+  provider call the first time anyone sends it. 401/403/429 trip the existing
+  breaker. Reports keep the existing `reportGifAsset` → `reports` →
+  `moderateReport` path unchanged.
+- **Every send path serves an allow-set.** `resolveMessageGif` accepts
+  `providerNames`; `functions/index.js` wires `[yovoice, giphy]` into
+  `sendDirectMessage`, `sendRoomMessage` and `sendClubMessage` (Server text
+  channels use the club path). A GIPHY reference resolves only once
+  `resolveGif` has written its server-owned record, so accepting it ahead of the
+  resolver is inert, and Originals can never be stranded by a provider flip.
+  The legacy single `gifProviderName` still works and `fake` stays refused
+  outside the emulator/test environment.
+- **`resolveGif` is source-gated OFF** (`GIPHY_SEND_RESOLVE_ENABLED = false` in
+  `functions/index.js`). Enabling it declares the `GIPHY_API_KEY` secret and
+  adds an export, so it is a reviewed source change made together with the
+  pinned export list (`test/cold_start_module_graph.test.js`) and the
+  secret-discovery expectation, after the secret exists. While it is off,
+  `getGifCatalog` returns `resolvableProviders: []` (a new, additive response
+  field) and the client shows GIPHY only when that list contains `giphy` — so a
+  build carrying a key can never offer a GIF the deployed server cannot send.
+- **Attribution.** The picker heads the GIPHY section with the official
+  "Powered By GIPHY" mark and repeats it in the footer whenever GIPHY results
+  or GIPHY recents are on screen (`YoGiphyAttribution`, light and dark variants
+  at `assets/images/giphy_powered_by_on_light.png` and
+  `assets/images/giphy_powered_by_on_dark.png`). The artwork is GIPHY's: it is
+  not drawn or approximated in the repo. Until the official files are placed at
+  those paths the widget shows GIPHY's wording as plain text, so attribution is
+  never missing.
+- **Action Register pingbacks.** `GiphyPingbacks` registers `onload` once per
+  result per picker session, `onclick` on a deliberate choice (which arms one
+  `onsent`), and `onsent` only after the server commits the message. Each is
+  tagged with a per-install GIPHY `random_id` (from `/v1/randomid`, stored only
+  on the device, never linked to the YO Voice account) sent as `customer_id`,
+  plus `ts`.
+- **"Load GIFs automatically" gates GIPHY contact.** Off means no pingback of
+  any kind, no `/randomid` request, and no GIPHY trending request when the tab
+  opens; a search the person types still runs and its results render
+  tap-to-load. The preference key and its default are unchanged.
+
+**Reasoning.** Option B is compliant with GIPHY's published terms without
+waiting for written approval of a proxy, and keeps every safety property the
+server already owned: rating pin, denylist, block list, per-account and global
+budgets, and a report path that blames no member. Server-side resolution by id
+is a single lookup per chosen asset rather than a proxy of search; GIPHY's
+confirmation of it is part of the production-key application. The allow-set
+removes the split-revision hazard the investigation found (the 2026-09-14 class
+of outage). Source-gating the resolver keeps the committed export map and the
+secret-free deploy discovery unchanged until the secret genuinely exists.
+
+**Consequences.**
+
+- **Privacy.** Every rendered GIPHY GIF sends the viewer's IP address and
+  User-Agent to GIPHY, recipients included, and search requests go from the
+  device to GIPHY. Settings now states this under "Load GIFs automatically" in
+  every locale; the privacy policy and yovoice.app must say the same before
+  launch.
+- **The client key is extractable from any build.** That is GIPHY's model for
+  client keys; rotation needs a new build. The server secret is separate and
+  can be rotated without a release.
+- **App Check stays telemetry-first.** `resolveGif` inherits
+  `YOVOICE_ENFORCE_GIF_APP_CHECK` (false). Attestation is not healthy on Android
+  (undecodable tokens, Play Integrity API not enabled), iOS (App Attest
+  entitlement missing) or web (no reCAPTCHA site key), so enforcing now would
+  refuse most traffic. With enforcement off the resolver is bounded by Auth,
+  the per-account bucket and its hourly budget. Enforcement is a later,
+  separate redeploy once console metrics show verified traffic per platform.
+- **Blocking stays non-retroactive**, as in ADR-172. A GIPHY GIF can only be
+  reported once it has been resolved (sent or chosen), because the report path
+  reads `gifAssets`.
+- **Older clients** ignore `resolvableProviders`, keep sending Originals and
+  render received GIPHY messages through the existing pinned-URL path.
+- Activation steps are in
+  [DEPLOYMENT.md](DEPLOYMENT.md#giphy-activation--option-b-adr-214).
+
+
+## ADR-215: A notification that repeats on demand is a channel, not a notice — reminders page, re-arm on the schedule, and refuse two ways
+
+**Date:** 2026-09-20
+
+### Context
+
+[ADR-213](#adr-213-a-comment-notifies-the-author-a-mention-is-validated-against-the-mentioned-persons-audience-and-a-reminder-finally-gets-sent)
+shipped three new producers. A review round before the merge found four
+places where the design's own promises were not actually kept by the code.
+
+1. The reminder worker ran **one** `collectionGroup("events")` query with
+   `limit(100)` and never paged. `hasMore` was computed and thrown away by
+   the scheduler. The ordering is `startsAt` ascending over a fifteen-minute
+   horizon, so the hundred-and-first event in that window was not "delayed" —
+   it was dropped on that run and on every later run, silently and
+   permanently. The cap is global across every Server, and
+   `createServerEventV1` was charged only to the 120/min attempt budget, so
+   one account could mint roughly 7200 events an hour inside its own Family
+   server and bury everybody else's.
+2. The reminder's notification id carried the event's **revision**, and
+   `updateServerEventV1` bumps the revision for ANY patch — a
+   description-only edit included. An event manager could park an event just
+   inside the horizon and re-edit it between scheduler runs, delivering a
+   fresh push carrying a 120-character attacker-controlled title to every
+   opted-in member every five minutes, for an event that never happens.
+3. A promotion notice was keyed on the **membership revision**, and
+   `setServerMemberRoleV1` increments that on every role change. Demotion is
+   silent, so an owner or coOwner could demote and re-promote in a loop: a
+   fresh id, a fresh bell row and a fresh push each time, bounded only by the
+   shared 120/min budget. "A demotion is silent" was the whole defence, and
+   it was not enough.
+4. Deny-by-default at the push boundary was correct, but the refusal path was
+   destructive: an unregistered type took the same branch as a vanished
+   source, and `cleanupInvalidSource` DELETES `users/{uid}/notifications/{id}`.
+   "Nobody added a validator" degraded to "the recipient's bell row is gone".
+
+### Decision
+
+- The due-event query is **paged with a `startsAt`/`__name__` cursor** until
+  the set is exhausted or a wall-clock budget (240 s, under the 300 s
+  timeout) is spent. The opted-in responses of one event are paged the same
+  way instead of being cut at 500 with no cursor. A run that does not finish
+  says so — `hasMore`/`budgetExhausted` are now logged as a WARNING rather
+  than computed and discarded.
+- `createServerEventV1` is charged to **`server.v1.create`** (30/hour), not
+  only to the attempt budget. A scheduled event is durable fan-out work in a
+  shared queue.
+- A delivered event is **stamped** with three additive, server-written fields
+  (`reminderDeliveredAt`, `reminderDeliveredStartsAt`,
+  `reminderDeliveredRevision`). A reminder re-arms only when the start moves
+  further than the whole horizon AND a cooldown (1 h) has passed, so a real
+  reschedule still reminds and a cosmetic edit — or a five-minute nudge —
+  does not. A run that did not reach the end of an event's audience does not
+  stamp, and the per-recipient delivery ledger keeps the finished tail from
+  being delivered twice.
+- Before the ACL read and the eight-read canonical transaction, the worker
+  reads the **delivery ledger** for that (event, revision, recipient). An
+  already-decided recipient costs one get per run instead of roughly fifteen.
+- The promotion notice is charged against a **per-actor-per-recipient-per-role
+  budget** (1 per 24 h), the way `engagement.js` charges mentions. A real
+  chain (member → moderator → admin → coOwner) announces each role; a cycled
+  role announces once. Exhaustion drops the notice, never the role change.
+- The push boundary distinguishes its two refusals.
+  `isRegisteredNotificationType` is exported, an unregistered type is skipped
+  with `pushSkipReason: "unregistered-type"` and the row is left intact, and
+  only a genuinely stale source is cleaned up.
+
+### Reasoning
+
+A document-count cap on a time-ordered queue is not backpressure; it is a
+cliff that the clock never moves. A wall-clock budget degrades into "the next
+run finishes it" — five minutes away, inside a fifteen-minute horizon — which
+is the behaviour the horizon was designed for.
+
+Keying a notice on a revision counter keys it on *edits* when the news is a
+*schedule* or a *role*. Both repeat vectors have the same shape: an actor who
+may legitimately change a thing repeatedly turns a per-change notice into a
+lock-screen channel aimed at one person, with attacker-controlled text. The
+fix in both cases is to bound the notice by what actually changed, and to
+charge it, rather than to trust that the mutation is rare.
+
+Deleting a row because the server does not know how to revalidate its type
+gets the failure direction backwards: a missing validator is our gap, and the
+recipient's data should not pay for it. Skipping the push is the honest
+degradation the ADR-213 text already claimed.
+
+### Consequences
+
+- Three additive fields on `clubs/{id}/channels/{id}/events/{id}`, written by
+  the Admin SDK only (`firestore.rules` keeps `allow write: if false` on
+  events and responses). No rules change, no index change: the paged query
+  filters and orders exactly what the declared COLLECTION_GROUP composite
+  already covers, and the responses cursor orders by `__name__` behind an
+  equality filter, which the automatic single-field index serves.
+- Events created before this change carry no stamp, so their first reminder
+  after deploy behaves as it always would have.
+- A legitimate reschedule inside the same horizon, or within the cooldown,
+  does not send a second reminder. Accepted: the member already has a
+  reminder for that event, and the event detail carries the current time.
+- Re-promoting somebody to a role they already held today is silent. Accepted
+  for the same reason a demotion is.
+- `handleNotificationCreated` takes one more test seam (`isRegisteredType`),
+  because every shipped type currently has both a title and a validator, so
+  the branch cannot be reached with real data. The containment itself is
+  pinned by an assertion in `engagement_push_contract.test.js`.
+- The reminder scan still reads zero-opt-in events, one document each. A
+  `reminderCount`-based filter would need either a second inequality field in
+  the composite (forcing `reminderCount` into the sort) or a new
+  `hasReminders` equality flag and a backfill for events that already carry
+  opt-ins. Deliberately not done here: paging removes the harm, the creation
+  budget removes the cheap volume, and `remindableEvent` already refuses a
+  zero-opt-in event before it reads a single response.
+
+## ADR-216: Server channel reactions and media are Admin-SDK-only, and the "react" permission is derived in the callable, never stored in a channel grant
+
+**Date:** 2026-09-19 · **Status:** accepted (source on `nb/server-messaging`,
+merged into `nb/integrate` at `0fbe42d0`; the upload platform split at
+`e69b1013`, the ADR-212 review on this surface at `6a473b27`, the retry-lease
+fix at `77264f18`) · **NOT DEPLOYED**
+
+### Context
+
+Server text channels reuse the legacy club message store
+(`clubs/{s}/channels/{c}/messages`), which was built text- and GIF-only: no
+reaction field, no media, no callable, and no context action on the tile. DMs
+have had one-reaction-per-person and private photo/video for two builds. The
+obvious way to add "may react" to a V1 channel is a new capability key in
+`capabilitiesFor` (`functions/servers/authority.js`).
+
+### Decision
+
+1. Reactions are a `reactions` map (uid → emoji) on the message, written only
+   by `setServerChannelMessageReactionV1`, with the fixed DM vocabulary
+   imported from `direct_integrity.js`. The `react` permission is **derived
+   inside the callable** from the channel's `read` capability plus role,
+   profile, mute and verification — `capabilitiesFor` is untouched.
+2. Photos and videos follow Company Files exactly: a reservation-bound
+   Storage path, a finalize that probes the bytes and revokes the download
+   token, batched 90-second generation-bound V4 read grants issued by a
+   callable that re-runs the channel ACL, and durable generation-guarded
+   deletion jobs. The message keeps a `content: 'Photo'|'Video'` fallback so
+   installed clients render a readable line.
+3. A new author-only `deleteServerChannelMessageV1` gives V1 authors the
+   retraction the rules never allowed them.
+4. The five new callables and two schedules are registered through a
+   **separate extension table** in `functions/servers/registration.js`
+   (`SERVER_MESSAGE_CALLABLE_METHODS`, built by
+   `createServerMessageFunctions`), outside `ALL_SERVER_CALLABLE_METHODS` and
+   `SERVERS_V1_EXPORT_NAMES`.
+5. The bytes reach Storage through a **platform-split upload source**
+   (`lib/features/clubs/data/services/club_media_upload_source*.dart`): io
+   streams the picked file with `putFile`, web keeps `putData`. The scene
+   measures the pick with `XFile.length()` and never reads it into the heap.
+6. A library pick goes through **ADR-212's `YoMediaSendReview`** before any
+   byte leaves the device; a camera capture deliberately does not.
+7. **A send is one attempt per pick, not per press** (`77264f18`).
+   `ServerMediaSendAttempt` (`club_chat_service.dart`) carries the reserve and
+   finalize request ids and caches the reservation and the committed
+   generation as they are earned; `sendServerMediaAttempt` replays whatever
+   the attempt already holds. The scene mints the attempt once per pick, so a
+   retry from the review re-uploads under the reservation it already has, and
+   a finalize failure after a committed object costs no second upload. This is
+   the `ServerCompanyFileUploadAttempt` shape. `sendServerMediaMessage` stays
+   as the one-shot wrapper for a camera capture, which is re-taken rather
+   than re-sent. The backend's one-live-lease-per-member rule is unchanged.
+
+### Reasoning
+
+`grantMatches` compares a stored `accessGrants` document to `capabilitiesFor`
+with an **exact key count**, so adding `react` would have invalidated every
+stored grant and silently removed read access to every restricted channel
+until a sweep rewrote them — a lockout, in exchange for a permission the
+callable can derive for free. Keeping the messages rule untouched means
+neither feature widens a client predicate: Storage rules can authorize an
+upload against a reservation (two cross-service documents) but cannot evaluate
+a V1 channel ACL, which is why reads are a callable grant.
+
+The separate registration table exists because the reviewed Servers manifest
+is pinned by `tool/servers_activation_package.js`, the registration suites and
+the frozen table in `docs/Servers.md`; spreading seven new names into it would
+have rewritten those numbers and the activation package's phase plan for a
+feature that deploys on its own selector anyway. (The manifest reads
+**62 total / 56 callable / 55 base** on this tree. It moved from 61/55/54
+because the ADR-180 amendment added `releaseServerChannelSessionIfEmptyV1` in
+the same build, recomputed from the merged `registration.js` in `cd30afea` —
+not because of these seven, which sit outside it.)
+
+Streaming from disk on io is not an optimization. `putData` copies the buffer
+on the way out, so a 64 MiB video had a ~128 MiB transient peak — an
+out-of-memory kill on a mid-range Android phone. Direct messages were already
+split this way (`direct_attachment_payload_store_io.dart`); this surface now
+matches, and web is unchanged because a Blob has no path to stream from.
+
+The attempt-per-pick shape exists because the backend's lease is keyed on the
+request id. `reserveServerChannelMessageMediaV1` gives a member one live
+upload lease (15 minutes) and short-circuits only a replay of the *same*
+`requestId`. When the client minted a fresh id per press, the review's armed
+Send after a failure was read as a second upload and refused
+`resource-exhausted` for up to fifteen minutes, in every channel of every
+server. Relaxing the lease would have weakened the one-upload-at-a-time
+control; making the retry a true replay fixes the client without touching it.
+
+### Consequences
+
+- Members can react in announcements and rules channels they cannot post in;
+  guests can react nowhere.
+- The reaction map is capped at 500 reactors per message; a busy announcement
+  contends on one document. The upgrade path (a `reactions/{uid}`
+  subcollection with counters) is a schema change and needs its own ADR.
+- Media reads cost one callable per ≤20 visible bubbles, cached until shortly
+  before the grant expires; a minted URL stays valid for up to 90 s after
+  access is lost.
+- Account deletion gains a fifth Admin-only collection
+  (`serverMessageMediaObjects`) purely so an author's objects can be found
+  under other people's servers. `server_message_media` is therefore **swept**,
+  and the cross-container gap list in [Bugs.md](Bugs.md) shrinks to four.
+- The Servers export surface is now the 62-name Servers V1 manifest (55
+  base, which already include `createServerBroadcastIngressV1` and the
+  ADR-180 amendment's `releaseServerChannelSessionIfEmptyV1`, plus 7
+  source-disabled Podcast-recording names) and, outside it, the 7
+  message-parity names in `SERVER_MESSAGE_EXPORT_NAMES`. They can be named by
+  two selectors; this build's deploy order deploys the whole Functions
+  surface at once (DEPLOYMENT.md step 3b). *(Corrected 2026-09-26: build 36
+  deploys every export except thirteen held names — the warm
+  `acceptDirectCall` and the Reel voice-comment slice — through one
+  name-scoped selector, still in one command, step 3b of the build 36 deploy
+  order.)* *(Corrected 2026-09-25: this line
+  first read "55 base + 1 broadcast + 1 last-leave release + 7", which counted
+  the broadcast and release callables twice.)*
+- A **different** pick while a lease is live is still refused
+  `resource-exhausted` until the first upload is finalized or its lease
+  expires (the expiry sweep then removes it).
+  That is the backend limit doing its job, not a defect.
+- **On io the bytes are read at send time, from the picked path.** If the OS
+  evicted the picker's temporary file, or it changed size, the source refuses
+  locally and the reservation is left unused — no object, no message, no retry
+  loop. This is the one new failure mode of the split, and it is the same one
+  Reels accepted in `reel_upload_transport_io.dart`. Anything upstream that
+  consumes or rewrites the pick (a resized copy, a move into app storage, a
+  cleanup after preview) must hand the send the NEW `XFile`.
+- `storage.rules` is no longer byte-identical to 3.0.0+34, so this build has a
+  Storage Rules deploy step for the first time since 2026-09-14. It must land
+  **before** the Functions that issue reservations — see
+  [DEPLOYMENT.md](DEPLOYMENT.md#2b-storage-rules--the-upload-paths-before-any-function-that-issues-a-reservation).
+
+### Deviations from the investigation's design, with reasons
+
+1. **Registration**: a separate extension table and builder instead of
+   spreading into `ALL_SERVER_CALLABLE_METHODS`, for the manifest reason
+   above. Behaviour (activation gate, Auth binding, options, error mapping) is
+   identical.
+2. **Legacy clubs are refused `permission-denied`, not `failed-precondition`.**
+   `readServerAccess` already denies a legacy, missing or private target with
+   one indistinguishable shape, and keeping that avoids an existence oracle
+   for legacy club ids.
+3. **Content cleanup gains no inline Storage phase.** Channel and server
+   deletion write durable prefix sweep jobs instead, drained by the new
+   schedule, so `CHANNEL_PHASES`/`SERVER_PHASES` and every existing
+   cleanup-runtime constructor stay untouched — at the cost of bytes surviving
+   for at most one 10-minute sweep after the documents are gone.
+4. **Account deletion sweeps** rather than only documenting the gap. Because
+   the uid is the fourth path segment, this needed the fifth Admin-only
+   collection.
+5. **Reaction chips are the DM summary pill, not tappable count chips.**
+   Toggling happens in the actions sheet, where the viewer's current reaction
+   is marked. `MessageReactionSummaryPill`/`MessageReactionPickerRow` live in
+   `lib/shared/widgets/interactions/message_reactions.dart` with
+   caller-supplied copy (ADR-209); the DM files were left untouched so their
+   suites did not have to be re-baselined.
+6. **The access grant does not re-harden object metadata** the way
+   `getServerCompanyFileAccessV1` does; finalize already revoked the token
+   generation-guarded, and the grant path verifies the metadata binding before
+   signing.
+7. **The confirm sheet was deliberately absent at branch time** — the branch
+   sent immediately, exactly as DMs did, so there would only ever be one
+   confirm implementation. That reservation is now spent: `6a473b27` adopts
+   ADR-212's shared review on this surface instead of growing a second one.
+
+### Residual, stated rather than hidden
+
+- An issued V4 URL remains a bearer capability for at most 90 seconds after a
+  ban, a leave or a removal — the same residual the private-media section
+  already accepts.
+- `adminDeleteMessage` leaves the now-unreferenced `media` descriptor on its
+  tombstone (path and generation only; the object is deleted).
+- Reaction writes are a transaction on the message document, so a very popular
+  announcement can see retries.
+- Five new collections (`serverMessageMediaUploadReservations`, `…Leases`,
+  `…Budgets`, `serverMessageMediaDeletionJobs`, `serverMessageMediaObjects`)
+  are `allow read, write: if false` for every client, staff included.
+- **UNVERIFIED visually.** No simulator or device run: the reaction pill, the
+  actions sheet, the attach button, the sending row, the review sheet on this
+  surface and the media bubbles are proven by widget tests at 390 / 768 /
+  1440 px, not by looking at them.
+- **No server-side video thumbnails.** A video poster is a placeholder with
+  the duration; DMs have none either, so this is parity, not a regression.
+
+## ADR-217: A take that reaches its recorder's cap is a full-length take: the server accepts a 2 s measured grace and stores the cap
+
+**Date:** 2026-09-25 · **Status:** accepted (source on the `voice-60s`
+branch, based on `985dceee`) · **NOT DEPLOYED**
+
+### Context
+
+Kamil: "jak nagrywasz głosówkę na chat minutową to nie można jej wysłać, tak
+że samo Ci już przerywa wiadomość". The DM voice sheet stops itself when its
+Dart `Stopwatch` reads 60.000 s and declares
+`elapsed.inSeconds.clamp(1, 60)` = 60, so every declared-duration gate
+(client, reserve callable, Storage rules, reservation re-check) passes. But
+`VoiceMomentRecorder` starts that stopwatch only after the native start has
+returned and stops it before the native stop, so the `.m4a` always covers more
+than the stopwatch interval, and the trusted probe reports the **longest** of
+its container readings (AAC priming included). `validateDirectMediaProbe`
+refused any measured length over 60,000 ms as `failed-precondition` "The
+uploaded attachment tracks are invalid.", the client treats that as terminal
+("Nie wysłano"), and Retry replays the same bytes, so a one-minute voice
+message could never be delivered. The same code is on 3.0.0+34 and +35. The
+Family Memory composer has the same defect at 30 s, and the same class of
+mismatch refused a full-length **camera** video on the client
+(`ceil(60.0x) = 61 > 60`). Evidence:
+`yovoice-evidence/2026-09-25/diagnosis-voice-60s.md` and
+`verdict-voice-60s.md`.
+
+### Decision
+
+1. **The product limit stays 60 s (30 s for a Family Memory note); the
+   measurement gets a 2 s grace, and the stored value is clamped to the
+   limit.** `functions/messaging/direct_integrity.js` owns
+   `DIRECT_MEDIA_MAX_SECONDS = 60` and `DIRECT_MEDIA_DURATION_GRACE_MS =
+   2_000`; `validateDirectMediaProbe` accepts a measured 1..62,000 ms and
+   returns `min(60, max(1, ceil(ms / 1000)))`. Because the validator is
+   shared, this covers DM voice, DM video, server channel video
+   (`servers/message_media.js`) and the attachment migration.
+   `functions/servers/family_memories.js` gets `VOICE_DURATION_GRACE_MS =
+   2000` and stores `min(30_000, measured)`.
+2. **Nothing a client declares changes.** Reserve, Storage rules and the
+   canonical message / memory validators stay at 1..60 s and ≤ 30,000 ms; the
+   clamp is what keeps a 61 s file from writing `durationSeconds: 61` and
+   turning every later read into `data-loss`. The ±2 s declared-vs-measured
+   tolerance is unchanged and is checked against the clamped value, so a
+   short declaration can never borrow the grace (declared 12 s, measured 61 s
+   is still refused, and the tests now pin that reason).
+3. **The client mirrors the contract in one place.**
+   `message_service.dart` has `directMediaMaxSeconds` (with
+   `directVideoMaxSeconds` and `directVoiceMaxSeconds` defined on it),
+   `directMediaDurationGraceMs` and `directCappedTakeSeconds`, used only where
+   the camera itself capped the clip (DM `chat_screen.dart` and
+   `server_text_channel_scene.dart`). Library clips keep the strict
+   `ceil ≤ 60` check and the ADR-212 review is untouched.
+4. **The cap is announced, not silent.** Both capped recorders (DM voice,
+   Family Memory voice) show a `YoRecordingCountdown` pill in the final ten
+   seconds, give one light haptic and one polite announcement at ten seconds
+   left and again at the automatic stop, and keep the take ready to send with
+   a line saying why it ended. The pill holds its space for the whole take,
+   so the stop control never moves in the last seconds; its fade goes
+   through `AppMotion.resolve`. Voice Moments keep their own screen and are
+   unchanged.
+5. The DM sheet gains an injectable recorder (`ChatScreen.voiceRecorderFactory`,
+   the same seam the Family Memory composer already had) and a `_stopping`
+   guard against a Stop tap racing the automatic stop.
+
+### Reasoning
+
+Only the server fix reaches the released 3.0.0 builds without an app update:
+old clients already declare ≤ 60 and already send the longer file. Stopping
+the client earlier (say 59.5 s) could not be proven sufficient without
+device measurements and would not fix installed apps. 2 s is the smallest
+round number that clearly covers the causes the diagnosis names (platform
+channel latency at both ends, a blocking read finishing after stop on
+Android, ~46 ms of AAC priming) and it equals the existing declared-vs-measured
+tolerance, so the two bounds agree.
+
+### Consequences
+
+- A stored voice or video message says 1:00 while its file may run up to
+  62 s; a Family Memory note says 0:30 while its file may run up to 32 s.
+- **Deploy Functions first.** It is compatible both ways: old and new clients
+  declare ≤ 60, and it alone makes an auto-stopped take deliverable. A
+  "Nie wysłano" card left from before the deploy should deliver on Retry as
+  long as its reservation is still valid or can be rotated — to be confirmed
+  on a device. No rules, index, schema or secret change; no new Cloud
+  Function, so the pinned export counts do not move.
+- **UNVERIFIED:** the real measured overage on iOS, Android and web
+  (`record_web`), and whether 2 s covers every device. Log
+  `probe.durationMs` on finalize after the deploy, or filter Crashlytics
+  non-fatals for callable `finalizeDirectMessageAttachment`.
+- The countdown, haptics and announcements are proven by widget tests and by
+  rendered frames (`yovoice-evidence/2026-09-25/voice-60s/`, 390 and 1440 px,
+  Dark and Pearl), not on a device or simulator.
+
+## ADR-218: Accepting a friend request is an explicit consent decision — two labelled buttons everywhere, and "Add friend" never answers someone else's request
+
+**Date:** 2026-09-25 · **Status:** accepted (source on the `friend-request`
+item branch, based on `985dceee`) · **NOT DEPLOYED** · numbered ADR-218 at
+the build 36 integration.
+
+### Context
+
+A tester reported that he got no system notification for a friend request,
+saw no Accept / Decline, and that "tapping the notification just added him".
+The verified diagnosis
+(`yovoice-evidence/2026-09-25/diagnosis-friend-request.md` and its corrected
+verdict `verdict-friend-request.md`) found no notification tap that calls a
+friend mutation, and no friendRequest-specific push defect. What it did find:
+
+- The bell's own **Friend requests** card answered with an unlabelled X and an
+  unlabelled green check (tooltips only). The check accepted on one tap, at
+  the right edge of a card that looks like the notification itself. Released
+  3.0.0 has the same card.
+- The friend-request **activity row**, the **foreground top banner** (the
+  surface a user in the app actually sees, because it replaces the system
+  notification) and **FriendProfileScreen** offered no answer at all; the
+  **profile preview** offered a lone "Accept".
+- `sendFriendRequest` silently **turns "Add friend" into an acceptance** when
+  the target already sent the caller a request.
+- `friend_service` collapsed every callable error into one generic failure,
+  so a cancelled, already-answered or blocked request could only "fail".
+- The push outcome (`pushDeliveryStatus` / `pushSkipReason`) lives on the
+  inbox row, which is **deleted** the moment the request is resolved, so the
+  evidence for "I never got a notification" was gone after Kamil accepted.
+
+### Decision
+
+1. **One Accept / Decline pair.** `FriendRequestDecisionButtons`
+   (`lib/features/friends/presentation/widgets/friend_request_decision.dart`)
+   is the only way any surface answers an incoming request: two equally sized,
+   text-labelled buttons ("Accept"/"Akceptuj", "Decline"/"Odrzuć"), both
+   disabled while either call runs, stacked below 300 px or at large text,
+   capped so desktop shows a pair and never a bar. It is used by the bell's
+   Friend requests card (replacing the icon pair), the friend-request activity
+   row, FriendProfileScreen (`requestReceived`), the profile preview, the
+   foreground top banner and the prompt below. The Friends screen's request
+   list and the Add friend search row already had, or now have, labelled
+   buttons. A tap on the body of any of these only opens (the request list or
+   the requester's profile) and never answers.
+2. **`sendFriendRequest` takes an optional `acceptIncoming` flag.** Absent or
+   `true` keeps today's reciprocal accept for every installed client. `false`
+   never writes: when the target already asked, the callable returns
+   `{outcome: "incomingPending", changed: false}` and the new client opens an
+   explicit Accept / Decline prompt (`showFriendRequestPrompt`). The new client
+   **always** sends `false`.
+3. **Fail-closed against an old Functions deployment.** An old server ignores
+   the unknown key and answers `accepted`. `FriendService.requestFriendship`
+   treats `accepted` in reply to `acceptIncoming: false` as
+   `acceptedWithoutPrompt`: the relationship is shown truthfully as Friends,
+   but the copy says what happened and how to undo it — never a plain "request
+   sent" or "you are now friends" success. Deploy order still matters:
+   Functions before the app.
+4. **Stale states are outcomes, not errors.** `FriendService.respondToFriendRequest`
+   maps the server's `alreadyAccepted`, `alreadyResolved`, `not-found` and
+   blocked/inactive refusals to `FriendRequestResponseOutcome`s, and every
+   surface shows the honest line ("You are already friends", "This request is
+   no longer available", "This request is unavailable" — never which side
+   blocked) instead of a button that failed. `_mutate` now throws a
+   `SocialActionException` (still a `StateError` with the same generic
+   message) that keeps the callable's code.
+5. **The push decision for a friend request outlives its row.** After the row
+   records `pushDeliveryStatus` / `pushSkipReason`, the push trigger writes the
+   same decision to a receipt in `notificationDeliveryEvents` (the collection
+   already TTL-managed on `expiresAt`), keyed by
+   `sha256("pushDecision\0{uid}\0{notificationId}")`, kept 14 days, plus one
+   uid-free structured log line. Only `friendRequest` gets a receipt. It is
+   written outside the delivery transactions and can never fail or delay a
+   send beyond one write; nothing about who receives a push changed.
+
+### Reasoning
+
+- Consent needs words. An icon pair is fast for people who already know the
+  convention and ambiguous for everyone else, and a green check at the edge of
+  a notification-shaped card is indistinguishable from "open".
+- Keeping the flag optional and defaulting to `true` is the only way to change
+  the server without breaking installed apps whose Add button relies on the
+  reciprocal branch (ADR on backward compatibility; CLAUDE.md hard rules).
+- Detecting the old outcome shape on the client is cheaper and more robust
+  than a capability handshake, and it is exactly the case the verifier named.
+- A lock-screen Accept action was deliberately **not** added: Android
+  notification messages cannot carry actions without moving to data-only
+  pushes, and a lock-screen Accept is the accidental one-tap consent this ADR
+  removes.
+
+### Consequences
+
+- The contract "simultaneous reciprocal requests converge on one friendship"
+  (`functions/test/social_graph_security.test.js`) still holds for installed
+  clients. For new clients it is replaced by "one request stands and the other
+  caller is prompted" (`functions/test/friend_request_consent.test.js`).
+- The Yeel footer chip has no room for a pair, so for `requestReceived` it
+  reads "Respond" / "Odpowiedz" and opens the same explicit prompt
+  (`showFriendRequestPrompt`) that its "Add friend" path opens on
+  `incomingPending`. The chip itself never answers; only Accept or Decline in
+  the prompt does (`test/reel_footer_bar_test.dart`, changed deliberately in
+  the fix round from the old one-tap "Accept").
+- **The foreground banner arms its pair only once it has settled.** A card
+  slides in unrequested near the app bar, so Accept / Decline take no pointer
+  or semantics action until the 300 ms entrance (none under reduced motion)
+  plus 500 ms have passed, per card. A newer banner resets the old card's
+  busy state; the old card's answer is shown after the newer card closes, is
+  shown on its own if the card was closed by hand, and is dropped only across
+  a privacy/session/lifecycle clear.
+- **After a stale answer the relationship is read again.** `alreadyResolved`
+  and `noLongerAvailable` say nothing certain about the friendship (a Decline
+  on a request accepted on another device keeps it), so every surface calls
+  `friendRelationshipAfterResponse`, which re-reads instead of assuming "not
+  friends". The prompt returns its answer however it is closed (Done, swipe,
+  barrier, Back), and the bell's per-row result is tied to the `createdAt` of
+  the request it answered, so a new request from the same person shows the
+  buttons again.
+- **Deploy order:** Functions (`sendFriendRequest`, `onNotificationCreated`)
+  before the app. The app is safe against an old deployment (point 3) but
+  would show the "already asked, so you are now friends" copy instead of the
+  prompt until Functions ship.
+- **UNVERIFIED on devices.** Every surface is proven by widget tests and by
+  frames rendered in the Flutter test renderer at 320 / 390 / 1280 px, Dark
+  and Pearl, English and Polish
+  (`yovoice-evidence/2026-09-25/friend-request/frames/`), not on a simulator
+  or phone. Why Kamil got no system push is still runtime state the code
+  cannot see; the receipt makes the next occurrence answerable.
+
+## ADR-219: The profile banner is the header's full-bleed background, softened by a blurred copy of itself
+
+*(Numbered ADR-219 at the build 36 integration.)*
+
+### Context
+
+Kamil: "tło w profilu użytkownika powinno być na cały górny panel, nie w
+takim prostokącie, z ewentualnym blurem na dole". ADR-209 phase 5 had turned
+the old 300–320 px banner into a 104–168 px inset, rounded card below a
+separate toolbar row on both profile screens, so the banner read as a
+rectangle. Diagnosis and verdict:
+`yovoice-evidence/2026-09-25/diagnosis-profile-banner.md`,
+`verdict-profile-banner.md`.
+
+### Decision
+
+- One shared primitive, `lib/shared/widgets/profile/profile_hero_backdrop.dart`:
+  `ProfileHeroGeometry` (every size), `ProfileHeroLayout` (backdrop, floating
+  toolbar, identity on the text line, footer) and `ProfileHeroBackdrop` (the
+  drawing). `ProfileHeader` and `FriendProfileScreen` both use it; the
+  edit-profile preview renders it at the phone geometry.
+- The backdrop spans the whole host from y = 0. Height `T + 56 + band`
+  (124 / 156 / 176 by width), capped at the width's 16:9 — phones show the
+  whole banner and nothing is cut at the sides — and at 45% of a short
+  viewport; past 1440 it grows with the width so the visible share stays
+  ~28.6%, which is also the crop editor's "always visible" guide
+  (`ProfileHeader.bannerSafeBandFraction`, re-derived from 23.4%).
+- The blur Kamil asked for is a soft-focus copy of the same image provider
+  (image-cache hit, no second fetch), masked in over the bottom melt. It is
+  rendered once per photo and width into a tiny pre-blurred bitmap (one
+  texel per 7 pt, 2 texels of blur ≈ the former sigma 14) and drawn scaled
+  up over the bottom `fade + 24` pt only. Never a `BackdropFilter`, and no
+  per-frame `ImageFiltered` either (see the fix round below). High contrast
+  drops it. The whole stack alpha-melts into the page canvas.
+- The photo's scrim, blur and sized light status-bar region are built by a
+  new `ProfileMediaImage.imageLayerBuilder`, so they exist only while the
+  photo is on screen and fade in with it (instantly under Reduce Motion,
+  which now also applies to every profile image's 180 ms fade). The no-photo
+  base (pending, absent, failed) is the Dark fallback gradient or a Pearl
+  palette wash, so a Pearl profile never flashes a dark slab first.
+- The visible "Profil" toolbar title is gone from over the photo; a
+  `namesRoute` container still names the page.
+- `ResponsiveContentWidth.fullBleed` is added only for scroll views whose
+  first sliver is such a hero; readable slivers use
+  `ProfileMeasuredSliverPadding`.
+
+### Reasoning
+
+ADR-209's objection was imagery without data at desktop sizes. The banner is
+user content, and it now carries the header (toolbar, avatar, name) instead
+of sitting beside it, while readable content keeps its 1040 / 880 measure —
+desktop is not a stretched phone layout. The earlier rejections of blur
+(room board, chat cards) were about `BackdropFilter` save layers per card and
+about blur owning text contrast; here there is one hero, the blur is on the
+image itself, and contrast is owned by the melt (text only below the 10%
+line).
+
+### Consequences
+
+- The friend screen's `SafeArea` keeps only the bottom inset; landscape
+  insets are applied to the content column instead.
+- Test pins re-based deliberately: `image_crop_screen_test` (safe-band
+  derivation) and `friend_profile_responsive_test` (frame width; banner
+  above the avatar; 768 == 1440 band height).
+- UNVERIFIED: frame cost on a low-end Android device and on web CanvasKit
+  (no device or profile run was available; after the fix round nothing in
+  the hero filters per frame, only two alpha masks are composited); the
+  iOS bounce feel; status-bar legibility on a physical iPhone; how old
+  banners cropped for the 23% strip look now. Frames:
+  `yovoice-evidence/2026-09-25/profile-banner/` (flutter test renders) and
+  `…/profile-banner/fix-round/` (after the fix round).
+
+### Fix round (review findings)
+
+- **Status bar.** The top scrim is held at full strength across the whole
+  status-bar inset and only then fades out over 72 pt, and its strength
+  rose from .55 to .62. Over a pure-white banner the clock and battery now
+  stand at ≥ 5.2:1 in Pearl and ≥ 5.8:1 in Dark at every row of the bar
+  (measured in the frames: 5.18–5.25 and 5.83–5.94; it was 2.5–3.5:1 where
+  the old gradient had already faded). A pixel test pins ≥ 4.5:1 at
+  `T/2` and `T − 8` in both themes.
+- **Soft focus cost.** The per-frame `ImageFiltered` over the whole hero is
+  gone: renderers without a raster cache (Impeller, web CanvasKit) re-ran
+  it on every scroll frame. The blurred copy is now computed once
+  (`renderProfileHeroSoftFocus`, ~56×32 texels on a phone, ~206×116 at
+  1440) and drawn only over the bottom band. With no per-frame filter left
+  there is nothing to switch off by platform, so `softFocus` is still only
+  turned off by high contrast; the look is unchanged in the frames.
+- **Crop guide.** The "always visible" band stays the centred ~28.6% on
+  screen at every width, but it is now split: the upper ~14.8%
+  (`alwaysClearFraction`, the band's share above the melt at the widest
+  size) is "always visible", the rest "fades into the page". Two geometry
+  rules make that true at every size instead of at 1440 only, pinned by a
+  sweep of widths 280–3840 × status bars 0–59 × viewports 320–1440 that
+  maps the stored rows onto the hero: the height never drops below the
+  guide's share (a short desktop window keeps 232 pt at 1440 instead of
+  45% of its height), and the melt never takes a larger share of the hero
+  than at the widest size (`maxFadeShare` = 112/232; landscape phones and
+  narrow windows without a status bar get a shorter melt, e.g. 84.7 pt at
+  844×390, which lowers the text line by up to ~4 pt there).
+- **16:9 on phones.** The 16:9 cap now wins over the clear-band floor, so no
+  phone ever crops the banner's sides (it could at 320 pt under a ≥ 44 pt
+  status bar). `minimumClearBand`'s doc now says what it is: photo down to
+  the text line, not unaltered photo.
+- **Side melt** is decided by the canvas actually left beside the column
+  (`ResponsiveContentFrame.sideCanvasOf`), not by the window width: beside
+  the 264 pt sidebar at a 1704 pt window the photo meets the sidebar with
+  no melt; it melts only into a gutter of at least 48 pt.
+- **Order and focus.** The backdrop is painted first but read and focused
+  last: toolbar (Back, page name, Edit) → identity → footer → banner, by
+  `OrdinalSortKey` and an `OrderedTraversalPolicy` group. The banner's
+  focus ring (`focusRingInsets`) is drawn on the visible photo — below the
+  status bar, above the text line, 4 pt inside the content column.
+- **Open product call (resolved in the second round below):** on current phones the
+  16:9 cap decides the height, so the photo is almost entirely scrim and
+  melt — at 393 pt under the 59 pt Dynamic Island about 10 pt of it is
+  unaltered, and the avatar and name stand on the page canvas below the
+  melt, not on the photo. Kamil's "cały górny panel" may mean the photo
+  should reach behind the avatar; that needs his sign-off on
+  `fix-round/profile_393x852_*_bright_island.png` before testers. The
+  options are a shorter phone melt, or a phone hero slightly taller than
+  16:9 with a small side crop.
+
+### Second round: the photo stands behind the identity (Kamil's decision)
+
+Kamil looked at the fix-round frames and decided: the photo must stand
+BEHIND the avatar, the name and the handle too, covering the whole header,
+with a stronger fade under the text so it stays readable.
+
+- **Layout.** `ProfileHeroGeometry` gains `nameLine` and `extent`, and
+  `textLine` now means the identity row's top — the avatar's. The text
+  keeps the line the identity had (`nameLine` = `height − 0.4 · fade`), so
+  the header is never taller than before (about 12 pt shorter on a phone,
+  where the text column is shorter than the avatar); the avatar rises
+  `nameDrop` = 30 pt above it into the photo, and the photo no longer melts away above
+  the text but runs on behind it. `minimumClearBand` (toolbar → avatar)
+  drops from 48 to 24: it was the air above an identity that stood under
+  the photo, now it keeps the avatar off the floating Back / Edit. The
+  height floor built on it only binds in very short windows (below the 45%
+  viewport cap), where the photo can now be up to 24 pt shorter; the crop
+  guide's own floor and every pinned height still hold. At 390 × 844 under
+  a 47 pt status bar the avatar spans 151–231 against the 219 pt photo; at
+  393 under the 59 pt Dynamic Island, 153–233 against 221. Both screens pad
+  the text column (and the friend's inline Follow) by `nameOffset`. A
+  36 pt rise with the text moved up was tried first; it put the own
+  avatar's centre in the header's upper half at 320 × 568 and the banner's
+  centre under the identity, which `profile_header_layout_test` and
+  `profile_banner_viewer_test` rightly reject.
+- **The photo's box does not change.** `height` is still the 16:9-capped
+  photo, the banner button's tap target and focus ring, and the crop
+  guide's truth; `ProfileHeroBackdrop` paints past it (an `OverflowBox`,
+  never clipped by the hero's Stack) down to `extent`, where the picture
+  has fully dissolved. Below the box the soft-focus copy continues: the same
+  pre-blurred bitmap through an `ImageShader` with the photo's own cover
+  mapping, mirrored past the image edge, overlapping the box by 2 pt so
+  two anti-aliased edges never leave a hairline. Still no per-frame filter.
+- **The veil** (one `dstIn` mask over the whole stack, keyed to
+  `nameLine`): opaque down to 28 pt above the name line (never above
+  `height − fade`, so the crop guide's "always visible" part stays
+  unveiled — it is now conservative), .45 on the name line, .15
+  from 22 pt lower, 0 at `extent`. Chosen from the contrast limits over the
+  worst photo per theme (white on Dark, black on Pearl), including the
+  friend profile's tinted canvas: the name (22–27 pt w800, large text)
+  ≥ 3.6:1 (≥ 4.1:1 on the plain canvas), `textPrimary` / `textSecondary`
+  for the handle and smaller ≥ 4.7:1. A pixel test renders white and black photos in both themes and
+  checks every row from the name line to the extent.
+- **Readability of the rest.** The avatar ring's hairline is now
+  `borderStrong` (4.0:1 Dark, 3.4:1 Pearl against the canvas cut-out), so
+  the ring reads over any photo. The presence chips carry their own fills
+  (`successSurface` / `surfaceMuted`, `surfaceSunken`), Back its raised
+  fill, Edit and Follow filled; the stats and action rows below the
+  identity sit where the photo is ≤ 15% or gone. High contrast drops the
+  photo 8 pt above the avatar after a 24 pt melt, so nothing of the
+  identity stands on it; the top scrim stays.
+- The crop editor's screen-reader copy now says the strip's lower part
+  fades into the page behind the avatar and name (not only on wide
+  screens).
+- Frames: `yovoice-evidence/2026-09-25/profile-banner/final/`.
+- No existing test assertion changed; new pins: the geometry (avatar in the
+  photo, text on the veil, header never taller), own and friend layout at
+  390 / 768 / 1440, the veil's contrast per row in Dark and Pearl over a
+  white and a black photo (and high contrast), the seam, and the ring.
+
+## ADR-220: Request to speak end to end — the host reads the queue, a decline is its own callable, and an authority change re-mints in place
+
+**Status:** accepted, 2026-09-25 (next build, `podcast-host`, part 1 of 2). Amends ADR-181.
+
+**Context.** Kamil: "jak ktoś prosi o głos na podcaście nigdzie tego nie widać".
+A listener's `setServerSessionHandV1` wrote `isHandRaised` and ADR-181's rules
+already let the session host and moderate-capable roles list exactly the
+raised hands of the live generation, but no Flutter code ever ran that query:
+the client was built on a stale "contract gap G3" comment claiming the
+participant document was unreadable. The listener was told "Prowadzący widzą
+Twoją prośbę." (false), approval was a blind per-avatar menu item with no
+decline, and every role or mute change (promotion, demotion, host or moderator
+mute) revoked the person's LiveKit token by design and the client turned that
+into the red "Połączenie zostało przerwane." with no re-mint, although ADR-181
+requires one. A hand also survived its owner leaving. Same on released 3.0.0.
+
+**Decision.**
+1. *Host queue.* `ServerSessionController` (not a stage widget) owns, per
+   joined generation, the listener's own-document subscription, the viewer's
+   role subscription and — only for the session host or a member whose role
+   carries `moderate` — the raised-hand query with exactly the rule's four
+   equalities and no `orderBy` (sorted on the client). The queue is limited to
+   identities the provider still reports. It is shown in the studio (name,
+   time waited, Approve / Decline), in the conversation dock from any channel
+   (a sheet), and as one shared `ServerWaitingDot` on the connected channel
+   row and the dock control. `ServerWaitingDot` is the product's single
+   "somebody waits for you" mark; the listener-questions work reuses it.
+   The queue lists only listeners' hands (a guest is already on the stage,
+   so Approve could give them nothing), and a guest is never offered
+   "Poproś o głos" on either stage template. Answers follow the callables'
+   standing: the controller reads the server roles of the moderate-capable
+   members (`watchSessionStaffRoles`, the query `watchModerators` already
+   runs) and offers Approve / Decline only for hands this viewer outranks;
+   any other row says "Na tę prośbę odpowie osoba z wyższą rolą." and does
+   not count towards the dot or the dock control.
+2. *Decline.* New callable `answerServerSessionHandV1 {serverId, channelId,
+   sessionId, participantId, decision: "declined", requestId}` with the role
+   callable's standing (host over peers and below, moderator over members it
+   strictly outranks). It lowers the hand and writes additive
+   `handDecision / handDecidedAt`; no revision moves, no outbox job, no
+   revocation; an already-lowered hand is a `changed: false` receipt. Who
+   answered is **not** written to the participant document — its subject can
+   read the whole document, and a declined listener must not learn which
+   moderator declined them; the operation ledger keeps the actor, and every
+   hand write deletes any `handDecidedById` an earlier build left. A decline
+   lasts a minute: `setServerSessionHandV1` refuses a new raise with
+   `failed-precondition` and `details.reason: "hand-decline-cooldown"` until
+   `handDecidedAt + 60 s`, and the listener reads "Daj prowadzącemu chwilę.
+   Możesz poprosić ponownie za minutę.". A promotion that answers a raised
+   hand records `handDecision: "approved"`; so does an Approve of a guest
+   whose hand is still up (raised by an older client), which clears it
+   without moving any authority. A new raise or the person's own withdrawal
+   clears the decision. It ships as a separate registration extension
+   (`SESSION_HAND_CALLABLE_METHODS`, like the message-parity one) so the
+   frozen 62/56/55 manifest and its activation phase plan do not move; the
+   cold-start export pin moves 261 → 262.
+3. *Stale hands.* A signed LiveKit `participant_left` /
+   `participant_connection_aborted` for a `srv_` generation reaches an
+   optional `onParticipantLeft` half of the webhook's server lifecycle hook
+   (behind `workersEnabled`), which lowers a hand raised before the departure
+   with `handDecision: "lowered"` unless the provider still lists the
+   identity or cannot answer, or the departure is a re-mint: the person's
+   `lastModeratedAt`, or their token recipient's revocation
+   (`revoking`, or `revokedAt` / `reconnectAfterMillis`), lies within a
+   minute of the departure. A departure during a full LiveKit reconnect
+   after a network change is not yet told apart. The client also withdraws its own raised hand on
+   an explicit leave, and the host's queue never offers an absent requester.
+4. *Re-mint in place.* When the listener's own document shows a higher
+   `authorizationRevision` under the same `tokenAuthorityFingerprint` (an
+   authority change the held token no longer matches), or the provider
+   reports `participantRemoved` while that document is still readable, the
+   controller tears down only the link and re-requests a token for the same
+   generation with a new request id after a 1.5 s barrier, retrying
+   `failed-precondition` (still being revoked) and transient codes with
+   back-off (about 30 s in all: the revocation runs on a cold outbox worker
+   and has not been measured on the deployed backend), then reconnects. A
+   provider removal the own document does not explain yet may be the host
+   ending the generation, so it is named only after one read of the channel
+   list still shows this generation as `activeSessionId` (the end callable
+   clears it before anybody is removed); an ended generation fails at once
+   into the honest "Połączenie zostało przerwane.", and a
+   `failed-precondition` for a generation that is no longer live stops the
+   retries. It never goes through
+   `leave()`: device claim, keep-alive, realtime-audio lease and
+   subscriptions stay, no release signal is sent. The phase is
+   `reconnecting` with a `reauthorization` reason, so every surface says
+   "Wchodzisz na scenę…", "Przechodzisz do publiczności…" or the access line
+   instead of "connection lost". The microphone stays off. The Android
+   keep-alive is re-asked only when the publish grant changed. A generation
+   that ended (own document unreadable) or a refusal fails into the old
+   honest failure with its retry.
+5. *Listener truth.* Pending, declined, lowered and on-stage are read from the
+   own document (the receipt only bridges the moment after a press); the copy
+   never claims a host saw the request. `handDecidedById` is not parsed or
+   shown by the client.
+
+**Reasoning.** Everything needed was already authorized by ADR-181's rules;
+the missing half was client reads and one additive, non-authority write. The
+revoke-on-change design stays (no in-place LiveKit permission update), and
+the client finally performs the re-mint ADR-181 asked of it. Keeping the
+decline outside the frozen manifest follows the precedent the message-parity
+extension set.
+
+**Consequences.** Deploy Functions (the extension and the webhook) before the
+client (docs/DEPLOYMENT.md, build 36 deploy order, steps 2 and 3b); an older backend answers the decline
+with `not-found`, which the queue shows as one sentence. The decider of a
+decline is no longer readable by the person declined; `lastModeratedById`
+still names whoever promoted, demoted or muted somebody, as it did before
+this ADR. The re-mint path, its real duration, the audio route and the
+Android keep-alive type update are unverified on devices. The Community stage
+gets the same truthful listener status and inline queue through the shared
+controller.
+
+## ADR-221: Listener questions dot — a per-host cursor, one waiting mark, no push
+
+**Status:** accepted, 2026-09-25 (next build, `podcast-host`, part 2 of 2).
+Amends ADR-209 ("not built": unread marks on the server rail).
+
+**Context.** Kamil: "pytania słuchaczy dobrze jakby były powiadomienia w
+formie właśnie kropeczki małej albo coś, że masz jakieś pytanie". Nothing told
+a podcast host that a listener had asked something. `createServerPodcastQuestionV1`
+writes only the question document; questions are `queued` or `onAir` forever
+(there is no answered state), so "there are queued questions" can never clear
+and cannot drive a dot. ADR-209 refused unread marks on server surfaces until
+a read cursor exists. Same gap on released 3.0.0. Diagnosis and independent
+verdict: `yovoice-evidence/2026-09-25/diagnosis-listener-questions-dot.md` and
+`verdict-listener-questions-dot.md`.
+
+**Decision.**
+1. *Cursor.* `users/{uid}/serverQuestionSeen/{serverId}_{channelId}` =
+   exactly `{seenAt}`. Rules: owner `get`, `create` and `update` only, with
+   `isActiveAccount()` (the ADR-206 freeze), a `serverId_channelId` id pattern
+   (≤ 300 characters), `hasOnly(['seenAt'])`, `seenAt is timestamp` and
+   `seenAt <= request.time`; on update `seenAt` may only move forward. No
+   `list`, no `delete`. Account deletion sweeps the subcollection
+   (`PLAIN_SUBCOLLECTIONS`, sixteen → seventeen). The client writes the
+   newest shown question's own `createdAt`, never "now", so a question
+   committed during the write is not swallowed.
+2. *Signal.* `ServerQuestionAttentionRepository.watchPodcastQuestionsUnseen`
+   combines `questions orderBy createdAt desc limit 5` (single-field index, no
+   status filter needed) with the cursor document: unseen when the newest
+   parsed question somebody else asked is later than the cursor or there is
+   no cursor. The viewer's own questions are skipped rather than treated as
+   seen, so a host's own question never hides a listener's question asked
+   just before it. Unparseable documents, no questions, or a failed read
+   settle on false; `permission-denied` is final, any other read error
+   reopens both reads after a back-off (2 s doubling to 1 min), so a network
+   change does not switch the dot off until the slot is hidden and shown. A dot, not a number: a count would need N
+   reads or a non-realtime aggregate.
+3. *Who.* Owners, admins and moderators (`canModerate`) of an active,
+   non-held Podcast server. The Community template's `questions` channel is a
+   plain thread and is not covered.
+4. *Where.* One shared `ServerWaitingDot` (the request-to-speak mark, so hosts
+   read one visual word for "somebody is waiting"): the `Pytania` local tab
+   (never while selected), the Questions channel row (desktop column and the
+   phone sheet; not while selected), the phone header `Kanały` entry when no
+   closer `Pytania` tab carries it, the server's squircle in the Servers
+   directory, and another podcast server's item in the server rail.
+   `YoSegmentedPillSegment` gains an optional `badge`, `ServerLocalTab` an
+   `attentionLabel`, `YoServerRailItem` an optional `attention`; all default to
+   nothing. The spoken label is "Nowe pytania słuchaczy" / "New listener
+   questions".
+5. *One set of listeners.* `ServerQuestionAttention` (a `ChangeNotifier` in
+   `data/services`) is owned by `ServersScreen` and handed to every workspace
+   it hosts or pushes; a workspace built elsewhere keeps its own. Directory
+   servers come from the viewer's own directory role and one channel read to
+   find the Questions channel; the open workspace pins its live role and
+   channel list instead, at no extra cost.
+6. *Retained slot.* While the shell hides the Servers slot (`isVisible`
+   false) every listener is cancelled — no reads — and the last answers are
+   kept; when the slot returns each listener reopens and its first snapshot
+   corrects them. The board moves the cursor only while it is really in front
+   of the host: `isVisible`, the app resumed, and `TickerMode` enabled (no
+   covering route), debounced 800 ms so a burst of questions writes once.
+7. *No push.* A member may create up to 120 questions a minute under the only
+   budget that applies, so a per-question push would be a harassment vector.
+   A coalesced, budgeted `serverQuestion` bell/push for hosts outside the
+   studio stays a separate decision.
+
+**Reasoning.** A counter or `latestQuestionAt` on the channel document would
+contend with liveness writes during a live show and re-deliver the channel to
+every member's list; per-question seen rows are the read explosion ruled out;
+a per-device cursor would leave a dot on the phone for questions read on
+desktop. Forward-only in the rules (not only on the client) keeps two devices
+from bringing a dot back.
+
+**Consequences.** Deploy Firestore rules and the functions (account-deletion
+list) before any client that writes the cursor; an older rules set refuses
+the write and the dot simply never clears. Cursor rows outlive a deleted
+server or a left membership (private, grant nothing) until account deletion.
+The board now keeps one question subscription per channel instead of
+re-subscribing on every rebuild. Rendering on devices and web lifecycle
+mapping are unverified.
+
+## ADR-222: A Google or Apple sign-in that inherits a password nobody verified ends every earlier session (pre-registered account takeover, Phase 1)
+
+**Date:** 2026-09-25 · **Status:** accepted (source on branch
+`nb2-account-takeover`: `a136ea2a` server, rules and tests; `1c248efb` app;
+`a213195d` adds these docs and strips address-less identities; the
+`fix(account-takeover):` commit after it bases the decision on the ledger's
+evidence, pages the ledger pass and checks every Google/Apple sign-in) ·
+**NOT DEPLOYED** · Phase 2 needs the owner's Identity Platform upgrade
+
+### Context
+
+Anyone can register a stranger's e-mail address with a password — from the
+app, the website, or straight against the public Identity Toolkit REST API. The
+account stays unverified. When the real owner later signs in with Google or
+Apple, Firebase ("one account per e-mail") gives the owner that same uid and
+unlinks the unverified password. It does not end the pre-registrant's session:
+their refresh token keeps working and every ID token it mints now says
+`email_verified: true`, which opens every `isVerified()` rule and every
+callable that trusts the claim. Push tokens planted while unverified
+(`users/{uid}/fcmTokens`, which never required verification) keep receiving
+the owner's notification metadata — and the next build adds push types that
+carry actor names and server labels. Pre-existing on the whole platform since
+ADR-068; the website's security note recorded it as an accepted risk on
+2026-09-24.
+
+Reproduced in the Auth emulator (firebase-tools 15.29.0) before writing code:
+
+- after the takeover the password provider is **already gone** from
+  `providerData` and `emailVerified` is true — the Auth record alone cannot
+  tell a taken-over account from one created with Google;
+- a verified password plus a Google sign-in is **linked**, not replaced;
+- the emulator does **not** enforce refresh-token revocation
+  (`state.js validateRefreshToken` checks only that the user exists) and it
+  stamps every token, refreshes included, with the account's latest sign-in
+  as `auth_time` (`getAuthTime` → `lastLoginAt`); production does neither;
+- a Google identity the pre-registrant linked to the unverified account before
+  the takeover disappears from `providerData`, yet in the emulator it still
+  signs in to the uid afterwards (a stale federated index).
+
+An earlier proposal was independently refuted in part: its remediation order
+let a stale session re-plant a push token between the purge and the epoch
+write; an epoch in `accountIsActive` was claimed to close reads it never
+reaches; `requireActor` never reads `users/{uid}`, so a callable epoch is not
+free; its TTL deletion used the bare outbox entry point.
+
+### Decision
+
+1. **One remediation authority**, `remediateAccount()` in
+   `functions/auth/federated_takeover.js`, used by every trigger. It acts when
+   the account has a Google/Apple identity on the owner's address AND still
+   carries an unverified password — or, while the server-side ledger still
+   says "pending", whenever that owner identity is linked and the ledger's
+   **evidence** no longer matches the account: the password vanished, the
+   account address differs from the one the ledger recorded, or a credential
+   changed (Auth `tokensValidAfterTime` is past the ledger's baseline). The
+   current `emailVerified` and address are never trusted on their own: after a
+   takeover the pre-registrant's surviving session can re-link a password
+   (`accounts:update`) or move the account to their own address before any
+   trigger runs, and both used to read as "the owner's verified password".
+   Only the owner's own race — verified by link, nothing changed since the
+   ledger saw it, then Google — is left alone ("ambiguous": logged, ledger
+   `verified`). The owner identity is the Google/Apple identity on the
+   account's address or on the address the ledger recorded, so moving the
+   account does not disown it.
+2. **Evidence is recorded while it is visible.** `authPasswordLedger/{uid}`
+   (`pending | verified | remediated`) is seeded by a v1 Auth `onCreate`
+   trigger (`onAuthUserCreated`, standard Firebase Auth, no upgrade needed) and
+   by the sweeper's bounded `listUsers` walk, which also backfills existing
+   accounts and re-arms an address that became unverified later. Each seeding
+   records `emailHash` (SHA-256 of the normalized address — never the address)
+   and `validSinceBaselineSeconds` (the record's `tokensValidAfterTime`, or its
+   creation second + 2 when an Auth event omits it). A verification-link click
+   moves neither; a password set or reset, an address change, a revocation
+   and Firebase's own takeover (emulator: `validSince` on the replaced
+   account) all move the baseline. A pending password-only account that is
+   verified but changed since the ledger saw it (a password reset before
+   verifying — or a pre-registrant who stripped the owner's identity) is
+   `unconfirmedPassword`: not closed as verified, not touched, still watched,
+   so the owner's next Google/Apple sign-in on it is a takeover.
+3. **Order**, so nothing planted or issued survives in between: (1) unlink the
+   password and every identity that is not the owner's, and remove every
+   enrolled second factor (a verified stranger session could enroll one and
+   lock the owner out), (2) revoke refresh tokens, (3) write
+   `users/{uid}.authSessionEpoch` = remediation second + 1, (4) purge
+   `fcmTokens` (all of them from the sweeper; all but the calling device's for
+   the owner, and only when the caller's session is the kept identity, fresh
+   and the account's latest sign-in), (5) put the owner identity's address
+   back on the account when it is missing or the password was unlinked, so a
+   password reset cannot be sent to an address the pre-registrant controls —
+   if that address was re-registered meanwhile, the audit row records
+   `ownerEmailRestored: false`, the ledger row `needsReview`, and an error log
+   asks for manual review instead of re-revoking the owner every sweep,
+   (6) audit row in `authTakeoverAudit` (now also `mfaFactorsRemoved`,
+   `ownerEmailRestored`) plus ledger `remediated`, one batch. Unlinking first
+   means no new session can start from those credentials, so the epoch is
+   after every pre-registrant `auth_time`; the epoch precedes the purge, so a
+   stale session cannot re-plant. Every step is idempotent; a failure leaves
+   the row pending for the next call or sweep.
+   **Sessions are ended once per takeover (review round, build 36).** The
+   epoch transaction also writes a checkpoint on the ledger row
+   (`sessionEpoch`, `sessionsEndedAt`, `sessionsEndedBy`, `purgeDeleted`). A
+   call that finds it on a still-pending row, with no credential or second
+   factor left to strip, resumes at the purge and never revokes or re-epochs
+   again — before this, a pre-registrant who planted more than the purge's
+   10 000-document budget made every call throw after revoking, so each
+   retry (every owner sign-in, every 5-minute sweep) signed the owner out of
+   the session they had just re-established. The purge now pages by document
+   id with a cursor, deletes only registrations written before the epoch (a
+   later one came from a session the rules accepted, i.e. the owner), and,
+   when its per-call budget runs out, records its progress and returns
+   `securing` (the owner's callable still answers `remediated` when the call
+   ended the caller's session, or the caller's session predates the epoch).
+   Independently, push delivery ignores every `fcmTokens` document whose
+   `updatedAt` predates `users/{uid}.authSessionEpoch`
+   (`registrationsNotBeforeEpoch`, push_delivery.js), so a planted token
+   receives nothing after the epoch however long the purge takes. A re-armed
+   row clears the checkpoint. The kept caller device is re-stamped at the
+   epoch so it keeps receiving.
+4. **Two triggers.** A: `secureFederatedSignInV1`, called by the owner's own
+   client right after every Google/Apple sign-in; it remediates the caller
+   only, answers `notApplicable` to any non-federated session, and is
+   best-effort on the client (a failure never blocks a sign-in). The app wires
+   it in `AuthService`: a returning sign-in waits for it up to 8 s (was 20 s;
+   the register route no longer spins through a cold start), a brand-new
+   account is checked in the background (whether production reports a
+   takeover as `isNewUser` is no longer load-bearing), and a check that
+   outlasts the wait keeps running. On `remediated` — early or late, and a late
+   one only while the same account is still signed in on the device — it signs
+   out and asks the owner to sign in once more (localized notice, through the
+   messenger captured at the tap), because revocation ended this device's
+   session too. B: `sweepFederatedTakeoverSchedule`, every 5 minutes,
+   `maxInstances: 1`, for the website and old builds. Its ledger pass pages
+   through **every** pending row until 180 s of the 240 s budget are used, then
+   resumes from a cursor; the `listUsers` walk keeps the rest of the budget.
+5. **The epoch is checked only where it is free and closes something
+   lasting**: the `fcmTokens` create/update rule and Storage `isActiveUser`.
+   Both already read `users/{uid}`. Folding it into `isActiveAccount()` was
+   tried and exceeded the 1000-expression budget of an existing Servers list
+   rule (`server_rules.test.js`), so it stays scoped. It is provider-agnostic
+   (`auth_time < epoch`): a pre-linked Google session is as stale as the
+   password one, and the owner's own pre-remediation session was revoked
+   anyway. **Callables whose effects outlive the hour check it too (review
+   round, build 36):** `assertSessionNotBeforeEpoch` (utils/auth.js) runs
+   inside the transactions that already read `users/{auth.uid}` —
+   `sendFriendRequest`, `respondToFriendRequest` (both answers),
+   `removeFriend`, `setFollow`, `setUserBlock` (both directions),
+   `sendDirectMessage`, `openDirectConversation` and `submitBugReportV1` — so
+   it costs no extra read there.
+6. **Report only for never-verified accounts.** Each completed walk logs
+   password-only, never-verified accounts older than 7 days (count and up to
+   100 uids, no addresses). No deletion code exists.
+
+### Reasoning
+
+The server is the only control: the REST API makes every client-side check
+optional for the attacker, and the owner's client is the one party the
+attacker cannot silence, which is why it — not the attacker's session — is
+the trigger that can act within seconds. A ledger is the smallest thing that
+turns an unobservable past ("this uid once had a password nobody verified")
+into a server fact without the Identity Platform upgrade. Scoping the rules
+epoch to the push-token write keeps the rules change cheap. The push token was
+NOT the only effect that outlives the one-hour ID token, as this entry first
+claimed: friendships, follows, blocks, direct messages and bug reports written
+by callables persist too. The callables among them that already read
+`users/{auth.uid}` in their transaction now check the epoch for free; what a
+stale token can still create is listed under Consequences.
+
+### Consequences
+
+- **Residual window, stated plainly.** An ID token the pre-registrant already
+  holds stays valid until it expires (up to one hour). The epoch refuses it
+  for push registration, Storage and the callables listed in Decision 5.
+  Other Cloud Functions callables (calls and LiveKit tokens, billing,
+  `cancelFriendRequest`, attachments, read markers, server and moment
+  callables), owner-only reads that never consult account state
+  (notifications, incoming calls, DM reads, the private profile) and other
+  `isActiveAccount()` writes still accept it until it expires. **Lasting
+  effects a stale token can still create in that hour:** Firestore writes
+  gated only by `isActiveAccount()` (profile fields, presence, moments,
+  comments and reactions, server messages and memberships the rules allow the
+  account), and the server callables that do not read `users/{uid}` — each
+  persists after the hour and is not rolled back by remediation. Phase 2 may shrink what that token is worth (if the blocking
+  function runs before the pre-registrant can refresh into a verified token —
+  UNVERIFIED until an emulator run of `beforeUserSignedIn` shows what it sees
+  at the takeover) but does not revoke a token already minted either.
+- Revocation is second-granular in Firebase: a session that starts in the same
+  second as the revocation survives it; the epoch's +1 covers that in rules.
+- Only a Google/Apple identity carrying the account's own address is kept. One
+  without an address (a repeat Apple authorization omits the e-mail claim) is
+  stripped with the password.
+- The callable and the sweeper do not lock each other out. Running both at
+  once is harmless (every step is idempotent) except that the audit may hold
+  two rows and a concurrent sweep may purge the owner's kept device row; the
+  app re-registers after its next sign-in anyway.
+- The owner signs in once more after a remediation. On the website and old
+  builds the sweeper acts within one run (5 minutes) as long as a pass over
+  the pending ledger fits in the ledger pass's 180 s; beyond that the bound
+  **scales with the backlog**: worst case ≈ ⌈pending rows ÷ rows per run⌉ ×
+  5 minutes, where rows per run is about 180 s ÷ (one `getUsers` round trip
+  per 100 rows plus one query per 300). The emulator did 651 rows in one run
+  in about 2 s; production throughput is UNMEASURED, but at even 300 ms per
+  100 rows one run covers ~60 000 rows, so mass unverified sign-ups need tens
+  of thousands of accounts to add a single 5-minute run. Never-verified rows
+  stay pending by design (deleting them is the owner's decision, below). No
+  prioritisation by recent sign-in: that signal lives only in the Auth record
+  the pass already reads, so it cannot make the pass cheaper; Phase 2's
+  blocking function is the real fix. The owner's own session ends at its next
+  refresh.
+- **Rewrites the ledger cannot see.** If the pre-registrant's session also
+  unlinks the owner's Google/Apple identity (or a password reset does that —
+  the emulator's `resetPassword` drops every other provider) before any
+  trigger observes the takeover, no owner identity is left to anchor a
+  remediation: the account reads `unconfirmedPassword` and is only watched.
+  The owner's next Google/Apple sign-in on it (a re-link on the same address)
+  is then a takeover; if the account was also moved to another address, the
+  owner's next sign-in creates a new account in production (the emulator's
+  stale federated index still signs into the old uid). Trigger A's race and
+  Phase 2 are what shrink this. Legitimate false positives, all benign: an
+  owner who reset or changed a password, or changed the address, between
+  registering and a Google/Apple link before any sweep has their password
+  unlinked (Google stays) or their address set back to the Google address,
+  and signs in once more; enrolled second factors on a remediated account are
+  removed (TOTP needs the Identity Platform upgrade, so none exist yet).
+- The app's TOTP sign-in path (`TotpChallengeScreen` → `resolveSignIn`) does
+  not call trigger A; the sweeper covers it. Wiring it is a Phase 2
+  precondition, together with enabling TOTP.
+- Not reset: the pre-registrant's `notificationPreferences`, `messagePrivacy`,
+  display name and Auth `displayName` stay on the owner's account; the owner
+  can change them (display-name cooldown applies). Candidate follow-up.
+- A foreign Google identity pre-linked before the takeover that survives only
+  as a stale index (emulator behaviour) is invisible to `providerData`, so
+  Phase 1 cannot unlink it. Production behaviour is UNVERIFIED — see the
+  canary below. Any foreign identity still listed is unlinked.
+- The owner who clicks the verification link the pre-registrant triggered
+  verifies the pre-registrant's password; no server check can tell that apart
+  from a legitimate user. Residual.
+- Accounts taken over before this is deployed left no evidence and cannot be
+  found. One option for the owner: a one-time revocation of every
+  federated-only account's sessions (one forced re-sign-in each).
+- Cost: one callable, one Firestore read and one Auth lookup per federated
+  sign-in (new accounts included now); every 5 minutes one indexed equality
+  query per 300 pending rows and one `getUsers` per 100; the `listUsers` walk
+  at most hourly. No new composite index (equality + document-id order).
+- **Website (integrator; the website repo was not edited).** In
+  `src/providers/auth-provider.tsx` `signInWithProvider`, after
+  `await createSocialUserProfileIfNeeded(credential, provider);` add
+  `await secureReturningFederatedSignIn(auth, credential);`, with:
+
+  ```ts
+  // src/lib/auth/federated-session.ts
+  import { getAdditionalUserInfo, signOut, type Auth, type UserCredential } from "firebase/auth";
+  import { httpsCallable } from "firebase/functions";
+  import { getFirebaseFunctions } from "@/lib/firebase/functions";
+
+  /** Matched by `code` in auth-errors.ts, which must stay import-free. */
+  export const FEDERATED_SESSION_SECURED_CODE = "yovoice/federated-session-secured";
+
+  export class FederatedSessionSecuredError extends Error {
+    readonly code = FEDERATED_SESSION_SECURED_CODE;
+    constructor() {
+      super("federated-session-secured");
+      this.name = "FederatedSessionSecuredError";
+    }
+  }
+
+  /** Trigger A of the app repo's ADR on pre-registered account takeover. */
+  export async function secureReturningFederatedSignIn(
+    auth: Auth,
+    credential: UserCredential,
+  ): Promise<void> {
+    const uid = credential.user.uid;
+    const check = httpsCallable<Record<string, never>, { status?: string }>(
+      getFirebaseFunctions(),
+      "secureFederatedSignInV1",
+    );
+    const answer = check({}).then((result) => result.data?.status);
+    if (getAdditionalUserInfo(credential)?.isNewUser) {
+      // Checked too, without waiting: a remediation signs this tab out.
+      void answer
+        .then((status) => {
+          if (status === "remediated" && auth.currentUser?.uid === uid) {
+            return signOut(auth);
+          }
+        })
+        .catch(() => undefined);
+      return;
+    }
+    let status: unknown;
+    try {
+      status = await answer;
+    } catch (error) {
+      console.error("YO Voice sign-in: the account check did not complete; the server sweep covers it.", error);
+      return;
+    }
+    if (status !== "remediated") return;
+    await signOut(auth).catch(() => undefined);
+    throw new FederatedSessionSecuredError();
+  }
+  ```
+
+  and in `src/lib/auth/auth-errors.ts` `getSocialAuthErrorMessage`, first —
+  matching the code string, **not** `instanceof`, because that file is kept
+  free of imports so `node --test` can load it:
+  `if ((error as { code?: unknown } | null)?.code === "yovoice/federated-session-secured") return "We secured your account and ended every earlier session, including a password sign-in that was never verified. Sign in again to continue.";`
+  The existing `catch` in `signInWithProvider` rethrows it (it is not an MFA
+  error) and the social form shows it through `onError`. Replace the
+  "Pre-registered addresses" accepted-risk paragraph in
+  `docs/security/security-notes.md` with a pointer to this ADR, and fix its
+  contradiction: line 151 calls Google authoritative for Workspace addresses,
+  lines 164-166 say Workspace gets `account-exists-with-different-credential`.
+
+### Phase 2 — the owner's step, then a separate change
+
+1. **Decide and upgrade.** Firebase Console → Authentication → Settings →
+   "Upgrade to Firebase Authentication with Identity Platform". The upgrade
+   **cannot be undone**; check the current Identity Platform pricing first. It
+   is the same upgrade TOTP already waits for and does not turn MFA on.
+2. **Then (new code, not on this branch):** `functions/auth/blocking.js` with
+   `beforeUserSignedIn` (europe-west1) that returns at once unless the provider
+   is `google.com`/`apple.com` and the user is not new, and otherwise runs the
+   same `remediateAccount()` synchronously, throwing `unavailable` only on that
+   branch; plus a best-effort `beforeUserCreated` ledger write (never failing
+   a registration). It can also refuse a Google/Apple sign-in whose provider
+   address differs from the account address on an account with a ledger row,
+   which covers the stale pre-linked identity above.
+3. **Register and confirm.** Deploy the functions, then Firebase Console →
+   Authentication → Settings → Blocking functions: select
+   `beforeUserSignedIn` under "Before sign in" (and `beforeUserCreated` under
+   "Before account creation"), Save, and confirm both are listed.
+4. **Canary** with owner-controlled accounts: pre-register a spare Gmail
+   address by password on device A, sign in with Google on device B; A must be
+   signed out at its next refresh and receive no further push. Repeat with
+   Apple (real address, not Hide My Email). Also pre-link a second Google
+   account on A before the takeover and check it cannot sign in afterwards.
+   Record from the takeover sign-in: `isNewUser` (the app no longer depends on
+   it, but the website snippet's wait/background split does), whether
+   `tokensValidAfterTime` moved at the takeover, and whether setting a
+   password from A's session afterwards needs a recent login
+   (`CREDENTIAL_TOO_OLD_LOGIN_AGAIN`) — then confirm the remediation still
+   runs when A re-links a password or moves the address first.
+5. **Before TOTP is enabled** (it needs the same upgrade): call trigger A
+   after a TOTP-resolved Google/Apple sign-in too; the server already removes
+   every enrolled factor during a remediation.
+
+### The owner's decision on never-verified accounts
+
+The sweeper reports them and deletes nothing. Deleting them is the owner's
+call, with three questions to settle first: the age (the report uses 7 days;
+it must exceed the verification link's lifetime), grandfathering and a warning
+e-mail for existing unverified testers (the app lets unverified users into the
+shell, so they may have real data), and the mechanism. If approved, it must
+reuse the app-deletion transaction shape (`disabled: true`, the
+`accountDeletion` mark and the outbox row together, `functions/account/deletion.js`)
+and re-check inside that transaction that the account is still password-only
+and unverified — never the bare `enqueueAccountDeletionOutbox`. Deletion only
+shortens the window; the pre-registrant can register again.
+
+## ADR-223: In-app bug reports are server-written and owner-read; alerts are source-gated channels that never carry the screenshot or the uid
+
+**Date:** 2026-09-25 · **Status:** accepted (source on `nb2/report-bug`; numbered
+ADR-223 at the build 36 integration) · **NOT DEPLOYED**
+
+### Context
+
+Testers had no in-app way to report a bug: the only path was a
+`mailto:support@yovoice.app` tile in Settings > Help that carried no version,
+device or screen. Kamil wants a "report bug" button for the testing period and
+beyond, with alerts arriving by e-mail or as "a new Claude chat". Facts that
+shaped the design, all checked in code: `functions/` held no e-mail capability
+(Resend is used only as Firebase Auth's console SMTP relay, ADR-008, so no
+Functions secret existed); `kamilxgriefer/yovoice` is a public repository
+(`docs/QUALITY_AUTOMATION.md`); an eagerly declared `defineSecret` blocks
+`firebase deploy` until it is set (the ADR-214 GIPHY lesson); only three of the
+app's routes carry a `RouteSettings.name`; the app has no tester flag and ships
+one binary per platform to testers and stores; `MoreDestination` is walked
+exhaustively by the shell and several suites.
+
+### Decision
+
+1. **One path in, one path out.** `submitBugReportV1` (any signed-in account,
+   unverified included; disabled/deleted refused; banned allowed in words, but
+   a banned account's screenshot is recorded `refused` and gets no
+   reservation, since `storage.rules` refuses a banned uploader) validates an
+   exact allowlist — a 10-2000 UTF-16-unit description, a fixed device-context
+   object and an optional JPEG declaration — rate-limits it (5 per 10 minutes
+   and 20 per day per account; no project-wide bucket refuses a report) and
+   writes `bugReports/{br_<sha256 prefix>}` in one transaction; the id is
+   derived from uid + requestId, so a retry replays. The uid is taken from the
+   session, never from the client. The protected owner reads through
+   `listBugReportsV1` (optionally by `reporterId`) / `getBugReportV1` /
+   `updateBugReportStatusV1` / `deleteBugReportV1` /
+   `deleteBugReportScreenshotV1`, each gated by `requireProtectedOwner` — i.e. only by the existing
+   `YOVOICE_PROTECTED_OWNER_UID` secret — and rendered as an owner-only Staff
+   Center section. Rules deny `bugReports` and `bugReportUploadReservations`
+   to every client.
+2. **Screenshots use the repo's reservation pattern.** A declared screenshot
+   gets one 15-minute reservation for `bug_reports/{uid}/{reportId}.jpg`;
+   `storage.rules` accepts only that object (exact metadata, JPEG, 128 B-1.5
+   MB, live reservation) and lets only its uploader read it back while the
+   reservation lives. `attachBugReportScreenshotV1` checks metadata,
+   generation and the JPEG magic bytes, strips the download token and binds the
+   generation to the report. The report is written before the upload, so a
+   failed upload never loses the words.
+3. **Consent before capture leaves the device.** The client captures the
+   navigator (never the top banners or the Bug button) before the reporter
+   opens, but attaches it only after the reporter opens a preview headed by
+   "may show other people's names, photos or messages" and confirms. The
+   preview opens full size with pinch-to-zoom (a thumbnail at ~40 % scale
+   cannot be read). The 2FA enrollment card blocks capture entirely.
+4. **Delivery is announcement only, and off twice.** `deliverBugReportV1`
+   (Firestore trigger, retrying, one transactional claim per channel, at most
+   five attempts) is exported only when a source gate in `functions/index.js`
+   is flipped, and only then declares that channel's secret
+   (`RESEND_API_KEY`, `GITHUB_BUG_REPORT_TOKEN`). Each channel is also switched
+   at runtime in Admin-only `appConfig/bugReports`, which holds the recipient,
+   sender and repository — not `functions/.env`, which is committed publicly.
+   Both channels are **link-only**: the report id, platform, version/build,
+   screen name and whether a screenshot was requested or attached, plus a
+   pointer to the Staff Center — never the description, uid, screenshot, OS
+   version or locale. Each channel has its own daily budget (200 e-mails, 50
+   issues, sentinel key); over it a report is stored but not announced.
+5. **Entry points do not touch navigation.** "Report a bug" is an action, not
+   a `MoreDestination`: the mobile sheet and the desktop popover close with no
+   destination and the reporter opens after their exit animation. The mobile
+   action sits in the sheet's chrome band (a new optional `leading` slot on
+   `YoModalSheetChrome`) so the compact sheet's height is unchanged. The
+   floating dock and `MainShell` are not modified.
+6. **The testing-period Bug button** is compiled in by
+   `--dart-define=YOVOICE_BUG_BUTTON` (default **true**, so the builds shipped
+   to testers now carry it with no build change; a public build passes
+   `false`), never shown on the web, and hideable per device (Settings switch
+   or long-press). It lives in `MaterialApp.builder`, stays inside the safe
+   area and the system gesture insets, below the toolbar band and above the
+   dock's own `reservedHeightFor` plus room for its expanded labels and the
+   mini bar, and hides while a modal, the reporter or the keyboard is up.
+7. **Retention is enforced in code**: a daily sweep removes abandoned uploads,
+   screenshots after 90 days and reports after 180 days, draining page after
+   page within a 240 s budget; account deletion sweeps `bug_reports/{uid}/`
+   with the other uid prefixes and deletes the account's reports and
+   reservations in the `records` stage. Rights requests are answered in the
+   Staff Center: find by account, delete a report, remove a screenshot, each
+   deletion audited in `adminAuditLogs`.
+
+### Reasoning
+
+Everything reuses existing primitives (guards, `privateRateLimits`,
+`requireProtectedOwner`, the reservation/finalize pattern, lazy buckets,
+source-gated secrets) and adds no npm or pub dependency (Node 22 `fetch` is
+enough for Resend and GitHub). Reports are useful the day the functions deploy,
+with nothing else configured. Keeping tester text out of a public repository by
+construction — and checking privacy at send time rather than trusting a
+setting — is the only safe reading of "open an issue" for this repository.
+
+### Consequences
+
+- The pinned export list grows 261 -> 269 (eight exports; `deliverBugReportV1`
+  joins only in the reviewed commit that flips a gate).
+- Three composite indexes on `bugReports`: `(status, createdAt DESC)`,
+  `(reporterId, createdAt DESC)` and `(reporterId, status, createdAt DESC)`.
+- The privacy policy's bug-report text must be **published before** the
+  functions deploy and before any build that shows "Report a bug" (the row is
+  on the public web app too); the App Store privacy labels and the Play Data
+  safety form ("diagnostics / user content (bug reports)") block the store
+  submission. The exact website text, retargeted to the page's real sections,
+  is in `docs/SECURITY.md` ("In-app bug reports"), with the open questions
+  for legal review.
+- `recentEvents` / device model / an owner FCM push, suggested in the design
+  review, are not built; the screen name is a class name, so a web release
+  build (minified) reports a mangled name.
+- **UNVERIFIED on devices.** RepaintBoundary capture over platform views
+  (LiveKit video, `video_player`) may be black; the button's placement is
+  proven by widget tests at 390 / 768 / 1440 px with a real dock, not on a
+  phone.
+
+## ADR-224: Bug report alerts are link-only, and rights requests have an owner tool
+
+**Date:** 2026-09-25 · **Status:** accepted (review fix round on
+`nb2/report-bug`, amends ADR-223 above; numbered ADR-224 at the
+build 36 integration) · **NOT DEPLOYED**
+
+### Context
+
+Review of the in-app bug reports found that the proposed privacy text promised
+more deletion than the code gave: the alert e-mail carried the description, OS
+and locale, and a private GitHub repository could receive the description too,
+and none of those copies (mailbox, Resend's sent-mail log, GitHub issue) is
+reached by the 180-day sweep or by account deletion. The owner also had no way
+to answer an access or erasure request — including from a third party shown
+in a screenshot — short of hand-editing Firestore and Storage in the console.
+A shared 300-a-day submit bucket let ~15 throwaway accounts block every
+tester, and a banned account was issued reservations that Storage would
+always refuse.
+
+### Decision
+
+1. **Alerts are link-only on every channel** (option (a) of the review): the
+   report id, platform, version/build, screen name and a requested/attached
+   screenshot line. The description stays in Firebase. The
+   `githubIncludeDescription` switch and the repository-visibility probe are
+   retired; a stale `true` is ignored.
+2. **Owner rights tools**: `deleteBugReportV1` (document, reservation, object —
+   the object deleted before and after the transaction) and
+   `deleteBugReportScreenshotV1` (object and reservation; the words stay,
+   `screenshot.status = "removed"`), both writing an `adminAuditLogs` entry in
+   the same transaction without the description; `listBugReportsV1` gains a
+   `reporterId` filter. Resolving or dismissing a report does not shorten its
+   retention (not built; the explicit remove action covers the need).
+3. **No shared bucket refuses a report.** The project-wide budgets move to the
+   alert channels (200 e-mails, 50 issues a day); over budget a report is kept
+   and listed, `delivery.<channel>.status = "throttled"`.
+4. **Banned accounts report in words only**: no reservation, screenshot
+   `refused`.
+5. **Delivery hardening**: 15 s provider timeouts; a live lease held by another
+   attempt throws so the event retries instead of counting as delivered; a
+   GitHub retry reuses an issue already titled with the report id.
+6. **The sweep drains** page after page within 240 s and logs a backlog.
+7. **Publication order**: the privacy text is a blocking step before the
+   functions deploy and the tester build; store labels block the store
+   submission; the public store build must pass
+   `--dart-define=YOVOICE_BUG_BUTTON=false` (release checklist).
+
+### Reasoning
+
+A copy that deletion cannot reach is only safe if it contains nothing personal.
+Making the alert link-only is cheaper and more robust than chasing copies
+across a mailbox, a provider log and an issue tracker, and it makes the
+privacy text true as written. The owner already reads reports in the Staff
+Center, so the alert loses little. Rights requests arrive at the published
+privacy@yovoice.app mailbox, so the tool to answer them belongs next to the
+inbox, audited like every other owner action.
+
+### Consequences
+
+- Two new owner callables: the pinned export list is 269 (recomputed from
+  `functions/index.js`); two new composite indexes.
+- A GitHub-issue "Claude chat" route now gets only the reference and must read
+  the report through the owner (the route was already documented as
+  data-only).
+- Legal questions (lawful basis, third parties in screenshots, US processors,
+  the age threshold) are recorded, not answered, in `docs/SECURITY.md`.
+
+## ADR-225: Store builds come from a manually dispatched, reviewer-gated workflow that never publishes a binary
+
+**Date:** 2026-09-25 · **Status:** accepted (source only: the workflow has
+never run, and none of its GitHub, Play, App Store Connect or Keychain setup
+exists yet) · **NOTHING DISPATCHED**
+
+### Context
+
+Every store build so far was signed and uploaded by hand on Kamil's Mac:
+`flutter build ipa` plus `xcrun altool`, and `flutter build appbundle` plus a
+Play Console upload through the native file picker. The handover asked for
+either that or a GitHub Actions release path. An independent review of the
+first design found real flaws:
+
+- the repository is **public**, so logs and artifacts are world-readable;
+- no protected environment exists (`production` has no rules);
+- free-text inputs could be interpolated into shell;
+- fork pull-request runs share cache scopes with `main`;
+- a third job would ask for a second approval;
+- Hosting always deploys `main` HEAD, so web and store builds could come from
+  different SHAs;
+- a backend baseline taken from an empty variable would silently pass.
+
+### Decision
+
+1. `.github/workflows/store-release.yml` has a `workflow_dispatch` trigger
+   only. It is **dry run by default**. The dry-run jobs use no environment and
+   reference no secret. Android signs with a key generated on the runner,
+   because `build.gradle.kts` refuses to configure without one, and a
+   runner-only Gradle init script switches off the Crashlytics mapping-file
+   upload so a dry run writes nothing to Firebase. iOS builds with
+   `--no-codesign`.
+2. The real Android and iOS jobs run only from `main`, behind one protected
+   environment, `store-release` (required reviewer Kamil, branches `main`).
+   Both wait at the same moment, so **one review approves the release**.
+   TestFlight processing is polled inside the iOS job instead of a third
+   gated job.
+3. A no-secret **preflight** refuses a real release unless:
+   - `ref` is on `main`;
+   - `build_number` equals the pubspec `+N`;
+   - `verify_and_build` and the Playwright smoke are green on exactly `ref`,
+     counting only push or dispatch workflow runs on `main` (a
+     `pull_request` run tests a merge commit, so it never counts);
+   - a `deploy_hosting` job succeeded on exactly `ref` in a dispatch run on
+     `main` (web and store ship one SHA), unless `web_confirmed`;
+   - nothing under `functions/`, `firestore.rules`, `firestore.indexes.json`
+     or `storage.rules` changed since the last store release, unless
+     `backend_confirmed`.
+
+   The baseline is the newest `store-build-<N>` tag, which the workflow writes
+   itself after a successful upload. With no baseline it fails closed.
+4. Uploads use repository-owned, zero-dependency Node scripts
+   (`tool/release/`), always checked out from the workflow commit, never from
+   `ref`.
+   - Android: Play Developer API; internal track only; refuse a used
+     versionCode; one upload, never retried; Play's reported versionCode and
+     SHA-256 must match; commit; read back.
+   - iOS: App Store Connect API check that the build number is free; **one**
+     `altool` upload with no retry; poll until `VALID`. If the build never
+     appears in App Store Connect within 45 minutes the job fails, so the
+     release is not tagged; a build seen but still processing only warns.
+5. Hygiene rules for the public repository:
+   - inputs pass through `env:` only;
+   - no cache is read or written;
+   - no artifact is uploaded;
+   - secrets reach only the step that uses them, under `RUNNER_TEMP`, and
+     are removed in `always()` steps;
+   - actions are pinned by SHA.
+
+   `tool/test/release_workflow.test.mjs` pins these rules and runs in every
+   preflight.
+6. External TestFlight distribution, rolling out a Play draft, and handing
+   testers the opt-in link stay manual.
+
+### Reasoning
+
+A repository-owned script is a few hundred lines to review. A third-party
+upload action would hold the upload key and the store credentials. Checking
+CI and the Hosting deploy inside the workflow is necessary because `main`
+requires no status check (ADR-108), so nothing else stops a red SHA from
+shipping. Writing the baseline tag from the workflow removes the "someone
+forgot to update the variable" failure. Refusing on a missing baseline makes
+the dangerous direction impossible. A dry run with no secret lets the whole
+build half be proven, and re-proven after any workflow change, without the
+reviewer or the keys.
+
+### Consequences
+
+- Kamil has a one-time setup. It is exact, command by command, in
+  [RELEASE_CI.md](RELEASE_CI.md):
+  - the environment;
+  - nine environment secrets;
+  - a Play service account with "Release apps to testing tracks";
+  - optionally a dedicated App Store Connect key;
+  - the first `store-build-<N>` tag.
+- **With the classic token sessions use today (`repo`, `workflow`), the
+  reviewer gate does not bind a session.** That token can approve its own
+  pending deployment and change the workflow. The control becomes real only
+  when sessions move to a fine-grained token without Deployments or Workflows
+  permission. RELEASE_CI.md says so plainly.
+- App code at `ref` (Gradle scripts, the Xcode build) runs with the signing
+  material, as any signing build does. The approver's summary lists every
+  change under `android/`, `ios/`, the pubspec, the sound generator and
+  `tool/release/` since the last release.
+- Hosting still deploys `main` HEAD. The procedure is: backend by hand,
+  Hosting while `main` is at the release SHA, then this workflow with that
+  SHA. The web gate refuses anything else unless `web_confirmed`.
+- Making the repository private on a free plan would remove required
+  reviewers and environment secrets, and so the protection itself.
+- Nothing here is proven on a runner yet. These stay **UNVERIFIED** until the
+  first dry run and first real run: Xcode 26.6 on `macos-26`, the first Linux
+  Gradle release build, the Play API behaviour for this app, and the
+  one-approval behaviour.

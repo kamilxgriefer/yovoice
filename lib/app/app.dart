@@ -15,6 +15,9 @@ import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/auth/presentation/navigation/auth_epoch_route_resetter.dart';
+import 'package:yovoice/features/bug_reports/data/bug_report_route_tracker.dart';
+import 'package:yovoice/features/bug_reports/presentation/bug_report_capture.dart';
+import 'package:yovoice/features/bug_reports/presentation/bug_report_floating_button.dart';
 import 'package:yovoice/features/auth/presentation/screens/auth_gate.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/calls/presentation/widgets/direct_call_coordinator.dart';
@@ -22,6 +25,8 @@ import 'package:yovoice/features/messages/data/services/active_conversation_regi
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/notifications/presentation/friend_request_banner_decision.dart';
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
 import 'package:yovoice/features/reels/presentation/navigation/reel_link_coordinator.dart';
@@ -255,6 +260,10 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
   StreamSubscription<User?>? _authRouteSubscription;
   bool _foregroundRetryScheduled = false;
 
+  /// Created on the first friend-request answer from a foreground card. It
+  /// resolves the signed-in user at call time, so it is safe across accounts.
+  FriendService? _bannerFriendService;
+
   @override
   void initState() {
     super.initState();
@@ -298,6 +307,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
           type: notification.type,
           targetId: notification.targetId,
           actorId: notification.actorId,
+          actorName: notification.actorName,
           notificationId: notification.id,
         );
       },
@@ -402,6 +412,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
     required NotificationType type,
     required String? targetId,
     required String? actorId,
+    String? actorName,
     String? notificationId,
   }) {
     // Treat a deliberately suppressed event as consumed so the Firestore
@@ -425,6 +436,14 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             targetId: targetId,
             actorId: actorId,
             notificationId: notificationId,
+          ),
+          // A friend request carries its own labelled Accept / Decline;
+          // opening the card never answers it.
+          decision: friendRequestBannerDecision(
+            type: type,
+            senderId: actorId,
+            senderName: actorName,
+            friendService: () => _bannerFriendService ??= FriendService(),
           ),
         ),
       );
@@ -469,7 +488,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
         controller: controller,
         child: MaterialApp(
           navigatorKey: notificationNavigatorKey,
-          navigatorObservers: [appRouteObserver],
+          navigatorObservers: [appRouteObserver, bugReportRouteTracker],
           scaffoldMessengerKey: _messengerKey,
           debugShowCheckedModeBanner: false,
           title: 'YO Voice',
@@ -493,10 +512,22 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             final palette = context.appPalette;
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: AppTheme.systemOverlayStyle(theme.brightness, palette),
+              // The testing-period "Bug" button floats above the app, and a
+              // top banner floats above the button: a banner's Accept /
+              // Decline must never be covered by a button parked high on the
+              // right. Both sit outside the screenshot boundary, which wraps
+              // only the navigator, so a bug-report screenshot never
+              // contains the button or a banner (banners can preview other
+              // people's messages).
               child: YoTopNotificationHost(
                 controller: _topNotifications,
                 onReady: () => _streamNotifications?.retryPendingBanners(),
-                child: child ?? const SizedBox.shrink(),
+                child: BugReportFloatingButtonHost(
+                  navigatorKey: notificationNavigatorKey,
+                  child: BugReportCaptureBoundary(
+                    child: child ?? const SizedBox.shrink(),
+                  ),
+                ),
               ),
             );
           },

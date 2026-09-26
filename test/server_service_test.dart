@@ -6,6 +6,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/features/servers/data/models/server_creation.dart';
+import 'package:yovoice/features/servers/data/models/server_session.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_service.dart';
 
@@ -312,6 +313,73 @@ void main() {
       'sessionId': 'generation-7',
       'requestId': 'stable-end',
     });
+  });
+
+  test('the leave signal calls only releaseServerChannelSessionIfEmptyV1 and '
+      'reads its receipt strictly', () async {
+    final calls = <(String, Map<String, Object?>)>[];
+    var answer = <Object?, Object?>{
+      'sessionId': 'generation-7',
+      'outcome': 'pending',
+      'recheckAfterMillis': 60000,
+    };
+    final service = ServerService(
+      call: (name, data) async {
+        calls.add((name, data));
+        return answer;
+      },
+    );
+
+    final pending = await service.releaseChannelSessionIfEmpty(
+      serverId: 'server',
+      channelId: 'lounge',
+      sessionId: 'generation-7',
+      requestId: 'leave-1',
+    );
+    expect(calls.single.$1, 'releaseServerChannelSessionIfEmptyV1');
+    expect(calls.single.$2, {
+      'serverId': 'server',
+      'channelId': 'lounge',
+      'sessionId': 'generation-7',
+      'requestId': 'leave-1',
+    });
+    expect(pending.isPending, isTrue);
+    expect(pending.recheckAfter, const Duration(seconds: 60));
+
+    // A receipt can never keep the client waiting longer than the cap.
+    answer = {
+      'sessionId': 'generation-7',
+      'outcome': 'pending',
+      'recheckAfterMillis': 86400000,
+    };
+    final capped = await service.releaseChannelSessionIfEmpty(
+      serverId: 'server',
+      channelId: 'lounge',
+      sessionId: 'generation-7',
+      requestId: 'leave-2',
+    );
+    expect(capped.recheckAfter, ServerSessionReleaseResult.maxRecheckAfter);
+
+    answer = {'sessionId': 'generation-7', 'outcome': 'occupied'};
+    final occupied = await service.releaseChannelSessionIfEmpty(
+      serverId: 'server',
+      channelId: 'lounge',
+      sessionId: 'generation-7',
+      requestId: 'leave-3',
+    );
+    expect(occupied.isPending, isFalse);
+    expect(occupied.recheckAfter, Duration.zero);
+
+    answer = {'outcome': 'ended'};
+    await expectLater(
+      service.releaseChannelSessionIfEmpty(
+        serverId: 'server',
+        channelId: 'lounge',
+        sessionId: 'generation-7',
+        requestId: 'leave-4',
+      ),
+      throwsFormatException,
+    );
   });
 
   test('directory reads old ids without migrating roots', () async {

@@ -511,14 +511,22 @@ void main() {
     expect(raise.$2['sessionId'], 'gen-7');
     expect(raise.$2['raised'], isTrue);
     expect(raise.$2['requestId'], isNotEmpty);
-    expect(find.text('Prowadzący widzą Twoją prośbę.'), findsOneWidget);
+    // Deliberately updated (request to speak): the old line claimed the hosts
+    // could see the request while no host surface read it.
+    expect(
+      find.text('Prośba wysłana. Czekasz na decyzję prowadzącego.'),
+      findsOneWidget,
+    );
 
     // The same control takes the request back.
     await tester.tap(hand);
     await tester.pumpAndSettle();
     expect(repository.calls.last.$2['raised'], isFalse);
     expect(find.text('Poproś o głos'), findsOneWidget);
-    expect(find.text('Prowadzący widzą Twoją prośbę.'), findsNothing);
+    expect(
+      find.text('Prośba wysłana. Czekasz na decyzję prowadzącego.'),
+      findsNothing,
+    );
   });
 
   testWidgets('a refused hand is one sentence and never the raw code', (
@@ -549,7 +557,42 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('not-found'), findsNothing);
-    expect(find.text('Prowadzący widzą Twoją prośbę.'), findsNothing);
+    expect(
+      find.text('Prośba wysłana. Czekasz na decyzję prowadzącego.'),
+      findsNothing,
+    );
+  });
+
+  testWidgets('a guest already on the stage is never offered a request an '
+      'Approve could not answer', (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    // Every participant of a non-broadcast Community stage starts as a guest,
+    // and a promoted listener is one too.
+    final repository = TestServerRepository()
+      ..servers = [communityServer()]
+      ..channels = communityChannels(
+        stage: ServerChannelLiveness(
+          isLive: true,
+          startedAt: DateTime(2026, 9, 12, 19, 40),
+        ),
+        activeSessionId: 'gen-7',
+      )
+      ..sessionRole = 'guest'
+      ..permittedTrackSources = const ['microphone'];
+    await pumpServers(
+      tester,
+      communityWorkspace(repository),
+      size: const Size(390, 844),
+    );
+    await tester.tap(join);
+    await tester.pumpAndSettle();
+    expect(hand, findsNothing);
+    expect(find.text('Poproś o głos'), findsNothing);
+    expect(find.text('W rozmowie'), findsWidgets);
+    expect(
+      repository.calls.map((call) => call.$1),
+      isNot(contains('setServerSessionHandV1')),
+    );
   });
 
   testWidgets('the generation host is never offered the stage queue', (
@@ -1060,5 +1103,37 @@ void main() {
       findsOneWidget,
     );
     expect(repository.calls, isEmpty);
+  });
+
+  testWidgets('a refused hand on the community stage is a live region', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = TestServerRepository()
+      ..servers = [communityServer()]
+      ..channels = communityChannels(
+        stage: const ServerChannelLiveness(isLive: false),
+        activeSessionId: 'gen-7',
+      )
+      ..sessionRole = 'listener';
+    await pumpServers(
+      tester,
+      communityWorkspace(repository),
+      size: const Size(1440, 900),
+    );
+    await tester.tap(join);
+    await tester.pumpAndSettle();
+
+    repository.failNextCall['setServerSessionHandV1'] =
+        FirebaseFunctionsException(code: 'not-found', message: 'unregistered');
+    await tester.tap(hand);
+    await tester.pumpAndSettle();
+    final error = find.byKey(const ValueKey('server-community-hand-error'));
+    expect(error, findsOneWidget);
+    final node = tester.getSemantics(error);
+    expect(node.label, 'Ta część YO Voice jest jeszcze przygotowywana.');
+    expect(node.getSemanticsData().flagsCollection.isLiveRegion, isTrue);
+    handle.dispose();
   });
 }

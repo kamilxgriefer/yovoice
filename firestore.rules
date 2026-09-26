@@ -2509,6 +2509,24 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Pre-registered account takeover (functions/auth/federated_takeover.js).
+    // The ledger records which accounts carried an unverified password, the
+    // audit records every remediation, and the sweep state is the sweeper's
+    // cursor. All three are Admin-SDK-only: a client that could read the
+    // ledger could learn which addresses were pre-registered, and one that
+    // could write it could mark its own planted password "verified".
+    match /authPasswordLedger/{uid} {
+      allow read, write: if false;
+    }
+
+    match /authTakeoverAudit/{auditId} {
+      allow read, write: if false;
+    }
+
+    match /authTakeoverSweep/{stateId} {
+      allow read, write: if false;
+    }
+
     match /users/{userId} {
       // The root user document is private account state. Owners retain their
       // own profile/settings/presence flow. Staff account-management uses
@@ -2669,6 +2687,38 @@ service cloud.firestore {
         allow create, update: if isOwner(userId) && isActiveAccount() &&
             request.resource.data.keys().hasOnly(['viewedAt']) &&
             request.resource.data.viewedAt == request.time;
+        allow delete: if false;
+      }
+
+      // A podcast host's "I last looked at the listener questions" cursor,
+      // one row per `{serverId}_{channelId}`, holding EXACTLY { seenAt }. The
+      // client writes the newest question's own server-stamped createdAt, not
+      // request.time, so a question committed during the write is never
+      // swallowed; the rule therefore bounds seenAt by request.time instead of
+      // pinning it. On update the cursor only moves forward, so a second
+      // device or a stale cached read cannot bring back a dot for questions
+      // already seen. The row grants nothing and previews nothing (no
+      // membership check, the momentViews stance). No list, no delete: the
+      // app reads its own row by id, and account deletion removes the rows
+      // (functions/account/stages.js). isActiveAccount() is the ADR-206
+      // freeze, as on momentViews: with no client delete, a row written after
+      // the deletion sweep passed could never be removed.
+      match /serverQuestionSeen/{cursorId} {
+        allow get: if isOwner(userId);
+        allow list: if false;
+        allow create: if isOwner(userId) && isActiveAccount() &&
+            cursorId.size() <= 300 &&
+            cursorId.matches('^[A-Za-z0-9-]+(_[A-Za-z0-9-]+)+$') &&
+            request.resource.data.keys().hasOnly(['seenAt']) &&
+            request.resource.data.seenAt is timestamp &&
+            request.resource.data.seenAt <= request.time;
+        allow update: if isOwner(userId) && isActiveAccount() &&
+            cursorId.size() <= 300 &&
+            cursorId.matches('^[A-Za-z0-9-]+(_[A-Za-z0-9-]+)+$') &&
+            request.resource.data.keys().hasOnly(['seenAt']) &&
+            request.resource.data.seenAt is timestamp &&
+            request.resource.data.seenAt <= request.time &&
+            request.resource.data.seenAt >= resource.data.seenAt;
         allow delete: if false;
       }
 
@@ -2848,6 +2898,34 @@ service cloud.firestore {
         allow create, update, delete: if false;
       }
 
+      // SESSION EPOCH (pre-registered account takeover, Phase 1).
+      //
+      // `users/{uid}.authSessionEpoch` (int, epoch seconds) is written only by
+      // functions/auth/federated_takeover.js through the Admin SDK, after it
+      // has unlinked a password its holder never verified and revoked the
+      // account's refresh tokens, and BEFORE it purges this collection. It is
+      // absent from both client allowlists on users/{userId}. Revocation stops
+      // NEW ID tokens; one already issued stays valid for up to an hour, and a
+      // push token planted with it would outlive that hour indefinitely. So a
+      // token whose sign-in (`auth_time`) predates the epoch may not register
+      // or refresh a device here, whatever provider it signed in with; the
+      // owner signs in again once and that session is after the epoch.
+      //
+      // Deliberately scoped to this collection (and Storage isActiveUser).
+      // Folding it into isActiveAccount() exceeded the 1000-expression budget
+      // on an existing list rule in the Servers suite. Other paths keep the
+      // stale ID token's remaining lifetime as a documented residual — see
+      // docs/SECURITY.md. It reads the users/{uid} document isActiveAccount()
+      // has already read, so it costs no extra document access, and an
+      // account without the field short-circuits before any token field.
+      function sessionPredatesAuthEpoch() {
+        return get(/databases/$(database)/documents/users/$(userId))
+              .data.get('authSessionEpoch', null) is int &&
+            request.auth.token.get('auth_time', 0) <
+              get(/databases/$(database)/documents/users/$(userId))
+                .data.authSessionEpoch;
+      }
+
       // One doc per registered device. Only the Admin SDK (push-send Cloud
       // Function) ever reads across users' tokens; clients only manage
       // their own.
@@ -2855,6 +2933,7 @@ service cloud.firestore {
         allow read: if isOwner(userId);
         allow create, update: if isOwner(userId) &&
             isActiveAccount() &&
+            !sessionPredatesAuthEpoch() &&
             request.resource.data.keys().hasOnly([
               'platform',
               'directVideoProtocol',
@@ -4802,6 +4881,18 @@ service cloud.firestore {
       }
     }
 
+    // Who a Voice Moment or Yeel comment @-mentions (ADR-213), written by
+    // the comment callable in the SAME transaction as the comment and
+    // deleted with it. Server-only in both directions, and deliberately not
+    // a field on the comment: a Voice Moment comment IS readable by the
+    // Moment's audience, so a list of mentioned uids stored there would be
+    // published to everyone who can read the thread, and every comment
+    // reader validates an exact key set that an additive field would fail.
+    // The notification writer and the push boundary are the only readers.
+    match /commentMentions/{mentionId} {
+      allow read, write: if false;
+    }
+
     // Server-only serialization state for the exact 10-active cap.
     match /momentCapacityLedgers/{userId} {
       allow read, write: if false;
@@ -4930,6 +5021,35 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Photo and video messages in Servers V1 text channels. A reservation is
+    // the Storage upload capability for exactly one object (storage.rules
+    // `server_message_media`), so no client may read it, forge it or extend
+    // it; the lease, the daily byte budget, the durable deletion jobs and the
+    // per-object owner index (the handle account deletion uses) are likewise
+    // Admin-SDK-only. Default-deny already covers them; these are stated out
+    // loud so a later wildcard cannot silently widen them. The message
+    // documents themselves stay under the unchanged channel rule above:
+    // readable through the channel ACL, never client-writable on a V1 server.
+    match /serverMessageMediaUploadReservations/{messageId} {
+      allow read, write: if false;
+    }
+
+    match /serverMessageMediaUploadLeases/{userId} {
+      allow read, write: if false;
+    }
+
+    match /serverMessageMediaUploadBudgets/{budgetId} {
+      allow read, write: if false;
+    }
+
+    match /serverMessageMediaDeletionJobs/{jobId} {
+      allow read, write: if false;
+    }
+
+    match /serverMessageMediaObjects/{messageId} {
+      allow read, write: if false;
+    }
+
     // Remote LiveKit Egress jobs contain provider identifiers and private
     // object paths. They are leased and reconciled exclusively by Admin SDK
     // workers; no client may observe or mutate the queue.
@@ -4938,6 +5058,23 @@ service cloud.firestore {
     }
 
     match /integrityOperationLedgers/{ledgerId} {
+      allow read, write: if false;
+    }
+
+    // In-app bug reports. One path in (submitBugReportV1 /
+    // attachBugReportScreenshotV1, Admin SDK) and one path out (the protected
+    // owner's listBugReportsV1 / getBugReportV1). A report holds the
+    // reporter's own words and uid, so NO client — the reporter, staff or the
+    // owner — reads or writes it directly, and no collectionGroup() query
+    // reads either collection. The upload reservation is read only by
+    // storage.rules' cross-service firestore.get(), which these rules do not
+    // govern. Default-deny already covers both; stated out loud so a later
+    // wildcard cannot silently widen them.
+    match /bugReports/{reportId} {
+      allow read, write: if false;
+    }
+
+    match /bugReportUploadReservations/{reportId} {
       allow read, write: if false;
     }
 

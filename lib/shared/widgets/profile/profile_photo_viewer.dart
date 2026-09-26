@@ -144,6 +144,8 @@ class ProfileBannerButton extends StatelessWidget {
     this.imageProvider,
     this.borderRadius = 22,
     this.minimumSize = const Size(44, 44),
+    this.focusContrastColor,
+    this.focusRingInsets = EdgeInsets.zero,
     super.key,
   });
 
@@ -155,6 +157,14 @@ class ProfileBannerButton extends StatelessWidget {
   final ProfileMediaImageProvider? imageProvider;
   final double borderRadius;
   final Size minimumSize;
+
+  /// Outer edge of a two-tone focus ring for a band whose photo has unknown
+  /// luminance (the full-bleed profile hero). Null keeps the plain ring.
+  final Color? focusContrastColor;
+
+  /// See [AccessibleTapRegion.focusRingInsets]; the profile hero passes
+  /// `ProfileHeroFrame.bannerFocusInsets`.
+  final EdgeInsets focusRingInsets;
 
   @override
   Widget build(BuildContext context) {
@@ -184,6 +194,8 @@ class ProfileBannerButton extends StatelessWidget {
       tooltip: tooltip,
       borderRadius: borderRadius,
       minimumSize: minimumSize,
+      focusContrastColor: focusContrastColor,
+      focusRingInsets: focusRingInsets,
       child: ExcludeSemantics(child: child),
     );
   }

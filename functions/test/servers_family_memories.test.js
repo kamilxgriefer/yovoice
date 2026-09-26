@@ -26,9 +26,12 @@ const { createServerCreationService } = require("../servers/creation");
 const {
   FAMILY_MEMORY_ACCESS_TTL_MS,
   FAMILY_MEMORY_RESERVATION_TTL_MS,
+  MAX_VOICE_DURATION_MS,
+  VOICE_DURATION_GRACE_MS,
   canonicalFamilyMemoryId,
   createServerFamilyMemoryService,
   deletionJobId,
+  validateTrustedProbe,
 } = require("../servers/family_memories");
 
 const START_MS = 1_900_000_000_000;
@@ -362,6 +365,67 @@ emulatorTest("finalize rejects generation, signature and duration mismatches", a
       true,
     );
   }
+});
+
+test("Server Family Memories: a voice note capped at 30 s may measure up to 2 s over and is stored as 30 s", () => {
+  assert.equal(MAX_VOICE_DURATION_MS, 30_000);
+  assert.equal(VOICE_DURATION_GRACE_MS, 2000);
+  const descriptor = { generation: "102", size: 8192, contentType: "audio/mp4", durationMs: 30_000 };
+  const probe = (durationMs) => ({
+    generation: "102",
+    size: 8192,
+    detectedContentType: "audio/mp4",
+    durationMs,
+    hasAudio: true,
+    hasVideo: false,
+  });
+  for (const [measured, stored] of [
+    [30_000, 30_000], [30_400, 30_000], [31_900, 30_000], [32_000, 30_000],
+  ]) {
+    assert.equal(validateTrustedProbe(probe(measured), descriptor, "voice"), stored,
+      `measured ${measured} ms`);
+  }
+  for (const measured of [32_001, 32_100, 45_000]) {
+    assert.throws(() => validateTrustedProbe(probe(measured), descriptor, "voice"),
+      (error) => error.code === "failed-precondition" &&
+        error.message === "The Family Memory voice note is invalid.",
+      `measured ${measured} ms`);
+  }
+  // Below the cap the real measurement is kept, not rounded or clamped.
+  assert.equal(validateTrustedProbe(probe(12_400), { ...descriptor, durationMs: 12_000 }, "voice"),
+    12_400);
+  // The grace never widens the declared-vs-measured tolerance.
+  assert.throws(() => validateTrustedProbe(probe(31_900), { ...descriptor, durationMs: 29_000 }, "voice"),
+    (error) => error.code === "failed-precondition");
+});
+
+emulatorTest("a voice note that hits the 30 s cap and measures 31.9 s is published as 30 s", async () => {
+  const value = await fixture();
+  const { reserved } = await value.reserveAndUpload(value.ownerId, { voiceDurationMs: 30_000 });
+  value.storage.objects.get(reserved.voice.storagePath).probe.durationMs = 31_900;
+  await value.finalizeServerFamilyMemoryV1(request(value.ownerId, value.finalizeData(reserved)));
+  const stored = (await value.memoryRef(reserved.memoryId).get()).data();
+  assert.equal(stored.status, "published");
+  assert.equal(stored.voice.durationMs, 30_000);
+  // The canonical memory read accepts the clamped value.
+  const memberId = await value.addMember();
+  const access = await value.getServerFamilyMemoryMediaAccessV1(request(memberId, {
+    serverId: value.serverId,
+    channelId: value.memoryChannelId,
+    memoryId: reserved.memoryId,
+  }));
+  assert.equal(access.voice.durationMs, 30_000);
+});
+
+emulatorTest("a voice note measured past the 30 s grace is refused and never published", async () => {
+  const value = await fixture();
+  const { reserved } = await value.reserveAndUpload(value.ownerId, { voiceDurationMs: 30_000 });
+  value.storage.objects.get(reserved.voice.storagePath).probe.durationMs = 32_100;
+  await rejection(value.finalizeServerFamilyMemoryV1(request(
+    value.ownerId,
+    value.finalizeData(reserved),
+  )), "failed-precondition");
+  assert.equal((await value.memoryRef(reserved.memoryId).get()).exists, false);
 });
 
 emulatorTest("finalize reauthorizes after the external probe", async () => {

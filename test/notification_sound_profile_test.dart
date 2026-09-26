@@ -12,6 +12,14 @@ void main() {
       NotificationType.directMessage: NotificationSoundProfile.message,
       NotificationType.mention: NotificationSoundProfile.message,
       NotificationType.reply: NotificationSoundProfile.message,
+      // ADR-213. An @mention inside a comment is addressed at one person, so
+      // it rings like a message; a comment on your own Moment or Yeel is
+      // social; an event reminder is the alert the member asked for.
+      NotificationType.commentMention: NotificationSoundProfile.message,
+      NotificationType.momentComment: NotificationSoundProfile.social,
+      NotificationType.reelComment: NotificationSoundProfile.social,
+      NotificationType.serverRole: NotificationSoundProfile.social,
+      NotificationType.serverEventReminder: NotificationSoundProfile.alert,
       NotificationType.friendRequest: NotificationSoundProfile.social,
       NotificationType.friendAccepted: NotificationSoundProfile.social,
       NotificationType.follow: NotificationSoundProfile.social,

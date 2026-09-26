@@ -727,3 +727,76 @@ describe("LiveKit achievement webhook — bounds", () => {
     assert.equal(memory.data(`users/${UID}`).voiceMinutes, 1);
   });
 });
+
+/* -------------------------------------------------------------------------
+ * 4. The server channel lifecycle hook is isolated from voice accounting
+ * ---------------------------------------------------------------------- */
+
+describe("LiveKit achievement webhook — server channel lifecycle isolation", () => {
+  const SRV_NAME = `srv_${"a".repeat(40)}`;
+
+  function lifecycleHarness({ storeResult = { outcome: "room-closed" }, storeError = null, lifecycleError = null } = {}) {
+    const order = [];
+    const handler = createLiveKitAchievementWebhookHandler({
+      apiKeyProvider: () => API_KEY,
+      apiSecretProvider: () => API_SECRET,
+      store: {
+        async handle(webhook) {
+          order.push(`store:${webhook.type}`);
+          if (storeError) throw storeError;
+          return storeResult;
+        },
+      },
+      now: () => currentNowMs,
+      serverLifecycle: {
+        async onRoomFinished(input) {
+          order.push(`lifecycle:${input.livekitRoomName}:${input.finishedAtMs}`);
+          if (lifecycleError) throw lifecycleError;
+          return { outcome: "pending" };
+        },
+      },
+    });
+    return { order, handler };
+  }
+
+  test("only a signed srv_ room_finished reaches the lifecycle, after the achievement close, and the answer is the close's", async () => {
+    const { order, handler } = lifecycleHarness();
+    const at = BASE_SECONDS + 30;
+    const recorded = await deliverSigned(handler, roomFinishedBody(at, { roomName: SRV_NAME }));
+    assert.equal(recorded.statusCode, 202);
+    assert.deepEqual(recorded.body, { accepted: true, outcome: "room-closed" });
+    assert.deepEqual(order, ["store:room_finished", `lifecycle:${SRV_NAME}:${at * 1000}`]);
+    order.length = 0;
+    await deliverSigned(handler, roomFinishedBody(at + 1));
+    await deliverSigned(handler, participantBody("participant_left", at + 2, { roomName: SRV_NAME }));
+    assert.deepEqual(order, ["store:room_finished", "store:participant_left"],
+      "a legacy name or another event never reaches the lifecycle");
+    const unsigned = await deliver(handler, roomFinishedBody(at + 3, { roomName: SRV_NAME }), "Bearer forged");
+    assert.equal(unsigned.statusCode, 401);
+    assert.equal(order.length, 2, "an unsigned delivery reaches neither");
+  });
+
+  test("a throwing lifecycle never changes the answer, and a failing close never skips the lifecycle", async () => {
+    const at = BASE_SECONDS + 60;
+    const broken = lifecycleHarness({ lifecycleError: Object.assign(new Error("lifecycle outage"), { code: 14 }) });
+    const kept = await deliverSigned(broken.handler, roomFinishedBody(at, { roomName: SRV_NAME }));
+    assert.deepEqual([kept.statusCode, kept.body], [202, { accepted: true, outcome: "room-closed" }]);
+    const transient = lifecycleHarness({ storeError: Object.assign(new Error("store outage"), { code: 14 }) });
+    const retry = await deliverSigned(transient.handler, roomFinishedBody(at + 1, { roomName: SRV_NAME }));
+    assert.deepEqual([retry.statusCode, retry.body], [503, { accepted: false, error: "temporarily-unavailable" }]);
+    assert.deepEqual(transient.order, ["store:room_finished", `lifecycle:${SRV_NAME}:${(at + 1) * 1000}`]);
+    const permanent = lifecycleHarness({ storeError: new TypeError("permanent") });
+    const refused = await deliverSigned(permanent.handler, roomFinishedBody(at + 2, { roomName: SRV_NAME }));
+    assert.deepEqual([refused.statusCode, refused.body], [400, { accepted: false, error: "invalid-source" }]);
+    assert.equal(permanent.order.length, 2);
+  });
+
+  test("a lifecycle hook must actually handle room_finished", () => {
+    for (const serverLifecycle of [{}, { onRoomFinished: "yes" }, 7]) {
+      assert.throws(() => createLiveKitAchievementWebhookHandler({
+        apiKeyProvider: () => API_KEY, apiSecretProvider: () => API_SECRET,
+        store: { async handle() { return { outcome: "x" }; } }, serverLifecycle,
+      }), TypeError);
+    }
+  });
+});

@@ -38,6 +38,33 @@ abstract interface class ReelAudioPlayback {
 
 typedef ReelAudioPlaybackFactory = ReelAudioPlayback Function();
 
+/// What a finger on the Yeel timeline drives (ADR-211).
+///
+/// A drag is one session: [beginScrub] holds playback, every [scrubTo] moves
+/// the published position at once and previews the frame through coalesced
+/// seeks, and [endScrub] commits the final position to every engine and
+/// resumes only what was playing before. [seekBy] is the same session in one
+/// step, for the keyboard and for a screen reader's adjust gesture.
+///
+/// A [Listenable] so the timeline redraws when [isScrubbing] or [canSeek]
+/// change.
+abstract interface class ReelScrubTarget implements Listenable {
+  /// True when there is a timeline and an engine to move along it.
+  bool get canSeek;
+
+  /// True between [beginScrub] and the commit of [endScrub].
+  bool get isScrubbing;
+
+  Future<void> beginScrub();
+
+  /// [offset] is a timeline offset (0 → the published timeline).
+  void scrubTo(Duration offset);
+
+  Future<void> endScrub();
+
+  Future<void> seekBy(Duration delta);
+}
+
 /// Supplies the video engine for one resolved Reel media URL.
 ///
 /// The feed leaves this null and the card builds a real
@@ -59,7 +86,8 @@ typedef ReelPlaybackTimerFactory =
 ///
 /// Autoplay is opt-in and video-only. See [autoplay] for the exact policy and
 /// the reasons a Reel refuses to start itself.
-class ReelPlaybackCoordinator extends ChangeNotifier {
+class ReelPlaybackCoordinator extends ChangeNotifier
+    implements ReelScrubTarget {
   ReelPlaybackCoordinator({
     required Reel reel,
     required Future<Uri> Function() resolveBackingAudioUri,
@@ -165,6 +193,25 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   int _epoch = 0;
   int _commandVersion = 0;
 
+  // A finger on the timeline (ADR-211). While [_scrubbing] only the finger
+  // publishes the position, autoplay stands down, and the engines hold still
+  // apart from the coalesced preview seeks.
+  bool _scrubbing = false;
+  bool _scrubReleasing = false;
+  bool _resumeAfterScrub = false;
+  int _scrubSession = 0;
+  Duration? _scrubTarget;
+  Duration? _scrubLatest;
+  bool _scrubPumpQueued = false;
+
+  /// A photo Reel scrubbed before its backing track was ever loaded: applied
+  /// right after the lazy load on the next play instead of the trim start.
+  Duration? _pendingPhotoOffset;
+
+  /// The last seekable instant. A release at the very end must stay short of
+  /// the trim end, where a tick would loop and a play would rewind.
+  static const Duration _scrubEndGuard = Duration(milliseconds: 40);
+
   bool get isPlaying => _playing;
   bool get isLoading => _loading;
   bool get isActive => _active;
@@ -179,8 +226,11 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   /// photo Reel. Never negative, never past the timeline.
   ValueListenable<Duration> get position => _position;
 
-  void _publishPosition(Duration raw) {
+  void _publishPosition(Duration raw, {bool fromScrub = false}) {
     if (_disposed) return;
+    // Late engine ticks from older preview seeks must not pull the bar out
+    // from under the finger.
+    if (_scrubbing && !fromScrub) return;
     final total = timelineDuration;
     final clamped = raw < Duration.zero
         ? Duration.zero
@@ -237,6 +287,187 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     );
   }
 
+  @override
+  bool get isScrubbing => _scrubbing;
+
+  @override
+  bool get canSeek =>
+      !_disposed && canToggle && timelineDuration > Duration.zero;
+
+  Duration _clampScrubOffset(Duration offset) {
+    final last = timelineDuration - _scrubEndGuard;
+    final ceiling = last > Duration.zero ? last : Duration.zero;
+    if (offset < Duration.zero) return Duration.zero;
+    return offset > ceiling ? ceiling : offset;
+  }
+
+  /// Holds playback for a finger on the timeline. Not a hand-pause: the
+  /// viewer did not ask to stop, so [endScrub] resumes what was playing.
+  @override
+  Future<void> beginScrub() {
+    if (!canSeek) return Future<void>.value();
+    if (_scrubbing) {
+      if (!_scrubReleasing) return Future<void>.value();
+      // The finger landed again before the last release committed: this is
+      // the same hold, so it keeps the original resume decision and the
+      // pending commit stands down.
+      _scrubReleasing = false;
+      _scrubSession += 1;
+      _commandVersion += 1;
+      return Future<void>.value();
+    }
+    _resumeAfterScrub = _desiredPlaying;
+    _scrubbing = true;
+    _scrubSession += 1;
+    _scrubTarget = null;
+    _scrubLatest = null;
+    _commandVersion += 1;
+    _desiredPlaying = false;
+    _cancelPhotoEndTimer();
+    _notify();
+    final session = _scrubSession;
+    return _enqueue(() async {
+      if (session != _scrubSession || !_scrubbing) return;
+      await _pauseEngines();
+      _setPlaying(false);
+    });
+  }
+
+  /// Moves the published position to the finger at once and previews the
+  /// frame. At most one native seek is in flight; the newest target wins.
+  @override
+  void scrubTo(Duration offset) {
+    if (!_scrubbing || _scrubReleasing || _disposed) return;
+    final target = _clampScrubOffset(offset);
+    _publishPosition(target, fromScrub: true);
+    _scrubLatest = target;
+    _scrubTarget = target;
+    if (_scrubPumpQueued) return;
+    _scrubPumpQueued = true;
+    unawaited(_enqueue(_pumpScrub).catchError((Object _) {}));
+  }
+
+  Future<void> _pumpScrub() async {
+    try {
+      while (true) {
+        final target = _scrubTarget;
+        if (target == null || !_scrubbing || _disposed) break;
+        _scrubTarget = null;
+        try {
+          await _seekPreview(target);
+        } catch (_) {
+          // A failed preview keeps the last good frame; the commit on
+          // release is what decides where playback continues.
+        }
+      }
+    } finally {
+      _scrubPumpQueued = false;
+    }
+  }
+
+  Future<void> _seekPreview(Duration target) async {
+    final video = _video;
+    if (_mediaKind == ReelMediaKind.video) {
+      if (video != null) await video.seek(_videoStart + target);
+      return;
+    }
+    final audio = _audio;
+    if (audio != null && _audioLoaded) {
+      final position = _audioStart + target;
+      await audio.seek(position);
+      _audioPosition = position;
+    } else {
+      _pendingPhotoOffset = target;
+    }
+  }
+
+  /// Commits the finger's last position to every engine, then resumes only
+  /// if the Reel was playing when the finger landed and nothing (a
+  /// deactivation, a sheet, a hand-pause) has taken over since.
+  @override
+  Future<void> endScrub() {
+    if (!_scrubbing || _scrubReleasing) return Future<void>.value();
+    _scrubReleasing = true;
+    final session = _scrubSession;
+    final target = _scrubLatest ?? _position.value;
+    final resume = _resumeAfterScrub;
+    final command = ++_commandVersion;
+    _scrubTarget = null;
+    return _enqueue(() async {
+      if (session != _scrubSession || !_scrubbing) return;
+      var committed = false;
+      try {
+        await _commitScrub(target);
+        committed = true;
+      } finally {
+        if (session == _scrubSession) {
+          _scrubbing = false;
+          _scrubReleasing = false;
+          _resumeAfterScrub = false;
+          _scrubLatest = null;
+          _lastDriftCorrection = null;
+          _lastViewedPosition = null;
+          _publishPosition(target);
+          _notify();
+        }
+      }
+      if (!committed ||
+          !resume ||
+          _disposed ||
+          !_active ||
+          _autoplaySuspended ||
+          command != _commandVersion) {
+        return;
+      }
+      _desiredPlaying = true;
+      await _playNow(command);
+    });
+  }
+
+  Future<void> _commitScrub(Duration target) async {
+    if (_mediaKind == ReelMediaKind.video) {
+      final video = _video;
+      if (video == null) return;
+      final videoPosition = _videoStart + target;
+      await video.seek(videoPosition);
+      final audio = _audio;
+      if (audio != null && _audioLoaded) {
+        // Respects the video trim, the audio trim and the audio-window
+        // modulo, exactly as a drift correction would.
+        final expected = _expectedAudioPosition(videoPosition);
+        await audio.seek(expected);
+        _audioPosition = expected;
+      }
+      return;
+    }
+    await _seekPreview(target);
+  }
+
+  /// Drops a scrub without resuming: whatever interrupted the finger (a
+  /// swipe away, a sheet, the app backgrounding) wins.
+  void cancelScrub() {
+    if (!_scrubbing) return;
+    _scrubbing = false;
+    _scrubReleasing = false;
+    _scrubSession += 1;
+    _scrubTarget = null;
+    _scrubLatest = null;
+    _resumeAfterScrub = false;
+    _notify();
+  }
+
+  /// One-step seek for the keyboard and a screen reader's adjust action.
+  /// Keeps the play state.
+  @override
+  Future<void> seekBy(Duration delta) {
+    if (_scrubbing || !canSeek) return Future<void>.value();
+    final from = _position.value;
+    final begun = beginScrub();
+    scrubTo(from + delta);
+    final ended = endScrub();
+    return Future.wait<void>(<Future<void>>[begun, ended]);
+  }
+
   Duration get _videoStart => Duration(milliseconds: _composition.trimStartMs);
   Duration get _videoEnd => Duration(milliseconds: _composition.trimEndMs);
   Duration get _audioStart =>
@@ -283,6 +514,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
 
   Future<void> detachVideo(ReelVideoPlayback video) {
     if (!identical(_video, video)) return Future<void>.value();
+    cancelScrub();
     _video = null;
     _commandVersion += 1;
     _desiredPlaying = false;
@@ -338,6 +570,8 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     if (_active == active) return Future<void>.value();
     _active = active;
     if (!active) {
+      cancelScrub();
+      _pendingPhotoOffset = null;
       _commandVersion += 1;
       _desiredPlaying = false;
       // The hand-pause belonged to that visit. Scrolling back to this Reel
@@ -367,6 +601,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
         !_active ||
         _autoplaySuspended ||
         _viewerPaused ||
+        _scrubbing ||
         _desiredPlaying ||
         !canToggle;
     if (blocked) return Future<void>.value();
@@ -409,6 +644,8 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
 
   Future<void> toggle() {
     if (!_active || !canToggle) return Future<void>.value();
+    // An explicit play/pause outranks a finger that is still on the bar.
+    cancelScrub();
     final shouldPlay = !_desiredPlaying;
     final command = ++_commandVersion;
     _desiredPlaying = shouldPlay;
@@ -433,6 +670,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   /// a later pause, deactivation or disposal always wins the race.
   Future<void> play() {
     if (!_active || !canToggle) return Future<void>.value();
+    cancelScrub();
     final command = ++_commandVersion;
     _desiredPlaying = true;
     _viewerPaused = false;
@@ -443,6 +681,9 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
   }
 
   Future<void> pause({bool reset = false}) {
+    // A suspension (sheet, route, background) arrives through here and must
+    // win over a scrub in progress.
+    cancelScrub();
     final command = ++_commandVersion;
     _desiredPlaying = false;
     return _enqueue(() async {
@@ -457,6 +698,11 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     final video = _video;
     if (_disposed || !_active || video == null) return;
     _publishPosition(video.position - _videoStart);
+    if (_scrubbing) {
+      // Preview seeks are neither watch time, nor a loop, nor drift.
+      _lastViewedPosition = null;
+      return;
+    }
     final position = _playing && !_autoplaySuspended && video.isPlaying
         ? video.position
         : null;
@@ -521,6 +767,15 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
           command != _commandVersion) {
         await _pauseEngines(reset: true);
         return;
+      }
+      final pendingPhotoOffset = _pendingPhotoOffset;
+      if (video == null && audio != null && pendingPhotoOffset != null) {
+        _pendingPhotoOffset = null;
+        final scrubbed = _audioStart + pendingPhotoOffset;
+        if (scrubbed < _audioEnd) {
+          await audio.seek(scrubbed);
+          _audioPosition = scrubbed;
+        }
       }
       if (audio != null) {
         await audio.setVolume(_backingAudioVolume);
@@ -645,6 +900,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     }
     if (_mediaKind == ReelMediaKind.image &&
         _playing &&
+        !_scrubbing &&
         position >= _audioEnd) {
       unawaited(_finishPhoto().catchError((Object _) {}));
     }
@@ -716,6 +972,7 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
       await audio.seek(_audioStart);
     }
     _audioPosition = _audioStart;
+    _pendingPhotoOffset = null;
     _publishPosition(Duration.zero);
     _setPlaying(false);
   }
@@ -798,6 +1055,8 @@ class ReelPlaybackCoordinator extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     _active = false;
+    _scrubbing = false;
+    _scrubSession += 1;
     _desiredPlaying = false;
     _playing = false;
     _epoch += 1;

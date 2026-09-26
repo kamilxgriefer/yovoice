@@ -11,6 +11,7 @@ import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
+import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
@@ -143,6 +144,7 @@ Future<void> showProfilePreview(
               followService: resolvedDestination.followService,
               socialGraphService: resolvedDestination.socialGraphService,
               profileMediaService: resolvedDestination.profileMediaService,
+              isFriend: resolvedDestination.isFriend,
             ),
           ),
         );
@@ -184,6 +186,7 @@ class _FullProfileDestination extends _ProfilePreviewDestination {
     required this.followService,
     required this.socialGraphService,
     required this.profileMediaService,
+    required this.isFriend,
   });
 
   final FriendUser friend;
@@ -195,6 +198,11 @@ class _FullProfileDestination extends _ProfilePreviewDestination {
   final FollowService followService;
   final SocialGraphService socialGraphService;
   final ProfileMediaService? profileMediaService;
+
+  /// The relationship this sheet had resolved when "View full profile" was
+  /// tapped, so the full profile never offers a non-friend friend-only
+  /// actions.
+  final bool isFriend;
 }
 
 class ProfilePreviewSheet extends StatefulWidget {
@@ -247,6 +255,11 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   StaffCapabilities _capabilities = StaffCapabilities.none;
   bool _personallyMuted = false;
   bool _busyFriend = false;
+
+  /// Set once this person is known to have sent the viewer a request. The
+  /// Accept / Decline panel then stays in the sheet — showing its result
+  /// after an answer — instead of vanishing the moment the status changes.
+  bool _showRequestPanel = false;
   bool _busyFollow = false;
   bool _busyMessage = false;
   bool _destinationChosen = false;
@@ -337,7 +350,14 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   Future<void> _loadRelationship() async {
     try {
       final status = await _friends.getRelationshipStatus(widget.userId);
-      if (mounted) setState(() => _relationship = status);
+      if (mounted) {
+        setState(() {
+          _relationship = status;
+          if (status == FriendRelationshipStatus.requestReceived) {
+            _showRequestPanel = true;
+          }
+        });
+      }
     } catch (_) {
       // Leave the friend button in its loading state rather than lying.
     }
@@ -384,6 +404,7 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
         followService: _follows,
         socialGraphService: _socialGraph,
         profileMediaService: widget.profileMediaService,
+        isFriend: _relationship == FriendRelationshipStatus.friends,
       ),
     );
   }
@@ -430,18 +451,21 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
     }
   }
 
+  /// The friend button: Add friend, or cancel a sent request. A received
+  /// request is answered only in the labelled Accept / Decline panel above
+  /// the actions, never by this single button.
   Future<void> _friendAction(UserProfile profile) async {
     final status = _relationship;
     if (status == null || _busyFriend) return;
-    final failureMessage = AppLocalizations.of(context).text(
+    final copy = AppLocalizations.of(context);
+    final failureMessage = copy.text(
       "Couldn't update your friend request. Please try again.",
       'Nie udało się zaktualizować zaproszenia. Spróbuj ponownie.',
     );
     final optimistic = switch (status) {
       FriendRelationshipStatus.none => FriendRelationshipStatus.requestSent,
       FriendRelationshipStatus.requestSent => FriendRelationshipStatus.none,
-      FriendRelationshipStatus.requestReceived =>
-        FriendRelationshipStatus.friends,
+      FriendRelationshipStatus.requestReceived ||
       FriendRelationshipStatus.friends ||
       FriendRelationshipStatus.blocked => status,
     };
@@ -452,11 +476,28 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
     try {
       switch (status) {
         case FriendRelationshipStatus.none:
-          final relationship = await _friends.sendFriendRequest(
+          final result = await _friends.requestFriendship(
             _asFriendUser(profile),
           );
           if (mounted) {
-            setState(() => _relationship = relationship);
+            setState(() {
+              _relationship = result.status;
+              // They had already asked: nothing changed, and the explicit
+              // Accept / Decline panel appears for the decision.
+              if (result.incomingPending) _showRequestPanel = true;
+            });
+          }
+          if (result.acceptedWithoutPrompt && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  friendRequestAcceptedWithoutPromptMessage(
+                    copy,
+                    name: profile.displayName,
+                  ),
+                ),
+              ),
+            );
           }
         case FriendRelationshipStatus.requestSent:
           await _friends.cancelFriendRequest(profile.uid);
@@ -464,12 +505,6 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
             setState(() => _relationship = FriendRelationshipStatus.none);
           }
         case FriendRelationshipStatus.requestReceived:
-          await _friends.acceptFriendRequest(
-            FriendRequestLike.from(profile).toRequest(),
-          );
-          if (mounted) {
-            setState(() => _relationship = FriendRelationshipStatus.friends);
-          }
         case FriendRelationshipStatus.friends:
         case FriendRelationshipStatus.blocked:
           break;
@@ -480,6 +515,18 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
     } finally {
       if (mounted) setState(() => _busyFriend = false);
     }
+  }
+
+  Future<void> _requestResolved(FriendRequestResponseOutcome outcome) async {
+    if (!mounted) return;
+    // A stale answer re-reads the relationship: a request that was accepted
+    // on another device must not offer "Add friend" to a friend.
+    final next = await friendRelationshipAfterResponse(
+      outcome,
+      reread: () => _friends.getRelationshipStatus(widget.userId),
+    );
+    if (!mounted) return;
+    setState(() => _relationship = next);
   }
 
   Future<void> _toggleFollow(bool isFollowing, UserProfile profile) async {
@@ -601,6 +648,24 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
                           onMessage: _message,
                           onFriend: _friendAction,
                           onFollow: _toggleFollow,
+                          requestPanel: _showRequestPanel && !_isSelf
+                              ? FriendRequestResponsePanel(
+                                  key: const ValueKey(
+                                    'profile-preview-request-panel',
+                                  ),
+                                  senderId: widget.userId,
+                                  senderName:
+                                      profile?.displayName ??
+                                      widget.seedDisplayName ??
+                                      '',
+                                  friendService: _friends,
+                                  profileMediaService:
+                                      widget.profileMediaService,
+                                  showIdentity: false,
+                                  keyPrefix: 'profile-preview-request',
+                                  onResolved: _requestResolved,
+                                )
+                              : null,
                         ),
                 ),
               ),
@@ -652,6 +717,7 @@ class _Body extends StatelessWidget {
     required this.onMessage,
     required this.onFriend,
     required this.onFollow,
+    this.requestPanel,
   });
 
   final String userId;
@@ -676,6 +742,9 @@ class _Body extends StatelessWidget {
   final ValueChanged<UserProfile> onMessage;
   final ValueChanged<UserProfile> onFriend;
   final void Function(bool isFollowing, UserProfile profile) onFollow;
+
+  /// Accept / Decline for a request this person sent the viewer.
+  final Widget? requestPanel;
 
   @override
   Widget build(BuildContext context) {
@@ -825,6 +894,10 @@ class _Body extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 18),
+        if (requestPanel case final panel?) ...[
+          panel,
+          const SizedBox(height: 12),
+        ],
         if (messageError != null) ...[
           _MessageError(message: messageError!),
           const SizedBox(height: 10),
@@ -956,10 +1029,11 @@ class _Body extends StatelessWidget {
         Icons.hourglass_top_rounded,
         true,
       ),
+      // Answered in the Accept / Decline panel above, never by one button.
       FriendRelationshipStatus.requestReceived => (
-        copy.text('Accept', 'Akceptuj'),
-        Icons.check_circle_rounded,
-        true,
+        copy.text('Request received', 'Otrzymano zaproszenie'),
+        Icons.mark_email_unread_outlined,
+        false,
       ),
       FriendRelationshipStatus.friends => (
         copy.text('Friends', 'Znajomi'),

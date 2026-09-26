@@ -23,6 +23,7 @@ class ClubChatAuthority {
     this.clubOwnerId,
     this.viewerEmailVerified = false,
     this.viewerIsCommunicationMuted = false,
+    this.membershipResolved = true,
   });
 
   /// Nobody is signed in, so no message can be removed.
@@ -31,7 +32,15 @@ class ClubChatAuthority {
       role = null,
       clubOwnerId = null,
       viewerEmailVerified = false,
-      viewerIsCommunicationMuted = false;
+      viewerIsCommunicationMuted = false,
+      membershipResolved = true;
+
+  /// Whether the viewer's membership row has been read at least once (or
+  /// its read has failed). False only while the very first snapshot is
+  /// still on its way: [role] is null then because nothing is known yet,
+  /// not because the viewer holds no role. A composer must not treat that
+  /// moment as "read-only" — see [showsReadOnlyNotice].
+  final bool membershipResolved;
 
   /// The signed-in account acting on the chat. Empty when signed out.
   final String viewerId;
@@ -76,6 +85,17 @@ class ClubChatAuthority {
     if (currentRole == null || !currentRole.canWriteChat) return false;
     return !announcement || canModerate;
   }
+
+  /// Whether a channel composer should give way to the read-only notice.
+  ///
+  /// Only a RESOLVED refusal does. Before the membership row has arrived
+  /// nothing is known, and swapping the composer — emoji button and panel
+  /// included — for "you can only read" made the emoji input vanish on
+  /// every channel open and never come back when the first snapshot was
+  /// slow or never arrived. The composer stays; `sendClubMessage` remains
+  /// the authority for every send, so keeping it visible grants nothing.
+  bool showsReadOnlyNotice({required bool announcement}) =>
+      membershipResolved && !canSendToChannel(announcement: announcement);
 
   bool isAuthorOf(ClubMessage message) =>
       viewerId.isNotEmpty && message.senderId == viewerId;

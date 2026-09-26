@@ -84,7 +84,12 @@ void main() {
       expect(calls, hasLength(1));
       expect(calls.single.uid, senderUid);
       expect(calls.single.name, 'sendFriendRequest');
-      expect(calls.single.data, {'targetUserId': acceptorUid});
+      // Every send now declares it must not answer an incoming request
+      // (ADR: friend requests are an explicit consent decision).
+      expect(calls.single.data, {
+        'targetUserId': acceptorUid,
+        'acceptIncoming': false,
+      });
 
       // No client-written notification on either side.
       expect(await notificationsOf(acceptorUid), isEmpty);

@@ -17,7 +17,9 @@
 // A public number called "created" that shrinks is a quieter version of the
 // same lie as a hardcoded "2,481 people talking right now".
 //
-//   activeAccounts — count() over `publicProfiles`, NOT over `users`.
+//   activeAccounts — count() over `publicProfiles`, NOT over `users`, minus
+//   the few service accounts in PUBLIC_STATS_EXCLUDED_ACCOUNT_UIDS (e.g. the
+//   Apple App Review demo account) that currently have a projection.
 //
 //     `users` is the wrong source and would overstate the product by roughly
 //     two to one. It is private account state, it retains rows for banned and
@@ -109,6 +111,22 @@ const PUBLIC_STATS_SCHEMA_VERSION = 2;
 // usable. See the header for why this is not `users`.
 const ACTIVE_ACCOUNTS_COLLECTION = "publicProfiles";
 const ROOMS_COLLECTION = "rooms";
+
+// Service accounts that are real, usable Firebase accounts (so they keep a
+// `publicProfiles` projection and keep working) but are not people using YO
+// Voice, and therefore must not be counted in the public `activeAccounts`
+// figure. Uids are not secrets. Keep this list short and explicit: every entry
+// needs a comment saying what the account is and why it exists.
+//
+// Only entries whose `publicProfiles/{uid}` document actually exists are
+// subtracted (one point read each), so a deleted or never-projected service
+// account can never make the published number go down a second time.
+const PUBLIC_STATS_EXCLUDED_ACCOUNT_UIDS = Object.freeze([
+  // Apple App Review demo account (its sign-in address is deliberately not in
+  // this public repository). It must stay signed-in-able so App Review can
+  // exercise the app, but it is Apple's reviewer, not a YO Voice user.
+  "sugg76GWtpMe7vXM5SVWP0alsoi1",
+]);
 
 // The freshness bound IS the token TTL. Deriving it rather than restating it
 // means the two can never drift apart in a way that silently invents presence.
@@ -246,6 +264,44 @@ async function countCollection(name, database = db) {
 }
 
 /**
+ * How many of the excluded service accounts currently have a
+ * `publicProfiles` projection — i.e. how many of them the `count()` aggregate
+ * actually included. One point read per distinct uid; a duplicated list entry
+ * is read and subtracted once. A failed read rejects rather than guessing,
+ * for the same reason a failed aggregate does.
+ */
+async function countExcludedAccountsPresent({
+  excludedUids = PUBLIC_STATS_EXCLUDED_ACCOUNT_UIDS,
+  collection = ACTIVE_ACCOUNTS_COLLECTION,
+  database = db,
+} = {}) {
+  const distinct = [...new Set(excludedUids)];
+  const snapshots = await Promise.all(
+    distinct.map((uid) => database.collection(collection).doc(uid).get()),
+  );
+  return snapshots.filter((snapshot) => snapshot?.exists === true).length;
+}
+
+/**
+ * The published account figure: every `publicProfiles` projection, minus the
+ * excluded service accounts that are actually among them. The aggregate and
+ * the point reads are not one atomic snapshot, so a projection deleted between
+ * them could momentarily make the difference negative; it is floored at zero
+ * rather than ever publishing a negative number of accounts.
+ */
+async function countActiveAccounts({
+  excludedUids = PUBLIC_STATS_EXCLUDED_ACCOUNT_UIDS,
+  collection = ACTIVE_ACCOUNTS_COLLECTION,
+  database = db,
+} = {}) {
+  const [total, excluded] = await Promise.all([
+    countCollection(collection, database),
+    countExcludedAccountsPresent({ excludedUids, collection, database }),
+  ]);
+  return Math.max(0, total - excluded);
+}
+
+/**
  * Both sources must succeed. A partial run would mix one fresh number with one
  * missing number, and a missing number written as zero would read as "nobody is
  * here" — a lie, and a worse one than the hardcoded value it replaces. Every
@@ -253,7 +309,7 @@ async function countCollection(name, database = db) {
  * promise, then the first real failure is rethrown.
  */
 async function computePublicStats({
-  countAccounts = () => countCollection(ACTIVE_ACCOUNTS_COLLECTION),
+  countAccounts = () => countActiveAccounts(),
   countRooms = () => countCollection(ROOMS_COLLECTION),
 } = {}) {
   const outcomes = await Promise.allSettled([countAccounts(), countRooms()]);
@@ -279,7 +335,7 @@ async function computePublicStats({
  * rather than lingering at its last value forever.
  */
 async function publishPublicStats({
-  countAccounts = () => countCollection(ACTIVE_ACCOUNTS_COLLECTION),
+  countAccounts = () => countActiveAccounts(),
   countRooms = () => countCollection(ROOMS_COLLECTION),
   writeStats = null,
   updatedAt = null,
@@ -332,6 +388,7 @@ module.exports = {
   LIVE_SESSION_FRESHNESS_SECONDS,
   MAX_LIVE_SESSION_SCAN,
   PUBLIC_STATS_COLLECTION,
+  PUBLIC_STATS_EXCLUDED_ACCOUNT_UIDS,
   PUBLIC_STATS_DOCUMENT,
   PUBLIC_STATS_SCHEMA_VERSION,
   PublicStatsError,
@@ -339,7 +396,9 @@ module.exports = {
   ROOMS_COLLECTION,
   canonicalSessionUser,
   computePublicStats,
+  countActiveAccounts,
   countCollection,
+  countExcludedAccountsPresent,
   distinctLiveSpeakers,
   fetchFreshVoiceSessions,
   publishPublicStats,

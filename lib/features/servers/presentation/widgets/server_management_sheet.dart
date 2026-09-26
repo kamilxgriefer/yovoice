@@ -22,6 +22,7 @@ import '../../data/services/server_service.dart';
 import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
 import '../theme/server_identity.dart';
+import 'server_delete_flow.dart';
 import 'server_panel.dart';
 
 enum ServerManagementOutcome { left, deleted }
@@ -283,7 +284,7 @@ class _ServerManagementSheetState extends State<_ServerManagementSheet> {
                   builder: (context, channelSnapshot) {
                     final channels = channelSnapshot.data ?? const [];
                     return switch (_section) {
-                      0 => _overview(context, server),
+                      0 => _overview(context, server, channels),
                       1 => _channelList(context, server, channels),
                       _ => _memberList(context, server),
                     };
@@ -297,7 +298,11 @@ class _ServerManagementSheetState extends State<_ServerManagementSheet> {
     );
   }
 
-  Widget _overview(BuildContext context, Server server) {
+  Widget _overview(
+    BuildContext context,
+    Server server,
+    List<ServerChannel> channels,
+  ) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final canEdit = widget.role.power >= ServerMemberRole.coOwner.power;
@@ -375,30 +380,62 @@ class _ServerManagementSheetState extends State<_ServerManagementSheet> {
           ),
         ],
         const SizedBox(height: 28),
-        Divider(color: palette.border),
-        const SizedBox(height: 12),
-        if (widget.role == ServerMemberRole.owner)
-          OutlinedButton.icon(
-            key: const ValueKey('server-delete-action'),
-            onPressed: _busy ? null : () => _deleteServer(context, server),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: palette.dangerForeground,
-              minimumSize: const Size.fromHeight(48),
-            ),
-            icon: const Icon(Icons.delete_outline_rounded),
-            label: Text(copy.serverDelete),
-          )
-        else
-          OutlinedButton.icon(
-            key: const ValueKey('server-leave-action'),
-            onPressed: _busy ? null : () => _leaveServer(context, server),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: palette.dangerForeground,
-              minimumSize: const Size.fromHeight(48),
-            ),
-            icon: const Icon(Icons.logout_rounded),
-            label: Text(copy.serverLeave),
+        // Leaving and deleting live in their own block, apart from the edit
+        // form above, so they never read as the form's last field.
+        Container(
+          key: const ValueKey('server-danger-zone'),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: AppRadius.md,
+            border: Border.all(color: palette.dangerForeground),
           ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                copy.serverDangerZone,
+                style: AppTypography.titleSmall.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: palette.dangerForeground,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                widget.role == ServerMemberRole.owner
+                    ? copy.serverDeleteConsequences
+                    : copy.serverLeaveQuestion,
+                style: AppTypography.bodySmall.copyWith(
+                  color: palette.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (widget.role == ServerMemberRole.owner)
+                OutlinedButton.icon(
+                  key: const ValueKey('server-delete-action'),
+                  onPressed: _busy
+                      ? null
+                      : () => _deleteServer(context, server, channels),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: palette.dangerForeground,
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  label: Text(copy.serverDelete),
+                )
+              else
+                OutlinedButton.icon(
+                  key: const ValueKey('server-leave-action'),
+                  onPressed: _busy ? null : () => _leaveServer(context, server),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: palette.dangerForeground,
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  icon: const Icon(Icons.logout_rounded),
+                  label: Text(copy.serverLeave),
+                ),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -779,18 +816,46 @@ class _ServerManagementSheetState extends State<_ServerManagementSheet> {
     }
   }
 
-  Future<void> _deleteServer(BuildContext context, Server server) async {
-    final copy = AppLocalizations.of(context);
-    if (!await _confirm(context, copy.serverDeleteQuestion)) return;
-    if (await _run(
-          () => widget.management.deleteServer(
-            serverId: server.id,
-            requestId: widget.repository.newRequestId(),
-          ),
-        ) &&
-        mounted) {
-      Navigator.of(this.context).pop(ServerManagementOutcome.deleted);
+  Future<void> _deleteServer(
+    BuildContext context,
+    Server server,
+    List<ServerChannel> channels,
+  ) async {
+    final live = liveServerChannels(channels);
+    if (!await confirmServerDeletion(
+      context,
+      server: server,
+      liveChannels: live,
+    )) {
+      return;
     }
+    if (_busy || !mounted) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await deleteServerFor(
+        repository: widget.repository,
+        management: widget.management,
+        server: server,
+        liveChannels: live,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _messageIsError = true;
+        _message = serverDeletionFailureCopy(
+          error,
+          AppLocalizations.of(this.context),
+          server,
+        );
+      });
+      return;
+    }
+    if (!mounted) return;
+    Navigator.of(this.context).pop(ServerManagementOutcome.deleted);
   }
 
   Future<String?> _textDialog(

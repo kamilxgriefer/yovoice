@@ -66,7 +66,7 @@ downloaded.
 
 This is a source-level closure. Production rollout still has to follow the
 coordinated callable → migration/inventory → compatible client → restrictive
-Rules sequence documented in [SECURITY.md](SECURITY.md#private-media-rollout-gate-source-only-not-deployed).
+Rules sequence documented in [SECURITY.md](SECURITY.md#private-media-rollout-status-build-19-tester-deployment-complete).
 
 ### Destructive privileged actions require recent authentication
 

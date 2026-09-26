@@ -17,10 +17,13 @@ if (getApps().length === 0) initializeApp();
 
 const {
   DEFAULT_LIMITS,
+  DIRECT_MEDIA_DURATION_GRACE_MS,
+  DIRECT_MEDIA_MAX_SECONDS,
   canonicalConversationId,
   canonicalPairKey,
   createDirectMessagingService,
   validateDirectMediaProbe,
+  validateMessage,
 } = require("../messaging/direct_integrity");
 const {
   createDirectMigrationService,
@@ -1064,6 +1067,152 @@ test("iOS MOV finalizes when its trusted bytes carry an MP4 brand", async () => 
   assert.equal(conversation.lastMessageType, "video");
 });
 
+const TRACKS_INVALID = "The uploaded attachment tracks are invalid.";
+const DURATION_MISMATCH = "The uploaded attachment duration does not match.";
+
+test("the measured-length grace is the shared 60 s limit plus 2 s", () => {
+  assert.equal(DIRECT_MEDIA_MAX_SECONDS, 60);
+  assert.equal(DIRECT_MEDIA_DURATION_GRACE_MS, 2_000);
+});
+
+test("a full-length voice or video take measured just past 60 s is accepted and stored as 60", () => {
+  const media = { generation: "41", size: 4096 };
+  for (const type of ["voice", "video"]) {
+    const reservation = type === "voice"
+      ? { type, contentType: "audio/mp4", durationSeconds: 60 }
+      : { type, contentType: "video/mp4", durationSeconds: 60 };
+    const probe = (durationMs) => ({
+      detectedContentType: reservation.contentType,
+      durationMs,
+      generation: "41",
+      hasAudio: true,
+      hasVideo: type === "video",
+      size: 4096,
+    });
+    for (const durationMs of [60_000, 60_400, 61_900, 62_000]) {
+      assert.equal(
+        validateDirectMediaProbe(probe(durationMs), reservation, media),
+        60,
+        `${type} measured ${durationMs} ms`,
+      );
+    }
+    for (const durationMs of [62_001, 62_100, 90_000]) {
+      assert.throws(
+        () => validateDirectMediaProbe(probe(durationMs), reservation, media),
+        (error) => error.code === "failed-precondition" &&
+          error.message === TRACKS_INVALID,
+        `${type} measured ${durationMs} ms`,
+      );
+    }
+    // Below the limit nothing changes: the measurement still rounds up.
+    assert.equal(validateDirectMediaProbe(
+      probe(10_400),
+      { ...reservation, durationSeconds: 10 },
+      media,
+    ), 11);
+    // A short declaration can never borrow the grace: 61 s against a 12 s
+    // declaration is refused by the declared-vs-measured tolerance.
+    assert.throws(
+      () => validateDirectMediaProbe(
+        probe(61_000),
+        { ...reservation, durationSeconds: 12 },
+        media,
+      ),
+      (error) => error.code === "failed-precondition" &&
+        error.message === DURATION_MISMATCH,
+    );
+    // The clamped value keeps the ±2 s tolerance meaningful at the limit.
+    assert.equal(validateDirectMediaProbe(
+      probe(61_900),
+      { ...reservation, durationSeconds: 58 },
+      media,
+    ), 60);
+    assert.throws(
+      () => validateDirectMediaProbe(
+        probe(61_900),
+        { ...reservation, durationSeconds: 57 },
+        media,
+      ),
+      (error) => error.code === "failed-precondition" &&
+        error.message === DURATION_MISMATCH,
+    );
+  }
+});
+
+async function finalizeCappedTake(type, durationMs, suffix) {
+  const metadata = new Map();
+  const storage = {
+    async getMetadata(path) { return metadata.get(path); },
+    getObjectReference(path) {
+      return `gs://yovoice-test.appspot.com/${path}`;
+    },
+  };
+  const service = directService({}, {
+    storage,
+    mediaProbe: matchingMediaProbe({ durationMs }),
+  });
+  const contentType = type === "voice" ? "audio/mp4" : "video/mp4";
+  const { conversationId } = await open(service, A, B, `open-capped-${suffix}`);
+  const reserved = await service.reserveDirectMessageAttachment(request(A, {
+    conversationId,
+    type,
+    contentType,
+    // What the app declares for a take that reached the cap.
+    durationSeconds: 60,
+    requestId: `media-capped-reserve-${suffix}`,
+  }));
+  metadata.set(reserved.storagePath, {
+    size: "4096",
+    contentType,
+    generation: "31",
+    metadata: {
+      yovoiceConversationId: conversationId,
+      yovoiceMessageId: reserved.messageId,
+      yovoiceMessagePath:
+        `conversations/${conversationId}/messages/${reserved.messageId}`,
+      yovoiceMediaType: type,
+      yovoiceOwnerUid: A,
+    },
+  });
+  const messageRef = db.doc(
+    `conversations/${conversationId}/messages/${reserved.messageId}`,
+  );
+  const finalize = () => service.finalizeDirectMessageAttachment(request(A, {
+    conversationId,
+    messageId: reserved.messageId,
+    objectGeneration: "31",
+    requestId: `media-capped-finalize-${suffix}`,
+  }));
+  return { conversationId, finalize, messageRef, reserved };
+}
+
+for (const type of ["voice", "video"]) {
+  for (const durationMs of [60_000, 60_400, 61_900]) {
+    test(`a ${type} take capped at 60 s that measures ${durationMs} ms finalizes as a 1:00 message`, async () => {
+      const take = await finalizeCappedTake(type, durationMs, `${type}-${durationMs}`);
+      const finalized = await take.finalize();
+      assert.equal(finalized.type, type);
+      const snapshot = await take.messageRef.get();
+      assert.equal(snapshot.data().durationSeconds, 60);
+      // The stored message is canonical: the reader-side validator accepts it.
+      assert.doesNotThrow(() => validateMessage(snapshot, take.conversationId));
+    });
+  }
+
+  test(`a ${type} take measured at 62,100 ms is refused by the length cap and never published`, async () => {
+    const take = await finalizeCappedTake(type, 62_100, `${type}-62100`);
+    await assert.rejects(
+      take.finalize(),
+      (error) => error.code === "failed-precondition" &&
+        error.message === TRACKS_INVALID,
+    );
+    assert.equal((await take.messageRef.get()).exists, false);
+    assert.equal((await db.doc(
+      `directMessageUploadReservations/${take.reserved.messageId}`,
+    ).get()).exists, true);
+  });
+}
+
 test("trusted probe rejects a video whose real duration exceeds its contract", async () => {
   const metadata = new Map();
   const storage = {
@@ -1097,6 +1246,8 @@ test("trusted probe rejects a video whose real duration exceeds its contract", a
       yovoiceOwnerUid: A,
     },
   });
+  // Declared 12 s, measured 61 s: 61 s is inside the 60 s + 2 s measured
+  // grace, so the refusal must come from the declared-vs-measured tolerance.
   await assert.rejects(
     service.finalizeDirectMessageAttachment(request(A, {
       conversationId,
@@ -1104,7 +1255,8 @@ test("trusted probe rejects a video whose real duration exceeds its contract", a
       objectGeneration: "29",
       requestId: "media-video-long-finalize",
     })),
-    (error) => error.code === "failed-precondition",
+    (error) => error.code === "failed-precondition" &&
+      error.message === DURATION_MISMATCH,
   );
   assert.equal((await db.doc(
     `directMessageUploadReservations/${reserved.messageId}`,

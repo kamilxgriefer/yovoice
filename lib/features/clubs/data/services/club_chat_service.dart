@@ -4,15 +4,138 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 import 'package:yovoice/features/clubs/data/models/club_chat_authority.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
+import 'package:yovoice/features/clubs/data/services/club_media_upload_source.dart';
+
+/// One short-lived read grant for a server channel photo or video, as
+/// `getServerChannelMessageMediaAccessV1` issues it: a generation-bound V4 URL
+/// that expires within 90 seconds. Never stored, never written to Firestore.
+class ServerMediaGrant {
+  const ServerMediaGrant({
+    required this.messageId,
+    required this.url,
+    required this.type,
+    required this.contentType,
+    required this.size,
+    required this.durationSeconds,
+    required this.expiresAt,
+  });
+
+  final String messageId;
+  final Uri url;
+  final String type;
+  final String contentType;
+  final int size;
+  final int? durationSeconds;
+  final DateTime expiresAt;
+
+  bool get isVideo => type == 'video';
+}
+
+/// Uploads the reserved object and answers with its Storage generation.
+///
+/// The production implementation hands the pick to Firebase Storage through
+/// [ClubMediaUploadSource] — `putFile` on io, `putData` in a browser — and
+/// never holds a whole photo or video itself; tests inject one, which is why
+/// the seam carries the source rather than bytes.
+typedef ServerMediaUploader =
+    Future<String> Function({
+      required String storagePath,
+      required ClubMediaUploadSource source,
+      required String contentType,
+      required Map<String, String> customMetadata,
+      void Function(double progress)? onProgress,
+    });
+
+/// One intended channel photo or video send, held across every press of Send
+/// for the same pick.
+///
+/// WHY THIS EXISTS. `reserveServerChannelMessageMediaV1` gives one member one
+/// live upload lease at a time, for 15 minutes, and short-circuits only a
+/// replay of the same `requestId`. A client that minted a new id per press
+/// therefore turned a single failed upload into a quarter of an hour in which
+/// no photo or video could be sent to any channel of any server — the retry the
+/// ADR-212 review offers included. Carrying the reservation identity (and, once
+/// they exist, the reservation and the committed generation) makes the second
+/// press a replay of the first attempt rather than a second reservation, which
+/// is what `ServerCompanyFileUploadAttempt` already does for Company Files.
+///
+/// Deliberately not the pick itself: the upload source is built fresh per
+/// attempt so a retry streams the file again instead of reusing a spent handle.
+/// [size] is the pick's measured length and is what the reservation declared,
+/// so a source that no longer matches it is refused before anything is sent.
+class ServerMediaSendAttempt {
+  ServerMediaSendAttempt({
+    required this.serverId,
+    required this.channelId,
+    required this.type,
+    required this.contentType,
+    required this.size,
+    required this.reserveRequestId,
+    required this.finalizeRequestId,
+    this.durationSeconds,
+  });
+
+  final String serverId;
+  final String channelId;
+  final String type;
+  final String contentType;
+  final int size;
+  final int? durationSeconds;
+  final String reserveRequestId;
+  final String finalizeRequestId;
+
+  String? _messageId;
+  String? _storagePath;
+  Map<String, String>? _uploadMetadata;
+
+  /// The reserved message id, once the reservation has been granted.
+  String? get messageId => _messageId;
+
+  /// The exact object the reservation named. Never chosen by the client.
+  String? get storagePath => _storagePath;
+
+  /// The metadata `storage.rules` matches the upload against.
+  Map<String, String>? get uploadMetadata => _uploadMetadata;
+
+  /// The committed object's generation, once the upload has been seen through.
+  String? generation;
+
+  void rememberReservation({
+    required String messageId,
+    required String storagePath,
+    required Map<String, String> uploadMetadata,
+  }) {
+    _messageId = messageId;
+    _storagePath = storagePath;
+    _uploadMetadata = Map<String, String>.unmodifiable(uploadMetadata);
+  }
+}
+
+class _ServerMediaGrantBatch {
+  _ServerMediaGrantBatch(this.serverId, this.channelId);
+
+  final String serverId;
+  final String channelId;
+  final Map<String, Completer<ServerMediaGrant?>> waiting = {};
+}
 
 typedef ClubMessageModerationInvoker =
     Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
 typedef ClubMessageSendInvoker =
     Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
+
+/// Invokes one Servers V1 message callable by name. The test seam for the
+/// reaction, media and author-delete callables, which share one shape.
+typedef ServerMessageCallableInvoker =
+    Future<Map<Object?, Object?>> Function(
+      String name,
+      Map<String, Object?> request,
+    );
 
 class ClubChatService {
   ClubChatService({
@@ -21,12 +144,20 @@ class ClubChatService {
     FirebaseFunctions? functions,
     ClubMessageModerationInvoker? moderationInvoker,
     ClubMessageSendInvoker? messageSendInvoker,
+    ServerMessageCallableInvoker? serverMessageInvoker,
+    ServerMediaUploader? mediaUploader,
+    FirebaseStorage? storage,
+    DateTime Function()? clock,
     String Function()? requestIdFactory,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _functionsOverride = functions,
        _moderationInvoker = moderationInvoker,
        _messageSendInvoker = messageSendInvoker,
+       _serverMessageInvoker = serverMessageInvoker,
+       _mediaUploaderOverride = mediaUploader,
+       _storageOverride = storage,
+       _clock = clock ?? DateTime.now,
        _requestIdFactory = requestIdFactory ?? _newRequestId;
 
   final FirebaseFirestore _firestore;
@@ -34,7 +165,26 @@ class ClubChatService {
   final FirebaseFunctions? _functionsOverride;
   final ClubMessageModerationInvoker? _moderationInvoker;
   final ClubMessageSendInvoker? _messageSendInvoker;
+  final ServerMessageCallableInvoker? _serverMessageInvoker;
+  final ServerMediaUploader? _mediaUploaderOverride;
+  final FirebaseStorage? _storageOverride;
+  final DateTime Function() _clock;
   final String Function() _requestIdFactory;
+
+  /// Grants live only in memory and only until they expire. Keyed by
+  /// server/channel/message, dropped ten seconds before expiry so a render
+  /// never uses a URL that dies mid-request.
+  final Map<String, ServerMediaGrant> _mediaGrants = {};
+
+  /// Ids the server reported unavailable (removed, non-media, or an object
+  /// that is gone). Remembered briefly so a thread does not ask again on
+  /// every rebuild.
+  final Map<String, DateTime> _mediaUnavailableUntil = {};
+  final Map<String, _ServerMediaGrantBatch> _pendingMediaGrants = {};
+
+  static const _mediaGrantSafety = Duration(seconds: 10);
+  static const _mediaUnavailableMemory = Duration(seconds: 30);
+  static const _mediaGrantBatch = 20;
 
   FirebaseFunctions get _functions =>
       _functionsOverride ??
@@ -57,6 +207,13 @@ class ClubChatService {
     }
     return user;
   }
+
+  /// The signed-in account, for a surface that has to close itself when the
+  /// account changes mid-flow (the confirm-before-send media review's
+  /// `closeWhen`). It reads the one `FirebaseAuth` this service already sends
+  /// with, so the surface can never watch a different account than the one a
+  /// send would use.
+  Stream<User?> accountChanges() => _auth.userChanges();
 
   CollectionReference<Map<String, dynamic>> _messages({
     required String clubId,
@@ -149,6 +306,426 @@ class ClubChatService {
     await _functions.httpsCallable('sendClubMessage').call(payload);
   }
 
+  Future<Map<Object?, Object?>> _callServerMessage(
+    String name,
+    Map<String, Object?> payload,
+  ) async {
+    final invoker = _serverMessageInvoker;
+    if (invoker != null) return invoker(name, payload);
+    final response = await _functions
+        .httpsCallable(name)
+        .call<Map<Object?, Object?>>(payload);
+    return response.data;
+  }
+
+  /// Toggles the viewer's reaction on a Servers V1 channel message, exactly
+  /// as `MessageService.toggleReaction` does for a direct message: one
+  /// reaction per person, and choosing the current one again removes it.
+  ///
+  /// Callable-only. `firestore.rules` keeps V1 message updates closed to
+  /// every client, so there is deliberately no direct-write fallback: the
+  /// `setServerChannelMessageReactionV1` callable is the only writer of the
+  /// map and decides who may react (members, including in announcement and
+  /// rules channels; never guests).
+  Future<void> toggleServerReaction({
+    required String serverId,
+    required String channelId,
+    required String messageId,
+    required String emoji,
+  }) async {
+    final user = _user;
+    // Decided against the stored map rather than the rendered tile, the way
+    // the direct-message toggle reads its document first.
+    final snapshot = await _messages(
+      clubId: serverId,
+      channelId: channelId,
+    ).doc(messageId).get();
+    final stored = snapshot.data()?['reactions'];
+    final current = stored is Map ? stored[user.uid] : null;
+    await _callServerMessage('setServerChannelMessageReactionV1', {
+      'serverId': serverId,
+      'channelId': channelId,
+      'messageId': messageId,
+      'emoji': current == emoji ? null : emoji,
+      'requestId': _requestIdFactory(),
+    });
+  }
+
+  // ------------------------------------------------- channel photos/videos
+
+  /// Starts one intended channel photo or video send, with the request
+  /// identities that make every later attempt of it a replay.
+  ///
+  /// Hold the returned attempt for as long as the person can press Send again
+  /// for the same pick — the ADR-212 review keeps Send armed after a failure —
+  /// and hand the same object back to [sendServerMediaAttempt]. A fresh
+  /// attempt per press would mint a fresh `requestId`, which
+  /// `reserveServerChannelMessageMediaV1` reads as a *second* upload and
+  /// refuses with `resource-exhausted` while the first lease is live, so the
+  /// retry the person is looking at would be locked out for the lease's 15
+  /// minutes. This is the same shape `ServerCompanyFileUploadAttempt` has.
+  ServerMediaSendAttempt newServerMediaSendAttempt({
+    required String serverId,
+    required String channelId,
+    required String type,
+    required String contentType,
+    required int size,
+    int? durationSeconds,
+  }) {
+    if (type != 'image' && type != 'video') {
+      throw ArgumentError.value(type, 'type', 'Unsupported media type.');
+    }
+    return ServerMediaSendAttempt(
+      serverId: serverId,
+      channelId: channelId,
+      type: type,
+      contentType: contentType,
+      size: size,
+      durationSeconds: durationSeconds,
+      reserveRequestId: _requestIdFactory(),
+      finalizeRequestId: _requestIdFactory(),
+    );
+  }
+
+  /// Sends one photo or video to a Servers V1 text channel:
+  /// reserve -> upload the exact reserved object -> finalize.
+  ///
+  /// The client never chooses the path, the id or the metadata: all three come
+  /// from the reservation, and `storage.rules` accepts the upload only while
+  /// that reservation is live. A retry reuses the same reservation (the same
+  /// `requestId`), so a lost response can never leave a second object or a
+  /// second message. Returns the message id the channel will show.
+  ///
+  /// [source] is the pick itself, not its bytes: on io the upload streams from
+  /// the picked file, so a 64 MiB video never becomes a 64 MiB buffer (plus the
+  /// copy `putData` makes of it) in the Dart heap. [ServerMediaSendAttempt.size]
+  /// is what the reservation declares and what the committed object is checked
+  /// against, so a source of a different length is refused here rather than at
+  /// finalize.
+  ///
+  /// Every step it completes is remembered on [attempt]: a second call after a
+  /// failure replays the reservation it already holds, re-uploads only if the
+  /// object never committed, and finalizes under the id it already used.
+  Future<String> sendServerMediaAttempt(
+    ServerMediaSendAttempt attempt, {
+    required ClubMediaUploadSource source,
+    void Function(double progress)? onProgress,
+  }) async {
+    final user = _user;
+    if (source.length != attempt.size) {
+      throw StateError('The selected media changed after it was chosen.');
+    }
+    if (attempt.messageId == null) {
+      final reserved =
+          await _callServerMessage('reserveServerChannelMessageMediaV1', {
+            'serverId': attempt.serverId,
+            'channelId': attempt.channelId,
+            'type': attempt.type,
+            'contentType': attempt.contentType,
+            'size': attempt.size,
+            'durationSeconds': attempt.durationSeconds,
+            'requestId': attempt.reserveRequestId,
+          });
+      final messageId = reserved['messageId'];
+      final media = reserved['media'];
+      if (messageId is! String || messageId.isEmpty || media is! Map) {
+        throw StateError('The upload could not be prepared. Try again.');
+      }
+      final storagePath = media['storagePath'];
+      final metadata = media['uploadMetadata'];
+      final expected =
+          'server_message_media/${attempt.serverId}/${attempt.channelId}/'
+          '${user.uid}/$messageId.';
+      if (storagePath is! String ||
+          !storagePath.startsWith(expected) ||
+          metadata is! Map) {
+        throw StateError('The upload could not be prepared. Try again.');
+      }
+      final customMetadata = <String, String>{
+        for (final entry in metadata.entries)
+          if (entry.key is String && entry.value is String)
+            entry.key as String: entry.value as String,
+      };
+      if (customMetadata.length != metadata.length) {
+        throw StateError('The upload could not be prepared. Try again.');
+      }
+      attempt.rememberReservation(
+        messageId: messageId,
+        storagePath: storagePath,
+        uploadMetadata: customMetadata,
+      );
+    }
+    final messageId = attempt.messageId!;
+    final generation =
+        attempt.generation ??
+        await (_mediaUploaderOverride ?? _uploadWithStorage)(
+          storagePath: attempt.storagePath!,
+          source: source,
+          contentType: attempt.contentType,
+          customMetadata: attempt.uploadMetadata!,
+          onProgress: onProgress,
+        );
+    attempt.generation = generation;
+    final finalize = <String, Object?>{
+      'serverId': attempt.serverId,
+      'channelId': attempt.channelId,
+      'messageId': messageId,
+      'objectGeneration': generation,
+      'requestId': attempt.finalizeRequestId,
+    };
+    try {
+      await _callServerMessage('finalizeServerChannelMessageMediaV1', finalize);
+    } on FirebaseFunctionsException catch (error) {
+      // One retry of the SAME operation for a lost or transient answer; the
+      // ledger makes the second call a replay, never a second message.
+      if (error.code != 'unavailable' &&
+          error.code != 'deadline-exceeded' &&
+          error.code != 'internal' &&
+          error.code != 'aborted') {
+        rethrow;
+      }
+      await _callServerMessage('finalizeServerChannelMessageMediaV1', finalize);
+    }
+    return messageId;
+  }
+
+  /// One-shot convenience over [sendServerMediaAttempt] for a send that cannot
+  /// be retried in place — a camera capture, which is re-taken rather than
+  /// re-sent. A surface that keeps Send armed after a failure must mint the
+  /// attempt itself with [newServerMediaSendAttempt] and hold it across
+  /// presses; see [ServerMediaSendAttempt].
+  Future<String> sendServerMediaMessage({
+    required String serverId,
+    required String channelId,
+    required String type,
+    required String contentType,
+    required ClubMediaUploadSource source,
+    int? durationSeconds,
+    void Function(double progress)? onProgress,
+  }) {
+    return sendServerMediaAttempt(
+      newServerMediaSendAttempt(
+        serverId: serverId,
+        channelId: channelId,
+        type: type,
+        contentType: contentType,
+        size: source.length,
+        durationSeconds: durationSeconds,
+      ),
+      source: source,
+      onProgress: onProgress,
+    );
+  }
+
+  Future<String> _uploadWithStorage({
+    required String storagePath,
+    required ClubMediaUploadSource source,
+    required String contentType,
+    required Map<String, String> customMetadata,
+    void Function(double progress)? onProgress,
+  }) async {
+    final reference = (_storageOverride ?? FirebaseStorage.instance).ref(
+      storagePath,
+    );
+    final settable = SettableMetadata(
+      contentType: contentType,
+      customMetadata: customMetadata,
+    );
+    // Started outside the recovery below on purpose. A source that refuses
+    // before any byte moves — the picked file is gone, or it is no longer the
+    // length the reservation declared — has provably committed nothing, so
+    // asking Storage about an object that cannot exist would only replace an
+    // honest local reason with "the upload did not complete".
+    final task = await source.start(reference, settable);
+    try {
+      final progress = task.snapshotEvents.listen(
+        (snapshot) {
+          if (snapshot.totalBytes > 0) {
+            onProgress?.call(snapshot.bytesTransferred / snapshot.totalBytes);
+          }
+        },
+        onError: (_) {
+          // Progress is cosmetic; the upload's own future owns the outcome.
+        },
+      );
+      try {
+        final snapshot = await task;
+        final generation = snapshot.metadata?.generation;
+        if (generation != null && generation.isNotEmpty) return generation;
+      } finally {
+        await progress.cancel();
+      }
+    } catch (_) {
+      // The object may have committed before the response was lost. The
+      // uploader may read its own object back while the reservation is live,
+      // so ask Storage instead of reserving a second path.
+    }
+    final stored = await reference.getMetadata();
+    final generation = stored.generation;
+    if (generation == null ||
+        generation.isEmpty ||
+        stored.size != source.length) {
+      throw StateError('The upload did not complete. Try again.');
+    }
+    return generation;
+  }
+
+  /// A short-lived read grant for one media message, or null when the server
+  /// reports it unavailable (removed, not media, or its object is gone).
+  ///
+  /// Requests made in the same frame are coalesced into batches of twenty, so
+  /// a thread of media bubbles costs one callable per twenty visible tiles,
+  /// and each grant is cached until shortly before it expires.
+  Future<ServerMediaGrant?> serverMediaGrant({
+    required String serverId,
+    required String channelId,
+    required String messageId,
+    bool refresh = false,
+  }) {
+    final key = '$serverId/$channelId/$messageId';
+    final now = _clock();
+    if (!refresh) {
+      final cached = _mediaGrants[key];
+      if (cached != null &&
+          cached.expiresAt.isAfter(now.add(_mediaGrantSafety))) {
+        return Future<ServerMediaGrant?>.value(cached);
+      }
+      final blocked = _mediaUnavailableUntil[key];
+      if (blocked != null && blocked.isAfter(now)) {
+        return Future<ServerMediaGrant?>.value(null);
+      }
+    }
+    _mediaGrants.remove(key);
+    final batchKey = '$serverId/$channelId';
+    final batch = _pendingMediaGrants.putIfAbsent(batchKey, () {
+      Timer.run(() => _flushServerMediaGrants(batchKey));
+      return _ServerMediaGrantBatch(serverId, channelId);
+    });
+    return batch.waiting
+        .putIfAbsent(messageId, Completer<ServerMediaGrant?>.new)
+        .future;
+  }
+
+  /// Drops any cached grant for [messageId] — after a retraction or a
+  /// moderator removal, the next render must ask again.
+  void forgetServerMediaGrant({
+    required String serverId,
+    required String channelId,
+    required String messageId,
+  }) {
+    final key = '$serverId/$channelId/$messageId';
+    _mediaGrants.remove(key);
+    _mediaUnavailableUntil.remove(key);
+  }
+
+  Future<void> _flushServerMediaGrants(String batchKey) async {
+    final batch = _pendingMediaGrants.remove(batchKey);
+    if (batch == null) return;
+    final ids = batch.waiting.keys.toList(growable: false);
+    for (var start = 0; start < ids.length; start += _mediaGrantBatch) {
+      final chunk = ids.sublist(
+        start,
+        min(start + _mediaGrantBatch, ids.length),
+      );
+      try {
+        final response =
+            await _callServerMessage('getServerChannelMessageMediaAccessV1', {
+              'serverId': batch.serverId,
+              'channelId': batch.channelId,
+              'messageIds': chunk,
+            });
+        final grants = _parseServerMediaGrants(response);
+        final now = _clock();
+        for (final messageId in chunk) {
+          final key = '${batch.serverId}/${batch.channelId}/$messageId';
+          final grant = grants[messageId];
+          if (grant != null) {
+            _mediaGrants[key] = grant;
+            _mediaUnavailableUntil.remove(key);
+          } else {
+            _mediaUnavailableUntil[key] = now.add(_mediaUnavailableMemory);
+          }
+          batch.waiting[messageId]?.complete(grant);
+        }
+      } catch (error, stack) {
+        for (final messageId in chunk) {
+          batch.waiting[messageId]?.completeError(error, stack);
+        }
+      }
+    }
+  }
+
+  Map<String, ServerMediaGrant> _parseServerMediaGrants(
+    Map<Object?, Object?> response,
+  ) {
+    final expiresAtMillis = response['expiresAtMillis'];
+    final rows = response['grants'];
+    if (expiresAtMillis is! int || rows is! List) {
+      throw StateError('The media could not be loaded. Try again.');
+    }
+    final expiresAt = DateTime.fromMillisecondsSinceEpoch(
+      expiresAtMillis,
+      isUtc: true,
+    ).toLocal();
+    final grants = <String, ServerMediaGrant>{};
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final messageId = row['messageId'];
+      final url = row['url'];
+      final type = row['type'];
+      final contentType = row['contentType'];
+      final size = row['size'];
+      final duration = row['durationSeconds'];
+      if (messageId is! String ||
+          url is! String ||
+          type is! String ||
+          contentType is! String ||
+          size is! num) {
+        continue;
+      }
+      final parsed = Uri.tryParse(url);
+      // Only the signing host this backend uses, and only over HTTPS: a
+      // grant is a bearer capability and must never point anywhere else.
+      if (parsed == null ||
+          parsed.scheme != 'https' ||
+          parsed.host != 'storage.googleapis.com' ||
+          parsed.userInfo.isNotEmpty) {
+        continue;
+      }
+      grants[messageId] = ServerMediaGrant(
+        messageId: messageId,
+        url: parsed,
+        type: type,
+        contentType: contentType,
+        size: size.toInt(),
+        durationSeconds: duration is num ? duration.toInt() : null,
+        expiresAt: expiresAt,
+      );
+    }
+    return grants;
+  }
+
+  /// The author takes their own Servers V1 message back. Rules keep every V1
+  /// message update closed to clients, so this is callable-only; it tombstones
+  /// the message and enqueues the private object's deletion.
+  Future<void> deleteOwnServerMessage({
+    required String serverId,
+    required String channelId,
+    required String messageId,
+  }) async {
+    await _callServerMessage('deleteServerChannelMessageV1', {
+      'serverId': serverId,
+      'channelId': channelId,
+      'messageId': messageId,
+      'requestId': _requestIdFactory(),
+    });
+    forgetServerMediaGrant(
+      serverId: serverId,
+      channelId: channelId,
+      messageId: messageId,
+    );
+  }
+
   /// The viewer's removal authority in [clubId], kept live.
   ///
   /// Two documents decide it — the viewer's own membership row for their
@@ -173,6 +750,8 @@ class ClubChatService {
     ClubRole? role;
     String? ownerId;
     var muted = false;
+    // Flips on the first membership snapshot (or its failure), never back.
+    var membershipResolved = false;
     StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? memberSub;
     StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? clubSub;
     StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? restrictionSub;
@@ -193,6 +772,7 @@ class ClubChatService {
           // is not reachable, because the flag never goes back.
           viewerEmailVerified: _auth.currentUser?.emailVerified ?? false,
           viewerIsCommunicationMuted: muted,
+          membershipResolved: membershipResolved,
         ),
       );
     }
@@ -210,10 +790,12 @@ class ClubChatService {
                 role = snapshot.exists
                     ? ClubRole.fromValue(snapshot.data()?['role'])
                     : null;
+                membershipResolved = true;
                 emit();
               },
               onError: (_) {
                 role = null;
+                membershipResolved = true;
                 emit();
               },
             );

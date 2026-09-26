@@ -8,6 +8,7 @@ const {
   MAX_FCM_TOKEN_DOCUMENT_READS,
   chunks,
   planTokenDocuments,
+  registrationsNotBeforeEpoch,
   sendMulticastInChunks,
 } = require("../notifications/push_delivery");
 
@@ -131,5 +132,27 @@ describe("FCM multicast chunking", () => {
     }]);
     assert.equal(outcome.attempted, 501);
     assert.equal(outcome.successCount, 1);
+  });
+});
+
+describe("registrations and the account's session epoch", () => {
+  const at = (millis) => ({ toMillis: () => millis });
+  const doc = (id, updatedAt) => ({ id, get: (field) => (field === "updatedAt" ? updatedAt : undefined) });
+
+  test("without an epoch every registration is kept", () => {
+    const docs = [doc("a", at(1)), doc("b", undefined)];
+    assert.equal(registrationsNotBeforeEpoch(docs, undefined), docs);
+    assert.equal(registrationsNotBeforeEpoch(docs, "1700000000"), docs);
+  });
+
+  test("a registration written before the epoch never receives; one at or after it does", () => {
+    const epoch = 1_700_000_000;
+    const kept = registrationsNotBeforeEpoch([
+      doc("planted", at(epoch * 1000 - 1)),
+      doc("at-epoch", at(epoch * 1000)),
+      doc("owner", at(epoch * 1000 + 5_000)),
+      doc("no-time", undefined),
+    ], epoch);
+    assert.deepEqual(kept.map((entry) => entry.id), ["at-epoch", "owner"]);
   });
 });

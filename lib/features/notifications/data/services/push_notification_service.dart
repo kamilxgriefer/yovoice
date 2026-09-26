@@ -160,6 +160,7 @@ NotificationSoundProfile notificationSoundProfileFor(NotificationType type) {
   return switch (type) {
     NotificationType.directMessage ||
     NotificationType.mention ||
+    NotificationType.commentMention ||
     NotificationType.reply => NotificationSoundProfile.message,
     NotificationType.friendRequest ||
     NotificationType.friendAccepted ||
@@ -168,11 +169,15 @@ NotificationSoundProfile notificationSoundProfileFor(NotificationType type) {
     NotificationType.clubInviteAccepted ||
     NotificationType.roomInvite ||
     NotificationType.broadcastInvite ||
+    NotificationType.momentComment ||
+    NotificationType.reelComment ||
+    NotificationType.serverRole ||
     NotificationType.liveStarted => NotificationSoundProfile.social,
     NotificationType.achievementUnlocked =>
       NotificationSoundProfile.achievement,
     NotificationType.directCall => NotificationSoundProfile.call,
     NotificationType.missedCall ||
+    NotificationType.serverEventReminder ||
     NotificationType.moderation ||
     NotificationType.system => NotificationSoundProfile.alert,
   };

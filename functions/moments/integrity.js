@@ -39,6 +39,10 @@ const {
   exactFriendshipGuard,
   profileVisibilityOf,
 } = require("../profile/media_contract");
+const {
+  normalizeMentionUserIds,
+  writeCommentMentions,
+} = require("../notifications/comment_mentions");
 const defaultLogger = require("firebase-functions/logger");
 
 // HttpsError's canonical code set. The feed's drop counter reports codes and
@@ -2460,7 +2464,7 @@ function createMomentIntegrityService({
     const auth = requireActor(request);
     const data = requireExactInput(
       request.data,
-      ["commentId", "momentId", "objectGeneration", "requestId"],
+      ["commentId", "mentionUserIds", "momentId", "objectGeneration", "requestId"],
       ["commentId", "momentId", "objectGeneration", "requestId"],
     );
     const momentId = requireId(data.momentId, "momentId");
@@ -2473,7 +2477,10 @@ function createMomentIntegrityService({
     if (!/^[0-9]{1,30}$/u.test(objectGeneration)) {
       fail("invalid-argument", "objectGeneration is invalid.");
     }
-    const input = { commentId, momentId, objectGeneration };
+    const mentionUserIds = normalizeMentionUserIds(data.mentionUserIds, auth.uid);
+    const input = mentionUserIds.length > 0
+      ? { commentId, mentionUserIds, momentId, objectGeneration }
+      : { commentId, momentId, objectGeneration };
     const identity = operationIdentity(
       "moment.voiceComment.finalize",
       auth.uid,
@@ -2597,6 +2604,14 @@ function createMomentIntegrityService({
         mediaContentType: media.contentType,
         createdAt: timing.now,
       });
+      writeCommentMentions(transaction, db, {
+        kind: "moment",
+        parentId: momentId,
+        commentId,
+        actorId: auth.uid,
+        mentionUserIds,
+        now: timing.now,
+      });
       const commentCount = incrementCanonicalCount(
         momentData.commentCount,
         "commentCount",
@@ -2621,16 +2636,22 @@ function createMomentIntegrityService({
 
   async function createMomentComment(request) {
     const auth = requireActor(request);
+    // `mentionUserIds` is OPTIONAL and additive (ADR-213): an installed
+    // client that never sends it produces exactly the input, the input hash
+    // and the stored comment it produced before mentions existed.
     const data = requireExactInput(
       request.data,
-      ["momentId", "requestId", "text"],
+      ["mentionUserIds", "momentId", "requestId", "text"],
       ["momentId", "requestId", "text"],
     );
     const momentId = requireId(data.momentId, "momentId");
     const requestId = requireRequestId(data.requestId);
     const text = normalizeText(data.text, 1000, "text");
+    const mentionUserIds = normalizeMentionUserIds(data.mentionUserIds, auth.uid);
     const commentId = canonicalCommentId(auth.uid, momentId, requestId);
-    const input = { momentId, text };
+    const input = mentionUserIds.length > 0
+      ? { mentionUserIds, momentId, text }
+      : { momentId, text };
     const identity = operationIdentity(
       "moment.comment",
       auth.uid,
@@ -2703,6 +2724,14 @@ function createMomentIntegrityService({
         mediaSize: null,
         mediaContentType: null,
         createdAt: timing.now,
+      });
+      writeCommentMentions(transaction, db, {
+        kind: "moment",
+        parentId: momentId,
+        commentId,
+        actorId: auth.uid,
+        mentionUserIds,
+        now: timing.now,
       });
       const commentCount = incrementCanonicalCount(
         momentData.commentCount,

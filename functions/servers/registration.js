@@ -52,6 +52,9 @@ const {
 } = require("./company_files");
 const { createServerInviteService } = require("./invites");
 const { createServerMembershipService } = require("./memberships");
+const {
+  createServerRolePromotionNotifier,
+} = require("../notifications/server_roles");
 const { createServerManagementService } = require("./management");
 const { createServerSessionService } = require("./sessions");
 const { createServerCommunityBroadcastService } = require("./community_broadcast");
@@ -61,6 +64,11 @@ const { createServerConvergenceService } = require("./convergence");
 const { createServerConvergenceRuntimeService } = require("./convergence_runtime");
 const { createServerSessionControlService } = require("./session_control");
 const { createServerLiveKitAdapter } = require("./session_livekit");
+const { createServerMessageReactionService } = require("./message_reactions");
+const {
+  createServerMessageMediaService,
+  createServerMessageMediaStorageAdapter,
+} = require("./message_media");
 
 const REGION = "europe-west1";
 const OUTBOX_COLLECTION = "serverControlOutbox";
@@ -138,14 +146,21 @@ const SERVER_CALLABLE_METHODS = Object.freeze({
 const COMMUNITY_BROADCAST_CALLABLE_METHODS = Object.freeze({
   createServerBroadcastIngressV1: "broadcast",
 });
+// The last-leave signal of the empty-generation grace (session_staleness.js,
+// ADR-180 amendment), also kept outside the frozen documented table.
+const SESSION_LIFECYCLE_CALLABLE_METHODS = Object.freeze({
+  releaseServerChannelSessionIfEmptyV1: "sessions",
+});
 const ALL_SERVER_CALLABLE_METHODS = Object.freeze({
   ...SERVER_CALLABLE_METHODS,
   ...COMMUNITY_BROADCAST_CALLABLE_METHODS,
+  ...SESSION_LIFECYCLE_CALLABLE_METHODS,
 });
 
 // Only callables that reach the media provider bind the LiveKit secrets:
 // token issuance signs a JWT, session end eagerly runs one revocation page
-// (sessions.js), and OBS provisioning manages an RTMP ingress.
+// (sessions.js), OBS provisioning manages an RTMP ingress, and the release
+// signal reads the room's occupancy (one ListParticipants).
 // `startServerChannelSessionV1` validates the
 // public LIVEKIT_URL only, and the three participation callables
 // (session_participation.js) never touch the provider themselves: a role or
@@ -156,6 +171,7 @@ const SECRET_BOUND_CALLABLES = Object.freeze([
   "createServerChannelTokenV1",
   "endServerChannelSessionV1",
   "createServerBroadcastIngressV1",
+  "releaseServerChannelSessionIfEmptyV1",
 ]);
 
 const FAMILY_MEMORY_MEDIA_CALLABLES = Object.freeze([
@@ -215,6 +231,57 @@ const SERVERS_V1_EXPORT_NAMES = Object.freeze([
   ...DISPATCHER_EXPORTS,
   ...SWEEP_EXPORTS,
 ]);
+
+// Server channel messaging parity with direct messages (reactions, photos and
+// videos). A SEPARATE extension, deliberately outside ALL_SERVER_CALLABLE_METHODS
+// and SERVERS_V1_EXPORT_NAMES: the reviewed 62-total / 56-callable / 55-base
+// manifest is pinned by the activation-package tool
+// (tool/servers_activation_package.js) and by the registration and cold-start
+// suites, and docs/Servers.md mirrors the frozen 54-entry table. These exports
+// are built by createServerMessageFunctions below, behind the same runtime
+// activation gate, with the same callable options and Auth binding, and are
+// deployed by their own explicit selector.
+// The three numbers above are 62/56/55 and not the 61/55/54 this extension was
+// written against: the ADR-180 amendment landed in the same build and added
+// `releaseServerChannelSessionIfEmptyV1` to the frozen manifest. Recomputed
+// from the merged registration below, not relaxed — these seven exports are
+// still outside it, which is why none of those numbers moved for them.
+const SERVER_MESSAGE_CALLABLE_METHODS = Object.freeze({
+  setServerChannelMessageReactionV1: "messageReactions",
+  reserveServerChannelMessageMediaV1: "messageMedia",
+  finalizeServerChannelMessageMediaV1: "messageMedia",
+  getServerChannelMessageMediaAccessV1: "messageMedia",
+  deleteServerChannelMessageV1: "messageMedia",
+});
+// The Storage-reaching callables get the Company File media profile: the
+// probe reads bytes, access signs V4 URLs, delete removes the object inline.
+const SERVER_MESSAGE_MEDIA_CALLABLES = Object.freeze([
+  "finalizeServerChannelMessageMediaV1",
+  "getServerChannelMessageMediaAccessV1",
+  "deleteServerChannelMessageV1",
+]);
+const SERVER_MESSAGE_SCHEDULE_EXPORTS = Object.freeze([
+  "expireServerChannelMessageMediaReservations",
+  "processServerChannelMessageMediaDeletionJobs",
+]);
+const SERVER_MESSAGE_EXPORT_NAMES = Object.freeze([
+  ...Object.keys(SERVER_MESSAGE_CALLABLE_METHODS),
+  ...SERVER_MESSAGE_SCHEDULE_EXPORTS,
+]);
+
+// Request to speak (ADR "request to speak end to end"): the host's or a
+// moderator's decline of a raised hand. A SEPARATE extension exactly like the
+// message-parity one above, for the same reason: the reviewed 62/56/55
+// manifest, its activation-package phase plan and docs/Servers.md's frozen
+// 54-entry table stay unchanged. It is built by
+// createServerSessionHandFunctions below over the same participation service
+// the base runtime uses, behind the same activation gate and callable options.
+// It never reaches the media provider (a hand is not authority), so it binds
+// no secret.
+const SESSION_HAND_CALLABLE_METHODS = Object.freeze({
+  answerServerSessionHandV1: "participation",
+});
+const SESSION_HAND_EXPORT_NAMES = Object.freeze(Object.keys(SESSION_HAND_CALLABLE_METHODS));
 
 // Outbox job kinds and the reviewed worker that owns each of them. The three
 // workers validate their own job shape under their own transaction; this
@@ -452,7 +519,19 @@ function createServersV1Runtime({
       storage: privateCompanyFileStorage,
     }),
     invites: createServerInviteService(dependencies),
-    memberships: createServerMembershipService(dependencies),
+    // Role promotions and ownership transfers announce themselves (ADR-213).
+    // The notifier is injected rather than imported by the membership
+    // service so a focused runtime without a default Firebase app still
+    // constructs the service.
+    memberships: createServerMembershipService({
+      ...dependencies,
+      notifyServerRolePromotion: createServerRolePromotionNotifier({
+        firestore: database,
+        // The same clock the rest of the runtime uses, so the notice's
+        // per-actor-per-recipient budget cannot be moved by a second one.
+        clock,
+      }),
+    }),
     management: createServerManagementService(dependencies),
     sessions: createServerSessionService(dependencies),
     broadcast: createServerCommunityBroadcastService(dependencies),
@@ -879,20 +958,34 @@ function createServersV1Functions({
       { scanned: 0, completed: 0, deferred: 0, rejected: 0, failed: 0, unsupported: 0,
         hasMore: false, activationDisabled: true }),
   );
-  // Same cadence as the legacy sweepStrandedLiveRoomsSchedule: a stale
-  // generation stays visibly LIVE for at most one grace period plus one
-  // cadence. maxInstances: 1 keeps two runs from racing onto one generation
-  // (the staging transaction makes that correct anyway, but not free).
+  // Same cadence as the legacy sweepStrandedLiveRoomsSchedule. A generation
+  // whose emptiness was observed (release callable or provider
+  // `room_finished`) ends here at most one cadence after its reconnect grace;
+  // an unobserved one keeps the ADR-180 bound. maxInstances: 1 keeps two runs
+  // from racing onto one generation (the staging transaction makes that
+  // correct anyway, but not free).
   exportsMap.sweepStaleServerChannelSessionsSchedule = registrars.onSchedule(
     { ...workerOptions, schedule: "every 5 minutes", timeZone: "Etc/UTC", maxInstances: 1 },
     async () => runWorker("sweepStaleServerChannelSessionsSchedule", async () => {
       const outcome = await resolved.staleness.stageStaleServerChannelSessions();
-      const line = { ...outcome, staged: outcome.staged.length };
-      if (outcome.truncated || outcome.providerUnavailable > 0) log.warn("servers.stale_session_sweep", line);
-      else log.info("servers.stale_session_sweep", line);
+      // Counts only, never ids. The last-leave and drift counters default to
+      // zero so an older worker result still produces one line shape.
+      const line = {
+        ...outcome,
+        staged: outcome.staged.length,
+        stagedEmpty: outcome.stagedEmpty ?? 0,
+        graceRunning: outcome.graceRunning ?? 0,
+        driftRepaired: outcome.driftRepaired ?? 0,
+        driftUnresolved: outcome.driftUnresolved ?? 0,
+        driftTruncated: outcome.driftTruncated ?? false,
+      };
+      if (outcome.truncated || outcome.providerUnavailable > 0 || line.driftUnresolved > 0 || line.driftTruncated) {
+        log.warn("servers.stale_session_sweep", line);
+      } else log.info("servers.stale_session_sweep", line);
       return line;
     }, { scanned: 0, truncated: false, skippedLegacy: 0, skippedUnbound: 0, skippedYoung: 0,
-      skippedOccupied: 0, providerUnavailable: 0, changed: 0, staged: 0, activationDisabled: true }),
+      skippedOccupied: 0, providerUnavailable: 0, changed: 0, staged: 0, stagedEmpty: 0, graceRunning: 0,
+      driftRepaired: 0, driftUnresolved: 0, driftTruncated: false, activationDisabled: true }),
   );
   exportsMap.sweepServerFamilyMemoryMaintenanceSchedule = registrars.onSchedule(
     {
@@ -958,6 +1051,190 @@ function createServersV1Functions({
   return Object.freeze(exportsMap);
 }
 
+/**
+ * The reviewed message-parity services over one Firestore handle. Like
+ * createServersV1Runtime it performs no I/O and loads no provider SDK.
+ */
+function createServerMessageRuntime({
+  db = null,
+  Timestamp: TimestampClass = Timestamp,
+  clock = Date.now,
+  bucket = null,
+  storage = null,
+  probeMedia = null,
+} = {}) {
+  if (typeof clock !== "function") throw new TypeError("clock must be a function.");
+  const database = db ?? getFirestore();
+  // Resolved on first object access, never at module load: the cold-start
+  // graph pins @google-cloud/storage at zero (utils/lazy_bucket.js).
+  const resolvedBucket = bucket ?? createLazyBucket(() => getStorage().bucket());
+  const dependencies = { db: database, Timestamp: TimestampClass, clock };
+  return Object.freeze({
+    db: database,
+    clock,
+    messageReactions: createServerMessageReactionService(dependencies),
+    messageMedia: createServerMessageMediaService({
+      ...dependencies,
+      storage: storage ?? createServerMessageMediaStorageAdapter(resolvedBucket),
+      // The direct-message trusted probe (reels/probe.js): real image/video
+      // bytes, track presence and a bounded duration from the object itself.
+      probeMedia: probeMedia ?? createTrustedGcsMediaProbe(resolvedBucket),
+    }),
+  });
+}
+
+/**
+ * Builds the message-parity export map (SERVER_MESSAGE_EXPORT_NAMES). Every
+ * callable passes through the same Auth binding, the same server-owned
+ * appConfig/serversV1 activation gate and the same error mapping as the base
+ * Servers callables; nothing here is reachable while Servers are disabled.
+ */
+function createServerMessageFunctions({
+  runtime = null,
+  registrars = defaultRegistrars(),
+  enforceAppCheck = false,
+  activationGate = null,
+  log = logger,
+} = {}) {
+  for (const name of ["onCall", "onSchedule"]) {
+    if (typeof registrars?.[name] !== "function") {
+      throw new TypeError(`Missing Cloud Functions registrar: ${name}.`);
+    }
+  }
+  const resolved = runtime ?? createServerMessageRuntime();
+  const activation = activationGate ?? createServersV1ActivationGate({ db: resolved.db, log });
+  if (typeof activation?.requireCallable !== "function" || typeof activation?.workersEnabled !== "function") {
+    throw new TypeError("A Servers V1 runtime activation gate is required.");
+  }
+  const callableOptions = {
+    region: REGION,
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    maxInstances: 50,
+    minInstances: 0,
+    enforceAppCheck: enforceAppCheck === true,
+    consumeAppCheckToken: enforceAppCheck === true,
+  };
+  const mediaOptions = { ...callableOptions, memory: "512MiB", timeoutSeconds: 120 };
+  const exportsMap = {};
+  for (const [name, serviceName] of Object.entries(SERVER_MESSAGE_CALLABLE_METHODS)) {
+    const method = resolved?.[serviceName]?.[name];
+    if (typeof method !== "function") {
+      throw new TypeError(`Missing Servers V1 method ${serviceName}.${name}.`);
+    }
+    exportsMap[name] = registrars.onCall(
+      SERVER_MESSAGE_MEDIA_CALLABLES.includes(name) ? { ...mediaOptions } : { ...callableOptions },
+      callableHandler(name, method, activation, log),
+    );
+  }
+  const media = resolved?.messageMedia;
+  if (typeof media?.expireServerChannelMessageMediaReservations !== "function" ||
+      typeof media?.processServerChannelMessageMediaDeletionJobs !== "function") {
+    throw new TypeError("Missing Servers V1 message media workers.");
+  }
+  // Same gate and paused shape as the Company File sweep: workers run only
+  // while appConfig/serversV1.workersEnabled is true, and durable work
+  // (reservations, deletion jobs) simply waits while they are paused.
+  async function runWorker(name, task, paused) {
+    let enabled = false;
+    try {
+      enabled = await activation.workersEnabled();
+    } catch {
+      // The activation reader already logged a non-sensitive diagnostic.
+    }
+    if (!enabled) {
+      log.info("servers.worker_paused", { worker: name });
+      return paused;
+    }
+    return task();
+  }
+  const scheduleOptions = {
+    region: REGION,
+    memory: "512MiB",
+    timeoutSeconds: 300,
+    schedule: "every 10 minutes",
+    timeZone: "Etc/UTC",
+    maxInstances: 1,
+  };
+  exportsMap.expireServerChannelMessageMediaReservations = registrars.onSchedule(
+    { ...scheduleOptions },
+    async () => runWorker("expireServerChannelMessageMediaReservations", async () => {
+      const line = await media.expireServerChannelMessageMediaReservations({ limit: 20 });
+      if (line.hasMore) log.warn("servers.message_media_reservation_sweep", line);
+      else log.info("servers.message_media_reservation_sweep", line);
+      return line;
+    }, { expired: [], processed: 0, hasMore: false, activationDisabled: true }),
+  );
+  exportsMap.processServerChannelMessageMediaDeletionJobs = registrars.onSchedule(
+    { ...scheduleOptions },
+    async () => runWorker("processServerChannelMessageMediaDeletionJobs", async () => {
+      const line = await media.processServerChannelMessageMediaDeletionJobs({ limit: 20 });
+      if (line.hasMore) log.warn("servers.message_media_deletion_sweep", line);
+      else log.info("servers.message_media_deletion_sweep", line);
+      return line;
+    }, { completed: [], processed: 0, hasMore: false, activationDisabled: true }),
+  );
+  return Object.freeze(exportsMap);
+}
+
+/**
+ * The participation service alone over one Firestore handle, for the
+ * request-to-speak extension. Performs no I/O and loads no provider SDK.
+ */
+function createServerSessionHandRuntime({
+  db = null,
+  Timestamp: TimestampClass = Timestamp,
+  clock = Date.now,
+} = {}) {
+  if (typeof clock !== "function") throw new TypeError("clock must be a function.");
+  const database = db ?? getFirestore();
+  return Object.freeze({
+    db: database,
+    clock,
+    participation: createServerSessionParticipationService({ db: database, Timestamp: TimestampClass, clock }),
+  });
+}
+
+/**
+ * Builds the request-to-speak export map (SESSION_HAND_EXPORT_NAMES) with the
+ * same Auth binding, activation gate, error mapping and callable options as
+ * the base participation callables.
+ */
+function createServerSessionHandFunctions({
+  runtime = null,
+  registrars = defaultRegistrars(),
+  enforceAppCheck = false,
+  activationGate = null,
+  log = logger,
+} = {}) {
+  if (typeof registrars?.onCall !== "function") {
+    throw new TypeError("Missing Cloud Functions registrar: onCall.");
+  }
+  const resolved = runtime ?? createServerSessionHandRuntime();
+  const activation = activationGate ?? createServersV1ActivationGate({ db: resolved.db, log });
+  if (typeof activation?.requireCallable !== "function" || typeof activation?.workersEnabled !== "function") {
+    throw new TypeError("A Servers V1 runtime activation gate is required.");
+  }
+  const callableOptions = {
+    region: REGION,
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    maxInstances: 50,
+    minInstances: 0,
+    enforceAppCheck: enforceAppCheck === true,
+    consumeAppCheckToken: enforceAppCheck === true,
+  };
+  const exportsMap = {};
+  for (const [name, serviceName] of Object.entries(SESSION_HAND_CALLABLE_METHODS)) {
+    const method = resolved?.[serviceName]?.[name];
+    if (typeof method !== "function") {
+      throw new TypeError(`Missing Servers V1 method ${serviceName}.${name}.`);
+    }
+    exportsMap[name] = registrars.onCall({ ...callableOptions }, callableHandler(name, method, activation, log));
+  }
+  return Object.freeze(exportsMap);
+}
+
 module.exports = {
   ALL_SERVER_CALLABLE_METHODS,
   ACTIVATION_ACCESS,
@@ -977,10 +1254,21 @@ module.exports = {
   REGION,
   SECRET_BOUND_CALLABLES,
   SERVER_CALLABLE_METHODS,
+  SERVER_MESSAGE_CALLABLE_METHODS,
+  SERVER_MESSAGE_EXPORT_NAMES,
+  SERVER_MESSAGE_MEDIA_CALLABLES,
+  SERVER_MESSAGE_SCHEDULE_EXPORTS,
   SERVERS_V1_EXPORT_NAMES,
+  SESSION_HAND_CALLABLE_METHODS,
+  SESSION_HAND_EXPORT_NAMES,
+  SESSION_LIFECYCLE_CALLABLE_METHODS,
   SWEEP_EXPORTS,
   authBoundRequest,
   canonicalActivationConfig,
+  createServerMessageFunctions,
+  createServerMessageRuntime,
+  createServerSessionHandFunctions,
+  createServerSessionHandRuntime,
   createServersV1ActivationGate,
   createServersV1Dispatcher,
   createServersV1Functions,

@@ -96,7 +96,7 @@ is still worth naming: had real rows existed, that is precisely the sweep outage
 the index step exists to prevent.
 
 Full command, tables and read-backs:
-[DEPLOYMENT.md](../DEPLOYMENT.md#build-32-release-round--backend-deployed-ios-with-testers-web-and-play-pending-2026-09-19).
+[DEPLOYMENT.md](../DEPLOYMENT.md#build-32-release-round--backend-deployed-ios-web-and-play-with-testers-2026-09-19).
 
 ## The client round
 

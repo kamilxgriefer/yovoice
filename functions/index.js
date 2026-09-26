@@ -179,6 +179,17 @@ const {
   onServerInviteWritten,
   sweepExpiredServerInvitesSchedule,
 } = require("./notifications/invites");
+// Comments and @mentions on Voice Moments and Yeels, and the Server event
+// reminders the app has accepted opt-ins for since Servers V1 (ADR-213).
+const {
+  onMomentCommentCreated,
+  onMomentCommentDeleted,
+  onReelCommentCreated,
+  onReelCommentDeleted,
+} = require("./notifications/engagement");
+const {
+  sendServerEventRemindersSchedule,
+} = require("./notifications/server_events");
 
 /*
 |--------------------------------------------------------------------------
@@ -309,6 +320,11 @@ exports.onClubInviteCreated = onClubInviteCreated;
 exports.onClubMemberCreated = onClubMemberCreated;
 exports.onServerInviteWritten = onServerInviteWritten;
 exports.sweepExpiredServerInvitesSchedule = sweepExpiredServerInvitesSchedule;
+exports.onMomentCommentCreated = onMomentCommentCreated;
+exports.onMomentCommentDeleted = onMomentCommentDeleted;
+exports.onReelCommentCreated = onReelCommentCreated;
+exports.onReelCommentDeleted = onReelCommentDeleted;
+exports.sendServerEventRemindersSchedule = sendServerEventRemindersSchedule;
 
 /*
 |--------------------------------------------------------------------------
@@ -321,6 +337,21 @@ const {
 } = require("./auth/session_management");
 
 exports.revokeMyRefreshTokens = revokeMyRefreshTokens;
+
+// Pre-registered account takeover, Phase 1: one remediation authority, two
+// triggers (the owner's own client right after a returning Google/Apple
+// sign-in, and a bounded sweeper), plus the Auth onCreate trigger that
+// records an unverified password while it is still visible. See
+// functions/auth/federated_takeover.js and docs/SECURITY.md.
+const {
+  onAuthUserCreated,
+  secureFederatedSignInV1,
+  sweepFederatedTakeoverSchedule,
+} = require("./auth/federated_takeover");
+
+exports.onAuthUserCreated = onAuthUserCreated;
+exports.secureFederatedSignInV1 = secureFederatedSignInV1;
+exports.sweepFederatedTakeoverSchedule = sweepFederatedTakeoverSchedule;
 
 /*
 |--------------------------------------------------------------------------
@@ -578,9 +609,10 @@ function strictBooleanEnvironment(name) {
 
 const { createReelFunctions } = require("./reels");
 Object.assign(exports, createReelFunctions({
-  // Clients attach App Check tokens already. Enforcement follows the staged
-  // project-wide rollout and must not be enabled before platform telemetry is
-  // healthy on iOS, Android and Web.
+  // Clients activate App Check, but platform attestation is not yet healthy
+  // (Android tokens fail to decode, iOS lacks the App Attest entitlement and
+  // web has no reCAPTCHA site key). Enforcement must not be enabled before
+  // console telemetry shows verified traffic on iOS, Android and Web.
   enforceAppCheck: strictBooleanEnvironment(
     "YOVOICE_ENFORCE_REELS_APP_CHECK",
   ),
@@ -594,26 +626,53 @@ Object.assign(exports, createReelFunctions({
 const { createGifFunctions } = require("./media/gif/catalog");
 const { GIF_PROVIDERS } = require("./media/gif/gif_ref");
 const deployedGifProvider = GIF_PROVIDERS.yovoice;
+// GIPHY, option B (ADR-214). Search and trending run in the CLIENT, as GIPHY's
+// API terms require; the server stays the send-time authority. `resolveGif`
+// fetches one chosen GIPHY id with the GIPHY_API_KEY secret, applies the
+// rating/denylist/block filter and writes the `gifAssets` record the message
+// transaction reads. It is SOURCE-GATED OFF: turning it on declares the
+// GIPHY_API_KEY secret and adds an export, so it needs the secret set first,
+// the pinned export list in test/cold_start_module_graph.test.js and the
+// secret-discovery expectation updated in the same reviewed commit, and one
+// deploy wave with the catalog. While it is off, getGifCatalog advertises no
+// resolvable provider, so a client built with a GIPHY key still shows
+// Originals only.
+const GIPHY_SEND_RESOLVE_ENABLED = false;
+// Every send path accepts BOTH providers. A GIPHY reference can only resolve
+// once `resolveGif` has written its server-owned record, so accepting it here
+// ahead of the resolver is inert, and it removes the split-revision hazard
+// where Originals (and every Originals recent) stop sending on a provider flip.
+const gifSendProviders = Object.freeze([
+  GIF_PROVIDERS.yovoice,
+  GIF_PROVIDERS.giphy,
+]);
 Object.assign(exports, createGifFunctions({
   providerName: deployedGifProvider,
-  // Clients attach App Check tokens already. Enforcement follows the staged
-  // project-wide rollout used by Reels and Stage B.
+  resolveProviders: GIPHY_SEND_RESOLVE_ENABLED ? [GIF_PROVIDERS.giphy] : [],
+  // Telemetry first: App Check is activated in clients but attestation is not
+  // yet healthy on every platform, so enforcement stays off until console
+  // metrics show verified traffic on Android, iOS and Web (ADR-214).
   enforceAppCheck: strictBooleanEnvironment(
     "YOVOICE_ENFORCE_GIF_APP_CHECK",
   ),
 }));
 
 const stageBFunctions = createStageBFunctions({
-  // Message publication uses the exact same source-owned provider as catalog
-  // discovery. This prevents a search result from being selectable while the
-  // authoritative direct/room/server send path captured a missing env value.
+  // Message publication uses a source-owned allow-set (ADR-214) rather than a
+  // missing env value, so a selectable Originals or GIPHY result always has a
+  // send path that accepts its provider.
   runtime: createStageBIntegrityRuntime({
-    directOptions: { gifProviderName: deployedGifProvider },
-    communityOptions: { gifProviderName: deployedGifProvider },
+    directOptions: {
+      gifProviderName: deployedGifProvider,
+      gifProviderNames: gifSendProviders,
+    },
+    communityOptions: {
+      gifProviderName: deployedGifProvider,
+      gifProviderNames: gifSendProviders,
+    },
   }),
-  // Rollout switch: clients already attach App Check tokens, but production
-  // enforcement must only flip after Android/iOS/Web attestation telemetry
-  // is healthy. Invalid configuration fails the deployment instead of
+  // Rollout switch: clients activate App Check, but production enforcement
+  // must only flip after Android/iOS/Web attestation telemetry is healthy. Invalid configuration fails the deployment instead of
   // silently weakening enforcement.
   enforceUserAppCheck: strictBooleanEnvironment(
     "YOVOICE_ENFORCE_STAGE_B_APP_CHECK",
@@ -645,7 +704,7 @@ exports.receiveLiveKitAchievementWebhook = receiveLiveKitAchievementWebhook;
 | Servers V1 — static registration, runtime activation
 |--------------------------------------------------------------------------
 | Firebase discovers exports before it loads functions/.env, so an environment
-| variable cannot safely decide which function names exist. The base fifty-three
+| variable cannot safely decide which function names exist. The base fifty-five
 | Servers exports are always discoverable and can therefore be deployed by the
 | reviewed phase selectors. Every callable then reads the server-owned
 | appConfig/serversV1 document and fails closed until an operator enables its
@@ -654,7 +713,11 @@ exports.receiveLiveKitAchievementWebhook = receiveLiveKitAchievementWebhook;
 | remains source-disabled: none of its seven exports, service construction or
 | missing credential is part of this registration.
 */
-const { createServersV1Functions } = require("./servers/registration");
+const {
+  createServerMessageFunctions,
+  createServerSessionHandFunctions,
+  createServersV1Functions,
+} = require("./servers/registration");
 Object.assign(exports, createServersV1Functions({
   // App Check remains in telemetry mode for this first internal rollout. A
   // later source-reviewed revision may set it true after platform telemetry.
@@ -662,6 +725,44 @@ Object.assign(exports, createServersV1Functions({
   // A later source-reviewed revision may register the seven Egress exports
   // only after its dedicated credential exists and the provider drill passes.
   enablePodcastRecording: false,
+}));
+// Server channel messaging parity with direct messages: emoji reactions and
+// photo/video messages. A separate, explicitly listed extension
+// (SERVER_MESSAGE_EXPORT_NAMES) behind the same appConfig/serversV1 gate; the
+// frozen base manifest above is unchanged.
+Object.assign(exports, createServerMessageFunctions({ enforceAppCheck: false }));
+// Request to speak: the host's or a moderator's decline of a raised hand
+// (SESSION_HAND_EXPORT_NAMES). Another explicit extension behind the same
+// gate; the frozen base manifest above is unchanged.
+Object.assign(exports, createServerSessionHandFunctions({ enforceAppCheck: false }));
+
+/*
+|--------------------------------------------------------------------------
+| In-app bug reports (see functions/bug_reports/registration.js)
+|--------------------------------------------------------------------------
+| Eight exports need no new secret: reporters submit a report (and optionally
+| attach one reserved screenshot); the protected owner lists, reads, triages
+| and (for rights requests) deletes them or their screenshot in the Staff
+| Center; a daily sweep enforces retention. Reports
+| are therefore usable with nothing else configured.
+|
+| Alert delivery is SOURCE-GATED OFF, one gate per channel. Turning a gate on
+| exports `deliverBugReportV1` and declares that channel's secret
+| (RESEND_API_KEY for e-mail, GITHUB_BUG_REPORT_TOKEN for GitHub issues), so
+| the secret must be set first, and test/cold_start_module_graph.test.js's
+| pinned export list must gain `deliverBugReportV1` in the same reviewed
+| commit. Each channel is then switched at runtime in the Admin-only
+| appConfig/bugReports document (docs/DEPLOYMENT.md, "Bug report alerts").
+*/
+const BUG_REPORT_EMAIL_DELIVERY_ENABLED = false;
+const BUG_REPORT_GITHUB_DELIVERY_ENABLED = false;
+const { createBugReportFunctions } = require("./bug_reports/registration");
+Object.assign(exports, createBugReportFunctions({
+  emailDelivery: BUG_REPORT_EMAIL_DELIVERY_ENABLED,
+  githubDelivery: BUG_REPORT_GITHUB_DELIVERY_ENABLED,
+  // Telemetry mode, like every other callable today (App Check attestation is
+  // not yet healthy on every platform).
+  enforceAppCheck: false,
 }));
 
 // Cold-start observability. Emitted once per instance start, only inside the

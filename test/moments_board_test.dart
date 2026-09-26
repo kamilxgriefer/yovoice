@@ -38,6 +38,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -973,6 +974,162 @@ void main() {
           .get();
       expect(heard.docs.map((doc) => doc.id), unorderedEquals(['c1', 'c2']));
     });
+
+    testWidgets('the stage waveform seeks under a finger once the player '
+        'knows the length; the arrows still walk the chain', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final semantics = tester.ensureSemantics();
+
+      final player = _SeekRecordingAudioPlayer();
+      final chain = buildMomentChains(chainOfThree()).single;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MomentStoryViewer(
+              chain: chain,
+              feedService: feed(),
+              momentService: privateMoments(),
+              playerFactory: () => player,
+              autoPlay: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      const scrub = ValueKey('story-progress-scrub');
+      // Nothing loaded yet: no pretend seek.
+      expect(tester.widget<Slider>(find.byKey(scrub)).onChanged, isNull);
+
+      // Left/right stay chain navigation on the story surface.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      expect(find.text('2 of 3'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pump();
+      expect(find.text('1 of 3'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('story-play-toggle')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.widget<Slider>(find.byKey(scrub)).onChanged, isNotNull);
+
+      final node = tester.getSemantics(
+        find.bySemanticsLabel(RegExp('Playback position')),
+      );
+      expect(node.getSemanticsData().flagsCollection.isSlider, isTrue);
+
+      final rect = tester.getRect(find.byKey(scrub));
+      await tester.dragFrom(
+        Offset(rect.left + 4, rect.center.dy),
+        Offset(rect.width / 2 - 4, 0),
+      );
+      await tester.pump();
+      expect(player.seeks, isNotEmpty);
+      expect(player.seeks.last.inMilliseconds, closeTo(6000, 400));
+      expect(find.text('0:06 / 0:12'), findsOneWidget);
+      semantics.dispose();
+    });
+
+    Future<Rect> openLoadedStory(
+      WidgetTester tester,
+      _HeldSeekAudioPlayer player,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final chain = buildMomentChains(chainOfThree()).single;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MomentStoryViewer(
+              chain: chain,
+              feedService: feed(),
+              momentService: privateMoments(),
+              playerFactory: () => player,
+              autoPlay: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.byKey(const ValueKey('story-play-toggle')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      return tester.getRect(find.byKey(const ValueKey('story-progress-scrub')));
+    }
+
+    testWidgets('a finger dragged past the end of the waveform stops short '
+        'of it: no completion, no advance under the finger', (tester) async {
+      final player = _HeldSeekAudioPlayer();
+      final rect = await openLoadedStory(tester, player);
+
+      final gesture = await tester.startGesture(
+        Offset(rect.left + 4, rect.center.dy),
+      );
+      await gesture.moveTo(Offset(rect.right - 20, rect.center.dy));
+      await tester.pump();
+      await gesture.moveTo(Offset(rect.right + 40, rect.center.dy));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(player.seeks, isNotEmpty);
+      for (final seek in player.seeks) {
+        expect(seek, lessThan(const Duration(seconds: 12)));
+      }
+      expect(
+        player.seeks.last,
+        const Duration(seconds: 12) - const Duration(milliseconds: 40),
+      );
+      expect(player.completions, 0);
+      expect(find.text('1 of 3'), findsOneWidget);
+    });
+
+    testWidgets('seeks are coalesced one at a time, and a stale position '
+        'event never pulls the waveform from under the finger', (tester) async {
+      final player = _HeldSeekAudioPlayer()..holdSeeks = true;
+      final rect = await openLoadedStory(tester, player);
+
+      final gesture = await tester.startGesture(
+        Offset(rect.left + 4, rect.center.dy),
+      );
+      await gesture.moveTo(Offset(rect.left + rect.width / 4, rect.center.dy));
+      await tester.pump();
+      await gesture.moveTo(Offset(rect.left + rect.width / 3, rect.center.dy));
+      await tester.pump();
+      await gesture.moveTo(Offset(rect.left + rect.width / 2, rect.center.dy));
+      await tester.pump();
+      // The first seek is still in flight: nothing else went out yet.
+      expect(player.seeks, hasLength(1));
+      expect(find.text('0:06 / 0:12'), findsOneWidget);
+
+      // The engine reports where an earlier seek left it.
+      player.emitPosition(const Duration(milliseconds: 120));
+      await tester.pump();
+      expect(find.text('0:06 / 0:12'), findsOneWidget);
+
+      player.releaseSeeks();
+      await tester.pump();
+      await tester.pump();
+      expect(player.seeks, hasLength(2));
+      expect(player.seeks.last.inMilliseconds, closeTo(6000, 400));
+
+      await gesture.up();
+      player.releaseSeeks();
+      await tester.pump();
+      await tester.pump();
+      player.releaseSeeks();
+      await tester.pump();
+
+      // Released and drained: the engine's clock drives the waveform again.
+      player.emitPosition(const Duration(seconds: 7));
+      await tester.pump();
+      expect(find.text('0:07 / 0:12'), findsOneWidget);
+    });
   });
 
   group('the filter chips switch data sources', () {
@@ -1447,4 +1604,47 @@ class _FakeAudioPlayer implements audio.AudioPlayer {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Records the seeks the story stage's waveform asks for.
+class _SeekRecordingAudioPlayer extends _FakeAudioPlayer {
+  final List<Duration> seeks = <Duration>[];
+
+  @override
+  Future<void> seek(Duration position) async => seeks.add(position);
+}
+
+/// A player that behaves like a native backend at the edges: a seek to the
+/// very end raises completion, seeks can be held in flight, and the test can
+/// report an engine position at any time.
+class _HeldSeekAudioPlayer extends _FakeAudioPlayer {
+  final List<Duration> seeks = <Duration>[];
+  final List<Completer<void>> _held = <Completer<void>>[];
+  bool holdSeeks = false;
+  int completions = 0;
+
+  void emitPosition(Duration position) {
+    if (!_positions.isClosed) _positions.add(position);
+  }
+
+  void releaseSeeks() {
+    final held = List<Completer<void>>.of(_held);
+    _held.clear();
+    for (final seek in held) {
+      seek.complete();
+    }
+  }
+
+  @override
+  Future<void> seek(Duration position) {
+    seeks.add(position);
+    if (position >= const Duration(seconds: 12)) {
+      completions += 1;
+      complete();
+    }
+    if (!holdSeeks) return Future<void>.value();
+    final pending = Completer<void>();
+    _held.add(pending);
+    return pending.future;
+  }
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
@@ -8,11 +9,20 @@ import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/calls/data/models/direct_call.dart';
+import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
+import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/calls/presentation/direct_call_launcher.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
+import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/moderation/data/services/report_service.dart';
+import 'package:yovoice/features/moderation/presentation/widgets/report_reason_sheet.dart';
+import 'package:yovoice/features/servers/data/services/server_service.dart';
+import 'package:yovoice/features/servers/presentation/widgets/invite_person_to_server_sheet.dart';
 import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/creator/presentation/widgets/creator_pinned_moment_card.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_pinned_moment_screen.dart';
@@ -26,7 +36,7 @@ import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headl
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
-import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
+import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
@@ -43,6 +53,12 @@ class FriendProfileScreen extends StatefulWidget {
     this.socialGraphService,
     this.profileMediaService,
     this.creatorPinnedPostService,
+    this.isFriend = true,
+    this.relationshipStatusResolver,
+    this.directCallService,
+    this.voiceCallService,
+    this.reportService,
+    this.serverRepository,
     super.key,
   });
 
@@ -59,6 +75,23 @@ class FriendProfileScreen extends StatefulWidget {
   final SocialGraphService? socialGraphService;
   final ProfileMediaService? profileMediaService;
   final CreatorPinnedPostService? creatorPinnedPostService;
+
+  /// What the route that opened this profile already knows. The Friends list
+  /// only lists friends, so it keeps the default; the profile preview passes
+  /// its resolved relationship. While true, the relationship read below may
+  /// only NARROW the offer (to blocked) — it never takes a friend's actions
+  /// away on a read that cannot see the friendship.
+  final bool isFriend;
+
+  /// How the screen learns the relationship. Production leaves this null and
+  /// uses [FriendService.getRelationshipStatus] (four plain `get`s, no
+  /// callable). It only sees the viewer's own block; the backend refuses the
+  /// rest.
+  final RelationshipStatusInvoker? relationshipStatusResolver;
+  final DirectCallGateway? directCallService;
+  final VoiceCallService? voiceCallService;
+  final ReportService? reportService;
+  final ServerRepository? serverRepository;
 
   @override
   State<FriendProfileScreen> createState() => _FriendProfileScreenState();
@@ -88,8 +121,30 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   late final SocialGraphService _socialGraphService =
       widget.socialGraphService ?? SocialGraphService();
 
+  late final DirectCallGateway _calls =
+      widget.directCallService ??
+      DirectCallService(firestore: _firestore, auth: _auth);
+  late final VoiceCallService _voice =
+      widget.voiceCallService ?? VoiceCallService.instance;
+
   late final Future<MutualFriendsSummary> _mutualFriendsFuture;
 
+  /// Null while unknown. Starts as friends when the route vouches for it.
+  FriendRelationshipStatus? _relationship;
+
+  /// True once the incoming-request panel has answered, so it stays to show
+  /// the result after [_relationship] leaves `requestReceived`.
+  bool _requestPanelAnswered = false;
+
+  /// Part of the panel's key: a NEW request from the same person, after an
+  /// earlier one was answered here, mounts a fresh panel with Accept /
+  /// Decline instead of the old result.
+  int _requestPanelGeneration = 0;
+
+  /// Which call slot is starting, so only the tapped tile shows progress.
+  DirectCallMediaType? _startingCallType;
+  bool _startingCall = false;
+  bool _reporting = false;
   bool _openingChat = false;
   bool _removingFriend = false;
   bool _changingFollow = false;
@@ -102,7 +157,46 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     _mutualFriendsFuture = _socialGraphService
         .getMutualFriends(widget.friend.id)
         .catchError((_) => MutualFriendsSummary.empty);
+    if (widget.isFriend) _relationship = FriendRelationshipStatus.friends;
+    unawaited(_refreshRelationship());
   }
+
+  /// Reads the relationship once on open and again after returning from a
+  /// pushed route. A failed read leaves the state as it was: an unknown
+  /// relationship keeps the call slots disabled, and never guesses "friends".
+  Future<void> _refreshRelationship() async {
+    final RelationshipStatusInvoker resolve;
+    try {
+      resolve =
+          widget.relationshipStatusResolver ??
+          _friendService.getRelationshipStatus;
+    } catch (_) {
+      return;
+    }
+    try {
+      final status = await resolve(widget.friend.id);
+      if (!mounted) return;
+      setState(() {
+        if (widget.isFriend) {
+          _relationship = status == FriendRelationshipStatus.blocked
+              ? FriendRelationshipStatus.blocked
+              : FriendRelationshipStatus.friends;
+        } else {
+          if (status == FriendRelationshipStatus.requestReceived &&
+              _requestPanelAnswered) {
+            _requestPanelAnswered = false;
+            _requestPanelGeneration++;
+          }
+          _relationship = status;
+        }
+      });
+    } catch (_) {
+      // Unknown stays unknown.
+    }
+  }
+
+  bool get _isFriends => _relationship == FriendRelationshipStatus.friends;
+  bool get _isBlocked => _relationship == FriendRelationshipStatus.blocked;
 
   @override
   void dispose() {
@@ -110,8 +204,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     super.dispose();
   }
 
-  Future<void> _openChat() async {
-    if (_openingChat || _removingFriend) return;
+  Future<void> _openChat({
+    ChatLaunchAction initialAction = ChatLaunchAction.none,
+  }) async {
+    if (_openingChat || _startingCall || _removingFriend) return;
     setState(() => _openingChat = true);
     try {
       final friend = widget.friend;
@@ -135,9 +231,11 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             profileMediaService: _profileMediaService,
             firestore: _firestore,
             auth: _auth,
+            initialAction: initialAction,
           ),
         ),
       );
+      if (mounted) unawaited(_refreshRelationship());
     } catch (error) {
       // See ADR-062: a refusal from `openDirectConversation` now reaches
       // this handler instead of being swallowed into a client-side write.
@@ -154,6 +252,155 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     } finally {
       if (mounted) setState(() => _openingChat = false);
     }
+  }
+
+  /// Zadzwoń / Wideo: the shared direct-call flow. Permissions are the first
+  /// await (the web gesture chain), then the DM is opened the same way
+  /// Message opens it — `openDirectConversation` also enforces the friend's
+  /// message privacy — then the backend starts the call.
+  Future<void> _startCall(DirectCallMediaType mediaType) async {
+    if (_startingCall || _openingChat || _removingFriend) return;
+    final friend = widget.friend;
+    // The tile's busy state is owned by the launcher: it may refuse before it
+    // ever reports busy (a live voice session), so the tapped media type is
+    // only recorded once the launcher actually starts.
+    await launchDirectCall(
+      context,
+      calls: _calls,
+      voice: _voice,
+      calleeId: friend.id,
+      mediaType: mediaType,
+      resolveConversationId: () => _messageService.openOrCreateConversation(
+        otherUserId: friend.id,
+        otherDisplayName: friend.displayName,
+        otherEmail: friend.email,
+        otherPhotoUrl: friend.photoUrl ?? '',
+      ),
+      currentUserId: _auth.currentUser?.uid ?? '',
+      participantName: () =>
+          _auth.currentUser?.displayName ??
+          _auth.currentUser?.email ??
+          AppLocalizations.of(
+            context,
+          ).text('YO Voice user', 'Użytkownik YO Voice'),
+      showMessage: _showMessage,
+      onBusyChanged: (busy) => setState(() {
+        _startingCall = busy;
+        _startingCallType = busy ? mediaType : null;
+      }),
+      onStartAudioInstead: () =>
+          unawaited(_startCall(DirectCallMediaType.audio)),
+      describeError: (error, copy) =>
+          error is FirebaseFunctionsException &&
+              error.code == 'permission-denied'
+          ? copy.text(
+              "You can't call this person from their profile right now.",
+              'Nie możesz teraz zadzwonić do tej osoby z profilu.',
+            )
+          : null,
+    );
+    if (mounted) unawaited(_refreshRelationship());
+  }
+
+  Future<void> _report() async {
+    if (_reporting) return;
+    final copy = AppLocalizations.of(context);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final name = widget.friend.displayName;
+    final uid = widget.friend.id;
+    final reason = await showReportReasonSheet(
+      context: context,
+      title: copy.template(
+        'Report {name}',
+        'Zgłoś użytkownika {name}',
+        values: {'name': name},
+      ),
+      subtitle: copy.template(
+        'Your report goes to the YO Voice moderation team. {name} is not told who reported them.',
+        'Zgłoszenie trafi do zespołu moderacji YO Voice. Użytkownik {name} nie otrzyma informacji, kto go zgłosił.',
+        values: {'name': name},
+      ),
+    );
+    if (reason == null || !mounted) return;
+    setState(() => _reporting = true);
+    try {
+      await (widget.reportService ??
+              ReportService(firestore: _firestore, auth: _auth))
+          .report(
+            targetType: ReportTargetType.user,
+            targetId: uid,
+            reportedUserId: uid,
+            reason: reason,
+            contextPath: 'users/$uid',
+          );
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(
+            copy.template(
+              'Reported {name}. Our team will review.',
+              'Zgłoszono użytkownika {name}. Nasz zespół je sprawdzi.',
+              values: {'name': name},
+            ),
+          ),
+        ),
+      );
+    } catch (error) {
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(
+            copy.isPolish
+                ? 'Nie udało się wysłać zgłoszenia. Spróbuj ponownie.'
+                : intentionalOrFriendly(
+                    error,
+                    fallback:
+                        'Your report could not be sent. Please try again.',
+                  ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _reporting = false);
+    }
+  }
+
+  Future<void> _inviteToServer() async {
+    final ServerRepository repository;
+    try {
+      repository =
+          widget.serverRepository ??
+          ServerService(firestore: _firestore, auth: _auth);
+    } catch (error) {
+      _showError(error.toString());
+      return;
+    }
+    if (!mounted) return;
+    await showInvitePersonToServerSheet(
+      context,
+      inviteeId: widget.friend.id,
+      inviteeName: widget.friend.displayName,
+      repository: repository,
+    );
+  }
+
+  /// A neutral snackbar for call outcomes, the same presentation the chat
+  /// uses for them.
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            message
+                .replaceFirst('Bad state: ', '')
+                .replaceFirst('Invalid argument(s): ', ''),
+          ),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      );
   }
 
   Future<void> _toggleFollow(bool isFollowing) async {
@@ -362,27 +609,35 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                     ],
                   ),
                 ),
+                // The banner is the header's full-bleed background: it runs
+                // under the status bar and edge to edge (landscape insets
+                // included), so only the bottom inset stays a SafeArea and
+                // the scroll view spans the whole route. Readable content
+                // keeps the 880pt list measure through the hero and the
+                // measured padding below.
                 child: SafeArea(
+                  top: false,
+                  left: false,
+                  right: false,
                   child: ResponsiveContentFrame(
-                    width: ResponsiveContentWidth.list,
+                    width: ResponsiveContentWidth.fullBleed,
                     alignment: ResponsiveContentAlignment.topCenter,
                     child: CustomScrollView(
                       key: const ValueKey('friend-profile-content-frame'),
                       slivers: [
-                        SliverToBoxAdapter(child: _header()),
-                        SliverPadding(
-                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
+                        SliverToBoxAdapter(
+                          child: _header(profile, isFollowing),
+                        ),
+                        ProfileMeasuredSliverPadding(
+                          maxWidth: ResponsiveContentWidth.list.maxWidth,
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
                           sliver: SliverList.list(
                             children: [
-                              // Slim header (phase 5): banner, then the
-                              // identity row (avatar + name + handle +
-                              // presence), the stats row and the action bar
-                              // — the same pieces, in the same order, as the
-                              // own profile's ProfileHeader. The banner stays
-                              // fully above the avatar here.
-                              _banner(profile),
-                              const SizedBox(height: 12),
-                              _identity(profile),
+                              // Slim header: the hero (banner behind the
+                              // toolbar and the identity row — avatar, name,
+                              // handle, presence), then badges, bio, Follow
+                              // and the quick actions (call, video, message,
+                              // more), then the social block.
                               const SizedBox(height: 10),
                               Align(
                                 alignment: AlignmentDirectional.centerStart,
@@ -412,62 +667,75 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                                   ),
                                 ),
                               ],
+                              ..._actionsBlock(profile, isFollowing),
                               const SizedBox(height: 14),
-                              _profileBody(profile, isFollowing),
-                              const SizedBox(height: 20),
-                              TextButton.icon(
-                                onPressed: _removingFriend
-                                    ? null
-                                    : _confirmRemoveFriend,
-                                icon: _removingFriend
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.person_remove_outlined),
-                                label: Text(
-                                  _removingFriend
-                                      ? copy.text('Removing...', 'Usuwanie...')
-                                      : copy.text(
-                                          'Remove friend',
-                                          'Usuń ze znajomych',
-                                        ),
-                                ),
-                                style: TextButton.styleFrom(
-                                  foregroundColor: palette.dangerForeground,
-                                  disabledForegroundColor: palette.textTertiary,
-                                ),
-                              ),
-                              TextButton.icon(
-                                onPressed: _blocking ? null : _confirmBlock,
-                                icon: _blocking
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.block_rounded),
-                                label: Text(
-                                  _blocking
-                                      ? copy.text(
-                                          'Blocking...',
-                                          'Blokowanie...',
+                              _profileBody(profile),
+                              // Remove / Block at the foot are a friend's
+                              // controls; a non-friend or a person already
+                              // blocked reaches Block and Report from More.
+                              if (_isFriends) ...[
+                                const SizedBox(height: 20),
+                                TextButton.icon(
+                                  onPressed: _removingFriend
+                                      ? null
+                                      : _confirmRemoveFriend,
+                                  icon: _removingFriend
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
                                         )
-                                      : copy.text(
-                                          'Block user',
-                                          'Zablokuj użytkownika',
+                                      : const Icon(
+                                          Icons.person_remove_outlined,
                                         ),
+                                  label: Text(
+                                    _removingFriend
+                                        ? copy.text(
+                                            'Removing...',
+                                            'Usuwanie...',
+                                          )
+                                        : copy.text(
+                                            'Remove friend',
+                                            'Usuń ze znajomych',
+                                          ),
+                                  ),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: palette.dangerForeground,
+                                    disabledForegroundColor:
+                                        palette.textTertiary,
+                                  ),
                                 ),
-                                style: TextButton.styleFrom(
-                                  foregroundColor: palette.dangerForeground,
-                                  disabledForegroundColor: palette.textTertiary,
+                                TextButton.icon(
+                                  onPressed: _blocking ? null : _confirmBlock,
+                                  icon: _blocking
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.block_rounded),
+                                  label: Text(
+                                    _blocking
+                                        ? copy.text(
+                                            'Blocking...',
+                                            'Blokowanie...',
+                                          )
+                                        : copy.text(
+                                            'Block user',
+                                            'Zablokuj użytkownika',
+                                          ),
+                                  ),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: palette.dangerForeground,
+                                    disabledForegroundColor:
+                                        palette.textTertiary,
+                                  ),
                                 ),
-                              ),
+                              ],
                             ],
                           ),
                         ),
@@ -483,74 +751,83 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     );
   }
 
-  Widget _header() {
+  /// The hero: the friend's banner as the full-bleed background of the
+  /// header, Back floating over it, and the identity row (avatar, name,
+  /// handle, presence, and Follow when it fits) on the photo's melt. The
+  /// same [ProfileHeroLayout] the own profile uses, on this screen's 880pt
+  /// list measure and 20px gutter.
+  Widget _header(UserProfile? profile, bool isFollowing) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 18, 4),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            tooltip: copy.text('Back', 'Wstecz'),
-            icon: Icon(
-              Icons.arrow_back_ios_new_rounded,
-              color: palette.textPrimary,
-            ),
-          ),
-          Expanded(
-            child: Text(
-              copy.text('Profile', 'Profil'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+    return ProfileHeroLayout(
+      contentMaxWidth: ResponsiveContentWidth.list.maxWidth,
+      backdrop: (context, frame) => _banner(profile, frame),
+      toolbar: (context, frame) => Padding(
+        padding: frame.inset(start: 8, end: 18),
+        child: Row(
+          children: [
+            IconButton(
+              onPressed: () => Navigator.pop(context),
+              tooltip: copy.text('Back', 'Wstecz'),
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              // A raised fill keeps Back legible on any photo.
+              style: IconButton.styleFrom(
+                backgroundColor: palette.surfaceRaised.withValues(alpha: .92),
+              ),
+              icon: Icon(
+                Icons.arrow_back_ios_new_rounded,
                 color: palette.textPrimary,
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
               ),
             ),
-          ),
-        ],
+            // No visible title over the photo — the display name is the
+            // page's headline — but the page is still announced as a profile.
+            Expanded(
+              child: Semantics(
+                container: true,
+                namesRoute: true,
+                label: copy.text('Profile', 'Profil'),
+                child: const SizedBox(height: 44),
+              ),
+            ),
+          ],
+        ),
+      ),
+      identity: (context, frame) => Padding(
+        padding: frame.inset(start: 20, end: 20),
+        child: _identity(
+          profile,
+          isFollowing,
+          nameOffset: frame.geometry.nameOffset,
+        ),
       ),
     );
   }
 
-  /// The friend's banner ("zdjęcie w tle"). Own Profile has always drawn one
-  /// and a friend's profile drew none, so the same identity read differently
-  /// depending on whose profile you opened. The band is sized by available
-  /// width, never by a device label.
-  Widget _banner(UserProfile? profile) {
+  /// The friend's banner ("zdjęcie w tle") as the hero's full-bleed
+  /// background. Own Profile has always drawn one and a friend's profile
+  /// drew none, so the same identity read differently depending on whose
+  /// profile you opened. Its size comes from [ProfileHeroGeometry]: the
+  /// available width, never a device label.
+  Widget _banner(UserProfile? profile, ProfileHeroFrame frame) {
     final name = profile?.displayName ?? widget.friend.displayName;
     final revision =
         profile?.profileUpdatedAt ?? widget.friend.profileUpdatedAt;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // Breakpoint on the band's own measure, not the window. This feed is
-        // capped at ResponsiveContentWidth.list (880) and pays a 20px gutter
-        // on each side, so the widest band the screen can ever hand this
-        // builder is 840: a 900 threshold is unreachable here and the banner
-        // would stay phone-sized on tablets and desktop alike. 700 is the
-        // first step above a 768pt tablet's 728px band.
-        final height = constraints.maxWidth >= 700 ? 168.0 : 116.0;
-        return ProfileBannerButton(
-          userId: widget.friend.id,
-          displayName: name,
-          mediaRevision: revision,
-          mediaService: _profileMediaService,
-          child: SizedBox(
-            width: double.infinity,
-            height: height,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: ProfileBanner(
-                userId: widget.friend.id,
-                mediaRevision: revision,
-                mediaService: _profileMediaService,
-              ),
-            ),
-          ),
-        );
-      },
+    return ProfileBannerButton(
+      userId: widget.friend.id,
+      displayName: name,
+      mediaRevision: revision,
+      mediaService: _profileMediaService,
+      borderRadius: 0,
+      focusContrastColor: context.appPalette.scrim,
+      // The ring stays on the visible photo, clear of the status bar and
+      // of the handle / presence row on the melt.
+      focusRingInsets: frame.bannerFocusInsets,
+      child: ProfileHeroBackdrop(
+        geometry: frame.geometry,
+        userId: widget.friend.id,
+        mediaRevision: revision,
+        mediaService: _profileMediaService,
+      ),
     );
   }
 
@@ -567,13 +844,15 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       mediaService: _profileMediaService,
       minimumSize: Size(extent, extent),
       // Slim: a flat hairline ring from the palette (the former violet →
-      // magenta hex gradient was decoration, not state).
+      // magenta hex gradient was decoration, not state). It stands on the
+      // photo, so the hairline is `borderStrong` — ≥ 3:1 against the
+      // canvas-coloured cut-out in both themes, whatever the photo does.
       child: Container(
         padding: const EdgeInsets.all(ring),
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: context.appPalette.background,
-          border: Border.all(color: context.appPalette.border),
+          border: Border.all(color: context.appPalette.borderStrong),
         ),
         child: UserAvatar(
           radius: radius,
@@ -592,7 +871,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   /// as ONE group: the profile's social block reads (and scrolls, and is
   /// announced) as a unit, the way the own profile groups them under its
   /// header.
-  Widget _profileBody(UserProfile? profile, bool isFollowing) {
+  Widget _profileBody(UserProfile? profile) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -602,18 +881,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           alignment: AlignmentDirectional.centerStart,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 640),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _socialStats(profile),
-                const SizedBox(height: 12),
-                _profileActions(
-                  isFollowing,
-                  creatorAudienceVisible:
-                      profile?.canExposeCreatorAudience == true,
-                ),
-              ],
-            ),
+            child: _socialStats(profile),
           ),
         ),
         _mutualFriends(),
@@ -636,9 +904,31 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
 
   /// Avatar beside name, handle and presence — the own profile header's
   /// identity row, read from the public projection instead.
-  Widget _identity(UserProfile? profile) {
+  /// Follow rides at the end of the identity row once the band is wide and
+  /// the name is not stacked; otherwise it is a full-width bar under the bio.
+  /// Either way it sits above the quick actions.
+  bool _followInIdentity(BuildContext context, double width) =>
+      width >= 700 && MediaQuery.textScalerOf(context).scale(14) < 21;
+
+  bool _showFollow(UserProfile? profile, bool isFollowing) =>
+      !_isBlocked &&
+      // A hidden audience cannot gain new followers. Existing followers
+      // keep the Unfollow action so opting out never traps a relationship.
+      (profile?.canExposeCreatorAudience == true || isFollowing);
+
+  /// The avatar rises into the photo; the name (and a Follow beside it)
+  /// start [nameOffset] lower, on the hero's name line, where the veil keeps
+  /// them legible.
+  Widget _identity(
+    UserProfile? profile,
+    bool isFollowing, {
+    double nameOffset = 0,
+  }) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final trailingFollow =
+            _showFollow(profile, isFollowing) &&
+            _followInIdentity(context, constraints.maxWidth);
         final palette = context.appPalette;
         final isWide = constraints.maxWidth >= 700;
         final radius = switch (constraints.maxWidth) {
@@ -693,96 +983,347 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           );
         }
         return Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+          // Top-anchored: the row starts on the hero's text line, so a long
+          // name grows downward instead of pushing the avatar out of the hero.
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _avatar(profile, radius: radius),
             const SizedBox(width: 14),
-            Expanded(child: details),
+            Expanded(
+              child: Padding(
+                padding: EdgeInsets.only(top: nameOffset),
+                child: details,
+              ),
+            ),
+            if (trailingFollow) ...[
+              const SizedBox(width: 12),
+              Padding(
+                padding: EdgeInsets.only(top: nameOffset),
+                child: ProfileActionBar(
+                  key: const ValueKey('friend-profile-actions'),
+                  primary: _followButton(isFollowing),
+                ),
+              ),
+            ],
           ],
         );
       },
     );
   }
 
-  Widget _profileActions(
-    bool isFollowing, {
-    required bool creatorAudienceVisible,
-  }) {
-    // A hidden audience cannot gain new followers. Existing followers
-    // keep the Unfollow action so opting out never traps a relationship.
-    final showFollowAction = creatorAudienceVisible || isFollowing;
+  /// Follow (when offered and not already in the identity row), then the
+  /// quick actions, then — only when calls are unavailable — why.
+  List<Widget> _actionsBlock(UserProfile? profile, bool isFollowing) {
     final copy = AppLocalizations.of(context);
-    return ProfileActionBar(
-      key: const ValueKey('friend-profile-actions'),
-      primary: showFollowAction
-          ? _followButton(isFollowing)
-          : _messageButton(primary: true),
-      secondary: showFollowAction ? _messageButton(primary: false) : null,
-      icon: ProfileActionIconButton(
-        key: const ValueKey('friend-profile-more-button'),
-        icon: Icons.more_horiz_rounded,
-        tooltip: copy.more,
-        onPressed: _showMoreSheet,
+    final palette = context.appPalette;
+    Widget measure(Widget child) => Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 640),
+        child: child,
       ),
+    );
+    final callsUnavailable = switch (_relationship) {
+      FriendRelationshipStatus.none ||
+      FriendRelationshipStatus.requestSent ||
+      FriendRelationshipStatus.requestReceived => true,
+      _ => false,
+    };
+    return [
+      if (_showFollow(profile, isFollowing))
+        LayoutBuilder(
+          builder: (context, constraints) {
+            if (_followInIdentity(context, constraints.maxWidth)) {
+              return const SizedBox.shrink();
+            }
+            return Padding(
+              padding: const EdgeInsets.only(top: 14),
+              // A full-width 44 px bar on the narrow / stacked layout.
+              child: measure(
+                SizedBox(
+                  width: double.infinity,
+                  child: ProfileActionBar(
+                    key: const ValueKey('friend-profile-actions'),
+                    primary: _followButton(isFollowing),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      const SizedBox(height: 14),
+      // Someone who asked to be friends gets an explicit, labelled Accept /
+      // Decline here — never a single button, never a tap elsewhere.
+      if (!_isBlocked &&
+          (_relationship == FriendRelationshipStatus.requestReceived ||
+              _requestPanelAnswered)) ...[
+        measure(
+          FriendRequestResponsePanel(
+            key: ValueKey(
+              _requestPanelGeneration == 0
+                  ? 'friend-profile-request-panel'
+                  : 'friend-profile-request-panel-$_requestPanelGeneration',
+            ),
+            senderId: widget.friend.id,
+            senderName: profile?.displayName ?? widget.friend.displayName,
+            friendService: _friendService,
+            profileMediaService: _profileMediaService,
+            showIdentity: false,
+            keyPrefix: 'friend-profile-request',
+            onResolved: (outcome) async {
+              if (!mounted) return;
+              setState(() => _requestPanelAnswered = true);
+              // A stale answer re-reads the relationship: a request that was
+              // accepted on another device must not read as "not friends".
+              final next = await friendRelationshipAfterResponse(
+                outcome,
+                reread: () =>
+                    (widget.relationshipStatusResolver ??
+                    _friendService.getRelationshipStatus)(widget.friend.id),
+              );
+              if (!mounted) return;
+              setState(() => _relationship = next);
+            },
+          ),
+        ),
+        const SizedBox(height: 12),
+      ],
+      if (_isBlocked)
+        measure(
+          Row(
+            key: const ValueKey('friend-profile-blocked'),
+            children: [
+              Expanded(
+                child: Text(
+                  copy.text(
+                    'You have blocked this user.',
+                    'Ta osoba jest przez Ciebie zablokowana.',
+                  ),
+                  style: TextStyle(color: palette.textSecondary, fontSize: 13),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ProfileActionIconButton(
+                key: const ValueKey('friend-profile-more-button'),
+                icon: Icons.more_horiz_rounded,
+                tooltip: copy.text('More options', 'Więcej opcji'),
+                onPressed: _showMoreSheet,
+              ),
+            ],
+          ),
+        )
+      else ...[
+        measure(_quickActions()),
+        if (callsUnavailable) ...[
+          const SizedBox(height: 8),
+          measure(
+            Text(
+              copy.text(
+                'Calls are available between friends.',
+                'Połączenia są dostępne tylko między znajomymi.',
+              ),
+              key: const ValueKey('friend-profile-call-unavailable'),
+              style: TextStyle(
+                color: palette.textSecondary,
+                fontSize: 12,
+                height: 16 / 12,
+              ),
+            ),
+          ),
+        ],
+      ],
+    ];
+  }
+
+  Widget _quickActions() {
+    final copy = AppLocalizations.of(context);
+    final name = widget.friend.displayName;
+    final busy = _startingCall || _openingChat || _removingFriend;
+    final canCall = _isFriends && !busy;
+    final callHint = _relationship == null
+        ? copy.text('Checking…', 'Sprawdzanie…')
+        : copy.text(
+            'Available to friends only',
+            'Dostępne tylko dla znajomych',
+          );
+    final connecting = copy.text('Connecting…', 'Łączenie…');
+    return ProfileQuickActions(
+      key: const ValueKey('friend-profile-quick-actions'),
+      actions: [
+        ProfileQuickAction(
+          key: const ValueKey('friend-profile-call-button'),
+          icon: Icons.call_rounded,
+          label: copy.text('Call', 'Zadzwoń'),
+          semanticLabel: copy.template(
+            'Call {name}',
+            'Zadzwoń do {name}',
+            values: {'name': name},
+          ),
+          emphasis: ProfileQuickActionEmphasis.primary,
+          onPressed: canCall
+              ? () => _startCall(DirectCallMediaType.audio)
+              : null,
+          busy: _startingCallType == DirectCallMediaType.audio,
+          busyLabel: connecting,
+          disabledHint: _isFriends ? null : callHint,
+        ),
+        ProfileQuickAction(
+          key: const ValueKey('friend-profile-video-button'),
+          icon: Icons.videocam_outlined,
+          label: copy.text('Video', 'Wideo'),
+          semanticLabel: copy.template(
+            'Video call with {name}',
+            'Połączenie wideo z {name}',
+            values: {'name': name},
+          ),
+          onPressed: canCall
+              ? () => _startCall(DirectCallMediaType.video)
+              : null,
+          busy: _startingCallType == DirectCallMediaType.video,
+          busyLabel: connecting,
+          disabledHint: _isFriends ? null : callHint,
+        ),
+        ProfileQuickAction(
+          key: const ValueKey('friend-profile-message-button'),
+          icon: Icons.chat_bubble_outline_rounded,
+          label: copy.text('Message', 'Wiadomość'),
+          semanticLabel: copy.template(
+            'Message {name}',
+            'Napisz do {name}',
+            values: {'name': name},
+          ),
+          // The server enforces the friend's message privacy, so Message
+          // stays offered to non-friends exactly as before.
+          onPressed: busy ? null : _openChat,
+          busy: _openingChat,
+          busyLabel: copy.text('Opening…', 'Otwieranie…'),
+        ),
+        ProfileQuickAction(
+          key: const ValueKey('friend-profile-more-button'),
+          icon: Icons.more_horiz_rounded,
+          label: copy.more,
+          semanticLabel: copy.text('More options', 'Więcej opcji'),
+          onPressed: _showMoreSheet,
+          iconOnlyWhenWide: true,
+        ),
+      ],
     );
   }
 
-  /// The icon action: Remove friend and Block user in a bottom sheet
-  /// (contextual actions live in sheets, not dialogs). The same two actions
-  /// stay listed at the foot of the profile, and both paths run the same
+  /// Więcej: the everyday extras first (voice message, invite to a server),
+  /// then the safety group (report, remove, block). A bottom sheet, because
+  /// contextual actions live in sheets, not dialogs. Remove and Block stay
+  /// at the foot of a friend's profile too; both paths run the same
   /// confirmation.
   Future<void> _showMoreSheet() async {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
+    final friends = _isFriends;
+    final blocked = _isBlocked;
+    Widget tile({
+      required String key,
+      required IconData icon,
+      required String label,
+      required String choice,
+      bool danger = false,
+      bool enabled = true,
+    }) {
+      final ink = danger ? palette.dangerForeground : palette.textPrimary;
+      return Builder(
+        builder: (sheetContext) => ListTile(
+          key: ValueKey(key),
+          enabled: enabled,
+          minTileHeight: 56,
+          leading: Icon(icon, size: 22, color: ink),
+          title: Text(
+            label,
+            style: TextStyle(color: ink, fontWeight: FontWeight.w600),
+          ),
+          onTap: () => Navigator.pop(sheetContext, choice),
+        ),
+      );
+    }
+
     final choice = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
       useSafeArea: true,
+      isScrollControlled: true,
       backgroundColor: palette.surfaceRaised,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 560,
+      ),
       builder: (sheetContext) => SafeArea(
         top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              key: const ValueKey('friend-profile-more-remove'),
-              enabled: !_removingFriend,
-              leading: Icon(
-                Icons.person_remove_outlined,
-                color: palette.dangerForeground,
-              ),
-              title: Text(
-                copy.text('Remove friend', 'Usuń ze znajomych'),
-                style: TextStyle(
-                  color: palette.dangerForeground,
-                  fontWeight: FontWeight.w600,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (friends) ...[
+                tile(
+                  key: 'friend-profile-more-voice-message',
+                  icon: Icons.mic_none_rounded,
+                  label: copy.text(
+                    'Send a voice message',
+                    'Wyślij wiadomość głosową',
+                  ),
+                  choice: 'voice',
+                  enabled: !_openingChat && !_startingCall,
                 ),
-              ),
-              onTap: () => Navigator.pop(sheetContext, 'remove'),
-            ),
-            ListTile(
-              key: const ValueKey('friend-profile-more-block'),
-              enabled: !_blocking,
-              leading: Icon(
-                Icons.block_rounded,
-                color: palette.dangerForeground,
-              ),
-              title: Text(
-                copy.text('Block user', 'Zablokuj użytkownika'),
-                style: TextStyle(
-                  color: palette.dangerForeground,
-                  fontWeight: FontWeight.w600,
+                tile(
+                  key: 'friend-profile-more-invite',
+                  icon: Icons.group_add_outlined,
+                  label: copy.text('Invite to a server', 'Zaproś na serwer'),
+                  choice: 'invite',
                 ),
+                Divider(
+                  height: 1,
+                  thickness: 1,
+                  indent: 72,
+                  color: palette.border,
+                ),
+              ],
+              // Reporting is not destructive, so it keeps the neutral ink.
+              tile(
+                key: 'friend-profile-more-report',
+                icon: Icons.flag_outlined,
+                label: copy.text('Report user', 'Zgłoś użytkownika'),
+                choice: 'report',
+                enabled: !_reporting,
               ),
-              onTap: () => Navigator.pop(sheetContext, 'block'),
-            ),
-            const SizedBox(height: 8),
-          ],
+              if (friends)
+                tile(
+                  key: 'friend-profile-more-remove',
+                  icon: Icons.person_remove_outlined,
+                  label: copy.text('Remove friend', 'Usuń ze znajomych'),
+                  choice: 'remove',
+                  danger: true,
+                  enabled: !_removingFriend,
+                ),
+              if (!blocked)
+                tile(
+                  key: 'friend-profile-more-block',
+                  icon: Icons.block_rounded,
+                  label: copy.text('Block user', 'Zablokuj użytkownika'),
+                  choice: 'block',
+                  danger: true,
+                  enabled: !_blocking,
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
     if (!mounted) return;
     switch (choice) {
+      case 'voice':
+        await _openChat(initialAction: ChatLaunchAction.recordVoice);
+      case 'invite':
+        await _inviteToServer();
+      case 'report':
+        await _report();
       case 'remove':
         await _confirmRemoveFriend();
       case 'block':
@@ -932,12 +1473,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         key: const ValueKey('friend-profile-follow-button'),
         onPressed: _changingFollow ? null : () => _toggleFollow(isFollowing),
         style: FilledButton.styleFrom(
-          backgroundColor: isFollowing
-              ? colors.secondaryContainer
-              : colors.primary,
-          foregroundColor: isFollowing
-              ? colors.onSecondaryContainer
-              : colors.onPrimary,
+          // Tonal in both states: Zadzwoń is the screen's one violet accent
+          // (ADR-209). The icon still tells Follow from Following.
+          backgroundColor: colors.secondaryContainer,
+          foregroundColor: colors.onSecondaryContainer,
           disabledBackgroundColor: palette.surfaceMuted,
           disabledForegroundColor: palette.textTertiary,
           minimumSize: const Size(0, ProfileActionBar.buttonHeight),
@@ -967,66 +1506,6 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
-    );
-  }
-
-  /// Message is the primary CTA when Follow is not offered (an ordinary
-  /// profile), and the outlined secondary one beside Follow otherwise.
-  Widget _messageButton({required bool primary}) {
-    final palette = context.appPalette;
-    final copy = AppLocalizations.of(context);
-    final shape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(ProfileActionBar.radius),
-    );
-    const minimumSize = Size(0, ProfileActionBar.buttonHeight);
-    const padding = EdgeInsets.symmetric(horizontal: 12);
-    final icon = _openingChat
-        ? const SizedBox(
-            width: 17,
-            height: 17,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          )
-        : const Icon(Icons.chat_bubble_outline_rounded, size: 18);
-    final label = Text(
-      copy.text('Message', 'Wiadomość'),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(fontWeight: FontWeight.w700),
-    );
-    const key = ValueKey('friend-profile-message-button');
-    final onPressed = _openingChat ? null : _openChat;
-    return ConstrainedBox(
-      constraints: const BoxConstraints(
-        minHeight: ProfileActionBar.buttonHeight,
-      ),
-      child: primary
-          ? FilledButton.icon(
-              key: key,
-              onPressed: onPressed,
-              style: FilledButton.styleFrom(
-                disabledBackgroundColor: palette.surfaceMuted,
-                disabledForegroundColor: palette.textTertiary,
-                minimumSize: minimumSize,
-                padding: padding,
-                shape: shape,
-              ),
-              icon: icon,
-              label: label,
-            )
-          : OutlinedButton.icon(
-              key: key,
-              onPressed: onPressed,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: palette.textPrimary,
-                disabledForegroundColor: palette.textTertiary,
-                side: BorderSide(color: palette.borderStrong),
-                minimumSize: minimumSize,
-                padding: padding,
-                shape: shape,
-              ),
-              icon: icon,
-              label: label,
-            ),
     );
   }
 

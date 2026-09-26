@@ -21,6 +21,7 @@ import 'package:yovoice/features/servers/data/models/server_list_item.dart';
 import 'package:yovoice/features/servers/data/models/server_podcast_episode.dart';
 import 'package:yovoice/features/servers/data/models/server_podcast_question.dart';
 import 'package:yovoice/features/servers/data/models/server_session.dart';
+import 'package:yovoice/features/servers/data/models/server_session_hand.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/models/server_whiteboard.dart';
 import 'package:yovoice/features/servers/data/services/server_media_connector.dart';
@@ -57,10 +58,12 @@ ServerPodcastEpisodeReceipt _podcastReceipt({
 class TestServerRepository
     implements
         ServerRepository,
+        ServerSessionHandsRepository,
         ServerManagementRepository,
         ServerEventsRepository,
         ServerPodcastEpisodeRepository,
         ServerPodcastQuestionsRepository,
+        ServerQuestionAttentionRepository,
         ServerFamilyCheckInRepository,
         ServerFamilyMemoryRepository,
         ServerSharedListRepository,
@@ -90,7 +93,91 @@ class TestServerRepository
   int familyMemoryPublishes = 0;
   bool followsCommunity = false;
   List<ServerPodcastQuestion> podcastQuestions = const [];
+
+  /// When set, the board's question list follows this stream instead of a
+  /// one-shot [podcastQuestions] snapshot.
+  Stream<List<ServerPodcastQuestion>>? podcastQuestionsStream;
   final podcastQuestionVotes = <String, bool>{};
+
+  /// The host's listener-questions cursors, keyed `serverId_channelId`, as
+  /// `markPodcastQuestionsSeen` moves them.
+  final questionSeenAt = <String, DateTime>{};
+
+  /// Every cursor write, in order: `(serverId, channelId, seenAt)`.
+  final questionSeenWrites = <(String, String, DateTime)>[];
+
+  /// Unseen listeners currently open, and every one ever opened.
+  int openUnseenWatches = 0;
+  int unseenWatchCount = 0;
+
+  /// Makes every unseen read fail, as a denied cursor read would.
+  Object? unseenError;
+  final _questionsChanged = StreamController<void>.broadcast();
+
+  /// Replaces the questions and tells every open unseen listener, as a new
+  /// Firestore snapshot would.
+  void setPodcastQuestions(List<ServerPodcastQuestion> questions) {
+    podcastQuestions = questions;
+    _questionsChanged.add(null);
+  }
+
+  bool _unseen(String serverId, String channelId) {
+    ServerPodcastQuestion? newest;
+    for (final question in podcastQuestions) {
+      if (question.serverId != serverId || question.channelId != channelId) {
+        continue;
+      }
+      if (newest == null || question.createdAt.isAfter(newest.createdAt)) {
+        newest = question;
+      }
+    }
+    return serverPodcastQuestionsUnseen(
+      newestCreatedAt: newest?.createdAt,
+      newestAuthorId: newest?.authorId,
+      seenAt: questionSeenAt['${serverId}_$channelId'],
+      viewerId: currentUserId,
+    );
+  }
+
+  @override
+  Stream<bool> watchPodcastQuestionsUnseen(String serverId, String channelId) {
+    late StreamController<bool> controller;
+    StreamSubscription<void>? changes;
+    controller = StreamController<bool>(
+      onListen: () {
+        openUnseenWatches++;
+        unseenWatchCount++;
+        final error = unseenError;
+        if (error != null) {
+          controller.addError(error);
+          return;
+        }
+        controller.add(_unseen(serverId, channelId));
+        changes = _questionsChanged.stream.listen(
+          (_) => controller.add(_unseen(serverId, channelId)),
+        );
+      },
+      onCancel: () {
+        openUnseenWatches--;
+        return changes?.cancel();
+      },
+    );
+    return controller.stream.distinct();
+  }
+
+  @override
+  Future<void> markPodcastQuestionsSeen({
+    required String serverId,
+    required String channelId,
+    required DateTime newestCreatedAt,
+  }) async {
+    final key = '${serverId}_$channelId';
+    final known = questionSeenAt[key];
+    if (known != null && !newestCreatedAt.isAfter(known)) return;
+    questionSeenWrites.add((serverId, channelId, newestCreatedAt));
+    questionSeenAt[key] = newestCreatedAt;
+    _questionsChanged.add(null);
+  }
   List<ServerPodcastEpisode> podcastEpisodes = const [];
   ServerPodcastRecordingState? podcastRecording;
   Stream<ServerPodcastRecordingState?>? podcastRecordingStream;
@@ -227,7 +314,7 @@ class TestServerRepository
   Stream<List<ServerPodcastQuestion>> watchPodcastQuestions(
     String serverId,
     String channelId,
-  ) => Stream.value(
+  ) => podcastQuestionsStream ?? Stream.value(
     podcastQuestions
         .where(
           (question) =>
@@ -353,6 +440,77 @@ class TestServerRepository
           cleanupPending: true,
           requestedMuted: muted,
         ),
+  );
+
+  /// The raised-hand queue the host's or a moderator's session reads. A
+  /// test drives it through [sessionHandsStream] (a controller it owns) or
+  /// sets [sessionHands] for a one-shot answer.
+  List<ServerSessionHand> sessionHands = const [];
+  Stream<List<ServerSessionHand>>? sessionHandsStream;
+
+  /// Every queue subscription, as `{roomId, serverId, channelId, sessionId}`.
+  final handQueueReads = <Map<String, String>>[];
+
+  @override
+  Stream<List<ServerSessionHand>> watchSessionHands({
+    required String roomId,
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+  }) {
+    handQueueReads.add({
+      'roomId': roomId,
+      'serverId': serverId,
+      'channelId': channelId,
+      'sessionId': sessionId,
+    });
+    return sessionHandsStream ?? Stream.value(sessionHands);
+  }
+
+  /// This person's own participant document; absent (null) unless a test
+  /// supplies one.
+  Stream<ServerSessionParticipantState?>? ownParticipantStream;
+
+  @override
+  Stream<ServerSessionParticipantState?> watchOwnSessionParticipant({
+    required String roomId,
+    required String sessionId,
+  }) => ownParticipantStream ?? Stream.value(null);
+
+  /// The server roles of the roster's moderate-capable members, by uid. Empty
+  /// (everybody a plain member) unless a test supplies them.
+  Map<String, ServerMemberRole> sessionStaffRoles = const {};
+
+  @override
+  Stream<Map<String, ServerMemberRole>> watchSessionStaffRoles(
+    String serverId,
+  ) => Stream.value(sessionStaffRoles);
+
+  @override
+  Future<ServerSessionHandAnswerResult> declineSessionHand({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String participantId,
+    required String requestId,
+  }) => _answer(
+    'answerServerSessionHandV1',
+    {
+      'serverId': serverId,
+      'channelId': channelId,
+      'sessionId': sessionId,
+      'participantId': participantId,
+      'decision': 'declined',
+      'requestId': requestId,
+    },
+    () => ServerSessionHandAnswerResult(
+      serverId: serverId,
+      channelId: channelId,
+      sessionId: sessionId,
+      participantId: participantId,
+      decision: ServerHandDecision.declined,
+      changed: true,
+    ),
   );
 
   @override
@@ -584,6 +742,10 @@ class TestServerRepository
     'serverId': serverId,
     'requestId': requestId,
   }, () {});
+
+  @override
+  Future<void> deleteLegacyServer({required String serverId}) =>
+      _answer<void>('deleteClubSelf', {'clubId': serverId}, () {});
 
   @override
   Future<ServerChannelCreationResult> createChannel(
@@ -1271,6 +1433,45 @@ class TestServerRepository
     'sessionId': sessionId,
     'requestId': requestId,
   }, () {});
+
+  /// Every `releaseServerChannelSessionIfEmptyV1` payload, in order. Kept
+  /// apart from [calls]: it is the backstop signal leaving sends by itself,
+  /// never something a person's press asked for, so a test of what a press
+  /// asked for is not rewritten by it.
+  final releases = <Map<String, Object?>>[];
+
+  /// The receipt the next releases answer with. `occupied` by default, which
+  /// schedules nothing.
+  String releaseOutcome = 'occupied';
+  Duration releaseRecheckAfter = Duration.zero;
+
+  /// Thrown by the next release, once.
+  Object? failNextRelease;
+
+  @override
+  Future<ServerSessionReleaseResult> releaseChannelSessionIfEmpty({
+    required String serverId,
+    required String channelId,
+    required String sessionId,
+    required String requestId,
+  }) async {
+    releases.add({
+      'serverId': serverId,
+      'channelId': channelId,
+      'sessionId': sessionId,
+      'requestId': requestId,
+    });
+    final failure = failNextRelease;
+    if (failure != null) {
+      failNextRelease = null;
+      throw failure;
+    }
+    return ServerSessionReleaseResult(
+      sessionId: sessionId,
+      outcome: releaseOutcome,
+      recheckAfter: releaseRecheckAfter,
+    );
+  }
 }
 
 /// A provider link that never touches native audio. Tests move it through
@@ -1304,6 +1505,18 @@ class FakeServerMediaLink extends ServerMediaLink {
   /// when that happens.
   Object? failMicrophoneWith;
   Object? failDeafenWith;
+
+  /// What [drop] reported, as the provider would.
+  ServerMediaDisconnectReason? droppedBecause;
+
+  @override
+  ServerMediaDisconnectReason? get disconnectReason => droppedBecause;
+
+  /// The provider ends the link on its own, saying why.
+  void drop(ServerMediaDisconnectReason reason) {
+    droppedBecause = reason;
+    report(ServerMediaLinkState.disconnected);
+  }
 
   @override
   ServerMediaLinkState get state => _state;

@@ -6,6 +6,7 @@ import 'translations_feed_surface_release.dart';
 import 'translations_voice_time_footer.dart';
 import 'translations_language_names.dart';
 import 'translations_mobile_navigation.dart';
+import 'translations_notification_engagement.dart';
 import 'translations_moments_creation.dart';
 import 'translations_moments_listen.dart';
 import 'translations_moments_overview.dart';
@@ -15,9 +16,11 @@ import 'translations_reels_stage.dart';
 import 'translations_reels_voice_comments.dart';
 import 'translations_reel_links.dart';
 import 'translations_profile_media_viewer.dart';
+import 'translations_server_deletion.dart';
 import 'translations_server_surface.dart';
 import 'translations_gif_messages.dart';
 import 'translations_gif_composer.dart';
+import 'translations_giphy.dart';
 import 'translations_auth_call_release.dart';
 import 'translations_chinese_traditional.dart';
 import 'translations_current_release.dart';
@@ -216,6 +219,7 @@ const appTranslationKeys = <String>{
   ...reelLinksTranslationKeys,
   ...gifMessageTranslationKeys,
   ...gifComposerTranslationKeys,
+  ...giphyTranslationKeys,
   ...yoMomentsTranslationKeys,
   ...mobileNavigationTranslationKeys,
   ...homeTranslationKeys,
@@ -228,7 +232,9 @@ const appTranslationKeys = <String>{
   ...reelsVoiceCommentTranslationKeys,
   ...startupTranslationKeys,
   ...serverSurfaceTranslationKeys,
+  ...serverDeletionTranslationKeys,
   ...profileMediaViewerTranslationKeys,
+  ...notificationEngagementTranslationKeys,
 };
 
 const _retiredServerSurfaceTranslationKeys = <String>{
@@ -270,6 +276,7 @@ final appTranslations = <String, Map<String, String>>{
         ...reelLinksTranslations[entry.key]!,
         ...gifMessageTranslations[entry.key]!,
         ...gifComposerTranslations[entry.key]!,
+        ...giphyTranslations[entry.key]!,
         ...yoMomentsTranslations[entry.key]!,
         ...mobileNavigationTranslations[entry.key]!,
         ...homeTranslations[entry.key]!,
@@ -282,7 +289,9 @@ final appTranslations = <String, Map<String, String>>{
         ...reelsVoiceCommentTranslations[entry.key]!,
         ...startupTranslations[entry.key]!,
         ...serverSurfaceTranslations[entry.key]!,
+        ...serverDeletionTranslations[entry.key]!,
         ...profileMediaViewerTranslations[entry.key]!,
+        ...notificationEngagementTranslations[entry.key]!,
         ...localizedExtendedLanguageNames[entry.key]!,
       }),
     ),

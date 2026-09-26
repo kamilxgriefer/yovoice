@@ -21,6 +21,7 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
+import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 
 class _EmptySocialGraphService implements SocialGraphService {
@@ -284,7 +285,9 @@ void main() {
   });
 
   testWidgets('keeps phones full-width and centres an 880px profile feed '
-      'across desktop widths with long content', (tester) async {
+      'under a full-bleed hero across desktop widths with long content', (
+    tester,
+  ) async {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
@@ -314,11 +317,22 @@ void main() {
       final background = tester.getRect(
         find.byKey(const ValueKey('friend-profile-background')),
       );
-      final expectedWidth = size.width > 880 ? 880.0 : size.width;
-      final expectedLeft = (size.width - expectedWidth) / 2;
+      // The scroll view spans the whole route (the banner is the header's
+      // full-bleed background); the readable column inside it keeps the
+      // 880pt list measure. Before the hero, the scroll view itself was the
+      // 880pt column.
+      final expectedWidth = size.width;
+      const expectedLeft = 0.0;
+      final columnWidth = size.width > 880 ? 880.0 : size.width;
+      final columnLeft = (size.width - columnWidth) / 2;
 
       expect(frame.width, expectedWidth, reason: '$size frame width');
       expect(frame.left, expectedLeft, reason: '$size top-centred frame');
+      expect(
+        tester.getRect(find.byType(ProfilePhotoButton)).left,
+        closeTo(columnLeft + 20, .01),
+        reason: '$size identity stays on the centred 880px column',
+      );
       expect(background.width, size.width, reason: '$size full-bleed bg');
       expect(find.text(longDisplayName), findsOneWidget);
       expect(
@@ -371,6 +385,72 @@ void main() {
       }
       expect(tester.takeException(), isNull, reason: '$size overflow');
     }
+  });
+
+  testWidgets('a landscape iPhone keeps Back, the identity, stats and '
+      'actions clear of the notch insets while the banner runs edge to edge', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(844, 390);
+    addTearDown(tester.view.reset);
+    const safe = EdgeInsets.only(left: 47, right: 47, bottom: 21);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.darkTheme,
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(844, 390),
+            padding: safe,
+            viewPadding: safe,
+          ),
+          child: buildScreen(),
+        ),
+      ),
+    );
+    for (var pump = 0; pump < 8; pump++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+
+    final banner = tester.getRect(find.byType(ProfileBannerButton));
+    expect(banner.left, 0);
+    expect(banner.width, 844);
+    expect(
+      tester.getRect(find.byTooltip('Back')).left,
+      greaterThanOrEqualTo(47 + 6),
+    );
+    final avatar = tester.getRect(find.byType(ProfilePhotoButton));
+    expect(avatar.left, greaterThanOrEqualTo(47 + 20 - .01));
+    expect(
+      tester.getRect(find.text(longDisplayName)).right,
+      lessThanOrEqualTo(844 - 47 - 20 + .01),
+    );
+
+    final scrollable = find
+        .descendant(
+          of: find.byKey(const ValueKey('friend-profile-content-frame')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    for (final key in const [
+      ValueKey('friend-profile-stats'),
+      ValueKey('friend-profile-quick-actions'),
+    ]) {
+      await tester.scrollUntilVisible(
+        find.byKey(key),
+        80,
+        scrollable: scrollable,
+      );
+      final rect = tester.getRect(find.byKey(key));
+      expect(rect.left, greaterThanOrEqualTo(47 + 20 - .01), reason: '$key');
+      expect(
+        rect.right,
+        lessThanOrEqualTo(844 - 47 - 20 + .01),
+        reason: '$key',
+      );
+    }
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('320px at 200% text stacks stats and actions with accessible '
@@ -583,7 +663,7 @@ void main() {
   });
 
   testWidgets('the friend banner resolves through the injected media service, '
-      'stays above the avatar and grows with the available band', (
+      'is the full-bleed hero behind the avatar and follows its geometry', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -653,12 +733,35 @@ void main() {
         reason: '$size banner grant must be requested by uid and kind alone',
       );
 
+      // Re-based when the banner became the header's full-bleed background:
+      // it used to be an inset card that had to end above the avatar, capped
+      // by the 880px measure. Now it starts at y = 0, runs edge to edge, and
+      // the avatar stands in its bottom melt.
       final band = tester.getRect(find.byType(ProfileBannerButton));
       final avatar = tester.getRect(find.byType(ProfilePhotoButton));
+      final geometry = ProfileHeroGeometry.resolve(
+        width: size.width,
+        viewportHeight: size.height,
+        windowWidth: size.width,
+      );
+      expect(band.top, 0, reason: '$size hero starts at the top edge');
+      expect(band.width, size.width, reason: '$size hero is full bleed');
+      expect(band.left, 0);
+      expect(band.height, closeTo(geometry.height, .01));
       expect(
-        band.bottom,
-        lessThanOrEqualTo(avatar.top),
-        reason: '$size banner must stay above the avatar',
+        avatar.top,
+        greaterThanOrEqualTo(geometry.textLine - .01),
+        reason: '$size identity row starts on the hero text line',
+      );
+      expect(
+        tester.getRect(find.text(longDisplayName)).top,
+        greaterThanOrEqualTo(geometry.textLine - .01),
+        reason: '$size the name only stands where the photo has melted away',
+      );
+      expect(
+        avatar.top,
+        lessThan(band.bottom),
+        reason: '$size avatar stands in the hero, not below it',
       );
       expect(
         band.width,
@@ -675,9 +778,77 @@ void main() {
       reason: 'a tablet band must not stay phone-sized',
     );
     expect(
-      bandHeights[768],
-      bandHeights[1440],
-      reason: 'the band is capped by the 880px content measure, not the window',
+      bandHeights[768]!,
+      lessThan(bandHeights[1440]!),
+      reason: 'a desktop hero takes the wide tier, not the tablet one',
     );
+  });
+  // Kamil: the photo stands behind the avatar, the name and the handle too,
+  // with a stronger fade under the text.
+  testWidgets('the friend avatar stands on the photo and the name on its '
+      'veil', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    for (final size in const [
+      Size(390, 844),
+      Size(768, 1024),
+      Size(1440, 900),
+    ]) {
+      ProfileMediaService.clearAllMediaAccessCaches();
+      final media = ProfileMediaService(
+        auth: auth,
+        invoker: (_, request) async => {
+          'schemaVersion': 1,
+          'available': false,
+          'expiresAtMillis': DateTime.now()
+              .toUtc()
+              .add(const Duration(seconds: 80))
+              .millisecondsSinceEpoch,
+        },
+      );
+      tester.view.physicalSize = size;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: buildScreen(
+            key: ValueKey('veil-${size.width}'),
+            profileMediaService: media,
+          ),
+        ),
+      );
+      for (var pump = 0; pump < 8; pump++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+
+      final geometry = ProfileHeroGeometry.resolve(
+        width: size.width,
+        viewportHeight: size.height,
+        windowWidth: size.width,
+      );
+      final photo = tester.getRect(find.byType(ProfileBannerButton));
+      final avatar = tester.getRect(find.byType(ProfilePhotoButton));
+      final name = tester.getRect(find.text(longDisplayName));
+      final reason = '$size';
+      expect(avatar.top, closeTo(geometry.textLine, .01), reason: reason);
+      expect(
+        avatar.center.dy,
+        lessThan(photo.bottom),
+        reason: '$reason: the avatar stands on the photo',
+      );
+      expect(
+        name.top,
+        greaterThanOrEqualTo(geometry.nameLine - .01),
+        reason: '$reason: the name starts on the veil, not above it',
+      );
+      expect(name.top, lessThan(photo.bottom), reason: reason);
+      expect(
+        tester.getRect(find.text('@alexandra_responsive_profile_name')).top,
+        greaterThanOrEqualTo(
+          geometry.nameLine + ProfileHeroBackdrop.nameVeilBand - .01,
+        ),
+        reason: '$reason: the handle stands on the stronger veil',
+      );
+      expect(tester.takeException(), isNull, reason: reason);
+    }
   });
 }

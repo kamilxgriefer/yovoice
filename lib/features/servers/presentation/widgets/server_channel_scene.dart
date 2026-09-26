@@ -817,7 +817,7 @@ class ServerSessionStatus extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Text(
-                  copy.serverReconnecting,
+                  copy.serverReconnectingFor(session.reauthorization),
                   key: const ValueKey('server-session-status'),
                   style: AppTypography.bodyMedium.copyWith(
                     color: palette.textSecondary,

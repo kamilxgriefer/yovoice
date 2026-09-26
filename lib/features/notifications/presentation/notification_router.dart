@@ -7,6 +7,9 @@ import 'package:yovoice/features/calls/presentation/direct_call_route_registry.d
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
+import 'package:yovoice/features/reels/presentation/screens/reel_link_destination_screen.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/servers/presentation/screens/server_invite_response_screen.dart';
@@ -31,6 +34,18 @@ enum NotificationDestination {
   conversation,
   directCall,
   missedCall,
+  /// The comment thread under a Voice Moment.
+  momentComments,
+
+  /// The Yeel viewer, opened on its thread.
+  reelComments,
+
+  /// A Moment or a Yeel — which one is decided from the row's `sourcePath`,
+  /// because one `commentMention` type covers both surfaces.
+  commentThread,
+
+  /// A Server, opened on the channel the event lives in.
+  serverEvent,
   none,
 }
 
@@ -59,20 +74,49 @@ class NotificationRouter {
         NotificationType.reply => NotificationDestination.conversation,
         NotificationType.directCall => NotificationDestination.directCall,
         NotificationType.missedCall => NotificationDestination.missedCall,
+        NotificationType.momentComment =>
+          NotificationDestination.momentComments,
+        NotificationType.reelComment => NotificationDestination.reelComments,
+        NotificationType.commentMention =>
+          NotificationDestination.commentThread,
+        NotificationType.serverEventReminder =>
+          NotificationDestination.serverEvent,
+        NotificationType.serverRole => NotificationDestination.club,
         NotificationType.achievementUnlocked ||
         NotificationType.moderation ||
         NotificationType.system => NotificationDestination.none,
       };
+
+  /// Notification types whose destination needs a field a push payload does
+  /// not always carry (the comment's parent surface, the event's channel).
+  static bool _needsRowDetail(NotificationType type) =>
+      type == NotificationType.commentMention ||
+      type == NotificationType.serverEventReminder;
 
   static Future<void> route({
     required NotificationType type,
     String? targetId,
     String? actorId,
     String? notificationId,
+    String? targetSubId,
+    String? sourcePath,
   }) async {
     if (FirebaseAuth.instance.currentUser == null) return;
     final navigator = notificationNavigatorKey.currentState;
     if (navigator == null) return;
+
+    var resolvedSubId = targetSubId;
+    var resolvedSourcePath = sourcePath;
+    if (_needsRowDetail(type) &&
+        (resolvedSourcePath == null || resolvedSubId == null) &&
+        notificationId?.isNotEmpty == true) {
+      // A tapped push carries only type/targetId/actorId/notificationId (plus
+      // the optional targetSubId). The owner-readable row itself is the
+      // authoritative source for the rest, so read it rather than guessing.
+      final row = await _loadNotification(notificationId!);
+      resolvedSubId ??= row?['targetSubId'] as String?;
+      resolvedSourcePath ??= row?['sourcePath'] as String?;
+    }
 
     if (notificationId?.isNotEmpty == true) {
       try {
@@ -103,6 +147,18 @@ class NotificationRouter {
           await _openDirectCall(navigator, targetId);
         case NotificationDestination.missedCall:
           await _openMissedCall(navigator, targetId);
+        case NotificationDestination.momentComments:
+          await _openMomentComments(navigator, targetId);
+        case NotificationDestination.reelComments:
+          await _openReel(navigator, targetId);
+        case NotificationDestination.commentThread:
+          if (resolvedSourcePath?.startsWith('reels/') == true) {
+            await _openReel(navigator, targetId);
+          } else if (resolvedSourcePath?.startsWith('voiceMoments/') == true) {
+            await _openMomentComments(navigator, targetId);
+          }
+        case NotificationDestination.serverEvent:
+          await _openServer(navigator, targetId, channelId: resolvedSubId);
         case NotificationDestination.none:
           // No dedicated destination yet — landing on the notification
           // center itself (where the tap originated) is enough for these.
@@ -147,10 +203,33 @@ class NotificationRouter {
     );
   }
 
+  static Future<Map<String, dynamic>?> _loadNotification(
+    String notificationId,
+  ) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return null;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('notifications')
+          .doc(notificationId)
+          .get();
+      return doc.data();
+    } on FirebaseException catch (error) {
+      debugPrint(
+        'NotificationRouter: could not read the tapped row '
+        '(${error.code}); routing continues with what the push carried.',
+      );
+      return null;
+    }
+  }
+
   static Future<void> _openServer(
     NavigatorState navigator,
-    String? serverId,
-  ) async {
+    String? serverId, {
+    String? channelId,
+  }) async {
     if (serverId == null || serverId.isEmpty) return;
     final doc = await FirebaseFirestore.instance
         .collection('clubs')
@@ -159,7 +238,43 @@ class NotificationRouter {
     if (!doc.exists || !navigator.mounted) return;
     await navigator.push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => ServerWorkspaceScreen(serverId: serverId),
+        builder: (_) => ServerWorkspaceScreen(
+          serverId: serverId,
+          initialChannelId: channelId?.isNotEmpty == true ? channelId : null,
+        ),
+      ),
+    );
+  }
+
+  /// Opens the Moment's own comment thread. The Moment is re-fetched through
+  /// `getVoiceMomentViewV2`, which rechecks the audience and refuses an
+  /// expired or deleted Moment — so a stale row simply does nothing rather
+  /// than opening something the viewer may no longer see.
+  static Future<void> _openMomentComments(
+    NavigatorState navigator,
+    String? momentId,
+  ) async {
+    if (momentId == null || momentId.isEmpty) return;
+    final view = await MomentService().loadMomentView(momentId);
+    if (!navigator.mounted) return;
+    await navigator.push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => MomentCommentsScreen(moment: view.moment),
+      ),
+    );
+  }
+
+  /// Opens the Yeel viewer. Reel documents are never client-readable, so the
+  /// destination screen calls `getReelViewV2` itself and shows its own
+  /// unavailable state when the Yeel is gone.
+  static Future<void> _openReel(
+    NavigatorState navigator,
+    String? reelId,
+  ) async {
+    if (reelId == null || reelId.isEmpty || !navigator.mounted) return;
+    await navigator.push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ReelLinkDestinationScreen(reelId: reelId),
       ),
     );
   }

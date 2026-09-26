@@ -14,6 +14,14 @@ enum NotificationType {
   missedCall,
   mention,
   reply,
+  // Engagement and Server activity (ADR-213). Server-written like every
+  // other type: a comment trigger, the event reminder worker and the
+  // membership callables produce these.
+  momentComment,
+  reelComment,
+  commentMention,
+  serverEventReminder,
+  serverRole,
   // Server-only: never in firestore.rules' client-creatable type list, so
   // only the Admin SDK (Cloud Functions) can ever produce one of these.
   achievementUnlocked,
@@ -41,6 +49,8 @@ class AppNotification {
     required this.createdAt,
     this.dedupeKey,
     this.bellSuppressed = false,
+    this.targetSubId,
+    this.sourcePath,
   });
 
   final String id;
@@ -73,6 +83,16 @@ class AppNotification {
   /// server-side activity writer decides this at write time; screens do not
   /// infer or override it cosmetically.
   final bool bellSuppressed;
+
+  /// The secondary target inside [targetId] — the comment to scroll to, or
+  /// the Server channel an event lives in. Additive and optional: rows
+  /// written before it existed simply carry none.
+  final String? targetSubId;
+
+  /// The server document this row was derived from, when the writer recorded
+  /// one. The router uses it to tell a Moment comment from a Yeel comment
+  /// without trusting anything the push payload carries.
+  final String? sourcePath;
 
   String get title {
     switch (type) {
@@ -119,6 +139,20 @@ class AppNotification {
         return targetLabel == null
             ? '$actorName replied to you'
             : '$actorName replied to you in $targetLabel';
+      case NotificationType.momentComment:
+        return '$actorName commented on your Moment';
+      case NotificationType.reelComment:
+        return '$actorName commented on your Yeel';
+      case NotificationType.commentMention:
+        return '$actorName mentioned you in a comment';
+      case NotificationType.serverEventReminder:
+        return targetLabel == null
+            ? 'An event is starting soon'
+            : 'Starting soon: $targetLabel';
+      case NotificationType.serverRole:
+        return targetLabel == null
+            ? '$actorName promoted you in a server'
+            : '$actorName promoted you in $targetLabel';
       case NotificationType.achievementUnlocked:
         return targetLabel == null
             ? 'Achievement unlocked'
@@ -149,6 +183,8 @@ class AppNotification {
       createdAt: createdAtValue is Timestamp ? createdAtValue.toDate() : null,
       dedupeKey: data['dedupeKey'] as String?,
       bellSuppressed: data['bellSuppressed'] as bool? ?? false,
+      targetSubId: data['targetSubId'] as String?,
+      sourcePath: data['sourcePath'] as String?,
     );
   }
 }

@@ -1,6 +1,7 @@
 import 'package:characters/characters.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'server_member_role.dart';
 import 'server_type.dart';
 
 /// An additive domain view of clubs/{id}; reading never migrates data.
@@ -23,6 +24,7 @@ class Server {
     this.activationState,
     this.entitlementPolicyId,
     this.status = 'active',
+    this.directoryRole,
   });
 
   final String id;
@@ -42,6 +44,36 @@ class Server {
   final String? activationState;
   final String? entitlementPolicyId;
   final String status;
+
+  /// The viewer's role as their own `users/{uid}/clubs/{id}` directory mirror
+  /// records it — never a field of `clubs/{id}` itself, so it is not parsed
+  /// from the root. It only decides which directory action to OFFER (delete
+  /// for the owner, leave for everyone else); every action it opens is
+  /// re-proven by its callable, so a stale mirror can at worst show an action
+  /// the backend then refuses. Null when the mirror carries no known role.
+  final ServerMemberRole? directoryRole;
+
+  /// The same root read, annotated with the viewer's directory-mirror role.
+  Server withDirectoryRole(ServerMemberRole? role) => Server(
+    id: id,
+    name: name,
+    description: description,
+    ownerId: ownerId,
+    type: type,
+    privacy: privacy,
+    defaultLanguage: defaultLanguage,
+    memberCount: memberCount,
+    defaultChannelId: defaultChannelId,
+    defaultVoiceChannelId: defaultVoiceChannelId,
+    loungeRoomId: loungeRoomId,
+    schemaVersion: schemaVersion,
+    templateVersion: templateVersion,
+    revision: revision,
+    activationState: activationState,
+    entitlementPolicyId: entitlementPolicyId,
+    status: status,
+    directoryRole: role,
+  );
 
   bool get isLegacy => schemaVersion == null;
   bool get isHeld => !isLegacy && activationState != 'active';

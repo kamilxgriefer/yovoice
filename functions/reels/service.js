@@ -79,6 +79,10 @@ const {
   validateAvailabilitySnapshot,
 } = require("./availability");
 const { paidPremiumIsActive } = require("../utils/premium_access");
+const {
+  normalizeMentionUserIds,
+  writeCommentMentions,
+} = require("../notifications/comment_mentions");
 
 const RESERVATION_TTL_MS = 30 * 60 * 1000;
 const MEDIA_GRANT_TTL_MS = 90 * 1000;
@@ -3161,20 +3165,24 @@ function createReelService({
 
   async function createReelComment(request) {
     const auth = requireActor(request);
+    // `mentionUserIds` is OPTIONAL and additive (ADR-213). Absent — which is
+    // every installed client — leaves the input, its hash and the stored
+    // comment byte for byte what they were.
     const data = requireExactInput(
       request.data,
-      ["reelId", "requestId", "text"],
+      ["mentionUserIds", "reelId", "requestId", "text"],
       ["reelId", "requestId", "text"],
     );
     const reelId = requireId(data.reelId, "reelId");
     const requestId = requireRequestId(data.requestId);
     const text = normalizeText(data.text, MAX_REEL_COMMENT_LENGTH, "text");
+    const mentionUserIds = normalizeMentionUserIds(data.mentionUserIds, auth.uid);
     const commentId = reelCommentIdFor(auth.uid, reelId, requestId);
     const identity = operationIdentity(
       "reel.comment",
       auth.uid,
       requestId,
-      { reelId, text },
+      mentionUserIds.length > 0 ? { mentionUserIds, reelId, text } : { reelId, text },
     );
     const attempt = await beginEngagementAttempt({
       identity,
@@ -3241,6 +3249,14 @@ function createReelService({
         text,
         durationSeconds: null,
         createdAt: attemptTime.now,
+      });
+      writeCommentMentions(transaction, db, {
+        kind: "reel",
+        parentId: reelId,
+        commentId,
+        actorId: auth.uid,
+        mentionUserIds,
+        now: attemptTime.now,
       });
       const commentCount = incrementCanonicalCount(
         reel.commentCount,
@@ -3473,7 +3489,7 @@ function createReelService({
     const auth = requireActor(request);
     const data = requireExactInput(
       request.data,
-      ["commentId", "objectGeneration", "reelId", "requestId"],
+      ["commentId", "mentionUserIds", "objectGeneration", "reelId", "requestId"],
       ["commentId", "objectGeneration", "reelId", "requestId"],
     );
     const reelId = requireId(data.reelId, "reelId");
@@ -3486,11 +3502,14 @@ function createReelService({
       data.objectGeneration,
       "objectGeneration",
     );
+    const mentionUserIds = normalizeMentionUserIds(data.mentionUserIds, auth.uid);
     const identity = operationIdentity(
       "reel.voiceComment.finalize",
       auth.uid,
       requestId,
-      { commentId, objectGeneration, reelId },
+      mentionUserIds.length > 0
+        ? { commentId, mentionUserIds, objectGeneration, reelId }
+        : { commentId, objectGeneration, reelId },
     );
     const preflight = await beginVoiceCommentPreflight({
       identity,
@@ -3616,6 +3635,14 @@ function createReelService({
         mediaSize: media.size,
         mediaContentType: media.contentType,
         createdAt: attemptTime.now,
+      });
+      writeCommentMentions(transaction, db, {
+        kind: "reel",
+        parentId: reelId,
+        commentId,
+        actorId: auth.uid,
+        mentionUserIds,
+        now: attemptTime.now,
       });
       const commentCount = incrementCanonicalCount(
         reel.commentCount,

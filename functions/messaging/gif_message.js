@@ -44,16 +44,37 @@ function isCanonicalMessageGif(gif) {
       Number.isSafeInteger(value) && value >= 1 && value <= 4096);
 }
 
+/// The providers a send path accepts, as a set.
+///
+/// ADR-214 (option B): the send paths serve an ALLOW-SET rather than the one
+/// provider the catalog searches, so YO Voice Originals (including every
+/// recent) stay sendable while GIPHY results chosen client-side are sent too.
+/// Accepts the legacy single `providerName` string or any iterable of names;
+/// anything that is not a serving provider is dropped, so `none`, a blank
+/// value or a typo can only narrow the set, never widen it.
+function sendableGifProviders(value) {
+  const names = typeof value === "string"
+    ? [value]
+    : (value && typeof value[Symbol.iterator] === "function" ? [...value] : []);
+  const set = new Set();
+  for (const name of names) {
+    const trimmed = typeof name === "string" ? name.trim() : "";
+    if (isServingProvider(trimmed)) set.add(trimmed);
+  }
+  return set;
+}
+
 async function resolveMessageGif({
   db,
   transaction,
   gif,
   providerName = process.env.GIF_PROVIDER,
+  providerNames = null,
 }) {
   if (!gif) return null;
-  const selected = typeof providerName === "string" ? providerName.trim() : "";
-  if (!isServingProvider(selected) || selected !== gif.provider ||
-      (selected === GIF_PROVIDERS.fake && !isFixtureEnvironment())) {
+  const allowed = sendableGifProviders(providerNames ?? providerName);
+  if (!allowed.has(gif.provider) ||
+      (gif.provider === GIF_PROVIDERS.fake && !isFixtureEnvironment())) {
     throw new HttpsError("failed-precondition", "GIFs are not available right now.", {
       code: "not_configured",
     });
@@ -92,4 +113,5 @@ module.exports = {
   isCanonicalMessageGif,
   messageInput,
   resolveMessageGif,
+  sendableGifProviders,
 };

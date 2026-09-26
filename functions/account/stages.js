@@ -35,6 +35,14 @@
 
 const { isValidOpaqueUid } = require("../achievements/identity");
 const {
+  BUDGETS: SERVER_MESSAGE_MEDIA_BUDGETS,
+  GENERATION_PATTERN,
+  LEASES: SERVER_MESSAGE_MEDIA_LEASES,
+  OBJECTS: SERVER_MESSAGE_MEDIA_OBJECTS,
+  RESERVATIONS: SERVER_MESSAGE_MEDIA_RESERVATIONS,
+  parseServerMessageMediaObjectName,
+} = require("../servers/message_media_contract");
+const {
   deletedAccountEmailDigest,
   deletedReportId,
   deletedReporterId,
@@ -54,7 +62,7 @@ function canonicalUid(value) {
 // every denormalized name field enforces.
 const DELETED_IDENTITY_NAME = "YO Voice user";
 
-// The sixteen private subcollections of `users/{uid}`, from firestore.rules.
+// The seventeen private subcollections of `users/{uid}`, from firestore.rules.
 // Six carry a reciprocal edge in somebody else's document and are handled by
 // their own steps; the rest are a plain bounded batch delete.
 const RECIPROCAL_SUBCOLLECTIONS = Object.freeze([
@@ -70,6 +78,7 @@ const PLAIN_SUBCOLLECTIONS = Object.freeze([
   "muted",
   "momentViews",
   "reelViews",
+  "serverQuestionSeen",
   "clubs",
   "serverChannelRefs",
   "serverInviteRefs",
@@ -115,8 +124,20 @@ const UID_KEYED_DOCUMENTS = Object.freeze([
 
 // Every Storage prefix owned by exactly one uid (storage.rules).
 //
-// storage.rules declares ELEVEN top-level prefixes. Seven of them begin with a
-// uid, and those seven are this list. THE OTHER FOUR ARE NOT SWEPT BY THIS
+// storage.rules declares THIRTEEN top-level prefixes. Eight of them carry the
+// uid as their first path segment after the prefix, and those eight are this
+// list (the eighth, bug_reports/{uid}/, holds in-app bug report screenshots).
+// A ninth,
+//
+//   server_message_media/{serverId}/{channelId}/{userId}/   (channel photos
+//                                                           and videos)
+//
+// is uid-keyed UNDER somebody else's container like the two below, but it IS
+// swept: finalizeServerChannelMessageMediaV1 writes one Admin-only
+// serverMessageMediaObjects/{messageId} row per published object carrying its
+// owner, path and generation, and the storage stage walks those rows (plus any
+// open upload reservation) after the fixed prefixes — see
+// sweepServerMessageMedia below. THE OTHER FOUR ARE NOT SWEPT BY THIS
 // PIPELINE AT ALL, and the disclosure below is the complete one — an earlier
 // revision of this comment named only the first two, which made the gap look
 // half the size it is:
@@ -139,7 +160,7 @@ const UID_KEYED_DOCUMENTS = Object.freeze([
 //        neither uid nor uploader anywhere in the path or the object name.
 //        There is no uid-derived handle on it to delete.
 //
-// This list is therefore exactly seven fixed prefixes and nothing more. The
+// This list is therefore exactly eight fixed prefixes and nothing more. The
 // gap is tracked in docs/Bugs.md ("Account deletion leaves cross-container
 // Storage objects", 2026-09-18), mirrored in the public /delete-account
 // "what deleting your account does not do" section, and NO user-facing copy
@@ -155,6 +176,9 @@ function uidStoragePrefixes(uid) {
     `reels/${uid}/`,
     `message_attachments/${uid}/`,
     `clubs/${uid}/`,
+    // In-app bug report screenshots (functions/bug_reports). The reports
+    // themselves are deleted by the `records` stage.
+    `bug_reports/${uid}/`,
   ]);
 }
 
@@ -166,6 +190,7 @@ const DEFAULT_LIMITS = Object.freeze({
   reportPage: 25,
   serverPage: 25,
   storagePrefixesPerCall: 3,
+  serverMediaPage: 25,
 });
 
 function resolveLimits(overrides = {}) {
@@ -544,11 +569,79 @@ function createAccountDeletionStages({
 
   // --------------------------------------------------------------- storage
 
+  function incompleteStorage(message) {
+    const error = new Error(message);
+    error.code = "storage-cleanup-incomplete";
+    return error;
+  }
+
+  /**
+   * One bounded page of the account's Servers V1 channel photos and videos,
+   * which live at server_message_media/{serverId}/{channelId}/{uid}/ — the
+   * uid is the FOURTH segment, so no uid prefix delete can reach them. The
+   * Admin-only owner index (serverMessageMediaObjects, written by finalize)
+   * and the open upload reservations name every object; each is deleted by
+   * its exact path (re-derived and checked against the uid, never trusted)
+   * and, for a published object, its exact generation. A row is removed only
+   * after its object is gone, so a failure leaves it for the retry.
+   */
+  async function sweepServerMessageMedia(uid, bucket) {
+    let removed = 0;
+    const [objects, reservations] = await Promise.all([
+      db.collection(SERVER_MESSAGE_MEDIA_OBJECTS)
+        .where("ownerId", "==", uid).limit(limits.serverMediaPage).get(),
+      db.collection(SERVER_MESSAGE_MEDIA_RESERVATIONS)
+        .where("ownerId", "==", uid).limit(limits.serverMediaPage).get(),
+    ]);
+    for (const document of objects.docs) {
+      const value = document.data() ?? {};
+      const parsed = parseServerMessageMediaObjectName(value.storagePath);
+      if (!parsed || parsed.ownerId !== uid || parsed.messageId !== document.id ||
+          typeof value.generation !== "string" || !GENERATION_PATTERN.test(value.generation)) {
+        throw incompleteStorage("A server message media index row is malformed.");
+      }
+      await bucket.file(value.storagePath, { generation: value.generation }).delete({
+        ignoreNotFound: true,
+        ifGenerationMatch: value.generation,
+      });
+      await document.ref.delete();
+      removed += 1;
+    }
+    for (const document of reservations.docs) {
+      const value = document.data() ?? {};
+      const parsed = parseServerMessageMediaObjectName(value.storagePath);
+      if (!parsed || parsed.ownerId !== uid || parsed.messageId !== document.id) {
+        throw incompleteStorage("A server message media reservation is malformed.");
+      }
+      await bucket.file(value.storagePath).delete({ ignoreNotFound: true });
+      await document.ref.delete();
+      removed += 1;
+    }
+    const more = objects.size >= limits.serverMediaPage ||
+      reservations.size >= limits.serverMediaPage;
+    if (!more) {
+      const budgets = await db.collection(SERVER_MESSAGE_MEDIA_BUDGETS)
+        .where("ownerId", "==", uid).limit(limits.serverMediaPage).get();
+      await Promise.all([
+        db.collection(SERVER_MESSAGE_MEDIA_LEASES).doc(uid).delete(),
+        ...budgets.docs.map((document) => document.ref.delete()),
+      ]);
+    }
+    return { removed, more };
+  }
+
   async function runStorage(uid, cursor) {
     const prefixes = uidStoragePrefixes(uid);
     const index = cursorStep(cursor);
     if (index >= prefixes.length) {
-      return { done: true, cursor: null, details: { prefixes: prefixes.length } };
+      const swept = await sweepServerMessageMedia(uid, resolveBucket());
+      return swept.more
+        ? { done: false, cursor: { step: index }, details: { serverMessageMedia: swept.removed } }
+        : {
+          done: true,
+          cursor: null,
+          details: { prefixes: prefixes.length, serverMessageMedia: swept.removed },
+        };
     }
     const bucket = resolveBucket();
     const slice = prefixes.slice(index, index + limits.storagePrefixesPerCall);
@@ -563,10 +656,16 @@ function createAccountDeletionStages({
       }
     }
     const next = index + slice.length;
+    if (next < prefixes.length) {
+      return { done: false, cursor: { step: next }, details: { deleted: slice } };
+    }
+    // The fixed prefixes are clear; the channel media page runs in the same
+    // call, so an account without any keeps finishing this stage here.
+    const swept = await sweepServerMessageMedia(uid, bucket);
     return {
-      done: next >= prefixes.length,
-      cursor: next >= prefixes.length ? null : { step: next },
-      details: { deleted: slice },
+      done: !swept.more,
+      cursor: swept.more ? { step: next } : null,
+      details: { deleted: slice, serverMessageMedia: swept.removed },
     };
   }
 
@@ -734,7 +833,45 @@ function createAccountDeletionStages({
       };
     }
 
+    if (step === 5) {
+      const outcome = await deleteBugReports(uid);
+      return {
+        done: false,
+        cursor: { step: outcome.complete ? 6 : 5 },
+        details: { bugReportsDeleted: outcome.removed },
+      };
+    }
+
     return { done: true, cursor: null, details: { step: "complete" } };
+  }
+
+  /**
+   * The account's in-app bug reports and any open screenshot reservation.
+   *
+   * Deleted, not re-keyed: unlike a safety report (retained as moderation
+   * evidence above), a bug report has no value to anybody once its reporter
+   * is gone, and its description is the reporter's own words. The screenshot
+   * objects live under bug_reports/{uid}/, which the `storage` stage has
+   * already swept by prefix.
+   */
+  async function deleteBugReports(uid) {
+    const [reports, reservations] = await Promise.all([
+      db.collection("bugReports").where("reporterId", "==", uid)
+        .limit(limits.reportPage).get(),
+      db.collection("bugReportUploadReservations").where("ownerId", "==", uid)
+        .limit(limits.reportPage).get(),
+    ]);
+    const documents = [...reports.docs, ...reservations.docs];
+    if (documents.length > 0) {
+      const batch = db.batch();
+      for (const document of documents) batch.delete(document.ref);
+      await batch.commit();
+    }
+    return {
+      removed: documents.length,
+      complete: reports.size < limits.reportPage &&
+        reservations.size < limits.reportPage,
+    };
   }
 
   // ------------------------------------------------------------------ auth

@@ -25,6 +25,28 @@ function chunks(values, size) {
 }
 
 /**
+ * Drops every registration written before the account's session epoch
+ * (`users/{uid}.authSessionEpoch`, seconds). The epoch is written when a
+ * pre-registered account takeover is remediated (auth/federated_takeover.js);
+ * the rules refuse any registration from a session older than it, and every
+ * registration's `updatedAt` is the server's request time, so a document
+ * older than the epoch was planted by a session that has been ended. It
+ * receives nothing while the bounded purge is still working through it.
+ * Accounts without an epoch are unaffected.
+ */
+function registrationsNotBeforeEpoch(documents, sessionEpoch) {
+  if (!Number.isSafeInteger(sessionEpoch)) return documents;
+  const epochMillis = sessionEpoch * 1000;
+  return documents.filter((document) => {
+    const writtenAt = typeof document?.get === "function"
+      ? document.get("updatedAt")
+      : document?.data?.()?.updatedAt;
+    return typeof writtenAt?.toMillis === "function" &&
+      writtenAt.toMillis() >= epochMillis;
+  });
+}
+
+/**
  * Selects the bounded, newest token set used for delivery. The production
  * query is ordered by the Rules-enforced server timestamp, so the first
  * documents are the account's most recently active devices. Everything
@@ -118,5 +140,6 @@ module.exports = {
   MAX_FCM_TOKEN_DOCUMENT_READS,
   chunks,
   planTokenDocuments,
+  registrationsNotBeforeEpoch,
   sendMulticastInChunks,
 };

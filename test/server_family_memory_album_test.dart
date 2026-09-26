@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemChannels;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
@@ -18,6 +19,7 @@ import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_family_memory_service.dart';
 import 'package:yovoice/features/servers/presentation/theme/server_identity.dart';
 import 'package:yovoice/features/servers/presentation/widgets/server_family_memory_album.dart';
+import 'package:yovoice/shared/widgets/media/yo_recording_countdown.dart';
 
 import 'voice_moment_test_doubles.dart';
 
@@ -312,4 +314,155 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'a voice note that reaches 0:30 counts down, stops itself and is kept',
+    (tester) async {
+      final haptics = <Object?>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'HapticFeedback.vibrate') {
+            haptics.add(call.arguments);
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      final stopwatch = FakeStopwatch();
+      final audio = FakeRecordedAudio();
+      final repository = MemoryRepository(Stream.value(const []));
+      await pumpAlbum(
+        tester,
+        repository,
+        picker: PickerStub(
+          XFile.fromData(validPng(), mimeType: 'image/png', name: 'family.png'),
+        ),
+        recorderFactory: () => VoiceMomentRecorder(
+          backend: FakeRecorderBackend(),
+          capture: FakeAudioCapture()..result = audio,
+          clock: stopwatch,
+        ),
+        playerFactory: FakePreviewAudioPlayer.new,
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('server-family-memory-add')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('server-family-memory-pick-photo')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('server-family-memory-record')),
+      );
+      await tester.pump();
+
+      final countdown = find.byKey(const ValueKey('yo-recording-countdown'));
+      Future<void> tick(int ms) async {
+        stopwatch.value = Duration(milliseconds: ms);
+        await tester.pump(const Duration(milliseconds: 200));
+      }
+
+      await tick(19_900);
+      expect(countdown, findsNothing);
+      expect(haptics, isEmpty);
+      await tick(20_000);
+      expect(
+        find.descendant(of: countdown, matching: find.text('Zostało 10 s')),
+        findsOneWidget,
+      );
+      expect(haptics, ['HapticFeedbackType.lightImpact']);
+      await tick(27_500);
+      expect(
+        find.descendant(of: countdown, matching: find.text('Zostało 3 s')),
+        findsOneWidget,
+      );
+      expect(haptics, hasLength(1));
+
+      // Past the cap the composer stops itself and keeps the note.
+      await tick(30_300);
+      await tester.pump();
+      expect(countdown, findsNothing);
+      expect(find.text('Głos gotowy'), findsOneWidget);
+      expect(
+        find.text('Zatrzymano na limicie 0:30. Głos jest gotowy do zapisania.'),
+        findsOneWidget,
+      );
+      expect(find.text('0:30 / 0:30'), findsOneWidget);
+      expect(haptics, hasLength(2));
+      expect(audio.discarded, isFalse);
+
+      final publish = find.byKey(
+        const ValueKey('server-family-memory-publish'),
+      );
+      await tester.ensureVisible(publish);
+      await tester.tap(publish);
+      await tester.pumpAndSettle();
+      expect(repository.publishCalls, 1);
+      expect(repository.attempt?.voiceDurationMs, 30000);
+    },
+  );
+
+  testWidgets(
+    'a Finish tap just after the automatic stop at 0:30 keeps the voice',
+    (tester) async {
+      final stopwatch = FakeStopwatch();
+      final audio = FakeRecordedAudio();
+      final backend = FakeRecorderBackend();
+      final repository = MemoryRepository(Stream.value(const []));
+      await pumpAlbum(
+        tester,
+        repository,
+        picker: PickerStub(
+          XFile.fromData(validPng(), mimeType: 'image/png', name: 'family.png'),
+        ),
+        recorderFactory: () => VoiceMomentRecorder(
+          backend: backend,
+          capture: FakeAudioCapture()..result = audio,
+          clock: stopwatch,
+        ),
+        playerFactory: FakePreviewAudioPlayer.new,
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('server-family-memory-add')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('server-family-memory-pick-photo')),
+      );
+      await tester.pumpAndSettle();
+      final record = find.byKey(const ValueKey('server-family-memory-record'));
+      await tester.tap(record);
+      await tester.pump();
+      expect(backend.startCalls, 1);
+
+      stopwatch.value = const Duration(milliseconds: 30_300);
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      expect(find.text('Głos gotowy'), findsOneWidget);
+
+      // "Finish" became "Record again" under the finger; a late tap is ignored.
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.tap(record);
+      await tester.pumpAndSettle();
+      expect(backend.startCalls, 1);
+      expect(audio.discarded, isFalse);
+      expect(find.text('Głos gotowy'), findsOneWidget);
+
+      // Past the grace, a new take still asks first; "Zachowaj" keeps it.
+      await tester.pump(recordingAutoStopTapGrace);
+      await tester.tap(record);
+      await tester.pumpAndSettle();
+      expect(find.text('Nagrać ponownie?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('recording-replace-keep')));
+      await tester.pumpAndSettle();
+      expect(backend.startCalls, 1);
+      expect(audio.discarded, isFalse);
+      expect(find.text('Głos gotowy'), findsOneWidget);
+    },
+  );
 }

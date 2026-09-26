@@ -9,6 +9,14 @@ import 'package:livekit_client/livekit_client.dart' as lk;
 /// been issued — so the dock's "połączono" is true when it is shown.
 enum ServerMediaLinkState { connecting, connected, reconnecting, disconnected }
 
+/// Why the provider ended an established link, where it says so.
+///
+/// [participantRemoved] is what a server-side revocation looks like (LiveKit
+/// `RemoveParticipant`, which ADR-181's convergence worker calls when a
+/// person's role or mute changes); [roomDeleted] is a generation that ended.
+/// Everything else — a network loss, a signalling failure — is [other].
+enum ServerMediaDisconnectReason { participantRemoved, roomDeleted, other }
+
 /// Immutable authority carried by a LiveKit participant token.
 ///
 /// `canUpdateOwnMetadata` is disabled by the backend, so a parsed binding is a
@@ -74,8 +82,10 @@ abstract interface class ServerMediaDataLink {
 }
 
 /// Somebody the provider says is in the session. This is the only honest
-/// in-session presence source (contract G3): it exists after joining and
-/// nowhere before.
+/// in-session *presence* source: it exists after joining and nowhere before.
+/// (The participant documents ADR-181 opens to clients are authorization
+/// state — a person's own role and hand, the hosts' raised-hand queue — never
+/// a roster.)
 @immutable
 class ServerMediaParticipant {
   const ServerMediaParticipant({
@@ -99,8 +109,10 @@ class ServerMediaParticipant {
   /// `host | guest | listener` for this generation, or null when the provider
   /// reports nothing usable.
   ///
-  /// This is **not** the participant document of contract gap G3, which stays
-  /// unreadable. It is the role the server itself signed into this person's
+  /// This is **not** read from the participant document. Since ADR-181 that
+  /// document is readable only by its own subject (and, for raised hands, by
+  /// the session host and moderators), so it can never describe everybody on
+  /// a stage. This is the role the server itself signed into each person's
   /// access token — `session_livekit.js mintToken()` writes
   /// `metadata: {uid, role, serverId, channelId, roomId, sessionId}` and the
   /// same grant sets `canUpdateOwnMetadata: false`, so no client can alter or
@@ -138,6 +150,10 @@ class ServerMediaParticipant {
 /// roster or speaking change.
 abstract class ServerMediaLink extends ChangeNotifier {
   ServerMediaLinkState get state;
+
+  /// Set once the provider ended the link, when it reported why. Null while
+  /// the link is up and for a provider that does not say.
+  ServerMediaDisconnectReason? get disconnectReason => null;
   List<ServerMediaParticipant> get participants;
   bool get isMicrophoneEnabled;
 
@@ -318,7 +334,16 @@ class _LiveKitServerMediaLink extends ServerMediaLink
     _events = _room.createListener()
       ..on<lk.RoomReconnectingEvent>((_) => _sync())
       ..on<lk.RoomReconnectedEvent>((_) => _sync())
-      ..on<lk.RoomDisconnectedEvent>((_) => _sync())
+      ..on<lk.RoomDisconnectedEvent>((event) {
+        _disconnectReason = switch (event.reason) {
+          lk.DisconnectReason.participantRemoved =>
+            ServerMediaDisconnectReason.participantRemoved,
+          lk.DisconnectReason.roomDeleted =>
+            ServerMediaDisconnectReason.roomDeleted,
+          _ => ServerMediaDisconnectReason.other,
+        };
+        _sync();
+      })
       ..on<lk.ParticipantConnectedEvent>((_) => _sync())
       ..on<lk.ParticipantDisconnectedEvent>((_) => _sync())
       ..on<lk.ActiveSpeakersChangedEvent>((_) => _sync())
@@ -347,6 +372,7 @@ class _LiveKitServerMediaLink extends ServerMediaLink
   final lk.Room _room;
   late final lk.EventsListener<lk.RoomEvent> _events;
   ServerMediaLinkState _state = ServerMediaLinkState.connecting;
+  ServerMediaDisconnectReason? _disconnectReason;
   List<ServerMediaParticipant> _participants = const [];
   bool _released = false;
   bool _deafened = false;
@@ -361,6 +387,9 @@ class _LiveKitServerMediaLink extends ServerMediaLink
 
   @override
   ServerMediaLinkState get state => _state;
+
+  @override
+  ServerMediaDisconnectReason? get disconnectReason => _disconnectReason;
 
   @override
   ServerMediaSessionBinding? get localSessionBinding {

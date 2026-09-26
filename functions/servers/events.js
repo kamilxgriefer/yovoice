@@ -161,6 +161,11 @@ function createServerEventService(dependencies) {
   }
   const operations = createServerOperations(dependencies);
 
+  // Charged to `server.v1.create` (30/hour), not only to the 120/min attempt
+  // budget. A scheduled event is durable fan-out work: the reminder worker
+  // scans every due event in ONE collection-group query across every server,
+  // so an account able to mint ~7200 events an hour inside its own Family
+  // server would otherwise be able to crowd that shared due set.
   async function createServerEventV1(request) {
     const required = ["title", "description", "startsAtMillis", "endsAtMillis", "timeZone"];
     const input = eventMutationInput(request.data, required);
@@ -214,7 +219,7 @@ function createServerEventService(dependencies) {
         revision: 1,
         status: "scheduled",
       };
-    });
+    }, { creation: true });
   }
 
   async function updateServerEventV1(request) {

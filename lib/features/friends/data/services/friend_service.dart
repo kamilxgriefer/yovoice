@@ -8,9 +8,28 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 
 import '../models/friend_request.dart';
+import '../models/friend_request_response.dart';
 import '../models/friend_user.dart';
 
+export '../models/friend_request_response.dart';
 export '../models/friend_user.dart' show FriendRelationshipStatus;
+
+/// A refused social callable, keeping the server's error code.
+///
+/// It is still a [StateError] with the same generic message every caller has
+/// always shown, so no surface starts leaking server wording. The [code] is
+/// what lets a friend-request surface tell a stale request ("no longer
+/// available", "already friends") apart from a real failure.
+class SocialActionException extends StateError {
+  SocialActionException(this.code, {this.serverMessage})
+    : super('The social action could not be completed.');
+
+  /// The `FirebaseFunctionsException.code`, for example `not-found`.
+  final String code;
+
+  /// The callable's own message, for matching only; never shown verbatim.
+  final String? serverMessage;
+}
 
 typedef FriendMutationInvoker =
     Future<Map<String, dynamic>> Function(
@@ -134,8 +153,8 @@ class FriendService {
       return value is Map
           ? Map<String, dynamic>.from(value)
           : const <String, dynamic>{};
-    } on FirebaseFunctionsException {
-      throw StateError('The social action could not be completed.');
+    } on FirebaseFunctionsException catch (error) {
+      throw SocialActionException(error.code, serverMessage: error.message);
     }
   }
 
@@ -1046,24 +1065,53 @@ class FriendService {
     return FriendRelationshipStatus.none;
   }
 
+  /// Sends a friend request and returns the relationship it produced.
+  ///
+  /// Kept for callers that only need the resulting status. Surfaces that
+  /// present the outcome use [requestFriendship], which also says whether the
+  /// other person's own request is waiting for an explicit answer.
   Future<FriendRelationshipStatus> sendFriendRequest(
     FriendUser receiver,
-  ) async {
+  ) async => (await requestFriendship(receiver)).status;
+
+  /// "Add friend". Never accepts the other person's pending request.
+  ///
+  /// The request always carries `acceptIncoming: false`: when the receiver
+  /// has already sent this user a request, the server answers
+  /// `incomingPending` and changes nothing, and the caller shows an explicit
+  /// Accept / Decline prompt. An older Functions deployment ignores the flag
+  /// and answers `accepted`; that friendship is real, so it is reported as
+  /// [FriendRequestSendResult.acceptedWithoutPrompt] rather than as a plain
+  /// success (ADR: friend requests are an explicit consent decision).
+  Future<FriendRequestSendResult> requestFriendship(FriendUser receiver) async {
     if (receiver.id == _currentUser.uid) {
       throw StateError('You cannot add yourself.');
     }
     final result = await _mutate('sendFriendRequest', {
       'targetUserId': receiver.id,
+      'acceptIncoming': false,
     });
-    final status = switch (result['outcome']) {
-      'accepted' || 'alreadyFriends' => FriendRelationshipStatus.friends,
-      'requested' || 'alreadyPending' => FriendRelationshipStatus.requestSent,
+    final sendResult = switch (result['outcome']) {
+      'alreadyFriends' => const FriendRequestSendResult(
+        status: FriendRelationshipStatus.friends,
+      ),
+      'accepted' => const FriendRequestSendResult(
+        status: FriendRelationshipStatus.friends,
+        acceptedWithoutPrompt: true,
+      ),
+      'requested' || 'alreadyPending' => const FriendRequestSendResult(
+        status: FriendRelationshipStatus.requestSent,
+      ),
+      'incomingPending' => const FriendRequestSendResult(
+        status: FriendRelationshipStatus.requestReceived,
+        incomingPending: true,
+      ),
       _ => throw StateError('The friend request returned an invalid response.'),
     };
-    if (status == FriendRelationshipStatus.friends) {
+    if (sendResult.status == FriendRelationshipStatus.friends) {
       ProfileMediaService.evictUser(receiver.id);
     }
-    return status;
+    return sendResult;
   }
 
   Future<void> cancelFriendRequest(String receiverId) async {
@@ -1083,6 +1131,65 @@ class FriendService {
       'senderId': senderId,
       'accept': false,
     });
+  }
+
+  /// An explicit Accept or Decline that reports what really happened.
+  ///
+  /// Unlike [acceptFriendRequest] / [declineFriendRequest], a stale request
+  /// is not an exception here: the server's idempotent outcomes and its
+  /// "no longer available" / blocked refusals come back as
+  /// [FriendRequestResponseOutcome]s so every surface can show an honest
+  /// state instead of a button that failed. Anything else still throws.
+  Future<FriendRequestResponseOutcome> respondToFriendRequest(
+    String senderId, {
+    required bool accept,
+  }) async {
+    final Map<String, dynamic> result;
+    try {
+      result = await _mutate('respondToFriendRequest', {
+        'senderId': senderId,
+        'accept': accept,
+      });
+    } on SocialActionException catch (error) {
+      final stale = staleFriendRequestOutcome(error);
+      if (stale == null) rethrow;
+      return stale;
+    }
+    final outcome = switch (result['outcome']) {
+      'alreadyAccepted' => FriendRequestResponseOutcome.alreadyFriends,
+      'alreadyResolved' => FriendRequestResponseOutcome.alreadyResolved,
+      'declined' => FriendRequestResponseOutcome.declined,
+      'accepted' => FriendRequestResponseOutcome.accepted,
+      // Only a success without an outcome field reaches here; the decision
+      // the user made is the one that was applied.
+      _ =>
+        accept
+            ? FriendRequestResponseOutcome.accepted
+            : FriendRequestResponseOutcome.declined,
+    };
+    if (outcome == FriendRequestResponseOutcome.accepted ||
+        outcome == FriendRequestResponseOutcome.alreadyFriends) {
+      ProfileMediaService.evictUser(senderId);
+    }
+    return outcome;
+  }
+
+  /// Maps a refused respond call onto a stale state, or null for a real
+  /// failure. `failed-precondition` is also "verify your email", and
+  /// `permission-denied` is also "your own account is restricted", so only
+  /// the refusals that describe the request itself are stale.
+  static FriendRequestResponseOutcome? staleFriendRequestOutcome(
+    SocialActionException error,
+  ) {
+    final message = (error.serverMessage ?? '').toLowerCase();
+    return switch (error.code) {
+      'not-found' => FriendRequestResponseOutcome.noLongerAvailable,
+      'failed-precondition' when message.contains('blocked') =>
+        FriendRequestResponseOutcome.unavailable,
+      'permission-denied' when message.contains('not active') =>
+        FriendRequestResponseOutcome.unavailable,
+      _ => null,
+    };
   }
 
   Future<void> removeFriend(String friendId) async {

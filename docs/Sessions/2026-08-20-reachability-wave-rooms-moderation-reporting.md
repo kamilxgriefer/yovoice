@@ -125,7 +125,7 @@ nobody has written yet.
   deploy, no Hosting release. `firestore.indexes.json` now carries **21
   composites and 4 fieldOverrides**; the last production reading, on
   2026-08-19, was 19 and 4. Rollout order and gates:
-  [DEPLOYMENT.md](../DEPLOYMENT.md#pending-release-the-2026-08-1920-reachability-wave).
+  [DEPLOYMENT.md](../DEPLOYMENT.md#released-2026-08-20-the-reachability-wave).
 - **Room voice has had no round trip of any kind** — no production, no
   emulator, no real LiveKit, no device run. Rules were read, not executed,
   and `fake_cloud_firestore` evaluates no rules, so every "the client may

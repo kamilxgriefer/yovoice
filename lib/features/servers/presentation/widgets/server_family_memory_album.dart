@@ -13,6 +13,7 @@ import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
 import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
+import 'package:yovoice/shared/widgets/media/yo_recording_countdown.dart';
 
 import '../../data/models/server_family_memory.dart';
 import '../../data/models/server_member_role.dart';
@@ -903,6 +904,7 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
   late final ImagePicker _picker = widget.imagePicker ?? ImagePicker();
   late final VoiceMomentRecorder _recorder =
       widget.recorderFactory?.call() ?? VoiceMomentRecorder();
+  final RecordingLimitCues _limitCues = RecordingLimitCues();
   AudioPlayer? _previewPlayer;
   StreamSubscription<void>? _previewCompletion;
   Timer? _ticker;
@@ -914,6 +916,12 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
   Duration _elapsed = Duration.zero;
   bool _recording = false;
   bool _stopping = false;
+
+  /// The note was ended by the 0:30 cap rather than by the person.
+  bool _stoppedAtCap = false;
+
+  /// Runs for [recordingAutoStopTapGrace] after the automatic stop at 0:30.
+  Timer? _capStopGrace;
   bool _previewing = false;
   bool _busy = false;
   bool _published = false;
@@ -967,6 +975,13 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
       await _finishRecording();
       return;
     }
+    // A Finish aimed at the last second that lands just after the automatic
+    // stop must not start a new take over the kept one.
+    if (_capStopGrace?.isActive ?? false) return;
+    if (_voice != null) {
+      final replace = await confirmReplaceRecording(context);
+      if (!replace || !mounted || _recording || _busy || _stopping) return;
+    }
     try {
       await _stopPreview();
       final previous = _voice;
@@ -979,9 +994,11 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
         await _recorder.cancel();
         return;
       }
+      _limitCues.reset();
       setState(() {
         _recording = true;
         _elapsed = Duration.zero;
+        _stoppedAtCap = false;
         _notice = null;
       });
       _ticker?.cancel();
@@ -989,7 +1006,11 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
         if (!mounted || !_recording || _stopping) return;
         final elapsed = _recorder.elapsed;
         setState(() => _elapsed = elapsed);
-        if (elapsed >= _maxDuration) unawaited(_finishRecording());
+        if (elapsed >= _maxDuration) {
+          unawaited(_finishRecording(atCap: true));
+          return;
+        }
+        _limitCues.onTick(context, elapsed, _maxDuration);
       });
     } on VoiceRecordingException catch (error) {
       if (!mounted) return;
@@ -1010,7 +1031,10 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
     }
   }
 
-  Future<void> _finishRecording() async {
+  /// Ends the note and keeps it. [atCap] marks the automatic stop at 0:30:
+  /// the note is still kept, never discarded, and the person is told why the
+  /// recording ended.
+  Future<void> _finishRecording({bool atCap = false}) async {
     if (!_recording || _stopping) return;
     _stopping = true;
     _ticker?.cancel();
@@ -1028,9 +1052,21 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
         _voiceDurationMs = durationMs;
         _elapsed = Duration(milliseconds: durationMs);
         _recording = false;
+        _stoppedAtCap = atCap;
         _attempt = null;
         _notice = null;
       });
+      if (atCap) {
+        _capStopGrace?.cancel();
+        _capStopGrace = Timer(recordingAutoStopTapGrace, () {});
+        _limitCues.onAutomaticStop(
+          context,
+          AppLocalizations.of(context).text(
+            'Recording stopped at the 0:30 limit. Your voice is ready to save.',
+            'Nagrywanie zatrzymało się na limicie 0:30. Głos jest gotowy do zapisania.',
+          ),
+        );
+      }
     } on VoiceRecordingException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -1129,6 +1165,7 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _capStopGrace?.cancel();
     _caption.dispose();
     unawaited(_previewCompletion?.cancel());
     unawaited(_previewPlayer?.dispose());
@@ -1206,6 +1243,8 @@ class _FamilyMemoryComposerState extends State<_FamilyMemoryComposer> {
                     _ComposerVoice(
                       recording: _recording,
                       stopping: _stopping,
+                      secondsLeft: recordingSecondsLeft(_elapsed, _maxDuration),
+                      stoppedAtCap: _stoppedAtCap,
                       hasVoice: _voice != null,
                       previewing: _previewing,
                       elapsed: _elapsed,
@@ -1372,6 +1411,8 @@ class _ComposerVoice extends StatelessWidget {
   const _ComposerVoice({
     required this.recording,
     required this.stopping,
+    required this.secondsLeft,
+    required this.stoppedAtCap,
     required this.hasVoice,
     required this.previewing,
     required this.elapsed,
@@ -1384,6 +1425,8 @@ class _ComposerVoice extends StatelessWidget {
 
   final bool recording;
   final bool stopping;
+  final int? secondsLeft;
+  final bool stoppedAtCap;
   final bool hasVoice;
   final bool previewing;
   final Duration elapsed;
@@ -1404,66 +1447,91 @@ class _ComposerVoice extends StatelessWidget {
         borderRadius: AppRadius.lg,
         border: Border.all(color: colors.iconBorder),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          FilledButton.icon(
-            key: const ValueKey('server-family-memory-record'),
-            onPressed: busy || stopping || locked ? null : onRecord,
-            style: FilledButton.styleFrom(
-              backgroundColor: recording
-                  ? palette.dangerForeground
-                  : colors.cta,
-              foregroundColor: recording ? palette.dangerSurface : colors.onCta,
-              minimumSize: const Size(148, 48),
-            ),
-            icon: Icon(recording ? Icons.stop_rounded : Icons.mic_rounded),
-            label: Text(
-              recording
-                  ? copy.text('Finish', 'Zakończ')
-                  : hasVoice
-                  ? copy.text('Record again', 'Nagraj ponownie')
-                  : copy.text('Record voice', 'Nagraj głos'),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  recording
-                      ? copy.text('Recording…', 'Nagrywanie…')
-                      : hasVoice
-                      ? copy.text('Voice ready', 'Głos gotowy')
-                      : copy.text('Up to 30 seconds', 'Do 30 sekund'),
-                  style: AppTypography.labelLarge.copyWith(
-                    color: palette.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  '${_durationLabel(elapsed)} / 0:30',
-                  style: AppTypography.bodySmall.copyWith(
-                    color: palette.textSecondary,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (hasVoice && !recording)
-            IconButton.filledTonal(
-              key: const ValueKey('server-family-memory-preview'),
-              onPressed: busy ? null : onPreview,
-              tooltip: previewing
-                  ? copy.text('Pause preview', 'Wstrzymaj podgląd')
-                  : copy.text('Play preview', 'Odtwórz podgląd'),
-              icon: Icon(
-                previewing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          _row(context, copy, palette),
+          // Below the row, so the Finish button never moves in the last
+          // seconds; the slot is held for the whole take.
+          if (recording) ...[
+            const SizedBox(height: AppRhythm.tight),
+            YoRecordingCountdown(secondsLeft: secondsLeft),
+          ] else if (hasVoice && stoppedAtCap) ...[
+            const SizedBox(height: AppRhythm.tight),
+            Text(
+              copy.text(
+                'Stopped at the 0:30 limit. Your voice is ready to save.',
+                'Zatrzymano na limicie 0:30. Głos jest gotowy do zapisania.',
+              ),
+              key: const ValueKey('server-family-memory-stopped-at-limit'),
+              style: AppTypography.bodySmall.copyWith(
+                color: palette.textSecondary,
               ),
             ),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _row(BuildContext context, AppLocalizations copy, AppPalette palette) {
+    return Row(
+      children: [
+        FilledButton.icon(
+          key: const ValueKey('server-family-memory-record'),
+          onPressed: busy || stopping || locked ? null : onRecord,
+          style: FilledButton.styleFrom(
+            backgroundColor: recording ? palette.dangerForeground : colors.cta,
+            foregroundColor: recording ? palette.dangerSurface : colors.onCta,
+            minimumSize: const Size(148, 48),
+          ),
+          icon: Icon(recording ? Icons.stop_rounded : Icons.mic_rounded),
+          label: Text(
+            recording
+                ? copy.text('Finish', 'Zakończ')
+                : hasVoice
+                ? copy.text('Record again', 'Nagraj ponownie')
+                : copy.text('Record voice', 'Nagraj głos'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                recording
+                    ? copy.text('Recording…', 'Nagrywanie…')
+                    : hasVoice
+                    ? copy.text('Voice ready', 'Głos gotowy')
+                    : copy.text('Up to 30 seconds', 'Do 30 sekund'),
+                style: AppTypography.labelLarge.copyWith(
+                  color: palette.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                '${_durationLabel(elapsed)} / 0:30',
+                style: AppTypography.bodySmall.copyWith(
+                  color: palette.textSecondary,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (hasVoice && !recording)
+          IconButton.filledTonal(
+            key: const ValueKey('server-family-memory-preview'),
+            onPressed: busy ? null : onPreview,
+            tooltip: previewing
+                ? copy.text('Pause preview', 'Wstrzymaj podgląd')
+                : copy.text('Play preview', 'Odtwórz podgląd'),
+            icon: Icon(
+              previewing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            ),
+          ),
+      ],
     );
   }
 }

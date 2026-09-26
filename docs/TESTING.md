@@ -4,6 +4,155 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
+## Pre-registered account takeover, Phase 1 — 2026-09-25 (ADR-222, source only, NOT deployed)
+
+Every attack step in the Functions suite is the production-shaped client call:
+Identity Toolkit REST against the Auth emulator for sign-up, Google/Apple
+sign-in, refresh and e-mail verification (through the emulator's real oob
+code), and Firestore REST `documents:commit` with the caller's own ID token for
+the profile bootstrap and `NotificationService.registerFcmToken`'s exact write,
+so the real `firestore.rules` decide.
+
+| Suite | Cases | What it proves |
+| --- | --- | --- |
+| `functions/test/federated_takeover.test.js` (new) | 15 | Regression anchor: after the owner's Google sign-in the pre-registrant's refresh succeeds and says `email_verified: true`. Trigger A then: only Google remains, `tokensValidAfterTime` is after the pre-registrant's sign-in, Admin `verifyIdToken(…, true)` rejects its ID tokens, `accounts:lookup` answers `TOKEN_EXPIRED`, the planted push token is gone, a re-plant is **403** through the rules, the password cannot sign in, one audit row, ledger `remediated`; the owner's next sign-in is after the epoch and registers push; a second call is `clean`. The owner's calling device is kept. Trigger B (Apple, no client call) purges every token. An unverified password still linked beside Google is unlinked. Not touched: verified password + Google (including the race where Google comes before any sweep saw the verification), verified password-only, Google-created. Stale never-verified accounts are reported and not deleted. Input refusals, `notApplicable` for password sessions, the keep-device decision, ledger retry/cleanup, the verdict matrix and deployment metadata. |
+| `firestore-tests/account_takeover_rules.test.js` (new, in `npm test`) | 6 | A session older than `authSessionEpoch` cannot create or refresh a push token (password or google.com); at/after the epoch it can; an account without the field is unaffected however old its session; a stale session can still delete its own row; no client can create, raise, lower or remove the epoch; the ledger, audit and sweep collections refuse get/list/set/update/delete for owner, other, staff and anonymous. |
+| `firestore-tests/account_takeover_storage.test.js` (new, in `test:storage`) | 2 | Storage `isActiveUser()`: a pre-epoch session cannot read or upload the owner's private avatar; the post-epoch session can; an untouched account is unaffected. |
+| `test/federated_sign_in_security_test.dart` (new) | 8 | `AuthService` checks only a returning sign-in, once; a remediation signs this device out and throws `FederatedSessionSecuredException`; a failing, slow or undeployed check never blocks a sign-in; any other answer is ignored. The sign-in screen shows the notice in English and Polish, and still shows it after an AuthGate-style swap removed the screen. |
+
+Anchors: the new rules suite run against the pre-change `firestore.rules`
+fails the push-token case; the Storage suite against the pre-change
+`storage.rules` fails the stale-session case.
+
+Emulator limits the Functions suite states rather than hides: the Auth
+emulator does not enforce refresh-token revocation and stamps refreshed tokens
+with the account's latest sign-in as `auth_time`. Revocation is therefore
+proven the way production evaluates it (`tokensValidAfterTime`,
+`verifyIdToken(…, true)`), and whatever the emulator still mints is shown to be
+refused by the rules.
+
+| Run (through `tmp/lk.sh`) | Result |
+| --- | --- |
+| `emulators:exec --only firestore --project demo-yovoice 'npm --prefix firestore-tests test'` | 577 + 4 + 6 pass |
+| `emulators:exec --only firestore,storage --project demo-yovoice 'npm --prefix firestore-tests run test:storage'` | 76 + 2 pass |
+| Servers suite (`demo-yovoice-server-acl`) | 71 / 71 (an `isActiveAccount()` placement of the epoch made it 70 / 71 on the 1000-expression budget — the reason the check is scoped) |
+| `server_message_media`, `notification_engagement`, `creator_audience`, `server_followups_adversarial`, `server_liveness_adversarial`, `family-media` | all pass |
+| `company_files_rules.test.js` | 3 pass, 2 fail — **identical against the pre-change rules**, pre-existing and unrelated |
+| `emulators:exec --only auth,firestore --project demo-yovoice` Functions: `federated_takeover`, `cold_start_module_graph` (264 exports), `session_management` | 29 / 29 |
+| Functions neighbours (`latency_critical_configuration`, `callable_invocation_contract`, `privileged_authentication`, `push_delivery`, `account_deletion_index`, `optional_secret_discovery`) | 24 / 24 |
+| `flutter test` on the new file plus `apple_sign_in`, `auth_responsive_screen`, `sign_out_cleanup`, `google_sign_in_configuration` | 74 / 74 |
+| `flutter analyze` | clean |
+
+Not run: the full Functions suite and the full Flutter suite (only touched
+files and neighbours). Nothing ran on a device or a simulator.
+
+### Review round (fix) — the decision rests on the ledger's evidence
+
+New in `functions/test/federated_takeover.test.js` (now 23 cases), every
+attacker step production-shaped (Identity Toolkit REST with the stranger's
+refreshed session): the stranger re-links a password with `accounts:update`
+after a Google takeover and the owner's call remediates it; the same after an
+Apple takeover plus a planted second factor (planted through Admin — SMS MFA
+is not enabled in the emulator project) and the sweeper remediates it and
+removes the factor; the stranger moves the account to their own address with
+`verifyBeforeUpdateEmail` and the sweeper remediates it, puts the owner's
+address back and a password reset to the stranger's address answers
+`EMAIL_NOT_FOUND`; a password reset before verifying keeps the row pending and
+touches nothing; a 650-row pending backlog sorting before the victim is paged
+through in one run; the ledger stores a SHA-256 of the address and the
+baseline, never the address; the verdict matrix covers moved baselines and
+addresses. Deliberately changed: the matrix's `pending` fixture now carries
+the evidence the ledger records (the "ambiguous" and "verified" lines keep
+their meaning only with intact evidence, and a pending row without evidence is
+a takeover).
+
+`test/federated_sign_in_security_test.dart` (now 12 cases): deliberately
+changed — "a brand-new account is never checked" became "checked in the
+background and never waits"; new: a background or late "remediated" signs the
+device out and emits `federatedSessionSecuredLater`, a late answer never signs
+out a different account, and the sign-in screen shows the notice for a late
+remediation after an AuthGate-style swap.
+
+Anchor: the five new emulator regressions run against the pre-fix module
+(`a213195d`) all fail — `ambiguous` instead of `takeover`, no remediation for
+the re-linked password or the moved address, `verified` instead of `pending`,
+and 300 of 651 rows checked.
+
+| Run (through `tmp/lk.sh`) | Result |
+| --- | --- |
+| Functions: `federated_takeover`, `cold_start_module_graph` (264 exports, unchanged), `session_management` | 37 / 37 |
+| Functions neighbours (as above) | 24 / 24 |
+| `flutter test` on the takeover file plus `apple_sign_in`, `auth_responsive_screen`, `auth_link_tap_target`, `sign_out_cleanup`, `google_sign_in_configuration` | 88 / 88 |
+| `flutter analyze` | clean |
+
+Rules and Storage rules were not changed in this round and not re-run.
+
+## ADR-216 server channel reactions and media — 2026-09-19/20 (source only, NOT deployed)
+
+Emoji reactions and photo/video messages in server text channels
+([ADR-216](Decisions.md#adr-216-server-channel-reactions-and-media-are-admin-sdk-only-and-the-react-permission-is-derived-in-the-callable-never-stored-in-a-channel-grant)).
+The rules suite is new; everything else was added beside existing cases, and
+no assertion was edited.
+
+| Suite | How it runs | What it proves |
+| --- | --- | --- |
+| `firestore-tests/server_message_media_rules.test.js` | `firebase emulators:exec --only firestore,storage --project demo-yovoice 'npm --prefix firestore-tests run test:server-message-media'` | The `server_message_media` Storage block: a create only with a live reservation and exact metadata and inside the DM bounds; get only for the uploader while reserved; list, update and delete never; the five Admin-only collections unreachable from any client. It must use the emulator project `demo-yovoice` (as `storage.test.js` does) — a project id the Storage emulator's cross-service reads cannot see fails every reservation lookup |
+| `functions/test/server_message_reactions.test.js`, `server_message_media.test.js`, `server_message_media_admin_delete.test.js` | inside the Functions suite (fresh Auth + Firestore emulators, the storage bucket in `FIREBASE_CONFIG`) | Reactions (vocabulary, 500-reactor cap, rate limit, guests refused, announcements allowed); reserve, probe, finalize, the batched access grant, author retraction, the deletion jobs and the account-deletion sweep; staff removal through `adminDeleteMessage` |
+| `test/server_message_reactions_test.dart`, `test/server_composer_emoji_test.dart`, `test/server_channel_media_test.dart` | Flutter suite | The pill and the actions sheet; the emoji input kept while membership loads; the attach flow at 390 / 768 / 1440 px; the io upload streaming from disk (a pick whose `readAsBytes()` throws still sends) and the web `putData` path; the ADR-212 review on a library pick and its absence on a camera capture (`6a473b27`); and a retry after a failed upload replaying the reservation it already holds, plus a committed object being finalized instead of re-uploaded (`77264f18`) |
+
+Branch-time results (2026-09-19/20, from the branch's own gate): rules
+`test:server-message-media` 9/9, `test:storage` 76/0, firestore 577/0;
+Functions `server_message_reactions` 14/14, `server_message_media` 21/21,
+`server_message_media_admin_delete` 2/2. On the integrated tree the whole
+Functions suite is 2480/2480 (`6a473b27`, unchanged at `cd30afea`); see
+[Sessions/2026-09-20-next-build.md](Sessions/2026-09-20-next-build.md) for
+the later runs. Pre-existing and unrelated: `test:servers` is 68/3 with and
+without this work — its three Storage cases use a project id the Storage
+emulator's cross-service reads cannot see.
+
+**What this does not prove.** No device or simulator has shown the pill, the
+sheet, the review or a media bubble; the V4 grant path needs the runtime
+service account's `signBlob` permission, which no emulator exercises; and
+nothing here is deployed.
+
+## In-app bug reports — 2026-09-25 (ADR-223, source only, NOT deployed)
+
+| Suite | How to run it | What it proves |
+| --- | --- | --- |
+| `functions/test/bug_reports.test.js` | `./firestore-tests/node_modules/.bin/firebase emulators:exec --only auth,firestore --project demo-yovoice "cd functions && node --test --test-concurrency=1 test/bug_reports.test.js"` (with `FIREBASE_CONFIG` carrying a `storageBucket`) | 36 cases: the exact input allowlist and bounds, account states (unverified and banned may report; disabled, deleted and missing may not; a banned account's screenshot is refused with no reservation), the stored document's exact keys and server uid, requestId replay without spending the limit, the 5/10-min and daily limits and no shared bucket refusing a report, the `appConfig` kill switch, the upload reservation's exact shape and TTL, attach (metadata, generation, size, JPEG magic bytes, token stripped, expired window), the owner callables (and the rights-request callables) refusing everybody else, list/filter/page/detail with a signed URL and status change, the reporter filter, owner delete and remove-screenshot with their audit entries, the retention sweep (including draining more than one page and stopping on its time budget), the declared composite indexes, every delivery channel (disabled, sent once link-only, link-only issues on public and private repositories, a live lease retried, a GitHub retry reusing its issue, per-channel budgets, the screenshot line, retry/permanent/bounded), each secret declared only by its own source gate, and account deletion. |
+| `firestore-tests/bug_report_rules.test.js` | `./firestore-tests/node_modules/.bin/firebase emulators:exec --only firestore,storage --project demo-yovoice 'npm --prefix firestore-tests run test:bug-reports'` | 7 cases: no client (reporter, other, owner, moderator, anonymous) reads, queries (the owner list shape and the deletion sweep shape) or writes either collection; Storage accepts exactly the reserved JPEG (unverified included) and refuses a missing/expired/used/forged/foreign reservation, any metadata/size/MIME/name mismatch, banned/deleted/anonymous uploaders and overwrites; only the uploader reads back, only while reserved; nobody lists, updates or deletes. |
+| `functions/test/cold_start_module_graph.test.js` | part of the functions suite | The export list, deliberately 261 -> 269 on its branch (273 on the build 36 integration, with request to speak and the account-takeover exports). |
+| `test/bug_report_sheet_test.dart`, `test/bug_report_floating_button_test.dart`, `test/bug_report_entry_points_test.dart` | `flutter test …` | The consent step (no screenshot without the preview and an explicit confirm; the full-size pinch-to-zoom view; remove after attaching; blocked screens offer none), the payload keys, refusal copy (already-exists and invalid-argument included), same-requestId retry and a fresh id after an edit, the UTF-16 length bound, sheet at 390 and dialog at 768/1440; the Bug button against the real dock and its screen-reader tap action at 390/768/1440 with gesture insets, dragged to every corner, hidden when signed out, under a modal and with the keyboard up, without resetting the app below; Settings, More sheet and desktop popover entry points; the owner inbox and its rights-request actions (find by account, remove screenshot, delete, bounded screenshot decode). |
+| `test/bug_report_visual_capture.dart` | `YOVOICE_CAPTURE_DIR=… flutter test test/bug_report_visual_capture.dart` | 52 rendered frames (Dark and Pearl, 390/768/1440): reporter, consent preview (and scrolled, and full size), attached state, button resting and dragged, More sheet, owner inbox, detail rights actions, delete confirmation, find by account and the account filter. Test-harness frames, not a device. |
+
+## ADR-215 notification review round — 2026-09-20 (source only, NOT deployed)
+
+Four defects found by a pre-merge review of `nb/notifications`
+([Bugs.md](Bugs.md), [ADR-215](Decisions.md#adr-215-a-notification-that-repeats-on-demand-is-a-channel-not-a-notice--reminders-page-re-arm-on-the-schedule-and-refuse-two-ways)). New coverage, all of it
+added beside the existing cases rather than by changing an assertion:
+
+| Suite | New cases | What they prove |
+| --- | --- | --- |
+| `functions/test/server_event_reminders.test.js` | 3 | The due set is **paged**, not cut off: with `limit: 1` all three seeded events are reminded across `pages >= 3`, and the real `collectionGroup("events")` query is re-run in its **cursor form** against the emulator so page two cannot repeat page one (ADR-007). A description-only edit — three of them, plus a five-minute nudge, five revisions in total — delivers **nothing** after the first reminder, and the server-written stamp on the event is asserted field by field. A run whose wall-clock budget is already spent reports `budgetExhausted`/`hasMore`, stamps nothing, and the next ordinary run finishes the work exactly once. |
+| `functions/test/server_role_notifications.test.js` | 2 | Demoting and re-promoting the same member seven times produces **one** bell row, while the membership revision keeps moving and the stored role still changes; a genuinely different role is still announced. The budget key is exercised directly: actor, recipient and role each separate, the window is a day, and the exhausted key recovers after it. |
+| `functions/test/push_unregistered_type.test.js` (new) | 2 | A genuinely stale `follow` row is still **deleted** at the push boundary, and the same refusal with an unregistered type **keeps** the row, marking it `pushSkipReason: "unregistered-type"`. The refusal itself is real (no follower edge); only the type registry is injected, because every shipped type currently has both a push title and a validator. |
+| `functions/test/engagement_push_contract.test.js` | 2 | Every `PUSH_TITLES` key is a registered type and the two lists cover it exactly — the containment the earlier version pinned only by repeating both lists literally. |
+
+| Run | Result |
+| --- | --- |
+| The four suites above, `firebase emulators:exec --only auth,firestore --project demo-yovoice-review` | **24 / 24** pass, 0 skipped |
+| The seven suites most exposed to the change (`servers_events`, `servers_memberships`, `cold_start_module_graph`, `activity_notifications`, `push_social_source`, `push_social_claim`, `push_delivery`) | **54 / 54** pass |
+| Full `functions/test/*.test.js` under fresh Auth + Firestore emulators | **2382 / 2382**, 139 suites, 0 fail, 0 skipped (459 s) |
+| `flutter analyze` | clean (no Dart changed in this round) |
+
+`firestore.rules`, `storage.rules` and `firestore.indexes.json` are **unchanged**
+by this round, deliberately: the paged query filters and orders exactly what the
+declared COLLECTION_GROUP composite already covers, the responses cursor orders
+by `__name__` behind an equality filter (served by the automatic single-field
+index), and the three new event fields are Admin-SDK-only under a rules block
+that already reads `allow write: if false`. The existing index-declaration test
+therefore still describes the production query.
+
 ## Build 32 account-deletion and invite-widening suites — 2026-09-18
 
 Source-only round (nothing deployed). These are the suites that prove the two
@@ -1670,6 +1819,40 @@ invalid/retry, network recovery, 200% text, multiple factors and reduced motion
 were inspected. This is local simulator and screenshot evidence only: it does
 not prove production configuration or deployment, and VoiceOver/TalkBack has
 not been verified on a physical device.
+
+## Store release tooling (source only, 2026-09-25)
+
+These tests cover `.github/workflows/store-release.yml` and its
+zero-dependency scripts in `tool/release/` ([RELEASE_CI.md](RELEASE_CI.md)).
+They need Node 22 or later and `git`, and nothing from npm:
+
+```bash
+node --test tool/test/release_*.test.mjs
+```
+
+The store-release **preflight job runs them before every release**. The
+push-triggered CI does not run them.
+
+| File | Tests | What it pins |
+| --- | --- | --- |
+| `release_preflight.test.mjs` | 45 | Input validation (shell metacharacters, short SHAs and Play's versionCode ceiling are refused). Pubspec match. Gradle configuration cache refused. Baseline tag choice. Check runs counted only from GitHub Actions, and only from push or dispatch workflow runs on `main` on exactly `ref`: a newer green `pull_request` run cannot turn a red push result green. Every release-order gate: hard on a real run, a warning on a dry run. End to end against a throwaway git repository: not-on-main, no baseline (fail closed), backend diff with and without `backend_confirmed`, a tag already used by another commit |
+| `release_play.test.mjs` | 11 | The RS256 assertion verifies and carries the androidpublisher scope. The call order insert → list → upload → track → commit → read-back. A used versionCode is refused before upload. **One** upload attempt. Play's versionCode and SHA-256 must match. The edit is deleted on every failure before the commit. `changesNotSentForReview` is used only when Play asks for it. Only the internal track is reachable |
+| `release_asc.test.mjs` | 14 | The ES256 token has a raw r‖s signature, audience `appstoreconnect-v1` and a life of at most 20 min. An existing build number is refused in any state. The processing poll handles VALID, INVALID/FAILED and a timeout. A timeout only warns when the build was seen at least once; a build never seen in App Store Connect fails the `wait-valid` step (after the summary is written), so the release is not tagged |
+| `release_aab_manifest.test.mjs` | 6 | The protobuf manifest decoder: raw and compiled values, disagreement refused, namespace, truncation. It was also checked by hand against the retained bundles 33 and 34 |
+| `release_workflow.test.mjs` | 10 | Dispatch-only. No `${{ }}` in any `run:`. No `set -x`, `--dart-define` or upload export options. Actions pinned by SHA. No cache or artifact. Dry-run jobs have no secret and no environment. Secrets appear only in the two `store-release` jobs, gated to real runs from `main`. Tooling comes from the workflow commit. Every secret is documented |
+
+The structural test was mutation-checked. Each of these edits turns it red:
+- injecting `${{ inputs.ref }}` into a script;
+- a secret in a dry-run job;
+- `cache: true`;
+- an `upload-artifact` step;
+- an unpinned action;
+- `set -x`.
+
+**What this does not prove:** that the workflow runs on GitHub. No runner has
+executed it; `actionlint` is not installed here, and the YAML was
+parsed with js-yaml and Ruby Psych instead. The first dry run is the first
+real evidence.
 
 ## Static analysis — the actual baseline gate
 

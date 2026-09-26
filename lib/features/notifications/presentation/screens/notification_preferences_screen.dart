@@ -34,7 +34,16 @@ const _kPreferenceGroups = [
       NotificationType.roomInvite,
       NotificationType.broadcastInvite,
       NotificationType.liveStarted,
+      NotificationType.serverEventReminder,
+      NotificationType.serverRole,
     ],
+  ),
+  // Moments & Yeels (ADR-213). One switch stands for three server types —
+  // see _coveredTypes: a person who turns comments off does not expect an
+  // @mention inside a comment to still ring.
+  _PreferenceGroup(
+    title: 'Moments & Yeels',
+    types: [NotificationType.momentComment],
   ),
   _PreferenceGroup(
     title: 'Calls',
@@ -50,6 +59,21 @@ const _kPreferenceGroups = [
   ),
 ];
 
+/// The server notification types one visible switch controls.
+///
+/// The push boundary reads one key per type. A row that stands for several
+/// types therefore writes all of them together, and reads as ON only while
+/// every type it covers is on.
+List<NotificationType> _coveredTypes(NotificationType type) =>
+    switch (type) {
+      NotificationType.momentComment => const [
+        NotificationType.momentComment,
+        NotificationType.reelComment,
+        NotificationType.commentMention,
+      ],
+      _ => <NotificationType>[type],
+    };
+
 String _groupTitle(AppLocalizations copy, String title) => switch (title) {
   'Friends' => copy.text('Friends', 'Znajomi'),
   'Friends & follows' => copy.text(
@@ -57,6 +81,7 @@ String _groupTitle(AppLocalizations copy, String title) => switch (title) {
     'Znajomi i obserwowani',
   ),
   'Servers' => copy.text('Servers', 'Serwery'),
+  'Moments & Yeels' => copy.text('Moments & Yeels', 'Momenty i Yeels'),
   'Calls' => copy.text('Calls', 'Połączenia'),
   'Messages' => copy.text('Messages', 'Wiadomości'),
   _ => title,
@@ -100,6 +125,17 @@ String _labelFor(AppLocalizations copy, NotificationType type) {
       return copy.text('Missed calls', 'Nieodebrane połączenia');
     case NotificationType.mention:
       return copy.text('Mentions', 'Wzmianki');
+    case NotificationType.momentComment:
+    case NotificationType.reelComment:
+    case NotificationType.commentMention:
+      return copy.text(
+        'Comments and mentions',
+        'Komentarze i oznaczenia',
+      );
+    case NotificationType.serverEventReminder:
+      return copy.text('Server events', 'Wydarzenia na serwerach');
+    case NotificationType.serverRole:
+      return copy.text('Your server role', 'Twoja rola na serwerze');
     case NotificationType.reply:
       return copy.text('Replies', 'Odpowiedzi');
     case NotificationType.achievementUnlocked:
@@ -186,7 +222,7 @@ class _NotificationPreferencesScreenState
     if (_pending.contains(type)) return;
     setState(() => _pending.add(type));
     try {
-      await _notificationService.setPreference(type, enabled);
+      await _notificationService.setPreferences(_coveredTypes(type), enabled);
     } catch (error) {
       if (!mounted) return;
       final copy = AppLocalizations.of(context);
@@ -345,11 +381,14 @@ class _NotificationPreferencesScreenState
                                         // means enabled, matching
                                         // onNotificationCreated's default in
                                         // functions/notifications/push.js.
-                                        value:
-                                            preferences[group
-                                                .types[index]
-                                                .name] !=
-                                            false,
+                                        // A row covering several types is ON
+                                        // only while every one of them is.
+                                        value: _coveredTypes(
+                                          group.types[index],
+                                        ).every(
+                                          (type) =>
+                                              preferences[type.name] != false,
+                                        ),
                                         isPending: _pending.contains(
                                           group.types[index],
                                         ),

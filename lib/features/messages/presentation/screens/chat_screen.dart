@@ -13,17 +13,17 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
 
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
-import 'package:yovoice/features/calls/presentation/screens/direct_call_screen.dart';
+import 'package:yovoice/features/calls/presentation/direct_call_launcher.dart';
 import 'package:yovoice/features/media/data/models/gif_asset.dart';
 import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
 import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
 import 'package:yovoice/features/media/data/services/gif_transport.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_gif_send_status.dart';
-import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
@@ -48,6 +48,8 @@ import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_composer_panel.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/media/yo_media_send_review.dart';
+import 'package:yovoice/shared/widgets/media/yo_recording_countdown.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
@@ -58,6 +60,18 @@ typedef DirectMessageVoiceRecorderPresenter =
     Future<void> Function(
       Future<void> Function(RecordedAudio audio, int durationSeconds) onSend,
     );
+
+/// Builds the recorder the voice message sheet drives. Production leaves it
+/// null and records from the microphone; tests pass a recorder over a fake
+/// backend and clock so the 60 s auto-stop is deterministic.
+typedef DirectMessageVoiceRecorderFactory = VoiceMomentRecorder Function();
+
+/// What a freshly pushed chat does once, right after its first frame.
+///
+/// [recordVoice] opens the voice-message recorder (the friend profile's
+/// "Send a voice message"). The recorder's own record button asks for the
+/// microphone, so no permission is requested without a gesture.
+enum ChatLaunchAction { none, recordVoice }
 
 enum DirectMessageMediaPickAction {
   takePhoto,
@@ -85,15 +99,22 @@ class ChatScreen extends StatefulWidget {
     this.photoPicker,
     this.videoPicker,
     this.videoInspector,
+    this.videoPreviewControllerFactory,
     this.voiceRecorderPresenter,
+    this.voiceRecorderFactory,
     this.profilePreviewAction,
     this.gifService,
     this.gifMessageInvoker,
     this.relationshipStatusResolver,
+    this.initialAction = ChatLaunchAction.none,
     super.key,
   });
 
   final String conversationId;
+
+  /// Runs once after the first frame; [ChatLaunchAction.none] changes
+  /// nothing.
+  final ChatLaunchAction initialAction;
   final GifCatalogService? gifService;
   final GifMessageInvoker? gifMessageInvoker;
   final String otherUserId;
@@ -117,7 +138,15 @@ class ChatScreen extends StatefulWidget {
   final DirectMessagePhotoPicker? photoPicker;
   final DirectMessageVideoPicker? videoPicker;
   final DirectMessageVideoInspector? videoInspector;
+
+  /// Builds the local preview player in the library review (ADR-212).
+  /// Production leaves this null and plays the picked file on the platform.
+  final YoMediaPreviewControllerFactory? videoPreviewControllerFactory;
   final DirectMessageVoiceRecorderPresenter? voiceRecorderPresenter;
+
+  /// The recorder behind the live voice message sheet; see
+  /// [DirectMessageVoiceRecorderFactory].
+  final DirectMessageVoiceRecorderFactory? voiceRecorderFactory;
 
   /// Deterministic seam for navigation regression tests. Production leaves
   /// this null and opens the canonical profile preview.
@@ -320,6 +349,12 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     unawaited(_loadOutbox());
     _controller.addListener(_handleTyping);
+    if (widget.initialAction == ChatLaunchAction.recordVoice) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_recordVoiceMessage());
+      });
+    }
   }
 
   @override
@@ -687,149 +722,34 @@ class _ChatScreenState extends State<ChatScreen> {
     DirectCallMediaType mediaType = DirectCallMediaType.audio,
   }) async {
     if (_startingCall) return;
-    final voice = _voice;
-    if (voice.status != VoiceCallStatus.disconnected &&
-        voice.status != VoiceCallStatus.failed) {
-      _showMessage(
-        AppLocalizations.of(context).text(
-          'Leave your current voice session before starting a call.',
-          'Opuść bieżącą rozmowę głosową, zanim rozpoczniesz połączenie.',
-        ),
-      );
-      return;
-    }
-    setState(() => _startingCall = true);
-    String? callId;
-    var effectiveMediaType = mediaType;
-    try {
-      final permissionSnapshot = await voice
-          .prepareMediaPermissionsFromUserGesture(
-            includeCamera: mediaType == DirectCallMediaType.video,
-          );
-      if (!mounted) return;
-      if (!permissionSnapshot[AppPermissionKind.microphone].isUsable) {
-        _showMessage(
-          AppLocalizations.of(context).text(
-            'Allow microphone access in system settings before starting a call.',
-            'Zezwól na dostęp do mikrofonu w ustawieniach systemowych, zanim rozpoczniesz połączenie.',
-          ),
-        );
-        return;
-      }
-      if (mediaType == DirectCallMediaType.video &&
-          !permissionSnapshot[AppPermissionKind.camera].isUsable) {
-        effectiveMediaType = DirectCallMediaType.audio;
-        _showMessage(
-          AppLocalizations.of(context).text(
-            'Camera access is off. The call will start with audio only.',
-            'Dostęp do aparatu jest wyłączony. Połączenie rozpocznie się tylko z dźwiękiem.',
-          ),
-        );
-      }
-      callId = await _calls.startCall(
-        calleeId: widget.otherUserId,
-        conversationId: widget.conversationId,
-        mediaType: effectiveMediaType,
-      );
-      if (!mounted) {
-        await _calls.cancel(callId);
-        return;
-      }
+    // The flow itself (permission gesture chain, backend start, fullscreen
+    // route, exception copy) is shared with the friend profile.
+    await launchDirectCall(
+      context,
+      calls: _calls,
+      voice: _voice,
+      calleeId: widget.otherUserId,
+      resolveConversationId: () => widget.conversationId,
+      mediaType: mediaType,
+      currentUserId: _currentUserId,
+      participantName: () =>
+          _auth.currentUser?.displayName ??
+          _auth.currentUser?.email ??
+          AppLocalizations.of(
+            context,
+          ).text('YO Voice user', 'Użytkownik YO Voice'),
+      showMessage: _showMessage,
+      onBusyChanged: (busy) => setState(() => _startingCall = busy),
+      onStartAudioInstead: () =>
+          unawaited(_startDirectCall(mediaType: DirectCallMediaType.audio)),
       // A mounted chat hidden under the fullscreen call is not active. Leave
       // the foreground-notification registry for the route lifetime so a DM
       // received during the call still banners/sounds.
-      ActiveConversationRegistry.instance.leave(_registeredConversationId);
-      try {
-        await Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(
-            fullscreenDialog: true,
-            builder: (_) => DirectCallScreen(
-              callId: callId!,
-              callService: _calls,
-              currentUserId: _currentUserId,
-              participantName:
-                  _auth.currentUser?.displayName ??
-                  _auth.currentUser?.email ??
-                  AppLocalizations.of(
-                    context,
-                  ).text('YO Voice user', 'Użytkownik YO Voice'),
-            ),
-          ),
-        );
-      } finally {
-        if (mounted) {
-          ActiveConversationRegistry.instance.enter(_registeredConversationId);
-        }
-      }
-    } on DirectVideoCompatibilityException {
-      if (!mounted) return;
-      final copy = AppLocalizations.of(context);
-      final messenger = ScaffoldMessenger.of(context);
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 10),
-          content: Text(
-            copy.text(
-              'This person needs a newer YO Voice version for video. You can call with audio now.',
-              'Ta osoba potrzebuje nowszej wersji YO Voice do wideo. Możesz teraz zadzwonić głosowo.',
-            ),
-          ),
-          action: SnackBarAction(
-            label: copy.text('Start audio', 'Zadzwoń głosowo'),
-            onPressed: () => unawaited(
-              _startDirectCall(mediaType: DirectCallMediaType.audio),
-            ),
-          ),
-        ),
-      );
-    } on DirectCallFriendshipException {
-      if (!mounted) return;
-      final copy = AppLocalizations.of(context);
-      _showMessage(
-        copy.text(
-          'Calls are temporarily unavailable while this friendship is verified. Try again shortly.',
-          'Połączenia są chwilowo niedostępne, dopóki ta znajomość nie zostanie zweryfikowana. Spróbuj ponownie za chwilę.',
-        ),
-      );
-    } on DirectCallConversationException {
-      if (!mounted) return;
-      final copy = AppLocalizations.of(context);
-      _showMessage(
-        copy.text(
-          'This chat is no longer ready for calls. Return to Chats and reopen the conversation.',
-          'Ten czat nie jest już gotowy do połączeń. Wróć do Czatów i ponownie otwórz rozmowę.',
-        ),
-      );
-    } on DirectCallEmailVerificationException {
-      if (!mounted) return;
-      final copy = AppLocalizations.of(context);
-      _showMessage(
-        copy.text(
-          'Verify your email before calling. Use the verification banner on Home.',
-          'Zweryfikuj adres e-mail przed połączeniem. Użyj banera weryfikacji na stronie głównej.',
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      final copy = AppLocalizations.of(context);
-      _showMessage(
-        friendlyErrorMessage(
-          error,
-          fallback: effectiveMediaType == DirectCallMediaType.video
-              ? copy.text(
-                  'Could not start this private video call.',
-                  'Nie udało się rozpocząć prywatnego połączenia wideo.',
-                )
-              : copy.text(
-                  'Could not start this private voice call.',
-                  'Nie udało się rozpocząć prywatnego połączenia głosowego.',
-                ),
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _startingCall = false);
-    }
+      onCoveredStart: () =>
+          ActiveConversationRegistry.instance.leave(_registeredConversationId),
+      onCoveredEnd: () =>
+          ActiveConversationRegistry.instance.enter(_registeredConversationId),
+    );
   }
 
   /// Swaps the system keyboard for the composer panel and back.
@@ -1516,6 +1436,9 @@ class _ChatScreenState extends State<ChatScreen> {
             imageQuality: 88,
           );
     if (image == null || !_ownsMediaInteraction(ownerId)) return;
+    if (source == ImageSource.gallery) {
+      return _reviewLibraryPhoto(image, ownerId: ownerId);
+    }
     setState(() => _sendingMedia = true);
     try {
       if (!_ownsMediaInteraction(ownerId)) return;
@@ -1526,21 +1449,114 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!_ownsMediaInteraction(ownerId)) return;
     } catch (error) {
       if (mounted && _ownsMediaInteraction(ownerId)) {
-        final copy = AppLocalizations.of(context);
-        _showMessage(
-          error is VoiceRecordingException
-              ? [error.message, error.action].whereType<String>().join(' ')
-              : intentionalOrFriendly(
-                  error,
-                  fallback: copy.text(
-                    'Your photo could not be sent. Try again.',
-                    'Nie udało się wysłać zdjęcia. Spróbuj ponownie.',
-                  ),
-                ),
-        );
+        _showMessage(_photoSendFailure(error));
       }
     } finally {
       if (mounted) setState(() => _sendingMedia = false);
+    }
+  }
+
+  String _photoSendFailure(Object error) {
+    final copy = AppLocalizations.of(context);
+    return error is VoiceRecordingException
+        ? [error.message, error.action].whereType<String>().join(' ')
+        : intentionalOrFriendly(
+            error,
+            fallback: copy.text(
+              'Your photo could not be sent. Try again.',
+              'Nie udało się wysłać zdjęcia. Spróbuj ponownie.',
+            ),
+          );
+  }
+
+  String _videoSendFailure(Object error) => intentionalOrFriendly(
+    error,
+    fallback: AppLocalizations.of(context).text(
+      'Your video could not be sent. Choose a video up to 60 seconds and try again.',
+      'Nie udało się wysłać filmu. Wybierz film do 60 sekund i spróbuj ponownie.',
+    ),
+  );
+
+  /// Library picks are confirmed before anything is queued (ADR-212). The
+  /// camera keeps its own OS Use/Retake step and enqueues directly.
+  Future<YoMediaSendDecision?> _reviewLibraryMedia(
+    YoPickedMedia item, {
+    required String ownerId,
+    required String title,
+    required YoMediaSendHandler onSend,
+    required String Function(Object error) describeSendError,
+  }) {
+    final copy = AppLocalizations.of(context);
+    return showYoMediaSendReview(
+      context,
+      item: item,
+      limits: const YoMediaSendLimits(
+        maxImageBytes: directImageMaxBytes,
+        maxVideoBytes: directVideoMaxBytes,
+        maxVideoDuration: Duration(seconds: directVideoMaxSeconds),
+      ),
+      title: title,
+      sendLabel: copy.text('Send', 'Wyślij'),
+      destinationLabel: copy.template(
+        'To {name}',
+        'Do: {name}',
+        values: <String, Object>{'name': widget.otherDisplayName},
+      ),
+      onSend: onSend,
+      describeSendError: describeSendError,
+      // Same revocation contract as the voice recorder sheet: a different
+      // account closes the review and nothing is queued into it.
+      closeWhen: _auth.userChanges().where(
+        (user) => user?.uid.trim() != ownerId,
+      ),
+      videoControllerFactory: widget.videoPreviewControllerFactory,
+    );
+  }
+
+  Future<void> _reviewLibraryPhoto(
+    XFile image, {
+    required String ownerId,
+  }) async {
+    final int length;
+    try {
+      length = await image.length();
+    } catch (error) {
+      if (mounted && _ownsMediaInteraction(ownerId)) {
+        _showMessage(_photoSendFailure(error));
+      }
+      return;
+    }
+    if (!mounted || !_ownsMediaInteraction(ownerId)) return;
+    final copy = AppLocalizations.of(context);
+    final decision = await _reviewLibraryMedia(
+      YoPickedMedia(
+        file: image,
+        kind: YoPickedMediaKind.image,
+        sizeBytes: length,
+        displayName: image.name,
+        contentType: image.mimeType,
+      ),
+      ownerId: ownerId,
+      title: copy.text('Send this photo?', 'Wysłać to zdjęcie?'),
+      describeSendError: _photoSendFailure,
+      onSend: (item) async {
+        if (!_ownsMediaInteraction(ownerId)) {
+          throw StateError('The signed-in account changed.');
+        }
+        setState(() => _sendingMedia = true);
+        try {
+          await _service.enqueueImageMessage(
+            conversationId: widget.conversationId,
+            image: item.file,
+          );
+        } finally {
+          if (mounted) setState(() => _sendingMedia = false);
+        }
+      },
+    );
+    if (decision?.choice == YoMediaSendChoice.chooseAnother &&
+        _ownsMediaInteraction(ownerId)) {
+      return _pickPhoto(ImageSource.gallery, ownerId: ownerId);
     }
   }
 
@@ -1552,14 +1568,20 @@ class _ChatScreenState extends State<ChatScreen> {
           ? await picker(source)
           : await ImagePicker().pickVideo(
               source: source,
-              maxDuration: const Duration(seconds: 60),
+              maxDuration: const Duration(seconds: directVideoMaxSeconds),
             );
       if (video == null || !_ownsMediaInteraction(ownerId)) return;
+      if (source == ImageSource.gallery) {
+        await _reviewLibraryVideo(video, ownerId: ownerId);
+        return;
+      }
       setState(() => _sendingMedia = true);
       final duration =
           await (widget.videoInspector ?? inspectPickedDirectVideo)(video);
       if (!_ownsMediaInteraction(ownerId)) return;
-      final durationSeconds = (duration.inMilliseconds + 999) ~/ 1000;
+      // The camera itself stopped this clip at 60 s, and a full-length
+      // recording measures a little over that: declare it as the cap.
+      final durationSeconds = directCappedTakeSeconds(duration);
       if (!_ownsMediaInteraction(ownerId)) return;
       await _service.enqueueVideoMessage(
         conversationId: widget.conversationId,
@@ -1569,19 +1591,74 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!_ownsMediaInteraction(ownerId)) return;
     } catch (error) {
       if (mounted && _ownsMediaInteraction(ownerId)) {
-        final copy = AppLocalizations.of(context);
-        _showMessage(
-          intentionalOrFriendly(
-            error,
-            fallback: copy.text(
-              'Your video could not be sent. Choose a video up to 60 seconds and try again.',
-              'Nie udało się wysłać filmu. Wybierz film do 60 sekund i spróbuj ponownie.',
-            ),
-          ),
-        );
+        _showMessage(_videoSendFailure(error));
       }
     } finally {
       if (mounted) setState(() => _sendingMedia = false);
+    }
+  }
+
+  Future<void> _reviewLibraryVideo(
+    XFile video, {
+    required String ownerId,
+  }) async {
+    int length;
+    Duration? duration;
+    setState(() => _sendingMedia = true);
+    try {
+      length = await video.length();
+      if (!_ownsMediaInteraction(ownerId)) return;
+      try {
+        duration = await (widget.videoInspector ?? inspectPickedDirectVideo)(
+          video,
+        );
+      } catch (_) {
+        // The review's own preview player measures the clip instead; if that
+        // fails too, the review blocks Send with a clear reason.
+        duration = null;
+      }
+    } catch (error) {
+      if (mounted && _ownsMediaInteraction(ownerId)) {
+        _showMessage(_videoSendFailure(error));
+      }
+      return;
+    } finally {
+      if (mounted) setState(() => _sendingMedia = false);
+    }
+    if (!mounted || !_ownsMediaInteraction(ownerId)) return;
+    final copy = AppLocalizations.of(context);
+    final decision = await _reviewLibraryMedia(
+      YoPickedMedia(
+        file: video,
+        kind: YoPickedMediaKind.video,
+        sizeBytes: length,
+        displayName: video.name,
+        contentType: video.mimeType,
+        duration: duration,
+      ),
+      ownerId: ownerId,
+      title: copy.text('Send this video?', 'Wysłać ten film?'),
+      describeSendError: _videoSendFailure,
+      onSend: (item) async {
+        final measured = item.duration;
+        if (!_ownsMediaInteraction(ownerId) || measured == null) {
+          throw StateError('The signed-in account changed.');
+        }
+        setState(() => _sendingMedia = true);
+        try {
+          await _service.enqueueVideoMessage(
+            conversationId: widget.conversationId,
+            video: item.file,
+            durationSeconds: (measured.inMilliseconds + 999) ~/ 1000,
+          );
+        } finally {
+          if (mounted) setState(() => _sendingMedia = false);
+        }
+      },
+    );
+    if (decision?.choice == YoMediaSendChoice.chooseAnother &&
+        _ownsMediaInteraction(ownerId)) {
+      return _pickVideo(ImageSource.gallery, ownerId: ownerId);
     }
   }
 
@@ -1662,6 +1739,7 @@ class _ChatScreenState extends State<ChatScreen> {
             // app-private storage and the manifest is persisted, the message
             // cannot be lost, and the queued card owns the network work.
             onSend: enqueue,
+            recorderFactory: widget.voiceRecorderFactory,
           );
         },
       );
@@ -3606,9 +3684,13 @@ class _ConversationHistoryErrorBanner extends StatelessWidget {
 }
 
 class _VoiceMessageRecorderSheet extends StatefulWidget {
-  const _VoiceMessageRecorderSheet({required this.onSend});
+  const _VoiceMessageRecorderSheet({
+    required this.onSend,
+    this.recorderFactory,
+  });
 
   final Future<void> Function(RecordedAudio audio, int durationSeconds) onSend;
+  final DirectMessageVoiceRecorderFactory? recorderFactory;
 
   @override
   State<_VoiceMessageRecorderSheet> createState() =>
@@ -3617,20 +3699,40 @@ class _VoiceMessageRecorderSheet extends StatefulWidget {
 
 class _VoiceMessageRecorderSheetState
     extends State<_VoiceMessageRecorderSheet> {
-  final VoiceMomentRecorder _recorder = VoiceMomentRecorder();
+  /// The product cap. The sheet stops itself here and keeps the take; the
+  /// server accepts the slightly longer file a capped take always produces.
+  static const Duration _cap = Duration(seconds: directVoiceMaxSeconds);
+
+  late final VoiceMomentRecorder _recorder =
+      widget.recorderFactory?.call() ?? VoiceMomentRecorder();
+  final RecordingLimitCues _limitCues = RecordingLimitCues();
   Timer? _timer;
+  Duration _elapsed = Duration.zero;
   RecordedAudio? _audio;
   AudioPlayer? _previewPlayer;
   StreamSubscription<PlayerState>? _previewStateSubscription;
   PlayerState _previewState = PlayerState.stopped;
   int _durationSeconds = 0;
   bool _recording = false;
+
+  /// Set while [_finishRecording] awaits the recorder, so a Stop tap landing
+  /// in the same moment as the automatic stop cannot stop it twice.
+  bool _stopping = false;
+
+  /// The take was ended by the 1:00 cap rather than by the person.
+  bool _stoppedAtCap = false;
+
+  /// Runs for [recordingAutoStopTapGrace] after the automatic stop: a Stop
+  /// tap aimed at the last second that lands after it is ignored instead of
+  /// starting a new take over the kept one.
+  Timer? _capStopGrace;
   bool _publishing = false;
   String? _error;
 
   @override
   void dispose() {
     _timer?.cancel();
+    _capStopGrace?.cancel();
     unawaited(_previewStateSubscription?.cancel());
     unawaited(_previewPlayer?.dispose());
     unawaited(_recorder.dispose());
@@ -3639,10 +3741,19 @@ class _VoiceMessageRecorderSheetState
   }
 
   Future<void> _toggleRecording() async {
-    if (_publishing) return;
+    if (_publishing || _stopping) return;
     if (_recording) {
       await _finishRecording();
       return;
+    }
+    if (_capStopGrace?.isActive ?? false) return;
+    // The same control that stopped the take now records again; a kept take
+    // is never thrown away without asking.
+    if (_audio != null) {
+      final replace = await confirmReplaceRecording(context);
+      if (!replace || !mounted || _recording || _publishing || _stopping) {
+        return;
+      }
     }
     await _stopPreview();
     final previous = _audio;
@@ -3651,18 +3762,26 @@ class _VoiceMessageRecorderSheetState
     try {
       await _recorder.start();
       if (!mounted) return;
+      _limitCues.reset();
       setState(() {
         _recording = true;
         _durationSeconds = 0;
+        _elapsed = Duration.zero;
+        _stoppedAtCap = false;
         _error = null;
       });
       _timer = Timer.periodic(const Duration(milliseconds: 250), (_) {
-        if (!mounted) return;
-        final elapsed = _recorder.elapsed.inSeconds.clamp(0, 60);
-        setState(() => _durationSeconds = elapsed);
-        if (_recorder.elapsed >= const Duration(seconds: 60)) {
-          unawaited(_finishRecording());
+        if (!mounted || !_recording || _stopping) return;
+        final elapsed = _recorder.elapsed;
+        setState(() {
+          _elapsed = elapsed;
+          _durationSeconds = elapsed.inSeconds.clamp(0, directVoiceMaxSeconds);
+        });
+        if (elapsed >= _cap) {
+          unawaited(_finishRecording(atCap: true));
+          return;
         }
+        _limitCues.onTick(context, elapsed, _cap);
       });
     } on VoiceRecordingException catch (error) {
       if (mounted) {
@@ -3682,8 +3801,12 @@ class _VoiceMessageRecorderSheetState
     }
   }
 
-  Future<void> _finishRecording() async {
-    if (!_recording) return;
+  /// Ends the take and keeps it ready to send. [atCap] marks the automatic
+  /// stop at 1:00: the take is still kept, never discarded, and the person is
+  /// told why the recording ended.
+  Future<void> _finishRecording({bool atCap = false}) async {
+    if (!_recording || _stopping) return;
+    _stopping = true;
     _timer?.cancel();
     _durationSeconds = _recorder.durationSeconds;
     try {
@@ -3695,8 +3818,20 @@ class _VoiceMessageRecorderSheetState
       setState(() {
         _recording = false;
         _audio = audio;
+        _stoppedAtCap = atCap;
         _error = null;
       });
+      if (atCap) {
+        _capStopGrace?.cancel();
+        _capStopGrace = Timer(recordingAutoStopTapGrace, () {});
+        _limitCues.onAutomaticStop(
+          context,
+          AppLocalizations.of(context).text(
+            'Recording stopped at the 1:00 limit. Your voice message is ready to send.',
+            'Nagrywanie zatrzymało się na limicie 1:00. Wiadomość głosowa jest gotowa do wysłania.',
+          ),
+        );
+      }
     } on VoiceRecordingException catch (error) {
       if (mounted) {
         setState(() {
@@ -3704,6 +3839,8 @@ class _VoiceMessageRecorderSheetState
           _error = [error.message, error.action].whereType<String>().join(' ');
         });
       }
+    } finally {
+      _stopping = false;
     }
   }
 
@@ -3863,6 +4000,23 @@ class _VoiceMessageRecorderSheetState
                   fontFeatures: [FontFeature.tabularFigures()],
                 ),
               ),
+              if (_recording) ...[
+                const SizedBox(height: AppRhythm.tight),
+                YoRecordingCountdown(
+                  secondsLeft: recordingSecondsLeft(_elapsed, _cap),
+                ),
+              ] else if (hasTake && _stoppedAtCap) ...[
+                const SizedBox(height: AppRhythm.tight),
+                Text(
+                  copy.text(
+                    'Stopped at the 1:00 limit. Your message is ready to send.',
+                    'Zatrzymano na limicie 1:00. Wiadomość jest gotowa do wysłania.',
+                  ),
+                  key: const ValueKey('voice-message-stopped-at-limit'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: palette.textSecondary),
+                ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 14),
                 Semantics(

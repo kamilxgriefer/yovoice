@@ -364,9 +364,11 @@ void main() {
       expect(find.text('Add friend'), findsNothing);
     });
 
-    testWidgets('an incoming request uses the explicit accept mutation', (
-      tester,
-    ) async {
+    // Changed deliberately (friend-request consent, fix round): the chip over
+    // a playing Yeel used to accept on one tap. It now opens the labelled
+    // Accept / Decline prompt, and only Accept inside it answers.
+    testWidgets('an incoming request opens the explicit prompt; only its '
+        'Accept answers', (tester) async {
       final friends = reelFriendService(
         viewerUid: 'viewer',
         relationship: FriendRelationshipStatus.requestReceived,
@@ -383,9 +385,31 @@ void main() {
         const ValueKey<String>('reel-friend-creator_1'),
       );
       expect(button, findsOneWidget);
-      expect(find.text('Accept'), findsOneWidget);
+      expect(
+        find.descendant(of: button, matching: find.text('Respond')),
+        findsOneWidget,
+      );
+      expect(find.text('Accept'), findsNothing);
 
       await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(
+        friends.mutations,
+        isEmpty,
+        reason: 'the chip opens the decision; it never answers it',
+      );
+      expect(
+        find.byKey(const ValueKey('friend-request-prompt')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('friend-request-prompt-decline')),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('friend-request-prompt-accept')),
+      );
       await tester.pumpAndSettle();
       expect(friends.mutations, hasLength(1));
       expect(friends.mutations.single.name, 'respondToFriendRequest');
@@ -393,7 +417,52 @@ void main() {
         'senderId': 'creator_1',
         'accept': true,
       });
+
+      await tester.tap(
+        find.byKey(const ValueKey('friend-request-prompt-close')),
+      );
+      await tester.pumpAndSettle();
+      expect(friends.mutations, hasLength(1));
       expect(button, findsNothing);
+    });
+
+    testWidgets('closing the incoming-request prompt without an answer '
+        'changes nothing', (tester) async {
+      final friends = reelFriendService(
+        viewerUid: 'viewer',
+        relationship: FriendRelationshipStatus.requestReceived,
+      );
+      final players = FakeReelPlayers();
+      await pumpReelStage(
+        tester,
+        players: players,
+        size: const Size(900, 1000),
+        friendService: friends.service,
+      );
+
+      final button = find.byKey(
+        const ValueKey<String>('reel-friend-creator_1'),
+      );
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('friend-request-prompt-close')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(friends.mutations, isEmpty);
+      expect(
+        find.descendant(of: button, matching: find.text('Respond')),
+        findsOneWidget,
+        reason: 'a second tap opens the prompt again, never a one-tap accept',
+      );
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(friends.mutations, isEmpty);
+      expect(
+        find.byKey(const ValueKey('friend-request-prompt')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('is absent on your own Yeel', (tester) async {
