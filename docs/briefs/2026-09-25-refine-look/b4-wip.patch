@@ -1,0 +1,2414 @@
+diff --git a/lib/features/servers/presentation/screens/server_workspace_screen.dart b/lib/features/servers/presentation/screens/server_workspace_screen.dart
+index 2ce56014..5b46d4ee 100644
+--- a/lib/features/servers/presentation/screens/server_workspace_screen.dart
++++ b/lib/features/servers/presentation/screens/server_workspace_screen.dart
+@@ -3,6 +3,7 @@ import 'dart:async';
+ import 'package:flutter/foundation.dart';
+ import 'package:flutter/material.dart';
+ import 'package:yovoice/core/localization/app_localizations.dart';
++import 'package:yovoice/core/theme/app_finish.dart';
+ import 'package:yovoice/core/theme/app_palette.dart';
+ import 'package:yovoice/core/theme/app_radius.dart';
+ import 'package:yovoice/core/theme/app_typography.dart';
+@@ -623,7 +624,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
+         Container(
+           padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
+           decoration: BoxDecoration(
+-            border: Border(bottom: BorderSide(color: palette.border)),
++            border: Border(bottom: BorderSide(color: serverDivider(context))),
+           ),
+           child: Row(
+             children: [
+@@ -902,7 +903,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
+                     selectedId: server.id,
+                     onOpen: _openServer,
+                   ),
+-                  VerticalDivider(width: 1, color: context.appPalette.border),
++                  VerticalDivider(width: 1, color: serverDivider(context)),
+                   SizedBox(
+                     width: panelWidth,
+                     child: ServerPanel(
+@@ -928,7 +929,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
+                       homeSelected: home,
+                     ),
+                   ),
+-                  VerticalDivider(width: 1, color: context.appPalette.border),
++                  VerticalDivider(width: 1, color: serverDivider(context)),
+                   Expanded(
+                     // The panel and the context column are fixed; the centre
+                     // used to take everything else, so at 1920 the family
+@@ -980,7 +981,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
+                     ),
+                   ),
+                   if (showContextPanel) ...[
+-                    VerticalDivider(width: 1, color: context.appPalette.border),
++                    VerticalDivider(width: 1, color: serverDivider(context)),
+                     SizedBox(
+                       width: contextWidth,
+                       child: _contextThread(
+@@ -1303,7 +1304,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
+           Container(
+             padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+             decoration: BoxDecoration(
+-              border: Border(bottom: BorderSide(color: palette.border)),
++              border: Border(bottom: BorderSide(color: serverDivider(context))),
+             ),
+             child: Row(
+               children: [
+@@ -1597,12 +1598,21 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
+     final railServers = _railServers(server);
+     final showRail =
+         railServers.length >= ServerWorkspaceScreen.phoneRailMinimumServers;
++    final palette = context.appPalette;
+     final picked = await showModalBottomSheet<Object>(
+       context: context,
+       isScrollControlled: true,
+       useSafeArea: true,
+       showDragHandle: true,
+       constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
++      // Refine-look §8.2: the sheet IS the panel's surface, so the handle
++      // band no longer sits on a second tone above it (the "two-tone band");
++      // a hairline marks the top edge instead.
++      backgroundColor: palette.surfaceMuted,
++      shape: RoundedRectangleBorder(
++        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
++        side: BorderSide(color: serverDivider(context)),
++      ),
+       builder: (sheetContext) => FractionallySizedBox(
+         heightFactor: .88,
+         child: _WithServerRail(
+@@ -1753,7 +1763,7 @@ class _WithServerRail extends StatelessWidget {
+       crossAxisAlignment: CrossAxisAlignment.stretch,
+       children: [
+         rail,
+-        VerticalDivider(width: 1, color: context.appPalette.border),
++        VerticalDivider(width: 1, color: serverDivider(context)),
+         Expanded(child: child),
+       ],
+     );
+@@ -1845,6 +1855,10 @@ class _PhoneSurface extends StatelessWidget {
+     final copy = AppLocalizations.of(context);
+     final palette = context.appPalette;
+     final largeText = MediaQuery.textScalerOf(context).scale(16) > 24;
++    final tonal = AppFinish.tonalNeutral(
++      palette,
++      highContrast: MediaQuery.highContrastOf(context),
++    );
+     final channel = selected;
+     // Board 03 states the family's real boundary on the phone header, beside
+     // a lock; every other template keeps the member line it already had.
+@@ -1880,7 +1894,7 @@ class _PhoneSurface extends StatelessWidget {
+                   Container(
+                     padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+                     decoration: BoxDecoration(
+-                      border: Border(bottom: BorderSide(color: palette.border)),
++                      border: Border(bottom: BorderSide(color: serverDivider(context))),
+                     ),
+                     child: Row(
+                       children: [
+@@ -1960,13 +1974,18 @@ class _PhoneSurface extends StatelessWidget {
+                         ),
+                         if (showChannelsButton) ...[
+                           const SizedBox(width: 8),
++                          // Refine-look R7 neutral: glass, a control
++                          // hairline and the interactive ink, keeping each
++                          // widget type and the surface's own key.
+                           if (largeText)
+                             IconButton.outlined(
+                               key: const ValueKey('server-open-channels'),
+                               onPressed: onChannels,
+                               tooltip: copy.serverChannels,
+-                              style: IconButton.styleFrom(
+-                                minimumSize: const Size(48, 48),
++                              style: tonal.merge(
++                                IconButton.styleFrom(
++                                  minimumSize: const Size(48, 48),
++                                ),
+                               ),
+                               icon: const Icon(Icons.tag_rounded),
+                             )
+@@ -1974,10 +1993,12 @@ class _PhoneSurface extends StatelessWidget {
+                             OutlinedButton.icon(
+                               key: const ValueKey('server-open-channels'),
+                               onPressed: onChannels,
+-                              style: OutlinedButton.styleFrom(
+-                                minimumSize: const Size(48, 48),
+-                                padding: const EdgeInsets.symmetric(
+-                                  horizontal: 12,
++                              style: tonal.merge(
++                                OutlinedButton.styleFrom(
++                                  minimumSize: const Size(48, 48),
++                                  padding: const EdgeInsets.symmetric(
++                                    horizontal: 12,
++                                  ),
+                                 ),
+                               ),
+                               icon: const Icon(Icons.tag_rounded, size: 18),
+@@ -2038,14 +2059,12 @@ class _PublicServerAdmission extends StatelessWidget {
+         padding: const EdgeInsets.all(24),
+         child: ConstrainedBox(
+           constraints: const BoxConstraints(maxWidth: 520),
++          // Refine-look §8.2: an R2 block at the sheet radius, edged in the
++          // template's own ink at .30.
+           child: Container(
+             key: const ValueKey('server-public-admission'),
+             padding: const EdgeInsets.all(24),
+-            decoration: BoxDecoration(
+-              color: palette.surface,
+-              borderRadius: AppRadius.xl,
+-              border: Border.all(color: colors.iconBorder),
+-            ),
++            decoration: _identityBlock(context, colors, AppRadius.xl),
+             child: Column(
+               mainAxisSize: MainAxisSize.min,
+               children: [
+@@ -2055,7 +2074,7 @@ class _PublicServerAdmission extends StatelessWidget {
+                   size: 64,
+                   bordered: false,
+                   textStyle: AppTypography.headlineSmall.copyWith(
+-                    fontWeight: FontWeight.w800,
++                    fontWeight: FontWeight.w700,
+                   ),
+                 ),
+                 const SizedBox(height: 16),
+@@ -2108,14 +2127,15 @@ class _PublicServerAdmission extends StatelessWidget {
+                   ),
+                 ],
+                 const SizedBox(height: 18),
+-                FilledButton.icon(
+-                  key: const ValueKey('server-public-join'),
++                // The admission's one action: the server join, in the
++                // template's identity gradient (R5).
++                ServerGradientFilledButton(
++                  buttonKey: const ValueKey('server-public-join'),
+                   onPressed: joining ? null : onJoin,
+-                  style: FilledButton.styleFrom(
+-                    backgroundColor: colors.cta,
+-                    foregroundColor: colors.onCta,
+-                    minimumSize: const Size.fromHeight(48),
+-                  ).copyWith(side: serverFocusRing(colors.onCta)),
++                  gradient: colors.ctaGradient,
++                  fill: colors.cta,
++                  foreground: colors.onCta,
++                  minimumSize: const Size.fromHeight(48),
+                   icon: joining
+                       ? const SizedBox.square(
+                           dimension: 18,
+@@ -2159,11 +2179,10 @@ class _MeetingPeoplePanel extends StatelessWidget {
+       final people = session.participants;
+       if (people.isEmpty) return const SizedBox.shrink();
+       final copy = AppLocalizations.of(context);
+-      final palette = context.appPalette;
+       return Container(
+         constraints: const BoxConstraints(maxHeight: maxHeight),
+         decoration: BoxDecoration(
+-          border: Border(bottom: BorderSide(color: palette.border)),
++          border: Border(bottom: BorderSide(color: serverDivider(context))),
+         ),
+         child: SingleChildScrollView(
+           padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+@@ -2180,6 +2199,27 @@ class _MeetingPeoplePanel extends StatelessWidget {
+   );
+ }
+ 
++/// The R2 block with the template's ink at .30 as its edge — the admission
++/// and the invite introduction, the two cards that speak for the server
++/// itself. High contrast: flat `surface` and `borderStrong`.
++BoxDecoration _identityBlock(
++  BuildContext context,
++  ServerIdentityVisuals colors,
++  BorderRadius radius,
++) {
++  final palette = context.appPalette;
++  final highContrast = MediaQuery.highContrastOf(context);
++  return AppFinish.block(
++    palette,
++    radius: radius,
++    highContrast: highContrast,
++  ).copyWith(
++    border: Border.all(
++      color: highContrast ? palette.borderStrong : colors.identityEdge,
++    ),
++  );
++}
++
+ /// The one thing a server needs immediately after it exists: people.
+ ///
+ /// The action follows the same authority as the panel's own `Zaproś`:
+@@ -2201,11 +2241,7 @@ class _InviteIntroduction extends StatelessWidget {
+     return Container(
+       key: const ValueKey('server-invite-introduction'),
+       padding: const EdgeInsets.all(16),
+-      decoration: BoxDecoration(
+-        color: palette.surface,
+-        borderRadius: AppRadius.lg,
+-        border: Border.all(color: colors.iconBorder),
+-      ),
++      decoration: _identityBlock(context, colors, AppRadius.block),
+       child: Column(
+         crossAxisAlignment: CrossAxisAlignment.start,
+         children: [
+diff --git a/lib/features/servers/presentation/screens/servers_screen.dart b/lib/features/servers/presentation/screens/servers_screen.dart
+index 1ed3d521..02101797 100644
+--- a/lib/features/servers/presentation/screens/servers_screen.dart
++++ b/lib/features/servers/presentation/screens/servers_screen.dart
+@@ -1,10 +1,15 @@
+ import 'package:flutter/foundation.dart';
+ import 'package:flutter/material.dart';
+ import 'package:yovoice/core/localization/app_localizations.dart';
++import 'package:yovoice/core/theme/app_colors.dart';
++import 'package:yovoice/core/theme/app_finish.dart';
++import 'package:yovoice/core/theme/app_gradients.dart';
++import 'package:yovoice/core/theme/app_motion.dart';
+ import 'package:yovoice/core/theme/app_palette.dart';
+ import 'package:yovoice/core/theme/app_radius.dart';
+ import 'package:yovoice/core/theme/app_spacing.dart';
+ import 'package:yovoice/core/theme/app_typography.dart';
++import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
+ import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+ import 'package:yovoice/shared/widgets/navigation/yo_server_rail_item.dart';
+ import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
+@@ -19,6 +24,8 @@ import '../../data/services/server_media_connector.dart';
+ import '../../data/services/server_service.dart';
+ import '../server_action_failure.dart';
+ import '../server_localized_copy.dart';
++import '../theme/server_identity.dart';
++import '../widgets/server_channel_scene.dart';
+ import '../widgets/server_delete_flow.dart';
+ import 'create_server_screen.dart';
+ import 'server_workspace_screen.dart';
+@@ -413,9 +420,30 @@ class _ServersScreenState extends State<ServersScreen> {
+             final columns = contentWidth >= ResponsiveContentWidth.form.maxWidth
+                 ? 2
+                 : 1;
+-            const columnGap = AppRhythm.section;
++            // Refine-look §8.2: rows are blocks now, so the gaps are the
++            // block rhythm — 16 between the columns, 12 between the rows.
++            const columnGap = AppRhythm.title;
+             final rowWidth =
+                 (contentWidth - columnGap * (columns - 1)) / columns;
++            // The desktop shell's rail draws its own lifted "Stwórz serwer"
++            // beside this slot (MainShell switches to it at the same 1 100 px
++            // as the workspace's desktop tier), so there this identical
++            // action keeps the gradient and gives up the lift: one lift per
++            // screen, exactly as Start does on a desktop.
++            final railOwnsLift =
++                widget.isRootTab &&
++                MediaQuery.sizeOf(context).width >=
++                    ServerWorkspaceScreen.desktopBreakpoint;
++            final scheme = Theme.of(context).colorScheme;
++            Widget tile(Server server) => _ServerTile(
++              server: server,
++              width: rowWidth,
++              onTap: () => _open(server),
++              onActions: _repository is ServerManagementRepository
++                  ? () => _showActions(server)
++                  : null,
++              busy: _busyIds.contains(server.id),
++            );
+             return ListView(
+               padding: padding.add(
+                 const EdgeInsets.only(
+@@ -437,16 +465,20 @@ class _ServersScreenState extends State<ServersScreen> {
+                       Text(
+                         copy.serversTitle,
+                         style: AppTypography.headlineMedium.copyWith(
+-                          fontWeight: FontWeight.w800,
++                          fontWeight: FontWeight.w700,
+                           color: context.appPalette.textPrimary,
+                         ),
+                       ),
+-                      FilledButton.icon(
+-                        key: const ValueKey('servers-create'),
++                      // The directory's one CTA (refine-look R5): the
++                      // brand action gradient and the rail's lift.
++                      ServerGradientFilledButton(
++                        buttonKey: const ValueKey('servers-create'),
+                         onPressed: _create,
+-                        style: FilledButton.styleFrom(
+-                          minimumSize: const Size(48, 48),
+-                        ),
++                        gradient: AppGradients.primaryAction(scheme),
++                        fill: scheme.primary,
++                        foreground: scheme.onPrimary,
++                        liftColor: AppColors.primary,
++                        lifted: !railOwnsLift,
+                         icon: const Icon(Icons.add_rounded),
+                         label: Text(
+                           copy.text('Create server', 'Stwórz serwer'),
+@@ -459,6 +491,12 @@ class _ServersScreenState extends State<ServersScreen> {
+                 if (servers.isEmpty)
+                   YoEmptyState(
+                     icon: Icons.hub_outlined,
++                    // The first-run invitation carries the real logo (§4):
++                    // a bloom in Dark, a contact shadow in Pearl.
++                    leading: const YoBrandMark(
++                      key: ValueKey('servers-empty-logo'),
++                      size: 72,
++                    ),
+                     title: copy.text(
+                       'Your place for shared conversations',
+                       'Twoje miejsce na wspólne rozmowy',
+@@ -468,23 +506,45 @@ class _ServersScreenState extends State<ServersScreen> {
+                       'Stwórz serwer lub przyjmij zaproszenie, aby zacząć.',
+                     ),
+                   )
++                else if (columns == 1)
++                  Column(
++                    crossAxisAlignment: CrossAxisAlignment.stretch,
++                    children: [
++                      for (var i = 0; i < servers.length; i++) ...[
++                        if (i > 0) const SizedBox(height: AppRhythm.item),
++                        tile(servers[i]),
++                      ],
++                    ],
++                  )
+                 else
+-                  Wrap(
+-                    spacing: columnGap,
+-                    runSpacing: AppRhythm.hairline,
++                  // Two columns render as row-major pairs, each pair
++                  // stretched to the taller block, so a one-line row never
++                  // sits beside a three-line one at a different height, and
++                  // focus still runs left → right, top → bottom.
++                  Column(
++                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                     children: [
+-                      for (final server in servers)
+-                        SizedBox(
+-                          width: rowWidth,
+-                          child: _ServerTile(
+-                            server: server,
+-                            onTap: () => _open(server),
+-                            onActions: _repository is ServerManagementRepository
+-                                ? () => _showActions(server)
+-                                : null,
+-                            busy: _busyIds.contains(server.id),
++                      for (var i = 0; i < servers.length; i += 2) ...[
++                        if (i > 0) const SizedBox(height: AppRhythm.item),
++                        IntrinsicHeight(
++                          child: Row(
++                            crossAxisAlignment: CrossAxisAlignment.stretch,
++                            children: [
++                              SizedBox(
++                                width: rowWidth,
++                                child: tile(servers[i]),
++                              ),
++                              const SizedBox(width: columnGap),
++                              SizedBox(
++                                width: rowWidth,
++                                child: i + 1 < servers.length
++                                    ? tile(servers[i + 1])
++                                    : null,
++                              ),
++                            ],
+                           ),
+                         ),
++                      ],
+                     ],
+                   ),
+               ],
+@@ -496,19 +556,33 @@ class _ServersScreenState extends State<ServersScreen> {
+   );
+ }
+ 
+-/// One server in the directory: a flat 64–68 px row (squircle, name, what
+-/// kind of server it is and how many members it has, the description on one
+-/// more line) with a hover / press wash instead of a bordered card.
+ enum _DirectoryAction { delete, leave }
+ 
+-class _ServerTile extends StatelessWidget {
++/// One server in the directory (refine-look §8.2): squircle, name, what kind
++/// of server it is and how many members it has, the description on one more
++/// line — on the neutral R2 block. The identity lives only in the squircle,
++/// never as a tint on the block.
++///
++/// The block is painted with `Ink` inside the row's own keyed `Material`
++/// (`server-directory-<id>`), so the press wash lands on it; Pearl's shadow
++/// pair sits on an outer box that the clip cannot cut. Hover moves the
++/// hairline to `hairlineHover` (and sinks Pearl's drop), keyboard focus
++/// paints a 2 px `focus` ring, and neither moves a pixel of layout. No ink
++/// ripple except InkSparkle on Android. At least 72 px tall.
++class _ServerTile extends StatefulWidget {
+   const _ServerTile({
+     required this.server,
++    required this.width,
+     required this.onTap,
+     this.onActions,
+     this.busy = false,
+   });
+   final Server server;
++
++  /// The row's own width. The stacked 200 % layout is decided from it
++  /// rather than from a `LayoutBuilder`, because two-column pairs measure
++  /// their rows' intrinsic height and a `LayoutBuilder` has none.
++  final double width;
+   final VoidCallback onTap;
+ 
+   /// Opens the row's action sheet (delete for the owner, leave otherwise)
+@@ -520,15 +594,33 @@ class _ServerTile extends StatelessWidget {
+   final bool busy;
+ 
+   static const double _tileSize = 44;
++  static const double minHeight = 72;
++
++  @override
++  State<_ServerTile> createState() => _ServerTileState();
++}
++
++class _ServerTileState extends State<_ServerTile> {
++  bool _hovered = false;
++  bool _focused = false;
++
++  static InteractiveInkFeatureFactory get _splashFactory =>
++      !kIsWeb && defaultTargetPlatform == TargetPlatform.android
++      ? InkSparkle.splashFactory
++      : NoSplash.splashFactory;
+ 
+   @override
+   Widget build(BuildContext context) {
++    final server = widget.server;
++    final onTap = widget.onTap;
++    final busy = widget.busy;
+     final copy = AppLocalizations.of(context);
+     final palette = context.appPalette;
++    final highContrast = MediaQuery.highContrastOf(context);
+     final avatar = YoServerTile(
+       initial: server.initial,
+       type: server.type,
+-      size: _tileSize,
++      size: _ServerTile._tileSize,
+     );
+     final details = Column(
+       crossAxisAlignment: CrossAxisAlignment.start,
+@@ -543,8 +635,9 @@ class _ServerTile extends StatelessWidget {
+         ),
+         const SizedBox(height: 2),
+         Text(
++          // A non-breaking space keeps "184 osoby" on one line.
+           '${copy.serverTypeTitle(server.type)} · '
+-          '${copy.serverMembers(server.memberCount)}',
++          '${serverKeepCountTogether(copy.serverMembers(server.memberCount))}',
+           maxLines: 2,
+           overflow: TextOverflow.ellipsis,
+           style: AppTypography.bodySmall.copyWith(color: palette.textSecondary),
+@@ -567,7 +660,7 @@ class _ServerTile extends StatelessWidget {
+       size: 22,
+       color: palette.textTertiary,
+     );
+-    final actions = onActions;
++    final actions = widget.onActions;
+     final Widget arrow = actions == null
+         ? chevron
+         : Row(
+@@ -597,49 +690,92 @@ class _ServerTile extends StatelessWidget {
+               chevron,
+             ],
+           );
+-    return Material(
+-      key: ValueKey('server-directory-${server.id}'),
+-      color: Colors.transparent,
+-      shape: const RoundedRectangleBorder(borderRadius: AppRadius.md),
+-      clipBehavior: Clip.antiAlias,
+-      child: InkWell(
+-        onTap: busy ? null : onTap,
+-        onLongPress: busy ? null : actions,
+-        onSecondaryTap: busy ? null : actions,
+-        child: Padding(
+-          padding: EdgeInsetsDirectional.only(
+-            start: AppRhythm.item,
+-            end: actions == null ? AppRhythm.item : AppRhythm.hairline,
+-            top: AppRhythm.item,
+-            bottom: AppRhythm.item,
++    final padding = EdgeInsetsDirectional.only(
++      start: AppRhythm.item,
++      end: actions == null ? AppRhythm.item : AppRhythm.hairline,
++      top: AppRhythm.item,
++      bottom: AppRhythm.item,
++    );
++    final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
++    final innerWidth = widget.width - padding.horizontal;
++    final stacked =
++        textScale > 1.3 &&
++        innerWidth - (actions == null ? 96 : 144) < 160 * textScale;
++    final content = stacked
++        ? Column(
++            crossAxisAlignment: CrossAxisAlignment.stretch,
++            mainAxisSize: MainAxisSize.min,
++            children: [
++              Row(children: [avatar, const Spacer(), arrow]),
++              const SizedBox(height: AppRhythm.item),
++              details,
++            ],
++          )
++        : Row(
++            children: [
++              avatar,
++              const SizedBox(width: AppRhythm.item),
++              Expanded(child: details),
++              const SizedBox(width: AppRhythm.tight),
++              arrow,
++            ],
++          );
++    final hovered = _hovered && !busy;
++    final fill = AppFinish.blockFill(
++      palette,
++      hovered: hovered,
++      highContrast: highContrast,
++    );
++    final Border edge = _focused
++        ? Border.all(color: palette.focus, width: 2)
++        : AppFinish.blockEdge(
++            palette,
++            hovered: hovered,
++            highContrast: highContrast,
++          );
++    final pressedWash = AppFinish.blockPressedWash(palette);
++    return AnimatedContainer(
++      // Pearl's shadow pair, outside the row's clip.
++      duration: AppMotion.resolve(context, AppMotion.quick),
++      curve: AppMotion.standardCurve,
++      decoration: BoxDecoration(
++        borderRadius: AppRadius.block,
++        boxShadow: fill.boxShadow,
++      ),
++      child: Material(
++        key: ValueKey('server-directory-${server.id}'),
++        color: Colors.transparent,
++        shape: const RoundedRectangleBorder(borderRadius: AppRadius.block),
++        clipBehavior: Clip.antiAlias,
++        child: Ink(
++          decoration: BoxDecoration(
++            color: fill.color,
++            gradient: fill.gradient,
++            borderRadius: AppRadius.block,
++            border: edge,
+           ),
+-          child: LayoutBuilder(
+-            builder: (context, constraints) {
+-              final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
+-              final stacked =
+-                  textScale > 1.3 &&
+-                  constraints.maxWidth - (actions == null ? 96 : 144) <
+-                      160 * textScale;
+-              if (stacked) {
+-                return Column(
+-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+-                  children: [
+-                    Row(children: [avatar, const Spacer(), arrow]),
+-                    const SizedBox(height: AppRhythm.item),
+-                    details,
+-                  ],
+-                );
+-              }
+-              return Row(
+-                children: [
+-                  avatar,
+-                  const SizedBox(width: AppRhythm.item),
+-                  Expanded(child: details),
+-                  const SizedBox(width: AppRhythm.tight),
+-                  arrow,
+-                ],
+-              );
++          child: InkWell(
++            onTap: busy ? null : onTap,
++            onLongPress: busy ? null : actions,
++            onSecondaryTap: busy ? null : actions,
++            splashFactory: _splashFactory,
++            onHover: (value) {
++              if (_hovered != value) setState(() => _hovered = value);
+             },
++            onFocusChange: (value) {
++              if (_focused != value) setState(() => _focused = value);
++            },
++            overlayColor: WidgetStateProperty.resolveWith((states) {
++              if (states.contains(WidgetState.pressed)) return pressedWash;
++              // Hover and focus are carried by the edge, not a wash.
++              return Colors.transparent;
++            }),
++            child: ConstrainedBox(
++              constraints: const BoxConstraints(
++                minHeight: _ServerTile.minHeight,
++              ),
++              child: Padding(padding: padding, child: content),
++            ),
+           ),
+         ),
+       ),
+diff --git a/lib/features/servers/presentation/theme/server_identity.dart b/lib/features/servers/presentation/theme/server_identity.dart
+index b98eef6c..172f5c5e 100644
+--- a/lib/features/servers/presentation/theme/server_identity.dart
++++ b/lib/features/servers/presentation/theme/server_identity.dart
+@@ -59,6 +59,40 @@ class ServerIdentity {
+ 
+   static ServerIdentity of(ServerType type) => _identities[type]!;
+ 
++  /// The lit gem of a LIVE session orb (refine-look §6, the director-verified
++  /// stops): the template's accent lifted 12 % toward white into the midpoint
++  /// of its primary and accent, with the ink that reads on BOTH stops —
++  /// friends 11.0:1, podcast 5.6:1, family 9.6:1, company 7.8:1 in
++  /// [AppColors.contrastInk], community 5.05 / 5.96:1 in white. The same in
++  /// Dark and Pearl: a gem is an object, not a surface.
++  static const _liveGems = <ServerType, (Color, Color, Color)>{
++    ServerType.friends: (
++      Color(0xFF70E5E9),
++      Color(0xFF5CE1E6),
++      AppColors.contrastInk,
++    ),
++    ServerType.podcast: (
++      Color(0xFFFF7D90),
++      Color(0xFFFF5474),
++      AppColors.contrastInk,
++    ),
++    ServerType.family: (
++      Color(0xFF4DE89B),
++      Color(0xFF2EDB84),
++      AppColors.contrastInk,
++    ),
++    ServerType.company: (
++      Color(0xFF76CEFF),
++      Color(0xFF58B5FF),
++      AppColors.contrastInk,
++    ),
++    ServerType.community: (
++      Color(0xFFA528F0),
++      Color(0xFF8A2BE2),
++      AppColors.white,
++    ),
++  };
++
+   ServerIdentityVisuals resolve(Brightness brightness) {
+     final dark = brightness == Brightness.dark;
+     final scheme = ColorScheme.fromSeed(
+@@ -78,6 +112,7 @@ class ServerIdentity {
+     final onCta = cta.computeLuminance() > .32
+         ? AppColors.contrastInk
+         : AppColors.white;
++    final (gemTop, gemBottom, onGem) = _liveGems[type]!;
+     return ServerIdentityVisuals(
+       foreground: foreground,
+       selectedForeground: _readableForeground(
+@@ -104,6 +139,40 @@ class ServerIdentity {
+       selectedWash: selectedWash,
+       orbit: primary.withValues(alpha: dark ? .09 : .12),
+       focus: palette.textPrimary,
++      liveOrbGradient: LinearGradient(
++        begin: Alignment.topLeft,
++        end: Alignment.bottomRight,
++        colors: [gemTop, gemBottom],
++      ),
++      onLiveOrb: onGem,
++      // R5 identity variant: the fill deepens toward the Dark canvas under a
++      // white label and brightens toward white under an ink one, so the
++      // label only ever gains contrast across the sweep.
++      ctaGradient: LinearGradient(
++        colors: onCta == AppColors.white
++            ? [cta, Color.lerp(cta, AppPalette.dark.background, .16)!]
++            : [Color.lerp(cta, AppColors.white, .14)!, cta],
++      ),
++      // The "unlit" identity finish: a quiet top-lit glass of the template's
++      // hue, for anything that marks a place rather than a live event.
++      unlitGradient: LinearGradient(
++        begin: Alignment.topCenter,
++        end: Alignment.bottomCenter,
++        colors: [
++          Color.alphaBlend(
++            primary.withValues(alpha: dark ? .18 : .12),
++            palette.surfaceRaised,
++          ),
++          Color.alphaBlend(
++            primary.withValues(alpha: dark ? .06 : .04),
++            palette.surface,
++          ),
++        ],
++      ),
++      unlitEdge: dark ? primary.withValues(alpha: .28) : palette.hairline,
++      // The admission and invite introduction cards carry the template's
++      // own ink as a faint edge instead of the neutral hairline.
++      identityEdge: foreground.withValues(alpha: .30),
+     );
+   }
+ 
+@@ -138,6 +207,12 @@ class ServerIdentityVisuals {
+     required this.selectedWash,
+     required this.orbit,
+     required this.focus,
++    required this.liveOrbGradient,
++    required this.onLiveOrb,
++    required this.ctaGradient,
++    required this.unlitGradient,
++    required this.unlitEdge,
++    required this.identityEdge,
+   });
+   final Color foreground;
+   final Color selectedForeground;
+@@ -153,6 +228,28 @@ class ServerIdentityVisuals {
+   final Color selectedWash;
+   final Color orbit;
+   final Color focus;
++
++  /// The LIVE session orb's gem (both themes) and the symbol ink on it.
++  final LinearGradient liveOrbGradient;
++  final Color onLiveOrb;
++
++  /// The join action's identity gradient (refine-look R5): [cta] into a
++  /// deeper stop under a white label, or a brighter stop into [cta] under an
++  /// ink label. The focus ring is still [onCta].
++  final LinearGradient ctaGradient;
++
++  /// The quiet orb, the module icon chip and the microphone orb: the
++  /// template's hue at .18 / .12 over `surfaceRaised` into .06 / .04 over
++  /// `surface`, top-lit.
++  final LinearGradient unlitGradient;
++
++  /// The unlit finish's 1 px edge: the template's primary at .28 in Dark,
++  /// the neutral `hairline` in Pearl (which adds the block shadow instead).
++  final Color unlitEdge;
++
++  /// The template's ink at .30: the edge of the admission and the invite
++  /// introduction cards.
++  final Color identityEdge;
+ }
+ 
+ /// The keyboard focus ring for a control whose fill this slice overrides.
+@@ -173,6 +270,22 @@ WidgetStateProperty<BorderSide?> serverFocusRing(Color foreground) =>
+           : null,
+     );
+ 
++/// The workspace's decorative separators — the header rules, the panel's
++/// divider and the columns' vertical rules (refine-look §8.2, principle 4):
++/// the palette's `hairline`, and `borderStrong` again under high contrast.
++Color serverDivider(BuildContext context) {
++  final palette = context.appPalette;
++  return MediaQuery.highContrastOf(context)
++      ? palette.borderStrong
++      : palette.hairline;
++}
++
++/// A member count whose number and noun never part at a line break
++/// ("12\u00A0osób"): the first space after a digit becomes a non-breaking
++/// one. The words are unchanged, so every reader hears the same copy.
++String serverKeepCountTogether(String count) =>
++    count.replaceFirstMapped(RegExp(r'(\d) '), (match) => '${match[1]}\u00A0');
++
+ /// The selector is an explicitly approved responsive exception to page rhythm.
+ abstract final class ServerSelectorMetrics {
+   static const compactBreakpoint = 640.0;
+diff --git a/lib/features/servers/presentation/widgets/server_channel_scene.dart b/lib/features/servers/presentation/widgets/server_channel_scene.dart
+index 4e644e17..46a46187 100644
+--- a/lib/features/servers/presentation/widgets/server_channel_scene.dart
++++ b/lib/features/servers/presentation/widgets/server_channel_scene.dart
+@@ -1,5 +1,8 @@
+ import 'package:flutter/material.dart';
+ import 'package:yovoice/core/localization/app_localizations.dart';
++import 'package:yovoice/core/theme/app_colors.dart';
++import 'package:yovoice/core/theme/app_finish.dart';
++import 'package:yovoice/core/theme/app_motion.dart';
+ import 'package:yovoice/core/theme/app_palette.dart';
+ import 'package:yovoice/core/theme/app_radius.dart';
+ import 'package:yovoice/core/theme/app_spacing.dart';
+@@ -73,6 +76,9 @@ class ServerChannelHeader extends StatelessWidget {
+         : restricted
+         ? copy.serverChannelRestricted
+         : copy.serverChannelKindTitle(channel.kind);
++    final subtitleStyle = AppTypography.bodySmall.copyWith(
++      color: palette.textSecondary,
++    );
+     return Container(
+       key: const ValueKey('server-channel-header'),
+       padding: EdgeInsets.symmetric(
+@@ -80,7 +86,7 @@ class ServerChannelHeader extends StatelessWidget {
+         vertical: compact ? 10 : 14,
+       ),
+       decoration: BoxDecoration(
+-        border: Border(bottom: BorderSide(color: palette.border)),
++        border: Border(bottom: BorderSide(color: serverDivider(context))),
+       ),
+       child: Row(
+         children: [
+@@ -105,28 +111,26 @@ class ServerChannelHeader extends StatelessWidget {
+                           .copyWith(color: palette.textPrimary),
+                 ),
+                 const SizedBox(height: 2),
+-                // The pill and the live line share one row while they fit and
+-                // fall onto two lines when they do not, instead of the pill
+-                // holding its intrinsic width unflexed and being cut: at
+-                // 320 px / 200 % text the single piece of contract-backed
+-                // truth on this screen rendered as `NA ŻY`, and on board 04
+-                // as a 13-px red bar with no word in it at all.
+-                Wrap(
+-                  crossAxisAlignment: WrapCrossAlignment.center,
+-                  spacing: 8,
+-                  runSpacing: 4,
+-                  children: [
+-                    if (live) ServerLivePill(label: copy.serverLivePill),
+-                    Text(
+-                      subtitle,
+-                      maxLines: 2,
+-                      overflow: TextOverflow.ellipsis,
+-                      style: AppTypography.bodySmall.copyWith(
+-                        color: palette.textSecondary,
+-                      ),
+-                    ),
+-                  ],
+-                ),
++                // Refine-look §8.2: above a media scene the header says LIVE
++                // with a lamp — a small pulsing dot before the unchanged
++                // "Na żywo od 19:40" — instead of a second red pill; the
++                // pill itself stays on the scene's card and on the channel
++                // rows. The lamp and its line flex together, so at 320 px /
++                // 200 % text the line wraps under the dot rather than being
++                // cut.
++                if (live)
++                  ServerLiveLamp(
++                    semanticLabel: copy.serverLivePill,
++                    label: subtitle,
++                    style: subtitleStyle,
++                  )
++                else
++                  Text(
++                    subtitle,
++                    maxLines: 2,
++                    overflow: TextOverflow.ellipsis,
++                    style: subtitleStyle,
++                  ),
+               ],
+             ),
+           ),
+@@ -161,6 +165,293 @@ class ServerLivePill extends StatelessWidget {
+   );
+ }
+ 
++/// The channel header's LIVE lamp (refine-look §8.2): an 8 px dot in
++/// [AppColors.live] — pulsing three bounded 1.2 s cycles when it appears, like
++/// the badge's own dot, and still under Reduce Motion — then 6 px, then the
++/// unchanged "Na żywo od 19:40".
++///
++/// The dot is the marker and is announced as [semanticLabel] (the same
++/// `copy.serverLivePill` the pill says); the line keeps its own text node. The
++/// widget carries `server-live-lamp`, so "nothing claims liveness" can still
++/// be asserted for the header next to the `server-live-pill` count.
++class ServerLiveLamp extends StatelessWidget {
++  const ServerLiveLamp({
++    required this.semanticLabel,
++    required this.label,
++    required this.style,
++    super.key = const ValueKey('server-live-lamp'),
++  });
++
++  final String semanticLabel;
++  final String label;
++  final TextStyle style;
++
++  static const double dotSize = 8;
++  static const double gap = 6;
++
++  @override
++  Widget build(BuildContext context) {
++    // The dot sits on the centre of the FIRST line at any text size, so a
++    // line that wraps at 200 % never drags it down to the middle of two.
++    final line =
++        MediaQuery.textScalerOf(context).scale(style.fontSize ?? 12) *
++        (style.height ?? 1.2);
++    return Row(
++      mainAxisSize: MainAxisSize.min,
++      crossAxisAlignment: CrossAxisAlignment.start,
++      children: [
++        Padding(
++          padding: EdgeInsets.only(top: ((line - dotSize) / 2).clamp(0, 99)),
++          child: Semantics(
++            label: semanticLabel,
++            child: const ExcludeSemantics(child: _LampDot(size: dotSize)),
++          ),
++        ),
++        const SizedBox(width: gap),
++        Flexible(
++          child: Text(
++            label,
++            maxLines: 2,
++            overflow: TextOverflow.ellipsis,
++            style: style,
++          ),
++        ),
++      ],
++    );
++  }
++}
++
++/// The lamp's dot: opacity 1 → .55 → 1, three mirrored 1.2 s cycles when it
++/// appears, then at rest — the live badge's bounded pulse, so a persistent
++/// server screen never ticks forever for a decoration and every surface
++/// still settles. Parked at 1 whenever decorative motion is off.
++class _LampDot extends StatefulWidget {
++  const _LampDot({required this.size});
++  final double size;
++
++  @override
++  State<_LampDot> createState() => _LampDotState();
++}
++
++class _LampDotState extends State<_LampDot>
++    with SingleTickerProviderStateMixin {
++  static const int _cycles = 3;
++  static const Duration _cycle = Duration(milliseconds: 1200);
++
++  late final AnimationController _controller = AnimationController(
++    vsync: this,
++    duration: _cycle * _cycles,
++    value: 1,
++  );
++  late final Animation<double> _opacity = TweenSequence<double>([
++    for (var i = 0; i < _cycles; i++) ...[
++      TweenSequenceItem(
++        tween: Tween<double>(
++          begin: 1,
++          end: .55,
++        ).chain(CurveTween(curve: Curves.easeInOut)),
++        weight: 1,
++      ),
++      TweenSequenceItem(
++        tween: Tween<double>(
++          begin: .55,
++          end: 1,
++        ).chain(CurveTween(curve: Curves.easeInOut)),
++        weight: 1,
++      ),
++    ],
++  ]).animate(_controller);
++  bool _pulsed = false;
++
++  @override
++  void didChangeDependencies() {
++    super.didChangeDependencies();
++    if (AppMotion.decorative(context)) {
++      if (!_pulsed) {
++        _pulsed = true;
++        _controller.forward(from: 0);
++      }
++    } else {
++      _pulsed = false;
++      _controller
++        ..stop()
++        ..value = 1;
++    }
++  }
++
++  @override
++  void dispose() {
++    _controller.dispose();
++    super.dispose();
++  }
++
++  @override
++  Widget build(BuildContext context) => FadeTransition(
++    opacity: _opacity,
++    child: SizedBox.square(
++      dimension: widget.size,
++      child: const DecoratedBox(
++        decoration: BoxDecoration(
++          shape: BoxShape.circle,
++          color: AppColors.live,
++        ),
++      ),
++    ),
++  );
++}
++
++/// A server's one labelled CTA with the refine-look R5 finish: an identity
++/// (or brand) gradient laid on the button through `backgroundBuilder`, and
++/// the rail's tight coloured lift ([AppFinish.actionLift]) on an outer box so
++/// the button's own clip never cuts it.
++///
++/// It is the same `YoGradientFilledButton` recipe, kept here as a real
++/// [FilledButton] that carries the caller's key because the servers slice
++/// addresses `server-join`, `server-public-join` and `servers-create` as a
++/// [FilledButton] (its `onPressed`, its `enabled` and — for the WCAG 1.4.11
++/// focus-ring test — its `backgroundColor`). [fill] is therefore still the
++/// reported and underlying colour; the gradient's stops only ever move away
++/// from [foreground], so the [serverFocusRing] measured on [fill] holds on
++/// both stops.
++///
++/// States: hover and press wash [foreground] at .06 / .10 and move the lift
++/// (hover .40 / blur 22, pressed y 3 at 60 %); disabled is the theme's flat
++/// sunken fill with no gradient and no lift. [lifted] false keeps the
++/// gradient without the lift where another action already owns the screen's
++/// one lift. High contrast keeps the gradient (the fill IS the control) and
++/// drops the lift. Never for repeated, list, retry or tonal actions.
++class ServerGradientFilledButton extends StatefulWidget {
++  const ServerGradientFilledButton({
++    required this.buttonKey,
++    required this.onPressed,
++    required this.icon,
++    required this.label,
++    required this.gradient,
++    required this.fill,
++    required this.foreground,
++    this.liftColor,
++    this.lifted = true,
++    this.minimumSize = const Size(48, 48),
++    this.textStyle,
++    super.key,
++  });
++
++  /// The key of the [FilledButton] itself.
++  final Key buttonKey;
++  final VoidCallback? onPressed;
++  final Widget icon;
++  final Widget label;
++  final Gradient gradient;
++
++  /// The solid colour under the gradient, reported as `backgroundColor`.
++  final Color fill;
++  final Color foreground;
++
++  /// Defaults to [fill].
++  final Color? liftColor;
++  final bool lifted;
++  final Size minimumSize;
++  final TextStyle? textStyle;
++
++  @override
++  State<ServerGradientFilledButton> createState() =>
++      _ServerGradientFilledButtonState();
++}
++
++class _ServerGradientFilledButtonState
++    extends State<ServerGradientFilledButton> {
++  final _states = WidgetStatesController();
++  bool _hovered = false;
++  bool _pressed = false;
++
++  @override
++  void initState() {
++    super.initState();
++    _states.addListener(_statesChanged);
++  }
++
++  @override
++  void dispose() {
++    _states
++      ..removeListener(_statesChanged)
++      ..dispose();
++    super.dispose();
++  }
++
++  // Only hover and press move the lift; focus and disabled paint nothing
++  // here, so they never rebuild this widget.
++  void _statesChanged() {
++    if (!mounted) return;
++    final hovered = _states.value.contains(WidgetState.hovered);
++    final pressed = _states.value.contains(WidgetState.pressed);
++    if (hovered == _hovered && pressed == _pressed) return;
++    setState(() {
++      _hovered = hovered;
++      _pressed = pressed;
++    });
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    final enabled = widget.onPressed != null;
++    final lift =
++        !enabled || !widget.lifted || MediaQuery.highContrastOf(context)
++        ? const <BoxShadow>[]
++        : AppFinish.actionLift(
++            widget.liftColor ?? widget.fill,
++            hovered: _hovered,
++            pressed: _pressed,
++          );
++    final ink = widget.foreground;
++    return AnimatedContainer(
++      duration: AppMotion.resolve(context, AppMotion.quick),
++      curve: AppMotion.standardCurve,
++      decoration: ShapeDecoration(
++        shape: const StadiumBorder(),
++        shadows: lift,
++      ),
++      child: FilledButton.icon(
++        key: widget.buttonKey,
++        onPressed: widget.onPressed,
++        statesController: _states,
++        // FilledButton defaults to Clip.none, which would let the gradient
++        // `Ink` paint as a rectangle past the stadium.
++        clipBehavior: Clip.antiAlias,
++        style:
++            FilledButton.styleFrom(
++              backgroundColor: widget.fill,
++              foregroundColor: ink,
++              minimumSize: widget.minimumSize,
++              textStyle: widget.textStyle,
++              elevation: 0,
++              shadowColor: Colors.transparent,
++            ).copyWith(
++              side: serverFocusRing(ink),
++              overlayColor: WidgetStateProperty.resolveWith((states) {
++                if (states.contains(WidgetState.pressed)) {
++                  return ink.withValues(alpha: .10);
++                }
++                if (states.contains(WidgetState.hovered)) {
++                  return ink.withValues(alpha: .06);
++                }
++                return null;
++              }),
++              backgroundBuilder: enabled
++                  ? (context, states, child) => Ink(
++                      // Keep `color` null behind the gradient (see
++                      // yo_button.dart).
++                      decoration: BoxDecoration(gradient: widget.gradient),
++                      child: child,
++                    )
++                  : null,
++            ),
++        icon: widget.icon,
++        label: widget.label,
++      ),
++    );
++  }
++}
++
+ /// Mounts the scene a channel kind calls for.
+ class ServerChannelScene extends StatelessWidget {
+   const ServerChannelScene({
+@@ -326,23 +617,28 @@ class ServerSessionScene extends StatelessWidget {
+               session.phase == ServerSessionPhase.reconnecting);
+       final live = channel.liveness.isLive;
+       final module = _boardModule(context, copy, colors);
++      // Refine-look R4 / W2 at card scale. The card is lit only while the
++      // channel document says LIVE and this device has not joined it; once
++      // connected it carries the voice accent's edge and corner instead, and
++      // every other state is the plain R2 block. A held root is quiet.
++      final cardState = server.isHeld
++          ? ServerSessionCardState.quiet
++          : here && session.isConnected
++          ? ServerSessionCardState.connected
++          : live && !here
++          ? ServerSessionCardState.live
++          : ServerSessionCardState.quiet;
+       return SingleChildScrollView(
+         key: const ValueKey('server-channel-content-scroll'),
+         padding: EdgeInsets.all(compact ? AppSpacing.md : AppSpacing.lg),
+         child: Column(
+           crossAxisAlignment: CrossAxisAlignment.stretch,
+           children: [
+-            Container(
++            ServerSessionCard(
++              state: cardState,
++              accent: ServerIdentity.of(server.type).accent,
++              colors: colors,
+               padding: EdgeInsets.all(compact ? 16 : 24),
+-              decoration: BoxDecoration(
+-                color: palette.surface,
+-                borderRadius: AppRadius.lg,
+-                border: Border.all(
+-                  color: here && session.isConnected
+-                      ? palette.audioAccent
+-                      : palette.border,
+-                ),
+-              ),
+               child: Column(
+                 children: [
+                   // Tiles exist only while the provider reports a roster, so
+@@ -358,7 +654,13 @@ class ServerSessionScene extends StatelessWidget {
+                       compact: compact,
+                     ),
+                   ] else if (!_video)
+-                    _Orb(server: server, colors: colors, live: live),
++                    _Orb(
++                      server: server,
++                      colors: colors,
++                      // The gem is lit by the same fact as the card: a live
++                      // generation this device has not joined.
++                      live: cardState == ServerSessionCardState.live,
++                    ),
+                   const SizedBox(height: 20),
+                   Text(
+                     here && session.isConnected
+@@ -491,6 +793,198 @@ class ServerSessionScene extends StatelessWidget {
+   }
+ }
+ 
++/// Which light a session card carries (refine-look R4).
++enum ServerSessionCardState {
++  /// The plain R2 block: quiet, held, or joining.
++  quiet,
++
++  /// LIVE and not joined here: the W2 recipe at card scale.
++  live,
++
++  /// This device is in the conversation: the voice accent's edge and a
++  /// corner tint, no glow.
++  connected,
++}
++
++/// The session scene's card.
++///
++/// * [ServerSessionCardState.quiet] — R2: the top-lit block fill, a 1 px
++///   hairline edge and Pearl's shadow pair.
++/// * [ServerSessionCardState.live] — W2 at card scale: the live tile's base
++///   (the identity wash over `surfaceRaised`), a corner light in the
++///   identity [accent] whose reach is capped at 200 px, the 1 px live rim, a
++///   Dark specular top line and the live under-glow — which replaces the
++///   block shadow. This is the workspace's one emitted light.
++/// * [ServerSessionCardState.connected] — a 1.5 px `audioAccent` edge and an
++///   `audioAccent` corner tint (.12 / .08). No glow.
++///
++/// Edges are painted as a foreground, so a state change never moves the
++/// content by a pixel. High contrast: a flat `surface`, a 1 px `borderStrong`
++/// edge (1.5 px solid live / `audioAccent` in the lit states), no light.
++class ServerSessionCard extends StatelessWidget {
++  const ServerSessionCard({
++    required this.state,
++    required this.accent,
++    required this.colors,
++    required this.padding,
++    required this.child,
++    super.key,
++  });
++
++  final ServerSessionCardState state;
++
++  /// The template's bright accent ([ServerIdentity.accent]).
++  final Color accent;
++  final ServerIdentityVisuals colors;
++  final EdgeInsets padding;
++  final Widget child;
++
++  /// The connected corner tint's peak (Dark / Pearl), below the lead-block
++  /// tint because the edge already says "connected".
++  static const double connectedTintDark = .12;
++  static const double connectedTintPearl = .08;
++
++  @override
++  Widget build(BuildContext context) {
++    final palette = context.appPalette;
++    final highContrast = MediaQuery.highContrastOf(context);
++    final duration = AppMotion.resolve(context, AppMotion.quick);
++    final live = state == ServerSessionCardState.live;
++    final connected = state == ServerSessionCardState.connected;
++
++    final BoxDecoration fill;
++    if (highContrast) {
++      fill = BoxDecoration(
++        color: palette.surface,
++        borderRadius: AppRadius.block,
++      );
++    } else if (live) {
++      fill = BoxDecoration(
++        color: Color.alphaBlend(colors.cardWash, palette.surfaceRaised),
++        borderRadius: AppRadius.block,
++      );
++    } else {
++      fill = AppFinish.blockFill(palette);
++    }
++
++    final Border edge;
++    if (live) {
++      edge = AppFinish.liveRim(palette, highContrast: highContrast);
++    } else if (connected) {
++      edge = Border.all(color: palette.audioAccent, width: 1.5);
++    } else {
++      edge = AppFinish.blockEdge(palette, highContrast: highContrast);
++    }
++
++    final specular = live
++        ? AppFinish.liveSpecular(palette, highContrast: highContrast)
++        : null;
++    final tintAlpha = palette.isDark ? connectedTintDark : connectedTintPearl;
++
++    final card = AnimatedContainer(
++      key: const ValueKey('server-session-card'),
++      duration: duration,
++      curve: AppMotion.standardCurve,
++      decoration: fill,
++      foregroundDecoration: BoxDecoration(
++        borderRadius: AppRadius.block,
++        border: edge,
++      ),
++      child: ClipRRect(
++        borderRadius: AppRadius.block,
++        child: Stack(
++          // The content keeps the card's full width (a loose Stack would let
++          // the centred column shrink to its widest line).
++          fit: StackFit.passthrough,
++          children: [
++            if (live && !highContrast)
++              Positioned.fill(
++                child: IgnorePointer(
++                  child: LayoutBuilder(
++                    builder: (context, constraints) => DecoratedBox(
++                      key: const ValueKey('server-session-corner'),
++                      decoration: BoxDecoration(
++                        gradient: AppFinish.liveCorner(
++                          accent,
++                          palette,
++                          shortestSide: constraints.biggest.shortestSide,
++                        ),
++                      ),
++                    ),
++                  ),
++                ),
++              ),
++            if (connected && !highContrast)
++              PositionedDirectional(
++                key: const ValueKey('server-session-tint'),
++                top: AppFinish.cornerTintTop,
++                end: AppFinish.cornerTintEnd,
++                width: AppFinish.cornerTintSize,
++                height: AppFinish.cornerTintSize,
++                child: IgnorePointer(
++                  child: DecoratedBox(
++                    decoration: BoxDecoration(
++                      shape: BoxShape.circle,
++                      gradient: RadialGradient(
++                        colors: [
++                          palette.audioAccent.withValues(alpha: tintAlpha),
++                          palette.audioAccent.withValues(alpha: 0),
++                        ],
++                        stops: const [0, .68],
++                      ),
++                    ),
++                  ),
++                ),
++              ),
++            if (specular != null)
++              Positioned(
++                left: 0,
++                right: 0,
++                top: 0,
++                height: 1,
++                child: IgnorePointer(
++                  child: DecoratedBox(
++                    decoration: BoxDecoration(gradient: specular),
++                  ),
++                ),
++              ),
++            // The edge is a foreground; one extra pixel keeps the content
++            // exactly where the old in-layout 1 px border left it.
++            Padding(padding: padding + const EdgeInsets.all(1), child: child),
++          ],
++        ),
++      ),
++    );
++    if (!live || highContrast) return card;
++    // The under-glow is its own layer behind the card, so the card's clip
++    // never cuts it and it replaces the block shadow rather than adding one.
++    return Stack(
++      clipBehavior: Clip.none,
++      fit: StackFit.passthrough,
++      children: [
++        Positioned.fill(
++          child: IgnorePointer(
++            child: DecoratedBox(
++              key: const ValueKey('server-session-glow'),
++              decoration: BoxDecoration(
++                borderRadius: AppRadius.block,
++                boxShadow: AppFinish.liveGlow(palette),
++              ),
++            ),
++          ),
++        ),
++        card,
++      ],
++    );
++  }
++}
++
++/// The session's identity orb, 112 px.
++///
++/// LIVE (and not joined): the template's lit gem
++/// ([ServerIdentityVisuals.liveOrbGradient]) with the symbol in its own ink
++/// and a 1 px white @ .14 rim — no glow and no pulse, the badge's dot
++/// already pulses. Otherwise the "unlit" identity glass.
+ class _Orb extends StatelessWidget {
+   const _Orb({required this.server, required this.colors, required this.live});
+   final Server server;
+@@ -499,26 +993,54 @@ class _Orb extends StatelessWidget {
+ 
+   @override
+   Widget build(BuildContext context) => Container(
++    key: const ValueKey('server-session-orb'),
+     width: 112,
+     height: 112,
+-    decoration: BoxDecoration(
+-      shape: BoxShape.circle,
+-      color: colors.iconSurface,
+-      border: Border.all(
+-        color: live ? colors.foreground : colors.iconBorder,
+-        width: live ? 2 : 1,
+-      ),
+-    ),
++    decoration: serverOrbDecoration(context, colors, live: live),
+     child: Center(
+       child: ServerTypeSymbol(
+         type: server.type,
+-        color: colors.foreground,
++        color: live ? colors.onLiveOrb : colors.foreground,
+         size: 46,
+       ),
+     ),
+   );
+ }
+ 
++/// The decoration of an identity disc: the lit gem when [live], the unlit
++/// identity glass otherwise (quiet orbs, the module empty state). High
++/// contrast keeps the gem's deeper stop flat (its ink is measured on it) and
++/// gives both a `borderStrong` edge, with no gradient or shadow.
++BoxDecoration serverOrbDecoration(
++  BuildContext context,
++  ServerIdentityVisuals colors, {
++  bool live = false,
++}) {
++  final palette = context.appPalette;
++  final highContrast = MediaQuery.highContrastOf(context);
++  if (live) {
++    return BoxDecoration(
++      shape: BoxShape.circle,
++      color: highContrast ? colors.liveOrbGradient.colors.last : null,
++      gradient: highContrast ? null : colors.liveOrbGradient,
++      border: Border.all(
++        color: highContrast
++            ? palette.borderStrong
++            : AppColors.white.withValues(alpha: .14),
++      ),
++    );
++  }
++  return BoxDecoration(
++    shape: BoxShape.circle,
++    color: highContrast ? palette.surface : null,
++    gradient: highContrast ? null : colors.unlitGradient,
++    border: Border.all(
++      color: highContrast ? palette.borderStrong : colors.unlitEdge,
++    ),
++    boxShadow: AppFinish.blockShadows(palette, highContrast: highContrast),
++  );
++}
++
+ class _VideoSlot extends StatelessWidget {
+   const _VideoSlot({
+     required this.copy,
+@@ -684,15 +1206,15 @@ class ServerJoinAction extends StatelessWidget {
+         style: AppTypography.bodySmall.copyWith(color: palette.textSecondary),
+       );
+     }
+-    return FilledButton.icon(
+-      key: const ValueKey('server-join'),
++    // The workspace's one lifted action (refine-look R5, identity variant).
++    return ServerGradientFilledButton(
++      buttonKey: const ValueKey('server-join'),
+       onPressed: onJoin,
+-      style: FilledButton.styleFrom(
+-        backgroundColor: colors.cta,
+-        foregroundColor: colors.onCta,
+-        minimumSize: fullWidth ? const Size.fromHeight(56) : const Size(48, 48),
+-        textStyle: fullWidth ? AppTypography.titleSmall : null,
+-      ).copyWith(side: serverFocusRing(colors.onCta)),
++      gradient: colors.ctaGradient,
++      fill: colors.cta,
++      foreground: colors.onCta,
++      minimumSize: fullWidth ? const Size.fromHeight(56) : const Size(48, 48),
++      textStyle: fullWidth ? AppTypography.titleSmall : null,
+       icon: Icon(serverJoinIcon(channel, live: live), size: 18),
+       label: Text(label),
+     );
+@@ -879,10 +1401,9 @@ class ServerChannelEmptyState extends StatelessWidget {
+       child: Container(
+         padding: const EdgeInsets.all(24),
+         constraints: const BoxConstraints(minHeight: 250),
+-        decoration: BoxDecoration(
+-          color: palette.surface,
+-          borderRadius: AppRadius.lg,
+-          border: Border.all(color: palette.border),
++        decoration: AppFinish.block(
++          palette,
++          highContrast: MediaQuery.highContrastOf(context),
+         ),
+         child: Column(
+           children: [
+@@ -907,11 +1428,7 @@ class ServerChannelEmptyState extends StatelessWidget {
+               Container(
+                 width: 112,
+                 height: 112,
+-                decoration: BoxDecoration(
+-                  shape: BoxShape.circle,
+-                  color: colors.iconSurface,
+-                  border: Border.all(color: colors.iconBorder),
+-                ),
++                decoration: serverOrbDecoration(context, colors),
+                 child: Center(
+                   child: Icon(
+                     serverChannelIcon(channel.kind),
+diff --git a/lib/features/servers/presentation/widgets/server_conversation_dock.dart b/lib/features/servers/presentation/widgets/server_conversation_dock.dart
+index c26ae72d..276d5f76 100644
+--- a/lib/features/servers/presentation/widgets/server_conversation_dock.dart
++++ b/lib/features/servers/presentation/widgets/server_conversation_dock.dart
+@@ -3,6 +3,7 @@ import 'dart:async';
+ import 'package:flutter/material.dart';
+ import 'package:yovoice/core/localization/app_localizations.dart';
+ import 'package:yovoice/core/theme/app_colors.dart';
++import 'package:yovoice/core/theme/app_finish.dart';
+ import 'package:yovoice/core/theme/app_palette.dart';
+ import 'package:yovoice/core/theme/app_radius.dart';
+ import 'package:yovoice/core/theme/app_typography.dart';
+@@ -94,6 +95,25 @@ class ServerConversationDock extends StatelessWidget {
+       final elapsedSince = here && (meetingChannel?.liveness.isLive ?? false)
+           ? meetingChannel!.liveness.startedAt
+           : null;
++      // Refine-look §8.2 — the conversation bar (never the navigation
++      // dock): connected, a faint wash of the voice accent over
++      // `surfaceRaised` and its edge at .45 / .35; otherwise `surfaceRaised`
++      // with a hairline. Pearl adds the block's shadow pair. Geometry is
++      // unchanged. The controls sit on neutral glass composited over this
++      // exact fill, so each one's focus ring is measured on what is painted.
++      final highContrast = MediaQuery.highContrastOf(context);
++      final dark = palette.isDark;
++      final barFill = connected && !highContrast
++          ? Color.alphaBlend(
++              palette.audioAccent.withValues(alpha: dark ? .10 : .04),
++              palette.surfaceRaised,
++            )
++          : palette.surfaceRaised;
++      final barEdge = highContrast
++          ? (connected ? palette.audioAccent : palette.borderStrong)
++          : connected
++          ? palette.audioAccent.withValues(alpha: dark ? .45 : .35)
++          : palette.hairline;
+       final share = screenShare ?? controller.screenShare;
+       final canShare = controller.canShareScreen;
+       final sharing = controller.isScreenShareEnabled;
+@@ -102,6 +122,7 @@ class ServerConversationDock extends StatelessWidget {
+       final controls = [
+         if (publishing)
+           _DockControl(
++            surface: barFill,
+             key: const ValueKey('server-dock-microphone'),
+             icon: controller.isMicrophoneEnabled
+                 ? Icons.mic_rounded
+@@ -109,6 +130,9 @@ class ServerConversationDock extends StatelessWidget {
+             label: compact ? null : copy.serverMicrophone,
+             semanticLabel: micLabel,
+             active: controller.isMicrophoneEnabled,
++            // An open microphone is a voice being carried: the bar's one
++            // light, bound to the real publication state.
++            glow: controller.isMicrophoneEnabled,
+             onPressed: controller.microphoneBusy
+                 ? null
+                 : controller.toggleMicrophone,
+@@ -117,6 +141,7 @@ class ServerConversationDock extends StatelessWidget {
+           // Local output only: nothing is published, written or signalled
+           // about the person. It is the listener's own volume, not a mute.
+           _DockControl(
++            surface: barFill,
+             key: const ValueKey('server-dock-headphones'),
+             icon: controller.isDeafened
+                 ? Icons.headset_off_rounded
+@@ -132,6 +157,7 @@ class ServerConversationDock extends StatelessWidget {
+           ),
+         if (visualSession)
+           _DockControl(
++            surface: barFill,
+             key: const ValueKey('server-dock-camera'),
+             icon: cameraEnabled
+                 ? Icons.videocam_rounded
+@@ -147,6 +173,7 @@ class ServerConversationDock extends StatelessWidget {
+           ),
+         if (visualSession)
+           _DockControl(
++            surface: barFill,
+             key: const ValueKey('server-dock-share'),
+             icon: sharing
+                 ? Icons.stop_screen_share_outlined
+@@ -163,6 +190,7 @@ class ServerConversationDock extends StatelessWidget {
+           ),
+         if (here && onOpenWhiteboard != null)
+           _DockControl(
++            surface: barFill,
+             key: const ValueKey('server-dock-whiteboard'),
+             icon: Icons.draw_outlined,
+             label: compact
+@@ -173,6 +201,7 @@ class ServerConversationDock extends StatelessWidget {
+           ),
+         if (live && (controller.isSessionHost || canModerateSession))
+           _DockControl(
++            surface: barFill,
+             key: const ValueKey('server-dock-end-session'),
+             icon: Icons.stop_circle_outlined,
+             label: compact ? null : copy.serverEndShort,
+@@ -183,6 +212,7 @@ class ServerConversationDock extends StatelessWidget {
+                 : () => _confirmEnd(context, copy),
+           ),
+         _DockControl(
++          surface: barFill,
+           key: const ValueKey('server-dock-leave'),
+           icon: Icons.call_end_rounded,
+           label: compact ? null : copy.serverLeaveShort,
+@@ -267,10 +297,12 @@ class ServerConversationDock extends StatelessWidget {
+             vertical: compact ? 8 : 10,
+           ),
+           decoration: BoxDecoration(
+-            color: palette.surfaceRaised,
++            color: barFill,
+             borderRadius: AppRadius.lg,
+-            border: Border.all(
+-              color: connected ? palette.audioAccent : palette.border,
++            border: Border.all(color: barEdge),
++            boxShadow: AppFinish.blockShadows(
++              palette,
++              highContrast: highContrast,
+             ),
+           ),
+           child: stacked
+@@ -455,14 +487,23 @@ class _ElapsedState extends State<_Elapsed> {
+   }
+ }
+ 
++/// One round control of the conversation bar: a 48 px [CircleBorder]. At
++/// rest it is neutral glass composited over the bar's own [surface] (so the
++/// fill a focus ring is measured against is the fill that is painted); on,
++/// it is the voice accent; destructive, the danger fill. [glow] adds the
++/// open microphone's soft `audioAccent` light (.36 Dark / .20 Pearl, blur
++/// 12, spread -4) — never under high contrast. Geometry is the same as
++/// before in every state.
+ class _DockControl extends StatelessWidget {
+   const _DockControl({
+     required this.icon,
+     required this.semanticLabel,
+     required this.onPressed,
++    required this.surface,
+     this.label,
+     this.active = false,
+     this.destructive = false,
++    this.glow = false,
+     super.key,
+   });
+   final IconData icon;
+@@ -470,17 +511,24 @@ class _DockControl extends StatelessWidget {
+   final String? label;
+   final bool active;
+   final bool destructive;
++  final bool glow;
+   final VoidCallback? onPressed;
+ 
++  /// The bar's fill under this control.
++  final Color surface;
++
+   @override
+   Widget build(BuildContext context) {
+     final palette = context.appPalette;
+     final scheme = Theme.of(context).colorScheme;
++    final highContrast = MediaQuery.highContrastOf(context);
+     final background = destructive
+         ? AppColors.error
+         : active
+         ? palette.audioAccent
+-        : palette.surfaceMuted;
++        : highContrast
++        ? palette.surfaceMuted
++        : Color.alphaBlend(palette.glass, surface);
+     // `AppColors.white` on the error fill is 2.95:1 — below the 3:1 that
+     // WCAG 1.4.11 asks of a glyph that identifies a control, and on a phone
+     // this control has no text label at all. `contrastInk` is 5.87:1 on the
+@@ -500,9 +548,23 @@ class _DockControl extends StatelessWidget {
+       label: semanticLabel,
+       onTap: onPressed,
+       excludeSemantics: true,
+-      child: SizedBox(
++      child: Container(
+         width: 48,
+         height: 48,
++        decoration: BoxDecoration(
++          shape: BoxShape.circle,
++          boxShadow: glow && onPressed != null && !highContrast
++              ? [
++                  BoxShadow(
++                    color: palette.audioAccent.withValues(
++                      alpha: palette.isDark ? .36 : .20,
++                    ),
++                    blurRadius: 12,
++                    spreadRadius: -4,
++                  ),
++                ]
++              : const <BoxShadow>[],
++        ),
+         child: IconButton.filled(
+           onPressed: onPressed,
+           style:
+@@ -511,6 +573,7 @@ class _DockControl extends StatelessWidget {
+                 foregroundColor: foreground,
+                 disabledBackgroundColor: palette.surfaceMuted,
+                 disabledForegroundColor: palette.textTertiary,
++                shape: const CircleBorder(),
+               ).copyWith(
+                 // An identity-filled control overrides the fill the theme's
+                 // focus ring was measured against (`docs/UI.md`, semantic
+diff --git a/lib/features/servers/presentation/widgets/server_module_card.dart b/lib/features/servers/presentation/widgets/server_module_card.dart
+index 3e1fc03f..cbd4824e 100644
+--- a/lib/features/servers/presentation/widgets/server_module_card.dart
++++ b/lib/features/servers/presentation/widgets/server_module_card.dart
+@@ -1,5 +1,6 @@
+ import 'package:flutter/material.dart';
+ import 'package:yovoice/core/localization/app_localizations.dart';
++import 'package:yovoice/core/theme/app_finish.dart';
+ import 'package:yovoice/core/theme/app_palette.dart';
+ import 'package:yovoice/core/theme/app_radius.dart';
+ import 'package:yovoice/core/theme/app_typography.dart';
+@@ -14,6 +15,12 @@ import 'server_panel.dart';
+ /// Persisted modules use their primary action to open the real channel.
+ /// Modules without a backend say `Wkrótce` and keep that action disabled. The
+ /// card never invents a date, photo, count, or list item that nobody wrote.
++///
++/// Refine-look §8.2: the card is a neutral R2 block (top-lit fill, hairline,
++/// Pearl's shadow pair, radius 20) — identity lives only in the icon chip,
++/// a 12 px-radius glass of the template's hue that no longer carries Pearl's
++/// dark outline. Its primary action stays solid: the workspace's one lifted
++/// action is the join.
+ class ServerModuleCard extends StatelessWidget {
+   const ServerModuleCard({
+     required this.icon,
+@@ -57,13 +64,10 @@ class ServerModuleCard extends StatelessWidget {
+     final palette = context.appPalette;
+     final target = channel;
+     final open = onOpenChannel;
++    final highContrast = MediaQuery.highContrastOf(context);
+     return Container(
+       padding: EdgeInsets.all(large ? 20 : 16),
+-      decoration: BoxDecoration(
+-        color: palette.surface,
+-        borderRadius: AppRadius.lg,
+-        border: Border.all(color: palette.border),
+-      ),
++      decoration: AppFinish.block(palette, highContrast: highContrast),
+       child: Column(
+         crossAxisAlignment: CrossAxisAlignment.start,
+         mainAxisSize: MainAxisSize.min,
+@@ -72,12 +76,16 @@ class ServerModuleCard extends StatelessWidget {
+             crossAxisAlignment: CrossAxisAlignment.start,
+             children: [
+               Container(
++                key: const ValueKey('server-module-icon'),
+                 width: large ? 44 : 36,
+                 height: large ? 44 : 36,
+                 decoration: BoxDecoration(
+-                  color: colors.iconSurface,
+-                  borderRadius: AppRadius.sm,
+-                  border: Border.all(color: colors.iconBorder),
++                  color: highContrast ? palette.surface : null,
++                  gradient: highContrast ? null : colors.unlitGradient,
++                  borderRadius: AppRadius.card,
++                  border: Border.all(
++                    color: highContrast ? palette.borderStrong : colors.unlitEdge,
++                  ),
+                 ),
+                 child: Icon(
+                   icon,
+diff --git a/lib/features/servers/presentation/widgets/server_panel.dart b/lib/features/servers/presentation/widgets/server_panel.dart
+index d9e63b2c..10007060 100644
+--- a/lib/features/servers/presentation/widgets/server_panel.dart
++++ b/lib/features/servers/presentation/widgets/server_panel.dart
+@@ -1,5 +1,6 @@
+ import 'package:flutter/material.dart';
+ import 'package:yovoice/core/localization/app_localizations.dart';
++import 'package:yovoice/core/theme/app_finish.dart';
+ import 'package:yovoice/core/theme/app_palette.dart';
+ import 'package:yovoice/core/theme/app_radius.dart';
+ import 'package:yovoice/core/theme/app_typography.dart';
+@@ -266,7 +267,7 @@ class _ServerPanelState extends State<ServerPanel> {
+                               maxLines: 2,
+                               overflow: TextOverflow.ellipsis,
+                               style: AppTypography.titleMedium.copyWith(
+-                                fontWeight: FontWeight.w800,
++                                fontWeight: FontWeight.w700,
+                                 color: palette.textPrimary,
+                               ),
+                             ),
+@@ -290,8 +291,10 @@ class _ServerPanelState extends State<ServerPanel> {
+                       ),
+                       const SizedBox(height: 2),
+                       Text(
++                        // A non-breaking space keeps "12 osób" on one line
++                        // when the subtitle wraps.
+                         '${copy.serverKindSubtitle(server.type, server.privacy)} · '
+-                        '${copy.serverMembers(server.memberCount)}',
++                        '${serverKeepCountTogether(copy.serverMembers(server.memberCount))}',
+                         maxLines: 3,
+                         overflow: TextOverflow.ellipsis,
+                         style: AppTypography.bodySmall.copyWith(
+@@ -341,11 +344,18 @@ class _ServerPanelState extends State<ServerPanel> {
+           ],
+           if (canInvite) ...[
+             const SizedBox(height: 12),
++            // Refine-look R7 neutral: glass, a control hairline and the
++            // interactive ink — not a second outline beside the rows.
+             OutlinedButton.icon(
+               key: const ValueKey('server-invite-action'),
+               onPressed: server.isHeld ? null : widget.onInvite,
+-              style: OutlinedButton.styleFrom(
+-                minimumSize: const Size.fromHeight(48),
++              style: AppFinish.tonalNeutral(
++                palette,
++                highContrast: MediaQuery.highContrastOf(context),
++              ).merge(
++                OutlinedButton.styleFrom(
++                  minimumSize: const Size.fromHeight(48),
++                ),
+               ),
+               icon: const Icon(Icons.person_add_outlined, size: 18),
+               label: Text(copy.serverInvite),
+@@ -362,7 +372,7 @@ class _ServerPanelState extends State<ServerPanel> {
+               ),
+           ],
+           const SizedBox(height: 8),
+-          Divider(color: palette.border, height: 24),
++          Divider(color: serverDivider(context), height: 24),
+           if (channels.isEmpty)
+             Padding(
+               padding: const EdgeInsets.all(8),
+diff --git a/lib/features/servers/presentation/widgets/server_voice_stage.dart b/lib/features/servers/presentation/widgets/server_voice_stage.dart
+index db64a0d5..4cb06799 100644
+--- a/lib/features/servers/presentation/widgets/server_voice_stage.dart
++++ b/lib/features/servers/presentation/widgets/server_voice_stage.dart
+@@ -1,6 +1,9 @@
++import 'dart:math' as math;
++
+ import 'package:flutter/material.dart';
+ import 'package:yovoice/core/localization/app_localizations.dart';
+ import 'package:yovoice/core/theme/app_colors.dart';
++import 'package:yovoice/core/theme/app_finish.dart';
+ import 'package:yovoice/core/theme/app_palette.dart';
+ import 'package:yovoice/core/theme/app_typography.dart';
+ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+@@ -130,29 +133,59 @@ class _Column extends StatelessWidget {
+ 
+ /// The central microphone orb. It marks the conversation itself, never a
+ /// person and never a count.
++///
++/// Refine-look §8.2: the unlit identity glass inside a 2.5 px ring swept
++/// through the voice-playback accent (`audioProgressGradient`'s colours) —
++/// the conversation's own light, painted inside the orb's box so the stage
++/// geometry is unchanged. High contrast: a flat fill in a solid
++/// `audioAccent` ring.
+ class _MicrophoneOrb extends StatelessWidget {
+   const _MicrophoneOrb({required this.size, required this.colors});
+   final double size;
+   final ServerIdentityVisuals colors;
+ 
++  static const double ringWidth = 2.5;
++
+   @override
+   Widget build(BuildContext context) {
+     final palette = context.appPalette;
++    final highContrast = MediaQuery.highContrastOf(context);
++    final sweep = palette.audioProgressGradient.colors;
+     return ExcludeSemantics(
+       child: Container(
+         key: const ValueKey('server-voice-orb'),
+         width: size,
+         height: size,
++        padding: const EdgeInsets.all(ringWidth),
+         decoration: BoxDecoration(
+           shape: BoxShape.circle,
+-          color: colors.iconSurface,
+-          border: Border.all(color: palette.audioAccent, width: 2),
++          color: highContrast ? palette.audioAccent : null,
++          gradient: highContrast
++              ? null
++              : SweepGradient(
++                  // Starts at 12 o'clock and closes on its own first colour,
++                  // so the ring has no seam.
++                  transform: const GradientRotation(-math.pi / 2),
++                  colors: [...sweep, sweep.first],
++                ),
++          boxShadow: AppFinish.blockShadows(
++            palette,
++            highContrast: highContrast,
++          ),
+         ),
+-        child: Center(
+-          child: Icon(
+-            Icons.mic_rounded,
+-            size: size * .38,
+-            color: palette.audioAccent,
++        child: DecoratedBox(
++          decoration: BoxDecoration(
++            shape: BoxShape.circle,
++            // The inner glass is opaque, so the sweep shows only as a ring.
++            color: highContrast ? palette.surface : colors.unlitGradient.colors.last,
++            gradient: highContrast ? null : colors.unlitGradient,
++          ),
++          child: Center(
++            child: Icon(
++              Icons.mic_rounded,
++              size: size * .38,
++              color: palette.audioAccent,
++            ),
+           ),
+         ),
+       ),
+@@ -175,12 +208,21 @@ class ServerParticipantTile extends StatelessWidget {
+   final ServerIdentityVisuals colors;
+   final double width;
+ 
++  /// The resting and the speaking ring, and the gap between the ring's
++  /// outer edge budget and the avatar. The tile's box always reserves
++  /// [ringGap] + [speakingRingWidth] around the avatar.
++  static const double ringWidth = 1.5;
++  static const double speakingRingWidth = 3;
++  static const double ringGap = 3;
++
+   @override
+   Widget build(BuildContext context) {
+     final copy = AppLocalizations.of(context);
+     final palette = context.appPalette;
+     final name = person.isLocal ? copy.serverYou : person.name;
+     final radius = (width * .32).clamp(24.0, 40.0);
++    final highContrast = MediaQuery.highContrastOf(context);
++    final speaking = person.isSpeaking;
+     return Semantics(
+       label: [
+         name,
+@@ -195,15 +237,37 @@ class ServerParticipantTile extends StatelessWidget {
+           child: Column(
+             mainAxisSize: MainAxisSize.min,
+             children: [
++              // The ring is a FOREGROUND inside a fixed box: it used to be
++              // the box's own border, which grew 1.5 → 3 px inside the
++              // padding whenever someone spoke and made every tile jiggle by
++              // 1.5 px (refine-look §8.2). The box is now always the speaking
++              // size, the ring only repaints, and the voice's light is a
++              // soft `audioAccent` glow while — and only while — the provider
++              // says this person is speaking.
+               Container(
+-                padding: const EdgeInsets.all(3),
++                key: ValueKey('server-participant-ring-${person.identity}'),
++                padding: const EdgeInsets.all(
++                  ServerParticipantTile.ringGap +
++                      ServerParticipantTile.speakingRingWidth,
++                ),
+                 decoration: BoxDecoration(
++                  shape: BoxShape.circle,
++                  boxShadow: speaking && !highContrast
++                      ? [
++                          BoxShadow(
++                            color: palette.audioAccent.withValues(alpha: .40),
++                            blurRadius: 12,
++                          ),
++                        ]
++                      : const <BoxShadow>[],
++                ),
++                foregroundDecoration: BoxDecoration(
+                   shape: BoxShape.circle,
+                   border: Border.all(
+-                    color: person.isSpeaking
+-                        ? palette.audioAccent
+-                        : colors.iconBorder,
+-                    width: person.isSpeaking ? 3 : 1.5,
++                    color: speaking ? palette.audioAccent : colors.iconBorder,
++                    width: speaking
++                        ? ServerParticipantTile.speakingRingWidth
++                        : ServerParticipantTile.ringWidth,
+                   ),
+                 ),
+                 child: UserAvatar(
+diff --git a/test/slim_servers_capture.dart b/test/slim_servers_capture.dart
+index 0b2381d3..59184459 100644
+--- a/test/slim_servers_capture.dart
++++ b/test/slim_servers_capture.dart
+@@ -6,8 +6,24 @@
+ //
+ //   flutter test test/slim_servers_capture.dart --concurrency=1
+ //
+-// PNGs land in yovoice-evidence/2026-09-19/slim-2-servers-frames/after/.
++// PNGs land in yovoice-evidence/2026-09-19/slim-2-servers-frames/after/
++// unless `--dart-define=YO_CAPTURE_DIR=<absolute dir>` points elsewhere.
+ // Layout exceptions are recorded in _exceptions.log next to the frames.
++//
++// `--dart-define=YO_SERVERS_EXTENDED=true` adds the refine-look matrix
++// (spec §11, Servers) on top of the default frames, named
++// `<screen>_<width>_<dark|pearl>_pl_<text>_<state>.png`:
++//
++// * 200 % text for the directory, the live workspace and the phone sheet at
++//   390 / 768 / 1440;
++// * the empty directory (first-run logo);
++// * the workspace quiet, connected (a real roster with one person speaking,
++//   the conversation bar up) and held;
++// * all five templates on their own board channel, LIVE;
++// * high contrast for the live workspace and the directory.
++//
++// Every frame renders with Reduce Motion on (as the default frames always
++// did), so the header lamp and the badge dot are at rest.
+ 
+ import 'dart:io';
+ import 'dart:ui' as ui;
+@@ -22,15 +38,22 @@ import 'package:yovoice/core/theme/app_theme.dart';
+ import 'package:yovoice/features/servers/data/models/server.dart';
+ import 'package:yovoice/features/servers/data/models/server_channel.dart';
+ import 'package:yovoice/features/servers/data/models/server_type.dart';
++import 'package:yovoice/features/servers/data/services/server_voice_device.dart';
+ import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
+ import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
+ 
++import 'server_independent_qa_support.dart' as qa;
+ import 'server_templates_test.dart' as boards;
+ import 'server_test_support.dart';
+ 
+-const _outputDirectory =
+-    '/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-19/'
+-    'slim-2-servers-frames/after';
++const _outputDirectory = String.fromEnvironment(
++  'YO_CAPTURE_DIR',
++  defaultValue:
++      '/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-19/'
++      'slim-2-servers-frames/after',
++);
++
++const _extended = bool.fromEnvironment('YO_SERVERS_EXTENDED');
+ 
+ final _exceptions = File('$_outputDirectory/_exceptions.log');
+ 
+@@ -87,8 +110,8 @@ Server _server(
+ 
+ /// The account's servers: the open one first (id `s`, which the board
+ /// channels belong to) and four more for the rail and the directory.
+-List<Server> _servers() => [
+-  boards.boardServer(ServerType.friends, members: 12),
++List<Server> _servers({bool held = false}) => [
++  boards.boardServer(ServerType.friends, members: 12, held: held),
+   _server(
+     'k',
+     'Klub książki',
+@@ -101,31 +124,41 @@ List<Server> _servers() => [
+   _server('f', 'Studio Północ', ServerType.company, members: 23),
+ ];
+ 
++final _liveSince = ServerChannelLiveness(
++  isLive: true,
++  startedAt: DateTime(2026, 9, 19, 19, 40),
++);
++
++Widget _directory({List<Server>? servers}) => ServersScreen(
++  key: UniqueKey(),
++  isRootTab: true,
++  repository: TestServerRepository()..servers = servers ?? _servers(),
++  chatService: boards.boardChat(),
++  connector: FakeServerMediaConnector(),
++);
++
++Widget _workspace({
++  bool live = true,
++  bool held = false,
++  FakeServerMediaConnector? connector,
++}) => ServerWorkspaceScreen(
++  key: UniqueKey(),
++  serverId: 's',
++  repository: TestServerRepository()
++    ..servers = _servers(held: held)
++    ..channels = boards.boardChannels(
++      ServerType.friends,
++      liveness: live ? _liveSince : ServerChannelLiveness.idle,
++    ),
++  isRootTab: true,
++  initialChannelId: 'lounge',
++  chatService: boards.boardChat(),
++  connector: connector ?? FakeServerMediaConnector(),
++);
++
+ final _surfaces = <String, Widget Function()>{
+-  'directory': () => ServersScreen(
+-    key: UniqueKey(),
+-    isRootTab: true,
+-    repository: TestServerRepository()..servers = _servers(),
+-    chatService: boards.boardChat(),
+-    connector: FakeServerMediaConnector(),
+-  ),
+-  'workspace': () => ServerWorkspaceScreen(
+-    key: UniqueKey(),
+-    serverId: 's',
+-    repository: TestServerRepository()
+-      ..servers = _servers()
+-      ..channels = boards.boardChannels(
+-        ServerType.friends,
+-        liveness: ServerChannelLiveness(
+-          isLive: true,
+-          startedAt: DateTime(2026, 9, 19, 19, 40),
+-        ),
+-      ),
+-    isRootTab: true,
+-    initialChannelId: 'lounge',
+-    chatService: boards.boardChat(),
+-    connector: FakeServerMediaConnector(),
+-  ),
++  'directory': _directory,
++  'workspace': _workspace,
+ };
+ 
+ Future<void> _render(
+@@ -134,10 +167,16 @@ Future<void> _render(
+   required Size size,
+   required Widget child,
+   required ThemeData theme,
++  double textScale = 1,
++  bool highContrast = false,
+ }) async {
+   tester.view.physicalSize = size;
+   tester.view.devicePixelRatio = 1;
+   addTearDown(tester.view.reset);
++  // The workspace's join path asks the platform for the microphone; the
++  // capture host has none, so the tests' fake device answers.
++  debugServerVoiceDeviceOverride = FakeServerVoiceDevice();
++  addTearDown(() => debugServerVoiceDeviceOverride = null);
+   await tester.pumpWidget(
+     RepaintBoundary(
+       key: captureKey,
+@@ -153,9 +192,12 @@ Future<void> _render(
+           GlobalCupertinoLocalizations.delegate,
+         ],
+         builder: (context, inner) => MediaQuery(
+-          data: MediaQuery.of(
+-            context,
+-          ).copyWith(size: size, disableAnimations: true),
++          data: MediaQuery.of(context).copyWith(
++            size: size,
++            disableAnimations: true,
++            textScaler: TextScaler.linear(textScale),
++            highContrast: highContrast,
++          ),
+           child: inner!,
+         ),
+         home: child,
+@@ -206,6 +248,20 @@ Future<void> _shoot(
+   });
+ }
+ 
++/// The refine-look frame name (spec §11).
++String _name(
++  String screen,
++  double width,
++  bool light,
++  double textScale,
++  String state,
++) =>
++    '${screen}_${width.toInt()}_${light ? 'pearl' : 'dark'}_pl_'
++    '${(textScale * 100).round()}_$state';
++
++const _sizes = [(390.0, 844.0), (768.0, 1024.0), (1440.0, 900.0)];
++const _themes = [('dark', false), ('pearl', true)];
++
+ void main() {
+   setUpAll(() async {
+     await _loadRealFonts();
+@@ -214,15 +270,8 @@ void main() {
+   });
+ 
+   for (final entry in _surfaces.entries) {
+-    for (final (width, height) in const [
+-      (390.0, 844.0),
+-      (768.0, 1024.0),
+-      (1440.0, 900.0),
+-    ]) {
+-      for (final (themeLabel, light) in const [
+-        ('dark', false),
+-        ('pearl', true),
+-      ]) {
++    for (final (width, height) in _sizes) {
++      for (final (themeLabel, light) in _themes) {
+         final name =
+             '${entry.key}-${width.toInt()}x${height.toInt()}-$themeLabel-1x-pl';
+         testWidgets(name, (tester) async {
+@@ -259,4 +308,198 @@ void main() {
+       }
+     }
+   }
++
++  if (!_extended) return;
++
++  Future<void> capture(
++    WidgetTester tester, {
++    required String name,
++    required double width,
++    required double height,
++    required bool light,
++    required Widget child,
++    double textScale = 1,
++    bool highContrast = false,
++    Future<void> Function(WidgetTester tester)? before,
++    String? sheetName,
++  }) async {
++    final captureKey = GlobalKey();
++    await _render(
++      tester,
++      captureKey: captureKey,
++      size: Size(width, height),
++      theme: light ? AppTheme.lightTheme : AppTheme.darkTheme,
++      child: child,
++      textScale: textScale,
++      highContrast: highContrast,
++    );
++    if (before != null) await before(tester);
++    await _shoot(tester, captureKey: captureKey, name: name, width: width);
++    if (sheetName != null) {
++      await tester.tap(find.byKey(const ValueKey('server-open-channels')));
++      await _settle(tester);
++      await _shoot(
++        tester,
++        captureKey: captureKey,
++        name: sheetName,
++        width: width,
++      );
++    }
++  }
++
++  // 200 % text: the directory, the live workspace and the phone sheet.
++  for (final (width, height) in _sizes) {
++    for (final (_, light) in _themes) {
++      testWidgets(_name('directory', width, light, 2, 'populated'), (
++        tester,
++      ) async {
++        await capture(
++          tester,
++          name: _name('directory', width, light, 2, 'populated'),
++          width: width,
++          height: height,
++          light: light,
++          textScale: 2,
++          child: _directory(),
++        );
++      });
++      testWidgets(_name('workspace', width, light, 2, 'live'), (tester) async {
++        await capture(
++          tester,
++          name: _name('workspace', width, light, 2, 'live'),
++          width: width,
++          height: height,
++          light: light,
++          textScale: 2,
++          child: _workspace(),
++          sheetName: width < 768
++              ? _name('workspace-sheet', width, light, 2, 'live')
++              : null,
++        );
++      });
++    }
++  }
++
++  // The empty directory: the first-run invitation with the real logo.
++  for (final (width, height) in [_sizes.first, _sizes.last]) {
++    for (final (_, light) in _themes) {
++      final name = _name('directory', width, light, 1, 'empty');
++      testWidgets(name, (tester) async {
++        await capture(
++          tester,
++          name: name,
++          width: width,
++          height: height,
++          light: light,
++          child: _directory(servers: const []),
++        );
++      });
++    }
++  }
++
++  // The workspace's other states: quiet, connected and held.
++  for (final (width, height) in _sizes) {
++    for (final (_, light) in _themes) {
++      if (width != 768) {
++        final quiet = _name('workspace', width, light, 1, 'quiet');
++        testWidgets(quiet, (tester) async {
++          await capture(
++            tester,
++            name: quiet,
++            width: width,
++            height: height,
++            light: light,
++            child: _workspace(live: false),
++          );
++        });
++        final held = _name('workspace', width, light, 1, 'held');
++        testWidgets(held, (tester) async {
++          await capture(
++            tester,
++            name: held,
++            width: width,
++            height: height,
++            light: light,
++            child: _workspace(held: true),
++          );
++        });
++      }
++      final connected = _name('workspace', width, light, 1, 'connected');
++      testWidgets(connected, (tester) async {
++        final connector = FakeServerMediaConnector();
++        await capture(
++          tester,
++          name: connected,
++          width: width,
++          height: height,
++          light: light,
++          child: _workspace(connector: connector),
++          before: (tester) async {
++            // A real join through the scene's own action, then the roster
++            // the provider reports — one person speaking, the local
++            // microphone open.
++            await tester.tap(find.byKey(const ValueKey('server-join')));
++            await _settle(tester);
++            connector.links.single.setRoster(qa.qaRoster);
++            await _settle(tester);
++          },
++        );
++      });
++    }
++  }
++
++  // All five templates on their own board channel, LIVE.
++  for (final type in ServerType.values) {
++    for (final (width, height) in [_sizes.first, _sizes.last]) {
++      for (final (_, light) in _themes) {
++        final name = _name('template-${type.name}', width, light, 1, 'live');
++        testWidgets(name, (tester) async {
++          final repository = TestServerRepository()
++            ..servers = [qa.qaServer(type)]
++            ..channels = qa.qaChannels(
++              type,
++              liveness: _liveSince,
++              activeSessionId: 'session-live',
++            );
++          await capture(
++            tester,
++            name: name,
++            width: width,
++            height: height,
++            light: light,
++            child: qa.qaWorkspace(
++              repository,
++              channelId: qa.qaJoinableChannel(type),
++            ),
++          );
++        });
++      }
++    }
++  }
++
++  // High contrast: no gradient, tint or glow; `borderStrong` edges.
++  testWidgets(_name('workspace', 390, false, 1, 'live-hc'), (tester) async {
++    await capture(
++      tester,
++      name: _name('workspace', 390, false, 1, 'live-hc'),
++      width: 390,
++      height: 844,
++      light: false,
++      highContrast: true,
++      child: _workspace(),
++    );
++  });
++  testWidgets(_name('directory', 1440, true, 1, 'populated-hc'), (
++    tester,
++  ) async {
++    await capture(
++      tester,
++      name: _name('directory', 1440, true, 1, 'populated-hc'),
++      width: 1440,
++      height: 900,
++      light: true,
++      highContrast: true,
++      child: _directory(),
++    );
++  });
+ }
