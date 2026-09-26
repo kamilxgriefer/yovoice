@@ -9,6 +9,7 @@
 //   flutter run -t lib/dev/refine_sheet_preview.dart -d <device>
 //     --dart-define=YO_PREVIEW_THEME=dark|pearl   (default dark)
 //     --dart-define=YO_PREVIEW_TEXT=100|200       (default 100)
+//     --dart-define=YO_PREVIEW_HC=true             (high contrast)
 //
 // The PNG pages Kamil reviews are rendered by test/refine_sheet_capture.dart.
 // Not referenced by lib/main.dart; never part of a shipped build.
@@ -38,9 +39,13 @@ import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
 import 'package:yovoice/shared/widgets/badges/yo_metric_pill.dart';
 import 'package:yovoice/shared/widgets/badges/yo_progress_ring.dart';
 import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/cards/yo_card.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_search_field.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_text_field.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_server_rail_item.dart'
     show YoServerTile;
@@ -54,10 +59,12 @@ void main() {
     defaultValue: 'dark',
   );
   const text = int.fromEnvironment('YO_PREVIEW_TEXT', defaultValue: 100);
+  const highContrast = bool.fromEnvironment('YO_PREVIEW_HC');
   runApp(
     RefineSheetApp(
       brightness: theme == 'pearl' ? Brightness.light : Brightness.dark,
       textScale: text / 100,
+      highContrast: highContrast,
     ),
   );
 }
@@ -68,6 +75,7 @@ class RefineSheetApp extends StatelessWidget {
   const RefineSheetApp({
     this.brightness = Brightness.dark,
     this.textScale = 1,
+    this.highContrast = false,
     this.sections,
     this.page = 1,
     this.pageCount = 1,
@@ -77,6 +85,9 @@ class RefineSheetApp extends StatelessWidget {
 
   final Brightness brightness;
   final double textScale;
+
+  /// The platform's high-contrast setting, as the samples would read it.
+  final bool highContrast;
 
   /// Which sections to draw (indices into [RefineSheet.sectionCount]); all
   /// when null.
@@ -89,9 +100,13 @@ class RefineSheetApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: brightness == Brightness.dark
-          ? AppTheme.darkTheme
-          : AppTheme.lightTheme,
+      // The app hands MaterialApp these twins as its high-contrast themes.
+      theme: switch ((brightness, highContrast)) {
+        (Brightness.dark, false) => AppTheme.darkTheme,
+        (Brightness.dark, true) => AppTheme.darkHighContrastTheme,
+        (Brightness.light, false) => AppTheme.lightTheme,
+        (Brightness.light, true) => AppTheme.lightHighContrastTheme,
+      },
       locale: const Locale('pl'),
       supportedLocales: AppLocalizations.supportedLocales,
       localizationsDelegates: const [
@@ -104,6 +119,7 @@ class RefineSheetApp extends StatelessWidget {
         data: MediaQuery.of(context).copyWith(
           textScaler: TextScaler.linear(textScale),
           disableAnimations: true,
+          highContrast: highContrast,
         ),
         child: child!,
       ),
@@ -120,11 +136,14 @@ class RefineSheetApp extends StatelessWidget {
 typedef _SectionBuilder = Widget Function(BuildContext context);
 
 class _Section {
-  const _Section(this.title, this.code, this.build);
+  const _Section(this.title, this.code, this.build, {this.controls = false});
 
   final String title;
   final String code;
   final _SectionBuilder build;
+
+  /// A batch-3 shared-controls section (also captured in high contrast).
+  final bool controls;
 }
 
 /// The sample sheet itself: a page on the R1 canvas with one section per
@@ -148,6 +167,31 @@ class RefineSheet extends StatelessWidget {
   static int get sectionCount => _sections.length;
   static Key sectionKey(int index) => ValueKey('refine-section-$index');
 
+  /// The batch-3 shared-controls sections, by index.
+  static List<int> get controlSections => [
+    for (var i = 0; i < _sections.length; i++)
+      if (_sections[i].controls) i,
+  ];
+
+  /// Samples the capture harness puts into a live state before it shoots:
+  /// a mouse pointer rests on [hoverProbeKey] and [focusProbeKey] takes
+  /// keyboard focus. In `flutter run` they are ordinary samples.
+  static const Key hoverProbeKey = ValueKey('refine-probe-hover');
+  static const Key focusProbeKey = ValueKey('refine-probe-focus');
+
+  /// The live-state section's samples (see [liveStateShots]).
+  static const Key livePrimaryKey = ValueKey('refine-live-primary');
+  static const Key liveSecondaryKey = ValueKey('refine-live-secondary');
+  static const Key liveIconKey = ValueKey('refine-live-icon');
+
+  /// The two shots the harness takes of a page that holds the live-state
+  /// section, as (file suffix, pointer target, keyboard-focus target). The
+  /// page's ordinary shot keeps [hoverProbeKey] / [focusProbeKey].
+  static const List<(String, Key, Key)> liveStateShots = [
+    ('live-a', livePrimaryKey, liveIconKey),
+    ('live-b', liveSecondaryKey, livePrimaryKey),
+  ];
+
   static const double gutter = 20;
 
   static final List<_Section> _sections = <_Section>[
@@ -163,6 +207,30 @@ class RefineSheet extends StatelessWidget {
     _Section('Dysk ikony', 'R6', (c) => const _IconDiscSamples()),
     _Section('Akcje tonalne', 'R7', (c) => const _TonalSamples()),
     _Section('Chipy filtrów', 'R8', (c) => const _ChipSamples()),
+    _Section(
+      'Przyciski wspólne',
+      'R5 · R9 · etap 3',
+      (c) => const _SharedButtonSamples(),
+      controls: true,
+    ),
+    _Section(
+      'Kursor i fokus',
+      'R5 · R9 · etap 3',
+      (c) => const _LiveStateSamples(),
+      controls: true,
+    ),
+    _Section(
+      'Wyszukiwanie i pola',
+      'R9 · etap 3',
+      (c) => const _SearchFieldSamples(),
+      controls: true,
+    ),
+    _Section(
+      'Plakietki i chipy Material',
+      'R11 · R8 · etap 3',
+      (c) => const _BadgeAndChipSamples(),
+      controls: true,
+    ),
     _Section('Awatary', 'R10', (c) => const _AvatarSamples()),
     _Section('Licznik', 'R11', (c) => const _CountBadgeSamples()),
     _Section('Pierścień wygasania', 'R12', (c) => const _ExpirySamples()),
@@ -222,7 +290,10 @@ class _SheetHeader extends StatelessWidget {
     final palette = context.appPalette;
     final theme = palette.isDark ? 'Ciemny' : 'Jasny (Pearl)';
     final scale = MediaQuery.textScalerOf(context).scale(100).round();
-    final meta = '$theme · tekst $scale% · strona $page z $pageCount';
+    final contrast = MediaQuery.highContrastOf(context)
+        ? ' · wysoki kontrast'
+        : '';
+    final meta = '$theme$contrast · tekst $scale% · strona $page z $pageCount';
     if (page > 1) {
       return Text(
         'PRÓBKI · ${meta.toUpperCase()}',
@@ -233,7 +304,7 @@ class _SheetHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'YO VOICE 3.X · PRÓBKI · ETAP 1',
+          'YO VOICE 3.X · PRÓBKI · ETAPY 1–3',
           style: AppTypography.overline.copyWith(
             color: palette.interactiveForeground,
           ),
@@ -1056,6 +1127,388 @@ class _FilterChipSample extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Batch 3 — shared controls: YoButton (R5), YoIconButton (R9)
+// ---------------------------------------------------------------------------
+
+class _SharedButtonSamples extends StatefulWidget {
+  const _SharedButtonSamples();
+
+  @override
+  State<_SharedButtonSamples> createState() => _SharedButtonSamplesState();
+}
+
+class _SharedButtonSamplesState extends State<_SharedButtonSamples> {
+  // Holds one primary sample in its pressed state so the sheet can show it.
+  final WidgetStatesController _pressed = WidgetStatesController({
+    WidgetState.pressed,
+  });
+
+  @override
+  void dispose() {
+    _pressed.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final save = copy.text('Save', 'Zapisz');
+    Widget button(String caption, Widget child) =>
+        _Cell(caption: caption, child: child);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _Grid(
+          children: [
+            button(
+              'YoButton · spoczynek',
+              YoButton(label: save, height: 48, onPressed: () {}),
+            ),
+            button(
+              'wciśnięty (cień opada)',
+              YoButton(
+                label: save,
+                height: 48,
+                statesController: _pressed,
+                onPressed: () {},
+              ),
+            ),
+            button(
+              'nieaktywny',
+              YoButton(label: save, height: 48, onPressed: null),
+            ),
+            button(
+              'w toku (pół cienia)',
+              YoButton(
+                label: copy.text('Saving', 'Zapisywanie'),
+                height: 48,
+                isLoading: true,
+                onPressed: () {},
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        // As in YoErrorState: a secondary retry at its own width.
+        _Cell(
+          caption: 'drugorzędny (np. „Spróbuj ponownie”) — bez zmian',
+          child: YoButton(
+            label: copy.text('Try again', 'Spróbuj ponownie'),
+            variant: YoButtonVariant.secondary,
+            height: 48,
+            fullWidth: false,
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: () {},
+          ),
+        ),
+        const SizedBox(height: 22),
+        _IconSampleRow(
+          samples: [
+            (
+              'szkło',
+              YoIconButton(
+                icon: Icons.settings_rounded,
+                tooltip: copy.text('Settings', 'Ustawienia'),
+                onPressed: () {},
+              ),
+            ),
+            (
+              'najechany',
+              // The real hover also opens the tooltip; it is held back here
+              // only so it does not cover the neighbouring captions.
+              TooltipVisibility(
+                visible: false,
+                child: YoIconButton(
+                  key: RefineSheet.hoverProbeKey,
+                  icon: Icons.search_rounded,
+                  tooltip: copy.text('Search', 'Szukaj'),
+                  onPressed: () {},
+                ),
+              ),
+            ),
+            (
+              'nieaktywny',
+              YoIconButton(
+                icon: Icons.add_rounded,
+                tooltip: copy.text('Add', 'Dodaj'),
+                onPressed: null,
+              ),
+            ),
+            (
+              'kolory wywołującego',
+              // Settings / Friends still pass these today (batch 9 drops
+              // them): a caller's fill and edge win over the default; high
+              // contrast turns the visible caller edge `borderStrong`.
+              YoIconButton(
+                icon: Icons.arrow_back_ios_new_rounded,
+                backgroundColor: palette.surface,
+                borderColor: palette.border,
+                onPressed: () {},
+              ),
+            ),
+          ],
+        ),
+        const _Caption(
+          'Główny: gradient akcji i cień szyny (32 %, rozmycie 18, y 5). '
+          'Ikona: szkło + włoskowa krawędź kontrolki; kursor ją wzmacnia. '
+          'Wysoki kontrast przywraca mocną krawędź i zdejmuje cień.',
+        ),
+      ],
+    );
+  }
+}
+
+/// A row of icon-button samples: equal fixed-width cells, every button
+/// centred in the same 48 px box, so the captions share one top line and
+/// the gaps between the buttons are even. Two per row at large text.
+class _IconSampleRow extends StatelessWidget {
+  const _IconSampleRow({required this.samples});
+
+  final List<(String, Widget)> samples;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = _bigText(context) ? 2 : samples.length;
+        const gap = 12.0;
+        final cell = (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: 16,
+          children: [
+            for (final (caption, button) in samples)
+              SizedBox(
+                width: cell,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(height: 48, child: Center(child: button)),
+                    _Caption(caption, align: TextAlign.center),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Batch 3 — live pointer and keyboard-focus states
+// ---------------------------------------------------------------------------
+
+/// The shared controls under a REAL mouse pointer and REAL keyboard focus.
+/// There is one pointer and one focus at a time, so the capture harness
+/// shoots this section twice ([RefineSheet.liveStateShots]): once with the
+/// pointer on the primary button and focus in the icon button, once with
+/// focus on the primary button and the pointer on the secondary. In
+/// `flutter run` these are ordinary samples.
+class _LiveStateSamples extends StatelessWidget {
+  const _LiveStateSamples();
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _Grid(
+          children: [
+            _Cell(
+              caption: 'główny · A: kursor · B: fokus',
+              child: YoButton(
+                key: RefineSheet.livePrimaryKey,
+                label: copy.text('Save', 'Zapisz'),
+                height: 48,
+                onPressed: () {},
+              ),
+            ),
+            _Cell(
+              caption: 'drugorzędny · B: kursor',
+              child: YoButton(
+                key: RefineSheet.liveSecondaryKey,
+                label: copy.text('Cancel', 'Anuluj'),
+                variant: YoButtonVariant.secondary,
+                height: 48,
+                onPressed: () {},
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        _IconSampleRow(
+          samples: [
+            (
+              'ikona · A: fokus',
+              TooltipVisibility(
+                visible: false,
+                child: YoIconButton(
+                  key: RefineSheet.liveIconKey,
+                  icon: Icons.tune_rounded,
+                  tooltip: copy.text('Filters', 'Filtry'),
+                  onPressed: () {},
+                ),
+              ),
+            ),
+          ],
+        ),
+        const _Caption(
+          'Ujęcie A: kursor na głównym (biała poświata .06 i mocniejszy '
+          'cień, bez obrysu), fokus klawiatury w ikonie (pierścień 2 px). '
+          'Ujęcie B: fokus na głównym (biały pierścień 2 px rysowany na '
+          'wierzchu, etykieta się nie przesuwa), kursor na drugorzędnym '
+          '(krawędź 1,5 px na wierzchu). Bez stanu: spoczynek.',
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Batch 3 — the R9 search pill beside the unchanged form field
+// ---------------------------------------------------------------------------
+
+class _SearchFieldSamples extends StatefulWidget {
+  const _SearchFieldSamples();
+
+  @override
+  State<_SearchFieldSamples> createState() => _SearchFieldSamplesState();
+}
+
+class _SearchFieldSamplesState extends State<_SearchFieldSamples> {
+  final TextEditingController _filled = TextEditingController(text: 'Ola');
+  final TextEditingController _focused = TextEditingController();
+
+  @override
+  void dispose() {
+    _filled.dispose();
+    _focused.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final hint = copy.text('Search friends', 'Szukaj znajomych');
+    Widget sample(String caption, Widget field) => Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: _Cell(caption: caption, child: field),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        sample('spoczynek', YoSearchField(hint: hint)),
+        sample(
+          'z tekstem — przycisk czyszczenia 44 px',
+          YoSearchField(hint: hint, controller: _filled),
+        ),
+        sample(
+          'fokus — pierścień 2 px na pigułce, bez przesunięcia tekstu',
+          KeyedSubtree(
+            key: RefineSheet.focusProbeKey,
+            child: YoSearchField(hint: hint, controller: _focused),
+          ),
+        ),
+        sample('nieaktywne', YoSearchField(hint: hint, enabled: false)),
+        sample(
+          'pole formularza — bez zmian (mocna krawędź)',
+          YoTextField(
+            label: copy.text('Display name', 'Nazwa wyświetlana'),
+            hint: copy.text('Your name', 'Twoje imię'),
+          ),
+        ),
+        const _Caption(
+          'Szukanie: 44 px, tło powierzchni (Ciemny) lub białe (Pearl), '
+          'krawędź 1 px, szara lupa 20 px, bez cienia.',
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Batch 3 — tonal badges (R11) and the theme's Material chips (R8)
+// ---------------------------------------------------------------------------
+
+class _BadgeAndChipSamples extends StatelessWidget {
+  const _BadgeAndChipSamples();
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final badges = <(String, YoBadgeVariant)>[
+      (copy.text('New', 'Nowy'), YoBadgeVariant.primary),
+      (copy.text('Saved', 'Zapisano'), YoBadgeVariant.success),
+      (copy.text('Heads up', 'Uwaga'), YoBadgeVariant.warning),
+      (copy.text('Error', 'Błąd'), YoBadgeVariant.error),
+      (copy.text('Info', 'Info'), YoBadgeVariant.info),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 10,
+          children: [
+            for (final (label, variant) in badges)
+              YoBadge(label: label, variant: variant),
+          ],
+        ),
+        const _Caption(
+          'Plakietki tonalne: krawędź to atrament przy 32 % (wcześniej '
+          'pełny). NA ŻYWO bez zmian.',
+        ),
+        const SizedBox(height: 18),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            FilterChip(
+              label: Text(copy.text('Podcast', 'Podcast')),
+              selected: true,
+              onSelected: (_) {},
+            ),
+            FilterChip(
+              label: Text(copy.text('Family', 'Rodzina')),
+              selected: false,
+              onSelected: (_) {},
+            ),
+            FilterChip(
+              label: Text(copy.text('Company', 'Firma')),
+              selected: false,
+              onSelected: null,
+            ),
+          ],
+        ),
+        const _Caption(
+          'Chipy Material (motyw): zaznaczony zachowuje kontener i ptaszka; '
+          'krawędź wszystkich to włoskowa krawędź kontrolki.',
+        ),
+        const SizedBox(height: 18),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              copy.text(
+                'A Material card takes the block hairline.',
+                'Karta Material dostaje włoskową krawędź bloku.',
+              ),
+              style: AppTypography.bodyMedium.copyWith(
+                color: palette.textSecondary,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

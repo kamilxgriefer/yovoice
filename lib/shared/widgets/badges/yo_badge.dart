@@ -30,6 +30,9 @@ class YoBadge extends StatelessWidget {
   final YoBadgeVariant variant;
   final IconData? icon;
 
+  /// The alpha of a tonal badge's edge (its ink at .32).
+  static const double tonalEdgeAlpha = .32;
+
   @override
   Widget build(BuildContext context) {
     if (variant == YoBadgeVariant.live) return _buildLive();
@@ -37,13 +40,19 @@ class YoBadge extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final palette = context.appPalette;
     final (:surface, :foreground) = _colors(palette, colors);
+    // Refine-look R11: the tonal pill's edge is its ink at .32, so the fill
+    // and the label carry the status instead of an opaque outline. High
+    // contrast restores the full-strength edge.
+    final edge = MediaQuery.highContrastOf(context)
+        ? foreground
+        : foreground.withValues(alpha: tonalEdgeAlpha);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: surface,
         borderRadius: AppRadius.pill,
-        border: Border.all(color: foreground),
+        border: Border.all(color: edge),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

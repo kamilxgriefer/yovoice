@@ -6,6 +6,25 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
 
+/// The design system's icon-only button.
+///
+/// Its visual (refine-look R9) is a neutral glass square (`AppRadius.md`,
+/// unchanged) with a 1 px control hairline: `palette.glass` fill and
+/// `hairlineControl` edge at rest, `hairlineHover` under a pointer and a
+/// 2 px `focus` ring when focused. A caller's [backgroundColor] /
+/// [borderColor] still win (media plates, sheet chrome). High contrast
+/// brings the flat `surface` fill and a `borderStrong` edge back — also over
+/// a caller's visible edge (the Settings / Friends Back buttons pass
+/// `border`); a fully transparent caller edge (media plates, the sheet
+/// close) means "no edge" and stays none. Disabled and loading keep the
+/// quiet `surfaceMuted` fill with a `border` edge.
+///
+/// The hairline is decoration, not the identifier: the default
+/// `textPrimary` glyph (16:1 or more on the glass in both themes) identifies
+/// the control on every platform, including Android, where Flutter never
+/// reports high contrast.
+///
+/// The visual may be smaller than the 44 px target the button always keeps.
 class YoIconButton extends StatefulWidget {
   const YoIconButton({
     super.key,
@@ -106,6 +125,18 @@ class _YoIconButtonState extends State<YoIconButton> {
     }
   }
 
+  /// The enabled, unfocused, unhovered edge.
+  Color _restingEdge(AppPalette palette, {required bool highContrast}) {
+    final caller = widget.borderColor;
+    if (caller == null) {
+      return highContrast ? palette.borderStrong : palette.hairlineControl;
+    }
+    // "High contrast brings borderStrong back everywhere" — except where the
+    // caller asked for no edge at all.
+    if (highContrast && caller.a > 0) return palette.borderStrong;
+    return caller;
+  }
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
@@ -124,18 +155,22 @@ class _YoIconButtonState extends State<YoIconButton> {
             '{label}, trwa ładowanie',
             values: <String, Object>{'label': effectiveLabel},
           );
+    final highContrast = MediaQuery.highContrastOf(context);
     final foreground = _enabled
         ? widget.foregroundColor ?? palette.textPrimary
         : palette.textTertiary;
     final background = _enabled
-        ? widget.backgroundColor ?? palette.surfaceRaised
+        ? widget.backgroundColor ??
+              (highContrast ? palette.surface : palette.glass)
         : palette.surfaceMuted;
     final border = _focused
         ? palette.focus
         : _hovered && _enabled
-        ? palette.interactiveForeground
+        // A hairline control answers a pointer with a firmer hairline; high
+        // contrast keeps the strong lavender edge it always had.
+        ? (highContrast ? palette.interactiveForeground : palette.hairlineHover)
         : _enabled
-        ? widget.borderColor ?? palette.borderStrong
+        ? _restingEdge(palette, highContrast: highContrast)
         : palette.border;
 
     final button = IconButton(

@@ -34,9 +34,29 @@ class AppTheme {
   static ThemeData get lightTheme =>
       _buildTheme(brightness: Brightness.light, palette: AppPalette.light);
 
+  /// The high-contrast twins, for `MaterialApp.highContrastDarkTheme` /
+  /// `highContrastTheme`. A [ThemeData] cannot read the platform's
+  /// high-contrast flag, so the decorative hairlines the refine-look finish
+  /// gives the theme's Material chips and cards (R2 / R8) would otherwise
+  /// stay faint there. These are identical to [darkTheme] / [lightTheme]
+  /// except that those two edges return to `borderStrong` ("high contrast
+  /// brings borderStrong back everywhere").
+  static ThemeData get darkHighContrastTheme => _buildTheme(
+    brightness: Brightness.dark,
+    palette: AppPalette.dark,
+    highContrast: true,
+  );
+
+  static ThemeData get lightHighContrastTheme => _buildTheme(
+    brightness: Brightness.light,
+    palette: AppPalette.light,
+    highContrast: true,
+  );
+
   static ThemeData _buildTheme({
     required Brightness brightness,
     required AppPalette palette,
+    bool highContrast = false,
   }) {
     final isDark = brightness == Brightness.dark;
     final primary = isDark ? AppColors.primary : const Color(0xFF6F1FD1);
@@ -365,7 +385,13 @@ class AppTheme {
         secondaryLabelStyle: baseTextTheme.labelLarge?.copyWith(
           color: colorScheme.onSecondaryContainer,
         ),
-        side: BorderSide(color: palette.borderStrong),
+        // Refine-look R8: a multi-select Material chip keeps its selected
+        // container and checkmark; only its edge calms to the control
+        // hairline (it was an opaque `borderStrong` outline). High contrast
+        // keeps the strong edge.
+        side: BorderSide(
+          color: highContrast ? palette.borderStrong : palette.hairlineControl,
+        ),
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.pill),
       ),
       switchTheme: SwitchThemeData(
@@ -441,7 +467,11 @@ class AppTheme {
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
           borderRadius: AppRadius.lg,
-          side: BorderSide(color: palette.border),
+          // Refine-look R2: a block's decorative edge is the hairline;
+          // high contrast restores a `borderStrong` edge.
+          side: BorderSide(
+            color: highContrast ? palette.borderStrong : palette.hairline,
+          ),
         ),
       ),
       popupMenuTheme: PopupMenuThemeData(

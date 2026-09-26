@@ -494,6 +494,8 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
           title: 'YO Voice',
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,
+          highContrastTheme: AppTheme.lightHighContrastTheme,
+          highContrastDarkTheme: AppTheme.darkHighContrastTheme,
           themeMode: controller.value.theme.themeMode,
           locale: controller.value.language.locale,
           supportedLocales: AppLocalizations.supportedLocales,

@@ -73,10 +73,13 @@ void main() {
             of: action,
             matching: find.byType(AnimatedContainer),
           );
-          final decoration =
-              tester.widget<AnimatedContainer>(painted).decoration!
-                  as BoxDecoration;
-          final border = decoration.border! as Border;
+          final container = tester.widget<AnimatedContainer>(painted);
+          final decoration = container.decoration! as BoxDecoration;
+          // YoButton paints its focus ring as the foreground (refine-look
+          // batch 3), so focusing never moves the label.
+          final border =
+              (container.foregroundDecoration! as BoxDecoration).border!
+                  as Border;
           expect(border.top.color, scheme.onPrimary);
           expect(border.top.width, 2);
           for (final stop in decoration.gradient!.colors) {

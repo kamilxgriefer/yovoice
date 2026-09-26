@@ -315,8 +315,10 @@ void main() {
       for (var attempt = 0; attempt < 4 && focusBorder == null; attempt++) {
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
         await tester.pump();
+        // YoButton paints its focus ring as the foreground (refine-look
+        // batch 3), so focusing never moves the label.
         final focusedDecoration =
-            tester.widget<AnimatedContainer>(paintedButton).decoration!
+            tester.widget<AnimatedContainer>(paintedButton).foregroundDecoration!
                 as BoxDecoration;
         final candidate = focusedDecoration.border;
         if (candidate is Border &&

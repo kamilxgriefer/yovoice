@@ -28,7 +28,19 @@ enum YoDiscEmphasis { rest, lift, lit }
 /// Pearl surfaces receive it.
 ///
 /// **High contrast** brings `borderStrong` back everywhere and removes every
-/// gradient, tint and glow; each recipe below takes `highContrast` for that.
+/// decorative gradient, tint and glow; each recipe below takes
+/// `highContrast` for that. The exception is a fill that IS the control: the
+/// R5 action gradient (white label 5.79:1 or more on both stops) and the R14
+/// bead keep their gradient and drop only the lift or glow.
+///
+/// **Where high contrast reaches.** Flutter reports it on iOS (Increase
+/// Contrast) and on the web only under forced colours (Windows contrast
+/// themes); Android never reports it and the app has no in-app switch. So no
+/// WCAG 1.4.11 boundary may depend on it: every hairline control carries its
+/// own identifier at 3:1 or more in the default themes — the icon button's
+/// glyph, the chip's label, the search pill's magnifier — and a text input
+/// without a glyph keeps `borderStrong`. High contrast is an enhancement on
+/// top, never the fallback a control relies on.
 ///
 /// All values are pinned by `test/app_finish_test.dart`.
 abstract final class AppFinish {

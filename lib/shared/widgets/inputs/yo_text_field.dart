@@ -7,9 +7,31 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 
+/// The look of a [YoTextField].
+enum YoTextFieldVariant {
+  /// A form field (auth, edit profile, channel names): the unchanged
+  /// `borderStrong` edge at radius 20 with a soft focus glow.
+  standard,
+
+  /// The search pill (refine-look R9): at least 44 px tall, a stadium, a
+  /// `surface` (Dark) / `surfaceRaised` (Pearl) fill with a 1 px `border`
+  /// edge, a 2 px `focus` ring at pill radius painted over the edge (so
+  /// focusing never shifts the text), a 20 px `textTertiary` leading glyph
+  /// and no lift. High contrast restores the `borderStrong` edge.
+  ///
+  /// The faint edge is decoration; the magnifier (5.6:1 or more on the fill)
+  /// and the hint identify the field. A search pill WITHOUT a [prefixIcon]
+  /// has nothing left once the user types, so it keeps the form field's
+  /// `borderStrong` edge (WCAG 1.4.11). Its glyphs follow large text up to
+  /// [searchGlyphMax]; disabled, the hint and glyph dim to
+  /// [searchDisabledInkAlpha] and the edge to the block hairline.
+  search,
+}
+
 class YoTextField extends StatefulWidget {
   const YoTextField({
     super.key,
+    this.variant = YoTextFieldVariant.standard,
     this.controller,
     this.focusNode,
     this.label,
@@ -79,7 +101,8 @@ class YoTextField extends StatefulWidget {
     this.fillColor,
     this.contentPadding,
     this.autovalidateMode = AutovalidateMode.onUserInteraction,
-  }) : keyboardType = TextInputType.emailAddress,
+  }) : variant = YoTextFieldVariant.standard,
+       keyboardType = TextInputType.emailAddress,
        textCapitalization = TextCapitalization.none,
        obscureText = false,
        showPasswordToggle = false,
@@ -118,7 +141,8 @@ class YoTextField extends StatefulWidget {
     this.fillColor,
     this.contentPadding,
     this.autovalidateMode = AutovalidateMode.onUserInteraction,
-  }) : keyboardType = TextInputType.visiblePassword,
+  }) : variant = YoTextFieldVariant.standard,
+       keyboardType = TextInputType.visiblePassword,
        textCapitalization = TextCapitalization.none,
        obscureText = true,
        showPasswordToggle = true,
@@ -128,6 +152,29 @@ class YoTextField extends StatefulWidget {
        minLines = 1,
        expands = false,
        textAlignVertical = TextAlignVertical.center;
+
+  /// Form field or search pill.
+  final YoTextFieldVariant variant;
+
+  /// The search pill's minimum height (it grows with larger text).
+  static const double searchHeight = 44;
+
+  /// A disabled search pill dims its magnifier and hint to this alpha of
+  /// `textTertiary`, so it reads as disabled in Dark too (its fill moves only
+  /// `surface` → `surfaceMuted`, 1.05:1 there).
+  static const double searchDisabledInkAlpha = .55;
+
+  /// The search pill's glyphs (magnifier, clear): 20 px at 100 % text,
+  /// following the text scale up to [searchGlyphMax] (reached at 140 %), so
+  /// a 200 % hint is not flanked by specks. The clear target stays 44 px.
+  static const double searchGlyphSize = 20;
+  static const double searchGlyphMax = 28;
+
+  /// [searchGlyphSize] under the ambient text scale, clamped to
+  /// [searchGlyphSize]..[searchGlyphMax].
+  static double searchGlyphSizeOf(BuildContext context) => MediaQuery.textScalerOf(
+    context,
+  ).scale(searchGlyphSize).clamp(searchGlyphSize, searchGlyphMax).toDouble();
 
   final TextEditingController? controller;
   final FocusNode? focusNode;
@@ -268,25 +315,51 @@ class _YoTextFieldState extends State<YoTextField> {
             AnimatedContainer(
               duration: standardDuration,
               curve: Curves.easeOut,
-              decoration: BoxDecoration(
-                color: widget.enabled
-                    ? widget.fillColor ?? palette.surfaceRaised
-                    : palette.surfaceMuted,
-                borderRadius: AppRadius.lg,
-                border: Border.all(
-                  color: _borderColor(hasError, palette),
-                  width: _focusNode.hasFocus ? 2 : 1,
-                ),
-                boxShadow: _focusNode.hasFocus && !hasError && widget.enabled
-                    ? <BoxShadow>[
-                        BoxShadow(
-                          color: palette.focus.withValues(alpha: 0.14),
-                          blurRadius: 18,
-                          spreadRadius: 1,
-                        ),
-                      ]
-                    : const <BoxShadow>[],
-              ),
+              constraints: _isSearch
+                  ? const BoxConstraints(minHeight: YoTextField.searchHeight)
+                  : null,
+              decoration: _isSearch
+                  ? BoxDecoration(
+                      color: widget.enabled
+                          ? widget.fillColor ??
+                                (palette.isDark
+                                    ? palette.surface
+                                    : palette.surfaceRaised)
+                          : palette.surfaceMuted,
+                      borderRadius: AppRadius.pill,
+                    )
+                  : BoxDecoration(
+                      color: widget.enabled
+                          ? widget.fillColor ?? palette.surfaceRaised
+                          : palette.surfaceMuted,
+                      borderRadius: AppRadius.lg,
+                      border: Border.all(
+                        color: _borderColor(hasError, palette),
+                        width: _focusNode.hasFocus ? 2 : 1,
+                      ),
+                      boxShadow:
+                          _focusNode.hasFocus && !hasError && widget.enabled
+                          ? <BoxShadow>[
+                              BoxShadow(
+                                color: palette.focus.withValues(alpha: 0.14),
+                                blurRadius: 18,
+                                spreadRadius: 1,
+                              ),
+                            ]
+                          : const <BoxShadow>[],
+                    ),
+              // The search pill's edge and focus ring are painted over the
+              // fill, so the 1 → 2 px change never moves the text.
+              foregroundDecoration: _isSearch
+                  ? BoxDecoration(
+                      borderRadius: AppRadius.pill,
+                      border: Border.all(
+                        color: _borderColor(hasError, palette),
+                        width: _focusNode.hasFocus && widget.enabled ? 2 : 1,
+                      ),
+                    )
+                  : null,
+              alignment: _isSearch ? AlignmentDirectional.centerStart : null,
               child: TextFormField(
                 controller: widget.controller,
                 focusNode: _focusNode,
@@ -334,13 +407,33 @@ class _YoTextFieldState extends State<YoTextField> {
                   // `_YoSupportingText` remains the single visible message.
                   errorText: hasError ? visibleError : null,
                   hintStyle: AppTypography.bodyMedium.copyWith(
-                    color: palette.textTertiary,
+                    color: _isSearch && !widget.enabled
+                        ? _searchDisabledInk(palette)
+                        : palette.textTertiary,
                   ),
                   prefixIcon: _buildPrefixIcon(),
                   suffixIcon: _buildSuffixIcon(),
+                  // The pill's glyph slots may be smaller than Material's
+                  // 48 px default so the field can rest at 44 px.
+                  prefixIconConstraints: _isSearch
+                      ? const BoxConstraints(minWidth: 40, minHeight: 40)
+                      : null,
+                  suffixIconConstraints: _isSearch
+                      ? const BoxConstraints(minWidth: 40, minHeight: 40)
+                      : null,
                   contentPadding:
                       widget.contentPadding ??
-                      const EdgeInsets.symmetric(horizontal: 18, vertical: 17),
+                      (_isSearch
+                          ? EdgeInsetsDirectional.only(
+                              start: widget.prefixIcon == null ? 18 : 0,
+                              end: 16,
+                              top: 10,
+                              bottom: 10,
+                            )
+                          : const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 17,
+                            )),
                   border: InputBorder.none,
                   enabledBorder: InputBorder.none,
                   focusedBorder: InputBorder.none,
@@ -378,7 +471,9 @@ class _YoTextFieldState extends State<YoTextField> {
 
   Color _borderColor(bool hasError, AppPalette palette) {
     if (!widget.enabled) {
-      return palette.border;
+      // A disabled pill steps down to the block hairline, so it no longer
+      // looks like the resting one (whose edge is `border`).
+      return _isSearch ? palette.hairline : palette.border;
     }
 
     if (hasError) {
@@ -389,8 +484,21 @@ class _YoTextFieldState extends State<YoTextField> {
       return palette.focus;
     }
 
+    // The search pill's faint edge relies on its magnifier to identify it;
+    // without one it keeps the strong edge, as does high contrast.
+    if (_isSearch &&
+        widget.prefixIcon != null &&
+        !MediaQuery.highContrastOf(context)) {
+      return palette.border;
+    }
+
     return palette.borderStrong;
   }
+
+  bool get _isSearch => widget.variant == YoTextFieldVariant.search;
+
+  Color _searchDisabledInk(AppPalette palette) => palette.textTertiary
+      .withValues(alpha: YoTextField.searchDisabledInkAlpha);
 
   Widget? _buildPrefixIcon() {
     if (widget.prefixIcon == null) {
@@ -398,6 +506,20 @@ class _YoTextFieldState extends State<YoTextField> {
     }
 
     final palette = context.appPalette;
+    if (_isSearch) {
+      return IconTheme(
+        data: IconThemeData(
+          color: widget.enabled
+              ? palette.textTertiary
+              : _searchDisabledInk(palette),
+          size: YoTextField.searchGlyphSizeOf(context),
+        ),
+        child: Padding(
+          padding: const EdgeInsetsDirectional.only(start: 14, end: 8),
+          child: widget.prefixIcon,
+        ),
+      );
+    }
     return IconTheme(
       data: IconThemeData(
         color: _focusNode.hasFocus
@@ -435,10 +557,13 @@ class _YoTextFieldState extends State<YoTextField> {
     return IconTheme(
       data: IconThemeData(
         color: widget.enabled ? palette.textSecondary : palette.textTertiary,
-        size: 21,
+        size: _isSearch ? YoTextField.searchGlyphSizeOf(context) : 21,
       ),
       child: Padding(
-        padding: const EdgeInsets.only(left: 10, right: 14),
+        // The pill's trailing action (clear) carries its own 44 px target.
+        padding: _isSearch
+            ? const EdgeInsetsDirectional.only(end: 2)
+            : const EdgeInsets.only(left: 10, right: 14),
         child: widget.suffixIcon,
       ),
     );

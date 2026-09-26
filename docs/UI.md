@@ -46,6 +46,13 @@ and 2560 px where relevant, plus a 2.0 text scale. The acceptance bar is no
 overflow, no clipped primary text, 44x44 minimum interactive targets,
 keyboard/focus access on desktop, and preserved safe-area/keyboard insets.
 
+The 44 px floor (`AppSizing.minimumTouchTarget`, WCAG 2.5.5) is the
+project's bar on every platform, deliberately 4 dp under Android's 48 dp
+guideline (`androidTapTargetGuideline`). A control that sits inside a 44 px
+container keeps exactly 44 rather than inflating it: the refine-look search
+pill (`YoSearchField`, R9) rests at 44 px, so its clear action is a
+shrink-wrapped 44 × 44 target (it was Material's padded 48 before the pill).
+
 ## Vertical rhythm
 
 `AppRhythm` in `lib/core/theme/app_spacing.dart` names the six vertical

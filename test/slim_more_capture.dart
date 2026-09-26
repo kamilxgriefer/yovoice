@@ -1,20 +1,32 @@
 // Developer-only VISUAL harness for Slim phase 6: the "More" family.
 //
 // Renders the REAL production widgets — the More sheet (mobile) and the
-// desktop More popover, Settings, Friends and the Notifications inbox —
-// with fixtures injected through their constructor seams, at exact
-// viewports, with real Inter + MaterialIcons glyphs, locale `pl`, in Dark
-// and Pearl, and writes one PNG per frame:
+// desktop More popover, Settings, Friends, the Notifications inbox and the
+// notification preferences — with fixtures injected through their
+// constructor seams, at exact viewports, with real Inter + MaterialIcons
+// glyphs (and the macOS colour-emoji font when the host has it, so an emoji
+// never draws as a tofu box), locale `pl`, in Dark and Pearl, and writes one
+// PNG per frame:
 //
-//   <screen>_<width>_<dark|pearl>_pl_100_populated.png
+//   <screen>_<width>_<dark|pearl>_pl_<text>_populated[-hc].png
+//
+// The default matrix is 390 (2x), 768 (2x) and 1440 (1x) wide, at 100 % and
+// 200 % text, plus a high-contrast frame (`-hc`, 100 % text, the app's
+// high-contrast theme twins) of every screen and width. At 1440 the screens
+// render without the app shell (the rail), as they always have here.
 //
 // It is NOT a test and deliberately does not end in `_test.dart`, so the
 // regular suite never writes evidence. Run it explicitly:
 //
 //   flutter test --reporter compact test/slim_more_capture.dart
 //
-// PNGs land in the evidence folder below; override it with
-// `--dart-define=SLIM_OUT=<dir>`.
+// Options (all `--dart-define`):
+//   SLIM_OUT=<dir>                 output folder (below is the default)
+//   SLIM_WIDTHS=390,768,1440       any of 390, 768, 1440
+//   SLIM_TEXT=100,200              text scales, in percent
+//   SLIM_HC=true|false             the high-contrast frames
+//   SLIM_SCREENS=settings,friends  a subset of: more, settings, friends,
+//                                  notifications, notification-prefs
 
 import 'dart:async';
 import 'dart:io';
@@ -42,6 +54,7 @@ import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/marketing/data/services/public_showcase_consent_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
@@ -55,6 +68,22 @@ const String _outDir = String.fromEnvironment(
   defaultValue:
       r'C:\Users\mfvon\Documents\GitHub\yovoice-evidence\2026-09-19\slim-p6-frames\after',
 );
+
+const String _widthsDefine = String.fromEnvironment(
+  'SLIM_WIDTHS',
+  defaultValue: '390,768,1440',
+);
+const String _textDefine = String.fromEnvironment(
+  'SLIM_TEXT',
+  defaultValue: '100,200',
+);
+const bool _hcFrames = bool.fromEnvironment('SLIM_HC', defaultValue: true);
+const String _screensDefine = String.fromEnvironment('SLIM_SCREENS');
+
+List<String> _list(String define) => [
+  for (final part in define.split(','))
+    if (part.trim().isNotEmpty) part.trim(),
+];
 
 const String _me = 'kamil';
 
@@ -101,6 +130,18 @@ Future<void> _loadFonts() async {
   final icons = FontLoader('MaterialIcons')
     ..addFont(_read('${_resolveMaterialFontRoot()}/MaterialIcons-Regular.otf'));
   await icons.load();
+
+  // Colour emoji (the Inter fallback chain ends in the platform emoji font).
+  const emojiFont = '/System/Library/Fonts/Apple Color Emoji.ttc';
+  if (File(emojiFont).existsSync()) {
+    final emoji = FontLoader('Apple Color Emoji')..addFont(_read(emojiFont));
+    await emoji.load();
+    // ignore: avoid_print
+    print('emoji font registered: $emojiFont');
+  } else {
+    // ignore: avoid_print
+    print('emoji font NOT available on this host');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +207,7 @@ class _Fixture {
   final FakeFirebaseFirestore db;
   final MockFirebaseAuth auth;
 
-  static Future<_Fixture> seed() async {
+  static Future<_Fixture> seed({bool withPreferences = false}) async {
     final db = FakeFirebaseFirestore();
     final auth = MockFirebaseAuth(
       signedIn: true,
@@ -192,6 +233,12 @@ class _Fixture {
       'isOnline': true,
       'statusMessage': 'Wieczorne rozmowy i dobra muzyka',
       'friendCount': 5,
+      // Two switches off, so both switch states are in the frame.
+      if (withPreferences)
+        'notificationPreferences': <String, bool>{
+          'follow': false,
+          'missedCall': false,
+        },
     });
 
     // Friends: a legacy mirror row, the public projection and the
@@ -429,13 +476,28 @@ enum _Look {
   final String label;
   final AppThemePreference preference;
 
-  ThemeData get theme => switch (this) {
-    _Look.dark => AppTheme.darkTheme,
-    _Look.pearl => AppTheme.lightTheme,
-  };
+  /// The app's theme, or its high-contrast twin (what `MaterialApp` picks
+  /// under the platform's high-contrast setting).
+  ThemeData theme({bool highContrast = false}) =>
+      switch ((this, highContrast)) {
+        (_Look.dark, false) => AppTheme.darkTheme,
+        (_Look.dark, true) => AppTheme.darkHighContrastTheme,
+        (_Look.pearl, false) => AppTheme.lightTheme,
+        (_Look.pearl, true) => AppTheme.lightHighContrastTheme,
+      };
 }
 
-enum _Screen { more, settings, friends, notifications }
+enum _Screen {
+  more('more'),
+  settings('settings'),
+  friends('friends'),
+  notifications('notifications'),
+  notificationPrefs('notification-prefs');
+
+  const _Screen(this.label);
+
+  final String label;
+}
 
 class _Viewport {
   const _Viewport(this.size, this.pixelRatio);
@@ -447,8 +509,9 @@ class _Viewport {
   bool get isDesktop => size.width >= 980;
 }
 
-const _viewports = <_Viewport>[
+const _allViewports = <_Viewport>[
   _Viewport(Size(390, 844), 2),
+  _Viewport(Size(768, 1024), 2),
   _Viewport(Size(1440, 900), 1),
 ];
 
@@ -505,10 +568,12 @@ Widget _app({
   required _Look look,
   required AppPreferencesController preferences,
   required Widget home,
+  double textScale = 1,
+  bool highContrast = false,
 }) {
   return MaterialApp(
     debugShowCheckedModeBanner: false,
-    theme: look.theme,
+    theme: look.theme(highContrast: highContrast),
     locale: const Locale('pl'),
     supportedLocales: AppLocalizations.supportedLocales,
     localizationsDelegates: const [
@@ -522,7 +587,12 @@ Widget _app({
     builder: (context, child) => AppPreferencesScope(
       controller: preferences,
       child: MediaQuery(
-        data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+        data: MediaQuery.of(context).copyWith(
+          textScaler: textScale == 1
+              ? TextScaler.noScaling
+              : TextScaler.linear(textScale),
+          highContrast: highContrast,
+        ),
         child: RepaintBoundary(key: _captureKey, child: child!),
       ),
     ),
@@ -635,6 +705,14 @@ Widget _screen(
         firestore: db,
         auth: auth,
       );
+    case _Screen.notificationPrefs:
+      return NotificationPreferencesScreen(
+        isRootTab: isRootTab,
+        notificationService: NotificationService(firestore: db, auth: auth),
+        auth: auth,
+        // A creator account, so the followers switch is part of the frame.
+        creatorAudienceVisibleStream: Stream<bool>.value(true),
+      );
     case _Screen.settings:
       return SettingsScreen(
         isRootTab: isRootTab,
@@ -687,66 +765,91 @@ void main() {
 
   tearDown(_resetSharedCaches);
 
+  final widths = _list(_widthsDefine).map(int.parse).toSet();
+  final viewports = [
+    for (final viewport in _allViewports)
+      if (widths.contains(viewport.width)) viewport,
+  ];
+  final textScales = _list(_textDefine).map(int.parse).toList();
+  final screenNames = _list(_screensDefine).toSet();
+  final screens = [
+    for (final screen in _Screen.values)
+      if (screenNames.isEmpty || screenNames.contains(screen.label)) screen,
+  ];
+  // (text %, high contrast): every text scale, then the -hc frame at 100 %.
+  final modes = <(int, bool)>[
+    for (final text in textScales) (text, false),
+    if (_hcFrames) (100, true),
+  ];
+
   for (final look in _Look.values) {
-    for (final viewport in _viewports) {
-      for (final screen in _Screen.values) {
-        final filename =
-            '${screen.name}_${viewport.width}_${look.label}_pl_100_populated.png';
-        testWidgets(filename, (tester) async {
-          tester.view.physicalSize = viewport.size;
-          tester.view.devicePixelRatio = 1;
-          addTearDown(tester.view.reset);
+    for (final viewport in viewports) {
+      for (final (text, highContrast) in modes) {
+        for (final screen in screens) {
+          final state = highContrast ? 'populated-hc' : 'populated';
+          final filename =
+              '${screen.label}_${viewport.width}_${look.label}_pl_${text}_'
+              '$state.png';
+          testWidgets(filename, (tester) async {
+            tester.view.physicalSize = viewport.size;
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.reset);
 
-          final fixture = await _Fixture.seed();
-          final disposers = <Future<void> Function()>[];
-          final preferences = AppPreferencesController(
-            store: _MemoryPreferencesStore(),
-            initialValue: AppPreferences(
-              theme: look.preference,
-              language: AppLanguagePreference.polish,
-            ),
-          );
-
-          // flutter_test replaces every elevation and BoxShadow blur with a
-          // hard, solid debug band. Evidence must show the real soft shadow,
-          // so it is re-enabled for the render and restored before the
-          // binding checks its invariants at the end of the test.
-          debugDisableShadows = false;
-          try {
-            await tester.pumpWidget(
-              _app(
-                look: look,
-                preferences: preferences,
-                home: _screen(screen, viewport, fixture, disposers),
+            final fixture = await _Fixture.seed(
+              withPreferences: screen == _Screen.notificationPrefs,
+            );
+            final disposers = <Future<void> Function()>[];
+            final preferences = AppPreferencesController(
+              store: _MemoryPreferencesStore(),
+              initialValue: AppPreferences(
+                theme: look.preference,
+                language: AppLanguagePreference.polish,
               ),
             );
-            await _settle(tester);
 
-            if (screen == _Screen.more) {
-              await tester.tap(find.byKey(_moreTriggerKey));
+            // flutter_test replaces every elevation and BoxShadow blur with a
+            // hard, solid debug band. Evidence must show the real soft shadow,
+            // so it is re-enabled for the render and restored before the
+            // binding checks its invariants at the end of the test.
+            debugDisableShadows = false;
+            try {
+              await tester.pumpWidget(
+                _app(
+                  look: look,
+                  preferences: preferences,
+                  textScale: text / 100,
+                  highContrast: highContrast,
+                  home: _screen(screen, viewport, fixture, disposers),
+                ),
+              );
               await _settle(tester);
-            }
 
-            await _capturePng(tester, filename, viewport.pixelRatio);
+              if (screen == _Screen.more) {
+                await tester.tap(find.byKey(_moreTriggerKey));
+                await _settle(tester);
+              }
 
-            final exception = tester.takeException();
-            if (exception != null) {
-              // ignore: avoid_print
-              print('EXCEPTION while rendering $filename: $exception');
-            }
+              await _capturePng(tester, filename, viewport.pixelRatio);
 
-            // Unmount inside the test so stream listeners and their timers
-            // are released before the binding checks for pending work.
-            await tester.pumpWidget(const SizedBox.shrink());
-            await tester.pump(const Duration(seconds: 1));
-            for (final dispose in disposers) {
-              await dispose();
+              final exception = tester.takeException();
+              if (exception != null) {
+                // ignore: avoid_print
+                print('EXCEPTION while rendering $filename: $exception');
+              }
+
+              // Unmount inside the test so stream listeners and their timers
+              // are released before the binding checks for pending work.
+              await tester.pumpWidget(const SizedBox.shrink());
+              await tester.pump(const Duration(seconds: 1));
+              for (final dispose in disposers) {
+                await dispose();
+              }
+              preferences.dispose();
+            } finally {
+              debugDisableShadows = true;
             }
-            preferences.dispose();
-          } finally {
-            debugDisableShadows = true;
-          }
-        });
+          });
+        }
       }
     }
   }
