@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
@@ -96,6 +98,25 @@ class ServerConversationDock extends StatelessWidget {
       final elapsedSince = here && (meetingChannel?.liveness.isLive ?? false)
           ? meetingChannel!.liveness.startedAt
           : null;
+      // Refine-look §8.2 — the conversation bar (never the navigation dock):
+      // connected, a faint wash of the voice accent over `surfaceRaised` and
+      // its edge at .45 / .35; otherwise `surfaceRaised` with a hairline.
+      // Pearl adds the block's shadow pair. Geometry is unchanged. The
+      // controls sit on neutral glass composited over this exact fill, so
+      // each focus ring is measured against what is painted.
+      final highContrast = MediaQuery.highContrastOf(context);
+      final dark = palette.isDark;
+      final barFill = connected && !highContrast
+          ? Color.alphaBlend(
+              palette.audioAccent.withValues(alpha: dark ? .10 : .04),
+              palette.surfaceRaised,
+            )
+          : palette.surfaceRaised;
+      final barEdge = highContrast
+          ? (connected ? palette.audioAccent : palette.borderStrong)
+          : connected
+          ? palette.audioAccent.withValues(alpha: dark ? .45 : .35)
+          : palette.hairline;
       final share = screenShare ?? controller.screenShare;
       final canShare = controller.canShareScreen;
       final sharing = controller.isScreenShareEnabled;
@@ -106,6 +127,7 @@ class ServerConversationDock extends StatelessWidget {
       final controls = [
         if (publishing)
           _DockControl(
+            surface: barFill,
             key: const ValueKey('server-dock-microphone'),
             icon: controller.isMicrophoneEnabled
                 ? Icons.mic_rounded
@@ -113,6 +135,9 @@ class ServerConversationDock extends StatelessWidget {
             label: compact ? null : copy.serverMicrophone,
             semanticLabel: micLabel,
             active: controller.isMicrophoneEnabled,
+            // An open microphone is a voice being carried: the bar's one
+            // light, bound to the real publication state.
+            glow: controller.isMicrophoneEnabled,
             onPressed: controller.microphoneBusy
                 ? null
                 : controller.toggleMicrophone,
@@ -121,6 +146,7 @@ class ServerConversationDock extends StatelessWidget {
           // Local output only: nothing is published, written or signalled
           // about the person. It is the listener's own volume, not a mute.
           _DockControl(
+            surface: barFill,
             key: const ValueKey('server-dock-headphones'),
             icon: controller.isDeafened
                 ? Icons.headset_off_rounded
@@ -136,6 +162,7 @@ class ServerConversationDock extends StatelessWidget {
           ),
         if (visualSession)
           _DockControl(
+            surface: barFill,
             key: const ValueKey('server-dock-camera'),
             icon: cameraEnabled
                 ? Icons.videocam_rounded
@@ -151,6 +178,7 @@ class ServerConversationDock extends StatelessWidget {
           ),
         if (visualSession)
           _DockControl(
+            surface: barFill,
             key: const ValueKey('server-dock-share'),
             icon: sharing
                 ? Icons.stop_screen_share_outlined
@@ -167,6 +195,7 @@ class ServerConversationDock extends StatelessWidget {
           ),
         if (here && onOpenWhiteboard != null)
           _DockControl(
+            surface: barFill,
             key: const ValueKey('server-dock-whiteboard'),
             icon: Icons.draw_outlined,
             label: compact
@@ -180,6 +209,7 @@ class ServerConversationDock extends StatelessWidget {
         // the queue is reachable from any channel, not only from the studio.
         if (live && waitingHands > 0)
           _DockControl(
+            surface: barFill,
             key: const ValueKey('server-dock-requests'),
             icon: Icons.back_hand_outlined,
             label: compact ? null : copy.serverHandQueueShort,
@@ -192,6 +222,7 @@ class ServerConversationDock extends StatelessWidget {
           ),
         if (live && (controller.isSessionHost || canModerateSession))
           _DockControl(
+            surface: barFill,
             key: const ValueKey('server-dock-end-session'),
             icon: Icons.stop_circle_outlined,
             label: compact ? null : copy.serverEndShort,
@@ -202,6 +233,7 @@ class ServerConversationDock extends StatelessWidget {
                 : () => _confirmEnd(context, copy),
           ),
         _DockControl(
+          surface: barFill,
           key: const ValueKey('server-dock-leave'),
           icon: Icons.call_end_rounded,
           label: compact ? null : copy.serverLeaveShort,
@@ -286,10 +318,12 @@ class ServerConversationDock extends StatelessWidget {
             vertical: compact ? 8 : 10,
           ),
           decoration: BoxDecoration(
-            color: palette.surfaceRaised,
+            color: barFill,
             borderRadius: AppRadius.lg,
-            border: Border.all(
-              color: connected ? palette.audioAccent : palette.border,
+            border: Border.all(color: barEdge),
+            boxShadow: AppFinish.blockShadows(
+              palette,
+              highContrast: highContrast,
             ),
           ),
           child: stacked
@@ -476,15 +510,34 @@ class _ElapsedState extends State<_Elapsed> {
   }
 }
 
-class _DockControl extends StatelessWidget {
+/// One round control of the conversation bar (refine-look §8.2): a 48 px
+/// [CircleBorder] in the same 48 px box as before. At rest it is neutral
+/// glass composited over the bar's own [surface] — so the fill its focus
+/// ring is measured against is exactly the fill that is painted — with the
+/// control hairline as a foreground; on, it is the voice accent;
+/// destructive, the danger fill. [glow] adds the open microphone's soft
+/// `audioAccent` light (.36 Dark / .20 Pearl, blur 12, spread -4), never
+/// under high contrast. High contrast keeps the flat `surfaceMuted` rest
+/// fill with a `borderStrong` edge.
+///
+/// The resting edge steps aside for focus: the 2 px focus ring is the
+/// button's own `side`, stroked inside the same circle, so an always-on
+/// foreground edge would cover its outer pixel — under high contrast an
+/// opaque `borderStrong` line over the ring, leaving focus a 1 px change.
+/// While the button is focused (read from the button's own
+/// [WidgetStatesController], the same state its `side` resolves) the edge
+/// turns transparent and the whole 2 px ring shows.
+class _DockControl extends StatefulWidget {
   const _DockControl({
     required this.icon,
     required this.semanticLabel,
     required this.onPressed,
+    required this.surface,
     this.label,
     this.active = false,
     this.destructive = false,
     this.waiting = false,
+    this.glow = false,
     super.key,
   });
   final IconData icon;
@@ -496,17 +549,66 @@ class _DockControl extends StatelessWidget {
   /// Pins the shared "waiting" dot to the control. The count is already in
   /// [semanticLabel], so the dot itself adds nothing to the spoken form.
   final bool waiting;
+
+  /// The open microphone's light.
+  final bool glow;
   final VoidCallback? onPressed;
+
+  /// The bar's fill under this control.
+  final Color surface;
+
+  @override
+  State<_DockControl> createState() => _DockControlState();
+}
+
+class _DockControlState extends State<_DockControl> {
+  final WidgetStatesController _states = WidgetStatesController();
+  bool _focused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _states.addListener(_statesChanged);
+  }
+
+  void _statesChanged() {
+    if (!mounted) return;
+    final focused = _states.value.contains(WidgetState.focused);
+    if (focused == _focused) return;
+    // A state can also change while the button itself rebuilds (it turns
+    // disabled mid-frame); this ancestor then catches up after the frame.
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => _statesChanged());
+      return;
+    }
+    setState(() => _focused = focused);
+  }
+
+  @override
+  void dispose() {
+    _states
+      ..removeListener(_statesChanged)
+      ..dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final scheme = Theme.of(context).colorScheme;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final onPressed = widget.onPressed;
+    final destructive = widget.destructive;
+    final active = widget.active;
+    final neutral = !destructive && !active;
     final background = destructive
         ? AppColors.error
         : active
         ? palette.audioAccent
-        : palette.surfaceMuted;
+        : highContrast
+        ? palette.surfaceMuted
+        : Color.alphaBlend(palette.glass, widget.surface);
     // `AppColors.white` on the error fill is 2.95:1 — below the 3:1 that
     // WCAG 1.4.11 asks of a glyph that identifies a control, and on a phone
     // this control has no text label at all. `contrastInk` is 5.87:1 on the
@@ -523,36 +625,75 @@ class _DockControl extends StatelessWidget {
     final button = Semantics(
       button: true,
       enabled: onPressed != null,
-      label: semanticLabel,
+      label: widget.semanticLabel,
       onTap: onPressed,
       excludeSemantics: true,
       child: SizedBox(
         width: 48,
         height: 48,
-        child: IconButton.filled(
-          onPressed: onPressed,
-          style:
-              IconButton.styleFrom(
-                backgroundColor: background,
-                foregroundColor: foreground,
-                disabledBackgroundColor: palette.surfaceMuted,
-                disabledForegroundColor: palette.textTertiary,
-              ).copyWith(
-                // An identity-filled control overrides the fill the theme's
-                // focus ring was measured against (`docs/UI.md`, semantic
-                // colour ownership), so it brings its own on-colour ring.
-                side: serverFocusRing(foreground),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            boxShadow: widget.glow && onPressed != null && !highContrast
+                ? [
+                    BoxShadow(
+                      color: palette.audioAccent.withValues(
+                        alpha: palette.isDark ? .36 : .20,
+                      ),
+                      blurRadius: 12,
+                      spreadRadius: -4,
+                    ),
+                  ]
+                : const <BoxShadow>[],
+          ),
+          // The resting edge is a foreground that is always present and only
+          // changes colour, so no state change adds a layer above the
+          // button (which would rebuild it and drop its focus). It is
+          // transparent while the button is focused, so the focus ring is
+          // never covered.
+          child: DecoratedBox(
+            key: const ValueKey('server-dock-control-edge'),
+            position: DecorationPosition.foreground,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: !neutral || _focused
+                    ? Colors.transparent
+                    : highContrast
+                    ? palette.borderStrong
+                    : palette.hairlineControl,
               ),
-          icon: ServerWaitingDot.on(
-            waiting: waiting,
-            // The outer node already speaks the count.
-            semanticLabel: '',
-            dotKey: const ValueKey('server-dock-requests-dot'),
-            child: Icon(icon, size: 22),
+            ),
+            child: IconButton.filled(
+              onPressed: onPressed,
+              statesController: _states,
+              style:
+                  IconButton.styleFrom(
+                    backgroundColor: background,
+                    foregroundColor: foreground,
+                    disabledBackgroundColor: palette.surfaceMuted,
+                    disabledForegroundColor: palette.textTertiary,
+                    shape: const CircleBorder(),
+                  ).copyWith(
+                    // An identity-filled control overrides the fill the
+                    // theme's focus ring was measured against (`docs/UI.md`,
+                    // semantic colour ownership), so it brings its own
+                    // on-colour ring.
+                    side: serverFocusRing(foreground),
+                  ),
+              icon: ServerWaitingDot.on(
+                waiting: widget.waiting,
+                // The outer node already speaks the count.
+                semanticLabel: '',
+                dotKey: const ValueKey('server-dock-requests-dot'),
+                child: Icon(widget.icon, size: 22),
+              ),
+            ),
           ),
         ),
       ),
     );
+    final label = widget.label;
     if (label == null) {
       return Padding(padding: const EdgeInsets.only(left: 6), child: button);
     }
@@ -565,7 +706,7 @@ class _DockControl extends StatelessWidget {
           const SizedBox(height: 2),
           ExcludeSemantics(
             child: Text(
-              label!,
+              label,
               style: AppTypography.labelSmall.copyWith(
                 color: palette.textSecondary,
               ),

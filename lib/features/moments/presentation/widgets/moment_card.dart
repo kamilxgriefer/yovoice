@@ -17,11 +17,20 @@ import 'package:yovoice/features/moments/presentation/widgets/moment_mentions.da
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc_button.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/voice/yo_voice_finish.dart';
 import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
 /// An audio-first Moment card: identity, caption, a compact waveform with
 /// play state and duration, and the real reaction/comment counts.
+///
+/// Refine-look R2 / W3: the card is a block ([YoVoiceBlock]) and its play
+/// control is the 44 px voice bead; while — and only while — this card's
+/// own recording plays, the bead glows, the edge turns violet and the
+/// corner light comes up. The card has no position source, so its bars
+/// stay a still `waveUnplayed` silhouette.
 ///
 /// Shared with the creator pinned-Moment surfaces and mobile Home — its
 /// constructor is deliberately backward compatible.
@@ -95,8 +104,8 @@ class _MomentCardState extends State<MomentCard> {
   /// construct one platform-backed player each just to sit there, and
   /// `dispose` must not be the thing that finally creates one.
   AudioPlayer? _created;
-  AudioPlayer get _player =>
-      _created ??= (widget.playerFactory ?? AudioPlayer.new)();
+  AudioPlayer get _player => _created ??= _createPlayer();
+  StreamSubscription<void>? _completion;
   late final OfflineVoiceMomentService _offline =
       widget.offlineService ?? OfflineVoiceMomentService.instance;
   MomentService? _moments;
@@ -160,8 +169,20 @@ class _MomentCardState extends State<MomentCard> {
     }
   }
 
+  /// The card's own player, listening for the end of the recording: a
+  /// finished clip is no longer playing, so the bead returns to play and
+  /// the card's light goes out instead of glowing over silence.
+  AudioPlayer _createPlayer() {
+    final player = (widget.playerFactory ?? AudioPlayer.new)();
+    _completion = player.onPlayerComplete.listen((_) {
+      if (mounted && _playing) setState(() => _playing = false);
+    });
+    return player;
+  }
+
   @override
   void dispose() {
+    unawaited(_completion?.cancel());
     _created?.dispose();
     super.dispose();
   }
@@ -366,232 +387,243 @@ class _MomentCardState extends State<MomentCard> {
     final palette = context.appPalette;
     final copy = _copy;
 
-    return Container(
+    return Padding(
       key: ValueKey('moment-card-${moment.id}'),
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        color: palette.surface,
-        border: Border.all(color: palette.border),
+      padding: const EdgeInsets.only(bottom: 12),
+      child: YoVoiceBlock(
+        lit: _playing,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: _body(context, moment, playable, palette, copy),
+        ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              AccessibleTapRegion(
-                onTap: () => showProfilePreview(
-                  context,
-                  userId: moment.authorId,
-                  displayName: moment.authorName,
-                  photoUrl: moment.authorPhotoUrl,
-                ),
-                semanticLabel: copy.text(
-                  'Open profile for ${moment.authorName}',
-                  'Otwórz profil: ${moment.authorName}',
-                ),
-                tooltip: copy.text(
-                  'Open ${moment.authorName}\'s profile',
-                  'Otwórz profil ${moment.authorName}',
-                ),
-                circular: true,
-                child: UserAvatar(
-                  radius: 18,
-                  userId: moment.authorId,
-                  photoUrl: moment.authorPhotoUrl,
-                  displayName: moment.authorName,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Row + Flexible, not Wrap: a long display name
-                    // truncates and the identity badges stay on the line.
-                    // A Wrap dropped the badges onto a second row.
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            moment.authorName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: palette.textPrimary,
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        UserIdentityBadges(uid: moment.authorId),
-                      ],
-                    ),
-                    Text(
-                      _age(moment.createdAt),
-                      style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 11.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (!moment.isPublished)
-                Padding(
-                  padding: const EdgeInsets.only(left: 6),
-                  child: Text(
-                    copy.text('Uploading…', 'Przesyłanie…'),
-                    style: TextStyle(color: palette.textTertiary, fontSize: 11),
-                  ),
-                ),
-            ],
-          ),
-          if (moment.caption.trim().isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text(
-              moment.caption,
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: 13.5,
-                height: 1.35,
-              ),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _PlayButton(playing: _playing, enabled: playable, onTap: _toggle),
-              const SizedBox(width: 12),
-              // Decorative on purpose: no per-Moment amplitude is recorded and
-              // MomentCard has no position source, so the silhouette is still.
-              Expanded(
-                child: YoWaveform(
-                  height: 26,
-                  color: AppColors.primary.withValues(alpha: .45),
-                  barGap: 2.4,
-                  barRadius: 2,
-                ),
-              ),
-              const SizedBox(width: 10),
-              // Hidden rather than asserting "0:00": legacy documents
-              // carry no duration and a fabricated zero is still fabricated.
-              if (moment.durationSeconds > 0)
-                Text(
-                  moment.durationLabel,
-                  style: TextStyle(
-                    color: palette.textTertiary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              _LikeControl(
-                liked: _liked,
-                likeCount: _likeCount,
-                feedService: widget.feedService,
-                onToggle: _likePending ? null : _toggleLike,
-              ),
-              const SizedBox(width: 6),
-              TextButton.icon(
-                onPressed: widget.onComments,
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  minimumSize: const Size(0, 44),
-                ),
-                icon: Icon(
-                  Icons.mode_comment_outlined,
-                  size: 17,
-                  color: palette.textSecondary,
-                ),
-                label: Text(
-                  moment.commentCount == 0
-                      ? copy.text('Comment', 'Komentarz')
-                      : '${moment.commentCount}',
-                  style: TextStyle(
-                    color: palette.textSecondary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const Spacer(),
-              // Not offered on your own Moment: reporting yourself is not
-              // a real intent, and each such report is a row a moderator
-              // opens before finding nothing to do. Deleting your own
-              // Moment is the action that belongs there instead, and it
-              // already exists elsewhere.
-              if (widget.canReport && !moment.isDeleted)
-                IconButton(
-                  key: ValueKey('report-moment-${moment.id}'),
-                  constraints: const BoxConstraints.tightFor(
-                    width: 44,
-                    height: 44,
-                  ),
-                  tooltip: copy.text(
-                    'Report this Voice Moment',
-                    'Zgłoś ten Voice Moment',
-                  ),
-                  onPressed: _report,
-                  icon: Icon(Icons.flag_outlined, color: palette.textSecondary),
-                ),
-              if (playable && moment.isPublished && !moment.isDeleted)
-                IconButton(
-                  key: ValueKey('download-moment-${moment.id}'),
-                  constraints: const BoxConstraints.tightFor(
-                    width: 44,
-                    height: 44,
-                  ),
-                  tooltip: _downloaded
-                      ? copy.text(
-                          'Remove offline download',
-                          'Usuń pobrane nagranie',
-                        )
-                      : copy.text(
-                          'Download for offline listening',
-                          'Pobierz do słuchania offline',
-                        ),
-                  onPressed: _downloading ? null : _toggleDownload,
-                  icon: _downloading
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Icon(
-                          _downloaded
-                              ? Icons.download_done_rounded
-                              : Icons.download_for_offline_outlined,
-                          color: _downloaded
-                              ? AppColors.secondary
-                              : palette.textSecondary,
-                        ),
-                ),
-            ],
-          ),
-          if (widget.commentPreview case final preview?) ...[
-            const SizedBox(height: 4),
-            Divider(color: palette.border, height: 1),
-            const SizedBox(height: 10),
-            MomentCommentPreview(
-              comments: preview,
-              totalCommentCount: moment.commentCount,
-              momentAuthor: MentionCandidate(
+    );
+  }
+
+  Widget _body(
+    BuildContext context,
+    VoiceMoment moment,
+    bool playable,
+    AppPalette palette,
+    AppLocalizations copy,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            AccessibleTapRegion(
+              onTap: () => showProfilePreview(
+                context,
                 userId: moment.authorId,
                 displayName: moment.authorName,
+                photoUrl: moment.authorPhotoUrl,
               ),
-              friends: widget.mentionFriends,
-              onSeeAll: widget.onComments,
-              onCompose: moment.isDeleted ? null : widget.onComments,
+              semanticLabel: copy.text(
+                'Open profile for ${moment.authorName}',
+                'Otwórz profil: ${moment.authorName}',
+              ),
+              tooltip: copy.text(
+                'Open ${moment.authorName}\'s profile',
+                'Otwórz profil ${moment.authorName}',
+              ),
+              circular: true,
+              child: UserAvatar(
+                radius: 18,
+                userId: moment.authorId,
+                photoUrl: moment.authorPhotoUrl,
+                displayName: moment.authorName,
+              ),
             ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Row + Flexible, not Wrap: a long display name
+                  // truncates and the identity badges stay on the line.
+                  // A Wrap dropped the badges onto a second row.
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          moment.authorName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      UserIdentityBadges(uid: moment.authorId),
+                    ],
+                  ),
+                  Text(
+                    _age(moment.createdAt),
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (!moment.isPublished)
+              Padding(
+                padding: const EdgeInsets.only(left: 6),
+                child: Text(
+                  copy.text('Uploading…', 'Przesyłanie…'),
+                  style: TextStyle(color: palette.textTertiary, fontSize: 11),
+                ),
+              ),
           ],
+        ),
+        if (moment.caption.trim().isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(
+            moment.caption,
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontSize: 13.5,
+              height: 1.35,
+            ),
+          ),
         ],
-      ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            _PlayButton(playing: _playing, enabled: playable, onTap: _toggle),
+            const SizedBox(width: 12),
+            // Decorative on purpose: no per-Moment amplitude is recorded and
+            // MomentCard has no position source, so the silhouette is still,
+            // in the R13 unplayed ink it keeps at rest and while playing.
+            Expanded(
+              child: YoWaveform(
+                height: 26,
+                color: palette.waveUnplayed,
+                barGap: 2.4,
+                barRadius: 2,
+              ),
+            ),
+            const SizedBox(width: 10),
+            // Hidden rather than asserting "0:00": legacy documents
+            // carry no duration and a fabricated zero is still fabricated.
+            if (moment.durationSeconds > 0)
+              Text(
+                moment.durationLabel,
+                style: TextStyle(
+                  color: palette.textTertiary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            _LikeControl(
+              liked: _liked,
+              likeCount: _likeCount,
+              feedService: widget.feedService,
+              onToggle: _likePending ? null : _toggleLike,
+            ),
+            const SizedBox(width: 6),
+            TextButton.icon(
+              onPressed: widget.onComments,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                minimumSize: const Size(0, 44),
+              ),
+              icon: Icon(
+                Icons.mode_comment_outlined,
+                size: 17,
+                color: palette.textSecondary,
+              ),
+              label: Text(
+                moment.commentCount == 0
+                    ? copy.text('Comment', 'Komentarz')
+                    : '${moment.commentCount}',
+                style: TextStyle(
+                  color: palette.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const Spacer(),
+            // Not offered on your own Moment: reporting yourself is not
+            // a real intent, and each such report is a row a moderator
+            // opens before finding nothing to do. Deleting your own
+            // Moment is the action that belongs there instead, and it
+            // already exists elsewhere.
+            if (widget.canReport && !moment.isDeleted)
+              IconButton(
+                key: ValueKey('report-moment-${moment.id}'),
+                constraints: const BoxConstraints.tightFor(
+                  width: 44,
+                  height: 44,
+                ),
+                tooltip: copy.text(
+                  'Report this Voice Moment',
+                  'Zgłoś ten Voice Moment',
+                ),
+                onPressed: _report,
+                icon: Icon(Icons.flag_outlined, color: palette.textSecondary),
+              ),
+            if (playable && moment.isPublished && !moment.isDeleted)
+              IconButton(
+                key: ValueKey('download-moment-${moment.id}'),
+                constraints: const BoxConstraints.tightFor(
+                  width: 44,
+                  height: 44,
+                ),
+                tooltip: _downloaded
+                    ? copy.text(
+                        'Remove offline download',
+                        'Usuń pobrane nagranie',
+                      )
+                    : copy.text(
+                        'Download for offline listening',
+                        'Pobierz do słuchania offline',
+                      ),
+                onPressed: _downloading ? null : _toggleDownload,
+                icon: _downloading
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        _downloaded
+                            ? Icons.download_done_rounded
+                            : Icons.download_for_offline_outlined,
+                        color: _downloaded
+                            ? AppColors.secondary
+                            : palette.textSecondary,
+                      ),
+              ),
+          ],
+        ),
+        if (widget.commentPreview case final preview?) ...[
+          const SizedBox(height: 4),
+          Divider(color: palette.border, height: 1),
+          const SizedBox(height: 10),
+          MomentCommentPreview(
+            comments: preview,
+            totalCommentCount: moment.commentCount,
+            momentAuthor: MentionCandidate(
+              userId: moment.authorId,
+              displayName: moment.authorName,
+            ),
+            friends: widget.mentionFriends,
+            onSeeAll: widget.onComments,
+            onCompose: moment.isDeleted ? null : widget.onComments,
+          ),
+        ],
+      ],
     );
   }
 }
@@ -679,6 +711,11 @@ class _LikeButton extends StatelessWidget {
   }
 }
 
+/// The card's 44 px voice bead (R14): gloss and rim, lit only while this
+/// card plays, a flat `surfaceMuted` disc when there is nothing to play.
+/// The node, its label and the tap stay the `Semantics` + `InkWell` they
+/// always were; the bead is drawn inside and follows the ink well's hover
+/// and keyboard focus.
 class _PlayButton extends StatelessWidget {
   const _PlayButton({
     required this.playing,
@@ -690,29 +727,43 @@ class _PlayButton extends StatelessWidget {
   final bool enabled;
   final VoidCallback onTap;
 
+  static const double size = 44;
+
+  void _toggle() {
+    if (!playing) YoGradientDiscButton.playHaptic();
+    onTap();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
     return Semantics(
       button: enabled,
       label: playing
           ? copy.text('Pause this Moment', 'Wstrzymaj ten Moment')
           : copy.text('Play this Moment', 'Odtwórz ten Moment'),
-      child: Material(
-        color: enabled ? colors.primary : colors.primary.withValues(alpha: .25),
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: enabled ? onTap : null,
-          child: SizedBox(
-            width: 44,
-            height: 44,
-            child: Icon(
-              playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-              color: colors.onPrimary,
-              size: 22,
-            ),
+      child: YoGradientDiscButton(
+        enabled: enabled,
+        disc: (hovered, focused) => YoGradientDisc(
+          size: size,
+          icon: playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          glyphSize: YoVoiceBead.glyphSize(size),
+          nudgePlay: !playing,
+          gloss: true,
+          emphasis: playing ? YoDiscEmphasis.lit : YoDiscEmphasis.rest,
+          status: enabled ? YoDiscStatus.idle : YoDiscStatus.disabled,
+          hovered: hovered,
+          focused: focused,
+        ),
+        builder: (context, states, disc) => Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            statesController: states,
+            customBorder: const CircleBorder(),
+            overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+            splashFactory: NoSplash.splashFactory,
+            onTap: enabled ? _toggle : null,
+            child: disc,
           ),
         ),
       ),

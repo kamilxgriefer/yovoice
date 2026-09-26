@@ -485,7 +485,9 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Tylko na zaproszenie'), findsWidgets);
-      expect(find.text('Tylko na zaproszenie · 8 osób'), findsOneWidget);
+      // Refine-look §8.2: non-breaking spaces keep the count together and
+      // the dot with the word before it.
+      expect(find.text('Tylko na zaproszenie\u00A0· 8\u00A0osób'), findsOneWidget);
       expect(find.byKey(const ValueKey('server-home-board')), findsOneWidget);
       expect(find.text('Rodzinny pulpit'), findsOneWidget);
       expect(

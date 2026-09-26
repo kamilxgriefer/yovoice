@@ -1,18 +1,67 @@
-// Slim redesign phase 4 (YO Moments) frame harness.
+// Slim redesign phase 4 (YO Moments) frame harness, extended for the
+// refine-look batch 5 (voice bead + Głos, spec §11 "Głos / detail").
 //
 // Adapted from `test/moments_visual_review_capture_test.dart` (same fixtures,
-// same production seams) for the Slim frame set: the Moments screen with Głos
-// selected, with Yeels selected, and the Moment detail view, at 390 and 1440,
-// Dark and Pearl, locale pl, 100 % text, populated.
+// same production seams): the Moments screen with Głos selected, with Yeels
+// selected, and the Moment detail view, at 390, 768 and 1440, Dark and
+// Pearl, locale pl, 100 % and 200 % text.
+//
+// States (refine-look §11):
+// * Głos (`moments-voice`): populated (idle; m4 is the uncaptioned card),
+//   playing (m1 at 40 % — the one lit card), paused (m1 paused at 40 %),
+//   failed (m1's grant refused), expiring (m1 inside its last hour — the
+//   amber pill), loading, empty, error.
+// * Detail (`moment-detail`): populated (listening at 40 %, lit), paused
+//   (paused at 40 %), empty (empty thread), error (the gone state).
+// * Yeels (`moments-yeels`): populated (the over-media chips and switch);
+//   white (refine-look batch 6: the same stage over a PURE WHITE frame, the
+//   worst case the §11 "chrome text on a white frame" measurement needs).
+// * Głos `create` (batch 6): the create chooser opened from the "+" (the
+//   R6 disc) or, at 1440, the panel's "Utwórz" — its R2 tiles.
+// * Recorder (`voice-recorder`, batch 6, spec §5 W4): idle (the lifted
+//   bead), requesting (the microphone prompt open), recording (a spoken
+//   phrase of real-shaped levels — the halo swollen by the last samples),
+//   silent (the same take gone quiet for over 3 s — the halo settled, the
+//   silence hint), review (the take stopped: preview, fields, actions).
+//   Immersive in both themes, so Dark and Pearl must match.
+// * Yeel stage (`yeels-stage`, batch 6): the stage itself with a finger held
+//   on the first Reel's timeline at 62 % (`scrub`: the thick track, thumb
+//   and time) and after letting go (`played`: the 2 px hairline keeps the
+//   committed position) — the theme-invariant brand sweep. It is the Yeel
+//   stage the Moments screen embeds, pumped directly with the test engines
+//   (`FakeReelPlayers`) so a position exists at all; at 390 and 768 it
+//   carries the Moments immersive header, as the screen hands it over.
+// * High contrast (`-hc` suffix on the state): Głos playing and detail
+//   populated at 390, both themes, 100 %; the recorder recording at 390.
+// Reduce Motion is on for every frame (the host sets disableAnimations), so
+// each frame is the settled end state: no pour tween, lit light already in.
+// The recorder is the exception: its moment IS motion (the halo follows the
+// voice), so its frames run with motion on and its Reduce Motion frames
+// carry an `-rm` suffix (recording at 390: the fixed halo).
+//
+// Frames render with REAL shadows: flutter_test paints every BoxShadow as a
+// hard, unblurred block by default (`debugDisableShadows`, meant for golden
+// stability), which would misrepresent the bead's contact shadow and glow,
+// the CTA lift and Pearl's block shadows. The flag is off while a frame is
+// rendered and restored inside the test body, before the binding checks its
+// painting invariants. The `-hc` frames use the app's high-contrast theme
+// twins (`AppTheme.*HighContrastTheme`), as lib/app/app.dart hands them over.
+// Asset images (the page scenery) get a short real-time window to decode, so
+// every state shows the same backdrop.
 //
 // The filename deliberately has no `_test` suffix, so the ordinary suite
 // skips it. Run explicitly:
 //
 //   flutter test test/slim_moments_capture.dart --concurrency=1 \
-//     --dart-define=YO_CAPTURE_DIR=<evidence>/slim-p4-frames/after
+//     --dart-define=YO_CAPTURE_DIR=<evidence>/frames/after/moments
 //
-// Frames are named `<screen>_<width>_<dark|pearl>_pl_100_populated.png`
-// (`moments-voice`, `moments-yeels`, `moment-detail`).
+// Narrow a run with `--dart-define=YO_CAPTURE_ONLY=<a>,<b>`: only frames
+// whose name contains one of the comma-separated fragments are rendered
+// (for example `moments-voice_768,_200_playing`).
+//
+// Frames are named `<screen>_<width>_<dark|pearl>_pl_<100|200>_<state>.png`
+// (`moments-voice`, `moments-yeels`, `moment-detail`, `voice-recorder`,
+// `yeels-stage`).
 //
 // Every fixture is controlled, reference-like data: no real account, no real
 // recording, no network, no callable. The Reels media is a flat light panel
@@ -32,6 +81,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:record/record.dart' show Amplitude;
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
@@ -42,20 +92,29 @@ import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
+import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_queue_list.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
+import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_progress_row.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
+import 'reel_stage_test_support.dart';
 import 'voice_moment_test_doubles.dart';
 
 const _outDir = String.fromEnvironment(
   'YO_CAPTURE_DIR',
   defaultValue: 'test/.screenshots/slim-p4',
 );
+
+/// Comma-separated name fragments; empty renders the whole matrix.
+const _only = String.fromEnvironment('YO_CAPTURE_ONLY');
 
 final _capture = GlobalKey();
 
@@ -117,11 +176,18 @@ Widget _host(
   required bool pearl,
   required double textScale,
   required Size size,
+  bool highContrast = false,
+  bool reduceMotion = true,
 }) => RepaintBoundary(
   key: _capture,
   child: MaterialApp(
     debugShowCheckedModeBanner: false,
-    theme: pearl ? AppTheme.lightTheme : AppTheme.darkTheme,
+    theme: switch ((pearl, highContrast)) {
+      (true, true) => AppTheme.lightHighContrastTheme,
+      (false, true) => AppTheme.darkHighContrastTheme,
+      (true, false) => AppTheme.lightTheme,
+      (false, false) => AppTheme.darkTheme,
+    },
     locale: const Locale('pl'),
     supportedLocales: AppLocalizations.supportedLocales,
     localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
@@ -134,7 +200,8 @@ Widget _host(
       data: MediaQueryData(
         size: size,
         textScaler: TextScaler.linear(textScale),
-        disableAnimations: true,
+        disableAnimations: reduceMotion,
+        highContrast: highContrast,
       ),
       child: child!,
     ),
@@ -295,6 +362,45 @@ class _StaticDiscovery implements MomentDiscoveryService {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
+
+/// The first page never arrives: the loading skeleton.
+class _PendingDiscovery implements MomentDiscoveryService {
+  final _never = Completer<MomentDiscoveryFeed>();
+
+  @override
+  Future<MomentDiscoveryFeed> loadDiscoveryFeed({
+    int poolSize = MomentDiscoveryService.defaultPoolSize,
+    int? seed,
+  }) => _never.future;
+
+  @override
+  Stream<Map<String, MomentEngagement>> watchEngagement({
+    int poolSize = MomentDiscoveryService.defaultPoolSize,
+  }) => const Stream<Map<String, MomentEngagement>>.empty();
+
+  @override
+  Future<List<VoiceMoment>> topLikedMoments({int limit = 3}) async =>
+      const <VoiceMoment>[];
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// The Głos feed with m1 inside its last hour (the amber R12 pill): it was
+/// published 23 h 18 min ago with the default 24 h availability.
+List<VoiceMoment> _expiringFeed() => <VoiceMoment>[
+  _moment(
+    'm1',
+    author: 'maja',
+    authorName: 'Maja',
+    caption: 'Zanim obudzi się miasto. Minuta spokoju przed całym dniem.',
+    seconds: 45,
+    likes: 24,
+    comments: 6,
+    age: const Duration(hours: 23, minutes: 18),
+  ),
+  ..._feed.skip(1),
+];
 
 class _ThrowingDiscovery implements MomentDiscoveryService {
   @override
@@ -513,6 +619,15 @@ class _CaptureMoments extends MomentService {
   }) async => Uri.parse('https://storage.googleapis.com/capture/$momentId.m4a');
 }
 
+/// A grant that is refused: the feed's failed-playback state.
+class _RefusingMoments extends _CaptureMoments {
+  @override
+  Future<Uri> resolveMediaUri({
+    required String momentId,
+    String? commentId,
+  }) async => throw StateError('capture: grant refused');
+}
+
 class _CapturePlayer implements audio.AudioPlayer {
   final _positions = StreamController<Duration>.broadcast();
   final _durations = StreamController<Duration>.broadcast();
@@ -689,12 +804,37 @@ Widget _footage(BuildContext context, Uri uri, Object reel) =>
       ),
     );
 
+/// The worst case for white chrome: a pure white frame (batch 6, the §11
+/// "chrome text on a white frame" measurement).
+Widget _whiteFootage(BuildContext context, Uri uri, Object reel) =>
+    const ColoredBox(color: Colors.white);
+
 MockFirebaseAuth _authMe() =>
     MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
 
 // ---------------------------------------------------------------------------
 
-enum _State { populated, empty, error, thread }
+enum _State {
+  populated,
+  empty,
+  error,
+  thread,
+  loading,
+  playing,
+  paused,
+  failed,
+  expiring,
+  // Batch 6.
+  white,
+  create,
+  idle,
+  requesting,
+  recording,
+  silent,
+  review,
+  scrub,
+  played,
+}
 
 typedef _Frame = ({
   String board,
@@ -703,40 +843,94 @@ typedef _Frame = ({
   _State state,
   bool pearl,
   double textScale,
+  bool highContrast,
+  bool reduceMotion,
 });
 
-/// `<screen>_<width>_<dark|pearl>_pl_100_populated`, the Slim frame naming.
+/// Boards whose moment is motion: they render with motion ON, and their
+/// Reduce Motion frames carry an `-rm` suffix. Every other board renders
+/// under Reduce Motion (the settled end state) without a suffix.
+const _motionBoards = <String>{'09'};
+
+/// `<screen>_<width>_<dark|pearl>_pl_<100|200>_<state>[-hc][-rm]`, the Slim
+/// frame naming.
 String _frameName(_Frame frame) {
   final screen = switch (frame.board) {
     '06' => 'moments-voice',
     '07' => 'moment-detail',
+    '09' => 'voice-recorder',
+    '10' => 'yeels-stage',
     _ => 'moments-yeels',
   };
   final theme = frame.pearl ? 'pearl' : 'dark';
   final scale = frame.textScale >= 2 ? '200' : '100';
-  final state = switch (frame.state) {
-    _State.populated => 'populated',
-    _State.empty => 'empty',
-    _State.error => 'error',
-    _State.thread => 'thread',
-  };
-  return '${screen}_${frame.width.toInt()}_${theme}_pl_${scale}_$state';
+  final state = frame.state.name;
+  final hc = frame.highContrast ? '-hc' : '';
+  final rm = _motionBoards.contains(frame.board) && frame.reduceMotion
+      ? '-rm'
+      : '';
+  return '${screen}_${frame.width.toInt()}_${theme}_pl_${scale}_$state$hc$rm';
 }
 
-const _widths = <(double, double)>[(390, 844), (1440, 900)];
+const _widths = <(double, double)>[(390, 844), (768, 1024), (1440, 900)];
+const _scales = <double>[1, 2];
 
-List<_Frame> _matrix(String board) => <_Frame>[
-  for (final pearl in const <bool>[false, true])
-    for (final (width, height) in _widths)
-      (
-        board: board,
-        width: width,
-        height: height,
-        state: _State.populated,
-        pearl: pearl,
-        textScale: 1,
-      ),
+List<_Frame> _matrix(String board, List<_State> states) => <_Frame>[
+  for (final state in states)
+    for (final pearl in const <bool>[false, true])
+      for (final (width, height) in _widths)
+        for (final scale in _scales)
+          (
+            board: board,
+            width: width,
+            height: height,
+            state: state,
+            pearl: pearl,
+            textScale: scale,
+            highContrast: false,
+            reduceMotion: !_motionBoards.contains(board),
+          ),
 ];
+
+/// High contrast: no glow, gloss or tint; the playing card carries a 1.5 px
+/// ink edge instead (refine-look W3); the recorder drops its halo (W4).
+List<_Frame> _highContrast(String board, _State state) => <_Frame>[
+  for (final pearl in const <bool>[false, true])
+    (
+      board: board,
+      width: 390,
+      height: 844,
+      state: state,
+      pearl: pearl,
+      textScale: 1,
+      highContrast: true,
+      reduceMotion: !_motionBoards.contains(board),
+    ),
+];
+
+/// Reduce Motion on a motion board: the recorder's fixed halo (W4).
+List<_Frame> _reduceMotion(String board, _State state) => <_Frame>[
+  for (final pearl in const <bool>[false, true])
+    (
+      board: board,
+      width: 390,
+      height: 844,
+      state: state,
+      pearl: pearl,
+      textScale: 1,
+      highContrast: false,
+      reduceMotion: true,
+    ),
+];
+
+bool _selected(String name) {
+  if (_only.trim().isEmpty) return true;
+  return _only
+      .split(',')
+      .map((fragment) => fragment.trim())
+      .where((fragment) => fragment.isNotEmpty)
+      .any(name.contains);
+}
 
 void main() {
   late PublicIdentityRepository originalIdentity;
@@ -767,6 +961,10 @@ void main() {
 
   Future<void> settle(WidgetTester tester) async {
     await tester.pump();
+    // Real time for asset decodes (the scenery), which fake time never runs.
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 150)),
+    );
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
@@ -780,8 +978,15 @@ void main() {
     final discovery = switch (frame.state) {
       _State.error => _ThrowingDiscovery(),
       _State.empty => _StaticDiscovery(const <VoiceMoment>[]),
+      _State.loading => _PendingDiscovery(),
+      _State.expiring => _StaticDiscovery(_expiringFeed()),
       _ => _StaticDiscovery(_feed),
     };
+    final plays =
+        frame.state == _State.playing ||
+        frame.state == _State.paused ||
+        frame.state == _State.failed;
+    final players = <_CapturePlayer>[];
 
     await tester.pumpWidget(
       _host(
@@ -794,14 +999,89 @@ void main() {
           viewsService: _StaticViews(const {'m2', 'm5'}),
           friendService: _StaticFriends(firestore: firestore, auth: auth),
           followService: FollowService(firestore: firestore, auth: auth),
-          playerFactory: _SilentPlayer.new,
+          // The playback states need the real grant seam and a player that
+          // reports positions; the still states keep the silent one.
+          momentService: !plays
+              ? null
+              : frame.state == _State.failed
+              ? _RefusingMoments()
+              : _CaptureMoments(),
+          playerFactory: plays
+              ? () {
+                  final player = _CapturePlayer();
+                  players.add(player);
+                  return player;
+                }
+              : _SilentPlayer.new,
         ),
         pearl: frame.pearl,
         textScale: frame.textScale,
         size: size,
+        highContrast: frame.highContrast,
       ),
     );
     await settle(tester);
+
+    if (frame.state == _State.create) {
+      // Batch 6: the chooser the "+" disc (or, at 1440, the panel's
+      // "Utwórz") opens — its R2 tiles. A miss is a finding in the frame.
+      final create = find.byKey(const ValueKey('moments-create-cta'));
+      if (create.evaluate().isNotEmpty) {
+        await tester.tap(create.first, warnIfMissed: false);
+        await settle(tester);
+      }
+    }
+
+    if (plays || frame.state == _State.expiring) {
+      // The feed is newest-first, so m1 (2 h old, or 23 h 18 min in the
+      // expiring feed) is not the first card. Scroll its card into view with
+      // a sliver of the card above it, so every width shows the lit card —
+      // or the amber pill — next to an unlit neighbour. This happens BEFORE
+      // the tap: on a phone the Głos header overlays the top of the list, so
+      // a play button scrolled flush to the top would sit under it.
+      final row = find.byKey(const ValueKey('moment-row-m1'));
+      final scrollable = find.descendant(
+        of: find.byKey(const ValueKey('moments-feed-scroll')),
+        matching: find.byType(Scrollable),
+      );
+      if (row.evaluate().isEmpty && scrollable.evaluate().isNotEmpty) {
+        // A lazy list builds only near the viewport: page down until the
+        // card exists.
+        await tester.scrollUntilVisible(
+          row,
+          300,
+          scrollable: scrollable.first,
+          maxScrolls: 20,
+        );
+      }
+      if (row.evaluate().isNotEmpty) {
+        await Scrollable.ensureVisible(
+          tester.element(row.first),
+          alignment: .12,
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+    if (plays) {
+      // m1 is the subject: start it, report 18 of 45 s (40 %), and for the
+      // paused frame stop there. A miss is a finding, not a silent frame.
+      final play = find.byKey(const ValueKey('moment-row-play-m1'));
+      if (play.evaluate().isNotEmpty) {
+        await tester.tap(play);
+        await settle(tester);
+        if (players.isNotEmpty) {
+          // The broadcast report lands on a microtask: settle so the frame
+          // shows it.
+          players.last.emit(const Duration(seconds: 18));
+          await settle(tester);
+        }
+        if (frame.state == _State.paused) {
+          await tester.tap(play);
+          await settle(tester);
+        }
+      }
+    }
   }
 
   Future<void> shoot07(WidgetTester tester, _Frame frame) async {
@@ -849,11 +1129,12 @@ void main() {
         pearl: frame.pearl,
         textScale: frame.textScale,
         size: size,
+        highContrast: frame.highContrast,
       ),
     );
     await settle(tester);
 
-    if (frame.state == _State.populated) {
+    if (frame.state == _State.populated || frame.state == _State.paused) {
       final disc = find.byKey(const ValueKey('moment-detail-play'));
       if (disc.evaluate().isNotEmpty) {
         await tester.ensureVisible(disc);
@@ -865,6 +1146,11 @@ void main() {
           players.last.emit(const Duration(seconds: 18));
         }
         await tester.pump();
+        if (frame.state == _State.paused) {
+          await tester.tap(disc, warnIfMissed: false);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+        }
       }
       final scrollable = find.descendant(
         of: find.byKey(const ValueKey('moment-detail-scroll')),
@@ -884,7 +1170,7 @@ void main() {
       _State.empty => _ReelCell.empty,
       _State.error => _ReelCell.error,
       _State.thread => _ReelCell.thread,
-      _State.populated => _ReelCell.populated,
+      _ => _ReelCell.populated,
     };
 
     await tester.pumpWidget(
@@ -894,13 +1180,16 @@ void main() {
           isRootTab: true,
           initialFormat: YoMomentsFormat.reels,
           reelService: _reelService(state),
-          reelVideoBuilder: _footage,
+          reelVideoBuilder: frame.state == _State.white
+              ? _whiteFootage
+              : _footage,
           followService: _follows(),
           onCreateReel: () async {},
         ),
         pearl: frame.pearl,
         textScale: frame.textScale,
         size: size,
+        highContrast: frame.highContrast,
       ),
     );
     await settle(tester);
@@ -916,25 +1205,255 @@ void main() {
     }
   }
 
+  /// A spoken phrase as the microphone reports it (dBFS, about eight
+  /// samples a second): the recorder normalises each one exactly as it does
+  /// a real microphone's, so the meter and the halo show real-shaped input.
+  const phrase = <double>[
+    -38, -30, -22, -14, -9, -12, -18, -11, -7, -10, //
+    -16, -24, -13, -8, -6, -9, -15, -21, -12, -7,
+  ];
+
+  /// The `requesting` frame's microphone prompt, held open until the frame
+  /// is shot and the screen is gone; answering it then ends the request's
+  /// 20 s timeout with the test.
+  Completer<MicrophoneAccess>? openPrompt;
+
+  Future<void> shoot09(WidgetTester tester, _Frame frame) async {
+    final size = Size(frame.width, frame.height);
+    sizeView(tester, size);
+    final backend = FakeRecorderBackend();
+    final capture = FakeAudioCapture()..result = FakeRecordedAudio();
+    if (frame.state == _State.requesting) {
+      // The microphone prompt stays open: the request never answers.
+      capture.microphoneGate = openPrompt = Completer<MicrophoneAccess>();
+    }
+    final clock = FakeStopwatch();
+
+    await tester.pumpWidget(
+      _host(
+        RecordVoiceMomentScreen(
+          key: UniqueKey(),
+          recorder: VoiceMomentRecorder(
+            backend: backend,
+            capture: capture,
+            clock: clock,
+          ),
+          momentService: StubMomentService(),
+          previewPlayerFactory: () =>
+              FakePreviewAudioPlayer(duration: const Duration(seconds: 23)),
+        ),
+        pearl: frame.pearl,
+        textScale: frame.textScale,
+        size: size,
+        highContrast: frame.highContrast,
+        reduceMotion: frame.reduceMotion,
+      ),
+    );
+    await settle(tester);
+
+    final mic = find.byIcon(Icons.mic_rounded);
+    if (mic.evaluate().isEmpty) return;
+    // Centre the bead: at 200 % it sits below the fold of a phone.
+    await Scrollable.ensureVisible(tester.element(mic), alignment: .5);
+    await tester.pump();
+    if (frame.state == _State.idle) return;
+
+    await tester.tap(mic, warnIfMissed: false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    if (frame.state == _State.requesting) {
+      await tester.pump(const Duration(milliseconds: 300));
+      return;
+    }
+
+    for (var i = 0; i < phrase.length; i++) {
+      clock.value = Duration(milliseconds: 1000 + i * 1100);
+      backend.amplitudes.add(Amplitude(current: phrase[i], max: 0));
+      await tester.pump(const Duration(milliseconds: 125));
+    }
+    var end = const Duration(seconds: 23);
+    if (frame.state == _State.silent) {
+      // The take goes quiet for longer than the 3 s silence warning: the
+      // halo settles on real zero samples and the hint appears.
+      for (var i = 0; i < 14; i++) {
+        clock.value = Duration(milliseconds: 23000 + i * 300);
+        backend.amplitudes.add(Amplitude(current: -160, max: -160));
+        await tester.pump(const Duration(milliseconds: 125));
+      }
+      end = const Duration(seconds: 27);
+    }
+    clock.value = end;
+    // The clock's own tick and the halo's last ease.
+    await tester.pump(const Duration(milliseconds: 250));
+
+    if (frame.state == _State.review) {
+      final stop = find.byIcon(Icons.stop_rounded);
+      if (stop.evaluate().isEmpty) return;
+      await tester.ensureVisible(stop);
+      await tester.pump();
+      await tester.tap(stop, warnIfMissed: false);
+      await settle(tester);
+    }
+  }
+
+  /// The finger that holds the `scrub` frame's timeline until it is shot.
+  TestGesture? held;
+
+  Future<void> shoot10(WidgetTester tester, _Frame frame) async {
+    final size = Size(frame.width, frame.height);
+    sizeView(tester, size);
+    final players = FakeReelPlayers();
+    // The Moments screen embeds the stage immersively below its 1100 px
+    // local-panel breakpoint and hands it the immersive header there — its
+    // canvas variant at the card-stage widths (600-1099), exactly as
+    // `MomentsScreen` does since the batch-6 review.
+    final immersive = frame.width < 1100;
+    final onCanvas = immersive && frame.width >= 600;
+
+    await tester.pumpWidget(
+      _host(
+        Scaffold(
+          key: UniqueKey(),
+          body: SafeArea(
+            child: Builder(
+              builder: (context) => ReelsFeedScreen(
+                embedded: true,
+                immersive: immersive,
+                immersiveHeader: immersive
+                    ? buildImmersiveMomentsHeader(
+                        context,
+                        showBack: false,
+                        selectedFormat: YoMomentsFormat.reels,
+                        onFormatSelected: (_) {},
+                        onCreate: () {},
+                        onCanvas: onCanvas,
+                      )
+                    : null,
+                service: _reelService(_ReelCell.populated),
+                audioPlaybackFactory: FakeReelAudioPlayback.new,
+                videoPlaybackFactory: (uri, reel) => players.of(reel.id),
+                videoBuilder: _footage,
+                onCreate: () async {},
+              ),
+            ),
+          ),
+        ),
+        pearl: frame.pearl,
+        textScale: frame.textScale,
+        size: size,
+        highContrast: frame.highContrast,
+        reduceMotion: frame.reduceMotion,
+      ),
+    );
+    await settle(tester);
+
+    final band = find.descendant(
+      of: find.byType(ReelCard).first,
+      matching: find.byKey(const ValueKey<String>('reel-progress-scrub')),
+    );
+    if (band.evaluate().isEmpty) return;
+    final rect = tester.getRect(band.first);
+    // The finger maps onto the visible bar's own extent, which on the card
+    // stage (768, 1440) is narrower than the band (the times sit beside
+    // it): aim at 20 % and 62 % of the bar itself, inside the band.
+    final bar = find.descendant(
+      of: find.byType(ReelCard).first,
+      matching: find.byType(ReelProgressBar),
+    );
+    final track = bar.evaluate().isEmpty ? rect : tester.getRect(bar.first);
+    final y = rect.bottom - 4;
+    final gesture = await tester.startGesture(
+      Offset(track.left + track.width * .2, y),
+    );
+    await gesture.moveTo(Offset(track.left + track.width * .62, y));
+    await settle(tester);
+    if (frame.state == _State.scrub) {
+      held = gesture;
+      return;
+    }
+    await gesture.up();
+    await settle(tester);
+  }
+
   for (final frame in <_Frame>[
-    ..._matrix('06'),
-    ..._matrix('07'),
-    ..._matrix('08'),
+    ..._matrix('06', const <_State>[
+      _State.populated,
+      _State.playing,
+      _State.paused,
+      _State.failed,
+      _State.expiring,
+      _State.loading,
+      _State.empty,
+      _State.error,
+    ]),
+    ..._highContrast('06', _State.playing),
+    ..._matrix('07', const <_State>[
+      _State.populated,
+      _State.paused,
+      _State.empty,
+      _State.error,
+    ]),
+    ..._highContrast('07', _State.populated),
+    ..._matrix('08', const <_State>[_State.populated]),
+    // Batch 6 — capture and Yeels.
+    ..._matrix('06', const <_State>[_State.create]),
+    ..._matrix('08', const <_State>[_State.white]),
+    ..._matrix('09', const <_State>[
+      _State.idle,
+      _State.requesting,
+      _State.recording,
+      _State.silent,
+      _State.review,
+    ]),
+    ..._highContrast('09', _State.recording),
+    ..._reduceMotion('09', _State.recording),
+    ..._matrix('10', const <_State>[_State.scrub, _State.played]),
   ]) {
     final name = _frameName(frame);
+    if (!_selected(name)) continue;
     testWidgets(name, (tester) async {
-      switch (frame.board) {
-        case '06':
-          await shoot06(tester, frame);
-        case '07':
-          await shoot07(tester, frame);
-        case '08':
-          await shoot08(tester, frame);
+      debugDisableShadows = false;
+      try {
+        switch (frame.board) {
+          case '06':
+            await shoot06(tester, frame);
+          case '07':
+            await shoot07(tester, frame);
+          case '08':
+            await shoot08(tester, frame);
+          case '09':
+            await shoot09(tester, frame);
+          case '10':
+            await shoot10(tester, frame);
+        }
+        await _shoot(tester, name);
+        _recordException(tester, name);
+        final finger = held;
+        held = null;
+        if (finger != null) {
+          await finger.up();
+          await tester.pump();
+          _recordException(tester, name);
+        }
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump(const Duration(milliseconds: 20));
+        final prompt = openPrompt;
+        openPrompt = null;
+        if (prompt != null && !prompt.isCompleted) {
+          // The screen is gone, so the answer lands on nothing; it only
+          // cancels the request's pending timeout.
+          prompt.complete(
+            const MicrophoneAccess.denied(
+              outcome: MicrophoneOutcome.dismissed,
+              message: 'The capture harness closed the prompt.',
+            ),
+          );
+          await tester.pump(const Duration(milliseconds: 20));
+          _recordException(tester, name);
+        }
+      } finally {
+        debugDisableShadows = true;
       }
-      await _shoot(tester, name);
-      _recordException(tester, name);
-      await tester.pumpWidget(const SizedBox());
-      await tester.pump(const Duration(milliseconds: 20));
     });
   }
 }

@@ -1,6 +1,9 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -130,29 +133,61 @@ class _Column extends StatelessWidget {
 
 /// The central microphone orb. It marks the conversation itself, never a
 /// person and never a count.
+///
+/// Refine-look §8.2: the unlit identity glass inside a [ringWidth] ring
+/// swept through the voice-playback accent (`audioProgressGradient`'s
+/// colours) — the conversation's own light, painted inside the orb's box so
+/// the stage geometry is unchanged. It has no glow: the only emitted light
+/// in a connected workspace is a speaking tile's. High contrast: a flat
+/// fill inside a solid `audioAccent` ring.
 class _MicrophoneOrb extends StatelessWidget {
   const _MicrophoneOrb({required this.size, required this.colors});
   final double size;
   final ServerIdentityVisuals colors;
 
+  static const double ringWidth = 2.5;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final sweep = palette.audioProgressGradient.colors;
     return ExcludeSemantics(
       child: Container(
         key: const ValueKey('server-voice-orb'),
         width: size,
         height: size,
+        padding: const EdgeInsets.all(ringWidth),
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: colors.iconSurface,
-          border: Border.all(color: palette.audioAccent, width: 2),
+          color: highContrast ? palette.audioAccent : null,
+          gradient: highContrast
+              ? null
+              : SweepGradient(
+                  // From 12 o'clock, closing on its own first colour so the
+                  // ring has no seam.
+                  transform: const GradientRotation(-math.pi / 2),
+                  colors: [...sweep, sweep.first],
+                ),
+          boxShadow: AppFinish.blockShadows(
+            palette,
+            highContrast: highContrast,
+          ),
         ),
-        child: Center(
-          child: Icon(
-            Icons.mic_rounded,
-            size: size * .38,
-            color: palette.audioAccent,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            // The inner glass is opaque (both unlit stops are composited),
+            // so the sweep shows only as the ring.
+            color: highContrast ? palette.surface : null,
+            gradient: highContrast ? null : colors.unlitGradient,
+          ),
+          child: Center(
+            child: Icon(
+              Icons.mic_rounded,
+              size: size * .38,
+              color: palette.audioAccent,
+            ),
           ),
         ),
       ),
@@ -175,12 +210,21 @@ class ServerParticipantTile extends StatelessWidget {
   final ServerIdentityVisuals colors;
   final double width;
 
+  /// The resting ring, the speaking ring and the gap between the ring's
+  /// widest extent and the avatar. The avatar's box always reserves
+  /// [ringGap] + [speakingRingWidth] around it, so a speaker never moves it.
+  static const double ringWidth = 1.5;
+  static const double speakingRingWidth = 3;
+  static const double ringGap = 3;
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final name = person.isLocal ? copy.serverYou : person.name;
     final radius = (width * .32).clamp(24.0, 40.0);
+    final highContrast = MediaQuery.highContrastOf(context);
+    final speaking = person.isSpeaking;
     return Semantics(
       label: [
         name,
@@ -195,15 +239,44 @@ class ServerParticipantTile extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // The ring is a FOREGROUND over a fixed box. It used to be the
+              // box's own border, and a `Container` pads its child by its
+              // border: the ring grew 1.5 → 3 px INSIDE the padding whenever
+              // someone spoke, so the avatar, the name and every tile beside
+              // it jiggled by 1.5 px (refine-look §8.2). The box is now
+              // always the speaking size and only the paint changes; the
+              // voice's light is a soft `audioAccent` glow while — and only
+              // while — the provider says this person is speaking.
               Container(
-                padding: const EdgeInsets.all(3),
+                key: ValueKey('server-participant-ring-${person.identity}'),
+                padding: const EdgeInsets.all(
+                  ServerParticipantTile.ringGap +
+                      ServerParticipantTile.speakingRingWidth,
+                ),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
+                  // `BlurStyle.outer`: the glow is drawn only OUTSIDE the
+                  // ring's circle. A normal shadow also fills the circle
+                  // under the avatar, and a letter avatar's identity fill
+                  // is translucent, so the whole speaker turned teal in Dark
+                  // (the white initial fell from ~13.7:1 to ~5.2:1).
+                  boxShadow: speaking && !highContrast
+                      ? [
+                          BoxShadow(
+                            color: palette.audioAccent.withValues(alpha: .40),
+                            blurRadius: 12,
+                            blurStyle: BlurStyle.outer,
+                          ),
+                        ]
+                      : const <BoxShadow>[],
+                ),
+                foregroundDecoration: BoxDecoration(
+                  shape: BoxShape.circle,
                   border: Border.all(
-                    color: person.isSpeaking
-                        ? palette.audioAccent
-                        : colors.iconBorder,
-                    width: person.isSpeaking ? 3 : 1.5,
+                    color: speaking ? palette.audioAccent : colors.iconBorder,
+                    width: speaking
+                        ? ServerParticipantTile.speakingRingWidth
+                        : ServerParticipantTile.ringWidth,
                   ),
                 ),
                 child: UserAvatar(

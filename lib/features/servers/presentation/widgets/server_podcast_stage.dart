@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
@@ -455,23 +456,33 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
   ) {
     final stage = _stage;
     final audience = _audience;
-    return Container(
+    // Refine-look R4 / W2 at card scale, the same live surface as every
+    // other template's: lit while the studio is LIVE and this device has
+    // not joined, the voice accent's edge and corner while it is in the
+    // room, a hairline otherwise. It keeps its own coral wash.
+    return ServerSessionCard(
       key: const ValueKey('server-podcast-scene'),
+      cardKey: const ValueKey('server-podcast-scene-card'),
+      state: ServerSessionCardState.of(
+        held: widget.server.isHeld,
+        live: widget.channel.liveness.isLive,
+        here: _here,
+        connected: _inRoom,
+      ),
+      accent: ServerIdentity.of(widget.server.type).accent,
+      colors: colors,
+      igniteKey: serverLiveGeneration(widget.server, widget.channel),
       padding: EdgeInsets.all(widget.compact ? 16 : 24),
-      decoration: BoxDecoration(
-        border: Border.all(color: _inRoom ? colors.iconBorder : palette.border),
-        borderRadius: AppRadius.lg,
-        // The template's own coral wash over the card fill, exactly as the
-        // accepted selector card is drawn — no new colour.
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Color.alphaBlend(colors.cardWash, palette.surface),
-            palette.surface,
-          ],
-          stops: const [0, .75],
-        ),
+      // The template's own coral wash over the card fill, exactly as the
+      // accepted selector card is drawn — no new colour.
+      fill: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Color.alphaBlend(colors.cardWash, palette.surface),
+          palette.surface,
+        ],
+        stops: const [0, .75],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -499,7 +510,7 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
           ],
           if (audience.isNotEmpty) ...[
             const SizedBox(height: 20),
-            Divider(height: 1, color: palette.border),
+            Divider(height: 1, color: serverDivider(context)),
             const SizedBox(height: 16),
             _AudienceStrip(
               people: audience,
@@ -823,8 +834,14 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
                   onPressed: () => widget.onOpenChannel?.call(_episodes!),
                   icon: const Icon(Icons.podcasts_rounded),
                   label: Text(copy.serverRecentEpisodes),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(48, 48),
+                  // Refine-look R7 neutral, not a hollow outline pill.
+                  style: AppFinish.tonalNeutral(
+                    palette,
+                    highContrast: MediaQuery.highContrastOf(context),
+                  ).merge(
+                    OutlinedButton.styleFrom(
+                      minimumSize: const Size(48, 48),
+                    ),
                   ),
                 ),
             ],
@@ -898,11 +915,18 @@ class _ServerPodcastStageState extends State<ServerPodcastStage> {
         : OutlinedButton.icon(
             key: const ValueKey('server-podcast-ask'),
             onPressed: () => open(questions),
-            style: OutlinedButton.styleFrom(
-              minimumSize: fullWidth
-                  ? const Size.fromHeight(52)
-                  : const Size(48, 48),
-              foregroundColor: colors.linkForeground,
+            // Refine-look R7 neutral (glass and a control hairline instead
+            // of a hollow outline pill), keeping the template's link ink.
+            style: AppFinish.tonalNeutral(
+              palette,
+              foreground: colors.linkForeground,
+              highContrast: MediaQuery.highContrastOf(context),
+            ).merge(
+              OutlinedButton.styleFrom(
+                minimumSize: fullWidth
+                    ? const Size.fromHeight(52)
+                    : const Size(48, 48),
+              ),
             ),
             icon: const Icon(Icons.help_outline_rounded, size: 18),
             label: Text(copy.serverAskQuestion),

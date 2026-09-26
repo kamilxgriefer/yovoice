@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
@@ -70,9 +74,15 @@ class ImmersiveChromeOption {
 /// cannot parse them as one row even at an accessibility text size:
 ///
 /// | | level 1 | level 2 |
-/// | shape | large text + short glow line | smaller filter controls |
-/// | selected | violet ink + line + weight | low-opacity wash + weight |
+/// | shape | large text + short glow line | smaller filter chips |
+/// | selected | full ink + brand line + weight | ink-inverted chip + weight |
 /// | type | 17 px, w800 selected | 13 px, w700 selected |
+///
+/// Refine-look §8.4 (Głos and Yeels ship together): the chips are the R8
+/// chips — on the canvas an ink inversion (`textPrimary` fill, `background`
+/// label) over hairline-edged unselected chips; over media a white chip with
+/// the immersive canvas as its ink over black @ .55 plates — and the
+/// switch's line is the logo's gradient.
 ///
 /// No [TextDecoration] appears anywhere in this chrome. Selection is carried
 /// by a separate line, weight AND by the `selected` semantic flag, never by
@@ -172,7 +182,12 @@ class ImmersiveFeedChrome extends StatelessWidget {
                   onCanvas: onCanvas,
                 ),
               ),
-              ?filterTrailing,
+              // Air between the strip's (faded) end and the pinned control,
+              // so a chip scrolling under the edge never touches its circle.
+              if (filterTrailing != null) ...<Widget>[
+                const SizedBox(width: ImmersiveFilterRow.trailingGap),
+                filterTrailing!,
+              ],
             ],
           ),
         ],
@@ -251,7 +266,13 @@ class _FormatRow extends StatelessWidget {
 
 /// Level 1 -- two large, trackless text tabs over media or the page canvas.
 ///
-/// The selected tab uses violet ink, stronger weight and a short glowing line.
+/// The selected tab uses full ink (`textPrimary` on the canvas, white over
+/// media), w800 and a short 30 × 3 line in the logo's gradient
+/// ([AppGradients.primary]) with a soft brand glow; the other tab is quieter
+/// (`textTertiary` w600 on the canvas; over media it keeps FULL white at
+/// w600, because a dimmed white measured ≈ 1.06:1 against a light frame and
+/// read as hollow, outlined letters — over footage the quieter tab is quiet
+/// by weight and by the missing line, never by fading its ink).
 /// The line is a separate shape rather than a text decoration, so it stays
 /// crisp at large text sizes and supplies a non-colour selection cue. There
 /// is deliberately no track, thumb or tile fill: the visual control is only
@@ -277,10 +298,9 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
 
   /// True when the switch sits on the page CANVAS instead of over media.
   ///
-  /// Over media the selected violet and white inactive label use the fixed
-  /// immersive palette because the luminance beneath them is unknown. On the
-  /// canvas the same trackless geometry uses theme-aware text and interaction
-  /// roles for Dark and Pearl.
+  /// Over media both labels are full white with the glyph-local dark
+  /// outline, because the luminance beneath them is unknown. On the canvas the same trackless geometry uses the
+  /// theme's text roles for Dark and Pearl.
   final bool onCanvas;
 
   /// The narrowest a segment may be. Over media 72 keeps the two-item
@@ -427,14 +447,17 @@ class _SwitchSegmentState extends State<_SwitchSegment>
     final selected = widget.selected;
     final onCanvas = widget.onCanvas;
     final palette = onCanvas ? context.appPalette : null;
-    // The fixed immersive violet clears AA against the header scrim even over
-    // bright footage. Canvas tabs use theme-aware interaction and copy roles.
-    // In both cases selection also changes weight and gains a separate line.
-    final selectedForeground =
-        palette?.interactiveForeground ?? AppPalette.dark.interactiveForeground;
+    // Selection is weight AND the separate gradient line (plus ink strength
+    // on the canvas) — never colour alone. Over media both words are full
+    // white and keep the glyph-local outline: an unplated word has nothing
+    // else to hold it on a white frame, and white @ .78 there measured
+    // ≈ 1.06:1 glyph against frame (the refine-look B5 review, A11Y-B5-06).
     final foreground = palette == null
-        ? (selected ? selectedForeground : Colors.white)
-        : (selected ? selectedForeground : palette.textSecondary);
+        ? AppColors.white
+        : (selected ? palette.textPrimary : palette.textTertiary);
+    // The line's glow is the brand light: the palette's on the canvas, the
+    // immersive (Dark) one over media, where both themes are the same.
+    final glow = (palette ?? AppPalette.dark).brandGlow;
     final focusRing = palette == null ? Colors.white : palette.focus;
     final accessibilityLayout =
         MediaQuery.textScalerOf(context).scale(1) >= 1.6;
@@ -512,9 +535,7 @@ class _SwitchSegmentState extends State<_SwitchSegment>
                         width: selected ? 30 : 0,
                         height: 3,
                         decoration: BoxDecoration(
-                          color: selected
-                              ? selectedForeground
-                              : Colors.transparent,
+                          gradient: selected ? AppGradients.primary : null,
                           borderRadius: const BorderRadius.all(
                             Radius.circular(999),
                           ),
@@ -526,12 +547,7 @@ class _SwitchSegmentState extends State<_SwitchSegment>
                                       blurRadius: 0,
                                       spreadRadius: 2,
                                     ),
-                                  BoxShadow(
-                                    color: selectedForeground.withValues(
-                                      alpha: .62,
-                                    ),
-                                    blurRadius: 8,
-                                  ),
+                                  BoxShadow(color: glow, blurRadius: 8),
                                 ]
                               : null,
                         ),
@@ -574,10 +590,24 @@ class _SwitchSegmentState extends State<_SwitchSegment>
 
 /// Level 2 -- the quieter one, by construction.
 ///
-/// No track, no thumb, no container of its own. The selected filter gets a
-/// low-opacity white wash; the unselected ones are plain text. It scrolls
-/// horizontally and never wraps, which is the existing filter behaviour.
-class ImmersiveFilterRow extends StatelessWidget {
+/// No track, no thumb, no container of its own: a row of R8 chips (36 ink
+/// in a 48 target, 14 px side padding, 13 px labels). Over media the
+/// selected chip is white with the immersive canvas as its ink and the
+/// others sit on black @ .55 plates with white words; on the canvas
+/// the selected chip is an ink inversion and the others are hairline-edged.
+/// It scrolls horizontally and never wraps, which is the existing filter
+/// behaviour.
+///
+/// **Finished edges** (refine-look §1 #10, the B5 review): with hairline
+/// chips a hard viewport cut read as a broken pill ("Najbardzie|"). An edge
+/// that still has chips beyond it therefore dissolves over [edgeFade]
+/// (a `ShaderMask` in `dstIn`, the pattern §8.1 uses for the Start chats
+/// rail): the end edge while more chips follow, the start edge once the
+/// strip has scrolled. It is mirrored in RTL and gone at either scroll end,
+/// so a strip that fits is drawn exactly as before. The mask is always in
+/// the tree (only its stops change), so a fade appearing or leaving never
+/// rebuilds the scroller or loses its offset.
+class ImmersiveFilterRow extends StatefulWidget {
   const ImmersiveFilterRow({
     required this.options,
     required this.selectedIndex,
@@ -593,22 +623,106 @@ class ImmersiveFilterRow extends StatelessWidget {
   final ValueChanged<int> onSelected;
   final String? groupLabel;
 
-  /// On the page canvas the selected chip is a low-opacity PRIMARY wash and
-  /// the unselected ones are plain secondary text: no card, fill or outline
-  /// under a chip that is not chosen (Slim redesign). Over media (default)
-  /// the existing white wash and plain text stay unchanged.
+  /// On the page canvas the chips take the theme's roles (R8 ink
+  /// inversion); over media (default) the fixed white / black-plate pair.
   final bool onCanvas;
 
   /// Scroll padding, so a full-bleed row can keep the page gutter as the
   /// distance its first and last chip stop at.
   final EdgeInsetsGeometry padding;
 
+  /// How far a chip cut by a scrolling edge dissolves.
+  static const double edgeFade = 28;
+
+  /// The air a host leaves between this strip and a control pinned beside
+  /// it (the refresh circle), so a chip under the fade never touches it.
+  static const double trailingGap = AppRhythm.tight;
+
+  /// The inner ring that marks keyboard focus on the SELECTED chip.
+  static const Key selectedFocusRingKey = ValueKey<String>(
+    'immersive-chip-selected-focus-ring',
+  );
+
+  @override
+  State<ImmersiveFilterRow> createState() => ImmersiveFilterRowState();
+}
+
+/// Tracks whether chips lie beyond either edge of the strip.
+class ImmersiveFilterRowState extends State<ImmersiveFilterRow> {
+  bool _moreBefore = false;
+  bool _moreAfter = false;
+
+  // The latest reported edges; the painted ones catch up after a frame
+  // when the report arrived mid-layout.
+  bool _reportedBefore = false;
+  bool _reportedAfter = false;
+
+  /// Chips are hidden past the START edge (the strip has scrolled).
+  @visibleForTesting
+  bool get fadesStart => _moreBefore;
+
+  /// Chips are hidden past the END edge.
+  @visibleForTesting
+  bool get fadesEnd => _moreAfter;
+
+  bool _track(ScrollMetrics metrics) {
+    if (metrics.axis != Axis.horizontal || !metrics.hasContentDimensions) {
+      return false;
+    }
+    final before = metrics.extentBefore > .5;
+    final after = metrics.extentAfter > .5;
+    if (before == _reportedBefore && after == _reportedAfter) return false;
+    _reportedBefore = before;
+    _reportedAfter = after;
+    void apply() {
+      if (!mounted) return;
+      if (_moreBefore == _reportedBefore && _moreAfter == _reportedAfter) {
+        return;
+      }
+      setState(() {
+        _moreBefore = _reportedBefore;
+        _moreAfter = _reportedAfter;
+      });
+    }
+
+    // A change reported while the frame is being laid out waits for the
+    // frame to finish; a scroll reported between frames applies at once.
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => apply());
+    } else {
+      apply();
+    }
+    return false;
+  }
+
+  Shader _edgeMask(Rect bounds, TextDirection direction) {
+    final width = bounds.width;
+    final fade = width <= 0
+        ? 0.0
+        : (ImmersiveFilterRow.edgeFade / width).clamp(0.0, .5);
+    return LinearGradient(
+      begin: AlignmentDirectional.centerStart,
+      end: AlignmentDirectional.centerEnd,
+      colors: <Color>[
+        _moreBefore ? Colors.transparent : Colors.black,
+        Colors.black,
+        Colors.black,
+        _moreAfter ? Colors.transparent : Colors.black,
+      ],
+      stops: <double>[0, fade, 1 - fade, 1],
+    ).createShader(bounds, textDirection: direction);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final label = groupLabel;
-    final row = SingleChildScrollView(
+    final label = widget.groupLabel;
+    final options = widget.options;
+    final onCanvas = widget.onCanvas;
+    final direction = Directionality.of(context);
+    final scroller = SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: padding,
+      padding: widget.padding,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
@@ -618,12 +732,25 @@ class ImmersiveFilterRow extends StatelessWidget {
             _FilterInk(
               key: options[index].key,
               option: options[index],
-              selected: index == selectedIndex,
+              selected: index == widget.selectedIndex,
               onCanvas: onCanvas,
-              onTap: () => onSelected(index),
+              onTap: () => widget.onSelected(index),
             ),
           ],
         ],
+      ),
+    );
+    final row = NotificationListener<ScrollMetricsNotification>(
+      onNotification: (notification) =>
+          notification.depth == 0 && _track(notification.metrics),
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notification) =>
+            notification.depth == 0 && _track(notification.metrics),
+        child: ShaderMask(
+          blendMode: BlendMode.dstIn,
+          shaderCallback: (bounds) => _edgeMask(bounds, direction),
+          child: scroller,
+        ),
       ),
     );
     return label == null
@@ -667,6 +794,9 @@ class _FilterInkState extends State<_FilterInk>
     revealIfSelectionGained(oldWidget.selected);
   }
 
+  bool _hovered = false;
+  bool _pressed = false;
+
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
@@ -688,45 +818,70 @@ class _FilterInkState extends State<_FilterInk>
           onFocusChange: (focused) {
             if (_focused != focused) setState(() => _focused = focused);
           },
+          onHover: (hovered) {
+            if (_hovered != hovered) setState(() => _hovered = hovered);
+          },
+          // The chip carries its own hover and press fills.
+          overlayColor: const WidgetStatePropertyAll(Colors.transparent),
           // The ink is 36 high and centred inside a 48 target: the chip reads
           // as quiet without ever shrinking what a finger has to hit.
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
             child: Center(
-              child: AnimatedContainer(
-                duration: AppMotion.resolve(context, AppMotion.quick),
-                constraints: const BoxConstraints(minHeight: 36),
-                padding: const EdgeInsets.symmetric(horizontal: AppRhythm.item),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: selected
-                      ? Colors.white.withValues(alpha: .16)
-                      : Colors.transparent,
-                  borderRadius: const BorderRadius.all(Radius.circular(999)),
-                  border: Border.all(
-                    color: _focused ? Colors.white : Colors.transparent,
-                    width: 2,
+              child: _withSelectedFocusRing(
+                ink: AppFinish.chipOverMediaLabel(selected: true),
+                chip: AnimatedContainer(
+                  duration: AppMotion.resolve(context, AppMotion.quick),
+                  constraints: const BoxConstraints(
+                    minHeight: AppFinish.chipHeight,
                   ),
-                  boxShadow: _focused
-                      ? const <BoxShadow>[
-                          BoxShadow(
-                            color: Color(0xE6000000),
-                            blurRadius: 0,
-                            spreadRadius: 1,
-                          ),
-                        ]
-                      : null,
-                ),
-                child: Text(
-                  widget.option.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    height: 1.2,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    shadows: _immersiveChromeTextShadows,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppFinish.chipPaddingH,
+                  ),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    // R8 over media: a white chip for the choice, a black
+                    // plate (a touch deeper on hover) for the others.
+                    color: selected
+                        ? AppFinish.chipOverMediaFill(selected: true)
+                        : _hovered
+                        ? Color.alphaBlend(
+                            AppFinish.overlayChipColor,
+                            AppFinish.overlayChipColor,
+                          )
+                        : AppFinish.chipOverMediaFill(selected: false),
+                    borderRadius: const BorderRadius.all(Radius.circular(999)),
+                    border: Border.all(
+                      color: _focused ? Colors.white : Colors.transparent,
+                      width: 2,
+                    ),
+                    boxShadow: _focused
+                        ? const <BoxShadow>[
+                            BoxShadow(
+                              color: Color(0xE6000000),
+                              blurRadius: 0,
+                              spreadRadius: 1,
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: Text(
+                    widget.option.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: AppFinish.chipOverMediaLabel(selected: selected),
+                      fontSize: AppFinish.chipFontSize,
+                      height: 1.2,
+                      fontWeight: AppFinish.chipWeight(selected: selected),
+                      // Dark ink on the white chip needs no outline. White
+                      // words on the plate get only the soft overlay shadow:
+                      // the plate itself carries their contrast (4.74:1 even
+                      // over a pure-white frame), and stacking the hard 8-way
+                      // stroke on it read as a meme caption (B5 review, V6).
+                      // The stroke stays on the UNPLATED switch words above.
+                      shadows: selected ? null : overlayTextShadows,
+                    ),
                   ),
                 ),
               ),
@@ -737,13 +892,47 @@ class _FilterInkState extends State<_FilterInk>
     );
   }
 
-  /// The canvas chip: the same 36-in-48 ink and the same semantics, in
-  /// palette roles. Selection is carried by the primary wash AND the
-  /// weight AND the ink, never by colour alone; the unselected chip has no
-  /// background of its own.
+  /// The keyboard-focus cue of a SELECTED chip. The selected fill is the
+  /// same colour as the focus ring drawn on the chip's edge (white over
+  /// media; on the canvas the ring meets an ink-inverted fill at ≈ 2:1), so
+  /// the ring alone would all but vanish on it. A 2 px ring in the chip's
+  /// own ink, inset 2 px inside the edge, marks focus against the fill at
+  /// ≥ 15:1 whatever lies behind the chip (WCAG 2.4.7). Unselected chips
+  /// keep the edge ring alone.
+  Widget _withSelectedFocusRing({required Color ink, required Widget chip}) {
+    return Stack(
+      children: <Widget>[
+        chip,
+        if (widget.selected && _focused)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: DecoratedBox(
+                  key: ImmersiveFilterRow.selectedFocusRingKey,
+                  decoration: BoxDecoration(
+                    borderRadius: const BorderRadius.all(Radius.circular(999)),
+                    border: Border.all(color: ink, width: 2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// The canvas chip (R8): the same 36-in-48 ink and the same semantics, in
+  /// palette roles. Selection is an ink inversion (`textPrimary` fill,
+  /// `background` label, w700) AND the semantic flag, never colour alone;
+  /// an unselected chip is transparent with a 1 px `hairlineControl` edge
+  /// and a `textSecondary` w600 label, `glass` on hover and textPrimary
+  /// @ .10 while pressed. Focus is a 2 px `focus` ring (plus, on the
+  /// selected chip, an inner ring in its own ink). Under high contrast the
+  /// edge returns to `borderStrong`.
   Widget _buildOnCanvas(BuildContext context, bool selected) {
     final palette = context.appPalette;
-    final primary = Theme.of(context).colorScheme.primary;
+    final highContrast = MediaQuery.highContrastOf(context);
     return Semantics(
       button: true,
       selected: selected,
@@ -761,35 +950,54 @@ class _FilterInkState extends State<_FilterInk>
           onFocusChange: (focused) {
             if (_focused != focused) setState(() => _focused = focused);
           },
+          onHover: (hovered) {
+            if (_hovered != hovered) setState(() => _hovered = hovered);
+          },
+          onHighlightChanged: (pressed) {
+            if (_pressed != pressed) setState(() => _pressed = pressed);
+          },
+          // The chip carries its own hover and press fills.
+          overlayColor: const WidgetStatePropertyAll(Colors.transparent),
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
             child: Center(
-              child: AnimatedContainer(
-                duration: AppMotion.resolve(context, AppMotion.quick),
-                constraints: const BoxConstraints(minHeight: 36),
-                padding: const EdgeInsets.symmetric(horizontal: AppRhythm.item),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: selected
-                      ? primary.withValues(alpha: .14)
-                      : Colors.transparent,
-                  borderRadius: const BorderRadius.all(Radius.circular(999)),
-                  border: Border.all(
-                    color: _focused ? palette.focus : Colors.transparent,
-                    width: _focused ? 2 : 1,
+              child: _withSelectedFocusRing(
+                ink: AppFinish.chipLabel(palette, selected: true),
+                chip: AnimatedContainer(
+                  duration: AppMotion.resolve(context, AppMotion.quick),
+                  constraints: const BoxConstraints(
+                    minHeight: AppFinish.chipHeight,
                   ),
-                ),
-                child: Text(
-                  widget.option.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: selected
-                        ? palette.textPrimary
-                        : palette.textSecondary,
-                    fontSize: 13,
-                    height: 1.2,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppFinish.chipPaddingH,
+                  ),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: AppFinish.chipFill(
+                      palette,
+                      selected: selected,
+                      hovered: _hovered,
+                      pressed: _pressed,
+                      highContrast: highContrast,
+                    ),
+                    borderRadius: const BorderRadius.all(Radius.circular(999)),
+                    border: AppFinish.chipBorder(
+                      palette,
+                      selected: selected,
+                      focused: _focused,
+                      highContrast: highContrast,
+                    ),
+                  ),
+                  child: Text(
+                    widget.option.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: AppFinish.chipLabel(palette, selected: selected),
+                      fontSize: AppFinish.chipFontSize,
+                      height: 1.2,
+                      fontWeight: AppFinish.chipWeight(selected: selected),
+                    ),
                   ),
                 ),
               ),

@@ -550,14 +550,39 @@ abstract final class AppFinish {
       selected ? FontWeight.w700 : FontWeight.w600;
 
   /// Chips over media (Yeels): white selected fill with the immersive canvas
-  /// as ink; a translucent black plate with white ink otherwise.
+  /// as ink; a black plate with white ink otherwise.
   static Color chipOverMediaFill({required bool selected}) =>
       selected ? AppColors.white : overlayChipColor;
 
   static Color chipOverMediaLabel({required bool selected}) =>
       selected ? AppImmersiveColors.background : AppColors.white;
 
-  static const Color overlayChipColor = Color(0x59000000);
+  /// The unselected over-media chip plate: black @ .55, the same depth §8.4
+  /// gives the Yeels action plates. The plate alone carries its white 13 px
+  /// label — 4.74:1 even over a pure-white frame — so the label needs no
+  /// hard outline on top of it. R8's first value, black @ .35, left 2.44:1
+  /// there and had to stack the 8-way stroke on the plate (the B5 review's
+  /// §8.4 white-frame measurement; a spec amendment to R8).
+  static const Color overlayChipColor = Color(0x8C000000);
+
+  /// The ICON plate of a control laid on media — `OverlayPlate`: the Yeels
+  /// rail, back, refresh, report and the sound toggle's icon form
+  /// (refine-look §8.4). It IS [overlayChipColor]: one black @ .55 token for
+  /// every plate over media, so chips and icon plates can never drift apart.
+  /// A white glyph on it holds 4.74:1 even over a pure-white frame, above
+  /// the 3:1 WCAG 1.4.11 asks of a glyph. The deeper word plate (black @ .72,
+  /// `overlayPlateColor`) stays for plates that carry words, and is what
+  /// high contrast falls back to.
+  static const Color overlayControlPlate = overlayChipColor;
+
+  /// [overlayControlPlate] under a pointer: black @ .70.
+  static const Color overlayControlPlateHover = Color(0xB3000000);
+
+  /// The 1 px edge of an icon plate that carries no ring: white @ .14, so
+  /// the lighter plate keeps a finished edge on a dark frame, where black on
+  /// black would otherwise dissolve into the footage. Decorative: high
+  /// contrast drops it.
+  static const Color overlayControlPlateHairline = Color(0x24FFFFFF);
 
   // -------------------------------------------------------------------------
   // R16 — glyph box

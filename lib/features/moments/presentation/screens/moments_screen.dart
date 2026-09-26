@@ -9,6 +9,9 @@ import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_sizing.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/creator/presentation/screens/find_creators_screen.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -26,6 +29,10 @@ import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
 import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/cards/yo_card.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -359,6 +366,14 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                 textScale: MediaQuery.textScalerOf(context).scale(1),
               );
               final immersiveReels = !layout.showsLocalPanel;
+              // At the card-stage widths (600-1099) the Yeels stage is a card
+              // on the page canvas and its header row is laid on that canvas,
+              // above the card — not on footage. The header then takes its
+              // canvas variant (palette ink, the theme's own "+" lift), as
+              // the feed's own chips and refresh do there (the batch-6 review
+              // of refine-look §8.4). Only the phone stage lays the chrome on
+              // a frame.
+              final reelsOnCanvas = immersiveReels && !layout.isNarrow;
               final showBack =
                   !widget.isRootTab && Navigator.of(context).canPop();
               return Column(
@@ -380,6 +395,11 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                         onCreate: () => unawaited(_showCreateChooser()),
                       ),
                     ),
+                  // The header's resting "+" keeps a clear 8 px above the
+                  // stage's docked panels, so its contact shadow is never
+                  // cut by the conversation panel's top edge.
+                  if (_format == YoMomentsFormat.reels && !immersiveReels)
+                    const SizedBox(height: AppRhythm.tight),
                   Expanded(
                     key: const ValueKey('yo-moments-retained-content'),
                     child: IndexedStack(
@@ -434,6 +454,7 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                               selectedFormat: _format,
                               onFormatSelected: _selectFormat,
                               onCreate: () => unawaited(_showCreateChooser()),
+                              onCanvas: reelsOnCanvas,
                             ),
                             service: widget.reelService,
                             videoBuilder: widget.reelVideoBuilder,
@@ -482,7 +503,6 @@ ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
 }) {
   final copy = AppLocalizations.of(context);
   final palette = context.appPalette;
-  final colors = Theme.of(context).colorScheme;
   final backLabel = MaterialLocalizations.of(context).backButtonTooltip;
   return ImmersiveFeedHeaderSlots(
     formatSwitch: ImmersiveSegmentedSwitch(
@@ -516,25 +536,77 @@ ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
             hoverPlateColor: onCanvas ? palette.surfaceMuted : null,
           )
         : null,
-    // On the canvas the create plate is the screen's one violet accent (a
-    // primary disc, like the wide header's); over media it stays the black
-    // plate every other media control is made of. Same control, key and
-    // spoken label in both.
-    trailing: OverlayPlateButton(
+    // Refine-look R6 / §8.4: on the canvas AND over media the create action
+    // is the 48 px gradient disc with the brand lift — the screen's one CTA
+    // lift, the same disc the wide header draws. Same control, key and
+    // spoken label as the plate it replaces.
+    trailing: _MomentsCreateDisc(
       key: const ValueKey('moments-create-cta'),
-      icon: Icons.add_rounded,
       semanticLabel: copy.text('CREATE', 'UTWÓRZ'),
       onTap: onCreate,
-      glyphColor: onCanvas ? colors.onPrimary : Colors.white,
-      plateColor: onCanvas ? colors.primary : null,
-      hoverPlateColor: onCanvas
-          ? Color.alphaBlend(
-              colors.onPrimary.withValues(alpha: .12),
-              colors.primary,
-            )
-          : null,
+      onMedia: !onCanvas,
     ),
   );
+}
+
+/// The immersive header's "+" (refine-look R6): a 48 px [YoGradientDisc] in
+/// the logo's gradient with the brand lift and a white `+`, pressed to .94 on
+/// touch ([YoPressFeedback.disc]) and lifted a touch more under a pointer.
+///
+/// The tap target is the same [AccessibleTapRegion] the media plate used —
+/// one button node with the spoken label, a 48 px circle, and the two-tone
+/// focus ring that stays visible on any frame.
+///
+/// Over media the disc takes the immersive (Dark) palette, so its lift is
+/// the same over footage in both themes: Yeels are immersive in Dark AND
+/// Pearl, and Pearl's paper lift would all but vanish on a video.
+class _MomentsCreateDisc extends StatefulWidget {
+  const _MomentsCreateDisc({
+    required this.semanticLabel,
+    required this.onTap,
+    required this.onMedia,
+    super.key,
+  });
+
+  final String semanticLabel;
+  final VoidCallback onTap;
+  final bool onMedia;
+
+  @override
+  State<_MomentsCreateDisc> createState() => _MomentsCreateDiscState();
+}
+
+class _MomentsCreateDiscState extends State<_MomentsCreateDisc> {
+  /// The immersive theme the disc reads its palette from over media.
+  static final ThemeData _immersive = AppTheme.darkTheme;
+
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget disc = YoGradientDisc(
+      size: AppSizing.standardControlHeight,
+      icon: Icons.add_rounded,
+      emphasis: YoDiscEmphasis.lift,
+      hovered: _hovered,
+    );
+    if (widget.onMedia) disc = Theme(data: _immersive, child: disc);
+    return YoPressFeedback(
+      scale: YoPressFeedback.disc,
+      child: AccessibleTapRegion(
+        onTap: widget.onTap,
+        semanticLabel: widget.semanticLabel,
+        tooltip: widget.semanticLabel,
+        circular: true,
+        minimumSize: const Size.square(AppSizing.standardControlHeight),
+        focusContrastColor: Colors.black,
+        onHover: (value) {
+          if (_hovered != value) setState(() => _hovered = value);
+        },
+        child: disc,
+      ),
+    );
+  }
 }
 
 enum _YoMomentsCreateChoice { voice, reel }
@@ -567,11 +639,18 @@ class _YoMomentsCreateSheet extends StatelessWidget {
                   surfaceColor: palette.surfaceRaised,
                   closeColor: palette.textSecondary,
                 ),
+                // One ink and one construction in both icon circles (the
+                // batch-6 review): an outline frame with a filled play, in
+                // `interactiveForeground`. The Moments mark fills its whole
+                // box where a Material glyph keeps 2 px of air, so it is
+                // drawn at 20 to sit at the same optical size as the 24 px
+                // glyph beside it.
                 _YoMomentsCreateTile(
                   key: const ValueKey<String>('create-voice-moment-choice'),
-                  icon: const YoMomentsIcon(
-                    state: YoMomentsIconState.active,
-                    size: 28,
+                  icon: YoMomentsIcon(
+                    state: YoMomentsIconState.inactive,
+                    size: 20,
+                    color: palette.interactiveForeground,
                   ),
                   label: voiceLabel,
                   subtitle: copy.text(
@@ -585,8 +664,8 @@ class _YoMomentsCreateSheet extends StatelessWidget {
                 _YoMomentsCreateTile(
                   key: const ValueKey<String>('create-reel-choice'),
                   icon: Icon(
-                    Icons.smart_display_rounded,
-                    size: 28,
+                    Icons.smart_display_outlined,
+                    size: 24,
                     color: palette.interactiveForeground,
                   ),
                   label: reelLabel,
@@ -620,9 +699,13 @@ class _YoMomentsCreateTile extends StatelessWidget {
   final String subtitle;
   final VoidCallback onTap;
 
+  /// The tile's icon circle (refine-look §8.4).
+  static const double iconCircle = 44;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final primary = Theme.of(context).colorScheme.primary;
     return Semantics(
       container: true,
       button: true,
@@ -630,53 +713,53 @@ class _YoMomentsCreateTile extends StatelessWidget {
       hint: subtitle,
       onTap: onTap,
       excludeSemantics: true,
-      child: Material(
-        color: palette.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-          side: BorderSide(color: palette.border),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 72),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
+      // Refine-look R2 at the block radius: the top-lit block fill, a
+      // hairline edge, Pearl's contact shadow pair, the .985 touch press and
+      // no ripple off Android. The Semantics above stays the tile's one
+      // node, so the card announces nothing of its own.
+      child: YoCard(
+        onTap: onTap,
+        semanticButton: false,
+        minHeight: 72,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: <Widget>[
+            Container(
+              width: iconCircle,
+              height: iconCircle,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: primary.withValues(alpha: .14),
+              ),
+              child: icon,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: <Widget>[
-                  SizedBox.square(dimension: 36, child: Center(child: icon)),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: <Widget>[
-                        Text(
-                          label,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                color: palette.textPrimary,
-                                fontWeight: FontWeight.w800,
-                              ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          subtitle,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: palette.textSecondary),
-                        ),
-                      ],
+                  Text(
+                    label,
+                    // Calm type (refine-look §2.6): w700, not w800.
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: palette.textPrimary,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    color: palette.textSecondary,
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: palette.textSecondary,
+                    ),
                   ),
                 ],
               ),
             ),
-          ),
+            Icon(Icons.chevron_right_rounded, color: palette.textSecondary),
+          ],
         ),
       ),
     );

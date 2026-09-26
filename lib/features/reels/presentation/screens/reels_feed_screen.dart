@@ -7,6 +7,7 @@ import 'package:flutter/scheduler.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
@@ -1182,6 +1183,14 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                     child: compactChrome
                         ? ImmersiveFeedChrome(
                             gutter: metrics.toolbarGutter,
+                            // Only the phone stage lays this chrome on a
+                            // frame. At the card-stage widths it sits on the
+                            // page canvas above the card, so it takes the
+                            // canvas chips and plates, as the host's header
+                            // does there (refine-look §8.4, the batch-6
+                            // review): over-media plates on the Pearl paper
+                            // read as washed-out grey discs.
+                            onCanvas: !immersive,
                             formatSwitch: widget.immersiveHeader?.formatSwitch,
                             leading: widget.immersiveHeader?.leading,
                             // The host header owns CREATE when there is one;
@@ -1215,12 +1224,22 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                             onFilterSelected: (index) =>
                                 _selectAudience(index == 1),
                             filterGroupLabel: filtersLabel,
-                            filterTrailing: OverlayPlateButton(
-                              key: const ValueKey('reels-refresh'),
-                              icon: Icons.refresh_rounded,
-                              semanticLabel: refreshLabel,
-                              onTap: _loading ? null : () => _load(reset: true),
-                            ),
+                            filterTrailing: immersive
+                                ? OverlayPlateButton(
+                                    key: const ValueKey('reels-refresh'),
+                                    icon: Icons.refresh_rounded,
+                                    semanticLabel: refreshLabel,
+                                    onTap: _loading
+                                        ? null
+                                        : () => _load(reset: true),
+                                  )
+                                : _CanvasRefreshButton(
+                                    key: const ValueKey('reels-refresh'),
+                                    tooltip: refreshLabel,
+                                    onPressed: _loading
+                                        ? null
+                                        : () => _load(reset: true),
+                                  ),
                           )
                         : DecoratedBox(
                             decoration: const BoxDecoration(),
@@ -2096,6 +2115,63 @@ class _NextReelThumb extends StatelessWidget {
         filterQuality: FilterQuality.medium,
         errorBuilder: (_, _, _) => placeholder,
       ),
+    );
+  }
+}
+
+/// The feed's refresh where its chrome sits on the page canvas (the
+/// card-stage widths): the same 40 px hairline circle, `textSecondary`
+/// 20 px glyph and 48 px target the Głos refresh draws in the same slot
+/// (refine-look §8.4), so switching Głos ↔ Yeels never swaps that control's
+/// finish. Hover lays the glass wash and the hover hairline; focus the 2 px
+/// `focus` ring; high contrast brings `borderStrong` back.
+class _CanvasRefreshButton extends StatelessWidget {
+  const _CanvasRefreshButton({
+    required this.tooltip,
+    required this.onPressed,
+    super.key,
+  });
+
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
+    return IconButton(
+      onPressed: onPressed,
+      tooltip: tooltip,
+      style: ButtonStyle(
+        fixedSize: const WidgetStatePropertyAll(Size.square(40)),
+        minimumSize: const WidgetStatePropertyAll(Size.square(40)),
+        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+        tapTargetSize: MaterialTapTargetSize.padded,
+        shape: const WidgetStatePropertyAll(CircleBorder()),
+        foregroundColor: WidgetStatePropertyAll(palette.textSecondary),
+        backgroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.hovered)
+              ? AppFinish.glass(palette, hovered: true)
+              : Colors.transparent,
+        ),
+        overlayColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.pressed)
+              ? palette.textPrimary.withValues(alpha: .10)
+              : Colors.transparent,
+        ),
+        side: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.focused)) {
+            return BorderSide(color: palette.focus, width: 2);
+          }
+          if (highContrast) return BorderSide(color: palette.borderStrong);
+          return BorderSide(
+            color: states.contains(WidgetState.hovered)
+                ? palette.hairlineHover
+                : palette.hairlineControl,
+          );
+        }),
+      ),
+      icon: const Icon(Icons.refresh_rounded, size: 20),
     );
   }
 }

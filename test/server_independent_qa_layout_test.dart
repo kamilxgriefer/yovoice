@@ -4,6 +4,7 @@ import 'package:yovoice/features/servers/data/models/server_channel.dart';
 import 'package:yovoice/features/servers/data/models/server_session.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
+import 'package:yovoice/features/servers/presentation/widgets/server_channel_scene.dart';
 
 import 'server_independent_qa_support.dart';
 import 'server_test_support.dart';
@@ -98,17 +99,40 @@ void main() {
               );
               final reason = 'live: $type $width ×$scale';
               expect(tester.takeException(), isNull, reason: reason);
+              // Every live screen keeps the word itself: at least one
+              // `server-live-pill`, whatever else says LIVE.
               expect(
                 qaLivePill,
                 findsWidgets,
                 reason: '$reason — a live generation showed no marker',
               );
+              // Refine-look §8.2: above a scene that carries its own pill the
+              // channel header says LIVE with a lamp (a live dot before the
+              // start time, `server-live-lamp`) instead of a second pill.
+              final lamps = find.byKey(const ValueKey('server-live-lamp'));
               final markers = qaLivePill.evaluate().length;
               for (var index = 0; index < markers; index++) {
                 expect(
                   tester.getSize(qaLivePill.at(index)).height,
                   greaterThan(8),
                   reason: '$reason — a live marker was crushed to a bar',
+                );
+              }
+              // The dot grows with the text (8 → 12 px, its gap 6 → 9 px).
+              final dot = ServerLiveLamp.dotFor(TextScaler.linear(scale));
+              final gap = ServerLiveLamp.gap * dot / ServerLiveLamp.dotSize;
+              for (var index = 0; index < lamps.evaluate().length; index++) {
+                final lamp = tester.getSize(lamps.at(index));
+                // The whole dot plus the words beside it.
+                expect(
+                  lamp.height,
+                  greaterThanOrEqualTo(dot),
+                  reason: '$reason — the live lamp was crushed',
+                );
+                expect(
+                  lamp.width,
+                  greaterThan(dot + gap),
+                  reason: '$reason — the live lamp lost its start time',
                 );
               }
               expect(

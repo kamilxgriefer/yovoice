@@ -51,4 +51,52 @@ void main() {
       expect(style.systemNavigationBarContrastEnforced, isFalse);
     },
   );
+
+  // Review B3-5: the island pinned the non-high-contrast dark theme, so a
+  // theme-inheriting Material chip or card inside it kept its decorative
+  // hairline under iOS Increase Contrast.
+  for (final highContrast in const [false, true]) {
+    testWidgets('follows high contrast (highContrast: $highContrast)', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          highContrastTheme: AppTheme.lightHighContrastTheme,
+          builder: (context, app) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(highContrast: highContrast),
+            child: app!,
+          ),
+          home: Scaffold(
+            body: YoImmersiveDarkSurface(
+              child: Builder(
+                key: const ValueKey('immersive-dark-child'),
+                builder: (context) => const SizedBox.expand(),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final theme = Theme.of(
+        tester.element(find.byKey(const ValueKey('immersive-dark-child'))),
+      );
+      final expected = highContrast
+          ? AppTheme.darkHighContrastTheme
+          : AppTheme.darkTheme;
+      expect(theme.brightness, Brightness.dark);
+      expect(theme.chipTheme.side, expected.chipTheme.side);
+      expect(
+        (theme.cardTheme.shape! as RoundedRectangleBorder).side,
+        (expected.cardTheme.shape! as RoundedRectangleBorder).side,
+      );
+      expect(
+        theme.chipTheme.side!.color,
+        highContrast
+            ? AppPalette.dark.borderStrong
+            : AppPalette.dark.hairlineControl,
+      );
+      expect(theme.extension<AppPalette>(), AppPalette.dark);
+    });
+  }
 }

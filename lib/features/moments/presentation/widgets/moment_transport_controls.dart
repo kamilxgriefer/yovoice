@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc_button.dart';
+import 'package:yovoice/shared/widgets/voice/yo_voice_finish.dart';
 
 /// How far the two skip controls move the playhead.
 ///
@@ -83,6 +87,22 @@ class MomentTransportControls extends StatelessWidget {
     final elapsedLabel = _clock(positionMs ~/ 1000);
     final totalLabel = _clock(total.inSeconds);
     final seekable = canSeek && !busy && maxMs > 0;
+    // One playback position, one colour system: the slider's played run is
+    // the waveform's own variant-B sweep (spread over the whole track and
+    // revealed up to the thumb, exactly as the bars above it are), its
+    // unplayed run the bars' `waveUnplayed`, and the thumb the sweep's
+    // colour at the playhead (the B5 review, V2). The listening ring keeps
+    // `audioAccent` — the separate "listening" accent spec §9 leaves as is.
+    final played = AppGradients.voicePlayed(
+      Theme.of(context).colorScheme,
+      palette,
+    );
+    final fraction = maxMs > 0 ? positionMs / maxMs : 0.0;
+    final playhead = Color.lerp(
+      played.colors.first,
+      played.colors.last,
+      fraction,
+    )!;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -136,13 +156,14 @@ class MomentTransportControls extends StatelessWidget {
             child: SliderTheme(
               data: SliderTheme.of(context).copyWith(
                 trackHeight: 4,
-                activeTrackColor: palette.audioAccent,
-                inactiveTrackColor: palette.borderStrong,
+                activeTrackColor: playhead,
+                inactiveTrackColor: palette.waveUnplayed,
                 disabledActiveTrackColor: palette.borderStrong,
                 disabledInactiveTrackColor: palette.border,
-                thumbColor: palette.audioAccent,
+                thumbColor: playhead,
                 disabledThumbColor: palette.borderStrong,
-                overlayColor: palette.audioAccent.withValues(alpha: .12),
+                overlayColor: playhead.withValues(alpha: .12),
+                trackShape: PlayedSweepTrackShape(played),
                 thumbShape: const RoundSliderThumbShape(
                   enabledThumbRadius: 8,
                   disabledThumbRadius: 6,
@@ -242,14 +263,30 @@ class _SkipButton extends StatelessWidget {
   final String label;
   final VoidCallback onPressed;
 
+  /// The glyph's box and its printed step at the ordinary text size.
+  static const double glyphSize = 32;
+  static const double stepFontSize = 9;
+
+  /// How far the whole glyph follows the reader's text size.
+  static const double maxGlyphScale = 1.5;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final tint = enabled
         ? palette.textPrimary
         : palette.textPrimary.withValues(alpha: .38);
+    // The step is part of the glyph, not running text: a "15" scaled on its
+    // own spilled over the arrow at 200 %. So the arrow AND the step scale
+    // together with the reader's text size, clamped at 1.5× (48 px arrow,
+    // 13.5 px step), and never apart. The tooltip and the semantics label
+    // carry the words at the reader's full size.
+    final scale = MediaQuery.textScalerOf(
+      context,
+    ).clamp(minScaleFactor: 1, maxScaleFactor: maxGlyphScale).scale(1);
+    final box = glyphSize * scale;
     final glyph = SizedBox.square(
-      dimension: 32,
+      dimension: box,
       child: Stack(
         alignment: Alignment.center,
         children: [
@@ -258,14 +295,15 @@ class _SkipButton extends StatelessWidget {
             transform: forward
                 ? Matrix4.diagonal3Values(-1, 1, 1)
                 : Matrix4.identity(),
-            child: Icon(Icons.replay_rounded, size: 32, color: tint),
+            child: Icon(Icons.replay_rounded, size: box, color: tint),
           ),
           Text(
             '15',
             textAlign: TextAlign.center,
+            textScaler: TextScaler.noScaling,
             style: AppTypography.labelSmall.copyWith(
               color: tint,
-              fontSize: 9,
+              fontSize: stepFontSize * scale,
               height: 1,
             ),
           ),
@@ -285,7 +323,86 @@ class _SkipButton extends StatelessWidget {
   }
 }
 
-/// The one dominant control of the expanded player.
+/// The slider track of the expanded player: the active run painted with
+/// the waveform's played sweep ([AppGradients.voicePlayed]) spread over the
+/// WHOLE track and revealed up to the thumb, so the colour at any x matches
+/// the bars above it and nothing shimmers as the thumb moves. The inactive
+/// run, the geometry and the disabled colours are the Material rounded
+/// track's; a disabled slider paints its solid disabled colours.
+@visibleForTesting
+class PlayedSweepTrackShape extends RoundedRectSliderTrackShape {
+  const PlayedSweepTrackShape(this.sweep);
+
+  final Gradient sweep;
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset offset, {
+    required RenderBox parentBox,
+    required SliderThemeData sliderTheme,
+    required Animation<double> enableAnimation,
+    required TextDirection textDirection,
+    required Offset thumbCenter,
+    Offset? secondaryOffset,
+    bool isDiscrete = false,
+    bool isEnabled = false,
+    double additionalActiveTrackHeight = 2,
+  }) {
+    // The base shape paints the inactive run and, while the slider is
+    // disabled, the solid disabled active run; the enabled active run is
+    // the sweep below, never a solid colour under it.
+    super.paint(
+      context,
+      offset,
+      parentBox: parentBox,
+      sliderTheme: sliderTheme.copyWith(activeTrackColor: Colors.transparent),
+      enableAnimation: enableAnimation,
+      textDirection: textDirection,
+      thumbCenter: thumbCenter,
+      secondaryOffset: secondaryOffset,
+      isDiscrete: isDiscrete,
+      isEnabled: isEnabled,
+      additionalActiveTrackHeight: additionalActiveTrackHeight,
+    );
+    if (!isEnabled || enableAnimation.value <= 0) return;
+    final track = getPreferredRect(
+      parentBox: parentBox,
+      offset: offset,
+      sliderTheme: sliderTheme,
+      isEnabled: isEnabled,
+      isDiscrete: isDiscrete,
+    );
+    final ltr = textDirection == TextDirection.ltr;
+    final half = track.height / 2;
+    final left = ltr ? track.left : thumbCenter.dx - half;
+    final right = ltr ? thumbCenter.dx + half : track.right;
+    if (right - left <= track.height) return;
+    final active = Rect.fromLTRB(
+      left,
+      track.top - additionalActiveTrackHeight / 2,
+      right,
+      track.bottom + additionalActiveTrackHeight / 2,
+    );
+    final paint = Paint()
+      ..shader = sweep.createShader(track, textDirection: textDirection)
+      ..color = Colors.black.withValues(alpha: enableAnimation.value);
+    context.canvas.drawRRect(
+      RRect.fromRectAndRadius(active, Radius.circular(active.height / 2)),
+      paint,
+    );
+  }
+}
+
+/// The one dominant control of the expanded player: the voice bead
+/// (refine-look R14, W3) at 64 / 72 — the logo's glass with its gloss and
+/// rim, lit with the brand glow only while this recording plays, a white
+/// spinner while the grant resolves.
+///
+/// The semantics wrapper is unchanged: one toggled button node that carries
+/// the tap action, over an excluded `InkWell` that keeps the key the tests
+/// and the harness address. The bead is drawn inside that `InkWell` and
+/// follows its hover and keyboard focus.
 class _PlayDisc extends StatelessWidget {
   const _PlayDisc({
     required this.buttonKey,
@@ -301,10 +418,13 @@ class _PlayDisc extends StatelessWidget {
   final bool busy;
   final VoidCallback onPressed;
 
+  void _toggle() {
+    if (!isPlaying) YoGradientDiscButton.playHaptic();
+    onPressed();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
     final label = busy
         ? copy.contextualText('yoMoments.loading', 'Loading', 'Wczytywanie')
@@ -320,35 +440,35 @@ class _PlayDisc extends StatelessWidget {
       // never reach the accessibility bridge. Forward it here: without this
       // the node is a button that TalkBack, Switch Access and
       // `accessibilityActivate` cannot operate.
-      onTap: busy ? null : onPressed,
+      onTap: busy ? null : _toggle,
       excludeSemantics: true,
-      child: Material(
-        color: palette.surfaceMuted,
-        shape: CircleBorder(side: BorderSide(color: colors.primary, width: 2)),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          key: buttonKey,
-          customBorder: const CircleBorder(),
-          onTap: busy ? null : onPressed,
-          child: SizedBox.square(
-            dimension: diameter,
-            child: Center(
-              child: busy
-                  ? SizedBox.square(
-                      dimension: 24,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        color: palette.audioAccent,
-                      ),
-                    )
-                  : Icon(
-                      isPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                      size: 32,
-                      color: palette.textPrimary,
-                    ),
-            ),
+      child: YoGradientDiscButton(
+        disc: (hovered, focused) => YoGradientDisc(
+          size: diameter,
+          icon: isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          glyphSize: YoVoiceBead.glyphSize(diameter),
+          nudgePlay: !isPlaying,
+          gloss: true,
+          // Lit only once the recording actually sounds, never while its
+          // grant is still resolving.
+          emphasis: isPlaying && !busy
+              ? YoDiscEmphasis.lit
+              : YoDiscEmphasis.rest,
+          status: busy ? YoDiscStatus.busy : YoDiscStatus.idle,
+          hovered: hovered,
+          focused: focused,
+        ),
+        builder: (context, states, disc) => Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            key: buttonKey,
+            statesController: states,
+            customBorder: const CircleBorder(),
+            // The bead carries hover, press and focus itself.
+            overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+            splashFactory: NoSplash.splashFactory,
+            onTap: busy ? null : _toggle,
+            child: disc,
           ),
         ),
       ),

@@ -1,12 +1,16 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_server_rail_item.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
@@ -695,7 +699,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         Container(
           padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
           decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(color: palette.border)),
+            border: Border(bottom: BorderSide(color: serverDivider(context))),
           ),
           child: Row(
             children: [
@@ -957,6 +961,10 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                       !communityStage &&
                       !podcastStage &&
                       (localTabs.isEmpty || _localTab == 0),
+                  // The header is on screen only above the scene itself.
+                  channelHeaderLamp:
+                      selected != null &&
+                      _sceneCarriesLivePill(server, selected, meeting: meeting),
                   intro: widget.justCreated
                       ? _InviteIntroduction(
                           server: server,
@@ -1003,7 +1011,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                     onOpen: _openServer,
                     questionsWaiting: _attention.isWaiting,
                   ),
-                  VerticalDivider(width: 1, color: context.appPalette.border),
+                  VerticalDivider(width: 1, color: serverDivider(context)),
                   SizedBox(
                     width: panelWidth,
                     child: ServerPanel(
@@ -1030,7 +1038,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                       questionsWaitingChannelId: waitingQuestions,
                     ),
                   ),
-                  VerticalDivider(width: 1, color: context.appPalette.border),
+                  VerticalDivider(width: 1, color: serverDivider(context)),
                   Expanded(
                     // The panel and the context column are fixed; the centre
                     // used to take everything else, so at 1920 the family
@@ -1048,6 +1056,15 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                             : ServerChannelHeader(
                                 server: server,
                                 channel: selected,
+                                // The lamp only while the scene with its
+                                // own pill is the view under the header.
+                                liveLamp:
+                                    _sceneCarriesLivePill(
+                                      server,
+                                      selected,
+                                      meeting: meeting,
+                                    ) &&
+                                    (wideTabs.isEmpty || _localTab == 0),
                               ),
                         intro: widget.justCreated
                             ? _InviteIntroduction(
@@ -1082,7 +1099,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                     ),
                   ),
                   if (showContextPanel) ...[
-                    VerticalDivider(width: 1, color: context.appPalette.border),
+                    VerticalDivider(width: 1, color: serverDivider(context)),
                     SizedBox(
                       width: contextWidth,
                       child: _contextThread(
@@ -1139,6 +1156,22 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
   /// `Tablica` selects one) and one of them is the shell's own conversation.
   /// A held root keeps the ordinary held scene, exactly as every other
   /// template does.
+  /// Whether the scene this workspace mounts for [channel] renders its own
+  /// `server-live-pill` while the channel is live: the session scene (every
+  /// voice, stage and meeting channel that is not board 04's meeting), the
+  /// community stage's picture and the wide podcast studio. Board 04's
+  /// meeting surface draws none, and a host-supplied scene
+  /// ([ServerWorkspaceScreen.channelBuilder]) is not ours to vouch for, so
+  /// there the channel header keeps the pill itself.
+  bool _sceneCarriesLivePill(
+    Server server,
+    ServerChannel channel, {
+    required bool meeting,
+  }) =>
+      channel.kind.isMedia &&
+      !meeting &&
+      (widget.channelBuilder == null || server.isHeld);
+
   static bool _isCompanyMeeting(Server server, ServerChannel channel) =>
       server.type == ServerType.company &&
       channel.kind == ServerChannelKind.meeting &&
@@ -1407,7 +1440,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
           Container(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
             decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: palette.border)),
+              border: Border(bottom: BorderSide(color: serverDivider(context))),
             ),
             child: Row(
               children: [
@@ -1715,6 +1748,13 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
       useSafeArea: true,
       showDragHandle: true,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
+      // Refine-look §8.2: the sheet IS the panel's surface, so the handle
+      // band no longer sits on a second tone above the channel list (the
+      // "two-tone band"); a hairline marks the sheet's top edge — and only
+      // its top edge: a `RoundedRectangleBorder.side` would also stroke both
+      // physical screen edges down the whole sheet.
+      backgroundColor: context.appPalette.surfaceMuted,
+      shape: ServerSheetTopEdge(edge: BorderSide(color: serverDivider(context))),
       builder: (sheetContext) => FractionallySizedBox(
         heightFactor: .88,
         child: _WithServerRail(
@@ -1724,6 +1764,10 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                   builder: (context, _) => _ServerRail(
                     servers: railServers,
                     selectedId: server.id,
+                    // The rail column shares the sheet's own surface: a
+                    // canvas-coloured column under the handle band would
+                    // bring back a notch of the seam this sheet removes.
+                    onSheet: true,
                     onOpen: (target) =>
                         Navigator.of(sheetContext).pop(_ServerRequest(target)),
                     questionsWaiting: _attention.isWaiting,
@@ -1835,17 +1879,24 @@ class _ServerRail extends StatelessWidget {
     required this.selectedId,
     required this.onOpen,
     this.questionsWaiting,
+    this.onSheet = false,
   });
   final List<Server> servers;
   final String selectedId;
   final ValueChanged<Server> onOpen;
   final bool Function(String serverId)? questionsWaiting;
 
+  /// Inside the phone `Kanały` sheet the column paints nothing of its own
+  /// and shows the sheet's surface; the tablet and desktop workspace rail
+  /// keeps the canvas it has always had.
+  final bool onSheet;
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     return Material(
-      color: context.appPalette.background,
+      type: onSheet ? MaterialType.transparency : MaterialType.canvas,
+      color: onSheet ? null : context.appPalette.background,
       child: SizedBox(
         width: ServerWorkspaceScreen.serverRailWidth,
         child: ListView.separated(
@@ -1894,11 +1945,55 @@ class _WithServerRail extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         rail,
-        VerticalDivider(width: 1, color: context.appPalette.border),
+        VerticalDivider(width: 1, color: serverDivider(context)),
         Expanded(child: child),
       ],
     );
   }
+}
+
+/// The phone `Kanały` sheet's outline (refine-look §8.2 / R16): the sheet's
+/// 28 px top corners, and a 1 px [edge] along the sheet's TOP only — across
+/// the top and round both corners, ending where each corner meets the side
+/// of the screen.
+///
+/// The sheet is a `RoundedRectangleBorder` for everything else (its clip,
+/// its hit area, its `side` stays none): only the paint is narrowed. A
+/// `RoundedRectangleBorder.side` would also run down both physical screen
+/// edges, where it reads as a stray 1 px line (and a two-toned one beside
+/// the server rail).
+class ServerSheetTopEdge extends RoundedRectangleBorder {
+  const ServerSheetTopEdge({required this.edge})
+    : super(borderRadius: const BorderRadius.vertical(top: Radius.circular(radius)));
+
+  /// The sheet's top corner radius (`AppRadius.xl`).
+  static const double radius = 28;
+
+  /// The top hairline.
+  final BorderSide edge;
+
+  @override
+  void paint(Canvas canvas, Rect rect, {TextDirection? textDirection}) {
+    if (edge.style == BorderStyle.none || edge.width <= 0) return;
+    // Stroked on the centre of its own width inside the sheet, so the whole
+    // pixel lands on the sheet and none of it outside the clip.
+    final inset = edge.width / 2;
+    final corner = math.min(radius, rect.shortestSide / 2);
+    final arc = Radius.circular(corner - inset);
+    final path = Path()
+      ..moveTo(rect.left + inset, rect.top + corner)
+      ..arcToPoint(Offset(rect.left + corner, rect.top + inset), radius: arc)
+      ..lineTo(rect.right - corner, rect.top + inset)
+      ..arcToPoint(Offset(rect.right - inset, rect.top + corner), radius: arc);
+    canvas.drawPath(path, edge.toPaint());
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is ServerSheetTopEdge && other.edge == edge;
+
+  @override
+  int get hashCode => Object.hash(ServerSheetTopEdge, edge);
 }
 
 class _JoinRequest {
@@ -1928,9 +2023,16 @@ class _Centre extends StatelessWidget {
             fadeKey: const ValueKey('server-centre-header-fade'),
             child: Column(
               children: [
+                // The scene's blocks sit 24 px in from the column at these
+                // widths; the introduction above them keeps the same edge.
                 if (intro != null)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.lg,
+                      AppSpacing.md,
+                      AppSpacing.lg,
+                      0,
+                    ),
                     child: intro,
                   ),
                 ?header,
@@ -1958,6 +2060,7 @@ class _PhoneSurface extends StatelessWidget {
     required this.showChannelsButton,
     required this.showChannelHeader,
     required this.centre,
+    this.channelHeaderLamp = false,
     this.onBack,
     this.tabs,
     this.intro,
@@ -1976,6 +2079,10 @@ class _PhoneSurface extends StatelessWidget {
   final VoidCallback onChannels;
   final bool showChannelsButton;
   final bool showChannelHeader;
+
+  /// The scene under the channel header carries its own live pill, so the
+  /// header may say LIVE with the lamp ([ServerChannelHeader.liveLamp]).
+  final bool channelHeaderLamp;
   final Widget centre;
   final Widget? tabs;
   final Widget? intro;
@@ -1986,10 +2093,26 @@ class _PhoneSurface extends StatelessWidget {
   static double _phoneSceneFloor(double height) =>
       height.isFinite ? (height * .28).clamp(0.0, height) : 0;
 
+  /// The icon-only `Kanały` (large text) edge: `borderStrong` at rest and
+  /// under a pointer (3.36:1 on Pearl's canvas, 4.0:1 on Dark's), the 2 px
+  /// `focus` ring when focused, the quiet `border` when disabled.
+  static WidgetStateProperty<BorderSide?> _iconOnlyChannelsSide(
+    AppPalette palette,
+  ) => WidgetStateProperty.resolveWith((states) {
+    if (states.contains(WidgetState.focused)) {
+      return BorderSide(color: palette.focus, width: 2);
+    }
+    if (states.contains(WidgetState.disabled)) {
+      return BorderSide(color: palette.border);
+    }
+    return BorderSide(color: palette.borderStrong);
+  });
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
     final largeText = MediaQuery.textScalerOf(context).scale(16) > 24;
     final channel = selected;
     // Board 03 states the family's real boundary on the phone header, beside
@@ -2026,7 +2149,7 @@ class _PhoneSurface extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
                     decoration: BoxDecoration(
-                      border: Border(bottom: BorderSide(color: palette.border)),
+                      border: Border(bottom: BorderSide(color: serverDivider(context))),
                     ),
                     child: Row(
                       children: [
@@ -2106,14 +2229,38 @@ class _PhoneSurface extends StatelessWidget {
                         ),
                         if (showChannelsButton) ...[
                           const SizedBox(width: 8),
+                          // Refine-look R7 neutral: glass, a control
+                          // hairline and the interactive ink, keeping each
+                          // widget type and the surface's own key.
                           if (largeText)
                             IconButton.outlined(
                               key: const ValueKey('server-open-channels'),
                               onPressed: onChannels,
                               tooltip: copy.serverChannels,
-                              style: IconButton.styleFrom(
-                                minimumSize: const Size(48, 48),
-                              ),
+                              style:
+                                  AppFinish.tonalNeutral(
+                                        palette,
+                                        // The icon-only control keeps the
+                                        // icon buttons' own shape.
+                                        shape: const RoundedRectangleBorder(
+                                          borderRadius: AppRadius.md,
+                                        ),
+                                        highContrast: highContrast,
+                                      )
+                                      .merge(
+                                        IconButton.styleFrom(
+                                          minimumSize: const Size(48, 48),
+                                        ),
+                                      )
+                                      .copyWith(
+                                        // At large text the label is gone
+                                        // and a lone "#" is all that says
+                                        // "button": the container keeps a
+                                        // visible 3:1 boundary
+                                        // (`borderStrong`) instead of the
+                                        // labelled pill's hairline.
+                                        side: _iconOnlyChannelsSide(palette),
+                                      ),
                               icon: ServerWaitingDot.on(
                                 waiting: channelsWaiting,
                                 semanticLabel: copy.serverQuestionsWaitingLabel,
@@ -2127,10 +2274,15 @@ class _PhoneSurface extends StatelessWidget {
                             OutlinedButton.icon(
                               key: const ValueKey('server-open-channels'),
                               onPressed: onChannels,
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: const Size(48, 48),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
+                              style: AppFinish.tonalNeutral(
+                                palette,
+                                highContrast: highContrast,
+                              ).merge(
+                                OutlinedButton.styleFrom(
+                                  minimumSize: const Size(48, 48),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                  ),
                                 ),
                               ),
                               icon: ServerWaitingDot.on(
@@ -2158,6 +2310,7 @@ class _PhoneSurface extends StatelessWidget {
                       server: server,
                       channel: channel,
                       compact: true,
+                      liveLamp: channelHeaderLamp,
                     ),
                 ],
               ),
@@ -2198,14 +2351,12 @@ class _PublicServerAdmission extends StatelessWidget {
         padding: const EdgeInsets.all(24),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
+          // Refine-look §8.2: an R2 block at the sheet radius, edged in the
+          // template's own ink at .30.
           child: Container(
             key: const ValueKey('server-public-admission'),
             padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: palette.surface,
-              borderRadius: AppRadius.xl,
-              border: Border.all(color: colors.iconBorder),
-            ),
+            decoration: _identityBlock(context, colors, AppRadius.xl),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -2215,7 +2366,7 @@ class _PublicServerAdmission extends StatelessWidget {
                   size: 64,
                   bordered: false,
                   textStyle: AppTypography.headlineSmall.copyWith(
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -2268,21 +2419,23 @@ class _PublicServerAdmission extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 18),
-                FilledButton.icon(
-                  key: const ValueKey('server-public-join'),
-                  onPressed: joining ? null : onJoin,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: colors.cta,
-                    foregroundColor: colors.onCta,
-                    minimumSize: const Size.fromHeight(48),
-                  ).copyWith(side: serverFocusRing(colors.onCta)),
-                  icon: joining
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.login_rounded),
-                  label: Text(
+                // The admission's one action: the server join in the
+                // template's identity gradient (R5, identity variant). While
+                // the join runs it stays the same lit action with a spinner
+                // (`busy`): focusable, announced as loading, deaf to a
+                // second press.
+                YoGradientFilledButton(
+                  buttonKey: const ValueKey('server-public-join'),
+                  onPressed: onJoin,
+                  busy: joining,
+                  gradient: colors.ctaGradient,
+                  fill: colors.cta,
+                  foreground: colors.onCta,
+                  liftColor: colors.cta,
+                  minimumSize: const Size.fromHeight(48),
+                  padding: serverIconActionPadding(context),
+                  icon: const Icon(Icons.login_rounded),
+                  child: Text(
                     joining
                         ? copy.serverPublicJoining
                         : copy.serverPublicJoinAction,
@@ -2319,11 +2472,10 @@ class _MeetingPeoplePanel extends StatelessWidget {
       final people = session.participants;
       if (people.isEmpty) return const SizedBox.shrink();
       final copy = AppLocalizations.of(context);
-      final palette = context.appPalette;
       return Container(
         constraints: const BoxConstraints(maxHeight: maxHeight),
         decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: palette.border)),
+          border: Border(bottom: BorderSide(color: serverDivider(context))),
         ),
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
@@ -2337,6 +2489,29 @@ class _MeetingPeoplePanel extends StatelessWidget {
         ),
       );
     },
+  );
+}
+
+/// The R2 block with the template's ink at .30 as its 1 px edge — the public
+/// admission and the invite introduction, the two cards that speak for the
+/// server itself (refine-look §8.2). No tint and no glow: the block's
+/// top-lit fill and Pearl's shadow pair. High contrast: flat `surface` and
+/// `borderStrong`.
+BoxDecoration _identityBlock(
+  BuildContext context,
+  ServerIdentityVisuals colors,
+  BorderRadius radius,
+) {
+  final palette = context.appPalette;
+  final highContrast = MediaQuery.highContrastOf(context);
+  return AppFinish.block(
+    palette,
+    radius: radius,
+    highContrast: highContrast,
+  ).copyWith(
+    border: Border.all(
+      color: highContrast ? palette.borderStrong : colors.identityEdge,
+    ),
   );
 }
 
@@ -2361,11 +2536,7 @@ class _InviteIntroduction extends StatelessWidget {
     return Container(
       key: const ValueKey('server-invite-introduction'),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: AppRadius.lg,
-        border: Border.all(color: colors.iconBorder),
-      ),
+      decoration: _identityBlock(context, colors, AppRadius.block),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

@@ -1,10 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_server_rail_item.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
@@ -20,6 +25,7 @@ import '../../data/services/server_question_attention.dart';
 import '../../data/services/server_service.dart';
 import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
+import '../theme/server_identity.dart';
 import '../widgets/server_delete_flow.dart';
 import '../widgets/server_waiting_dot.dart';
 import 'create_server_screen.dart';
@@ -433,15 +439,39 @@ class _ServersScreenState extends State<ServersScreen> {
               constraints.maxWidth,
             );
             final contentWidth = constraints.maxWidth - padding.horizontal;
-            // Slim: a compact list, not a stack of bordered cards. From the
-            // list measure up the rows flow into two columns so a desktop
-            // slot is never one phone-width row stretched across 1 200 px.
+            // From the list measure up the rows flow into two columns so a
+            // desktop slot is never one phone-width row stretched across
+            // 1 200 px. Refine-look §8.2: the rows are blocks now, so the
+            // gaps are the block rhythm — 16 between the columns, 12
+            // between the rows.
             final columns = contentWidth >= ResponsiveContentWidth.form.maxWidth
                 ? 2
                 : 1;
-            const columnGap = AppRhythm.section;
+            const columnGap = AppRhythm.title;
+            const rowGap = AppRhythm.item;
             final rowWidth =
                 (contentWidth - columnGap * (columns - 1)) / columns;
+            // The desktop shell's rail draws its own lifted "Stwórz serwer"
+            // beside this slot from the shell's desktop width up, so there
+            // this identical action keeps the gradient and gives up the
+            // lift: one lift per screen, exactly as Start does on a desktop.
+            // (A window that is wide but too short for the rail falls back
+            // to the dock; the action then stays a flat gradient, which is
+            // still the one violet action on the screen.)
+            final railOwnsLift =
+                widget.isRootTab &&
+                MediaQuery.sizeOf(context).width >=
+                    ServerWorkspaceScreen.desktopBreakpoint;
+            Widget tile(Server server) => _ServerTile(
+              server: server,
+              width: rowWidth,
+              questionsWaiting: _attention.isWaiting(server.id),
+              onTap: () => _open(server),
+              onActions: _repository is ServerManagementRepository
+                  ? () => _showActions(server)
+                  : null,
+              busy: _busyIds.contains(server.id),
+            );
             return ListView(
               padding: padding.add(
                 const EdgeInsets.only(
@@ -463,18 +493,27 @@ class _ServersScreenState extends State<ServersScreen> {
                       Text(
                         copy.serversTitle,
                         style: AppTypography.headlineMedium.copyWith(
-                          fontWeight: FontWeight.w800,
+                          // Calm type (refine-look principle 6): w700 cap.
+                          fontWeight: FontWeight.w700,
                           color: context.appPalette.textPrimary,
                         ),
                       ),
-                      FilledButton.icon(
-                        key: const ValueKey('servers-create'),
+                      // The directory's one CTA (R5): the brand action
+                      // gradient, and the rail's lift unless the rail is
+                      // on screen with its own.
+                      YoGradientFilledButton(
+                        buttonKey: const ValueKey('servers-create'),
                         onPressed: _create,
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size(48, 48),
-                        ),
+                        emphasis: railOwnsLift
+                            ? YoActionEmphasis.flat
+                            : YoActionEmphasis.lifted,
+                        minimumSize: const Size(48, 48),
+                        // FilledButton.icon's own asymmetric padding,
+                        // scaled with the text, so the pill keeps today's
+                        // width at every text size.
+                        padding: serverIconActionPadding(context),
                         icon: const Icon(Icons.add_rounded),
-                        label: Text(
+                        child: Text(
                           copy.text('Create server', 'Stwórz serwer'),
                         ),
                       ),
@@ -485,6 +524,12 @@ class _ServersScreenState extends State<ServersScreen> {
                 if (servers.isEmpty)
                   YoEmptyState(
                     icon: Icons.hub_outlined,
+                    // A first-run invitation carries the real logo (§4):
+                    // a bloom in Dark, a contact shadow in Pearl.
+                    leading: const YoBrandMark(
+                      key: ValueKey('servers-empty-logo'),
+                      size: 72,
+                    ),
                     title: copy.text(
                       'Your place for shared conversations',
                       'Twoje miejsce na wspólne rozmowy',
@@ -494,24 +539,46 @@ class _ServersScreenState extends State<ServersScreen> {
                       'Stwórz serwer lub przyjmij zaproszenie, aby zacząć.',
                     ),
                   )
-                else
-                  Wrap(
-                    spacing: columnGap,
-                    runSpacing: AppRhythm.hairline,
+                else if (columns == 1)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      for (final server in servers)
-                        SizedBox(
-                          width: rowWidth,
-                          child: _ServerTile(
-                            server: server,
-                            questionsWaiting: _attention.isWaiting(server.id),
-                            onTap: () => _open(server),
-                            onActions: _repository is ServerManagementRepository
-                                ? () => _showActions(server)
-                                : null,
-                            busy: _busyIds.contains(server.id),
+                      for (var i = 0; i < servers.length; i++) ...[
+                        if (i > 0) const SizedBox(height: rowGap),
+                        tile(servers[i]),
+                      ],
+                    ],
+                  )
+                else
+                  // Two columns render as row-major pairs, each pair
+                  // stretched to its taller block, so a one-line row never
+                  // sits beside a three-line one at a different height and
+                  // focus still runs left → right, top → bottom.
+                  Column(
+                    key: const ValueKey('servers-directory-pairs'),
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < servers.length; i += 2) ...[
+                        if (i > 0) const SizedBox(height: rowGap),
+                        IntrinsicHeight(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              SizedBox(
+                                width: rowWidth,
+                                child: tile(servers[i]),
+                              ),
+                              const SizedBox(width: columnGap),
+                              SizedBox(
+                                width: rowWidth,
+                                child: i + 1 < servers.length
+                                    ? tile(servers[i + 1])
+                                    : null,
+                              ),
+                            ],
                           ),
                         ),
+                      ],
                     ],
                   ),
               ],
@@ -523,20 +590,36 @@ class _ServersScreenState extends State<ServersScreen> {
   );
 }
 
-/// One server in the directory: a flat 64–68 px row (squircle, name, what
-/// kind of server it is and how many members it has, the description on one
-/// more line) with a hover / press wash instead of a bordered card.
 enum _DirectoryAction { delete, leave }
 
-class _ServerTile extends StatelessWidget {
+/// One server in the directory (refine-look §8.2): squircle, name, what kind
+/// of server it is and how many members it has, the description on one more
+/// line — on the neutral R2 block. The identity lives only in the squircle,
+/// never as a tint on the block.
+///
+/// The block is painted with `Ink` inside the row's own keyed `Material`
+/// (`server-directory-<id>`), so the press wash lands on it; Pearl's shadow
+/// pair sits on an outer box the clip cannot cut. Hover moves the hairline
+/// to `hairlineHover` (and sinks Pearl's drop); keyboard focus paints a 2 px
+/// `focus` ring as a FOREGROUND over the edge, so neither moves a pixel of
+/// layout. A touch press settles the block by .985. No ink ripple except
+/// InkSparkle on Android. At least [minHeight] tall. High contrast: flat
+/// `surface` and a `borderStrong` edge.
+class _ServerTile extends StatefulWidget {
   const _ServerTile({
     required this.server,
+    required this.width,
     required this.onTap,
     this.onActions,
     this.busy = false,
     this.questionsWaiting = false,
   });
   final Server server;
+
+  /// The row's own width. The stacked 200 % layout is decided from it
+  /// rather than from a `LayoutBuilder`, because a two-column pair measures
+  /// its rows' intrinsic height and a `LayoutBuilder` has none.
+  final double width;
   final VoidCallback onTap;
 
   /// Listener questions on this podcast server wait for this host: the
@@ -553,19 +636,61 @@ class _ServerTile extends StatelessWidget {
   final bool busy;
 
   static const double _tileSize = 44;
+  static const double minHeight = 72;
+
+  @override
+  State<_ServerTile> createState() => _ServerTileState();
+}
+
+class _ServerTileState extends State<_ServerTile> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  /// The row's own focus node. Its ring follows PRIMARY focus: the row's
+  /// `⋯` button is a descendant of the row's InkWell, and `onFocusChange`
+  /// (which reports `hasFocus`, descendants included) lit the row's ring
+  /// beside the button's own, so a focused `⋯` showed two rings at once.
+  final FocusNode _focusNode = FocusNode(debugLabel: 'server-directory-row');
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_focusChanged);
+  }
+
+  void _focusChanged() {
+    final focused = _focusNode.hasPrimaryFocus;
+    if (mounted && focused != _focused) setState(() => _focused = focused);
+  }
+
+  @override
+  void dispose() {
+    _focusNode
+      ..removeListener(_focusChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  static InteractiveInkFeatureFactory get _splashFactory =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+      ? InkSparkle.splashFactory
+      : NoSplash.splashFactory;
 
   @override
   Widget build(BuildContext context) {
+    final server = widget.server;
+    final busy = widget.busy;
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
     final avatar = ServerWaitingDot.on(
-      waiting: questionsWaiting,
+      waiting: widget.questionsWaiting,
       semanticLabel: copy.serverQuestionsWaitingLabel,
       dotKey: ValueKey('server-directory-questions-waiting-${server.id}'),
       child: YoServerTile(
         initial: server.initial,
         type: server.type,
-        size: _tileSize,
+        size: _ServerTile._tileSize,
       ),
     );
     final details = Column(
@@ -581,8 +706,12 @@ class _ServerTile extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          '${copy.serverTypeTitle(server.type)} · '
-          '${copy.serverMembers(server.memberCount)}',
+          // "184 osoby" stays on one line, and the dot stays with the word
+          // before it, so a wrap never opens a line with "· 184 osoby".
+          serverMetaLine(
+            copy.serverTypeTitle(server.type),
+            copy.serverMembers(server.memberCount),
+          ),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: AppTypography.bodySmall.copyWith(color: palette.textSecondary),
@@ -605,7 +734,7 @@ class _ServerTile extends StatelessWidget {
       size: 22,
       color: palette.textTertiary,
     );
-    final actions = onActions;
+    final actions = widget.onActions;
     final Widget arrow = actions == null
         ? chevron
         : Row(
@@ -635,49 +764,114 @@ class _ServerTile extends StatelessWidget {
               chevron,
             ],
           );
-    return Material(
-      key: ValueKey('server-directory-${server.id}'),
-      color: Colors.transparent,
-      shape: const RoundedRectangleBorder(borderRadius: AppRadius.md),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: busy ? null : onTap,
-        onLongPress: busy ? null : actions,
-        onSecondaryTap: busy ? null : actions,
-        child: Padding(
-          padding: EdgeInsetsDirectional.only(
-            start: AppRhythm.item,
-            end: actions == null ? AppRhythm.item : AppRhythm.hairline,
-            top: AppRhythm.item,
-            bottom: AppRhythm.item,
+    final padding = EdgeInsetsDirectional.only(
+      start: AppRhythm.item,
+      end: actions == null ? AppRhythm.item : AppRhythm.hairline,
+      top: AppRhythm.item,
+      bottom: AppRhythm.item,
+    );
+    final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
+    // The same rule the row always used, measured on the row's own width
+    // (less its padding and its 1 px edge on each side).
+    final innerWidth = widget.width - padding.horizontal - 2;
+    final stacked =
+        textScale > 1.3 &&
+        innerWidth - (actions == null ? 96 : 144) < 160 * textScale;
+    final content = stacked
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(children: [avatar, const Spacer(), arrow]),
+              const SizedBox(height: AppRhythm.item),
+              // The block's end padding is trimmed to the hairline for the
+              // actions' own touch padding; stacked, the text runs under
+              // them, so it takes back the difference and keeps the same
+              // 12 px inset from the block's edge at both ends.
+              Padding(
+                padding: EdgeInsetsDirectional.only(
+                  end: AppRhythm.item - padding.end,
+                ),
+                child: details,
+              ),
+            ],
+          )
+        : Row(
+            children: [
+              avatar,
+              const SizedBox(width: AppRhythm.item),
+              Expanded(child: details),
+              const SizedBox(width: AppRhythm.tight),
+              arrow,
+            ],
+          );
+
+    final hovered = _hovered && !busy;
+    final fill = AppFinish.blockFill(
+      palette,
+      hovered: hovered,
+      highContrast: highContrast,
+    );
+    final pressedWash = AppFinish.blockPressedWash(palette);
+    final duration = AppMotion.resolve(context, AppMotion.quick);
+    return YoPressFeedback(
+      enabled: !busy,
+      child: AnimatedContainer(
+        // Pearl's shadow pair, outside the row's clip.
+        duration: duration,
+        curve: AppMotion.standardCurve,
+        decoration: BoxDecoration(
+          borderRadius: AppRadius.block,
+          boxShadow: fill.boxShadow,
+        ),
+        // The focus ring is ALWAYS present and only changes colour, so focus
+        // arriving never inserts a layer above the InkWell (which would
+        // rebuild it and drop the focus it just received).
+        foregroundDecoration: BoxDecoration(
+          borderRadius: AppRadius.block,
+          border: Border.all(
+            color: _focused ? palette.focus : Colors.transparent,
+            width: 2,
           ),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
-              final stacked =
-                  textScale > 1.3 &&
-                  constraints.maxWidth - (actions == null ? 96 : 144) <
-                      160 * textScale;
-              if (stacked) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(children: [avatar, const Spacer(), arrow]),
-                    const SizedBox(height: AppRhythm.item),
-                    details,
-                  ],
-                );
-              }
-              return Row(
-                children: [
-                  avatar,
-                  const SizedBox(width: AppRhythm.item),
-                  Expanded(child: details),
-                  const SizedBox(width: AppRhythm.tight),
-                  arrow,
-                ],
-              );
-            },
+        ),
+        child: Material(
+          key: ValueKey('server-directory-${server.id}'),
+          color: Colors.transparent,
+          shape: const RoundedRectangleBorder(borderRadius: AppRadius.block),
+          clipBehavior: Clip.antiAlias,
+          child: Ink(
+            decoration: BoxDecoration(
+              color: fill.color,
+              gradient: fill.gradient,
+              borderRadius: AppRadius.block,
+              // A constant 1 px edge: hover only recolours it.
+              border: AppFinish.blockEdge(
+                palette,
+                hovered: hovered,
+                highContrast: highContrast,
+              ),
+            ),
+            child: InkWell(
+              onTap: busy ? null : widget.onTap,
+              onLongPress: busy ? null : actions,
+              onSecondaryTap: busy ? null : actions,
+              splashFactory: _splashFactory,
+              onHover: (value) {
+                if (_hovered != value) setState(() => _hovered = value);
+              },
+              focusNode: _focusNode,
+              overlayColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.pressed)) return pressedWash;
+                // Hover and focus are carried by the edge, not a wash.
+                return Colors.transparent;
+              }),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  minHeight: _ServerTile.minHeight,
+                ),
+                child: Padding(padding: padding, child: content),
+              ),
+            ),
           ),
         ),
       ),

@@ -1,10 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc_button.dart';
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
+import 'package:yovoice/shared/widgets/voice/yo_voice_finish.dart';
 import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
 /// What the row's transport is doing right now.
@@ -15,6 +20,15 @@ import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 /// retry path (the direct-message bubble; a voice reply answers a refused
 /// grant with a snackbar and returns to [idle]).
 enum VoicePlayerRowStatus { idle, loading, playing, paused, failed }
+
+/// The voice bead a row draws as its transport (refine-look R14), or none.
+///
+/// * [brand] — the logo's glass ([AppGradients.primary] with gloss and
+///   rim), lit only while this row's clip plays: the thread row and an
+///   incoming bubble.
+/// * [onBrand] — white @ .22 with no gloss, rim or light, for a row that
+///   sits ON a brand fill (the outgoing bubble).
+enum VoicePlayerRowBead { brand, onBrand }
 
 /// The inline voice-clip row (Slim redesign, phase 0, ADR-209).
 ///
@@ -42,11 +56,14 @@ enum VoicePlayerRowStatus { idle, loading, playing, paused, failed }
 /// Two shapes, one row, through [VoicePlayerRowStyle]:
 ///
 /// * [VoicePlayerRowStyle.contained] — the thread row: its own
-///   `surfaceMuted` card, a bordered 40 px disc, a position-swept waveform.
+///   `surfaceMuted` card, the 40 px voice bead (lit while it plays) and the
+///   pouring R13 waveform (the logo's violet → magenta played sweep over
+///   `waveUnplayed` bars).
 /// * [VoicePlayerRowStyle.inline] — the chat bubble: no surface of its own
-///   (the bubble supplies it), a bare 44 px icon box, and colours injected by
-///   the caller because the same row sits on a brand gradient (white ink) and
-///   on a neutral incoming bubble (`textPrimary`).
+///   (the bubble supplies it), a bare 44 px icon box — or, once the bubble
+///   opts in with `bead`, the 34 px bead in that 44 px target — and colours
+///   injected by the caller because the same row sits on a brand gradient
+///   (white ink) and on a neutral incoming bubble (`textPrimary`).
 class VoicePlayerRow extends StatefulWidget {
   const VoicePlayerRow({
     required this.status,
@@ -114,6 +131,7 @@ class VoicePlayerRow extends StatefulWidget {
 /// a thread could not see which clip Enter would play (WCAG 2.4.7).
 class _VoicePlayerRowState extends State<VoicePlayerRow> {
   bool _focused = false;
+  bool _hovered = false;
 
   VoicePlayerRowStatus get status => widget.status;
   VoicePlayerRowStyle get style => widget.style;
@@ -127,7 +145,17 @@ class _VoicePlayerRowState extends State<VoicePlayerRow> {
   @override
   Widget build(BuildContext context) {
     final border = style.borderColor;
-    final onTap = widget.onTap;
+    final tap = widget.onTap;
+    // A bead row ticks the light haptic when a voice starts (R14); the bare
+    // bubble row keeps its old, silent tap.
+    final onTap = tap == null
+        ? null
+        : () {
+            if (style.bead != null && !_playing && !_loading) {
+              YoGradientDiscButton.playHaptic();
+            }
+            tap();
+          };
     Widget row = InkWell(
       key: widget.tapKey,
       onTap: onTap,
@@ -135,6 +163,13 @@ class _VoicePlayerRowState extends State<VoicePlayerRow> {
       onFocusChange: (focused) {
         if (focused != _focused) setState(() => _focused = focused);
       },
+      // Only a row that draws the bead has anything to show on hover (the
+      // bead's contact and glow lift by .06).
+      onHover: style.bead == null
+          ? null
+          : (hovered) {
+              if (hovered != _hovered) setState(() => _hovered = hovered);
+            },
       child: Stack(
         // The row keeps exactly the constraints it had without the ring.
         fit: StackFit.passthrough,
@@ -210,6 +245,8 @@ class _VoicePlayerRowState extends State<VoicePlayerRow> {
   );
 
   Widget _control() {
+    final bead = style.bead;
+    if (bead != null) return _bead(bead);
     Widget content = Center(
       child: _loading
           ? SizedBox.square(
@@ -244,6 +281,43 @@ class _VoicePlayerRowState extends State<VoicePlayerRow> {
     return SizedBox.square(dimension: style.controlSize, child: content);
   }
 
+  /// The R14 bead in the transport's box: the row stays the one target, so
+  /// the bead is drawn, never tapped on its own.
+  Widget _bead(VoicePlayerRowBead bead) {
+    final disabled = widget.onTap == null;
+    final brand = bead == VoicePlayerRowBead.brand;
+    final status = _loading
+        ? YoDiscStatus.busy
+        : _failed
+        ? YoDiscStatus.failed
+        : disabled
+        ? YoDiscStatus.disabled
+        : YoDiscStatus.idle;
+    return SizedBox.square(
+      dimension: style.controlSize,
+      child: Center(
+        child: YoPressFeedback(
+          scale: YoPressFeedback.disc,
+          enabled: !disabled,
+          child: YoGradientDisc(
+            size: style.beadSize,
+            icon: _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            glyphSize: YoVoiceBead.glyphSize(style.beadSize),
+            nudgePlay: !_playing,
+            gloss: brand,
+            tone: brand ? YoDiscTone.brand : YoDiscTone.onBrand,
+            // Exactly one thing glows in a thread: the clip that plays.
+            emphasis: brand && _playing
+                ? YoDiscEmphasis.lit
+                : YoDiscEmphasis.rest,
+            status: status,
+            hovered: _hovered && !disabled,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _waveform() {
     final constraints = style.waveformConstraints;
     final source = progress;
@@ -261,28 +335,52 @@ class _VoicePlayerRowState extends State<VoicePlayerRow> {
           );
   }
 
-  /// A row with a position source draws the Moment player's [StoryWaveform]
-  /// (the position contract other surfaces pin by type); a row without one
-  /// draws the still [YoWaveform] silhouette in the caller's ink. Both are
-  /// the one painter — `StoryWaveform` is a `YoWaveform` with the player's
-  /// defaults.
-  Widget _silhouette(double value) => progress == null
-      ? YoWaveform(
-          color: style.waveformColor,
+  /// A row without a position source draws the still [YoWaveform]
+  /// silhouette in the caller's ink. A row with one draws, with
+  /// [VoicePlayerRowStyle.continuousProgress], the R13 pour: the played
+  /// sweep spread over the whole run and revealed up to the playhead, the
+  /// playhead tweened between the player's REAL reports ([YoVoicePour]);
+  /// without it, the Moment player's [StoryWaveform]. All three are the one
+  /// painter.
+  Widget _silhouette(double value) {
+    if (progress == null) {
+      return YoWaveform(
+        color: style.waveformColor,
+        height: style.waveformHeight,
+        barWidth: style.waveformBarWidth,
+        barCount: style.waveformBarCount,
+        barGap: style.waveformBarGap,
+        barRadius: style.waveformBarRadius,
+      );
+    }
+    if (style.continuousProgress) {
+      return YoVoicePour(
+        progress: value,
+        total: Duration(seconds: durationSeconds),
+        builder: (context, shown) => YoWaveform(
+          color: style.unplayed ?? style.waveformColor,
+          progress: shown,
+          playedColor: style.playedColor ?? style.foreground,
+          playedGradient: style.playedGradient,
+          gradientSpan: YoWaveformGradientSpan.full,
+          continuousProgress: true,
           height: style.waveformHeight,
           barWidth: style.waveformBarWidth,
           barCount: style.waveformBarCount,
           barGap: style.waveformBarGap,
           barRadius: style.waveformBarRadius,
-        )
-      : StoryWaveform(
-          progress: value,
-          height: style.waveformHeight,
-          barWidth: style.waveformBarWidth,
-          barGap: style.waveformBarGap,
-          barRadius: style.waveformBarRadius ?? 2,
-          playedGradient: style.playedGradient,
-        );
+        ),
+      );
+    }
+    return StoryWaveform(
+      progress: value,
+      height: style.waveformHeight,
+      barWidth: style.waveformBarWidth,
+      barGap: style.waveformBarGap,
+      barRadius: style.waveformBarRadius ?? 2,
+      playedGradient: style.playedGradient,
+    );
+  }
 }
 
 /// Where the row is drawn: its surface, its ink and the size of its parts.
@@ -299,6 +397,11 @@ class VoicePlayerRowStyle {
     required this.progressIndicator,
     required this.waveformColor,
     this.playedGradient,
+    this.playedColor,
+    this.unplayed,
+    this.continuousProgress = false,
+    this.bead,
+    this.beadSize = 40,
     this.surface,
     this.borderColor,
     this.borderRadius = AppRadius.md,
@@ -320,7 +423,9 @@ class VoicePlayerRowStyle {
     this.focusRing,
   });
 
-  /// The thread row: its own card, a bordered disc and a swept waveform.
+  /// The thread row: its own card, the 40 px voice bead and the R13 pour —
+  /// the logo's violet → magenta ([AppGradients.voicePlayed], variant B)
+  /// over `waveUnplayed` bars that never dim when play is pressed.
   ///
   /// The three measurements are parameters because the surface that mounts
   /// the row publishes them (`VoiceReplyMiniPlayer.height` / `.discSize` /
@@ -340,12 +445,14 @@ class VoicePlayerRowStyle {
     mutedForeground: palette.textSecondary,
     errorForeground: colors.error,
     progressIndicator: palette.audioAccent,
-    waveformColor: StoryWaveform.unplayedColor(),
-    playedGradient: palette.audioProgressGradient,
+    waveformColor: palette.waveUnplayed,
+    playedGradient: AppGradients.voicePlayed(colors, palette),
+    unplayed: palette.waveUnplayed,
+    continuousProgress: true,
+    bead: VoicePlayerRowBead.brand,
+    beadSize: controlSize,
     surface: palette.surfaceMuted,
     borderColor: palette.border,
-    controlFill: palette.surfaceRaised,
-    controlBorderColor: palette.border,
     padding: const EdgeInsets.symmetric(
       horizontal: AppRhythm.item,
       vertical: AppRhythm.tight,
@@ -359,15 +466,34 @@ class VoicePlayerRowStyle {
   /// The waveform is bounded rather than [Expanded] so the bubble keeps
   /// shrink-wrapping its content: a full-width row would widen every voice
   /// bubble and push the reaction pill over the clock at 200 % text scale.
+  ///
+  /// Refine-look (R13 / R14), opt-in so the bubble's own batch decides when
+  /// it adopts them: [bead] draws the 34 px bead in the unchanged 44 px
+  /// box ([VoicePlayerRowBead.onBrand] on the outgoing gradient, `brand` on
+  /// an incoming bubble); [unplayed] / [playedColor] / [playedGradient] with
+  /// [continuousProgress] draw the pour when the bubble hands the row a REAL
+  /// position notifier. Without them the row draws exactly what it drew
+  /// before.
   factory VoicePlayerRowStyle.inline({
     required Color foreground,
     required Color mutedForeground,
     required Color errorForeground,
+    VoicePlayerRowBead? bead,
+    Color? unplayed,
+    Color? playedColor,
+    LinearGradient? playedGradient,
+    bool continuousProgress = false,
   }) => VoicePlayerRowStyle(
     foreground: foreground,
     mutedForeground: mutedForeground,
     errorForeground: errorForeground,
     progressIndicator: foreground,
+    bead: bead,
+    beadSize: 34,
+    unplayed: unplayed,
+    playedColor: playedColor,
+    playedGradient: playedGradient,
+    continuousProgress: continuousProgress,
     waveformColor: foreground.withValues(alpha: .82),
     borderRadius: const BorderRadius.all(Radius.circular(12)),
     minHeight: 44,
@@ -396,17 +522,38 @@ class VoicePlayerRowStyle {
   /// The retry glyph of [VoicePlayerRowStatus.failed].
   final Color errorForeground;
 
-  /// The busy spinner. Its own role because the bubble spins in the injected
-  /// [foreground] (so it stays readable on the brand gradient) while the
-  /// thread row spins in `audioAccent`.
+  /// The busy spinner of a row WITHOUT a [bead]: the bubble spins in the
+  /// injected [foreground] (so it stays readable on the brand gradient). A
+  /// row with a bead spins white on the bead itself (R14), so there this
+  /// role is not drawn.
   final Color progressIndicator;
 
-  /// Unplayed bars of a still row; ignored where [VoicePlayerRow.progress] is
-  /// given, because [StoryWaveform] carries the player's own pair.
+  /// Unplayed bars of a still row; where [VoicePlayerRow.progress] is given
+  /// the bars take [unplayed] (with [continuousProgress]) or the
+  /// [StoryWaveform]'s own pair.
   final Color waveformColor;
 
   /// Sweeps the played run where there is a position to sweep with.
   final LinearGradient? playedGradient;
+
+  /// The solid played ink when there is no [playedGradient] (the outgoing
+  /// bubble's white); defaults to [foreground].
+  final Color? playedColor;
+
+  /// Unplayed bars of a row that pours ([continuousProgress]); they keep
+  /// this ink at rest and while playing, so pressing play never dims them.
+  final Color? unplayed;
+
+  /// Draws the R13 pour — the played sweep over the whole run, tweened
+  /// between real position reports — instead of the [StoryWaveform] fill.
+  final bool continuousProgress;
+
+  /// The R14 bead in the transport's box, or null for the bare icon.
+  final VoicePlayerRowBead? bead;
+
+  /// The bead's diameter inside [controlSize]: 40 in a thread row, 34 in a
+  /// bubble's 44 px box.
+  final double beadSize;
 
   /// `null` draws no surface: the host (a message bubble) supplies it.
   final Color? surface;

@@ -313,17 +313,22 @@ void main() {
         ),
       ),
     );
-    final fills = find.descendant(
+    // Refine-look §8.4 (a deliberate spec change): the played run is the
+    // brand sweep, a gradient DecoratedBox over the unplayed ColoredBox
+    // track, so the two layers are found by what each one is.
+    final track = find.descendant(
       of: find.byKey(reelProgressBarKey),
       matching: find.byType(ColoredBox),
     );
-    final sizes = fills
-        .evaluate()
-        .map((element) => (element.renderObject! as RenderBox).size)
-        .toList();
-    expect(sizes, hasLength(2));
-    expect(sizes.last.width, 200);
-    expect(sizes.last.height, ReelProgressBar.trackHeight);
+    final played = find.descendant(
+      of: find.byKey(reelProgressBarKey),
+      matching: find.byKey(ReelProgressBar.playedKey),
+    );
+    expect(track, findsOneWidget);
+    expect(played, findsOneWidget);
+    expect(tester.getSize(track).width, 400);
+    expect(tester.getSize(played).width, 200);
+    expect(tester.getSize(played).height, ReelProgressBar.trackHeight);
   });
 
   group('on the Yeel stage', () {

@@ -21,6 +21,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
 
@@ -126,14 +127,24 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      // Refine-look §8.4 changed the over-media inks deliberately: the
+      // selected word is full white w800 (it was violet), the other full
+      // white w600 — §8.4's white @ .78 measured ≈ 1.06:1 glyph against a
+      // light frame (B5 review, A11Y-B5-06), so selection over media is
+      // weight plus the gradient line. Both words keep the glyph-local
+      // outline: they sit on no plate.
       final voice = tester.widget<Text>(find.text('Voice'));
       final yeels = tester.widget<Text>(find.text('Yeels'));
       expect(voice.style?.fontSize, 17);
       expect(voice.style?.fontWeight, FontWeight.w800);
-      expect(voice.style?.color, AppPalette.dark.interactiveForeground);
+      expect(voice.style?.color, Colors.white);
       expect(yeels.style?.fontSize, 17);
       expect(yeels.style?.fontWeight, FontWeight.w600);
       expect(yeels.style?.color, Colors.white);
+      final quietOutline = yeels.style!.shadows!.where(
+        (shadow) => shadow.blurRadius == 0 && shadow.offset != Offset.zero,
+      );
+      expect(quietOutline.length, greaterThanOrEqualTo(8));
       final crispOutline = voice.style!.shadows!.where(
         (shadow) => shadow.blurRadius == 0 && shadow.offset != Offset.zero,
       );
@@ -159,6 +170,8 @@ void main() {
       expect(tester.getSize(inactive).width, 0);
       final indicator =
           tester.widget<AnimatedContainer>(active).decoration as BoxDecoration;
+      // The line is the logo's own gradient (refine-look §8.4).
+      expect(indicator.gradient, AppGradients.primary);
       expect(
         indicator.boxShadow,
         contains(
@@ -226,8 +239,12 @@ void main() {
     );
   });
 
+  // Refine-look §8.4 changed the canvas inks deliberately: the selected word
+  // is `textPrimary` w800 and the other `textTertiary` w600 (they were
+  // interactiveForeground / textSecondary); the selection line carries the
+  // brand colour.
   for (final brightness in Brightness.values) {
-    testWidgets('canvas active violet adapts to ${brightness.name}', (
+    testWidgets('canvas selected ink adapts to ${brightness.name}', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -247,12 +264,26 @@ void main() {
           : AppPalette.light;
       expect(
         tester.widget<Text>(find.text('Yeels')).style?.color,
-        palette.interactiveForeground,
+        palette.textPrimary,
       );
       expect(
         tester.widget<Text>(find.text('Voice')).style?.color,
-        palette.textSecondary,
+        palette.textTertiary,
       );
+      final line =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.byKey(
+                      const ValueKey<String>(
+                        'immersive-format-indicator-Yeels',
+                      ),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect(line.gradient, AppGradients.primary);
+      expect(line.boxShadow!.single.color, palette.brandGlow);
+      expect(line.boxShadow!.single.blurRadius, 8);
     });
   }
 

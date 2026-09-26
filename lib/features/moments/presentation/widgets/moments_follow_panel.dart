@@ -4,8 +4,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
-import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
@@ -13,6 +13,8 @@ import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -277,6 +279,9 @@ class _MomentsFollowPanelState extends State<MomentsFollowPanel> {
   }
 }
 
+/// The calm panel's block (refine-look R2): the same top-lit fill, hairline
+/// and radius as the feed's cards beside it, so the three columns at 1440
+/// read as one surface family.
 class _PanelCard extends StatelessWidget {
   const _PanelCard({required this.child});
 
@@ -285,13 +290,11 @@ class _PanelCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    return Material(
-      color: palette.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: AppRadius.lg,
-        side: BorderSide(color: palette.border),
+    return DecoratedBox(
+      decoration: AppFinish.block(
+        palette,
+        highContrast: MediaQuery.highContrastOf(context),
       ),
-      clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: const EdgeInsets.all(AppRhythm.title),
         child: child,
@@ -593,7 +596,10 @@ class _MomentsFollowButtonState extends State<MomentsFollowButton> {
   }
 }
 
-/// "Add your moment / Record a Voice Moment" — the panel's create card.
+/// "Add your moment / Record a Voice Moment" — the panel's create card: an
+/// R2 block ([YoCard]) whose mic is the voice bead at rest (the logo's glass
+/// with only a contact shadow; it lights only where a voice plays, never
+/// here), the same card Start's "Masz chwilę?" draws.
 class _RecordCard extends StatelessWidget {
   const _RecordCard({required this.onTap});
 
@@ -602,7 +608,6 @@ class _RecordCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
     final title = copy.text('Add your moment', 'Dodaj swoją chwilę');
     final subtitle = copy.text('Record a Voice Moment', 'Nagraj Voice Moment');
@@ -613,55 +618,43 @@ class _RecordCard extends StatelessWidget {
       hint: subtitle,
       onTap: onTap,
       excludeSemantics: true,
-      child: Material(
+      child: YoCard(
         key: const ValueKey('moments-follow-panel-record'),
-        color: palette.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: AppRadius.lg,
-          side: BorderSide(color: palette.border),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(AppRhythm.title),
-            child: Row(
-              children: <Widget>[
-                Container(
-                  width: AppSizing.standardControlHeight,
-                  height: AppSizing.standardControlHeight,
-                  decoration: BoxDecoration(
-                    color: colors.primary,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(Icons.mic_rounded, color: colors.onPrimary),
-                ),
-                const SizedBox(width: AppRhythm.item),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Text(
-                        title,
-                        style: AppTypography.titleSmall.copyWith(
-                          color: palette.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        style: AppTypography.bodySmall.copyWith(
-                          color: palette.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(Icons.chevron_right_rounded, color: palette.textSecondary),
-              ],
+        padding: const EdgeInsets.all(AppRhythm.title),
+        semanticButton: false,
+        onTap: onTap,
+        child: Row(
+          children: <Widget>[
+            const YoGradientDisc(
+              key: ValueKey('moments-follow-panel-record-bead'),
+              size: AppSizing.standardControlHeight,
+              icon: Icons.mic_rounded,
+              gloss: true,
             ),
-          ),
+            const SizedBox(width: AppRhythm.item),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    title,
+                    style: AppTypography.titleSmall.copyWith(
+                      color: palette.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: AppTypography.bodySmall.copyWith(
+                      color: palette.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, color: palette.textSecondary),
+          ],
         ),
       ),
     );

@@ -37,7 +37,9 @@ enum YoDiscTone { brand, onBrand, live }
 /// * **[emphasis]** — [YoDiscEmphasis.rest] (contact shadow),
 ///   [YoDiscEmphasis.lift] (the one CTA per screen) or [YoDiscEmphasis.lit]
 ///   (only the clip that is playing). Light fades in over 180 ms and out
-///   over 320 ms, instantly under Reduce Motion.
+///   over 320 ms; like the status cross-fade it is decorative motion, so
+///   it snaps under Reduce Motion, accessible navigation or a paused
+///   [TickerMode] ([AppMotion.decorative], spec §5).
 /// * **[gloss]** — a top-left highlight (white @ .28 radial) plus, when
 ///   [rim] is on, a 1 px inner stroke fading out by 55 % of the height.
 /// * **Glyph** — white at .42 × [size] (at least 18). [nudgePlay] shifts a
@@ -110,6 +112,7 @@ class YoGradientDisc extends StatelessWidget {
     final light = !disabled && !onBrand;
     final showsGloss = gloss && light && !highContrast;
     final showsRim = rim && showsGloss;
+    final animate = AppMotion.decorative(context);
 
     final Color ink;
     if (disabled) {
@@ -177,10 +180,11 @@ class YoGradientDisc extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             AnimatedContainer(
-              duration: AppMotion.resolve(
-                context,
-                emphasis == YoDiscEmphasis.lit ? litIn : litOut,
-              ),
+              duration: !animate
+                  ? Duration.zero
+                  : emphasis == YoDiscEmphasis.lit
+                  ? litIn
+                  : litOut,
               curve: AppMotion.standardCurve,
               decoration: decoration,
             ),
@@ -199,7 +203,7 @@ class YoGradientDisc extends StatelessWidget {
               child: IconTheme.merge(
                 data: IconThemeData(color: ink, size: resolvedGlyphSize),
                 child: AnimatedSwitcher(
-                  duration: AppMotion.resolve(context, statusFade),
+                  duration: animate ? statusFade : Duration.zero,
                   child: face,
                 ),
               ),

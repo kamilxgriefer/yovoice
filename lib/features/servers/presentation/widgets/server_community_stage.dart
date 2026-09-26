@@ -5,6 +5,7 @@ import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:share_plus/share_plus.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
@@ -647,53 +648,64 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
           child: AspectRatio(
             key: const ValueKey('server-community-scene'),
             aspectRatio: 16 / 9,
-            child: ClipRRect(
-              borderRadius: AppRadius.md,
-              child: Container(
-                // In the dark theme a sunken fill alone leaves the scene
-                // indistinguishable from the surface behind it, so the empty
-                // stage reads as a hole rather than a stage. The template's
-                // own wash and the shared border give it an edge, exactly as
-                // the selector card is drawn, and cost no new colour.
-                decoration: BoxDecoration(
-                  border: Border.all(color: palette.border),
-                  borderRadius: AppRadius.md,
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Color.alphaBlend(colors.cardWash, palette.surfaceSunken),
-                      palette.surfaceSunken,
-                    ],
-                    stops: const [0, .75],
-                  ),
-                ),
-                child: LayoutBuilder(
-                  builder: (context, box) => Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      _stageBody(copy, palette, colors),
-                      // The marker is bounded by the picture on both axes.
-                      // Unbounded it took its intrinsic width inside a
-                      // clipping `Stack`, so on a 320-px phone at 200 % text —
-                      // where this 16:9 picture collapses to a sliver — it was
-                      // cut mid-word into a red smear that says nothing. Below
-                      // the height it needs it is not drawn at all: the live
-                      // truth is still on screen, in words, as the
-                      // `Na żywo od 19:40` line under the title.
-                      if (widget.channel.liveness.isLive &&
-                          box.maxHeight >= _liveMarkerFloor)
-                        PositionedDirectional(
-                          top: 10,
-                          start: 10,
-                          end: 10,
-                          child: Align(
-                            alignment: AlignmentDirectional.centerStart,
-                            child: ServerLivePill(label: copy.serverLivePill),
-                          ),
+            // Refine-look R4 / W2: the broadcast IS this board's live
+            // surface, so it carries the live light while the stage is LIVE
+            // and this device has not joined — rim, corner light and
+            // under-glow — the voice accent's edge while it is in, and a
+            // hairline otherwise. It stays a sunken picture.
+            child: ServerSessionCard(
+              cardKey: const ValueKey('server-community-scene-surface'),
+              state: ServerSessionCardState.of(
+                held: widget.server.isHeld,
+                live: widget.channel.liveness.isLive,
+                here: _here,
+                connected: _inRoom,
+              ),
+              accent: ServerIdentity.of(widget.server.type).accent,
+              colors: colors,
+              igniteKey: serverLiveGeneration(widget.server, widget.channel),
+              radius: AppRadius.md,
+              elevated: false,
+              padding: EdgeInsets.zero,
+              // In the dark theme a sunken fill alone leaves the scene
+              // indistinguishable from the surface behind it, so the empty
+              // stage reads as a hole rather than a stage. The template's
+              // own wash and an edge set it apart, exactly as the selector
+              // card is drawn, and cost no new colour.
+              fill: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color.alphaBlend(colors.cardWash, palette.surfaceSunken),
+                  palette.surfaceSunken,
+                ],
+                stops: const [0, .75],
+              ),
+              child: LayoutBuilder(
+                builder: (context, box) => Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _stageBody(copy, palette, colors),
+                    // The marker is bounded by the picture on both axes.
+                    // Unbounded it took its intrinsic width inside a
+                    // clipping `Stack`, so on a 320-px phone at 200 % text —
+                    // where this 16:9 picture collapses to a sliver — it was
+                    // cut mid-word into a red smear that says nothing. Below
+                    // the height it needs it is not drawn at all: the live
+                    // truth is still on screen, in words, as the
+                    // `Na żywo od 19:40` line under the title.
+                    if (widget.channel.liveness.isLive &&
+                        box.maxHeight >= _liveMarkerFloor)
+                      PositionedDirectional(
+                        top: 10,
+                        start: 10,
+                        end: 10,
+                        child: Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: ServerLivePill(label: copy.serverLivePill),
                         ),
-                    ],
-                  ),
+                      ),
+                  ],
                 ),
               ),
             ),
@@ -896,12 +908,11 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
     // on a line: all three were laid out below the pane's edge and the tab
     // strip under it painted over them. A tighter gutter puts the chip and
     // `Obserwuj` on one line at 320 px without changing anything wider.
-    final style = OutlinedButton.styleFrom(
-      minimumSize: const Size(48, 48),
-      padding: widget.compact
-          ? const EdgeInsets.symmetric(horizontal: 12)
-          : null,
-    );
+    //
+    // Refine-look R7 neutral (diagnosis #6, "outlines everywhere"): glass,
+    // a control hairline and the interactive ink instead of hollow
+    // `borderStrong` pills; each keeps its widget type and key.
+    final style = _tonal(compactPadding: widget.compact);
     final cameraError = widget.session.cameraError;
     final screenError = widget.session.screenShareError;
     final actionError = _actionError ?? cameraError ?? screenError;
@@ -1009,12 +1020,28 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
     );
   }
 
+  /// The community's secondary actions (refine-look R7 neutral), with the
+  /// tighter phone gutter.
+  ButtonStyle _tonal({required bool compactPadding}) =>
+      AppFinish.tonalNeutral(
+        context.appPalette,
+        highContrast: MediaQuery.highContrastOf(context),
+      ).merge(
+        OutlinedButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          padding: compactPadding
+              ? const EdgeInsets.symmetric(horizontal: 12)
+              : null,
+        ),
+      );
+
   Widget _follow(AppLocalizations copy, {required bool compactPadding}) {
     final repository = widget.followRepository;
     if (repository == null) {
       return OutlinedButton.icon(
         key: const ValueKey('server-community-follow'),
         onPressed: null,
+        style: _tonal(compactPadding: compactPadding),
         icon: const Icon(Icons.notifications_none_rounded, size: 18),
         label: Text(copy.serverFollow),
       );
@@ -1029,12 +1056,7 @@ class _ServerCommunityStageState extends State<ServerCommunityStage> {
           onPressed: _followBusy || snapshot.hasError
               ? null
               : () => _toggleFollow(following),
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size(48, 48),
-            padding: compactPadding
-                ? const EdgeInsets.symmetric(horizontal: 12)
-                : null,
-          ),
+          style: _tonal(compactPadding: compactPadding),
           icon: _followBusy
               ? const SizedBox.square(
                   dimension: 18,

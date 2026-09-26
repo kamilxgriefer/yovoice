@@ -28,11 +28,15 @@ enum YoButtonVariant { primary, secondary, ghost, danger }
 /// IS the control's identifier — and drops only the lift. Its hover and press
 /// are white washes (.06 / .10) and the stronger lift — no outline.
 ///
-/// The decoration alone owns the edge: the inner [ElevatedButton] never
+/// The foreground alone owns the edge: the inner [ElevatedButton] never
 /// paints a side of its own (the theme's disabled / focused sides would draw
-/// a second ring inside this one). Focus is a 2 px ring painted as a
-/// foreground over the fill and any 1 px edge, and a secondary / ghost hover
-/// edge is painted the same way, so neither state moves the label.
+/// a second ring inside this one), and the fill's decoration paints none
+/// either. The 1 px resting edge of a secondary / ghost / disabled action,
+/// the secondary / ghost hover edge and the 2 px focus ring are all one
+/// foreground over the fill, so no state and no variant adds padding: every
+/// variant is exactly as tall as its neighbours (a bordered decoration used
+/// to make a secondary 2 px taller than the primary beside it) and no state
+/// moves the label.
 ///
 /// Every variant scales to .98 under a touch press ([YoPressFeedback]; none
 /// under Reduce Motion) and labels at letterSpacing .2.
@@ -152,7 +156,7 @@ class _YoButtonState extends State<YoButton> {
         duration: quickDuration,
         curve: Curves.easeOut,
         decoration: _decoration(palette, colors, highContrast: highContrast),
-        foregroundDecoration: _stateRing(palette, colors),
+        foregroundDecoration: _edge(palette, colors),
         child: ElevatedButton(
           onPressed: _isInteractive ? widget.onPressed : null,
           statesController: _states,
@@ -163,8 +167,8 @@ class _YoButtonState extends State<YoButton> {
             if (_focused != value) setState(() => _focused = value);
           },
           style: ButtonStyle(
-            // The AnimatedContainer's decoration owns the edge and
-            // [_stateRing] the focus / hover ring. The theme's
+            // The AnimatedContainer's foreground ([_edge]) owns the resting
+            // edge and the focus / hover ring. The theme's
             // `elevatedButtonTheme.side` (1 px `border` when disabled —
             // which a loading button is — and 2 px `onPrimary` when
             // focused) would otherwise draw a second ring inside them.
@@ -289,8 +293,8 @@ class _YoButtonState extends State<YoButton> {
       // path and leave only the translucent shadow visible in Pearl.
       color: usesPrimaryGradient ? null : _backgroundColor(palette, colors),
       borderRadius: AppRadius.lg,
-      // The resting edge only; focus and hover rings are foregrounds.
-      border: _border(palette),
+      // No border here: a decoration's border pads its child, which made a
+      // bordered variant 2 px taller than the primary. [_edge] paints it.
       boxShadow: usesPrimaryGradient && !highContrast
           ? AppFinish.actionLift(
               AppColors.primary,
@@ -303,19 +307,23 @@ class _YoButtonState extends State<YoButton> {
     );
   }
 
-  /// The focus ring (2 px) or, for a secondary / ghost / danger action under
-  /// a pointer, the 1.5 px hover edge — painted OVER the fill and the resting
-  /// edge, so the state never changes the padding or moves the label. The
-  /// primary action answers a pointer with its white wash and a stronger
+  /// The control's edge, painted OVER the fill as the container's foreground:
+  /// the focus ring (2 px); for a secondary / ghost / danger action under a
+  /// pointer, the 1.5 px hover edge; otherwise the 1 px resting edge
+  /// ([_restingEdge]) or nothing. A foreground never pads its child, so
+  /// neither the state nor the variant changes the box or moves the label.
+  /// The primary action answers a pointer with its white wash and a stronger
   /// lift, not an outline on the gradient (R5).
   ///
-  /// The ring is ALWAYS present and only changes colour (transparent at
-  /// rest). A null-to-value foreground would insert a DecoratedBox above the
-  /// button the moment focus arrived, rebuild the ElevatedButton from scratch
-  /// and destroy the focus node that had just been focused (the pattern and
-  /// its history are in `server_template_selector.dart`).
-  BoxDecoration _stateRing(AppPalette palette, ColorScheme colors) {
+  /// The edge is ALWAYS present and only changes colour and width
+  /// (transparent when there is none). A null-to-value foreground would
+  /// insert a DecoratedBox above the button the moment focus arrived,
+  /// rebuild the ElevatedButton from scratch and destroy the focus node that
+  /// had just been focused (the pattern and its history are in
+  /// `server_template_selector.dart`).
+  BoxDecoration _edge(AppPalette palette, ColorScheme colors) {
     final primary = widget.variant == YoButtonVariant.primary;
+    final resting = _restingEdge(palette);
     final (Color color, double width) = _focused
         ? (
             switch (widget.variant) {
@@ -328,6 +336,8 @@ class _YoButtonState extends State<YoButton> {
           )
         : _hovered && _isInteractive && !primary
         ? (palette.interactiveForeground, 1.5)
+        : resting != null
+        ? (resting, 1)
         : (Colors.transparent, 2);
     return BoxDecoration(
       borderRadius: AppRadius.lg,
@@ -369,22 +379,19 @@ class _YoButtonState extends State<YoButton> {
     }
   }
 
-  Border? _border(AppPalette palette) {
+  /// The 1 px resting edge colour, or null for none.
+  Color? _restingEdge(AppPalette palette) {
     switch (widget.variant) {
       case YoButtonVariant.primary:
         // No outline in any state: enabled and loading paint the gradient,
         // disabled the sunken fill (R5).
         return null;
       case YoButtonVariant.danger:
-        return _isDisabled ? Border.all(color: palette.border) : null;
+        return _isDisabled ? palette.border : null;
       case YoButtonVariant.secondary:
-        return Border.all(
-          color: _isDisabled ? palette.border : palette.borderStrong,
-        );
+        return _isDisabled ? palette.border : palette.borderStrong;
       case YoButtonVariant.ghost:
-        return Border.all(
-          color: _isDisabled ? palette.border : palette.interactiveForeground,
-        );
+        return _isDisabled ? palette.border : palette.interactiveForeground;
     }
   }
 }

@@ -3,9 +3,13 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
 import 'package:yovoice/shared/widgets/voice/voice_player_row.dart';
+import 'package:yovoice/shared/widgets/voice/yo_voice_finish.dart';
 import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
 /// The one inline voice-clip row (Slim redesign, phase 0): the chat bubble
@@ -124,8 +128,11 @@ void main() {
     );
   });
 
+  // Refine-look R14 changed the thread row's half deliberately: its busy
+  // state is now the voice bead's white spinner ON the bead (it used to be an
+  // `audioAccent` spinner in a bordered disc).
   testWidgets('the spinner has its own ink, so a bubble can keep it readable '
-      'on the brand gradient while a thread row uses the audio accent', (
+      'on the brand gradient while a thread row spins white on its bead', (
     tester,
   ) async {
     await pumpRow(
@@ -160,13 +167,18 @@ void main() {
         ),
       ),
     );
+    final spinner = find.descendant(
+      of: find.byType(YoGradientDisc),
+      matching: find.byType(CircularProgressIndicator),
+    );
+    expect(spinner, findsOneWidget);
     expect(
-      tester
-          .widget<CircularProgressIndicator>(
-            find.byType(CircularProgressIndicator),
-          )
-          .color,
-      AppPalette.dark.audioAccent,
+      tester.widget<CircularProgressIndicator>(spinner).color,
+      AppColors.white,
+    );
+    expect(
+      tester.widget<YoGradientDisc>(find.byType(YoGradientDisc)).status,
+      YoDiscStatus.busy,
     );
   });
 
@@ -235,9 +247,12 @@ void main() {
     expect(bars.height, 32);
   });
 
-  testWidgets('a real position sweeps the Moment player waveform', (
-    tester,
-  ) async {
+  // Refine-look R13 changed the thread row's waveform deliberately: the
+  // played sweep is the logo's violet → magenta (variant B) spread over the
+  // whole run, the unplayed bars are `waveUnplayed`, and the playhead pours
+  // between real reports. It used to be the Moment player's StoryWaveform.
+  testWidgets('a real position pours the R13 waveform: variant B over '
+      'waveUnplayed bars, the sweep spread over the whole run', (tester) async {
     final progress = ValueNotifier<double>(.25);
     addTearDown(progress.dispose);
 
@@ -256,17 +271,189 @@ void main() {
       ),
     );
 
+    expect(find.byType(StoryWaveform), findsNothing);
+    YoWaveform wave() => tester.widget<YoWaveform>(find.byType(YoWaveform));
+    expect(wave().progress, .25);
+    expect(wave().continuousProgress, isTrue);
+    expect(wave().gradientSpan, YoWaveformGradientSpan.full);
+    expect(wave().color, AppPalette.dark.waveUnplayed);
     expect(
-      tester.widget<StoryWaveform>(find.byType(StoryWaveform)).progress,
-      .25,
+      wave().playedGradient!.colors,
+      AppGradients.voicePlayed(
+        AppTheme.darkTheme.colorScheme,
+        AppPalette.dark,
+      ).colors,
     );
 
+    // A jump of 6.6 s of audio is a seek: it snaps, never tweens.
     progress.value = .8;
     await tester.pump();
-    expect(
-      tester.widget<StoryWaveform>(find.byType(StoryWaveform)).progress,
-      .8,
+    expect(wave().progress, .8);
+  });
+
+  testWidgets('a playhead step pours over 200 ms between two real reports, '
+      'and never runs past the last one', (tester) async {
+    final progress = ValueNotifier<double>(.25);
+    addTearDown(progress.dispose);
+
+    await pumpRow(
+      tester,
+      row: VoicePlayerRow(
+        status: VoicePlayerRowStatus.playing,
+        durationSeconds: 12,
+        semanticsLabel: 'clip',
+        onTap: () {},
+        progress: progress,
+        style: VoicePlayerRowStyle.contained(
+          AppPalette.dark,
+          AppTheme.darkTheme.colorScheme,
+        ),
+      ),
     );
+    double shown() =>
+        tester.widget<YoWaveform>(find.byType(YoWaveform)).progress!;
+
+    // 0.25 → 0.2667 is 200 ms of a 12 s clip: the next report of a playing
+    // player, so the pour moves toward it instead of jumping.
+    progress.value = .25 + 1 / 60;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(shown(), greaterThan(.25));
+    expect(shown(), lessThan(.25 + 1 / 60));
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(shown(), closeTo(.25 + 1 / 60, 1e-9));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      shown(),
+      closeTo(.25 + 1 / 60, 1e-9),
+      reason: 'no report, no motion: the pour never extrapolates',
+    );
+    expect(tester.binding.hasScheduledFrame, isFalse);
+  });
+
+  testWidgets('under Reduce Motion the pour moves only on a report', (
+    tester,
+  ) async {
+    final progress = ValueNotifier<double>(.25);
+    addTearDown(progress.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.darkTheme,
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: Scaffold(
+            body: VoicePlayerRow(
+              status: VoicePlayerRowStatus.playing,
+              durationSeconds: 12,
+              semanticsLabel: 'clip',
+              onTap: () {},
+              progress: progress,
+              style: VoicePlayerRowStyle.contained(
+                AppPalette.dark,
+                AppTheme.darkTheme.colorScheme,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    progress.value = .25 + 1 / 60;
+    await tester.pump();
+    expect(
+      tester.widget<YoWaveform>(find.byType(YoWaveform)).progress,
+      .25 + 1 / 60,
+    );
+    expect(find.byType(YoVoicePour), findsOneWidget);
+  });
+
+  testWidgets('the thread row transport is the 40 px voice bead, lit only '
+      'while its own clip plays', (tester) async {
+    Future<YoGradientDisc> bead(VoicePlayerRowStatus status) async {
+      await pumpRow(
+        tester,
+        row: VoicePlayerRow(
+          status: status,
+          durationSeconds: 12,
+          semanticsLabel: 'clip',
+          onTap: () {},
+          style: VoicePlayerRowStyle.contained(
+            AppPalette.dark,
+            AppTheme.darkTheme.colorScheme,
+          ),
+        ),
+      );
+      return tester.widget<YoGradientDisc>(find.byType(YoGradientDisc));
+    }
+
+    final idle = await bead(VoicePlayerRowStatus.idle);
+    expect(idle.size, 40);
+    expect(idle.tone, YoDiscTone.brand);
+    expect(idle.gloss, isTrue);
+    expect(idle.emphasis, YoDiscEmphasis.rest);
+    expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+
+    final playing = await bead(VoicePlayerRowStatus.playing);
+    expect(playing.emphasis, YoDiscEmphasis.lit);
+    expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+
+    expect(
+      (await bead(VoicePlayerRowStatus.paused)).emphasis,
+      YoDiscEmphasis.rest,
+    );
+    expect(
+      (await bead(VoicePlayerRowStatus.failed)).status,
+      YoDiscStatus.failed,
+    );
+  });
+
+  testWidgets('the bubble row keeps its bare glyph until the bubble opts in; '
+      'then a 34 px bead in the same 44 px box, and the outgoing one never '
+      'lights', (tester) async {
+    await pumpRow(
+      tester,
+      row: VoicePlayerRow(
+        status: VoicePlayerRowStatus.playing,
+        durationSeconds: 12,
+        semanticsLabel: 'clip',
+        onTap: () {},
+        style: inline(),
+      ),
+    );
+    expect(find.byType(YoGradientDisc), findsNothing);
+
+    for (final (tone, lit) in <(VoicePlayerRowBead, bool)>[
+      (VoicePlayerRowBead.onBrand, false),
+      (VoicePlayerRowBead.brand, true),
+    ]) {
+      await pumpRow(
+        tester,
+        row: VoicePlayerRow(
+          status: VoicePlayerRowStatus.playing,
+          durationSeconds: 12,
+          semanticsLabel: 'clip',
+          onTap: () {},
+          tapKey: const ValueKey<String>('voice-row'),
+          style: VoicePlayerRowStyle.inline(
+            foreground: Colors.white,
+            mutedForeground: Colors.white,
+            errorForeground: const Color(0xFFFFE0E7),
+            bead: tone,
+          ),
+        ),
+      );
+      final disc = tester.widget<YoGradientDisc>(find.byType(YoGradientDisc));
+      expect(disc.size, 34);
+      expect(tester.getSize(find.byType(YoGradientDisc)), const Size(34, 34));
+      expect(
+        disc.emphasis,
+        lit ? YoDiscEmphasis.lit : YoDiscEmphasis.rest,
+        reason: '$tone',
+      );
+      expect(
+        tester.getSize(find.byKey(const ValueKey<String>('voice-row'))).height,
+        greaterThanOrEqualTo(44),
+      );
+    }
   });
 
   testWidgets('the inline row shrink-wraps and the contained row fills', (

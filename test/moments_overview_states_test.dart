@@ -184,10 +184,18 @@ void main() {
     final card = find.byKey(const ValueKey('moment-row-m4'));
     final palette = AppPalette.of(tester.element(card));
     expect(palette, AppPalette.light);
-    final material = tester.widget<Material>(
-      find.descendant(of: card, matching: find.byType(Material)).first,
-    );
-    expect(material.color, AppPalette.light.surface);
+    // Refine-look R2: the card's fill is the light palette's block gradient
+    // (it was a flat `surface` Material).
+    final fill = tester
+        .widgetList<AnimatedContainer>(
+          find.descendant(
+            of: find.byKey(const ValueKey('moment-row-block-m4')),
+            matching: find.byType(AnimatedContainer),
+          ),
+        )
+        .first
+        .decoration as BoxDecoration;
+    expect(fill.gradient, AppPalette.light.blockGradient);
     final panel = tester.widget<Container>(
       find.byKey(const ValueKey<String>('yo-moments-local-panel')),
     );

@@ -13,6 +13,8 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
@@ -33,6 +35,7 @@ import 'package:yovoice/features/moments/presentation/screens/moment_detail_scre
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_discover_tiles.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_pill.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_sheet.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_queue_list.dart';
@@ -41,13 +44,17 @@ import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels
 import 'package:yovoice/features/moments/presentation/widgets/moments_follow_panel.dart';
 import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc_button.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
-import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/voice/yo_voice_finish.dart';
+import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
 /// Which slice of the Moments corpus the feed is showing.
 enum MomentsFilter {
@@ -1827,16 +1834,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
                 onFilterSelected: (index) =>
                     _setFilter(MomentsFilter.values[index]),
                 filterGroupLabel: groupLabel,
-                filterTrailing: OverlayPlateButton(
-                  key: const ValueKey('moments-discovery-refresh'),
-                  icon: Icons.refresh_rounded,
-                  semanticLabel: copy.text('Reload Moments', 'Odśwież Momenty'),
-                  focusNode: _expiryRecoveryFocus,
-                  onTap: _refreshAll,
-                  glyphColor: context.appPalette.textSecondary,
-                  plateColor: Colors.transparent,
-                  hoverPlateColor: context.appPalette.surfaceMuted,
-                ),
+                filterTrailing: _refreshButton(context),
               )
             else
               ?header,
@@ -1850,16 +1848,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
                       _setFilter(MomentsFilter.values[index]),
                   groupLabel: groupLabel,
                   gutter: layout.gutter,
-                  trailing: IconButton(
-                    key: const ValueKey('moments-discovery-refresh'),
-                    focusNode: _expiryRecoveryFocus,
-                    onPressed: _refreshAll,
-                    tooltip: copy.text('Reload Moments', 'Odśwież Momenty'),
-                    icon: Icon(
-                      Icons.refresh_rounded,
-                      color: context.appPalette.textSecondary,
-                    ),
-                  ),
+                  trailing: _refreshButton(context),
                 ),
               ),
             Expanded(child: body),
@@ -2001,6 +1990,52 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     );
   }
 
+  /// Refresh beside the chips (refine-look §8.4): a 40 px hairline circle
+  /// inside the unchanged 48 px target, with the same key, tooltip and
+  /// focus-recovery node on both chip layouts. Hover moves the edge to
+  /// `hairlineHover` and lays the neutral glass; keyboard focus is a 2 px
+  /// `focus` ring; high contrast brings `borderStrong` back.
+  Widget _refreshButton(BuildContext context) {
+    final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
+    return IconButton(
+      key: const ValueKey('moments-discovery-refresh'),
+      focusNode: _expiryRecoveryFocus,
+      onPressed: _refreshAll,
+      tooltip: _copy.text('Reload Moments', 'Odśwież Momenty'),
+      style: ButtonStyle(
+        fixedSize: const WidgetStatePropertyAll(Size.square(40)),
+        minimumSize: const WidgetStatePropertyAll(Size.square(40)),
+        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+        tapTargetSize: MaterialTapTargetSize.padded,
+        shape: const WidgetStatePropertyAll(CircleBorder()),
+        foregroundColor: WidgetStatePropertyAll(palette.textSecondary),
+        backgroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.hovered)
+              ? AppFinish.glass(palette, hovered: true)
+              : Colors.transparent,
+        ),
+        overlayColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.pressed)
+              ? palette.textPrimary.withValues(alpha: .10)
+              : Colors.transparent,
+        ),
+        side: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.focused)) {
+            return BorderSide(color: palette.focus, width: 2);
+          }
+          if (highContrast) return BorderSide(color: palette.borderStrong);
+          return BorderSide(
+            color: states.contains(WidgetState.hovered)
+                ? palette.hairlineHover
+                : palette.hairlineControl,
+          );
+        }),
+      ),
+      icon: const Icon(Icons.refresh_rounded, size: 20),
+    );
+  }
+
   Widget _buildPool(YoMomentsLayout layout) {
     switch (_phase) {
       case _Phase.loading:
@@ -2070,6 +2105,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
         ),
         actionLabel: _copy.text('Try again', 'Spróbuj ponownie'),
         onAction: _load,
+        retry: true,
       );
     }
     if (result.moments.isEmpty) {
@@ -2126,6 +2162,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
             ? _copy.text('Record a Moment', 'Nagraj Moment')
             : _copy.text('Try again', 'Spróbuj ponownie'),
         onAction: expiredOnly ? widget.onRecord : _load,
+        retry: !expiredOnly,
       );
     }
 
@@ -2572,6 +2609,41 @@ class _MomentFeedCard extends StatefulWidget {
 
 class _MomentFeedCardState extends State<_MomentFeedCard> {
   bool _hovered = false;
+  bool _focused = false;
+
+  /// W3: whether THIS card's clip is the one playing. It changes only on
+  /// play, pause, completion or a switch to another card — never on a
+  /// position tick — so the card's light rebuilds only its finish, and the
+  /// card body is never rebuilt by the playhead.
+  late final ValueNotifier<bool> _lit = ValueNotifier<bool>(_isLit());
+
+  bool _isLit() {
+    final playback = widget.playback.value;
+    return playback.id == widget.moment.id && playback.playing;
+  }
+
+  void _syncLit() => _lit.value = _isLit();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.playback.addListener(_syncLit);
+  }
+
+  @override
+  void didUpdateWidget(_MomentFeedCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.playback, widget.playback)) {
+      oldWidget.playback.removeListener(_syncLit);
+      widget.playback.addListener(_syncLit);
+    }
+    _syncLit();
+  }
+
+  static InteractiveInkFeatureFactory get _splashFactory =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+      ? InkSparkle.splashFactory
+      : NoSplash.splashFactory;
 
   void _afterMenu(VoidCallback action) {
     // PopupMenu returns its selection before the route's inherited current
@@ -2584,6 +2656,8 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
 
   @override
   void dispose() {
+    widget.playback.removeListener(_syncLit);
+    _lit.dispose();
     widget.onCardDispose(widget.moment.id, context);
     super.dispose();
   }
@@ -2602,7 +2676,8 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
         ? momentAvailabilityLabel(moment.expiresAt, copy: copy)
         : momentExpiryLabel(moment.expiresAt, copy: copy);
     final age = momentRelativeAge(moment.createdAt, copy: copy);
-    final caption = moment.caption.trim().isEmpty
+    final uncaptioned = moment.caption.trim().isEmpty;
+    final caption = uncaptioned
         ? copy.text('Voice Moment', 'Voice Moment')
         : moment.caption;
     final avatarDiameter = widget.compact ? 48.0 : 56.0;
@@ -2716,24 +2791,39 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
         child: MouseRegion(
           onEnter: (_) => setState(() => _hovered = true),
           onExit: (_) => setState(() => _hovered = false),
-          child: Material(
-            color: palette.surface,
-            // Slim: cards take the card radius token (`AppRadius.md`), not
-            // the sheet one; the hairline stays 1 px.
-            shape: RoundedRectangleBorder(
-              borderRadius: AppRadius.md,
-              side: BorderSide(
-                color: _hovered ? palette.borderStrong : palette.border,
-              ),
+          // Refine-look R2 + W3: the card is a block (radius 20, top-lit
+          // fill, hairline) that lights — violet edge, corner light — only
+          // while its own clip plays. The body below is built once per card
+          // build and handed to the light as its child. No card-level press
+          // scale: the card holds its own controls (the bead, the seek
+          // slider, the actions), and a card that shrank under a seek drag
+          // would move the very bars being dragged.
+          child: ValueListenableBuilder<bool>(
+            valueListenable: _lit,
+            builder: (context, lit, body) => YoVoiceBlock(
+              key: ValueKey('moment-row-block-${moment.id}'),
+              lit: lit,
+              hovered: _hovered && widget.canInteract,
+              focused: _focused,
+              child: body!,
             ),
-            clipBehavior: Clip.antiAlias,
             child: InkWell(
               onTap: widget.canInteract ? widget.onTap : null,
               // The node above carries this same action under the card's
               // own name; a second, unnamed tap node under it is what a
               // screen reader would read instead of the name.
               excludeFromSemantics: true,
-              borderRadius: AppRadius.md,
+              borderRadius: AppRadius.block,
+              splashFactory: _splashFactory,
+              onFocusChange: (focused) {
+                if (_focused != focused) setState(() => _focused = focused);
+              },
+              overlayColor: WidgetStateProperty.resolveWith(
+                (states) => states.contains(WidgetState.pressed)
+                    ? AppFinish.blockPressedWash(palette)
+                    // Hover and focus are carried by the edge.
+                    : Colors.transparent,
+              ),
               child: Padding(
                 padding: const EdgeInsets.all(AppRhythm.title),
                 child: Column(
@@ -2790,26 +2880,46 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
                       ),
                       child: Align(
                         alignment: AlignmentDirectional.centerStart,
+                        // Refine-look: the caption is the card's title (w700,
+                        // tight tracking); a card without one falls back to
+                        // the format name, quieter, so it never reads as a
+                        // caption somebody wrote.
                         child: Text(
                           caption,
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
-                          style: AppTypography.titleLarge.copyWith(
-                            color: palette.textPrimary,
-                          ),
+                          style: uncaptioned
+                              ? AppTypography.titleMedium.copyWith(
+                                  color: palette.textSecondary,
+                                  fontWeight: FontWeight.w600,
+                                )
+                              : AppTypography.titleLarge.copyWith(
+                                  color: palette.textPrimary,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -.2,
+                                ),
                         ),
                       ),
                     ),
                     if (availability != null) ...[
                       const SizedBox(height: AppRhythm.tight),
-                      Text(
-                        availability,
-                        style: AppTypography.bodySmall.copyWith(
-                          color: moment.isPermanent || uploading
-                              ? palette.textSecondary
-                              : palette.warningForeground,
+                      if (uploading)
+                        Text(
+                          availability,
+                          style: AppTypography.bodySmall.copyWith(
+                            color: palette.textSecondary,
+                          ),
+                        )
+                      else
+                        Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: MomentExpiryPill(
+                            key: ValueKey('moment-row-expiry-${moment.id}'),
+                            label: availability,
+                            expiresAt: moment.expiresAt,
+                            createdAt: moment.createdAt,
+                          ),
                         ),
-                      ),
                     ],
                     const SizedBox(height: AppRhythm.item),
                     ValueListenableBuilder<_FeedPlayback>(
@@ -2847,7 +2957,11 @@ class _MomentFeedCardState extends State<_MomentFeedCard> {
   }
 }
 
-/// ♡ · 💬 · Udostępnij · outlined "Odpowiedz głosem" — real counters only.
+/// ♡ · 💬 · Udostępnij · "Odpowiedz głosem" — real counters only.
+///
+/// The reply is the card's one voice-reply affordance, so it wears the R7
+/// accent tonal finish (a faint `interactiveForeground` wash, a 1.5 px edge,
+/// a w700 label); the three quiet actions stay transparent.
 ///
 /// Below a 328-px content width (a slot under 360) the reply action drops
 /// to its own full-width row; otherwise the row wraps only when the four
@@ -2954,15 +3068,21 @@ class _CardActions extends StatelessWidget {
       child: OutlinedButton.icon(
         key: ValueKey('moment-row-reply-voice-$id'),
         onPressed: enabled ? onReplyVoice : null,
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(
-            AppSizing.minimumTouchTarget,
-            AppSizing.standardControlHeight,
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: AppRhythm.title),
-          shape: const StadiumBorder(),
-          textStyle: AppTypography.labelLarge,
-        ),
+        style:
+            AppFinish.tonalAccent(
+              palette,
+              highContrast: MediaQuery.highContrastOf(context),
+            ).merge(
+              OutlinedButton.styleFrom(
+                minimumSize: const Size(
+                  AppSizing.minimumTouchTarget,
+                  AppSizing.standardControlHeight,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppRhythm.title,
+                ),
+              ),
+            ),
         icon: const Icon(Icons.mic_rounded, size: 18),
         // Two lines at 200 % text on a 320 slot rather than an ellipsis:
         // the button grows, the words stay whole.
@@ -3068,7 +3188,7 @@ class _CardActions extends StatelessWidget {
   }
 }
 
-/// Play disc 48 · decorative waveform with the REAL fill · reserved time.
+/// Voice bead 48 · pouring waveform with the REAL fill · time under it.
 ///
 /// One position source: the feed's playback notifier drives the waveform
 /// fill, the accessible seek control laid over it and the time label. The
@@ -3076,6 +3196,16 @@ class _CardActions extends StatelessWidget {
 /// the eye reads, the slider is what a finger, a keyboard and a screen
 /// reader get — so it keeps the platform's drag, arrow-key and value
 /// semantics without a second position.
+///
+/// Refine-look R13 / R14 / W3: the play control is the voice bead (the
+/// logo's glass, lit only while this clip plays; a spinner while the grant
+/// resolves, the refresh glyph after a failure, a flat disc when there is
+/// nothing to play). The bars are the fixed silhouette at 36 / 3 / 2 in
+/// `waveUnplayed`, which they keep at rest and while playing; the played
+/// part is the logo's violet → magenta spread over the whole run and
+/// revealed up to the playhead, tweened between the player's REAL reports
+/// ([YoVoicePour]). The time sits under the wave at its end, so no box is
+/// reserved beside the bars.
 class _VoiceMomentTransport extends StatelessWidget {
   const _VoiceMomentTransport({
     required this.moment,
@@ -3094,11 +3224,18 @@ class _VoiceMomentTransport extends StatelessWidget {
   final ValueChanged<Duration> onSeek;
 
   static const double discSize = AppSizing.standardControlHeight;
-  static const double waveformHeight = 32;
+  static const double waveformHeight = 36;
+  static const double barWidth = 3;
+  static const double barGap = 2;
 
-  /// The width of "0:00 / 0:00" at 14-px tabular figures, reserved so the
-  /// label never jumps when playback starts.
-  static const double timeWidth = 88;
+  /// The wave's top inset inside the transport, so its centre line meets
+  /// the bead's.
+  static const double waveInset = (discSize - waveformHeight) / 2;
+
+  void _play() {
+    if (!state.playing) YoGradientDiscButton.playHaptic();
+    onPlay();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3112,147 +3249,142 @@ class _VoiceMomentTransport extends StatelessWidget {
       maxMs > 0 ? maxMs : 0,
     );
     final progress = maxMs > 0 ? position / maxMs : 0.0;
-    final label = state.playing
+    final failed = state.error != null;
+    // After a failure the bead shows the refresh glyph, so its name and
+    // tooltip say what that glyph does — the same "Try again" the retry
+    // button under the wave carries (the B5 review, A11Y-B5-05).
+    final label = failed
+        ? copy.text('Try again', 'Spróbuj ponownie')
+        : state.playing
         ? copy.text('Pause', 'Pauza')
         : copy.text('Play', 'Odtwórz');
     final timeText = active
         ? '${_clock(position ~/ 1000)} / ${_clock(total.inSeconds)}'
         : _clock(total.inSeconds);
-    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-    final reserved = timeWidth * textScale;
 
-    final play = SizedBox.square(
-      dimension: discSize,
-      child: IconButton.filled(
-        key: ValueKey('moment-row-play-${moment.id}'),
-        style: ButtonStyle(
-          backgroundColor: WidgetStateProperty.resolveWith(
-            (states) => states.contains(WidgetState.disabled)
-                ? palette.surfaceMuted
-                : colors.primary,
+    final play = YoGradientDiscButton(
+      enabled: enabled && !state.busy,
+      disc: (hovered, focused) => YoGradientDisc(
+        size: discSize,
+        icon: state.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+        glyphSize: YoVoiceBead.glyphSize(discSize),
+        nudgePlay: !state.playing,
+        gloss: true,
+        emphasis: state.playing ? YoDiscEmphasis.lit : YoDiscEmphasis.rest,
+        status: !enabled
+            ? YoDiscStatus.disabled
+            : state.busy
+            ? YoDiscStatus.busy
+            : failed
+            ? YoDiscStatus.failed
+            : YoDiscStatus.idle,
+        hovered: hovered,
+        focused: focused,
+      ),
+      builder: (context, states, disc) => SizedBox.square(
+        dimension: discSize,
+        child: IconButton(
+          key: ValueKey('moment-row-play-${moment.id}'),
+          statesController: states,
+          style: const ButtonStyle(
+            backgroundColor: WidgetStatePropertyAll(Colors.transparent),
+            // The bead carries hover, press and focus itself.
+            overlayColor: WidgetStatePropertyAll(Colors.transparent),
+            shape: WidgetStatePropertyAll(CircleBorder()),
+            padding: WidgetStatePropertyAll(EdgeInsets.zero),
+            minimumSize: WidgetStatePropertyAll(Size.square(discSize)),
           ),
-          foregroundColor: WidgetStatePropertyAll(colors.onPrimary),
-          shape: const WidgetStatePropertyAll(CircleBorder()),
-          padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-          minimumSize: const WidgetStatePropertyAll(Size.square(discSize)),
-          side: WidgetStateProperty.resolveWith(
-            (states) => BorderSide(
-              width: 2,
-              color: states.contains(WidgetState.focused)
-                  ? colors.onPrimary
-                  : Colors.transparent,
-            ),
-          ),
+          onPressed: enabled && !state.busy ? _play : null,
+          tooltip: label,
+          icon: disc,
         ),
-        onPressed: enabled && !state.busy ? onPlay : null,
-        tooltip: label,
-        icon: state.busy
-            ? SizedBox.square(
-                dimension: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: colors.onPrimary,
-                ),
-              )
-            : Icon(
-                state.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                size: 24,
-              ),
       ),
     );
 
-    final waveform = SizedBox(
-      height: discSize,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Positioned.fill(
-            child: Center(
-              child: ExcludeSemantics(
-                child: StoryWaveform(
-                  progress: progress,
-                  height: waveformHeight,
-                  barWidth: 3,
-                  barGap: 3,
-                  barRadius: 1.5,
-                  playedGradient: palette.audioProgressGradient,
-                ),
-              ),
-            ),
-          ),
-          Positioned.fill(
-            // One node carrying the name AND the value. Without the
-            // container the label merged into the CARD's node — which is
-            // where the card's junk name came from — and the slider itself
-            // reached the accessibility bridge unnamed; without the merge
-            // the name and the position would be two separate nodes.
-            child: MergeSemantics(
-              child: Semantics(
-                container: true,
-                label: copy.contextualText(
-                  'yoMoments.playbackPosition',
-                  'Playback position',
-                  'Pozycja odtwarzania',
-                ),
-                child: SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    trackHeight: waveformHeight,
-                    activeTrackColor: Colors.transparent,
-                    inactiveTrackColor: Colors.transparent,
-                    disabledActiveTrackColor: Colors.transparent,
-                    disabledInactiveTrackColor: Colors.transparent,
-                    secondaryActiveTrackColor: Colors.transparent,
-                    thumbColor: Colors.transparent,
-                    disabledThumbColor: Colors.transparent,
-                    overlayColor: Colors.transparent,
-                    thumbShape: SliderComponentShape.noThumb,
-                    overlayShape: SliderComponentShape.noOverlay,
-                    trackShape: const RectangularSliderTrackShape(),
-                    showValueIndicator: ShowValueIndicator.never,
-                  ),
-                  child: Slider(
-                    key: ValueKey('moment-row-progress-${moment.id}'),
-                    value: position.toDouble(),
-                    max: maxMs > 0 ? maxMs.toDouble() : 1,
-                    padding: EdgeInsets.zero,
-                    onChanged:
-                        enabled &&
-                            active &&
-                            !state.busy &&
-                            state.error == null &&
-                            maxMs > 0
-                        ? (value) =>
-                              onSeek(Duration(milliseconds: value.round()))
-                        : null,
-                    // Both numbers, not the bare position: "0:18" alone tells
-                    // a screen-reader user nothing about how much is left.
-                    semanticFormatterCallback: (value) => copy.template(
-                      '{position} of {total}',
-                      '{position} z {total}',
-                      values: <String, Object>{
-                        'position': _clock(value ~/ 1000),
-                        'total': _clock(maxMs ~/ 1000),
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
+    final wave = SizedBox(
+      height: waveformHeight,
+      child: YoVoicePour(
+        progress: progress,
+        total: total,
+        builder: (context, shown) => YoWaveform(
+          key: ValueKey('moment-row-waveform-${moment.id}'),
+          color: palette.waveUnplayed,
+          progress: shown,
+          playedGradient: AppGradients.voicePlayed(colors, palette),
+          gradientSpan: YoWaveformGradientSpan.full,
+          continuousProgress: true,
+          height: waveformHeight,
+          barWidth: barWidth,
+          barGap: barGap,
+          barRadius: 1.5,
+        ),
       ),
     );
 
-    final time = SizedBox(
-      width: reserved,
-      child: Text(
-        timeText,
-        key: ValueKey('moment-row-time-${moment.id}'),
-        textAlign: TextAlign.end,
-        maxLines: 1,
-        style: AppTypography.bodyMedium.copyWith(
-          color: palette.textSecondary,
-          fontFeatures: const [FontFeature.tabularFigures()],
+    final time = Text(
+      timeText,
+      key: ValueKey('moment-row-time-${moment.id}'),
+      textAlign: TextAlign.end,
+      maxLines: 1,
+      style: AppTypography.labelMedium.copyWith(
+        color: palette.textSecondary,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+    );
+
+    final seek = MergeSemantics(
+      // One node carrying the name AND the value. Without the container the
+      // label merged into the CARD's node — which is where the card's junk
+      // name came from — and the slider itself reached the accessibility
+      // bridge unnamed; without the merge the name and the position would be
+      // two separate nodes.
+      child: Semantics(
+        container: true,
+        label: copy.contextualText(
+          'yoMoments.playbackPosition',
+          'Playback position',
+          'Pozycja odtwarzania',
+        ),
+        child: SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: waveformHeight,
+            activeTrackColor: Colors.transparent,
+            inactiveTrackColor: Colors.transparent,
+            disabledActiveTrackColor: Colors.transparent,
+            disabledInactiveTrackColor: Colors.transparent,
+            secondaryActiveTrackColor: Colors.transparent,
+            thumbColor: Colors.transparent,
+            disabledThumbColor: Colors.transparent,
+            overlayColor: Colors.transparent,
+            thumbShape: SliderComponentShape.noThumb,
+            overlayShape: SliderComponentShape.noOverlay,
+            trackShape: const RectangularSliderTrackShape(),
+            showValueIndicator: ShowValueIndicator.never,
+          ),
+          child: Slider(
+            key: ValueKey('moment-row-progress-${moment.id}'),
+            value: position.toDouble(),
+            max: maxMs > 0 ? maxMs.toDouble() : 1,
+            padding: EdgeInsets.zero,
+            onChanged:
+                enabled &&
+                    active &&
+                    !state.busy &&
+                    state.error == null &&
+                    maxMs > 0
+                ? (value) => onSeek(Duration(milliseconds: value.round()))
+                : null,
+            // Both numbers, not the bare position: "0:18" alone tells a
+            // screen-reader user nothing about how much is left.
+            semanticFormatterCallback: (value) => copy.template(
+              '{position} of {total}',
+              '{position} z {total}',
+              values: <String, Object>{
+                'position': _clock(value ~/ 1000),
+                'total': _clock(maxMs ~/ 1000),
+              },
+            ),
+          ),
         ),
       ),
     );
@@ -3261,42 +3393,40 @@ class _VoiceMomentTransport extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        LayoutBuilder(
-          builder: (context, constraints) {
-            // At 200 % text the reserved label alone can eat the waveform;
-            // it then drops under the row rather than squeezing the bars.
-            final inline =
-                constraints.maxWidth -
-                    discSize -
-                    2 * AppRhythm.item -
-                    reserved >=
-                64;
-            if (inline) {
-              return Row(
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            play,
+            const SizedBox(width: AppRhythm.item),
+            Expanded(
+              // The seek band is the bead's full 48 px, laid over the wave
+              // (and the top of the time under it), so a finger gets the
+              // same target the bead has.
+              child: Stack(
                 children: [
-                  play,
-                  const SizedBox(width: AppRhythm.item),
-                  Expanded(child: waveform),
-                  const SizedBox(width: AppRhythm.item),
-                  time,
+                  Padding(
+                    padding: const EdgeInsets.only(top: waveInset),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ExcludeSemantics(child: wave),
+                        const SizedBox(height: AppRhythm.hairline),
+                        time,
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: discSize,
+                    child: seek,
+                  ),
                 ],
-              );
-            }
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    play,
-                    const SizedBox(width: AppRhythm.item),
-                    Expanded(child: waveform),
-                  ],
-                ),
-                const SizedBox(height: AppRhythm.hairline),
-                Align(alignment: AlignmentDirectional.centerEnd, child: time),
-              ],
-            );
-          },
+              ),
+            ),
+          ],
         ),
         if (state.error != null) ...[
           const SizedBox(height: AppRhythm.tight),
@@ -3528,7 +3658,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: palette.surface,
-        border: Border(left: BorderSide(color: palette.border)),
+        border: Border(left: BorderSide(color: palette.hairline)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3579,7 +3709,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                                     style: TextStyle(
                                       color: palette.textPrimary,
                                       fontSize: 15.5,
-                                      fontWeight: FontWeight.w800,
+                                      fontWeight: FontWeight.w700,
                                     ),
                                   ),
                                 ),
@@ -3590,6 +3720,8 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                             const SizedBox(height: 2),
                             Wrap(
                               spacing: 8,
+                              runSpacing: 4,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 if (age.isNotEmpty)
                                   Text(
@@ -3599,19 +3731,16 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                                       fontSize: 12,
                                     ),
                                   ),
+                                // The neutral R12 pill: amber only in the
+                                // last hour, a calm fact for a permanent one.
                                 if (expiry != null)
-                                  Text(
-                                    expiry,
-                                    key: const ValueKey('detail-expiry-label'),
-                                    style: TextStyle(
-                                      // A permanent Moment's label is a
-                                      // calm fact, not a countdown.
-                                      color: moment.isPermanent
-                                          ? palette.textTertiary
-                                          : palette.warningForeground,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
+                                  MomentExpiryPill(
+                                    label: expiry,
+                                    labelKey: const ValueKey(
+                                      'detail-expiry-label',
                                     ),
+                                    expiresAt: moment.expiresAt,
+                                    createdAt: moment.createdAt,
                                   ),
                               ],
                             ),
@@ -3654,23 +3783,40 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                                 'Play this Moment',
                                 'Odtwórz ten Moment',
                               ),
-                        child: Material(
-                          color: colors.primary,
-                          shape: const CircleBorder(),
-                          child: InkWell(
-                            key: const ValueKey('detail-play-toggle'),
-                            customBorder: const CircleBorder(),
-                            onTap: widget.onTogglePlay,
-                            child: SizedBox(
-                              width: 54,
-                              height: 54,
-                              child: Icon(
-                                widget.isPlaying
-                                    ? Icons.pause_rounded
-                                    : Icons.play_arrow_rounded,
-                                color: colors.onPrimary,
-                                size: 30,
+                        // The 54 px voice bead (R14): lit only while this
+                        // Moment plays.
+                        child: YoGradientDiscButton(
+                          disc: (hovered, focused) => YoGradientDisc(
+                            size: 54,
+                            icon: widget.isPlaying
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                            glyphSize: YoVoiceBead.glyphSize(54),
+                            nudgePlay: !widget.isPlaying,
+                            gloss: true,
+                            emphasis: widget.isPlaying
+                                ? YoDiscEmphasis.lit
+                                : YoDiscEmphasis.rest,
+                            hovered: hovered,
+                            focused: focused,
+                          ),
+                          builder: (context, states, disc) => Material(
+                            type: MaterialType.transparency,
+                            child: InkWell(
+                              key: const ValueKey('detail-play-toggle'),
+                              statesController: states,
+                              customBorder: const CircleBorder(),
+                              overlayColor: const WidgetStatePropertyAll(
+                                Colors.transparent,
                               ),
+                              splashFactory: NoSplash.splashFactory,
+                              onTap: () {
+                                if (!widget.isPlaying) {
+                                  YoGradientDiscButton.playHaptic();
+                                }
+                                widget.onTogglePlay();
+                              },
+                              child: disc,
                             ),
                           ),
                         ),
@@ -3702,23 +3848,44 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                                           );
                                         }
                                       : null,
-                                  child: StoryWaveform(
+                                  child: YoVoicePour(
                                     progress: progress,
-                                    height: 30,
+                                    total: Duration(seconds: totalSeconds),
+                                    builder: (context, shown) => YoWaveform(
+                                      key: const ValueKey(
+                                        'detail-panel-waveform',
+                                      ),
+                                      color: palette.waveUnplayed,
+                                      progress: shown,
+                                      playedGradient: AppGradients.voicePlayed(
+                                        colors,
+                                        palette,
+                                      ),
+                                      gradientSpan: YoWaveformGradientSpan.full,
+                                      continuousProgress: true,
+                                      height: 30,
+                                      barWidth: 3,
+                                      barGap: 2,
+                                      barRadius: 1.5,
+                                    ),
                                   ),
                                 );
                               },
                             ),
                             const SizedBox(height: 6),
-                            Text(
-                              hasTotal
-                                  ? '${_clock(widget.elapsed.inSeconds)} / '
-                                        '${_clock(totalSeconds)}'
-                                  : '',
-                              style: TextStyle(
-                                color: palette.textTertiary,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
+                            Align(
+                              alignment: AlignmentDirectional.centerEnd,
+                              child: Text(
+                                hasTotal
+                                    ? '${_clock(widget.elapsed.inSeconds)} / '
+                                          '${_clock(totalSeconds)}'
+                                    : '',
+                                style: AppTypography.labelMedium.copyWith(
+                                  color: palette.textSecondary,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
                               ),
                             ),
                           ],
@@ -3737,7 +3904,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                     onDelete: widget.onDelete,
                   ),
                   const SizedBox(height: 16),
-                  Divider(color: palette.border, height: 1),
+                  Divider(color: palette.hairline, height: 1),
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -3747,7 +3914,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                           style: TextStyle(
                             color: palette.textPrimary,
                             fontSize: 14,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ),
@@ -3780,7 +3947,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
             padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
             decoration: BoxDecoration(
               color: palette.surfaceRaised,
-              border: Border(top: BorderSide(color: palette.border)),
+              border: Border(top: BorderSide(color: palette.hairline)),
             ),
             child: Row(
               children: [
@@ -4204,7 +4371,7 @@ class MomentCommentsInlineState extends State<MomentCommentsInline> {
                                 style: TextStyle(
                                   color: palette.textPrimary,
                                   fontSize: 12,
-                                  fontWeight: FontWeight.w800,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
                               Text(
@@ -4257,9 +4424,11 @@ class MomentCommentsInlineState extends State<MomentCommentsInline> {
 }
 
 /// Three card silhouettes at the card's real geometry — header, two caption
-/// lines, transport — on the card surface. A gentle pulse, static under
-/// Reduce Motion. The capsule strip and the side panels are ABSENT here: a
-/// skeleton of authors would fake authors.
+/// lines, transport — in the card's own R2 block. The transport bone is the
+/// real shape: a 48 px circle, the waveform's silhouette and the time bone
+/// under the wave at its end. A gentle pulse, static under Reduce Motion.
+/// The capsule strip and the side panels are ABSENT here: a skeleton of
+/// authors would fake authors.
 class _LoadingState extends StatefulWidget {
   const _LoadingState({required this.gutter, required this.compact});
 
@@ -4298,6 +4467,7 @@ class _LoadingStateState extends State<_LoadingState>
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
+    final highContrast = MediaQuery.highContrastOf(context);
     final avatar = widget.compact ? 48.0 : 56.0;
     Widget bone(double width, double height, {bool round = false}) => Container(
       width: width,
@@ -4326,11 +4496,7 @@ class _LoadingStateState extends State<_LoadingState>
             itemBuilder: (context, index) => Container(
               margin: const EdgeInsets.only(bottom: AppRhythm.item),
               padding: const EdgeInsets.all(AppRhythm.title),
-              decoration: BoxDecoration(
-                color: palette.surface,
-                border: Border.all(color: palette.border),
-                borderRadius: AppRadius.lg,
-              ),
+              decoration: AppFinish.block(palette, highContrast: highContrast),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -4359,6 +4525,7 @@ class _LoadingStateState extends State<_LoadingState>
                   ),
                   const SizedBox(height: AppRhythm.item),
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       bone(
                         _VoiceMomentTransport.discSize,
@@ -4367,13 +4534,28 @@ class _LoadingStateState extends State<_LoadingState>
                       ),
                       const SizedBox(width: AppRhythm.item),
                       Expanded(
-                        child: bone(
-                          double.infinity,
-                          _VoiceMomentTransport.waveformHeight,
+                        child: Padding(
+                          padding: const EdgeInsets.only(
+                            top: _VoiceMomentTransport.waveInset,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              // The silhouette itself, in the bone ink: the
+                              // shape of a clip, never a fake position.
+                              YoWaveform(
+                                color: palette.surfaceMuted,
+                                height: _VoiceMomentTransport.waveformHeight,
+                                barWidth: _VoiceMomentTransport.barWidth,
+                                barGap: _VoiceMomentTransport.barGap,
+                                barRadius: 1.5,
+                              ),
+                              const SizedBox(height: AppRhythm.hairline),
+                              bone(40, 12),
+                            ],
+                          ),
                         ),
                       ),
-                      const SizedBox(width: AppRhythm.item),
-                      bone(56, 14),
                     ],
                   ),
                 ],
@@ -4387,6 +4569,11 @@ class _LoadingStateState extends State<_LoadingState>
 }
 
 /// An inline card, never a red page: the existing copy, one retry.
+///
+/// Refine-look R17: the card is an R2 block and its topic glyph sits in the
+/// Moments disc (64 px, a faint primary fill and edge, an
+/// `interactiveForeground` glyph). The retry stays a solid action — R5's
+/// gradient is never spent on a retry.
 class _ErrorState extends StatelessWidget {
   const _ErrorState({required this.error, required this.onRetry});
 
@@ -4403,21 +4590,19 @@ class _ErrorState extends StatelessWidget {
         padding: const EdgeInsets.all(AppRhythm.section),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 480),
-          child: Material(
-            color: palette.surface,
-            shape: RoundedRectangleBorder(
-              borderRadius: AppRadius.lg,
-              side: BorderSide(color: palette.border),
+          child: DecoratedBox(
+            decoration: AppFinish.block(
+              palette,
+              highContrast: MediaQuery.highContrastOf(context),
             ),
             child: Padding(
               padding: const EdgeInsets.all(AppRhythm.section),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Icons.cloud_off_rounded,
-                    size: 32,
-                    color: palette.textSecondary,
+                  const YoMomentsStateDisc(
+                    key: ValueKey('moments-state-disc'),
+                    icon: Icons.cloud_off_rounded,
                   ),
                   const SizedBox(height: AppRhythm.title),
                   Text(
@@ -4462,6 +4647,11 @@ class _ErrorState extends StatelessWidget {
 
 /// Per-pool empty copy, centred at a 320 measure, with the recorder offered
 /// and — where the host can open it — a second, real action.
+///
+/// Refine-look R17: the topic glyph sits in the 64 px Moments disc and the
+/// record action is the R5 gradient — flat, because the header's create
+/// action owns the screen's one lift. An action that only tries again
+/// ([retry]) stays a solid button: the gradient is never spent on a retry.
 class _EmptyState extends StatelessWidget {
   const _EmptyState({
     required this.icon,
@@ -4469,6 +4659,7 @@ class _EmptyState extends StatelessWidget {
     required this.body,
     required this.actionLabel,
     required this.onAction,
+    this.retry = false,
     this.secondaryActionKey,
     this.secondaryActionLabel,
     this.onSecondaryAction,
@@ -4480,6 +4671,9 @@ class _EmptyState extends StatelessWidget {
   final String body;
   final String actionLabel;
   final VoidCallback onAction;
+
+  /// The action re-reads the feed instead of opening the recorder.
+  final bool retry;
   final Key? secondaryActionKey;
   final String? secondaryActionLabel;
   final VoidCallback? onSecondaryAction;
@@ -4501,7 +4695,10 @@ class _EmptyState extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 32, color: palette.textSecondary),
+              YoMomentsStateDisc(
+                key: const ValueKey('moments-state-disc'),
+                icon: icon,
+              ),
               const SizedBox(height: AppRhythm.title),
               Text(
                 title,
@@ -4519,7 +4716,18 @@ class _EmptyState extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: AppRhythm.section),
-              FilledButton(onPressed: onAction, child: Text(actionLabel)),
+              if (retry)
+                FilledButton(onPressed: onAction, child: Text(actionLabel))
+              else
+                YoGradientFilledButton(
+                  onPressed: onAction,
+                  emphasis: YoActionEmphasis.flat,
+                  minimumSize: const Size(
+                    AppSizing.minimumTouchTarget,
+                    AppSizing.standardControlHeight,
+                  ),
+                  child: Text(actionLabel, textAlign: TextAlign.center),
+                ),
               if (secondaryLabel != null && secondary != null) ...[
                 const SizedBox(height: AppRhythm.tight),
                 OutlinedButton(

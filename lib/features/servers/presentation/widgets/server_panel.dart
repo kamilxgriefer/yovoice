@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
@@ -273,7 +274,8 @@ class _ServerPanelState extends State<ServerPanel> {
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: AppTypography.titleMedium.copyWith(
-                                fontWeight: FontWeight.w800,
+                                // Calm type (refine-look principle 6).
+                                fontWeight: FontWeight.w700,
                                 color: palette.textPrimary,
                               ),
                             ),
@@ -297,8 +299,13 @@ class _ServerPanelState extends State<ServerPanel> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '${copy.serverKindSubtitle(server.type, server.privacy)} · '
-                        '${copy.serverMembers(server.memberCount)}',
+                        // "12 osób" stays together and the dot stays with
+                        // the word before it when the subtitle wraps
+                        // (refine-look §8.2).
+                        serverMetaLine(
+                          copy.serverKindSubtitle(server.type, server.privacy),
+                          copy.serverMembers(server.memberCount),
+                        ),
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: AppTypography.bodySmall.copyWith(
@@ -348,11 +355,19 @@ class _ServerPanelState extends State<ServerPanel> {
           ],
           if (canInvite) ...[
             const SizedBox(height: 12),
+            // Refine-look R7 neutral: glass, a control hairline and the
+            // interactive ink — not a second outline beside the rows. A held
+            // server keeps the disabled 1 px `border`.
             OutlinedButton.icon(
               key: const ValueKey('server-invite-action'),
               onPressed: server.isHeld ? null : widget.onInvite,
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size.fromHeight(48),
+              style: AppFinish.tonalNeutral(
+                palette,
+                highContrast: MediaQuery.highContrastOf(context),
+              ).merge(
+                OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                ),
               ),
               icon: const Icon(Icons.person_add_outlined, size: 18),
               label: Text(copy.serverInvite),
@@ -369,7 +384,7 @@ class _ServerPanelState extends State<ServerPanel> {
               ),
           ],
           const SizedBox(height: 8),
-          Divider(color: palette.border, height: 24),
+          Divider(color: serverDivider(context), height: 24),
           if (channels.isEmpty)
             Padding(
               padding: const EdgeInsets.all(8),

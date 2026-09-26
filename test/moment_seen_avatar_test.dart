@@ -183,8 +183,10 @@ void main() {
     },
   );
 
+  // Refine-look §8.4 moved the capsule's state from its border onto a 38 px
+  // MomentSeenAvatar ring (deliberate); the stops and angle are unchanged.
   testWidgets(
-    'MomentAuthorCapsule\'s border is the same ringGradient, not a plain '
+    'MomentAuthorCapsule\'s ring is the same ringGradient, not a plain '
     'left-to-right LinearGradient',
     (tester) async {
       await tester.pumpWidget(
@@ -198,11 +200,11 @@ void main() {
         ),
       );
       final context = tester.element(find.byType(MomentAuthorCapsule));
-      final border = tester.widget<DecoratedBox>(
-        find.byKey(MomentAuthorCapsule.borderKey),
+      final ring = tester.widget<Container>(
+        find.byKey(MomentAuthorCapsule.ringKey),
       );
       final gradient =
-          (border.decoration as BoxDecoration).gradient! as LinearGradient;
+          (ring.decoration! as BoxDecoration).gradient! as LinearGradient;
       expect(gradient, MomentStoryTile.ringGradient(context, seen: false));
       expect(gradient.begin, AppGradients.primary.begin);
       expect(gradient.end, AppGradients.primary.end);

@@ -5,7 +5,8 @@
 //                      Cards (the theme card hairline);
 // * server-events    — the Community events board: theme FilterChips
 //                      (response and reminder chips, selected / enabled /
-//                      disabled);
+//                      disabled); where large text pushes the chips below
+//                      the fold, a second `chips` shot scrolls them in;
 // * server-new-channel — the workspace's "Nowy kanał" sheet: theme
 //                      ChoiceChips (the channel kinds);
 // * company-files    — the Company files board's YoEmptyState with its
@@ -14,6 +15,26 @@
 //                      (YoButton primary busy + ghost "Anuluj" disabled),
 //                      plus pointer-hover shots of the caller-coloured
 //                      YoIconButtons (the video play plate, the sheet close).
+//
+// The unrendered-adopter states (review B3-4), 100 % text, both themes:
+//
+// * device-sessions-focus — the default YoIconButton (AppBar Back) holding
+//                      KEYBOARD focus (reached with Tab), not high contrast;
+// * delete-account   — the delete-account screen's default glass Back
+//                      button (the full matrix, like the screens above);
+// * server-soon      — a Company server still being prepared (held): the
+//                      meeting channel's theme `Chip`s "Kamera · …" /
+//                      "Udostępnij ekran · …" and the whiteboard's
+//                      "Wkrótce" chip (the workspace's soon chips), plus
+//                      high contrast;
+// * server-manage    — the owner's server settings sheet: its section
+//                      ChoiceChips (selected + unselected, with avatars),
+//                      plus high contrast;
+// * reel-composer    — the Yeel composer's edit step: the tool ChoiceChips,
+//                      plus high contrast;
+// * company-files-press — a touch press held on the primary YoButton, with
+//                      and without Reduce Motion (`pressed` / `pressed-rm`),
+//                      390 only (a touch gesture).
 //
 // Every surface is the real widget, reached through its own constructor
 // seams with the fakes the widget tests use; nothing is drawn by hand. The
@@ -40,7 +61,10 @@
 //   REFINE_CONTROLS_SCREENS=company-files,media-review
 //                                     a subset of: device-sessions,
 //                                     server-events, server-new-channel,
-//                                     company-files, media-review
+//                                     company-files, media-review,
+//                                     device-sessions-focus, delete-account,
+//                                     server-soon, server-manage,
+//                                     reel-composer, company-files-press
 //                                     (default: all; the hover shots run
 //                                     with media-review)
 //
@@ -67,16 +91,23 @@ import 'package:video_player/video_player.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/account/data/account_deletion_service.dart';
+import 'package:yovoice/features/auth/data/reauthentication_service.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/reels/data/services/reel_service.dart';
+import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
 import 'package:yovoice/features/servers/data/models/server_event.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
 import 'package:yovoice/features/servers/data/services/server_voice_device.dart';
 import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
 import 'package:yovoice/features/settings/data/services/session_management_service.dart';
+import 'package:yovoice/features/settings/presentation/screens/delete_account_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/device_sessions_screen.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 
 import 'server_templates_test.dart' as boards;
 import 'server_test_support.dart';
@@ -159,12 +190,20 @@ final List<_Variant> _hoverMatrix = [
     for (final dark in const [true, false]) _Variant(w, h, dark, 100, false),
 ];
 
-void _configure(WidgetTester tester, _Variant v) {
+/// The press shots: 390, both themes, 100 % text.
+final List<_Variant> _pressMatrix = [
+  for (final dark in const [true, false]) _Variant(390, 844, dark, 100, false),
+];
+
+void _configure(WidgetTester tester, _Variant v, {bool reduceMotion = false}) {
   tester.view.physicalSize = Size(v.width, v.height);
   tester.view.devicePixelRatio = 1;
   tester.platformDispatcher.textScaleFactorTestValue = v.text / 100;
   tester.platformDispatcher.accessibilityFeaturesTestValue =
-      FakeAccessibilityFeatures(highContrast: v.hc);
+      FakeAccessibilityFeatures(
+        highContrast: v.hc,
+        disableAnimations: reduceMotion,
+      );
   addTearDown(() {
     tester.view.reset();
     tester.platformDispatcher.clearAllTestValues();
@@ -330,9 +369,98 @@ Widget _workspace(TestServerRepository repository, String channelId) =>
       connector: FakeServerMediaConnector(),
     );
 
-TestServerRepository _companyRepository() => TestServerRepository()
-  ..servers = [boards.boardServer(ServerType.company, members: 23)]
-  ..channels = boards.boardChannels(ServerType.company);
+TestServerRepository _companyRepository({bool held = false}) =>
+    TestServerRepository()
+      ..servers = [
+        boards.boardServer(ServerType.company, members: 23, held: held),
+      ]
+      ..channels = boards.boardChannels(ServerType.company);
+
+/// On a phone the channel list (and the owner's settings action) lives in
+/// the "Kanały" sheet; open it when the panel is not on screen.
+Future<void> _revealPanel(WidgetTester tester, Finder target) async {
+  final panel = find.byKey(const ValueKey('server-panel'));
+  if (target.hitTestable().evaluate().isEmpty &&
+      panel.hitTestable().evaluate().isEmpty) {
+    await tester.tap(find.byKey(const ValueKey('server-open-channels')));
+    await _settle(tester, frames: 10);
+  }
+}
+
+/// Whether the primary focus sits inside [target].
+bool _holdsFocus(Finder target) {
+  final focused = FocusManager.instance.primaryFocus?.context;
+  if (focused == null) return false;
+  return find
+      .descendant(
+        of: target,
+        matching: find.byElementPredicate((element) => element == focused),
+      )
+      .evaluate()
+      .isNotEmpty;
+}
+
+// --- the delete-account screen (the review stage, before any request)
+
+class _PasswordReauthentication implements ReauthenticationClient {
+  @override
+  List<String> get providerIds => const ['password'];
+
+  @override
+  Future<void> reauthenticateWithPassword(String password) async {}
+
+  @override
+  Future<void> reauthenticateWithGoogle() async {}
+
+  @override
+  Future<void> reauthenticateWithApple() async {}
+}
+
+class _IdleDeletion implements AccountDeletionClient {
+  @override
+  Future<AccountDeletionReceipt> requestDeletion() =>
+      Completer<AccountDeletionReceipt>().future;
+}
+
+Widget _deleteAccount() => DeleteAccountScreen(
+  reauthentication: _PasswordReauthentication(),
+  deletionClient: _IdleDeletion(),
+  signOut: () async {},
+  openUrl: (_) async {},
+);
+
+// --- the Yeel composer, fed the same real photo as the media review
+
+class _PhotoPicker extends ImagePicker {
+  _PhotoPicker(this.png);
+
+  final Uint8List png;
+
+  @override
+  Future<XFile?> pickImage({
+    required ImageSource source,
+    double? maxWidth,
+    double? maxHeight,
+    int? imageQuality,
+    CameraDevice preferredCameraDevice = CameraDevice.rear,
+    bool requestFullMetadata = true,
+  }) async => XFile.fromData(
+    png,
+    name: 'IMG_2043.png',
+    mimeType: 'image/png',
+    length: png.length,
+  );
+}
+
+Widget _reelComposer(Uint8List png) => ReelComposerScreen(
+  service: ReelService(
+    auth: MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: _me, isEmailVerified: true),
+    ),
+  ),
+  imagePicker: _PhotoPicker(png),
+);
 
 // --- the chat host for the media review (as test/nb_confirm_upload_capture)
 
@@ -555,6 +683,28 @@ void main() {
         );
         await _settle(tester);
         await _shoot(tester, v, v.name('server-events', 'populated'));
+
+        // At 200 % text on a phone the hero card fills the first screen and
+        // the chips this batch changes sit below the fold. A frame without
+        // them proves nothing, so a second shot brings the first event's
+        // card (response and reminder chips) to the top.
+        final reminder = find.byKey(const ValueKey('server-event-reminder-e1'));
+        final view = Offset.zero & Size(v.width, v.height);
+        final chipsInView =
+            reminder.evaluate().isNotEmpty &&
+            view.contains(tester.getRect(reminder).bottomRight);
+        if (!chipsInView) {
+          await tester.ensureVisible(
+            find.byKey(const ValueKey('server-event-e1')),
+          );
+          await _settle(tester, frames: 6);
+          expect(
+            view.contains(tester.getRect(reminder).bottomRight),
+            isTrue,
+            reason: 'the chips must be in the frame',
+          );
+          await _shoot(tester, v, v.name('server-events', 'chips'));
+        }
       });
     }
 
@@ -621,6 +771,153 @@ void main() {
           await tester.pump(const Duration(milliseconds: 50));
         }
         await _shoot(tester, v, v.name('media-review', 'sending'));
+      });
+    }
+
+    if (_wants('delete-account', v)) {
+      _capture(v.name('delete-account', 'populated'), (tester) async {
+        _configure(tester, v);
+        await tester.pumpWidget(_app(dark: v.dark, home: _deleteAccount()));
+        await _settle(tester);
+        expect(
+          find.descendant(
+            of: find.byType(AppBar),
+            matching: find.byType(YoIconButton),
+          ),
+          findsOneWidget,
+        );
+        await _shoot(tester, v, v.name('delete-account', 'populated'));
+      });
+    }
+
+    // The remaining adopters: 100 % text, with and without high contrast.
+    if (v.text != 100) continue;
+
+    if (!v.hc && _wants('device-sessions-focus', v)) {
+      _capture(v.name('device-sessions', 'focus-back'), (tester) async {
+        _configure(tester, v);
+        await tester.pumpWidget(_app(dark: v.dark, home: _deviceSessions()));
+        await _settle(tester);
+        // Real keyboard focus: Tab until the AppBar's Back holds it (Tab also
+        // switches the focus highlight to the keyboard mode).
+        final back = find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byType(YoIconButton),
+        );
+        for (var i = 0; i < 8 && !_holdsFocus(back); i++) {
+          await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+          await tester.pump();
+        }
+        expect(_holdsFocus(back), isTrue, reason: 'Back must hold focus');
+        await _settle(tester, frames: 6);
+        await _shoot(tester, v, v.name('device-sessions', 'focus-back'));
+      });
+    }
+
+    // The workspace's theme `Chip`s mount on the plain channel scene, which
+    // a Company server shows while it is still being prepared (held): the
+    // meeting channel's "Kamera · …" / "Udostępnij ekran · …" chips and the
+    // whiteboard's "Wkrótce" chip.
+    for (final (channel, state) in const [
+      ('meeting', 'held-meeting'),
+      ('board', 'held-board'),
+    ]) {
+      if (!_wants('server-soon', v)) continue;
+      _capture(v.name('server-soon', state), (tester) async {
+        _configure(tester, v);
+        await tester.pumpWidget(
+          _app(
+            dark: v.dark,
+            home: _workspace(_companyRepository(held: true), channel),
+          ),
+        );
+        await _settle(tester);
+        final chip = find.byType(Chip);
+        expect(chip, findsWidgets, reason: 'the soon chips must be built');
+        await tester.ensureVisible(chip.last);
+        await _settle(tester, frames: 6);
+        await _shoot(tester, v, v.name('server-soon', state));
+      });
+    }
+
+    if (_wants('server-manage', v)) {
+      _capture(v.name('server-manage', 'sheet'), (tester) async {
+        _configure(tester, v);
+        await tester.pumpWidget(
+          _app(
+            dark: v.dark,
+            home: _workspace(_communityRepository(), 'general'),
+          ),
+        );
+        await _settle(tester);
+        final manage = find.byKey(const ValueKey('server-manage-action'));
+        await _revealPanel(tester, manage);
+        await tester.tap(manage.hitTestable().first);
+        await _settle(tester);
+        expect(
+          find.byKey(const ValueKey('server-management-overview')),
+          findsOneWidget,
+        );
+        expect(find.byType(ChoiceChip), findsNWidgets(3));
+        await _shoot(tester, v, v.name('server-manage', 'sheet'));
+      });
+    }
+
+    if (_wants('reel-composer', v)) {
+      _capture(v.name('reel-composer', 'tools'), (tester) async {
+        _configure(tester, v);
+        final png = await _photoBytes(tester);
+        await tester.pumpWidget(_app(dark: v.dark, home: _reelComposer(png)));
+        await _settle(tester);
+        final choose = find.byKey(const ValueKey('reel-choose-media'));
+        await tester.ensureVisible(choose);
+        await _settle(tester, frames: 4);
+        await tester.tap(choose);
+        await _settle(tester, frames: 10);
+        await tester.tap(find.text('Wybierz zdjęcie'));
+        await _settle(tester);
+        final crop = find.byKey(const ValueKey('reel-tool-crop'));
+        expect(crop, findsOneWidget, reason: 'the edit step must be open');
+        await tester.ensureVisible(crop);
+        await _settle(tester, frames: 6);
+        await _shoot(tester, v, v.name('reel-composer', 'tools'));
+      });
+    }
+  }
+
+  // A touch press held on the company files' primary YoButton: .98 scale
+  // without Reduce Motion, none with it.
+  for (final v in _pressMatrix) {
+    if (!_wants('company-files-press', v)) continue;
+    for (final reduceMotion in const [false, true]) {
+      final state = reduceMotion ? 'pressed-rm' : 'pressed';
+      _capture(v.name('company-files', state), (tester) async {
+        _configure(tester, v, reduceMotion: reduceMotion);
+        await tester.pumpWidget(
+          _app(dark: v.dark, home: _workspace(_companyRepository(), 'files')),
+        );
+        await _settle(tester);
+        final cta = find.byType(YoButton).first;
+        final rest = tester.getRect(cta);
+        final touch = await tester.startGesture(tester.getCenter(cta));
+        // The first frame starts the ticker's clock; the rest run the press.
+        await tester.pump();
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        final painted = find
+            .descendant(of: cta, matching: find.byType(AnimatedContainer))
+            .first;
+        // ignore: avoid_print
+        print(
+          '${v.name('company-files', state)}: button $rest, painted '
+          '${tester.getRect(painted)}',
+        );
+        await _shoot(tester, v, v.name('company-files', state));
+        // Cancel rather than lift: a lift is a tap, and the upload picker
+        // has no platform plugin here.
+        await touch.cancel();
+        await _settle(tester, frames: 8);
       });
     }
   }

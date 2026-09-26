@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/servers/data/models/server_member_role.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
+import 'package:yovoice/features/servers/presentation/theme/server_identity.dart';
 import 'package:yovoice/features/servers/presentation/widgets/server_create_channel_sheet.dart';
 
 import 'server_independent_qa_support.dart';
@@ -222,27 +223,59 @@ void main() {
       tester,
     ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      for (final type in ServerType.values) {
-        final repository = TestServerRepository()
-          ..servers = [qaServer(type)]
-          ..channels = qaChannels(type);
-        await pumpServers(
-          tester,
-          qaWorkspace(repository, channelId: qaJoinableChannel(type)),
-          size: const Size(1440, 900),
-        );
-        final joins = qaJoin.evaluate();
-        if (joins.isEmpty) continue;
-        final button = tester.widget<FilledButton>(qaJoin);
-        const focused = <WidgetState>{WidgetState.focused};
-        final side = button.style!.side!.resolve(focused);
-        final fill = button.style!.backgroundColor!.resolve(focused)!;
-        expect(side, isNotNull, reason: '$type CTA has no ring');
-        expect(
-          contrast(side!.color, fill),
-          greaterThanOrEqualTo(3),
-          reason: '$type CTA rings at ${contrast(side.color, fill)}:1',
-        );
+      for (final light in [false, true]) {
+        for (final type in ServerType.values) {
+          final repository = TestServerRepository()
+            ..servers = [qaServer(type)]
+            ..channels = qaChannels(type);
+          await pumpServers(
+            tester,
+            qaWorkspace(repository, channelId: qaJoinableChannel(type)),
+            size: const Size(1440, 900),
+            light: light,
+          );
+          final joins = qaJoin.evaluate();
+          if (joins.isEmpty) continue;
+          final button = tester.widget<FilledButton>(qaJoin);
+          const focused = <WidgetState>{WidgetState.focused};
+          final side = button.style!.side!.resolve(focused);
+          final fill = button.style!.backgroundColor!.resolve(focused)!;
+          expect(side, isNotNull, reason: '$type CTA has no ring');
+          expect(
+            contrast(side!.color, fill),
+            greaterThanOrEqualTo(3),
+            reason: '$type CTA rings at ${contrast(side.color, fill)}:1',
+          );
+          // Refine-look R5: the join paints the template's identity
+          // gradient, and the ring (the label's own ink) holds 3:1 on BOTH
+          // of its stops, not only on the solid fill under it. The label
+          // only gains contrast across the sweep.
+          final colors = ServerIdentity.of(
+            type,
+          ).resolve(light ? Brightness.light : Brightness.dark);
+          final ink = tester.widget<Ink>(
+            find.descendant(of: qaJoin, matching: find.byType(Ink)),
+          );
+          expect(
+            (ink.decoration! as BoxDecoration).gradient,
+            colors.ctaGradient,
+            reason: '$type join does not paint its identity gradient',
+          );
+          for (final stop in colors.ctaGradient.colors) {
+            expect(
+              contrast(side.color, stop),
+              greaterThanOrEqualTo(3),
+              reason:
+                  '$type CTA rings at ${contrast(side.color, stop)}:1 on '
+                  '$stop',
+            );
+            expect(
+              contrast(colors.onCta, stop),
+              greaterThanOrEqualTo(contrast(colors.onCta, colors.cta) - .001),
+              reason: '$type label loses contrast on $stop',
+            );
+          }
+        }
       }
     });
   });

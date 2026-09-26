@@ -8,6 +8,8 @@ import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
@@ -26,21 +28,23 @@ import 'package:yovoice/features/moments/presentation/screens/moment_comments_sc
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_conversation_thread.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_pill.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_mention_composer.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_mentions.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_progress_ring.dart';
-import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart'
-    show StoryWaveform;
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_transport_controls.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_queue_list.dart';
 import 'package:yovoice/features/moments/presentation/widgets/reply_playback_arbiter.dart';
 import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart'
-    show YoMomentsLayout, YoMomentsLayoutTier;
+    show YoMomentsLayout, YoMomentsLayoutTier, YoMomentsStateDisc;
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/voice/yo_voice_finish.dart';
+import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
 enum _MomentDetailRefreshTrigger {
   initial,
@@ -1254,58 +1258,61 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   }
 
   /// The player card of board 07 — hero, waveform, transport, actions.
+  ///
+  /// Refine-look R2 + W3: an R2 block that lights — violet edge, the corner
+  /// light — only while this recording actually sounds (not while its grant
+  /// resolves). The position ticks never reach it: they drive the listeners
+  /// inside it.
   Widget _playerCard({required bool compact, required bool shortHeight}) {
     final palette = context.appPalette;
-    return Container(
+    return YoVoiceBlock(
       key: const ValueKey('moment-detail-player-card'),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        // Slim: the card radius token, 1 px hairline, no shadow.
-        borderRadius: AppRadius.md,
-        border: Border.all(color: palette.border),
-      ),
-      padding: EdgeInsets.all(compact ? AppRhythm.title : AppRhythm.section),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _hero(sideBySide: !compact || shortHeight),
-          SizedBox(height: compact ? AppRhythm.title : AppRhythm.section),
-          _waveform(compact: compact),
-          const SizedBox(height: AppRhythm.tight),
-          ValueListenableBuilder<Duration>(
-            valueListenable: _position,
-            builder: (context, position, _) =>
-                ValueListenableBuilder<Duration?>(
-                  valueListenable: _duration,
-                  builder: (context, duration, __) => MomentTransportControls(
-                    position: position,
-                    total:
-                        duration ?? Duration(seconds: _moment.durationSeconds),
-                    isPlaying: _isPlaying,
-                    busy: _playbackBusy,
-                    canSeek: _everPlayed,
-                    compact: compact,
-                    onTogglePlay: () => unawaited(_togglePlay()),
-                    onSeek: (target) => unawaited(_seek(target)),
-                  ),
-                ),
-          ),
-          if (_playbackError != null) ...[
+      lit: _isPlaying && !_playbackBusy,
+      child: Padding(
+        padding: EdgeInsets.all(compact ? AppRhythm.title : AppRhythm.section),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _hero(sideBySide: !compact || shortHeight),
+            SizedBox(height: compact ? AppRhythm.title : AppRhythm.section),
+            _waveform(compact: compact),
             const SizedBox(height: AppRhythm.tight),
-            Text(
-              _playbackError!,
-              key: const ValueKey('moment-detail-playback-error'),
-              style: AppTypography.bodySmall.copyWith(
-                color: palette.dangerForeground,
-              ),
+            ValueListenableBuilder<Duration>(
+              valueListenable: _position,
+              builder: (context, position, _) =>
+                  ValueListenableBuilder<Duration?>(
+                    valueListenable: _duration,
+                    builder: (context, duration, __) => MomentTransportControls(
+                      position: position,
+                      total:
+                          duration ??
+                          Duration(seconds: _moment.durationSeconds),
+                      isPlaying: _isPlaying,
+                      busy: _playbackBusy,
+                      canSeek: _everPlayed,
+                      compact: compact,
+                      onTogglePlay: () => unawaited(_togglePlay()),
+                      onSeek: (target) => unawaited(_seek(target)),
+                    ),
+                  ),
             ),
+            if (_playbackError != null) ...[
+              const SizedBox(height: AppRhythm.tight),
+              Text(
+                _playbackError!,
+                key: const ValueKey('moment-detail-playback-error'),
+                style: AppTypography.bodySmall.copyWith(
+                  color: palette.dangerForeground,
+                ),
+              ),
+            ],
+            const SizedBox(height: AppRhythm.title),
+            Divider(color: palette.hairline, height: 1),
+            const SizedBox(height: AppRhythm.title),
+            _actions(compact: compact),
+            _reactionsSection(),
           ],
-          const SizedBox(height: AppRhythm.title),
-          Divider(color: palette.border, height: 1),
-          const SizedBox(height: AppRhythm.title),
-          _actions(compact: compact),
-          _reactionsSection(),
-        ],
+        ),
       ),
     );
   }
@@ -1433,7 +1440,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
         ),
         Wrap(
           spacing: AppRhythm.tight,
+          runSpacing: AppRhythm.hairline,
           alignment: centred ? WrapAlignment.center : WrapAlignment.start,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             if (age.isNotEmpty)
               Text(
@@ -1442,18 +1451,14 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
                   color: palette.textTertiary,
                 ),
               ),
+            // The neutral R12 pill: a calm fact for a permanent Moment, a
+            // countdown ring otherwise, amber only in the last hour.
             if (availability != null)
-              Text(
-                availability,
-                key: const ValueKey('moment-detail-availability'),
-                style: AppTypography.bodySmall.copyWith(
-                  // A permanent Moment's label is a calm fact, not a
-                  // warning-coloured countdown.
-                  color: moment.isPermanent
-                      ? palette.textTertiary
-                      : palette.warningForeground,
-                  fontWeight: FontWeight.w700,
-                ),
+              MomentExpiryPill(
+                label: availability,
+                labelKey: const ValueKey('moment-detail-availability'),
+                expiresAt: moment.expiresAt,
+                createdAt: moment.createdAt,
               ),
           ],
         ),
@@ -1464,8 +1469,15 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   /// The silhouette, filled to the real position. Dragging across it seeks
   /// (the accessible seek is the slider below it, which carries the value
   /// and the keyboard steps).
+  ///
+  /// Refine-look R13: `waveUnplayed` bars at rest and while playing, the
+  /// logo's violet → magenta spread over the whole run and revealed up to
+  /// the playhead, poured between the player's REAL reports and snapped on
+  /// a seek ([YoVoicePour]). The bar heights never change.
   Widget _waveform({required bool compact}) {
     final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
+    final height = compact ? 56.0 : 64.0;
     return ValueListenableBuilder<double>(
       valueListenable: _progress,
       builder: (context, progress, _) => LayoutBuilder(
@@ -1486,13 +1498,24 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
                   }
                 : null,
             child: ExcludeSemantics(
-              child: StoryWaveform(
-                progress: progress,
-                height: compact ? 56 : 64,
-                barWidth: 4,
-                barGap: 4,
-                barRadius: 2,
-                playedGradient: palette.audioProgressGradient,
+              child: SizedBox(
+                height: height,
+                child: YoVoicePour(
+                  progress: progress,
+                  total: _totalDuration,
+                  builder: (context, shown) => YoWaveform(
+                    key: const ValueKey('moment-detail-waveform'),
+                    color: palette.waveUnplayed,
+                    progress: shown,
+                    playedGradient: AppGradients.voicePlayed(colors, palette),
+                    gradientSpan: YoWaveformGradientSpan.full,
+                    continuousProgress: true,
+                    height: height,
+                    barWidth: 4,
+                    barGap: 3,
+                    barRadius: 2,
+                  ),
+                ),
               ),
             ),
           );
@@ -1529,22 +1552,33 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     );
   }
 
-  Widget _replyCta({required bool compact}) => FilledButton.icon(
-    key: const ValueKey('moment-detail-reply-voice'),
+  /// The page's one CTA (refine-look R5): the gradient action with its
+  /// lift. The key stays on the inner `FilledButton`.
+  ///
+  /// R5 keeps each call site's shape: the padding is the `FilledButton.icon`
+  /// geometry this button had (16 before the glyph, 24 after the label).
+  /// Wider padding pushed the CTA past its 200 px floor and made the wide
+  /// card's action row wrap "Zgłoś" onto a second line.
+  Widget _replyCta({required bool compact}) => YoGradientFilledButton(
+    buttonKey: const ValueKey('moment-detail-reply-voice'),
     onPressed: _gone ? null : () => unawaited(_replyWithVoice()),
     icon: const Icon(Icons.mic_rounded, size: 18),
-    label: Text(
+    minimumSize: Size(
+      AppSizing.minimumTouchTarget,
+      compact
+          ? AppSizing.primaryControlHeight
+          : AppSizing.standardControlHeight,
+    ),
+    padding: const EdgeInsetsDirectional.fromSTEB(
+      AppRhythm.title,
+      0,
+      AppRhythm.section,
+      0,
+    ),
+    child: Text(
       _copy.text('Reply with voice', 'Odpowiedz głosem'),
       maxLines: 2,
       textAlign: TextAlign.center,
-    ),
-    style: FilledButton.styleFrom(
-      minimumSize: Size(
-        0,
-        compact
-            ? AppSizing.primaryControlHeight
-            : AppSizing.standardControlHeight,
-      ),
     ),
   );
 
@@ -1747,14 +1781,14 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
                       decoration: BoxDecoration(
                         borderRadius: AppRadius.pill,
                         color: palette.surfaceRaised,
-                        border: Border.all(color: palette.border),
+                        border: Border.all(color: palette.hairline),
                       ),
                       child: Text(
                         '+$remainder',
                         maxLines: 1,
                         style: AppTypography.labelSmall.copyWith(
                           color: palette.textSecondary,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
@@ -1774,7 +1808,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     return DecoratedBox(
       decoration: BoxDecoration(
         color: palette.surface,
-        border: Border(left: BorderSide(color: palette.border)),
+        border: Border(left: BorderSide(color: palette.hairline)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1862,15 +1896,20 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   /// The gone-state: expired, deleted, or never loaded. A real explanation
   /// and a way back — the thread stays readable underneath it (comments
   /// outlive the recording) and the composer states why it is closed.
+  ///
+  /// Refine-look R17: the topic glyph sits in the same 64 px Moments disc
+  /// as the Głos empty and error states, so the feature has one
+  /// empty-state language. The way back stays a solid action: the reply
+  /// CTA's lift is absent in this state and a retreat never spends the
+  /// gradient.
   Widget _goneCard() {
     final palette = context.appPalette;
     final copy = _copy;
     return Container(
       key: const ValueKey('moment-detail-gone'),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: AppRadius.lg,
-        border: Border.all(color: palette.border),
+      decoration: AppFinish.block(
+        palette,
+        highContrast: MediaQuery.highContrastOf(context),
       ),
       padding: const EdgeInsets.all(AppRhythm.section),
       child: Column(
@@ -1881,10 +1920,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
             style: AppTypography.eyebrow.copyWith(color: palette.textSecondary),
           ),
           const SizedBox(height: AppRhythm.item),
-          Icon(
-            Icons.timer_off_outlined,
-            size: 34,
-            color: palette.textSecondary,
+          const YoMomentsStateDisc(
+            key: ValueKey('moment-detail-gone-disc'),
+            icon: Icons.timer_off_outlined,
           ),
           const SizedBox(height: AppRhythm.item),
           Text(
@@ -1931,7 +1969,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
       decoration: BoxDecoration(
         color: palette.surfaceRaised,
-        border: Border(top: BorderSide(color: palette.border)),
+        border: Border(top: BorderSide(color: palette.hairline)),
       ),
       // The bar's surface stays full-bleed chrome, but its controls hold
       // the SAME 640 measure as the page body: a desktop composer that
@@ -2145,12 +2183,13 @@ class _ActionChip extends StatelessWidget {
       child: Material(
         // Slim: a quiet action on the player card's own surface — no second
         // tile under it. Delete keeps its error tint so a destructive action
-        // never looks like one more neutral chip.
+        // never looks like one more neutral chip. Refine-look: the ink is
+        // pill-shaped, like every chip on the page.
         color: destructive ? palette.dangerSurface : Colors.transparent,
-        borderRadius: AppRadius.md,
+        borderRadius: AppRadius.pill,
         child: InkWell(
           onTap: onTap,
-          borderRadius: AppRadius.md,
+          borderRadius: AppRadius.pill,
           child: Container(
             constraints: const BoxConstraints(
               minHeight: AppSizing.standardControlHeight,

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
@@ -57,13 +58,49 @@ class ReelProgressBar extends StatelessWidget {
   /// last row of the frame, directly above the dock.
   static const double trackHeight = 2;
 
+  /// The played run's key (the unplayed track is the bar's first layer).
+  static const Key playedKey = ValueKey<String>('reel-progress-played');
+
+  /// The brand tip at the head of the played run.
+  static const Key playedCapKey = ValueKey<String>('reel-progress-played-cap');
+
+  /// How long the brand tip is, along the track.
+  static const double capLength = 3;
+
+  /// The played run's ink (refine-look §8.4, as amended by the batch-6
+  /// review): the frame's own ink — [AppColors.white] over footage,
+  /// `textPrimary` on an app surface — the same in Dark and Pearl, because
+  /// the bar lies over footage in both (the Pearl `audioAccent` teal was a
+  /// light-theme colour painted over a video).
+  ///
+  /// Not the brand pair. On the unplayed white @ .32 track the logo's
+  /// violet → magenta differs from it by hue alone (1.05-1.40:1 measured on
+  /// the stage), so the playhead was unreadable to anyone who cannot tell
+  /// those hues apart (WCAG 1.4.1 / 1.4.11). White holds 5.5:1 on the phone
+  /// stage, 4.1:1 on the card stage and 3.3:1 there over a pure-white frame.
+  static Color playedInk(AppPalette palette, {required bool onMedia}) =>
+      onMedia ? AppColors.white : palette.textPrimary;
+
+  /// The brand tip's colour at [fraction] of the track: the logo's violet at
+  /// 0:00 easing into its magenta at the end, so the tip's hue still says
+  /// how far along the Reel is. It rides on the head of the played run
+  /// ([capLength] px) and on the scrub thumb's rim; it never carries the
+  /// position on its own — the white run does.
+  static Color sweepAt(double fraction) => Color.lerp(
+    AppColors.primary,
+    AppColors.secondary,
+    fraction.clamp(0.0, 1.0),
+  )!;
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
     final unplayed = onMedia
         ? Colors.white.withValues(alpha: .32)
         : palette.textPrimary.withValues(alpha: .20);
+    final ink = playedInk(palette, onMedia: onMedia);
     return RepaintBoundary(
       child: ValueListenableBuilder<Duration>(
         valueListenable: position,
@@ -79,13 +116,12 @@ class ReelProgressBar extends StatelessWidget {
               child: Stack(
                 children: <Widget>[
                   Positioned.fill(child: ColoredBox(color: unplayed)),
-                  FractionallySizedBox(
-                    widthFactor: fraction,
-                    // Full height: a childless box under the Stack's loose height
-                    // would otherwise lay out 0 px tall and draw no progress at all.
-                    heightFactor: 1,
-                    alignment: AlignmentDirectional.centerStart,
-                    child: ColoredBox(color: palette.audioAccent),
+                  _PlayedRun(
+                    runKey: playedKey,
+                    fraction: fraction,
+                    ink: ink,
+                    // High contrast: one solid run, no brand tip.
+                    brandTip: !highContrast,
                   ),
                 ],
               ),
@@ -111,6 +147,54 @@ class ReelProgressBar extends StatelessWidget {
             child: track,
           );
         },
+      ),
+    );
+  }
+}
+
+/// The played part of a Yeel timeline: a run of [ink] from the start to the
+/// playhead, [fraction] of the track, with the brand tip
+/// ([ReelProgressBar.sweepAt]) on its last [ReelProgressBar.capLength] px
+/// when [brandTip] is on. Directional, so it mirrors in RTL.
+class _PlayedRun extends StatelessWidget {
+  const _PlayedRun({
+    required this.fraction,
+    required this.ink,
+    required this.brandTip,
+    this.runKey,
+  });
+
+  final double fraction;
+  final Color ink;
+  final bool brandTip;
+  final Key? runKey;
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      widthFactor: fraction,
+      // Full height: a childless box under the Stack's loose height would
+      // otherwise lay out 0 px tall and draw no progress at all.
+      heightFactor: 1,
+      alignment: AlignmentDirectional.centerStart,
+      child: DecoratedBox(
+        key: runKey,
+        decoration: BoxDecoration(color: ink),
+        child: brandTip
+            ? Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: SizedBox(
+                  key: ReelProgressBar.playedCapKey,
+                  width: ReelProgressBar.capLength,
+                  height: double.infinity,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: ReelProgressBar.sweepAt(fraction),
+                    ),
+                  ),
+                ),
+              )
+            : null,
       ),
     );
   }
@@ -634,6 +718,8 @@ class _ScrubFeedback extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!scrubbing && !hovered && !focused) return const SizedBox.shrink();
     final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final ink = ReelProgressBar.playedInk(palette, onMedia: onMedia);
     final rtl = Directionality.of(context) == TextDirection.rtl;
     final fade = AppMotion.resolve(context, AppMotion.quick);
     return RepaintBoundary(
@@ -678,7 +764,11 @@ class _ScrubFeedback extends StatelessWidget {
             final unplayed = onMedia
                 ? Colors.white.withValues(alpha: .40)
                 : palette.textPrimary.withValues(alpha: .24);
-            final thumbColor = onMedia ? Colors.white : palette.audioAccent;
+            // The thumb sits on the played run's brand tip, so its rim is
+            // the tip's colour; its fill is the run's own ink. High
+            // contrast: one ink, no brand colour.
+            final tip = highContrast ? ink : ReelProgressBar.sweepAt(fraction);
+            final thumbColor = ink;
             final ring = Rect.fromLTRB(
               math.max(2, rect.left - 6),
               thumbCenterY - thumb / 2 - 4,
@@ -712,13 +802,10 @@ class _ScrubFeedback extends StatelessWidget {
                     child: Stack(
                       children: <Widget>[
                         Positioned.fill(child: ColoredBox(color: unplayed)),
-                        FractionallySizedBox(
-                          widthFactor: fraction,
-                          // Full height: a childless box under the Stack's loose height
-                          // would otherwise lay out 0 px tall and draw no progress at all.
-                          heightFactor: 1,
-                          alignment: AlignmentDirectional.centerStart,
-                          child: ColoredBox(color: palette.audioAccent),
+                        _PlayedRun(
+                          fraction: fraction,
+                          ink: ink,
+                          brandTip: !highContrast,
                         ),
                       ],
                     ),
@@ -735,10 +822,7 @@ class _ScrubFeedback extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: thumbColor,
                         shape: BoxShape.circle,
-                        border: Border.all(
-                          color: palette.audioAccent,
-                          width: 2,
-                        ),
+                        border: Border.all(color: tip, width: 2),
                       ),
                     ),
                   ),
@@ -753,23 +837,11 @@ class _ScrubFeedback extends StatelessWidget {
                           anchorX: thumbX - rect.left,
                           bottomGap: 200 + thumbCenterY - thumb / 2 - 6,
                         ),
-                        child: Text(
-                          '${reelClockLabel(value)} / ${reelClockLabel(total)}',
-                          key: const ValueKey<String>(
-                            'reel-progress-scrub-time',
-                          ),
-                          maxLines: 1,
-                          softWrap: false,
-                          style: TextStyle(
-                            color: onMedia ? Colors.white : palette.textPrimary,
-                            fontSize: 13,
-                            height: 1.2,
-                            fontWeight: FontWeight.w700,
-                            fontFeatures: const <FontFeature>[
-                              FontFeature.tabularFigures(),
-                            ],
-                            shadows: onMedia ? overlayTextShadows : null,
-                          ),
+                        child: _ScrubTimeLabel(
+                          text:
+                              '${reelClockLabel(value)} / '
+                              '${reelClockLabel(total)}',
+                          onMedia: onMedia,
                         ),
                       ),
                     ),
@@ -785,6 +857,49 @@ class _ScrubFeedback extends StatelessWidget {
 
 /// Centres the time label over the thumb, kept inside the track's extent,
 /// with its bottom [bottomGap] from the top of the laid-out area.
+/// The previewed time while a finger scrubs. Over media it sits on a pill of
+/// the word plate at its deepest step ([overlayPlateHoverColor], black
+/// @ .84): the label rides just above the thumb, which on the phone stage is
+/// where the caption's last line is, and a bare shadowed label printed
+/// straight across that line was text on text (the batch-6 review). At .84
+/// the caption under the pill all but disappears, and the white label holds
+/// 13:1 or more over any frame, caption or footage.
+class _ScrubTimeLabel extends StatelessWidget {
+  const _ScrubTimeLabel({required this.text, required this.onMedia});
+
+  final String text;
+  final bool onMedia;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = Text(
+      text,
+      key: const ValueKey<String>('reel-progress-scrub-time'),
+      maxLines: 1,
+      softWrap: false,
+      style: TextStyle(
+        color: onMedia ? Colors.white : context.appPalette.textPrimary,
+        fontSize: 13,
+        height: 1.2,
+        fontWeight: FontWeight.w700,
+        fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+      ),
+    );
+    if (!onMedia) return label;
+    return DecoratedBox(
+      key: const ValueKey<String>('reel-progress-scrub-time-plate'),
+      decoration: const ShapeDecoration(
+        color: overlayPlateHoverColor,
+        shape: StadiumBorder(),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        child: label,
+      ),
+    );
+  }
+}
+
 class _ScrubLabelLayout extends SingleChildLayoutDelegate {
   const _ScrubLabelLayout({required this.anchorX, required this.bottomGap});
 

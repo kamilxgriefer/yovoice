@@ -295,29 +295,44 @@ class _LoungeCard extends StatelessWidget {
           here &&
           (session.phase == ServerSessionPhase.connected ||
               session.phase == ServerSessionPhase.reconnecting);
-      return Container(
+      final highContrast = MediaQuery.highContrastOf(context);
+      // Refine-look R4 / W2 at card scale, exactly as the session card: lit
+      // while the lounge is LIVE and this device has not joined, the voice
+      // accent's edge and corner while it is in the conversation, the
+      // plain R2 block otherwise (quiet, joining, held).
+      return ServerSessionCard(
         key: const ValueKey('server-family-lounge'),
-        padding: EdgeInsets.all(compact ? 16 : 24),
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: AppRadius.lg,
-          border: Border.all(
-            color: inRoom ? palette.audioAccent : palette.border,
-          ),
+        cardKey: const ValueKey('server-family-lounge-card'),
+        state: ServerSessionCardState.of(
+          held: server.isHeld,
+          live: live,
+          here: here,
+          connected: inRoom,
         ),
+        accent: ServerIdentity.of(server.type).accent,
+        colors: colors,
+        igniteKey: serverLiveGeneration(server, channel),
+        padding: EdgeInsets.all(compact ? 16 : 24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // The module cards' identity chip: the template's unlit
+                // glass, no Pearl dark outline.
                 Container(
                   width: compact ? 40 : 48,
                   height: compact ? 40 : 48,
                   decoration: BoxDecoration(
-                    color: colors.iconSurface,
-                    borderRadius: AppRadius.md,
-                    border: Border.all(color: colors.iconBorder),
+                    color: highContrast ? palette.surface : null,
+                    gradient: highContrast ? null : colors.unlitGradient,
+                    borderRadius: AppRadius.card,
+                    border: Border.all(
+                      color: highContrast
+                          ? palette.borderStrong
+                          : colors.unlitEdge,
+                    ),
                   ),
                   child: Icon(
                     serverChannelIcon(channel.kind),

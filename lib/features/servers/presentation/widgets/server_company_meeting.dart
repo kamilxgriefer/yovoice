@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
@@ -226,6 +227,7 @@ class ServerCompanyMeeting extends StatelessWidget {
         server: server,
         channel: channel,
         presenter: presenter,
+        here: _here,
         inRoom: _inRoom,
         colors: colors,
         compact: compact,
@@ -369,6 +371,7 @@ class _Screen extends StatelessWidget {
     required this.server,
     required this.channel,
     required this.presenter,
+    required this.here,
     required this.inRoom,
     required this.colors,
     required this.compact,
@@ -376,6 +379,9 @@ class _Screen extends StatelessWidget {
   final Server server;
   final ServerChannel channel;
   final ServerMediaParticipant? presenter;
+
+  /// This device is in (or joining) the meeting.
+  final bool here;
   final bool inRoom;
   final ServerIdentityVisuals colors;
   final bool compact;
@@ -394,24 +400,34 @@ class _Screen extends StatelessWidget {
         child: AspectRatio(
           key: const ValueKey('server-meeting-screen'),
           aspectRatio: 16 / 9,
-          child: ClipRRect(
-            borderRadius: AppRadius.md,
-            child: Container(
-              decoration: BoxDecoration(
-                border: Border.all(color: palette.border),
-                borderRadius: AppRadius.md,
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color.alphaBlend(colors.cardWash, palette.surfaceSunken),
-                    palette.surfaceSunken,
-                  ],
-                  stops: const [0, .75],
-                ),
-              ),
-              child: _body(context, palette),
+          // Refine-look R4 / W2: the shared screen is board 04's live
+          // surface — lit while the meeting is LIVE and this device has not
+          // joined, the voice accent's edge while it is in, a hairline
+          // otherwise. It stays a sunken picture.
+          child: ServerSessionCard(
+            cardKey: const ValueKey('server-meeting-screen-surface'),
+            state: ServerSessionCardState.of(
+              held: server.isHeld,
+              live: channel.liveness.isLive,
+              here: here,
+              connected: inRoom,
             ),
+            accent: ServerIdentity.of(server.type).accent,
+            colors: colors,
+            igniteKey: serverLiveGeneration(server, channel),
+            radius: AppRadius.md,
+            elevated: false,
+            padding: EdgeInsets.zero,
+            fill: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color.alphaBlend(colors.cardWash, palette.surfaceSunken),
+                palette.surfaceSunken,
+              ],
+              stops: const [0, .75],
+            ),
+            child: _body(context, palette),
           ),
         ),
       ),
@@ -513,10 +529,12 @@ class _PresenterRow extends StatelessWidget {
       child: Container(
         key: const ValueKey('server-meeting-presenter'),
         padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: AppRadius.md,
-          border: Border.all(color: palette.border),
+        // Refine-look R2: the block's top-lit fill and hairline, not an
+        // opaque outline (its own smaller radius is kept).
+        decoration: AppFinish.block(
+          palette,
+          radius: AppRadius.md,
+          highContrast: MediaQuery.highContrastOf(context),
         ),
         child: Row(
           children: [

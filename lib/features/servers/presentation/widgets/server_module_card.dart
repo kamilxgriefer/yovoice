@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
@@ -14,6 +15,12 @@ import 'server_panel.dart';
 /// Persisted modules use their primary action to open the real channel.
 /// Modules without a backend say `Wkrótce` and keep that action disabled. The
 /// card never invents a date, photo, count, or list item that nobody wrote.
+///
+/// Refine-look §8.2: the card is a neutral R2 block (top-lit fill, hairline,
+/// Pearl's shadow pair, radius 20). The identity lives only in the icon
+/// chip: a 12 px-radius tile of the template's unlit glass, which no longer
+/// carries Pearl's dark outline. Its primary action stays solid, because a
+/// workspace's one lifted action is the join.
 class ServerModuleCard extends StatelessWidget {
   const ServerModuleCard({
     required this.icon,
@@ -57,13 +64,10 @@ class ServerModuleCard extends StatelessWidget {
     final palette = context.appPalette;
     final target = channel;
     final open = onOpenChannel;
+    final highContrast = MediaQuery.highContrastOf(context);
     return Container(
       padding: EdgeInsets.all(large ? 20 : 16),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: AppRadius.lg,
-        border: Border.all(color: palette.border),
-      ),
+      decoration: AppFinish.block(palette, highContrast: highContrast),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -72,12 +76,18 @@ class ServerModuleCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
+                key: const ValueKey('server-module-icon'),
                 width: large ? 44 : 36,
                 height: large ? 44 : 36,
                 decoration: BoxDecoration(
-                  color: colors.iconSurface,
-                  borderRadius: AppRadius.sm,
-                  border: Border.all(color: colors.iconBorder),
+                  color: highContrast ? palette.surface : null,
+                  gradient: highContrast ? null : colors.unlitGradient,
+                  borderRadius: AppRadius.card,
+                  border: Border.all(
+                    color: highContrast
+                        ? palette.borderStrong
+                        : colors.unlitEdge,
+                  ),
                 ),
                 child: Icon(
                   icon,

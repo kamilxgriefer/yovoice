@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
@@ -15,8 +16,19 @@ import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 /// read the same over any frame in BOTH appearances, and a white glyph on it
 /// clears 3:1 even on a pure-white frame. This is the media-overlay case the
 /// semantic-colour guard documents as legitimately dark in both themes.
+///
+/// [overlayPlateColor] (black @ .72) is the plate that carries WORDS over
+/// media — the sound pill's label, a metric pill's count, the media send
+/// review's controls — where the plate alone holds the text at 4.5:1 or
+/// more. Its value is unchanged by the refine-look pass (spec §2.1).
 const Color overlayPlateColor = Color(0xB8000000);
 const Color overlayPlateHoverColor = Color(0xD6000000);
+
+// The ICON plate of a control laid on media — [OverlayPlate] — is one step
+// lighter than the word plate (black @ .55, hover .70, a white @ .14
+// hairline; refine-look §8.4). Its values are `AppFinish` tokens
+// (`overlayControlPlate*`), the .55 shared with the over-media chip plate,
+// so the two can never drift apart.
 
 /// Shadows behind every piece of white text laid directly on media.
 const List<Shadow> overlayTextShadows = <Shadow>[
@@ -108,7 +120,14 @@ class _OverlayPlateButtonState extends State<OverlayPlateButton> {
 ///
 /// Public only because the rail and the plate button live in different files
 /// now that two features share them; it was private while Reels was the only
-/// caller and its behaviour is unchanged.
+/// caller.
+///
+/// Over media (no [fill]) it is the refine-look §8.4 icon plate: black @ .55
+/// (`AppFinish.overlayControlPlate`, .70 on hover) with a 1 px white @ .14
+/// hairline whenever no [ring] is drawn. A canvas host that passes its own
+/// [fill] gets no media hairline. Under high contrast the plate goes back to
+/// the deeper word plate ([overlayPlateColor]) and drops the decorative
+/// hairline, so the glyph has the most contrast the plate can give it.
 class OverlayPlate extends StatelessWidget {
   const OverlayPlate({
     required this.icon,
@@ -133,21 +152,42 @@ class OverlayPlate extends StatelessWidget {
   /// straight through the number.
   final Color? ring;
 
+  /// The media plate's fill for [hovered] (a canvas host passes its own).
+  /// Under high contrast it is the word plate.
+  static Color mediaFill({required bool hovered, bool highContrast = false}) {
+    if (highContrast) {
+      return hovered ? overlayPlateHoverColor : overlayPlateColor;
+    }
+    return hovered
+        ? AppFinish.overlayControlPlateHover
+        : AppFinish.overlayControlPlate;
+  }
+
   @override
   Widget build(BuildContext context) {
     final ringColor = ring;
+    final ringed = ringColor != null && ringColor.a > 0;
+    final onMedia = fill == null;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final Border? border;
+    if (ringed) {
+      border = Border.all(color: ringColor, width: 2);
+    } else if (onMedia && !highContrast) {
+      border = Border.all(color: AppFinish.overlayControlPlateHairline);
+    } else {
+      border = null;
+    }
     return AnimatedContainer(
       duration: AppMotion.resolve(context, AppMotion.quick),
       width: 48,
       height: 48,
       decoration: BoxDecoration(
         color: hovered
-            ? hoverFill ?? overlayPlateHoverColor
-            : fill ?? overlayPlateColor,
+            ? hoverFill ??
+                  mediaFill(hovered: true, highContrast: highContrast)
+            : fill ?? mediaFill(hovered: false, highContrast: highContrast),
         shape: BoxShape.circle,
-        border: ringColor == null || ringColor.a == 0
-            ? null
-            : Border.all(color: ringColor, width: 2),
+        border: border,
       ),
       alignment: Alignment.center,
       child: Icon(icon, size: 24, color: color),

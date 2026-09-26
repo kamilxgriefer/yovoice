@@ -16,6 +16,7 @@ import 'package:yovoice/features/moments/presentation/screens/moment_comments_sc
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_card.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
+import 'package:yovoice/shared/widgets/voice/yo_voice_finish.dart';
 
 import 'voice_moment_test_doubles.dart';
 
@@ -134,11 +135,26 @@ void main() {
       );
       await tester.pump();
 
-      final card = tester.widget<Container>(
-        find.byKey(ValueKey('moment-card-${moment.id}')),
+      // Refine-look R2: the card is a block — the palette's own top-lit
+      // fill (it was a flat `surface`), so the semantic surface is read
+      // from the block's painted fill.
+      final block = find.descendant(
+        of: find.byKey(ValueKey('moment-card-${moment.id}')),
+        matching: find.byType(YoVoiceBlock),
       );
-      final decoration = card.decoration! as BoxDecoration;
-      expect(decoration.color, _palette(brightness).surface);
+      expect(block, findsOneWidget);
+      final fill =
+          tester
+                  .widgetList<AnimatedContainer>(
+                    find.descendant(
+                      of: block,
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .first
+                  .decoration
+              as BoxDecoration;
+      expect(fill.gradient, _palette(brightness).blockGradient);
       final author = tester.widget<Text>(find.text(moment.authorName));
       expect(author.style?.color, _palette(brightness).textPrimary);
       expect(tester.takeException(), isNull);
@@ -196,12 +212,21 @@ void main() {
         find.byKey(ValueKey('moment-featured-${moment.id}')),
         findsNothing,
       );
-      final material = tester.widget<Material>(
-        find.descendant(of: card, matching: find.byType(Material)).first,
-      );
-      // The 06 Voice card paints `surface` (the board's card tone, C30);
-      // `surfaceRaised` stays the mini-player disc and composer fill.
-      expect(material.color, _palette(brightness).surface);
+      // The 06 Voice card paints the palette's block fill (refine-look R2:
+      // blockTop → `surface`); `surfaceRaised` stays the mini-player disc
+      // and composer fill.
+      final fill =
+          tester
+                  .widgetList<AnimatedContainer>(
+                    find.descendant(
+                      of: find.byKey(ValueKey('moment-row-block-${moment.id}')),
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .first
+                  .decoration
+              as BoxDecoration;
+      expect(fill.gradient, _palette(brightness).blockGradient);
       final author = tester.widget<Text>(
         find.descendant(of: card, matching: find.text(moment.authorName)),
       );

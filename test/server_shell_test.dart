@@ -226,8 +226,10 @@ void main() {
       matching: find.byIcon(Icons.lock_outline),
     );
     expect(hr, findsOneWidget);
-    expect(find.text('Prywatny serwer · 12 osób'), findsNothing);
-    expect(find.text('Przestrzeń firmowa · 12 osób'), findsOneWidget);
+    // Refine-look §8.2: the panel keeps the count and its noun together
+    // with a non-breaking space, and the dot with the word before it.
+    expect(find.text('Prywatny serwer\u00A0· 12\u00A0osób'), findsNothing);
+    expect(find.text('Przestrzeń firmowa\u00A0· 12\u00A0osób'), findsOneWidget);
   });
 
   testWidgets('the panel subtitle and the phone header count real members', (
@@ -247,7 +249,7 @@ void main() {
       ),
       size: const Size(1100, 800),
     );
-    expect(find.text('Prywatny serwer · 12 osób'), findsOneWidget);
+    expect(find.text('Prywatny serwer\u00A0· 12\u00A0osób'), findsOneWidget);
     await pumpServers(
       tester,
       ServerWorkspaceScreen(

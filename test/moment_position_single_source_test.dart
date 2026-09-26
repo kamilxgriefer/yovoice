@@ -8,8 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/moments/presentation/widgets/moment_conversation_thread.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_progress_ring.dart';
-import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart'
-    show StoryWaveform;
+import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 import 'moment_listen_test_support.dart';
@@ -17,8 +16,12 @@ import 'moment_listen_test_support.dart';
 double _ringProgress(WidgetTester tester) =>
     tester.widget<MomentProgressRing>(find.byType(MomentProgressRing)).progress;
 
-double _waveProgress(WidgetTester tester) =>
-    tester.widgetList<StoryWaveform>(find.byType(StoryWaveform)).first.progress;
+// Refine-look R13: the detail waveform is the R13 pour (a YoWaveform with the
+// variant-B sweep), no longer the Moment player's StoryWaveform. A report
+// that jumps (0 → 18 s here) snaps, so the value it draws is the position.
+double _waveProgress(WidgetTester tester) => tester
+    .widget<YoWaveform>(find.byKey(const ValueKey('moment-detail-waveform')))
+    .progress!;
 
 double _sliderValue(WidgetTester tester) => tester
     .widget<Slider>(find.byKey(const ValueKey('moment-detail-position')))

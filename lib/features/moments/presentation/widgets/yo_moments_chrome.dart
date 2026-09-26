@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc_button.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_moments_icon.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
 
@@ -171,12 +175,10 @@ class YoMomentsHeader extends StatelessWidget {
             ? TextOverflow.visible
             : TextOverflow.ellipsis,
         textWidthBasis: TextWidthBasis.parent,
-        // 22 px w800: the Slim wordmark size. Hierarchy comes from weight,
-        // and the feed below owns the screen's content, not the chrome.
-        style: AppTypography.headlineMedium.copyWith(
-          color: palette.textPrimary,
-          fontWeight: FontWeight.w800,
-        ),
+        // Refine-look calm type: the screen title role (22 w700, tight
+        // tracking). w800 belongs only to the wordmark and the format
+        // switch; the feed below owns the screen's content, not the chrome.
+        style: AppTypography.screenTitle.copyWith(color: palette.textPrimary),
       ),
     );
     final back = showBack
@@ -190,7 +192,14 @@ class YoMomentsHeader extends StatelessWidget {
         : null;
     final create = onCreate == null
         ? null
-        : YoMomentsCreateButton(onTap: onCreate!, compact: true);
+        : YoMomentsCreateButton(
+            onTap: onCreate!,
+            compact: true,
+            // On Yeels the stage's own panel carries a create action too, so
+            // this disc rests there and the screen never shows two lifted
+            // create actions in two finishes (the light budget: one lift).
+            lifted: selectedFormat == YoMomentsFormat.voice,
+          );
     final switcher = YoMomentsFormatSwitch(
       selected: selectedFormat,
       onSelected: onFormatSelected,
@@ -352,9 +361,13 @@ class YoMomentsFilterOption {
 
 /// Level 2 below 1100: the pool filters as canvas chips (ink 36 in a 48
 /// target) with an optional trailing control (the feed's refresh, which is
-/// also the focus-recovery target after an expiry removal). Slim: no card
-/// or outline under an unselected chip; only the selected one carries a
-/// tonal wash (plus weight and the `selected` flag).
+/// also the focus-recovery target after an expiry removal). Refine-look R8:
+/// the selected chip is an ink inversion (`textPrimary` fill, `background`
+/// label, w700) and the others carry a 1 px `hairlineControl` edge — plus
+/// weight and the `selected` flag, never colour alone. The strip dissolves
+/// at an edge that still has chips beyond it ([ImmersiveFilterRow.edgeFade])
+/// and keeps [ImmersiveFilterRow.trailingGap] of air before the trailing
+/// control, so no hairline pill is ever sliced against the refresh circle.
 class YoMomentsFilterChips extends StatelessWidget {
   const YoMomentsFilterChips({
     required this.options,
@@ -380,8 +393,8 @@ class YoMomentsFilterChips extends StatelessWidget {
         Expanded(
           child: ImmersiveFilterRow(
             onCanvas: true,
-            // The strip scrolls; its last chip has to be cut by a clean
-            // edge and not by the pinned control beside it, so the trailing
+            // The strip scrolls; its last chip dissolves into a faded edge
+            // and never meets the pinned control beside it, so the trailing
             // inset is the full gutter with or without that control.
             padding: EdgeInsetsDirectional.only(start: gutter, end: gutter),
             groupLabel: groupLabel,
@@ -393,11 +406,13 @@ class YoMomentsFilterChips extends StatelessWidget {
             onSelected: onSelected,
           ),
         ),
-        if (trailing != null)
+        if (trailing != null) ...<Widget>[
+          const SizedBox(width: ImmersiveFilterRow.trailingGap),
           Padding(
             padding: EdgeInsetsDirectional.only(end: gutter - AppRhythm.tight),
             child: trailing,
           ),
+        ],
       ],
     );
   }
@@ -406,10 +421,12 @@ class YoMomentsFilterChips extends StatelessWidget {
 /// Level 2 at ≥ 1100: the local panel — filter rows (48, `AppRadius.md`,
 /// selected wash), an optional trailing control and the "Utwórz" action.
 ///
-/// `surfaceMuted` with a trailing hairline, flush with the slot's leading
+/// `surfaceMuted` with a trailing `hairline`, flush with the slot's leading
 /// edge exactly like the rail it sits beside. It carries NO title: the main
 /// header owns "YO Moments" (spec §11 forbids a duplicated heading). Slim:
-/// 12 px insets, rows without an outline, a flat create bar.
+/// 12 px insets. Refine-look §8.4: the selected row is a primary @ .12 wash
+/// with a 1 px primary @ .30 edge, and "Utwórz" is the screen's one lifted
+/// gradient action.
 class YoMomentsLocalPanel extends StatelessWidget {
   const YoMomentsLocalPanel({
     required this.options,
@@ -444,7 +461,7 @@ class YoMomentsLocalPanel extends StatelessWidget {
         width: width,
         decoration: BoxDecoration(
           color: palette.surfaceMuted,
-          border: BorderDirectional(end: BorderSide(color: palette.border)),
+          border: BorderDirectional(end: BorderSide(color: palette.hairline)),
         ),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(AppRhythm.item),
@@ -510,13 +527,18 @@ class _LocalPanelRowState extends State<_LocalPanelRow> {
       focused: _focused,
       excludeSemantics: true,
       child: Material(
-        // Selection is the tonal wash + weight + ink (and the semantic flag);
-        // no outline, so the panel reads as a list, not a stack of cards.
-        color: selected ? primary.withValues(alpha: .14) : Colors.transparent,
+        // Selection is the tonal wash, a quiet primary edge, weight and ink
+        // (and the semantic flag); an unselected row has no outline, so the
+        // panel reads as a list, not a stack of cards.
+        color: selected ? primary.withValues(alpha: .12) : Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: AppRadius.md,
           side: BorderSide(
-            color: _focused ? palette.focus : Colors.transparent,
+            color: _focused
+                ? palette.focus
+                : selected
+                ? primary.withValues(alpha: .30)
+                : Colors.transparent,
             width: _focused ? 2 : 1,
           ),
         ),
@@ -567,98 +589,73 @@ class _LocalPanelRowState extends State<_LocalPanelRow> {
   }
 }
 
-/// "Utwórz" — the create action, the screen's one violet accent. On the
-/// local panel it is a full-width 48 bar (`AppRadius.md`, solid primary,
-/// white w800, no gradient and no shadow: it does not float); [compact] is
-/// the 48 disc the phone header carries.
+/// "Utwórz" — the create action, the screen's one lifted CTA (refine-look
+/// R5 / R6 and the light budget). On the local panel it is a full-width 48
+/// [YoGradientFilledButton] at `AppRadius.md` with the action lift;
+/// [compact] is the 48 R6 disc the header carries — the logo's gradient
+/// with the brand lift, a white `+`. [lifted] false rests the disc (a
+/// contact shadow only) where another create action on the same screen
+/// already exists, so the screen never carries two lifts.
 ///
 /// Always enabled: the active-Moment cap is the server's rule, enforced by
 /// `reserveMomentDraft`, and the recorder surfaces its refusal honestly.
-class YoMomentsCreateButton extends StatefulWidget {
+class YoMomentsCreateButton extends StatelessWidget {
   const YoMomentsCreateButton({
     required this.onTap,
     this.compact = false,
+    this.lifted = true,
     super.key,
   });
 
   final VoidCallback onTap;
   final bool compact;
 
-  @override
-  State<YoMomentsCreateButton> createState() => _YoMomentsCreateButtonState();
-}
-
-class _YoMomentsCreateButtonState extends State<YoMomentsCreateButton> {
-  bool _focused = false;
+  /// Whether the compact disc carries the screen's one CTA lift.
+  final bool lifted;
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final colors = Theme.of(context).colorScheme;
     final label = copy.contextualText('yoMoments.create', 'Create', 'Utwórz');
-    if (widget.compact) {
-      return IconButton.filled(
-        key: const ValueKey<String>('moments-create-cta'),
-        onPressed: widget.onTap,
-        tooltip: label,
-        constraints: const BoxConstraints(
-          minWidth: AppSizing.standardControlHeight,
-          minHeight: AppSizing.standardControlHeight,
+    if (compact) {
+      return YoGradientDiscButton(
+        disc: (hovered, focused) => YoGradientDisc(
+          size: AppSizing.standardControlHeight,
+          icon: Icons.add_rounded,
+          emphasis: lifted ? YoDiscEmphasis.lift : YoDiscEmphasis.rest,
+          hovered: hovered,
+          focused: focused,
         ),
-        style: IconButton.styleFrom(
-          backgroundColor: colors.primary,
-          shape: const CircleBorder(),
+        builder: (context, states, disc) => IconButton(
+          key: const ValueKey<String>('moments-create-cta'),
+          statesController: states,
+          onPressed: onTap,
+          tooltip: label,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(
+            minWidth: AppSizing.standardControlHeight,
+            minHeight: AppSizing.standardControlHeight,
+          ),
+          style: IconButton.styleFrom(
+            shape: const CircleBorder(),
+            // The disc carries hover, press and focus itself.
+            overlayColor: Colors.transparent,
+            highlightColor: Colors.transparent,
+          ),
+          icon: disc,
         ),
-        icon: Icon(Icons.add_rounded, color: colors.onPrimary),
       );
     }
-    return Semantics(
-      button: true,
-      label: label,
-      onTap: widget.onTap,
-      excludeSemantics: true,
-      child: SizedBox(
-        width: double.infinity,
-        height: AppSizing.standardControlHeight,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: AppRadius.md,
-            color: colors.primary,
-            border: Border.all(
-              color: _focused ? colors.onPrimary : Colors.transparent,
-              width: 2,
-            ),
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              key: const ValueKey<String>('moments-create-cta'),
-              borderRadius: AppRadius.md,
-              onFocusChange: (value) => setState(() => _focused = value),
-              onTap: widget.onTap,
-              child: Center(
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Icon(Icons.add_rounded, color: colors.onPrimary, size: 19),
-                    const SizedBox(width: 7),
-                    Flexible(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTypography.labelLarge.copyWith(
-                          color: colors.onPrimary,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
+    return SizedBox(
+      width: double.infinity,
+      child: YoGradientFilledButton(
+        buttonKey: const ValueKey<String>('moments-create-cta'),
+        onPressed: onTap,
+        shape: const RoundedRectangleBorder(borderRadius: AppRadius.md),
+        minimumSize: const Size.fromHeight(AppSizing.standardControlHeight),
+        padding: const EdgeInsets.symmetric(horizontal: AppRhythm.item),
+        icon: const Icon(Icons.add_rounded, size: 19),
+        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
     );
   }
@@ -668,17 +665,30 @@ class _YoMomentsCreateButtonState extends State<YoMomentsCreateButton> {
 /// Moments glyph and the tracked eyebrow. It names the format and nothing
 /// else — no data, no state — and reads to assistive technology as the
 /// invariant format name, not as shouting capitals.
+///
+/// Refine-look §8.4: no outline — a quiet `glass` pill, so the mark never
+/// competes with the card's own edge. Its ink is [ink], `textSecondary`:
+/// the badge sits under the playing card's corner tint, and `textTertiary`
+/// on glass over the tint's peak measured 4.24:1, under WCAG 1.4.3's 4.5:1
+/// for its 12 px label (the B5 review, A11Y-B5-01; a spec amendment to
+/// §8.4). Under high contrast the pill is `surface` with a 1 px
+/// `borderStrong` edge.
 class YoMomentsFormatBadge extends StatelessWidget {
   const YoMomentsFormatBadge({this.outlined = true, super.key});
 
-  /// The card draws the bordered pill; a hero eyebrow drops the border.
+  /// The card draws the glass pill; a hero eyebrow drops the fill.
   final bool outlined;
+
+  /// The badge's label and glyph colour.
+  static Color ink(AppPalette palette) => palette.textSecondary;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
     final copy = AppLocalizations.of(context);
     final name = copy.text('Voice Moment', 'Voice Moment');
+    final color = ink(palette);
     return Semantics(
       container: true,
       label: name,
@@ -688,7 +698,14 @@ class YoMomentsFormatBadge extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: AppRhythm.item),
         decoration: BoxDecoration(
           borderRadius: AppRadius.pill,
-          border: outlined ? Border.all(color: palette.border) : null,
+          color: !outlined
+              ? null
+              : highContrast
+              ? palette.surface
+              : AppFinish.glass(palette),
+          border: outlined && highContrast
+              ? Border.all(color: palette.borderStrong)
+              : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -696,7 +713,7 @@ class YoMomentsFormatBadge extends StatelessWidget {
             YoMomentsIcon(
               state: YoMomentsIconState.inactive,
               size: 14,
-              color: palette.textSecondary,
+              color: color,
             ),
             const SizedBox(width: AppRhythm.tight - 2),
             Text(
@@ -708,11 +725,62 @@ class YoMomentsFormatBadge extends StatelessWidget {
               textScaler: MediaQuery.textScalerOf(
                 context,
               ).clamp(maxScaleFactor: 1.3),
-              style: AppTypography.eyebrow.copyWith(
-                color: palette.textSecondary,
-              ),
+              style: AppTypography.eyebrow.copyWith(color: color),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The Moments empty / error / gone disc (refine-look R17): 64 px with a
+/// faint primary tint (@ .14 Dark / .08 Pearl), a 1 px primary @ .30 edge
+/// and a 28 px `interactiveForeground` topic glyph. The tint is laid over an
+/// OPAQUE `surface` base, so the page scenery (the neon YO wall art on the
+/// Głos canvas at 390) never shows through the disc (the B5 review, V7).
+/// Under high contrast it is a plain `surface` disc with a `borderStrong`
+/// edge. Decorative: the title under it says what happened.
+///
+/// One disc for the whole feature — the Głos empty and error states and the
+/// detail page's gone state — so Moments speaks one empty-state language.
+class YoMomentsStateDisc extends StatelessWidget {
+  const YoMomentsStateDisc({required this.icon, super.key});
+
+  final IconData icon;
+
+  static const double size = 64;
+  static const double glyphSize = 28;
+
+  /// The disc's fill: the primary tint composited over `surface`.
+  static Color fill(AppPalette palette, Color primary) => Color.alphaBlend(
+    primary.withValues(alpha: palette.isDark ? .14 : .08),
+    palette.surface,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final primary = Theme.of(context).colorScheme.primary;
+    final highContrast = MediaQuery.highContrastOf(context);
+    return ExcludeSemantics(
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: highContrast ? palette.surface : fill(palette, primary),
+          border: Border.all(
+            color: highContrast
+                ? palette.borderStrong
+                : primary.withValues(alpha: .30),
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Icon(
+          icon,
+          size: glyphSize,
+          color: palette.interactiveForeground,
         ),
       ),
     );

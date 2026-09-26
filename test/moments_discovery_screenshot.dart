@@ -24,6 +24,19 @@
 //
 // The widths land on either side of the feed's own breakpoints (600 for
 // compact padding, 1100 for the detail panel): 390 / 768 / 1100 / 1440.
+//
+// Refine-look batch 6 (capture + Yeels) closes this harness's gaps: the
+// 768 px tablet at 200 % text (crowd, Following, long content), the create
+// chooser the "+" opens (its R2 tiles) at 390 / 768 / 1440, and the
+// recorder — idle (the lifted bead), recording (a spoken phrase of
+// real-shaped levels: the halo the bead's own shadow) and review — at 390 /
+// 768 / 1440 and at 200 % on the phone and the tablet. The recorder frames
+// run with motion on, because its signature moment (the halo following the
+// voice) is motion; Reduce Motion is `slim_moments_capture.dart`'s `-rm`.
+// Those batch-6 frames (chooser and recorder) render with REAL shadows
+// (`_withRealShadows`): the halo and the lifts are shadows, and the test
+// default paints them as hard rings. The chooser's text scale reaches the
+// sheet (`_host`'s `routeMedia`), so `-x2` really is 200 % inside it.
 
 import 'dart:async';
 import 'dart:io';
@@ -38,6 +51,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:record/record.dart' show Amplitude;
 
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
@@ -430,14 +444,36 @@ Future<MomentService> _seededMomentService(
 /// routes in the Navigator's overlay, which is a sibling of `home` — with
 /// the boundary inside it, those frames photographed the page underneath
 /// and nothing else.
-Widget _host(Widget child) => RepaintBoundary(
+///
+/// [routeMedia], when given, is applied above the Navigator too, so a route
+/// the frame opens (the create chooser) gets the same text scale as the
+/// page: a MediaQuery inside `home` never reaches those routes.
+Widget _host(Widget child, {MediaQueryData? routeMedia}) => RepaintBoundary(
   key: _capture,
   child: MaterialApp(
     debugShowCheckedModeBanner: false,
     theme: AppTheme.darkTheme,
+    builder: routeMedia == null
+        ? null
+        : (context, child) => MediaQuery(data: routeMedia, child: child!),
     home: child,
   ),
 );
+
+/// Renders [body] with REAL shadows. flutter_test paints every BoxShadow as
+/// a hard, unblurred block by default (`debugDisableShadows`), which turns
+/// the record bead's halo and lift, and the chooser's "+" / "Utwórz" lift,
+/// into solid rings. The flag is restored inside the test body, before the
+/// binding checks its painting invariants. Only the batch-6 frames use it,
+/// so the older frames stay comparable with their baselines.
+Future<void> _withRealShadows(Future<void> Function() body) async {
+  debugDisableShadows = false;
+  try {
+    await body();
+  } finally {
+    debugDisableShadows = true;
+  }
+}
 
 Future<void> _shoot(WidgetTester tester, String name) async {
   await tester.runAsync(() async {
@@ -509,16 +545,18 @@ void main() {
     MomentService? momentService,
     MomentViewsService? viewsService,
     String? openChain,
+    bool openCreate = false,
   }) async {
     useSize(tester, width, height);
 
+    final media = MediaQueryData(
+      size: Size(width, height),
+      textScaler: TextScaler.linear(textScale),
+    );
     await tester.pumpWidget(
       _host(
         MediaQuery(
-          data: MediaQueryData(
-            size: Size(width, height),
-            textScaler: TextScaler.linear(textScale),
-          ),
+          data: media,
           child: MomentsScreen(
             feedService: feed(),
             auth: authMe(),
@@ -529,6 +567,7 @@ void main() {
             isRootTab: true,
           ),
         ),
+        routeMedia: openCreate ? media : null,
       ),
     );
     await tester.pump();
@@ -539,6 +578,13 @@ void main() {
     }
     if (openChain != null) {
       await tester.tap(find.byKey(ValueKey('moments-chain-$openChain')));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 120));
+      }
+    }
+    if (openCreate) {
+      // The "+" disc below 1100, the panel's "Utwórz" from 1100.
+      await tester.tap(find.byKey(const ValueKey('moments-create-cta')).first);
       for (var i = 0; i < 8; i++) {
         await tester.pump(const Duration(milliseconds: 120));
       }
@@ -878,6 +924,91 @@ void main() {
         textScale: 2.0,
       );
     });
+
+    // Batch 6: the tablet at the accessibility scale — the 768 frame the
+    // refine-look matrix asks for at 200 %.
+    testWidgets('crowd 768 at 2x text', (tester) async {
+      await shootAt(
+        tester,
+        name: 'moments-crowd-768-x2',
+        discovery: _StaticDiscovery(_crowd),
+        width: 768,
+        height: 1024,
+        textScale: 2.0,
+      );
+    });
+
+    testWidgets('long content 768 at 2x text', (tester) async {
+      await shootAt(
+        tester,
+        name: 'moments-longcontent-768-x2',
+        discovery: _StaticDiscovery(_longContent),
+        width: 768,
+        height: 1024,
+        textScale: 2.0,
+      );
+    });
+
+    testWidgets('following 768 at 2x text', (tester) async {
+      await shootFollowing(
+        tester,
+        name: 'moments-following-768-x2',
+        width: 768,
+        height: 1024,
+        textScale: 2.0,
+        mine: [
+          _moment(
+            'mine0',
+            author: 'me',
+            authorName: 'Kamil',
+            caption: 'my moment',
+            likes: 2,
+            comments: 1,
+          ),
+        ],
+        social: [
+          for (var i = 0; i < 4; i++)
+            _moment(
+              'theirs$i',
+              author: 'friend$i',
+              authorName: 'Aleksandra-Konstantina Wielkopolska $i',
+              caption: 'their moment $i',
+              likes: i * 4,
+              age: Duration(hours: 3 + i),
+            ),
+        ],
+      );
+    });
+
+    // Batch 6: the create chooser — two R2 tiles, each with its 44 px icon
+    // circle — from the "+" disc (390, 768) and the panel's "Utwórz"
+    // (1440), and at 200 % on the phone.
+    for (final (label, width, height, scale) in const <(
+      String,
+      double,
+      double,
+      double,
+    )>[
+      ('390', 390, 844, 1.0),
+      ('768', 768, 1024, 1.0),
+      ('1440', 1440, 900, 1.0),
+      ('390-x2', 390, 844, 2.0),
+    ]) {
+      testWidgets('create sheet $label', (tester) async {
+        await _withRealShadows(() async {
+          await shootAt(
+            tester,
+            name: 'moments-create-sheet-$label',
+            discovery: _StaticDiscovery(_populated),
+            momentService: await _seededMomentService(_populated),
+            width: width,
+            height: height,
+            textScale: scale,
+            openCreate: true,
+          );
+        });
+      });
+    }
   });
 
   // ------------------------------------------------------------------
@@ -1192,6 +1323,127 @@ void main() {
         await tester.pump(const Duration(milliseconds: 60));
         await _shoot(tester, 'moments-nav-logo-$label');
       });
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // Batch 6: the recorder (refine-look §5 W4 — the record button listens).
+  // ------------------------------------------------------------------
+
+  group('capture', () {
+    // A spoken phrase as a microphone reports it (dBFS, about eight
+    // samples a second); the recorder normalises each exactly as it does a
+    // real microphone's, so the meter and the bead's halo show real input.
+    const phrase = <double>[
+      -38, -30, -22, -14, -9, -12, -18, -11, -7, -10, //
+      -16, -24, -13, -8, -6, -9, -15, -21, -12, -7,
+    ];
+
+    Future<void> shootRecorder(
+      WidgetTester tester, {
+      required String name,
+      required double width,
+      required double height,
+      required String stage,
+      double textScale = 1.0,
+    }) async {
+      useSize(tester, width, height);
+      final backend = FakeRecorderBackend();
+      final capture = FakeAudioCapture()..result = FakeRecordedAudio();
+      final clock = FakeStopwatch();
+      await tester.pumpWidget(
+        _host(
+          MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, height),
+              textScaler: TextScaler.linear(textScale),
+            ),
+            child: RecordVoiceMomentScreen(
+              recorder: VoiceMomentRecorder(
+                backend: backend,
+                capture: capture,
+                clock: clock,
+              ),
+              momentService: StubMomentService(),
+              previewPlayerFactory: () =>
+                  FakePreviewAudioPlayer(duration: const Duration(seconds: 23)),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 120));
+      }
+      final mic = find.byIcon(Icons.mic_rounded);
+      // Centre the bead: at 200 % it sits below a phone's fold.
+      await Scrollable.ensureVisible(tester.element(mic), alignment: .5);
+      await tester.pump();
+      if (stage != 'idle') {
+        await tester.tap(mic);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        for (var i = 0; i < phrase.length; i++) {
+          clock.value = Duration(milliseconds: 1000 + i * 1100);
+          backend.amplitudes.add(Amplitude(current: phrase[i], max: 0));
+          await tester.pump(const Duration(milliseconds: 125));
+        }
+        clock.value = const Duration(seconds: 23);
+        await tester.pump(const Duration(milliseconds: 250));
+      }
+      if (stage == 'review') {
+        final stop = find.byIcon(Icons.stop_rounded);
+        await tester.ensureVisible(stop);
+        await tester.pump();
+        await tester.tap(stop);
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 120));
+        }
+      }
+      await _shoot(tester, name);
+      // Unmount inside the test body so the take's clock timer ends with
+      // the tree.
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+    }
+
+    for (final (label, width, height) in const <(String, double, double)>[
+      ('390', 390, 844),
+      ('768', 768, 1024),
+      ('1440', 1440, 900),
+    ]) {
+      for (final stage in const <String>['idle', 'recording', 'review']) {
+        testWidgets('recorder $stage $label', (tester) async {
+          await _withRealShadows(
+            () => shootRecorder(
+              tester,
+              name: 'moments-recorder-$stage-$label',
+              width: width,
+              height: height,
+              stage: stage,
+            ),
+          );
+        });
+      }
+    }
+
+    for (final (label, width, height) in const <(String, double, double)>[
+      ('390', 390, 844),
+      ('768', 768, 1024),
+    ]) {
+      for (final stage in const <String>['recording', 'review']) {
+        testWidgets('recorder $stage $label at 2x text', (tester) async {
+          await _withRealShadows(
+            () => shootRecorder(
+              tester,
+              name: 'moments-recorder-$stage-$label-x2',
+              width: width,
+              height: height,
+              stage: stage,
+              textScale: 2.0,
+            ),
+          );
+        });
+      }
     }
   });
 

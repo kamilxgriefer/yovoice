@@ -7,8 +7,8 @@ import 'package:flutter/material.dart';
 ///
 /// Draw-only and excluded from semantics — the caller's text carries the
 /// value ("23 godz."). Used by the Moment expiry pill (14 px, stroke 2,
-/// track `border`, arc `interactiveForeground`, `warningForeground` only
-/// under one hour). `MomentProgressRing` (the listening ring) is a
+/// track `waveUnplayed`, arc `textSecondary`, `warningForeground` only
+/// under one hour — see `MomentExpiryPill`). `MomentProgressRing` (the listening ring) is a
 /// different widget and is unchanged.
 class YoProgressRing extends StatelessWidget {
   const YoProgressRing({

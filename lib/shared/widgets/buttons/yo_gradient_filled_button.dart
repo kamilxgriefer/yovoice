@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
@@ -44,13 +45,23 @@ enum YoActionEmphasis {
 /// the same when a screen promotes or demotes the action under the reader.
 ///
 /// States: hover white @ .06 and a stronger lift; pressed white @ .10 with the
-/// lift sunk; focus the existing 2 px `onPrimary` edge; disabled
+/// lift sunk; focus the existing 2 px `onPrimary` edge (also painted as a
+/// foreground over the gradient, which would otherwise cover it); disabled
 /// `surfaceSunken` with `textTertiary` and no lift. [busy] keeps the
 /// gradient, halves the lift and shows an 18 px white spinner beside the
 /// label; the button stays enabled and focusable (a disabled one would drop
 /// keyboard focus and be announced as dimmed) but ignores presses, and its
 /// semantics value says it is loading. Under high contrast the lift is
 /// dropped.
+///
+/// **Identity variant** (R5, the server join only): pass the template's
+/// [gradient] (`ServerIdentityVisuals.ctaGradient`), its label ink as
+/// [foreground] (white or `contrastInk` — also the 2 px focus edge and the
+/// busy spinner), [fill] (`cta`, the solid colour the button's own
+/// `Material` carries under the gradient and reports as `backgroundColor`,
+/// the fill every WCAG 1.4.11 focus-ring measurement is made against) and
+/// [liftColor] (`cta`). [buttonKey] keys the inner [FilledButton] itself,
+/// for callers whose tests address the button as a `FilledButton` by key.
 ///
 /// Never set this through `filledButtonTheme` (84 call sites recolour
 /// `FilledButton`s) and never use it for repeated, list, retry or tonal
@@ -66,6 +77,9 @@ class YoGradientFilledButton extends StatefulWidget {
     this.padding = const EdgeInsets.symmetric(horizontal: 20),
     this.gradient,
     this.liftColor,
+    this.foreground,
+    this.fill,
+    this.buttonKey,
     this.emphasis = YoActionEmphasis.lifted,
     this.busy = false,
     this.focusNode,
@@ -94,6 +108,17 @@ class YoGradientFilledButton extends StatefulWidget {
   /// Defaults to [AppColors.primary] (the rail's lift colour).
   final Color? liftColor;
 
+  /// The label, icon, busy spinner and focus-edge ink of an enabled action.
+  /// Defaults to the scheme's `onPrimary` (white).
+  final Color? foreground;
+
+  /// The solid colour under the gradient (the button's `Material`, reported
+  /// as its `backgroundColor`). Defaults to transparent.
+  final Color? fill;
+
+  /// The key of the inner [FilledButton].
+  final Key? buttonKey;
+
   /// Whether this action is the screen's one lifted CTA, a flat gradient
   /// (another action owns the lift) or a neutral tonal action (another
   /// violet fill owns the screen).
@@ -105,6 +130,9 @@ class YoGradientFilledButton extends StatefulWidget {
 
   /// Passed through to the [FilledButton]; the lift follows its states.
   final WidgetStatesController? statesController;
+
+  /// The focus ring's width, painted over the gradient.
+  static const double focusRingWidth = 2;
 
   @override
   State<YoGradientFilledButton> createState() => _YoGradientFilledButtonState();
@@ -142,19 +170,31 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
 
   bool _hovered = false;
   bool _pressed = false;
+  bool _focused = false;
 
-  // Only hover and press move the lift. Focus and disabled are reported by
-  // the button itself (sometimes while it is being built), and they change
-  // nothing this widget paints, so they never trigger a rebuild here.
+  // Hover and press move the lift; focus shows the foreground ring.
+  // Disabled changes nothing this widget paints. The button reports its
+  // states sometimes while it is being built (focus and disabled follow its
+  // `onPressed`), and this ancestor cannot rebuild in that phase, so such a
+  // change is picked up right after the frame.
   void _statesChanged() {
     if (!mounted) return;
     final states = _states.value;
     final hovered = states.contains(WidgetState.hovered);
     final pressed = states.contains(WidgetState.pressed);
-    if (hovered == _hovered && pressed == _pressed) return;
+    final focused = states.contains(WidgetState.focused);
+    if (hovered == _hovered && pressed == _pressed && focused == _focused) {
+      return;
+    }
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => _statesChanged());
+      return;
+    }
     setState(() {
       _hovered = hovered;
       _pressed = pressed;
+      _focused = focused;
     });
   }
 
@@ -176,6 +216,7 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
     final pressed = interactive && states.contains(WidgetState.pressed);
     _hovered = states.contains(WidgetState.hovered);
     _pressed = states.contains(WidgetState.pressed);
+    _focused = states.contains(WidgetState.focused);
 
     final lift =
         !enabled || highContrast || widget.emphasis != YoActionEmphasis.lifted
@@ -187,8 +228,9 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
             strength: busy ? .5 : 1,
           );
 
+    final ink = widget.foreground ?? scheme.onPrimary;
     Color foreground(Set<WidgetState> s) =>
-        enabled ? scheme.onPrimary : palette.textTertiary;
+        enabled ? ink : palette.textTertiary;
 
     // Geometry is the same in every emphasis, so demoting the action never
     // moves a neighbour.
@@ -231,7 +273,9 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
             // The gradient is laid by backgroundBuilder; a disabled action
             // is a flat sunken fill. A busy action keeps its gradient.
             backgroundColor: WidgetStatePropertyAll(
-              enabled ? Colors.transparent : palette.surfaceSunken,
+              enabled
+                  ? widget.fill ?? Colors.transparent
+                  : palette.surfaceSunken,
             ),
             foregroundColor: WidgetStateProperty.resolveWith(foreground),
             iconColor: WidgetStateProperty.resolveWith(foreground),
@@ -246,7 +290,7 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
             }),
             side: WidgetStateProperty.resolveWith(
               (s) => s.contains(WidgetState.focused)
-                  ? BorderSide(color: scheme.onPrimary, width: 2)
+                  ? BorderSide(color: ink, width: 2)
                   : BorderSide.none,
             ),
             backgroundBuilder: enabled
@@ -280,9 +324,7 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
                   height: 18,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: neutral
-                        ? palette.interactiveForeground
-                        : scheme.onPrimary,
+                    color: neutral ? palette.interactiveForeground : ink,
                     // No theme track (surfaceSunken) under the spinner.
                     backgroundColor: Colors.transparent,
                   ),
@@ -306,11 +348,31 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
             ],
           );
 
+    // The focus ring. A `ButtonStyleButton` paints its `side` UNDER its
+    // content (`borderOnForeground: false`), and the gradient `Ink` is
+    // content, so the style's 2 px edge was covered wherever the gradient is
+    // painted: a focused join or "Stwórz serwer" showed no ring at all. The
+    // same 2 px edge in the same ink is therefore painted again as this
+    // box's FOREGROUND, over the gradient. It is always present and only
+    // changes colour, so focus never inserts a layer above the button. The
+    // neutral finish has no gradient and keeps its own visible edge.
+    final ring = !neutral && enabled && _focused
+        ? ink
+        : ink.withValues(alpha: 0);
     return AnimatedContainer(
       duration: AppMotion.resolve(context, AppMotion.quick),
       curve: AppMotion.standardCurve,
       decoration: ShapeDecoration(shape: widget.shape, shadows: lift),
+      foregroundDecoration: ShapeDecoration(
+        shape: widget.shape.copyWith(
+          side: BorderSide(
+            color: ring,
+            width: YoGradientFilledButton.focusRingWidth,
+          ),
+        ),
+      ),
       child: FilledButton(
+        key: widget.buttonKey,
         // FilledButton defaults to Clip.none, which lets the gradient `Ink`
         // paint as a rectangle past a stadium or rounded shape.
         clipBehavior: Clip.antiAlias,

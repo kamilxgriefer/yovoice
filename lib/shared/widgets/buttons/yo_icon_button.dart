@@ -9,20 +9,20 @@ import 'package:yovoice/core/theme/app_sizing.dart';
 /// The design system's icon-only button.
 ///
 /// Its visual (refine-look R9) is a neutral glass square (`AppRadius.md`,
-/// unchanged) with a 1 px control hairline: `palette.glass` fill and
-/// `hairlineControl` edge at rest, `hairlineHover` under a pointer and a
-/// 2 px `focus` ring when focused. A caller's [backgroundColor] /
-/// [borderColor] still win (media plates, sheet chrome). High contrast
-/// brings the flat `surface` fill and a `borderStrong` edge back — also over
-/// a caller's visible edge (the Settings / Friends Back buttons pass
-/// `border`); a fully transparent caller edge (media plates, the sheet
-/// close) means "no edge" and stays none. Disabled and loading keep the
-/// quiet `surfaceMuted` fill with a `border` edge.
+/// unchanged) with a 1 px control edge: `palette.glass` fill and
+/// [restingEdgeOf] at rest, `hairlineHover` under a pointer and a 2 px
+/// `focus` ring when focused. A caller's [backgroundColor] / [borderColor]
+/// still win (media plates, sheet chrome). High contrast brings the flat
+/// `surface` fill and a `borderStrong` edge back — also over a caller's
+/// visible edge (the Settings / Friends Back buttons pass `border`); a fully
+/// transparent caller edge (media plates, the sheet close) means "no edge"
+/// and stays none. Disabled and loading keep the quiet `surfaceMuted` fill
+/// with a `border` edge.
 ///
-/// The hairline is decoration, not the identifier: the default
-/// `textPrimary` glyph (16:1 or more on the glass in both themes) identifies
-/// the control on every platform, including Android, where Flutter never
-/// reports high contrast.
+/// The edge is decoration, not the identifier: the default `textPrimary`
+/// glyph (16:1 or more on the glass in both themes) identifies the control
+/// on every platform, including Android, where Flutter never reports high
+/// contrast.
 ///
 /// The visual may be smaller than the 44 px target the button always keeps.
 class YoIconButton extends StatefulWidget {
@@ -54,6 +54,22 @@ class YoIconButton extends StatefulWidget {
   final FocusNode? focusNode;
   final bool autofocus;
   final String? semanticLabel;
+
+  /// The default (no caller edge), enabled, unfocused, unhovered edge.
+  ///
+  /// * Dark: `hairlineControl` (1.70–1.81:1 against the canvas roles).
+  /// * Pearl: `border`. Pearl's control hairline over the lit glass falls to
+  ///   1.28:1 on `background` — below the 1.3–1.4:1 the spec's §12.7 sets
+  ///   for hairline controls — while `border` holds 1.44:1 on `background`,
+  ///   1.56:1 on `backgroundTop` and 1.53:1 on `surface`. It is also the
+  ///   edge the Settings / Friends Back buttons already pass, so every Pearl
+  ///   Back button reads alike. Hover (`hairlineHover`, 1.75:1 or more)
+  ///   stays a visible step firmer.
+  /// * High contrast: `borderStrong` in both themes.
+  static Color restingEdgeOf(AppPalette palette, {bool highContrast = false}) {
+    if (highContrast) return palette.borderStrong;
+    return palette.isDark ? palette.hairlineControl : palette.border;
+  }
 
   @override
   State<YoIconButton> createState() => _YoIconButtonState();
@@ -129,7 +145,7 @@ class _YoIconButtonState extends State<YoIconButton> {
   Color _restingEdge(AppPalette palette, {required bool highContrast}) {
     final caller = widget.borderColor;
     if (caller == null) {
-      return highContrast ? palette.borderStrong : palette.hairlineControl;
+      return YoIconButton.restingEdgeOf(palette, highContrast: highContrast);
     }
     // "High contrast brings borderStrong back everywhere" — except where the
     // caller asked for no edge at all.

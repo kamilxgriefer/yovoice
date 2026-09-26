@@ -409,11 +409,9 @@ void main() {
         ring = _buttonForeground(tester, of: secondary)!.border! as Border;
         expect(ring.top.color, palette.focus);
         expect(ring.top.width, 2);
-        // The secondary's own 1 px edge stays where it was, under the ring.
-        expect(
-          (_buttonDecoration(tester, of: secondary).border! as Border).top,
-          BorderSide(color: palette.borderStrong),
-        );
+        // The ring takes the place of the secondary's own 1 px edge in the
+        // same foreground; the fill's decoration never pads with a border.
+        expect(_buttonDecoration(tester, of: secondary).border, isNull);
         expect(tester.getRect(secondary), secondaryRect);
         expect(tester.getRect(find.text('Drugi')), secondaryLabel);
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -457,17 +455,106 @@ void main() {
         ),
       );
       final decoration = _buttonDecoration(tester);
-      expect(
-        (decoration.border! as Border).top.color,
-        AppPalette.light.borderStrong,
-      );
+      // The 1 px edge is the foreground, so it never pads the button.
+      expect(decoration.border, isNull);
+      final edge = (_buttonForeground(tester)!.border! as Border).top;
+      expect(edge.color, AppPalette.light.borderStrong);
+      expect(edge.width, 1);
       expect(decoration.boxShadow, isEmpty);
     });
+
+    for (final (name, theme, _) in themes) {
+      testWidgets('$name every variant and state shares one box height', (
+        tester,
+      ) async {
+        // Review B3-3: a bordered decoration padded its child by 1 px a side,
+        // so "Anuluj" (ghost) stood 2 px taller than "Wyślij" (primary) in
+        // the media review, and a busy primary once jumped 2 px.
+        final buttons = <(String, YoButton)>[
+          ('primary', YoButton(label: 'P', height: 52, onPressed: () {})),
+          (
+            'primary busy',
+            const YoButton(
+              label: 'PB',
+              height: 52,
+              isLoading: true,
+              onPressed: null,
+            ),
+          ),
+          (
+            'primary disabled',
+            const YoButton(label: 'PD', height: 52, onPressed: null),
+          ),
+          (
+            'secondary',
+            YoButton(
+              label: 'S',
+              height: 52,
+              variant: YoButtonVariant.secondary,
+              onPressed: () {},
+            ),
+          ),
+          (
+            'secondary disabled',
+            const YoButton(
+              label: 'SD',
+              height: 52,
+              variant: YoButtonVariant.secondary,
+              onPressed: null,
+            ),
+          ),
+          (
+            'ghost',
+            YoButton(
+              label: 'G',
+              height: 52,
+              variant: YoButtonVariant.ghost,
+              onPressed: () {},
+            ),
+          ),
+          (
+            'ghost disabled',
+            const YoButton(
+              label: 'GD',
+              height: 52,
+              variant: YoButtonVariant.ghost,
+              onPressed: null,
+            ),
+          ),
+          (
+            'danger disabled',
+            const YoButton(
+              label: 'DD',
+              height: 52,
+              variant: YoButtonVariant.danger,
+              onPressed: null,
+            ),
+          ),
+        ];
+        await tester.pumpWidget(
+          _host(
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [for (final (_, button) in buttons) button],
+            ),
+            theme,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        for (final (variant, button) in buttons) {
+          expect(
+            tester.getSize(find.widgetWithText(YoButton, button.label)).height,
+            52,
+            reason: variant,
+          );
+        }
+      });
+    }
   });
 
   group('YoIconButton (R9)', () {
     for (final (name, theme, palette) in themes) {
-      testWidgets('$name default is glass with a control hairline', (
+      testWidgets('$name default is glass with its resting control edge', (
         tester,
       ) async {
         await tester.pumpWidget(
@@ -480,8 +567,46 @@ void main() {
         expect(decoration.color, palette.glass);
         expect(decoration.borderRadius, AppRadius.md);
         final edge = (decoration.border! as Border).top;
-        expect(edge.color, palette.hairlineControl);
+        // Dark keeps the control hairline. Pearl's hairline over the lit
+        // glass is 1.28:1 on `background`, below the spec's 1.3–1.4:1
+        // (§12.7), so Pearl takes `border` — the edge its Settings / Friends
+        // Back buttons already pass (review B3-1).
+        expect(edge.color, YoIconButton.restingEdgeOf(palette));
+        expect(
+          edge.color,
+          palette.isDark ? palette.hairlineControl : palette.border,
+        );
         expect(edge.width, 1);
+      });
+
+      test('$name resting edge holds 1.4:1 on every canvas role', () {
+        final edge = YoIconButton.restingEdgeOf(palette);
+        final hover = palette.hairlineHover;
+        for (final (role, canvas) in <(String, Color)>[
+          ('background', palette.background),
+          ('backgroundTop', palette.backgroundTop),
+          ('surface', palette.surface),
+        ]) {
+          // The edge is painted over the glass fill, which sits on the canvas.
+          final fill = Color.alphaBlend(palette.glass, canvas);
+          final resting = _contrast(Color.alphaBlend(edge, fill), canvas);
+          expect(resting, greaterThanOrEqualTo(1.4), reason: '$name on $role');
+          // Hover stays a visible step firmer than rest.
+          expect(
+            _contrast(Color.alphaBlend(hover, fill), canvas),
+            greaterThan(resting),
+            reason: '$name hover on $role',
+          );
+        }
+        // High contrast restores the strong edge (3:1 or more).
+        expect(
+          YoIconButton.restingEdgeOf(palette, highContrast: true),
+          palette.borderStrong,
+        );
+        expect(
+          _contrast(palette.borderStrong, palette.background),
+          greaterThanOrEqualTo(3),
+        );
       });
 
       testWidgets('$name hover firms the hairline; focus rings it', (
@@ -1158,3 +1283,12 @@ double _scaleOf(WidgetTester tester, Finder of) => tester
     )
     .scale
     .value;
+
+/// WCAG contrast ratio of two opaque colours.
+double _contrast(Color a, Color b) {
+  final la = a.computeLuminance();
+  final lb = b.computeLuminance();
+  final hi = la > lb ? la : lb;
+  final lo = la > lb ? lb : la;
+  return (hi + .05) / (lo + .05);
+}
