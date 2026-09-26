@@ -45,3 +45,7 @@ updates:
       time: "07:00"
       timezone: Europe/Warsaw
     open-pull-requests-limit: 5
+    ignore:
+      # intl is pinned by flutter_localizations in the Flutter SDK; it moves
+      # with Flutter, never on its own (closed #32: pub get fails otherwise).
+      - dependency-name: "intl"
