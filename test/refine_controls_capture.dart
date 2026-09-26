@@ -25,10 +25,24 @@
 // contrast at 100 % (every width) and 200 % (390). Names follow the spec's
 // §11 pattern: <screen>_<width>_<dark|pearl>_pl_<text>_<state>[-hc].png.
 //
+// flutter_test paints every elevation and BoxShadow as a hard, solid debug
+// band (`debugDisableShadows`); the capture switches that off for each
+// render, so the primary's lift and the Pearl contact shadows are the real
+// soft shadows, and restores it before the binding checks its invariants.
+//
 // Not a *_test.dart file, so the regular suite ignores it. Run explicitly:
 //
 //   flutter test test/refine_controls_capture.dart --concurrency=1 \
 //     --dart-define=REFINE_CONTROLS_OUT=<dir>
+//
+// Options (all `--dart-define`):
+//   REFINE_CONTROLS_WIDTHS=390,1440   any of 390, 768, 1440 (default: all)
+//   REFINE_CONTROLS_SCREENS=company-files,media-review
+//                                     a subset of: device-sessions,
+//                                     server-events, server-new-channel,
+//                                     company-files, media-review
+//                                     (default: all; the hover shots run
+//                                     with media-review)
 //
 // The same file runs unchanged against the pre-refine base commit (the
 // "before" frames), except that the base has no high-contrast theme twins;
@@ -72,7 +86,24 @@ const _out = String.fromEnvironment(
   'REFINE_CONTROLS_OUT',
   defaultValue: 'test/.screenshots/refine-controls',
 );
+const _widthsDefine = String.fromEnvironment(
+  'REFINE_CONTROLS_WIDTHS',
+  defaultValue: '390,768,1440',
+);
+const _screensDefine = String.fromEnvironment('REFINE_CONTROLS_SCREENS');
 const _emojiFont = '/System/Library/Fonts/Apple Color Emoji.ttc';
+
+List<String> _list(String define) => [
+  for (final part in define.split(','))
+    if (part.trim().isNotEmpty) part.trim(),
+];
+
+final Set<int> _widths = _list(_widthsDefine).map(int.parse).toSet();
+final Set<String> _screens = _list(_screensDefine).toSet();
+
+bool _wants(String screen, _Variant v) =>
+    _widths.contains(v.width.toInt()) &&
+    (_screens.isEmpty || _screens.contains(screen));
 const String _me = 'me-uid';
 
 final _captureKey = GlobalKey();
@@ -162,6 +193,23 @@ Widget _app({required bool dark, required Widget home}) => MaterialApp(
   home: home,
 );
 
+/// A capture test whose render shows the real soft shadows.
+///
+/// flutter_test swaps every elevation and BoxShadow blur for a hard debug
+/// band; evidence must show the real lift, so the flag is off for the whole
+/// render and back on before the binding checks its invariants (which it
+/// does before any `addTearDown` callback runs).
+void _capture(String name, Future<void> Function(WidgetTester tester) body) {
+  testWidgets(name, (tester) async {
+    debugDisableShadows = false;
+    try {
+      await body(tester);
+    } finally {
+      debugDisableShadows = true;
+    }
+  });
+}
+
 /// Frames for layout, streams and the real image decodes. Never
 /// `pumpAndSettle`: a busy spinner never settles.
 Future<void> _settle(WidgetTester tester, {int frames = 12}) async {
@@ -186,6 +234,11 @@ Future<void> _shoot(WidgetTester tester, _Variant v, String name) async {
     final boundary =
         _captureKey.currentContext!.findRenderObject()!
             as RenderRepaintBoundary;
+    // Prime the font and icon atlases: without a first raster pass a
+    // headless engine can intermittently omit a glyph from the evidence.
+    final warmup = await boundary.toImage(pixelRatio: v.pixelRatio);
+    warmup.dispose();
+    await Future<void>.delayed(const Duration(milliseconds: 16));
     final image = await boundary.toImage(pixelRatio: v.pixelRatio);
     try {
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -250,7 +303,14 @@ TestServerRepository _communityRepository() {
   );
   repository.events = [
     event('e1', 'Wieczór z książką', friday, going: 12, maybe: 4, reminders: 9),
-    event('e2', 'Niedzielne śniadanie', sunday, going: 5, maybe: 2, reminders: 3),
+    event(
+      'e2',
+      'Niedzielne śniadanie',
+      sunday,
+      going: 5,
+      maybe: 2,
+      reminders: 3,
+    ),
   ];
   repository.eventResponses['e1'] = const ServerEventAttendance(
     response: ServerEventResponse.going,
@@ -475,119 +535,143 @@ void main() {
   });
 
   for (final v in _matrix) {
-    testWidgets(v.name('device-sessions', 'populated'), (tester) async {
-      _configure(tester, v);
-      await tester.pumpWidget(_app(dark: v.dark, home: _deviceSessions()));
-      await _settle(tester);
-      await _shoot(tester, v, v.name('device-sessions', 'populated'));
-    });
+    if (_wants('device-sessions', v)) {
+      _capture(v.name('device-sessions', 'populated'), (tester) async {
+        _configure(tester, v);
+        await tester.pumpWidget(_app(dark: v.dark, home: _deviceSessions()));
+        await _settle(tester);
+        await _shoot(tester, v, v.name('device-sessions', 'populated'));
+      });
+    }
 
-    testWidgets(v.name('server-events', 'populated'), (tester) async {
-      _configure(tester, v);
-      await tester.pumpWidget(
-        _app(
-          dark: v.dark,
-          home: _workspace(_communityRepository(), 'events'),
-        ),
-      );
-      await _settle(tester);
-      await _shoot(tester, v, v.name('server-events', 'populated'));
-    });
+    if (_wants('server-events', v)) {
+      _capture(v.name('server-events', 'populated'), (tester) async {
+        _configure(tester, v);
+        await tester.pumpWidget(
+          _app(
+            dark: v.dark,
+            home: _workspace(_communityRepository(), 'events'),
+          ),
+        );
+        await _settle(tester);
+        await _shoot(tester, v, v.name('server-events', 'populated'));
+      });
+    }
 
-    testWidgets(v.name('server-new-channel', 'sheet'), (tester) async {
-      _configure(tester, v);
-      await tester.pumpWidget(
-        _app(
-          dark: v.dark,
-          home: _workspace(_communityRepository(), 'general'),
-        ),
-      );
-      await _settle(tester);
-      // On a phone the channel list (and its "Dodaj kanał") lives in the
-      // "Kanały" sheet.
-      final add = find.byKey(const ValueKey('server-add-channel'));
-      if (add.hitTestable().evaluate().isEmpty) {
-        await tester.tap(find.byKey(const ValueKey('server-open-channels')));
-        await _settle(tester, frames: 10);
-      }
-      await tester.ensureVisible(add);
-      await _settle(tester, frames: 4);
-      await tester.tap(add);
-      await _settle(tester);
-      expect(
-        find.byKey(const ValueKey('server-create-channel-sheet')),
-        findsOneWidget,
-      );
-      await _shoot(tester, v, v.name('server-new-channel', 'sheet'));
-    });
+    if (_wants('server-new-channel', v)) {
+      _capture(v.name('server-new-channel', 'sheet'), (tester) async {
+        _configure(tester, v);
+        await tester.pumpWidget(
+          _app(
+            dark: v.dark,
+            home: _workspace(_communityRepository(), 'general'),
+          ),
+        );
+        await _settle(tester);
+        // On a phone the channel list (and its "Dodaj kanał") lives in the
+        // "Kanały" sheet.
+        final add = find.byKey(const ValueKey('server-add-channel'));
+        final panel = find.byKey(const ValueKey('server-panel'));
+        if (add.hitTestable().evaluate().isEmpty &&
+            panel.hitTestable().evaluate().isEmpty) {
+          await tester.tap(find.byKey(const ValueKey('server-open-channels')));
+          await _settle(tester, frames: 10);
+        }
+        // The panel is a lazy ListView: at 200 % text "Dodaj kanał" sits
+        // past its cache extent and is not built until the list scrolls.
+        await tester.scrollUntilVisible(
+          add,
+          160,
+          scrollable: find
+              .descendant(of: panel.last, matching: find.byType(Scrollable))
+              .first,
+        );
+        await _settle(tester, frames: 4);
+        await tester.tap(add);
+        await _settle(tester);
+        expect(
+          find.byKey(const ValueKey('server-create-channel-sheet')),
+          findsOneWidget,
+        );
+        await _shoot(tester, v, v.name('server-new-channel', 'sheet'));
+      });
+    }
 
-    testWidgets(v.name('company-files', 'empty'), (tester) async {
-      _configure(tester, v);
-      await tester.pumpWidget(
-        _app(dark: v.dark, home: _workspace(_companyRepository(), 'files')),
-      );
-      await _settle(tester);
-      await _shoot(tester, v, v.name('company-files', 'empty'));
-    });
+    if (_wants('company-files', v)) {
+      _capture(v.name('company-files', 'empty'), (tester) async {
+        _configure(tester, v);
+        await tester.pumpWidget(
+          _app(dark: v.dark, home: _workspace(_companyRepository(), 'files')),
+        );
+        await _settle(tester);
+        await _shoot(tester, v, v.name('company-files', 'empty'));
+      });
+    }
 
-    testWidgets(v.name('media-review', 'sending'), (tester) async {
-      _configure(tester, v);
-      final chat = await _photoChat(tester);
-      await tester.pumpWidget(_app(dark: v.dark, home: chat));
-      await _settle(tester);
-      await _openMedia(tester, 'Biblioteka zdjęć');
-      await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
-      // ~0.5 s into the spinner's cycle: a long, legible arc.
-      for (var i = 0; i < 10; i++) {
-        await tester.pump(const Duration(milliseconds: 50));
-      }
-      await _shoot(tester, v, v.name('media-review', 'sending'));
-    });
+    if (_wants('media-review', v)) {
+      _capture(v.name('media-review', 'sending'), (tester) async {
+        _configure(tester, v);
+        final chat = await _photoChat(tester);
+        await tester.pumpWidget(_app(dark: v.dark, home: chat));
+        await _settle(tester);
+        await _openMedia(tester, 'Biblioteka zdjęć');
+        await tester.tap(find.byKey(const ValueKey('yo-media-review-send')));
+        // ~0.5 s into the spinner's cycle: a long, legible arc.
+        for (var i = 0; i < 10; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        await _shoot(tester, v, v.name('media-review', 'sending'));
+      });
+    }
   }
 
   for (final v in _hoverMatrix) {
-    testWidgets(v.name('media-review', 'hover-play'), (tester) async {
-      _configure(tester, v);
-      await tester.pumpWidget(
-        _app(
-          dark: v.dark,
-          home: _chat(
-            videoPicker: (_) async => XFile.fromData(
-              Uint8List(12 * 1024 * 1024 + 400 * 1024),
-              name: 'VID_0419.mp4',
-              mimeType: 'video/mp4',
+    if (_wants('media-review', v)) {
+      _capture(v.name('media-review', 'hover-play'), (tester) async {
+        _configure(tester, v);
+        await tester.pumpWidget(
+          _app(
+            dark: v.dark,
+            home: _chat(
+              videoPicker: (_) async => XFile.fromData(
+                Uint8List(12 * 1024 * 1024 + 400 * 1024),
+                name: 'VID_0419.mp4',
+                mimeType: 'video/mp4',
+              ),
             ),
           ),
-        ),
-      );
-      await _settle(tester);
-      await _openMedia(tester, 'Biblioteka filmów');
-      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-      await mouse.addPointer(
-        location: tester.getCenter(
-          find.byKey(const ValueKey('yo-media-review-play')),
-        ),
-      );
-      await _settle(tester, frames: 8);
-      await _shoot(tester, v, v.name('media-review', 'hover-play'));
-      await mouse.removePointer();
-    });
+        );
+        await _settle(tester);
+        await _openMedia(tester, 'Biblioteka filmów');
+        final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        await mouse.addPointer(
+          location: tester.getCenter(
+            find.byKey(const ValueKey('yo-media-review-play')),
+          ),
+        );
+        await _settle(tester, frames: 8);
+        await _shoot(tester, v, v.name('media-review', 'hover-play'));
+        await mouse.removePointer();
+      });
+    }
 
-    testWidgets(v.name('media-review', 'hover-close'), (tester) async {
-      _configure(tester, v);
-      final chat = await _photoChat(tester);
-      await tester.pumpWidget(_app(dark: v.dark, home: chat));
-      await _settle(tester);
-      await _openMedia(tester, 'Biblioteka zdjęć');
-      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-      await mouse.addPointer(
-        location: tester.getCenter(
-          find.byKey(const ValueKey('modal-sheet-close')),
-        ),
-      );
-      await _settle(tester, frames: 8);
-      await _shoot(tester, v, v.name('media-review', 'hover-close'));
-      await mouse.removePointer();
-    });
+    if (_wants('media-review', v)) {
+      _capture(v.name('media-review', 'hover-close'), (tester) async {
+        _configure(tester, v);
+        final chat = await _photoChat(tester);
+        await tester.pumpWidget(_app(dark: v.dark, home: chat));
+        await _settle(tester);
+        await _openMedia(tester, 'Biblioteka zdjęć');
+        final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        await mouse.addPointer(
+          location: tester.getCenter(
+            find.byKey(const ValueKey('modal-sheet-close')),
+          ),
+        );
+        await _settle(tester, frames: 8);
+        await _shoot(tester, v, v.name('media-review', 'hover-close'));
+        await mouse.removePointer();
+      });
+    }
   }
 }
