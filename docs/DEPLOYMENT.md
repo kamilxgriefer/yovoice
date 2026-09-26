@@ -18,21 +18,36 @@ endpoint manifests of all 273 existing exports are identical apart from
 schedule — never a bare `--only functions`.** `acceptDirectCall` is not in
 it: production already runs it at 0 on its 2026-09-08 revision, and moving it
 to current code is not part of this step. Deploy in **batches of at most
-four**, because the Cloud Run regional CPU allocation is near its 200 vCPU
-quota (the build 36 deploy failed with "Quota exceeded for total allowable CPU
-per project per region" on larger batches). Use the step 0 environment of the
-build 36 order below, from a clean worktree at this branch's merged commit
-with `npm ci --omit=dev --ignore-scripts --no-audit --no-fund` in its
-`functions/`. The order keeps the direct-message and call paths warm
-throughout: the pinger is live before their minimum instance goes.
+three**. What was measured in the build 36 deploy
+(`yovoice-evidence/2026-09-26/build36-deploy`): a 14-name batch failed with
+"Container Healthcheck failed. Quota exceeded for total allowable CPU per
+project per region" on 14 of 14 names, then on 9 of 14 at the first re-run,
+and still on some at the second; eight batches of three
+(`step3b-small-1..8`) each succeeded 3 of 3. A batch of four was never
+tried. The quota bites on revisions **starting at the same time**, not on
+steady-state use (at rest this change is quota-neutral: ten minimum instances
+become about twelve ping-held idle instances plus the pinger). **If a name
+fails with "Quota exceeded", it stays on its previous revision, which is still
+warm: wait a few minutes and re-run only that name.** Use the step 0
+environment of the build 36 order below, from a clean worktree at this
+branch's merged commit with
+`npm ci --omit=dev --ignore-scripts --no-audit --no-fund` in its
+`functions/`. The order keeps every warm path warm throughout: the pinger is
+deployed alone and its first run is read back before any warm path loses its
+minimum instance.
 
 ```bash
-# 1. The four retired Rooms callables (C1). Not pinged.
-firebase deploy --project yovoice-ec54a --only functions:createLiveKitToken,functions:sendRoomMessage,functions:startRoomVoice,functions:setOwnRoomParticipantMute
-# 2. The pinger (creates one Cloud Scheduler job) and the Reel publish pair.
-firebase deploy --project yovoice-ec54a --only functions:keepWarmHotPathsSchedule,functions:reserveReelDraftV2,functions:finalizeReelDraftV2
-# 3. The direct-message and direct-call paths, once step 2's first run has logged 401s.
-firebase deploy --project yovoice-ec54a --only functions:startDirectCall,functions:createDirectCallToken,functions:sendDirectMessage,functions:openDirectConversation
+# 1. The four retired Rooms callables (C1). Not pinged. Two batches.
+firebase deploy --project yovoice-ec54a --only functions:createLiveKitToken,functions:sendRoomMessage,functions:startRoomVoice
+firebase deploy --project yovoice-ec54a --only functions:setOwnRoomParticipantMute
+# 2. The pinger alone (creates one Cloud Scheduler job). Then wait for its
+#    first run and do read-back items 2 and 3 below: twelve 401s. Stop here if
+#    the job is missing or any target answers anything else.
+firebase deploy --project yovoice-ec54a --only functions:keepWarmHotPathsSchedule
+# 3. Only after step 2's read-back: the direct-message, direct-call and Reel
+#    publish paths, in two batches of three.
+firebase deploy --project yovoice-ec54a --only functions:startDirectCall,functions:createDirectCallToken,functions:sendDirectMessage
+firebase deploy --project yovoice-ec54a --only functions:openDirectConversation,functions:reserveReelDraftV2,functions:finalizeReelDraftV2
 ```
 
 No `--force`: nothing is deleted and no warm instance is added. If the CLI
@@ -49,13 +64,18 @@ asks about anything else, stop.
    `gcloud scheduler jobs describe firebase-schedule-keepWarmHotPathsSchedule-europe-west1 --location=europe-west1 --project=yovoice-ec54a`
    shows `every 5 minutes`, `UTC`, `retryCount` 0 (or unset).
 3. The first runs log a 401 from all twelve targets:
-   `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="keepwarmhotpathsschedule" AND jsonPayload.message="keep-warm ping"' --project=yovoice-ec54a --freshness=20m --format='value(severity,jsonPayload.target,jsonPayload.status,jsonPayload.ms)'`
-   — twelve INFO lines per run, every `status` 401. A `timeout`,
-   `network-error`, 404 or 5xx on any target: stop and read that target. A
-   `ms` above about 1,500 is a cold start; one per target right after a
-   deploy is expected.
-4. The alerts stay quiet. The targets' request logs for these pings
-   (`httpRequest.userAgent="yovoice-keepwarm"`) are status 401 at severity
+   `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="keepwarmhotpathsschedule" AND jsonPayload.message:"keep-warm"' --project=yovoice-ec54a --freshness=20m --format='value(severity,jsonPayload.target,jsonPayload.status,jsonPayload.ms)'`
+   — twelve INFO `keep-warm ping` lines per run, every `status` 401. Any
+   other HTTP status is logged instead as a WARNING
+   `keep-warm unexpected status` line (same fields), and a skipped run as
+   INFO `keep-warm skipped`; there must be none of either. A `timeout`, `network-error`,
+   404, 403 or 5xx on any target: stop and read that target. A `ms` above
+   about 1,500 is a cold start; one per target right after a deploy is
+   expected.
+4. The alerts stay quiet. The targets' request logs for these pings (the
+   `httpRequest.userAgent="yovoice-keepwarm"` filter is a reading aid only:
+   any client can send that User-Agent, so it is never a trust boundary and
+   never an alert exclusion) are status 401 at severity
    WARNING; `severity>=ERROR` on `cloud_run_revision` gains nothing, so
    "Backend ERROR logs" does not fire. A 401 is `response_code_class="4xx"`,
    which "Backend 5xx" does not count; **no 4xx can reach the 5xx alert.**
@@ -64,8 +84,19 @@ asks about anything else, stop.
    0.00 PLN/day, from 8.02 + 2.41 today. Over the following week the
    `functions module evaluated` count per pinged target should fall to about
    one a day (deploys), and the pinger's `ms` p95 stay below about 500 ms.
+6. Follow-up (owner, console; not done by the deploy): nothing alerts if the
+   pinger itself stops working (a 403 after an invoker change, a 404 after a
+   rename, the job paused, `keep-warm skipped`), and the hot paths would go
+   cold silently. Add a log-based metric on
+   `jsonPayload.message="keep-warm unexpected status" OR
+   jsonPayload.message="keep-warm skipped" OR (jsonPayload.message="keep-warm ping" AND jsonPayload.ms>1500)`
+   on `service_name="keepwarmhotpathsschedule"`, alerting when it stays above
+   0 across several runs, and one on the absence of `keep-warm ping` lines
+   for 15 minutes. A future 4xx-rate alert on the targets must set its
+   threshold above, or subtract, the pinger's known volume (twelve 401s per
+   five minutes) rather than exclude its User-Agent.
 
-**Rollback:** redeploy the same three batches from `3fb4e3e4` (the ten
+**Rollback:** redeploy the same batches from `3fb4e3e4` (the ten
 return to `minInstances: 1`, which needs `--force` and about 10 vCPU of the
 regional quota), then delete the schedule with
 `firebase functions:delete keepWarmHotPathsSchedule --region europe-west1 --project yovoice-ec54a`

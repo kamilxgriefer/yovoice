@@ -16508,8 +16508,11 @@ for:
    `yovoice-ec54a` it equals the `url` field of all twelve targets in the
    post-build-36 read-back
    (`yovoice-evidence/2026-09-26/build36-deploy/functions-POST.json`: all
-   twelve `ACTIVE`, ingress `ALLOW_ALL`). It logs one INFO line per
-   target, `{target, status, ms}`, and nothing else.
+   twelve `ACTIVE`, ingress `ALLOW_ALL`). It logs one line per target,
+   `{target, status, ms}`: INFO `keep-warm ping` for a 401, a timeout or a
+   network error, and WARNING `keep-warm unexpected status` for any other
+   HTTP status, which makes the pinger a continuous check that every target
+   still refuses an unauthenticated call. Nothing else, and never ERROR.
 4. Every export is `minInstances` 0 (the warm-set pins in
    `test/cold_start_module_graph.test.js`, `stage_b_bindings`,
    `reels_exports` and `latency_critical_configuration` say so). A warm
@@ -16525,10 +16528,14 @@ for:
   `requireActor` in `authBoundRequest` before the service or the Servers
   activation read. `test/keep_warm.test.js` proves it on the **real export
   map**: it serves every target through the real callable wrapper over HTTP,
-  runs the real pinger against it with every Firestore and Auth entry point
-  tripwired, and requires twelve `401 UNAUTHENTICATED` answers with zero
-  tripwire hits (a negative control shows the tripwires fire; moving one read
-  before the auth check turns the test red).
+  runs the real pinger against it with every Firestore, Auth, Storage
+  (Bucket, File) and LiveKit (server API clients, `AccessToken.toJwt`,
+  `TokenVerifier.verify`) entry point and every outbound HTTP API (`fetch`,
+  `http`/`https` `request`/`get`, `http2.connect`) tripwired, and requires
+  twelve `401 UNAUTHENTICATED` answers with zero tripwire hits (a negative
+  control shows every kind of tripwire fires; moving one read, one Storage
+  call, one token signature or one fetch before the auth check turns the test
+  red).
 - **The alerts stay quiet.** The callable wrapper does not log a handler's
   `HttpsError`, and `unauthenticated` is not one of the codes `fail()` logs.
   The only wrapper line is a DEBUG verification line. A GET or a malformed
@@ -16560,12 +16567,27 @@ for:
   INFO line under the emulator or without a project id.
 - Cloud Run request logs gain about 104,000 WARNING-level 401 entries per
   month, and the pinger about as many INFO lines: inside the Logging free
-  tier. Any future 4xx-rate alert must exclude
-  `httpRequest.userAgent="yovoice-keepwarm"`.
+  tier. The pinger's `User-Agent: yovoice-keepwarm` is a reading aid, **not
+  a trust boundary**: any client can send it, so an alert must never exclude
+  it (an attacker's flood carrying it would vanish from the alert). Any
+  future 4xx-rate alert sets its threshold above, or subtracts, the pinger's
+  known volume (twelve 401s per five minutes); exact attribution matches a
+  request to the pinger's `keep-warm ping` line by timestamp, or, if ever
+  needed, an OIDC identity token from the pinger's service account.
+- **Nothing alerts yet if the pinger itself stops** (a 403 after an invoker
+  change, a 404 after a rename, a paused job, `keep-warm skipped`); the hot
+  paths would go cold silently, and the Min-Instance SKU guardrail of the
+  cost plan only covers the opposite failure. Follow-up for the owner
+  (console action, listed as read-back item 6 in DEPLOYMENT.md): a
+  log-based metric on `keep-warm unexpected status`, `keep-warm skipped` and
+  `keep-warm ping` with `ms` above 1,500, alerting when it stays above 0
+  across several runs, plus an absence alert on `keep-warm ping`.
 - A ping to `createDirectCallToken` loads `livekit-server-sdk` on that
   instance (the handler's default parameter requires it before the auth
   check). That is a module load, not I/O, and a warm instance then already
   has it.
-- Deploying the change is a name-scoped, batched deploy of the ten services
-  plus the schedule ([DEPLOYMENT.md](DEPLOYMENT.md#cost-cuts-after-build-36-adr-xxx--source-only-nothing-deployed)).
+- Deploying the change is a name-scoped deploy of the ten services plus the
+  schedule, in batches of at most three (the only size measured to succeed
+  under the regional CPU quota during the build 36 deploy), with the
+  schedule deployed alone and read back before any warm path goes to 0 ([DEPLOYMENT.md](DEPLOYMENT.md#cost-cuts-after-build-36-adr-xxx--source-only-nothing-deployed)).
   `acceptDirectCall` is not in it: production is already 0.

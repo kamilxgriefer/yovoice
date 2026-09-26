@@ -23,7 +23,8 @@ five-minute schedule, `keepWarmHotPathsSchedule`, pings twelve hot paths with
 an unauthenticated empty callable request each target refuses with 401
 before any I/O. Expected: ~336 → ~26 PLN per 30 days, and the Servers voice
 join, call accept and both feeds warm for the first time. Deploy (batches of
-at most four, name-scoped) and read-back:
+at most three, name-scoped, the pinger alone and read back first) and
+read-back:
 [DEPLOYMENT.md](DEPLOYMENT.md#cost-cuts-after-build-36-adr-xxx--source-only-nothing-deployed).
 
 ## YO Voice 3.1.0 (36) — build 36 on `nb/integrate`: the eight next-build branches and the eight merges of 2026-09-25 — source only, NOTHING DEPLOYED

@@ -8,19 +8,27 @@ const { onSchedule } = require("firebase-functions/v2/scheduler");
 // schedules had 1-4 instance starts in 8 days, all at deploys). Every five
 // minutes this function sends each target ONE unauthenticated, empty callable
 // request. Each target refuses it with HTTP 401 `unauthenticated` before any
-// Firestore, Auth, Storage or LiveKit call (proved per target by
-// test/keep_warm.test.js against the real export map), so a ping can never do
-// work, and there is nothing to retry: the next tick is the retry.
+// Firestore, Auth, Storage, LiveKit or outbound HTTP call (proved per target
+// by test/keep_warm.test.js against the real export map, with each of those
+// tripwired), so a ping can never do work, and there is nothing to retry: the
+// next tick is the retry.
 //
 // Warmth is best-effort. Cloud Run may still recycle an idle instance; the
 // logged `ms` is the warmth monitor (a 401 slower than about 1.5 s was cold).
+// The pinger is also the continuous check that the targets still refuse an
+// unauthenticated call: any other HTTP status is logged at WARNING as
+// `keep-warm unexpected status` (still below the severity>=ERROR alert).
 
 const REGION = "europe-west1";
 const KEEP_WARM_FUNCTION_NAME = "keepWarmHotPathsSchedule";
 const KEEP_WARM_SCHEDULE = "every 5 minutes";
 const KEEP_WARM_PING_TIMEOUT_MS = 10_000;
-// A stable User-Agent so Cloud Run request logs and any future 4xx-rate
-// alert can exclude the pinger with one filter.
+// A stable User-Agent so a person reading Cloud Run request logs can tell the
+// pinger's requests apart at a glance. It is a convenience label, NOT a trust
+// boundary: any client can send it. Never exclude it from an alert or treat
+// it as proof of origin; a 4xx-rate alert subtracts the known pinger volume
+// (twelve requests per five minutes) instead, and exact attribution matches
+// a request to the pinger's own `keep-warm ping` log line by timestamp.
 const KEEP_WARM_USER_AGENT = "yovoice-keepwarm";
 // The smallest valid callable request. The callable wrapper error-logs a GET
 // or a malformed body (firebase-functions lib/common/providers/https.js,
@@ -28,6 +36,13 @@ const KEEP_WARM_USER_AGENT = "yovoice-keepwarm";
 // POST whose handler throws an HttpsError is not logged by the wrapper at all.
 const KEEP_WARM_REQUEST_BODY = "{\"data\":null}";
 const KEEP_WARM_LOG_MESSAGE = "keep-warm ping";
+// Every target must answer 401. Any other HTTP status (a 2xx means a target
+// served an unauthenticated call; 403 or 404 means an invoker or name change
+// left the target unpingable; 3xx or 5xx is a platform fault) is logged under
+// this message at WARNING. A timeout, a network error or an invalid response
+// stays an INFO `keep-warm ping` line: the next tick is the retry.
+const KEEP_WARM_EXPECTED_STATUS = 401;
+const KEEP_WARM_UNEXPECTED_MESSAGE = "keep-warm unexpected status";
 
 // Twelve hot paths, chosen from the cost plan (§2, §3 C3). Every one refuses
 // an unauthenticated call before any I/O:
@@ -140,18 +155,29 @@ async function pingKeepWarmTarget(target, url, {
   return { target, status, ms };
 }
 
-function logInfo(log, message, fields) {
+function logAt(log, level, message, fields) {
   try {
-    log.info(message, fields);
+    log[level](message, fields);
   } catch (_) {
     // Logging must never turn a ping run into a failed Scheduler execution.
   }
 }
 
+function logInfo(log, message, fields) {
+  logAt(log, "info", message, fields);
+}
+
+function isUnexpectedStatus(status) {
+  return Number.isSafeInteger(status) && status !== KEEP_WARM_EXPECTED_STATUS;
+}
+
 /**
- * Pings every target in parallel and logs one INFO line per target:
- * { target, status, ms }. Never throws and never logs above INFO, so expected
- * 401s cannot reach the "Backend ERROR logs" alert (severity >= ERROR).
+ * Pings every target in parallel and logs one line per target:
+ * { target, status, ms }. A 401, a timeout, a network error or an invalid
+ * response is an INFO `keep-warm ping` line; any other HTTP status is a
+ * WARNING `keep-warm unexpected status` line. Never throws and never logs
+ * above WARNING, so no answer can reach the "Backend ERROR logs" alert
+ * (severity >= ERROR).
  */
 async function pingKeepWarmTargets({
   targets = KEEP_WARM_TARGETS,
@@ -192,11 +218,13 @@ async function pingKeepWarmTargets({
         : { target: targets[index], status: "network-error", ms: 0 }
     ));
     for (const result of results) {
-      logInfo(log, KEEP_WARM_LOG_MESSAGE, {
-        target: result.target,
-        status: result.status,
-        ms: result.ms,
-      });
+      const unexpected = isUnexpectedStatus(result.status);
+      logAt(
+        log,
+        unexpected ? "warn" : "info",
+        unexpected ? KEEP_WARM_UNEXPECTED_MESSAGE : KEEP_WARM_LOG_MESSAGE,
+        { target: result.target, status: result.status, ms: result.ms },
+      );
     }
     return results;
   } catch (error) {
@@ -229,6 +257,7 @@ const keepWarmHotPathsSchedule = onSchedule(
 );
 
 module.exports = {
+  KEEP_WARM_EXPECTED_STATUS,
   KEEP_WARM_FUNCTION_NAME,
   KEEP_WARM_LOG_MESSAGE,
   KEEP_WARM_PING_TIMEOUT_MS,
@@ -236,6 +265,7 @@ module.exports = {
   KEEP_WARM_SCHEDULE,
   KEEP_WARM_SCHEDULE_OPTIONS,
   KEEP_WARM_TARGETS,
+  KEEP_WARM_UNEXPECTED_MESSAGE,
   KEEP_WARM_USER_AGENT,
   keepWarmCallableUrl,
   keepWarmHotPathsSchedule,

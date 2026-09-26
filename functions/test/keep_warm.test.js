@@ -8,11 +8,15 @@
 //      header, `{"data":null}` as the body, to the real public URL.
 //   2. A ping can never do work: every target, loaded from the REAL export
 //      map and driven through the real callable wrapper over HTTP, answers
-//      401 UNAUTHENTICATED with Firestore and Auth tripwired, so any read,
-//      write or token check before the refusal would fail the test.
-//   3. The pinger never throws and never logs above INFO, whatever the
+//      401 UNAUTHENTICATED with Firestore, Auth, Storage, LiveKit and
+//      outbound HTTP tripwired, so any read, write, token check, object
+//      access, LiveKit call or network request before the refusal would fail
+//      the test.
+//   3. The pinger never throws and never logs above WARNING, whatever the
 //      targets answer, so it cannot fire the "Backend ERROR logs" alert
-//      (severity >= ERROR) or fail its Scheduler job.
+//      (severity >= ERROR) or fail its Scheduler job. A 401 is INFO; any
+//      other HTTP status is a WARNING `keep-warm unexpected status` line, the
+//      canary for a target that stopped refusing unauthenticated calls.
 
 const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
@@ -20,10 +24,12 @@ const path = require("node:path");
 const { test } = require("node:test");
 
 const {
+  KEEP_WARM_EXPECTED_STATUS,
   KEEP_WARM_LOG_MESSAGE,
   KEEP_WARM_PING_TIMEOUT_MS,
   KEEP_WARM_REQUEST_BODY,
   KEEP_WARM_TARGETS,
+  KEEP_WARM_UNEXPECTED_MESSAGE,
   KEEP_WARM_USER_AGENT,
   keepWarmCallableUrl,
   keepWarmHotPathsSchedule,
@@ -189,7 +195,7 @@ test("each ping is one parallel POST with no Authorization, no App Check and no 
   }
 });
 
-test("timeouts, non-401 answers and network failures are logged at INFO and never thrown", async () => {
+test("non-401 answers log a WARNING; timeouts and network failures stay INFO; nothing throws", async () => {
   const behaviour = {
     sendDirectMessage: () => Promise.resolve(response(401)),
     openDirectConversation: () => Promise.resolve(response(200)),
@@ -242,8 +248,30 @@ test("timeouts, non-401 answers and network failures are logged at INFO and neve
   const timedOut = results.find(({ target }) =>
     target === "createServerChannelTokenV1");
   assert.ok(timedOut.ms >= 30, `timeout measured ${timedOut.ms} ms`);
+  assert.equal(KEEP_WARM_EXPECTED_STATUS, 401);
+  assert.notEqual(KEEP_WARM_UNEXPECTED_MESSAGE, KEEP_WARM_LOG_MESSAGE);
   assert.equal(entries.length, EXPECTED_TARGETS.length);
-  assert.deepEqual([...new Set(entries.map(({ severity }) => severity))], ["INFO"]);
+  // Every HTTP status other than 401 (2xx: a target served an
+  // unauthenticated call; 3xx, 404, 5xx) is a WARNING under its own message,
+  // so one log-based metric can alert on it. Nothing reaches ERROR.
+  const unexpected = new Set([
+    "openDirectConversation",
+    "startDirectCall",
+    "acceptDirectCall",
+    "createDirectCallToken",
+    "startServerChannelSessionV1",
+  ]);
+  for (const entry of entries) {
+    const target = entry.fields.target;
+    if (unexpected.has(target)) {
+      assert.equal(entry.severity, "WARNING", target);
+      assert.equal(entry.message, KEEP_WARM_UNEXPECTED_MESSAGE, target);
+    } else {
+      assert.equal(entry.severity, "INFO", target);
+      assert.equal(entry.message, KEEP_WARM_LOG_MESSAGE, target);
+    }
+    assert.deepEqual(Object.keys(entry.fields).sort(), ["ms", "status", "target"]);
+  }
 });
 
 test("a throwing logger or a missing project never fails the run", async () => {
@@ -260,6 +288,26 @@ test("a throwing logger or a missing project never fails the run", async () => {
     log: throwingLog,
   });
   assert.equal(results.length, EXPECTED_TARGETS.length);
+
+  // A throwing (or missing) warn channel is swallowed the same way.
+  for (const log of [
+    {
+      info: () => {},
+      warn: () => {
+        throw new Error("logging backend down");
+      },
+      error: () => assert.fail("never errors"),
+    },
+    { info: () => {}, error: () => assert.fail("never errors") },
+  ]) {
+    const warned = await pingKeepWarmTargets({
+      env: PRODUCTION_ENV,
+      fetchImpl: async () => response(200),
+      log,
+    });
+    assert.deepEqual(warned.map(({ status }) => status),
+      EXPECTED_TARGETS.map(() => 200));
+  }
 
   for (const env of [{}, { FUNCTIONS_EMULATOR: "true", ...PRODUCTION_ENV }]) {
     const { entries, log } = recordingLog();
@@ -330,18 +378,26 @@ test("the scheduled handler completes without throwing when every ping fails", a
   }
 });
 
-// Loads the REAL export map in a child process, tripwires every Firestore and
-// Auth entry point, serves each exported callable over a local HTTP server
-// through the real firebase-functions callable wrapper, and runs the real
-// pinger against it. The emulator hosts point at a closed port, so even a
-// bypassed tripwire could not reach a real database: it would time out and
-// fail the 401 assertion instead.
+// Loads the REAL export map in a child process, tripwires every Firestore,
+// Auth, Storage and LiveKit entry point and every outbound HTTP API, serves
+// each exported callable over a local HTTP server through the real
+// firebase-functions callable wrapper, and runs the real pinger against it
+// (with the fetch captured before arming). The Firestore and Auth emulator
+// hosts point at a closed port, so even a bypassed database tripwire could
+// not reach a real database: it would time out and fail the 401 assertion.
 const INTEGRATION = String.raw`
 const http = require("node:http");
+const https = require("node:https");
+const http2 = require("node:http2");
 const exported = require("./index.js");
 const admin = require("firebase-admin/firestore");
 const { getAuth } = require("firebase-admin/auth");
+const { getStorage } = require("firebase-admin/storage");
+// Loaded here only to reach its prototypes; the handlers' lazy require of the
+// same module then gets these tripwired classes from require.cache.
+const livekit = require("livekit-server-sdk");
 const { KEEP_WARM_TARGETS, pingKeepWarmTargets } = require("./ops/keep_warm");
+const realFetch = globalThis.fetch;
 
 const touched = [];
 // Built before anything is armed, like a module-level reference would be.
@@ -382,6 +438,50 @@ for (let proto = Object.getPrototypeOf(getAuth());
   tripwire(proto, "auth", Object.getOwnPropertyNames(proto)
     .filter((name) => name !== "constructor"));
 }
+// Storage: every network method of Bucket, File and their shared
+// ServiceObject base. bucket.file() only builds a handle, so it stays open.
+const probeBucket = getStorage().bucket("yovoice-keep-warm-test.firebasestorage.app");
+const bucketProto = Object.getPrototypeOf(probeBucket);
+const fileProto = Object.getPrototypeOf(probeBucket.file("keepWarm/probe"));
+tripwire(Object.getPrototypeOf(bucketProto), "storageObject", [
+  "create", "delete", "exists", "get", "getMetadata", "setMetadata",
+  "request", "requestStream",
+]);
+tripwire(bucketProto, "bucket", [
+  "getFiles", "getFilesStream", "getSignedUrl", "upload", "deleteFiles",
+  "combine", "getLabels", "setLabels", "deleteLabels", "getNotifications",
+  "createNotification", "createChannel", "setMetadata", "makePublic",
+  "makePrivate", "restore", "lock", "request", "addLifecycleRule",
+  "setCorsConfiguration", "setRetentionPeriod", "removeRetentionPeriod",
+  "setStorageClass", "enableLogging", "enableRequesterPays",
+  "disableRequesterPays",
+]);
+tripwire(fileProto, "file", [
+  "copy", "createReadStream", "createResumableUpload", "createWriteStream",
+  "delete", "download", "get", "getSignedUrl", "isPublic", "makePrivate",
+  "makePublic", "move", "moveFileAtomic", "rename", "restore", "request",
+  "rotateEncryptionKey", "save", "setMetadata", "setStorageClass",
+  "generateSignedPostPolicyV2", "generateSignedPostPolicyV4",
+]);
+// LiveKit: every server API client method, token signing and verification.
+for (const client of [
+  "RoomServiceClient", "EgressClient", "IngressClient", "SipClient",
+  "AgentDispatchClient", "ConnectorClient",
+]) {
+  const proto = livekit[client]?.prototype;
+  if (!proto) continue;
+  tripwire(proto, "livekit." + client, Object.getOwnPropertyNames(proto)
+    .filter((name) => name !== "constructor"));
+}
+tripwire(livekit.AccessToken.prototype, "livekit.AccessToken", ["toJwt"]);
+tripwire(livekit.TokenVerifier.prototype, "livekit.TokenVerifier", ["verify"]);
+// Outbound network: the global fetch (the pinger keeps realFetch) and the
+// Node HTTP clients. Nothing a handler may do before its auth check needs
+// any of them; the local server below only listens.
+tripwire(globalThis, "net", ["fetch"]);
+tripwire(http, "http", ["request", "get"]);
+tripwire(https, "https", ["request", "get"]);
+tripwire(http2, "http2", ["connect"]);
 
 const severities = [];
 const unstructured = [];
@@ -454,16 +554,30 @@ server.listen(0, "127.0.0.1", async () => {
   const { port } = server.address();
   const results = await pingKeepWarmTargets({
     env: {},
+    fetchImpl: realFetch,
     urlFor: (name) => "http://127.0.0.1:" + port + "/" + name,
     timeoutMs: 20000,
   });
   server.close();
   const touchedByPings = [...touched];
-  // Negative control: the tripwires do fire, for a pre-built reference and
-  // for Auth, so an empty list above is evidence rather than a dead probe.
+  // Negative control: the tripwires do fire, for a pre-built reference, Auth,
+  // Storage, LiveKit and outbound HTTP, so an empty list above is evidence
+  // rather than a dead probe.
   for (const probe of [
     () => preBuiltReference.get(),
     () => getAuth().getUser("keep-warm-probe"),
+    () => probeBucket.getFiles(),
+    () => probeBucket.file("keepWarm/probe").download(),
+    () => new livekit.RoomServiceClient(
+      "https://keep-warm.invalid", "devkey123",
+      "devsecret123devsecret123devsecret123",
+    ).listRooms(),
+    () => new livekit.AccessToken(
+      "devkey123", "devsecret123devsecret123devsecret123",
+    ).toJwt(),
+    () => globalThis.fetch("https://keep-warm.invalid/"),
+    () => https.request("https://keep-warm.invalid/"),
+    () => http2.connect("https://keep-warm.invalid"),
   ]) {
     try {
       await probe();
@@ -484,7 +598,7 @@ server.listen(0, "127.0.0.1", async () => {
 });
 `;
 
-test("every target refuses the real ping with 401 before any Firestore or Auth access", () => {
+test("every target refuses the real ping with 401 before any Firestore, Auth, Storage, LiveKit or network access", () => {
   const env = { ...process.env };
   for (const name of [
     "K_SERVICE",
@@ -520,8 +634,19 @@ test("every target refuses the real ping with 401 before any Firestore or Auth a
 
   assert.deepEqual(outcome.targets, [...EXPECTED_TARGETS]);
   // The tripwires work (negative control)...
-  assert.deepEqual(outcome.probeTouched, ["document.get", "auth.getUser"]);
-  // ...and no handler constructed a reference, read, wrote or checked a token.
+  assert.deepEqual(outcome.probeTouched, [
+    "document.get",
+    "auth.getUser",
+    "bucket.getFiles",
+    "file.download",
+    "livekit.RoomServiceClient.listRooms",
+    "livekit.AccessToken.toJwt",
+    "net.fetch",
+    "https.request",
+    "http2.connect",
+  ]);
+  // ...and no handler constructed a reference, read, wrote, checked a token,
+  // touched Storage or LiveKit, or opened a network request.
   assert.deepEqual(outcome.touched, []);
   for (const name of EXPECTED_TARGETS) {
     const request = outcome.seen[name];
