@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_motion.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 
 /// The paint atoms every control laid directly on media is made of.
 ///
@@ -15,8 +18,25 @@ import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 /// read the same over any frame in BOTH appearances, and a white glyph on it
 /// clears 3:1 even on a pure-white frame. This is the media-overlay case the
 /// semantic-colour guard documents as legitimately dark in both themes.
+///
+/// This denser pair backs white TEXT on media (the overlay metric pill, the
+/// media send review, the Yeel sound pill): small text needs 4.5:1, and on a
+/// pure-white frame 0xB8 keeps white text at about 7.9:1.
 const Color overlayPlateColor = Color(0xB8000000);
 const Color overlayPlateHoverColor = Color(0xD6000000);
+
+/// The 48 px glyph plate ([OverlayPlate]) since the refine-look finish
+/// (spec §8.4, Yeels): a lighter smoked disc, so the rail stops reading as
+/// a column of black holes over bright footage. A white glyph on it still
+/// holds about 4.7:1 on a pure-white frame — above the 3:1 a glyph needs —
+/// and the hover plate darkens toward the old value.
+const Color overlayGlyphPlateColor = Color(0x8C000000);
+const Color overlayGlyphPlateHoverColor = Color(0xB3000000);
+
+/// The plate's 1 px edge when it carries no ring: a white hairline that
+/// separates the disc from dark footage, where a translucent black plate
+/// alone would dissolve into the frame.
+const Color overlayGlyphPlateHairline = Color(0x24FFFFFF);
 
 /// Shadows behind every piece of white text laid directly on media.
 const List<Shadow> overlayTextShadows = <Shadow>[
@@ -59,12 +79,16 @@ class OverlayPlateButton extends StatefulWidget {
   final Color glyphColor;
   final FocusNode? focusNode;
 
-  /// The disc's fill. Null keeps the media plate ([overlayPlateColor]); a
-  /// host that lays the same control on the page CANVAS (the Voice feed)
-  /// passes palette roles instead, so Pearl never gets a black disc.
+  /// The disc's fill. Null keeps the media plate: the smoked
+  /// [overlayGlyphPlateColor] with its [overlayGlyphPlateHairline] edge, or
+  /// the denser [overlayPlateColor] under high contrast (see
+  /// [OverlayPlate]). A host that lays the same control on the page CANVAS
+  /// (the Voice feed) passes palette roles instead, so Pearl never gets a
+  /// black disc; a plate with a host fill draws no media hairline.
   final Color? plateColor;
 
-  /// The disc's hovered fill; null keeps [overlayPlateHoverColor].
+  /// The disc's hovered fill; null keeps [overlayGlyphPlateHoverColor]
+  /// ([overlayPlateHoverColor] under high contrast).
   final Color? hoverPlateColor;
 
   @override
@@ -108,7 +132,13 @@ class _OverlayPlateButtonState extends State<OverlayPlateButton> {
 ///
 /// Public only because the rail and the plate button live in different files
 /// now that two features share them; it was private while Reels was the only
-/// caller and its behaviour is unchanged.
+/// caller.
+///
+/// Over media it is the smoked [overlayGlyphPlateColor] plate with an
+/// [overlayGlyphPlateHairline] edge whenever no [ring] is drawn (under high
+/// contrast the denser [overlayPlateColor]); a canvas host that passes its
+/// own [fill] gets neither (a white hairline on a Pearl canvas would be
+/// noise, and the host owns its colours).
 class OverlayPlate extends StatelessWidget {
   const OverlayPlate({
     required this.icon,
@@ -136,21 +166,113 @@ class OverlayPlate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ringColor = ring;
+    final hasRing = ringColor != null && ringColor.a > 0;
+    final onMedia = fill == null;
+    // High contrast keeps the denser plate: more ink between the glyph and
+    // an unknown frame, instead of the lighter finish.
+    final highContrast = MediaQuery.highContrastOf(context);
+    final mediaFill = highContrast ? overlayPlateColor : overlayGlyphPlateColor;
+    final mediaHoverFill = highContrast
+        ? overlayPlateHoverColor
+        : overlayGlyphPlateHoverColor;
     return AnimatedContainer(
       duration: AppMotion.resolve(context, AppMotion.quick),
       width: 48,
       height: 48,
       decoration: BoxDecoration(
-        color: hovered
-            ? hoverFill ?? overlayPlateHoverColor
-            : fill ?? overlayPlateColor,
+        color: hovered ? hoverFill ?? mediaHoverFill : fill ?? mediaFill,
         shape: BoxShape.circle,
-        border: ringColor == null || ringColor.a == 0
-            ? null
-            : Border.all(color: ringColor, width: 2),
+        border: hasRing
+            ? Border.all(color: ringColor, width: 2)
+            : onMedia
+            ? Border.all(color: overlayGlyphPlateHairline)
+            : null,
       ),
       alignment: Alignment.center,
       child: Icon(icon, size: 24, color: color),
+    );
+  }
+}
+
+/// The icon-only brand CTA on a feed's chrome — the create `+` — as the
+/// refine-look R6 disc at 48 (`YoGradientDisc(emphasis: lift)`): the logo's
+/// gradient with a white glyph and the screen's one coloured lift.
+///
+/// The same control over footage and on the page canvas (spec §8.4): only
+/// the light differs. Over media ([onMedia]) the disc is drawn in the
+/// immersive Dark palette in both appearances, so its lift reads the same on
+/// any frame; on the canvas it follows the app theme (Pearl's lift is the
+/// softer plum-violet). High contrast keeps the gradient and drops the lift.
+///
+/// Tap, semantics, tooltip and focus stay on the [AccessibleTapRegion]
+/// every overlay control uses (48 px target, a black companion edge on the
+/// focus ring for media of any luminance); the disc itself is draw-only.
+class OverlayBrandDiscButton extends StatefulWidget {
+  const OverlayBrandDiscButton({
+    required this.icon,
+    required this.semanticLabel,
+    required this.onTap,
+    this.tooltip,
+    this.onMedia = true,
+    this.focusNode,
+    super.key,
+  });
+
+  final IconData icon;
+  final String semanticLabel;
+  final VoidCallback? onTap;
+  final String? tooltip;
+
+  /// True over footage; false on the page canvas.
+  final bool onMedia;
+  final FocusNode? focusNode;
+
+  /// The disc's diameter (R6 "+" on the canvas and over media).
+  static const double size = 48;
+
+  @override
+  State<OverlayBrandDiscButton> createState() => _OverlayBrandDiscButtonState();
+}
+
+class _OverlayBrandDiscButtonState extends State<OverlayBrandDiscButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.onTap != null;
+    Widget disc = YoGradientDisc(
+      size: OverlayBrandDiscButton.size,
+      icon: widget.icon,
+      emphasis: enabled ? YoDiscEmphasis.lift : YoDiscEmphasis.rest,
+      status: enabled ? YoDiscStatus.idle : YoDiscStatus.disabled,
+      hovered: _hovered && enabled,
+    );
+    if (widget.onMedia) {
+      // Only the disc reads the palette: give it the immersive one, so the
+      // lift over footage does not change with the app's appearance.
+      disc = Theme(
+        data: Theme.of(context).copyWith(
+          extensions: const <ThemeExtension<dynamic>>[AppPalette.dark],
+        ),
+        child: disc,
+      );
+    }
+    return YoPressFeedback(
+      scale: YoPressFeedback.disc,
+      enabled: enabled,
+      child: AccessibleTapRegion(
+        onTap: widget.onTap,
+        semanticLabel: widget.semanticLabel,
+        tooltip: widget.tooltip ?? widget.semanticLabel,
+        circular: true,
+        minimumSize: const Size.square(OverlayBrandDiscButton.size),
+        focusContrastColor: Colors.black,
+        focusNode: widget.focusNode,
+        onHover: (value) {
+          if (_hovered != value) setState(() => _hovered = value);
+        },
+        child: disc,
+      ),
     );
   }
 }

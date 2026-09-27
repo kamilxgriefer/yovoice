@@ -3,7 +3,13 @@ import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show
+        TargetPlatform,
+        ValueListenable,
+        defaultTargetPlatform,
+        kIsWeb,
+        visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
@@ -12,12 +18,17 @@ import 'package:record/record.dart' show Amplitude;
 import 'package:yovoice/core/helpers/callable_failure_reporter.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moments/data/models/moment_availability.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
@@ -81,6 +92,36 @@ class VoiceMomentPresentationNotice extends VoiceRecordingException {
         ),
         action: copy.text('Try again.', 'Spróbuj ponownie.'),
       );
+
+/// How fast the record halo rises toward a louder sample (refine-look W4).
+const double voiceMomentHaloAttack = .6;
+
+/// How fast the record halo settles toward a quieter sample (W4).
+const double voiceMomentHaloRelease = .25;
+
+/// One smoothing step of the record bead's halo (refine-look spec §5, W4).
+///
+/// [sample] is the very value the level meter draws for the same event —
+/// `VoiceMomentRecorder.normalizeAmplitude` of the recorder's amplitude
+/// stream, about eight times a second — so the halo can never show a level
+/// the meter does not. It rises quickly (attack [voiceMomentHaloAttack]) and
+/// settles slowly (release [voiceMomentHaloRelease]); anything under .01
+/// snaps to 0, so silence leaves a still halo rather than one that creeps
+/// for seconds. Per the spec the web build keeps the halo still (0); the
+/// meter still shows the level there.
+@visibleForTesting
+double voiceMomentHaloLevel(
+  double previous,
+  double sample, {
+  bool isWeb = kIsWeb,
+}) {
+  if (isWeb) return 0;
+  final target = sample.isFinite ? sample.clamp(0.0, 1.0).toDouble() : 0.0;
+  final from = previous.isFinite ? previous.clamp(0.0, 1.0).toDouble() : 0.0;
+  final rate = target > from ? voiceMomentHaloAttack : voiceMomentHaloRelease;
+  final next = from + (target - from) * rate;
+  return next < .01 ? 0 : next;
+}
 
 /// Publishes a finished recording somewhere OTHER than the Voice Moment
 /// pipeline this screen owns.
@@ -182,6 +223,15 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     return 8 + math.max(48, line * lines);
   }
 
+  /// The record bead (W4): the R14 bead at 96 with a 38 px glyph.
+  static const double _recordBeadSize = 96;
+  static const double _recordGlyphSize = 38;
+
+  /// The idle → recording colour change of the bead (unchanged from before
+  /// the refine-look finish) and the mic ↔ stop glyph swap.
+  static const Duration _beadColourChange = Duration(milliseconds: 220);
+  static const Duration _beadGlyphSwap = Duration(milliseconds: 160);
+
   static const int _maxSeconds = 60;
   static const int _meterBarCount = 27;
   static const int _compactMeterBarCount = 19;
@@ -208,6 +258,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
 
   late final VoiceMomentRecorder _recorder;
   MomentService? _momentService;
+
+  /// The record bead's halo level (W4): written from the amplitude stream,
+  /// read only by the halo, so the level never rebuilds the screen.
+  final ValueNotifier<double> _haloLevel = ValueNotifier<double>(0);
   final TextEditingController _captionController = TextEditingController();
   final TextEditingController _availabilityAmountController =
       TextEditingController(text: '24');
@@ -499,6 +553,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     _availabilityAmountController
       ..removeListener(_onAvailabilityAmountChanged)
       ..dispose();
+    _haloLevel.dispose();
     // `dispose` cannot await. The route's explicit back path awaits this same
     // ordered cleanup; this is the safety net for parent-route teardown.
     unawaited(_releaseResources());
@@ -940,6 +995,22 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     }
   }
 
+  /// W4 haptics, on phones only: a medium impact when recording really
+  /// starts, a light one when it stops. Desktop and the web get none.
+  static void _recordHaptic(Future<void> Function() impact) {
+    if (kIsWeb) return;
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.iOS:
+      case TargetPlatform.android:
+        unawaited(impact());
+      case TargetPlatform.fuchsia:
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        break;
+    }
+  }
+
   Future<void> _startRecording() async {
     if (_phase != VoiceMomentRecordingPhase.idle) return;
 
@@ -1002,7 +1073,9 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     _silenceAnnounced = false;
     _silenceDetected = false;
     _limitWarned = false;
+    _haloLevel.value = 0;
     setState(() => _phase = VoiceMomentRecordingPhase.recording);
+    _recordHaptic(HapticFeedback.mediumImpact);
 
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(milliseconds: 200), (_) {
@@ -1051,6 +1124,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           _silenceDetected = false;
         }
 
+        // The halo reads the same sample as the meter, through its own
+        // notifier: only the halo listens, so the level never rebuilds more
+        // than the meter already does.
+        _haloLevel.value = voiceMomentHaloLevel(_haloLevel.value, level);
+
         setState(() {
           for (var i = 0; i < _meter.length - 1; i++) {
             _meter[i] = _meter[i + 1];
@@ -1067,6 +1145,9 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       // the honest answer; flat bars would read as silence.
       onError: (Object error) {
         if (!mounted) return;
+        // No level, no light: a halo holding its last value would claim a
+        // sound the meter can no longer confirm.
+        _haloLevel.value = 0;
         setState(() {
           _meterValue = _meterUnknown;
           _silenceDetected = false;
@@ -1089,6 +1170,8 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   Future<void> _stopRecording() async {
     if (_phase != VoiceMomentRecordingPhase.recording) return;
 
+    _haloLevel.value = 0;
+    _recordHaptic(HapticFeedback.lightImpact);
     _ticker?.cancel();
     unawaited(_levels?.cancel());
     _levels = null;
@@ -1534,7 +1617,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 color: Colors.white,
                 fontSize: 19,
                 height: 1.15,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ),
@@ -1583,6 +1666,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       _copy.text('Review', 'Sprawdź'),
     ];
     final active = _isReview ? 1 : 0;
+    final highContrast = MediaQuery.highContrastOf(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         final stacked =
@@ -1609,16 +1693,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                       horizontal: 12,
                       vertical: 12,
                     ),
-                    decoration: BoxDecoration(
-                      color: index == active
-                          ? AppImmersiveColors.surfaceRaised
-                          : _surface.withValues(alpha: .45),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: index == active ? _controlBorder : _border,
-                        width: index == active ? 1.5 : 1,
-                      ),
-                    ),
+                    decoration: _stepDecoration(active: index == active),
                     child: Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -1630,7 +1705,14 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: index == active ? _primary : _inset,
+                            // The active step's number is the logo's own
+                            // gradient; high contrast keeps it solid.
+                            color: index == active
+                                ? (highContrast ? _primary : null)
+                                : _inset,
+                            gradient: index == active && !highContrast
+                                ? AppGradients.primary
+                                : null,
                           ),
                           child: index < active
                               ? const Icon(
@@ -1646,7 +1728,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 12,
-                                    fontWeight: FontWeight.w800,
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
                         ),
@@ -1654,7 +1736,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                           steps[index],
                           style: TextStyle(
                             color: index == active ? Colors.white : _muted,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                             fontSize: 13,
                             height: 1.25,
                           ),
@@ -1667,6 +1749,36 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           ],
         );
       },
+    );
+  }
+
+  /// A step of [_flowProgress] (refine-look W4). Active: a primary @ .14
+  /// wash under a 1.5 px primary @ .55 edge. Inactive: white @ .03 under a
+  /// white @ .06 hairline — it is progress, not a control, and its label
+  /// carries it. High contrast: flat surfaces with `borderStrong`.
+  BoxDecoration _stepDecoration({required bool active}) {
+    final radius = BorderRadius.circular(16);
+    if (MediaQuery.highContrastOf(context)) {
+      return BoxDecoration(
+        color: active ? AppImmersiveColors.surfaceRaised : _surface,
+        borderRadius: radius,
+        border: Border.all(
+          color: AppPalette.dark.borderStrong,
+          width: active ? 1.5 : 1,
+        ),
+      );
+    }
+    return BoxDecoration(
+      color: active
+          ? _primary.withValues(alpha: .14)
+          : AppColors.white.withValues(alpha: .03),
+      borderRadius: radius,
+      border: Border.all(
+        color: active
+            ? _primary.withValues(alpha: .55)
+            : AppColors.white.withValues(alpha: .06),
+        width: active ? 1.5 : 1,
+      ),
     );
   }
 
@@ -1764,12 +1876,35 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     return Container(
       key: key,
       padding: padding ?? const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: _surface.withValues(alpha: .92),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: _border),
-      ),
+      decoration: _panelDecoration(BorderRadius.circular(28)),
       child: child,
+    );
+  }
+
+  /// The recorder's immersive block finish (refine-look W4): a top-lit fill,
+  /// raised → surface at .92, under a 1 px white @ .10 hairline instead of
+  /// the old opaque outline. No tint and no glow: on this screen the record
+  /// bead is the light. High contrast is flat `surface` with the Dark
+  /// palette's `borderStrong` (the screen is immersive-dark in both themes).
+  BoxDecoration _panelDecoration(BorderRadius radius) {
+    if (MediaQuery.highContrastOf(context)) {
+      return BoxDecoration(
+        color: _surface,
+        borderRadius: radius,
+        border: Border.all(color: AppPalette.dark.borderStrong),
+      );
+    }
+    return BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          AppImmersiveColors.surfaceRaised.withValues(alpha: .92),
+          _surface.withValues(alpha: .92),
+        ],
+      ),
+      borderRadius: radius,
+      border: Border.all(color: AppColors.white.withValues(alpha: .10)),
     );
   }
 
@@ -1802,7 +1937,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             color: Colors.white,
             fontSize: 26,
             height: 1.12,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w700,
           ),
         ),
         if (!_isReview) ...[
@@ -1938,11 +2073,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   Widget _liveCard() {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
-      decoration: BoxDecoration(
-        color: _inset,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _border),
-      ),
+      decoration: _panelDecoration(BorderRadius.circular(20)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1962,7 +2093,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 15,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ],
@@ -2046,11 +2177,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
       container: true,
       child: Container(
         padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
-        decoration: BoxDecoration(
-          color: _inset,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: _border),
-        ),
+        decoration: _panelDecoration(BorderRadius.circular(20)),
         child: Column(
           children: [
             Container(
@@ -2078,7 +2205,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 19,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 10),
@@ -2107,11 +2234,22 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             const SizedBox(height: 22),
             SizedBox(
               width: double.infinity,
+              // R7 neutral tonal in the immersive Dark palette: the lit panel
+              // swallowed the old #3A3151 outline (1.47:1), so the button
+              // takes the glass fill and control hairline every other
+              // neutral action uses. High contrast: no glass, borderStrong.
               child: OutlinedButton(
                 onPressed: _leave,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white,
-                  side: const BorderSide(color: _border),
+                  backgroundColor: MediaQuery.highContrastOf(context)
+                      ? null
+                      : AppPalette.dark.glass,
+                  side: BorderSide(
+                    color: MediaQuery.highContrastOf(context)
+                        ? AppPalette.dark.borderStrong
+                        : AppPalette.dark.hairlineControl,
+                  ),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   minimumSize: const Size.fromHeight(48),
                   shape: RoundedRectangleBorder(
@@ -2215,11 +2353,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     ];
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
-      decoration: BoxDecoration(
-        color: _inset,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _border),
-      ),
+      decoration: _panelDecoration(BorderRadius.circular(20)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2228,7 +2362,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             style: const TextStyle(
               color: Colors.white,
               fontSize: 15,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 14),
@@ -2300,7 +2434,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             style: const TextStyle(
               color: Colors.white,
               fontSize: 15,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w700,
               fontFeatures: [FontFeature.tabularFigures()],
             ),
           ),
@@ -2322,11 +2456,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     return Container(
       key: const ValueKey('voice-moment-review-player'),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
-      decoration: BoxDecoration(
-        color: _inset,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _border),
-      ),
+      decoration: _panelDecoration(BorderRadius.circular(20)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2341,7 +2471,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 15,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
               Text(
@@ -2414,6 +2544,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
                         key: const ValueKey('voice-preview-seek'),
                         value: value,
                         max: maximum,
+                        // The raised panel finish would swallow the theme's
+                        // dark inactive track; the screen's control ink
+                        // keeps the unplayed part at 3:1 or more on it.
+                        inactiveColor: _controlBorder,
                         onChanged: publishing ? null : _setPreviewPosition,
                         onChangeEnd: publishing
                             ? null
@@ -2505,12 +2639,101 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     );
   }
 
+  /// The record bead (refine-look W4, "the record button listens").
+  ///
+  /// * **Idle** — the R14 bead at 96 with gloss, at the R6 lift strength (the
+  ///   screen's one CTA lift), and a white 38 px mic.
+  /// * **Requesting** — the bead at 35 % with a white spinner, as before.
+  /// * **Recording** — a solid [AppColors.live] bead with gloss and an
+  ///   [AppColors.onLive] stop glyph, reached through the same 220 ms colour
+  ///   change as before. Its own shadow is the halo, lit by the real input
+  ///   level ([_RecordHalo]); silence leaves it still.
+  ///
+  /// Mic, spinner and stop swap through a 160 ms fade and .6 → 1 scale.
+  /// Reduce Motion (or accessible navigation, or a paused ticker) snaps the
+  /// swap and holds a fixed halo; high contrast keeps the solid disc and
+  /// drops every glow and gloss. Only this child changed: the
+  /// [AccessibleTapRegion] around it — semantics, focus ring, 96 px target —
+  /// is exactly as before.
   Widget _recordButton() {
     final recording = _phase == VoiceMomentRecordingPhase.recording;
     final requesting = _phase == VoiceMomentRecordingPhase.requestingAccess;
-    final enabled = _phase == VoiceMomentRecordingPhase.idle || recording;
+    final idle = _phase == VoiceMomentRecordingPhase.idle;
+    final enabled = idle || recording;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final motion = AppMotion.decorative(context);
+    final colourChange = motion ? _beadColourChange : Duration.zero;
 
-    final color = recording ? _live : _primary;
+    final Widget glyph = switch (_phase) {
+      VoiceMomentRecordingPhase.requestingAccess => const SizedBox(
+        key: ValueKey('voice-record-glyph-requesting'),
+        width: 26,
+        height: 26,
+        child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white),
+      ),
+      VoiceMomentRecordingPhase.recording => const Icon(
+        Icons.stop_rounded,
+        key: ValueKey('voice-record-glyph-stop'),
+        color: AppColors.onLive,
+        size: _recordGlyphSize,
+      ),
+      _ => const Icon(
+        Icons.mic_rounded,
+        key: ValueKey('voice-record-glyph-mic'),
+        color: Colors.white,
+        size: _recordGlyphSize,
+      ),
+    };
+
+    final bead = SizedBox.square(
+      key: const ValueKey('voice-record-bead'),
+      dimension: _recordBeadSize,
+      child: Stack(
+        clipBehavior: Clip.none,
+        fit: StackFit.expand,
+        children: [
+          // The halo is the bead's own shadow: it sits exactly under the
+          // opaque disc, so only its outer glow shows.
+          if (recording && !highContrast)
+            _RecordHalo(level: _haloLevel, animate: motion),
+          AnimatedOpacity(
+            opacity: requesting ? .35 : 1,
+            duration: colourChange,
+            child: YoGradientDisc(
+              size: _recordBeadSize,
+              gloss: true,
+              emphasis: idle ? YoDiscEmphasis.lift : YoDiscEmphasis.rest,
+            ),
+          ),
+          // The live bead fades in over the brand one rather than the disc
+          // lerping gradient → colour, which would thin out mid-way.
+          AnimatedOpacity(
+            opacity: recording ? 1 : 0,
+            duration: colourChange,
+            child: const YoGradientDisc(
+              size: _recordBeadSize,
+              gloss: true,
+              tone: YoDiscTone.live,
+            ),
+          ),
+          Center(
+            child: AnimatedSwitcher(
+              duration: motion ? _beadGlyphSwap : Duration.zero,
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeIn,
+              transitionBuilder: (child, animation) => FadeTransition(
+                opacity: animation,
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: .6, end: 1).animate(animation),
+                  child: child,
+                ),
+              ),
+              child: glyph,
+            ),
+          ),
+        ],
+      ),
+    );
 
     // AccessibleTapRegion, not a bare InkWell: this screen paints an opaque
     // gradient and card over the Scaffold's root Material, so every ink
@@ -2525,39 +2748,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
             : _copy.text('Start recording', 'Rozpocznij nagrywanie'),
         circular: true,
         minimumSize: const Size(96, 96),
-        child: AnimatedContainer(
-          duration: MediaQuery.disableAnimationsOf(context)
-              ? Duration.zero
-              : const Duration(milliseconds: 220),
-          width: 96,
-          height: 96,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: enabled || requesting ? color : color.withValues(alpha: .35),
-            boxShadow: [
-              BoxShadow(
-                color: color.withValues(alpha: enabled ? .42 : .12),
-                blurRadius: 28,
-                spreadRadius: 3,
-              ),
-            ],
-          ),
-          child: requesting
-              ? const Center(
-                  child: SizedBox(
-                    width: 26,
-                    height: 26,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.4,
-                      color: Colors.white,
-                    ),
-                  ),
-                )
-              : Icon(
-                  recording ? Icons.stop_rounded : Icons.mic_rounded,
-                  color: recording ? AppColors.onLive : Colors.white,
-                  size: 38,
-                ),
+        child: YoPressFeedback(
+          scale: YoPressFeedback.disc,
+          enabled: enabled,
+          child: bead,
         ),
       ),
     );
@@ -2699,7 +2893,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
           style: const TextStyle(
             color: Colors.white,
             fontSize: 13.5,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w700,
           ),
         ),
         const SizedBox(height: 4),
@@ -3087,6 +3281,77 @@ class _AvailabilityModeButton extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The record bead's halo (refine-look W4): the bead's own shadow, lit by
+/// the real input level.
+///
+/// `BoxShadow(live @ (.30 + .35 L), blur 28 + 24 L, spread 2 + 4 L)`, where L
+/// is [voiceMomentHaloLevel] of the sample the meter draws. The level
+/// arrives through a [ValueListenable] and eases over [tween], so only this
+/// box repaints — the screen is never rebuilt for it — and its own
+/// [RepaintBoundary] keeps the repaint to the halo. At L = 0 (silence, the
+/// web, a lost level stream) the halo is still.
+///
+/// Extent: the formula reaches further than the spec's acceptance item. At
+/// L = 1 the shadow is blur 52 (a Gaussian sigma of about 30.5 px) with
+/// spread 6; measured in the B6 capture at L ≈ .89, a +16/255 red tint
+/// reaches about 32 px past the disc edge, +8 about 44 px and +4 about
+/// 52 px (in silence about 10 / 18 / 24 px). W4 asks for a maximum extent
+/// of about 26 px, to be agreed with the owner of the recording countdown's
+/// ring (which this screen does not draw); that agreement is still PENDING.
+/// If the spec owner caps the halo, change [shadowsFor] and the test that
+/// pins it (`test/record_voice_moment_halo_test.dart`) together.
+///
+/// Without decorative motion it is one fixed halo ([still]).
+class _RecordHalo extends StatelessWidget {
+  const _RecordHalo({required this.level, required this.animate});
+
+  final ValueListenable<double> level;
+  final bool animate;
+
+  static const Duration tween = Duration(milliseconds: 140);
+
+  static List<BoxShadow> shadowsFor(double l) => <BoxShadow>[
+    BoxShadow(
+      color: AppColors.live.withValues(alpha: .30 + .35 * l),
+      blurRadius: 28 + 24 * l,
+      spreadRadius: 2 + 4 * l,
+    ),
+  ];
+
+  /// Reduce Motion: the fixed recording halo (live @ .42, blur 28).
+  static final List<BoxShadow> still = <BoxShadow>[
+    BoxShadow(
+      color: AppColors.live.withValues(alpha: .42),
+      blurRadius: 28,
+      spreadRadius: 3,
+    ),
+  ];
+
+  static Widget _paint(List<BoxShadow> shadows) => DecoratedBox(
+    key: const ValueKey('voice-record-halo'),
+    decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: shadows),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: RepaintBoundary(
+        child: animate
+            ? ValueListenableBuilder<double>(
+                valueListenable: level,
+                builder: (context, value, _) => TweenAnimationBuilder<double>(
+                  tween: Tween<double>(end: value),
+                  duration: tween,
+                  curve: Curves.easeOut,
+                  builder: (context, l, _) => _paint(shadowsFor(l)),
+                ),
+              )
+            : _paint(still),
       ),
     );
   }

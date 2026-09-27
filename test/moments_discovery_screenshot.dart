@@ -5,7 +5,14 @@
 //
 //   flutter test test/moments_discovery_screenshot.dart
 //
-// PNGs land in test/.screenshots/ (git-ignored).
+// PNGs land in test/.screenshots/ (git-ignored). Two optional defines:
+//
+//   --dart-define=YO_CAPTURE_DIR=<dir>     write the frames there instead
+//   --dart-define=YO_CAPTURE_THEME=pearl   capture Pearl instead of Dark
+//
+// Real shadow blur is drawn (flutter_test turns BoxShadow blur off for golden
+// stability; each capture switches that off and restores it afterwards), so
+// a lift or a glow is photographed as a device draws it.
 //
 // Why this exists: `moments_discovery_test.dart` and
 // `moments_board_test.dart` prove the ranking, the expiry filter and
@@ -58,12 +65,28 @@ import 'voice_moment_test_doubles.dart';
 
 final _capture = GlobalKey();
 
+const _outDir = String.fromEnvironment(
+  'YO_CAPTURE_DIR',
+  defaultValue: 'test/.screenshots',
+);
+const _pearl = String.fromEnvironment('YO_CAPTURE_THEME') == 'pearl';
+
+/// The Material fonts of whichever Flutter SDK runs the harness: walked up
+/// from the tester binary, with the historical Mac install paths kept as
+/// fallbacks.
 String get _fontRoot {
-  const candidates = [
+  final candidates = <String>[];
+  var dir = File(Platform.resolvedExecutable).parent;
+  for (var i = 0; i < 8; i++) {
+    candidates.add('${dir.path}/bin/cache/artifacts/material_fonts');
+    candidates.add('${dir.path}/material_fonts');
+    dir = dir.parent;
+  }
+  candidates.addAll(const <String>[
     '/opt/homebrew/Caskroom/flutter/3.44.6/flutter/bin/cache/artifacts/material_fonts',
     '/opt/homebrew/share/flutter/bin/cache/artifacts/material_fonts',
     '/usr/local/share/flutter/bin/cache/artifacts/material_fonts',
-  ];
+  ]);
   return candidates.firstWhere(
     (path) => File('$path/Roboto-Regular.ttf').existsSync(),
   );
@@ -434,7 +457,7 @@ Widget _host(Widget child) => RepaintBoundary(
   key: _capture,
   child: MaterialApp(
     debugShowCheckedModeBanner: false,
-    theme: AppTheme.darkTheme,
+    theme: _pearl ? AppTheme.lightTheme : AppTheme.darkTheme,
     home: child,
   ),
 );
@@ -446,13 +469,26 @@ Future<void> _shoot(WidgetTester tester, String name) async {
     final image = await boundary.toImage(pixelRatio: 1);
     try {
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
-      final file = File('test/.screenshots/$name.png');
+      final file = File('$_outDir/$name${_pearl ? '-pearl' : ''}.png');
       file.parent.createSync(recursive: true);
       file.writeAsBytesSync(data!.buffer.asUint8List());
       // ignore: avoid_print
       print('wrote ${file.path}');
     } finally {
       image.dispose();
+    }
+  });
+}
+
+/// A capture with real `BoxShadow` blur: `flutter_test` disables it for golden
+/// stability and checks it is disabled again when the test body ends.
+void _captureTest(String description, WidgetTesterCallback callback) {
+  testWidgets(description, (tester) async {
+    debugDisableShadows = false;
+    try {
+      await callback(tester);
+    } finally {
+      debugDisableShadows = true;
     }
   });
 }
@@ -610,7 +646,7 @@ void main() {
       final label = entry.key;
       final (width, height) = entry.value;
 
-      testWidgets('populated $label', (tester) async {
+      _captureTest('populated $label', (tester) async {
         await shootAt(
           tester,
           name: 'moments-populated-$label',
@@ -631,7 +667,7 @@ void main() {
         );
       });
 
-      testWidgets('empty $label', (tester) async {
+      _captureTest('empty $label', (tester) async {
         await shootAt(
           tester,
           name: 'moments-empty-$label',
@@ -641,7 +677,7 @@ void main() {
         );
       });
 
-      testWidgets('error $label', (tester) async {
+      _captureTest('error $label', (tester) async {
         await shootAt(
           tester,
           name: 'moments-error-$label',
@@ -652,7 +688,7 @@ void main() {
       });
     }
 
-    testWidgets('loading 390', (tester) async {
+    _captureTest('loading 390', (tester) async {
       final gate = Completer<void>();
       await shootAt(
         tester,
@@ -666,7 +702,7 @@ void main() {
       await tester.pump();
     });
 
-    testWidgets('loading 1100', (tester) async {
+    _captureTest('loading 1100', (tester) async {
       final gate = Completer<void>();
       await shootAt(
         tester,
@@ -686,7 +722,7 @@ void main() {
       final label = entry.key;
       final (width, height) = entry.value;
 
-      testWidgets('crowd $label', (tester) async {
+      _captureTest('crowd $label', (tester) async {
         await shootAt(
           tester,
           name: 'moments-crowd-$label',
@@ -698,7 +734,7 @@ void main() {
 
       // Production's actual corpus: ONE Moment. A feed that only looks
       // composed when full is broken on the data that exists today.
-      testWidgets('solo $label', (tester) async {
+      _captureTest('solo $label', (tester) async {
         await shootAt(
           tester,
           name: 'moments-solo-$label',
@@ -709,7 +745,7 @@ void main() {
         );
       });
 
-      testWidgets('following $label', (tester) async {
+      _captureTest('following $label', (tester) async {
         await shootFollowing(
           tester,
           name: 'moments-following-$label',
@@ -746,7 +782,7 @@ void main() {
 
       // The Following filter with nothing in it: the honest empty state,
       // with the recorder still offered.
-      testWidgets('following empty $label', (tester) async {
+      _captureTest('following empty $label', (tester) async {
         await shootFollowing(
           tester,
           name: 'moments-following-empty-$label',
@@ -761,7 +797,7 @@ void main() {
     // The story viewer, both shells: the full-screen route a phone gets
     // and the centred overlay dialog a desktop window gets. Nadia's chain
     // holds three Moments, so the progress bars and "1 of 3" are real.
-    testWidgets('story viewer 390', (tester) async {
+    _captureTest('story viewer 390', (tester) async {
       await shootAt(
         tester,
         name: 'moments-viewer-390',
@@ -773,7 +809,7 @@ void main() {
       );
     });
 
-    testWidgets('story viewer 1440', (tester) async {
+    _captureTest('story viewer 1440', (tester) async {
       await shootAt(
         tester,
         name: 'moments-viewer-1440',
@@ -791,7 +827,7 @@ void main() {
     // layout that grew.
     for (final label in <String>['390', '1440']) {
       final (width, height) = widths[label]!;
-      testWidgets('following sheet $label', (tester) async {
+      _captureTest('following sheet $label', (tester) async {
         await shootFollowing(
           tester,
           name: 'moments-following-sheet-$label',
@@ -813,7 +849,7 @@ void main() {
       });
     }
 
-    testWidgets('crowd 390 at 2x text', (tester) async {
+    _captureTest('crowd 390 at 2x text', (tester) async {
       await shootAt(
         tester,
         name: 'moments-crowd-390-x2',
@@ -824,7 +860,7 @@ void main() {
       );
     });
 
-    testWidgets('following 390 at 2x text', (tester) async {
+    _captureTest('following 390 at 2x text', (tester) async {
       await shootFollowing(
         tester,
         name: 'moments-following-390-x2',
@@ -858,7 +894,7 @@ void main() {
     // The two frames most likely to overflow: a very long caption and a
     // very long author name, at the narrowest width, once at normal scale
     // and once at the accessibility scale a real user can set.
-    testWidgets('long content 390', (tester) async {
+    _captureTest('long content 390', (tester) async {
       await shootAt(
         tester,
         name: 'moments-longcontent-390',
@@ -868,7 +904,7 @@ void main() {
       );
     });
 
-    testWidgets('long content 390 at 2x text', (tester) async {
+    _captureTest('long content 390 at 2x text', (tester) async {
       await shootAt(
         tester,
         name: 'moments-longcontent-390-x2',
@@ -900,7 +936,7 @@ void main() {
     for (final entry in phoneWidths.entries) {
       final label = entry.key;
       final (width, height) = entry.value;
-      testWidgets('feed $label', (tester) async {
+      _captureTest('feed $label', (tester) async {
         await shootAt(
           tester,
           name: 'moments-feed-$label',
@@ -941,7 +977,7 @@ void main() {
 
     // Mockup-right: the detail page — author block, caption heading,
     // player art, engagement, top reactions, comments and composer.
-    testWidgets('detail 390', (tester) async {
+    _captureTest('detail 390', (tester) async {
       // Real likers behind "Top reactions": like docs plus their public
       // profiles, resolved exactly the way production resolves them.
       final db = FakeFirebaseFirestore();
@@ -997,7 +1033,7 @@ void main() {
 
     // The author's PERMANENT Moment on the detail page: "Stays until
     // deleted", Delete beside the engagement row, no countdown anywhere.
-    testWidgets('detail 390 own permanent', (tester) async {
+    _captureTest('detail 390 own permanent', (tester) async {
       final mine = _moment(
         'forever',
         author: 'me',
@@ -1017,7 +1053,7 @@ void main() {
     });
 
     // The own-moment overflow: Details + Delete, no Report.
-    testWidgets('own overflow open 390', (tester) async {
+    _captureTest('own overflow open 390', (tester) async {
       useSize(tester, 390, 844);
       final moments = await _seededMomentService([
         _moment(
@@ -1056,7 +1092,7 @@ void main() {
     // A permanent own Moment in the list: "Stays until deleted", no
     // countdown; a friend's permanent one right under it shows NO
     // availability copy at all.
-    testWidgets('permanent rows 390', (tester) async {
+    _captureTest('permanent rows 390', (tester) async {
       useSize(tester, 390, 844);
       final moments = await _seededMomentService([
         _moment(
@@ -1109,7 +1145,7 @@ void main() {
 
     // The recorder's Available-for selector, with the new
     // keep-until-deleted choice selected so its helper copy shows.
-    testWidgets('availability selector 390', (tester) async {
+    _captureTest('availability selector 390', (tester) async {
       useSize(tester, 390, 844);
       final backend = FakeRecorderBackend();
       final capture = FakeAudioCapture()..result = FakeRecordedAudio();
@@ -1153,7 +1189,7 @@ void main() {
     }.entries) {
       final label = entry.key;
       final (width, height) = entry.value;
-      testWidgets('nav with logo $label', (tester) async {
+      _captureTest('nav with logo $label', (tester) async {
         useSize(tester, width, height);
         final moments = await _seededMomentService(_populated);
         await tester.pumpWidget(
@@ -1201,7 +1237,7 @@ void main() {
     // injected so the frame is reproducible; the zone label and the glow
     // dot's longitude still come from the machine's real UTC offset —
     // the block deliberately names no city and no country.
-    testWidgets('sidebar clock map 1440x900', (tester) async {
+    _captureTest('sidebar clock map 1440x900', (tester) async {
       useSize(tester, 1440, 900);
 
       await tester.pumpWidget(
