@@ -5,6 +5,53 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## Refine look (build 37, 3.2.0+37) — found and fixed during the refine batches (2026-09-27, ADR-227)
+
+Every item below was found by the per-batch independent visual+accessibility and code reviews of the
+refine-look work (or by the engineer while capturing frames) and fixed in source before landing. None
+is a regression of build 36 unless it says so.
+
+- **FIXED — the server voice stage's speaking tile jiggled** (since build 36): the speaking border grew
+  from 1.5 to 3 px inside the tile's padding, so every tile shifted while someone talked. It is now a
+  foreground ring with no layout change (B4).
+- **FIXED — keyboard focus moved layout on the Servers directory rows and the server panel rows**: the
+  focus edge was an `Ink` border / `ListTile.shape.side`. Both are foreground rings now (B4). The plain
+  `YoChannelRow` path (the management sheet) had the same 2 px shift since build 36; fixed in the
+  cross-batch round with a test that the row and title rects do not move.
+- **FIXED — the gradient CTA's keyboard focus ring was invisible**: `YoGradientFilledButton` (and the
+  servers' local copy) resolved a 2 px focus side on the `FilledButton` shape, but Material paints the side
+  under its child, so the gradient `Ink` covered it on every adopter (Start "Stwórz serwer", Moments
+  "Utwórz", Profile "Edytuj profil", sign-in). The ring is painted as a foreground now, with pixel tests.
+- **FIXED — Friends "Dodaj" crashed on the Dodaj → Wysłano transition** (the suggestion button's text style
+  interpolated between incompatible styles) (B9).
+- **FIXED — Notifications "Oznacz wszystkie jako przeczytane" failed WCAG AA** (12 px `#7B2FF7` on the dark
+  canvas); it and the feed retry use `interactiveForeground` (8.4:1). Notifications also ignored high
+  contrast (a hand-rolled radial canvas); it now uses the shared canvas glow, none under high contrast (B9).
+- **FIXED — the own profile's error retry did nothing**: `_retryProfile` re-listened to the same failed
+  stream; it now resets the profile cache and re-subscribes (B8).
+- **FIXED — the Yeels played sweep was invisible without colour vision**: the spec's [primary, secondary]
+  on a white @ .32 track was 1.05:1 against the unplayed track (hue only, WCAG 1.4.11). It is the lightened
+  voicePlayed pair on a white @ .14 track now (3.6:1 at rest), solid white under high contrast (B6).
+- **FIXED — the TOTP code input's radial glow was drawn under high contrast** (light budget, principle 4).
+- **FIXED — the chat recorder title was left-aligned above a centred timer when it wrapped; the composer
+  hint was cut to "Wiadomoś…" at 200 %; the friend-rail labels truncated to stubs at 200 %; the first-run
+  inbox logo sat under the lounge's neon YO sign** (B7).
+- **FIXED — Settings: the support address broke mid-token at 200 %, and two privacy rows had no divider**;
+  the desktop Settings title started 6 px from the frame while blocks started at 16 (B9).
+- **FIXED — the startup harness drew tofu for Arabic, Hebrew and CJK** (it registered only the first
+  fallback font it found); the auth and profile harnesses painted every shadow as a hard band
+  (`debugDisableShadows` left on). Evidence-only defects (B10, B8).
+- **KNOWN — `test/desktop_sidebar_screenshot.dart` has two failing cases on `main`** ("more popover keeps
+  home content still", "short viewport keeps the complete rail fixed"), and the rail's world-map marker
+  follows the wall clock, so a parity baseline must be rendered in the same hour as the run it is compared
+  with. Harness-only; the app is unaffected.
+- **KNOWN — AccessibleTapRegion paints its hover/press wash across the whole 48 px target** around the new
+  36 px chips (a 6 px wash above and below). The file is protected; an additive overlay/inset argument is the
+  fix.
+- **UNVERIFIED on a device** — the startup/sign-in glint, bead gloss and rim at 34–52 px, the W4 amplitude
+  halo, haptics and Pearl contact shadows. All refine evidence is Flutter test-renderer frames, plus one real
+  Chromium render of the production web sign-in screen.
+
 ## FIXED — the keep-warm pinger's tests hung on Node 22 in CI (2026-09-26, `nb3/cost-cuts`, ADR-226)
 
 CI run 36217098826 on main `e09aeb07` failed "Run Firebase Functions tests": 2598 pass, 0 fail, 4 cancelled,
