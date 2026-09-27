@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -823,6 +824,14 @@ class _UserResultCard extends StatelessWidget {
         ),
       ],
     );
+    final highContrast = MediaQuery.highContrastOf(context);
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(12),
+    );
+    const size = WidgetStatePropertyAll(Size(0, 44));
+    const padding = WidgetStatePropertyAll(
+      EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    );
     final primary = FilledButton(
       onPressed:
           isProcessing ||
@@ -830,15 +839,22 @@ class _UserResultCard extends StatelessWidget {
               relationshipStatus == FriendRelationshipStatus.blocked
           ? null
           : onPressed,
-      style: FilledButton.styleFrom(
-        minimumSize: const Size(0, 44),
-        backgroundColor: button.backgroundColor,
-        disabledBackgroundColor: button.disabledBackgroundColor,
-        foregroundColor: button.foregroundColor,
-        disabledForegroundColor: button.disabledForegroundColor,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
+      // A received request's Accept is the R7 accent, as on Friends and
+      // Notifications: a result list is not a stack of violet slabs.
+      style: relationshipStatus == FriendRelationshipStatus.requestReceived
+          ? _acceptStyle(context, palette, shape, highContrast).copyWith(
+              minimumSize: size,
+              padding: padding,
+            )
+          : FilledButton.styleFrom(
+              minimumSize: const Size(0, 44),
+              backgroundColor: button.backgroundColor,
+              disabledBackgroundColor: button.disabledBackgroundColor,
+              foregroundColor: button.foregroundColor,
+              disabledForegroundColor: button.disabledForegroundColor,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              shape: shape,
+            ),
       child: isProcessing
           ? SizedBox(
               width: 17,
@@ -877,19 +893,13 @@ class _UserResultCard extends StatelessWidget {
             child: OutlinedButton.icon(
               key: ValueKey('friend-search-decline-${user.id}'),
               onPressed: isProcessing ? null : onDecline,
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size(0, 44),
-                foregroundColor: palette.textPrimary,
-                disabledForegroundColor: palette.textTertiary,
-                side: BorderSide(color: palette.borderStrong),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 10,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
+              // R7 neutral, like "Dodaj" beside it.
+              style: AppFinish.tonalNeutral(
+                palette,
+                foreground: palette.textPrimary,
+                shape: shape,
+                highContrast: highContrast,
+              ).copyWith(minimumSize: size, padding: padding),
               icon: const Icon(Icons.close_rounded, size: 18),
               label: Text(
                 copy.text('Decline', 'Odrzuć'),
@@ -950,6 +960,30 @@ class _UserResultCard extends StatelessWidget {
     );
   }
 
+  /// The R7 accent for a received request's Accept. Its label is laid over
+  /// the theme's `labelLarge`, the style every other state of this button
+  /// resolves to, so Accept → Friends animates between two compatible text
+  /// styles instead of failing to interpolate an Inter style against the
+  /// theme's.
+  static ButtonStyle _acceptStyle(
+    BuildContext context,
+    AppPalette palette,
+    OutlinedBorder shape,
+    bool highContrast,
+  ) {
+    final accent = AppFinish.tonalAccent(
+      palette,
+      shape: shape,
+      highContrast: highContrast,
+    );
+    final label = Theme.of(
+      context,
+    ).textTheme.labelLarge?.merge(accent.textStyle?.resolve(const {}));
+    return label == null
+        ? accent
+        : accent.copyWith(textStyle: WidgetStatePropertyAll(label));
+  }
+
   static _FriendButtonPresentation _buttonPresentation(
     FriendRelationshipStatus status,
     AppPalette palette,
@@ -975,13 +1009,15 @@ class _UserResultCard extends StatelessWidget {
           foregroundColor: palette.warningForeground,
           disabledForegroundColor: palette.textTertiary,
         );
+      // Painted by `AppFinish.tonalAccent`; these carry its ink for the
+      // busy spinner.
       case FriendRelationshipStatus.requestReceived:
         return _FriendButtonPresentation(
           label: copy.text('Accept', 'Akceptuj'),
           icon: Icons.check_rounded,
-          backgroundColor: colors.primary,
-          disabledBackgroundColor: palette.surfaceMuted,
-          foregroundColor: colors.onPrimary,
+          backgroundColor: Colors.transparent,
+          disabledBackgroundColor: Colors.transparent,
+          foregroundColor: palette.interactiveForeground,
           disabledForegroundColor: palette.textTertiary,
         );
       // Tonal like the suggestion cards on this same screen: a result list

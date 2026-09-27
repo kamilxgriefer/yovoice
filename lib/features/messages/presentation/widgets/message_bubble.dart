@@ -316,12 +316,22 @@ class MessageBubble extends StatelessWidget {
       );
     }
 
+    // The 48 px gutter on the far side and the gap to the next message are
+    // layout margin, not the message: the context action's focus ring and
+    // hover wash stay off them.
+    final margin = EdgeInsetsDirectional.only(
+      start: isMine ? 48 : 0,
+      end: isMine ? 0 : 48,
+      bottom: joinsNewer ? runGap : gap,
+    );
+
     return Align(
       alignment: isMine
           ? AlignmentDirectional.centerEnd
           : AlignmentDirectional.centerStart,
       child: AccessibleContextAction(
         onOpen: onLongPress,
+        ringInsets: margin,
         semanticLabel: isMine
             ? copy.text(
                 'Open actions for your message',
@@ -339,11 +349,7 @@ class MessageBubble extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: maxBubbleWidth + 48),
           child: Padding(
-            padding: EdgeInsetsDirectional.only(
-              start: isMine ? 48 : 0,
-              end: isMine ? 0 : 48,
-              bottom: joinsNewer ? runGap : gap,
-            ),
+            padding: margin,
             child: Column(
               crossAxisAlignment: isMine
                   ? CrossAxisAlignment.end

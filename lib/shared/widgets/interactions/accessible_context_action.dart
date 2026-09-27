@@ -11,6 +11,7 @@ class AccessibleContextAction extends StatefulWidget {
     required this.child,
     this.semanticLabel = 'Open message actions',
     this.borderRadius = 18,
+    this.ringInsets = EdgeInsets.zero,
     super.key,
   });
 
@@ -19,15 +20,49 @@ class AccessibleContextAction extends StatefulWidget {
   final String semanticLabel;
   final double borderRadius;
 
+  /// Draws the focus ring and the hover / press wash this far inside the
+  /// child's edges, so a child that carries layout margin (a chat bubble's
+  /// 48 px gutter and its gap to the next message) is ringed where the
+  /// message is, not around the empty margin.
+  final EdgeInsetsGeometry ringInsets;
+
   @override
   State<AccessibleContextAction> createState() =>
       _AccessibleContextActionState();
 }
 
 class _AccessibleContextActionState extends State<AccessibleContextAction> {
-  bool _showsFocusHighlight = false;
+  /// The detector's own node. `onShowFocusHighlight` reports focus WITHIN
+  /// the detector, so a focusable child (a voice row, a photo, a room link)
+  /// taking focus would otherwise light this ring as well as its own: two
+  /// rings for one focused control. The ring shows only while this node
+  /// itself holds primary focus and the highlight mode is the keyboard's.
+  final FocusNode _focusNode = FocusNode(debugLabel: 'AccessibleContextAction');
+  bool _highlightMode = false;
+  bool _primaryFocus = false;
   bool _hovered = false;
   bool _pressed = false;
+
+  bool get _showsFocusHighlight => _highlightMode && _primaryFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_handleFocus);
+  }
+
+  void _handleFocus() {
+    final primary = _focusNode.hasPrimaryFocus;
+    if (primary != _primaryFocus) setState(() => _primaryFocus = primary);
+  }
+
+  @override
+  void dispose() {
+    _focusNode
+      ..removeListener(_handleFocus)
+      ..dispose();
+    super.dispose();
+  }
 
   void _open() => widget.onOpen?.call();
 
@@ -37,11 +72,10 @@ class _AccessibleContextActionState extends State<AccessibleContextAction> {
     final palette = context.appPalette;
 
     return FocusableActionDetector(
+      focusNode: _focusNode,
       mouseCursor: SystemMouseCursors.contextMenu,
       onShowFocusHighlight: (value) {
-        if (_showsFocusHighlight != value) {
-          setState(() => _showsFocusHighlight = value);
-        }
+        if (_highlightMode != value) setState(() => _highlightMode = value);
       },
       shortcuts: const <ShortcutActivator, Intent>{
         SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
@@ -91,29 +125,32 @@ class _AccessibleContextActionState extends State<AccessibleContextAction> {
                   child: widget.child,
                 ),
                 Positioned.fill(
-                  child: IgnorePointer(
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 120),
-                      decoration: BoxDecoration(
-                        color: _pressed
-                            ? palette.interactiveForeground.withValues(
-                                alpha: .14,
-                              )
-                            : _hovered
-                            ? palette.interactiveForeground.withValues(
-                                alpha: .06,
-                              )
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(
-                          widget.borderRadius,
-                        ),
-                        border: Border.all(
-                          color: _showsFocusHighlight
-                              ? palette.focus
+                  child: Padding(
+                    padding: widget.ringInsets,
+                    child: IgnorePointer(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 120),
+                        decoration: BoxDecoration(
+                          color: _pressed
+                              ? palette.interactiveForeground.withValues(
+                                  alpha: .14,
+                                )
                               : _hovered
-                              ? palette.borderStrong
+                              ? palette.interactiveForeground.withValues(
+                                  alpha: .06,
+                                )
                               : Colors.transparent,
-                          width: _showsFocusHighlight ? 2 : 1,
+                          borderRadius: BorderRadius.circular(
+                            widget.borderRadius,
+                          ),
+                          border: Border.all(
+                            color: _showsFocusHighlight
+                                ? palette.focus
+                                : _hovered
+                                ? palette.borderStrong
+                                : Colors.transparent,
+                            width: _showsFocusHighlight ? 2 : 1,
+                          ),
                         ),
                       ),
                     ),

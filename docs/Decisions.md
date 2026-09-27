@@ -16673,7 +16673,9 @@ was what Kamil liked.
   address `servers-create`, `server-join` and `server-public-join` as a
   `FilledButton` by key and read `backgroundColor: cta`, and the templates need
   an ink label. Folding it into `YoGradientFilledButton` needs `buttonKey`,
-  `foreground` and `fill` on the primitive — a follow-up.
+  `foreground` and `fill` on the primitive — a follow-up (`buttonKey` landed
+  in the final review, and the fork now shares the primitive's focus
+  painter; see the amendment below).
 - **Yeels played sweep**: the spec's [primary, secondary] on a white @ .32
   track measured 1.05:1 against the unplayed track (hue only, WCAG 1.4.11).
   It ships as the lightened voicePlayed pair on a white @ .14 track (3.6:1 at
@@ -16722,3 +16724,41 @@ them and leave the dock and rail untouched by construction.
   stage scenes, an adopter for the segmented-pill finish, the channel-row live
   pill at 200 %, the Pearl identity-join tune, the role pill in the glass
   family, the Profile wide measure at 1440 (spec §12.5).
+
+### Amendment — the final review (2026-09-27)
+
+**Context.** The final release review of the integrated tree found keyboard
+focus invisible on the chat recorder's bead (a regression of build 36), two
+rings at once on Chats and Servers rows and on a focused voice clip in a
+bubble, three different focus looks on the one R5 action (`YoButton` and the
+servers' fork drew only the white band that vanishes on Pearl), the W4
+bead's ring on its own edge, and flat violet slabs outside the light budget
+(friend-request Accept, the Friends header CTA, TOTP verify).
+
+**Decision.** (1) One focus indicator for every filled labelled action:
+`YoActionFocusIndicatorPainter` (`lib/shared/widgets/buttons/`), the
+painter `YoGradientFilledButton` introduced, now shared by `YoButton`
+primary/danger and `ServerGradientFilledButton`. (2) A ring on a container
+that holds focusable children follows its own node's PRIMARY focus, never
+`InkWell.onFocusChange` / `onShowFocusHighlight` (focus within). (3) A
+bead or disc that fills its button exactly takes its ring from the button's
+states (`YoGradientDisc(focused:)`, 3 px outside); a region that draws its
+ring on its own edge is made larger than the bead inside the bead's layout
+slot. (4) Repeated list actions (friend requests, Unblock) are R7, never a
+violet slab. (5) `YoGradientFilledButton.buttonKey` puts a caller's key on
+the `FilledButton`, the first of the three parameters the servers' fork
+needs before it can fold into the primitive.
+
+**Reasoning.** Each of these had already been solved once in the refine
+batches (`YoChannelRow`, `VoiceBeadButton`, `YoGradientFilledButton`); the
+review found the call sites that did not reuse the solution. Sharing the
+painter and writing the rule down (UI.md, semantic colour ownership) makes
+the next adopter get it right by construction.
+
+**Consequences.** No layout moves (every ring is a foreground or paints into
+existing padding); the dock and rail stay pixel-identical (re-checked against
+a same-hour base). `pubspec.yaml` is `3.2.0+37`. Deferred as Roadmap
+follow-ups, each needing its own visual pass: `YoButton.secondary` onto R7
+neutral with a shared error state, one search-field shape, and the Moment
+detail composer finish. Defects: [Bugs.md](Bugs.md), "the final review of
+build 37".

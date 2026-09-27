@@ -227,6 +227,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   static const double _recordBeadSize = 96;
   static const double _recordGlyphSize = 38;
 
+  /// The tap region around the bead: 5 px wider on every side, so its 2 px
+  /// focus ring (drawn just inside the region's edge) sits 3 px OUTSIDE the
+  /// bead, as R14 asks, instead of over the gradient's own edge (1.8–2.5:1).
+  /// It paints into the bead's 96 px layout slot's margin: nothing moves.
+  static const double _recordRegionSize = _recordBeadSize + 10;
+
   /// The idle → recording colour change of the bead (unchanged from before
   /// the refine-look finish) and the mic ↔ stop glyph swap.
   static const Duration _beadColourChange = Duration(milliseconds: 220);
@@ -2652,9 +2658,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
   /// Mic, spinner and stop swap through a 160 ms fade and .6 → 1 scale.
   /// Reduce Motion (or accessible navigation, or a paused ticker) snaps the
   /// swap and holds a fixed halo; high contrast keeps the solid disc and
-  /// drops every glow and gloss. Only this child changed: the
-  /// [AccessibleTapRegion] around it — semantics, focus ring, 96 px target —
-  /// is exactly as before.
+  /// drops every glow and gloss. The [AccessibleTapRegion] around it keeps
+  /// its semantics and its 96 px layout slot and hit target; the region
+  /// itself is [_recordRegionSize] so its focus ring is drawn 3 px outside
+  /// the bead (R14), never on the gradient's edge.
   Widget _recordButton() {
     final recording = _phase == VoiceMomentRecordingPhase.recording;
     final requesting = _phase == VoiceMomentRecordingPhase.requestingAccess;
@@ -2740,18 +2747,32 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
     // feature — focus ring included — landed on a covered canvas and
     // keyboard focus was invisible. It brings its own transparent Material
     // and paints the ring above the child.
+    //
+    // The region is 5 px wider than the bead on every side so its 2 px ring
+    // sits 3 px outside the bead (R14); the overflow box keeps the bead's
+    // 96 px slot, so the ring paints into the margin and moves nothing. The
+    // hit target stays the slot.
     return Center(
-      child: AccessibleTapRegion(
-        onTap: enabled ? _toggleRecording : null,
-        semanticLabel: recording
-            ? _copy.text('Stop recording', 'Zatrzymaj nagrywanie')
-            : _copy.text('Start recording', 'Rozpocznij nagrywanie'),
-        circular: true,
-        minimumSize: const Size(96, 96),
-        child: YoPressFeedback(
-          scale: YoPressFeedback.disc,
-          enabled: enabled,
-          child: bead,
+      child: SizedBox.square(
+        dimension: _recordBeadSize,
+        child: OverflowBox(
+          minWidth: _recordRegionSize,
+          maxWidth: _recordRegionSize,
+          minHeight: _recordRegionSize,
+          maxHeight: _recordRegionSize,
+          child: AccessibleTapRegion(
+            onTap: enabled ? _toggleRecording : null,
+            semanticLabel: recording
+                ? _copy.text('Stop recording', 'Zatrzymaj nagrywanie')
+                : _copy.text('Start recording', 'Rozpocznij nagrywanie'),
+            circular: true,
+            minimumSize: const Size.square(_recordRegionSize),
+            child: YoPressFeedback(
+              scale: YoPressFeedback.disc,
+              enabled: enabled,
+              child: bead,
+            ),
+          ),
         ),
       ),
     );

@@ -41,7 +41,11 @@ The unpushed work is still on the Mac's disk; nothing of it is needed now.
   to B5's bead API with one voice at a time.
 - A final release review (code/release, cross-screen visual consistency,
   accessibility) with adversarial verification of every blocker/major
-  finding closed the work before landing.
+  finding closed the work before landing. It confirmed two majors — keyboard
+  focus invisible on the chat recorder's bead (a regression of build 36) and
+  two rings at once on Chats and Servers rows — and refuted a third at its
+  stated severity; both majors and most minors were fixed in the same round
+  (see the Bugs entry "the final review of build 37").
 - `main` requires linear history, so the release lands as a rebased series.
 
 ## What was verified
@@ -49,7 +53,7 @@ The unpushed work is still on the Mac's disk; nothing of it is needed now.
 | Check | Result |
 | --- | --- |
 | `flutter analyze` | No issues, after every batch and on the release tree |
-| Full Flutter suite on the integrated tree (before the last two rounds) | 6179 / 6179 |
+| Full Flutter suite on the integrated tree | 6179 / 6179 after the batches; 6234 / 6234 on the release candidate before the final-review fixes (the final run is recorded under Release) |
 | Targeted suites per batch on the integrated tree | B4 713, B5 747, B6 784, B7 623, B8 514, B10 575, voice bubble 623, cross-batch 243 — all green |
 | Dock / rail parity | Dock PNGs byte-identical, rail frames identical in columns 0..263, after every batch, against a base rendered in the same hour |
 | Visual evidence | About 900 Flutter test-renderer frames at 390/768/1440, Dark and Pearl, 100/200 % text, high contrast, focus, hover, RTL spot, each looked at by the engineer and an independent reviewer |

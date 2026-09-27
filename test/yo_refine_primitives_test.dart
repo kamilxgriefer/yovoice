@@ -15,6 +15,7 @@ import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/shared/widgets/badges/yo_count_badge.dart';
 import 'package:yovoice/shared/widgets/badges/yo_progress_ring.dart';
 import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/cards/yo_card.dart';
@@ -806,6 +807,135 @@ void main() {
           }
         }
       });
+    }
+
+    // The same filled action drawn by `YoButton` (the empty/error-state
+    // CTAs, premium, media review, the reel composer) must carry the same
+    // indicator: its on-colour band inside and, on Pearl and under high
+    // contrast, the `focus` band outside — not a lone white band that melts
+    // into the light page.
+    for (final (themeName, theme, highContrast) in [
+      ('Dark', AppTheme.darkTheme, false),
+      ('Dark HC', AppTheme.darkHighContrastTheme, true),
+      ('Pearl', AppTheme.lightTheme, false),
+      ('Pearl HC', AppTheme.lightHighContrastTheme, true),
+    ]) {
+      final palette = theme.extension<AppPalette>()!;
+      final twoTone = !palette.isDark || highContrast;
+      for (final variant in const [
+        YoButtonVariant.primary,
+        YoButtonVariant.danger,
+      ]) {
+        testWidgets('YoButton ${variant.name} paints the same focus '
+            'indicator and moves nothing ($themeName)', (tester) async {
+          traditionalFocus();
+          final boundary = GlobalKey();
+          debugDisableShadows = false;
+          try {
+            await _pump(
+              tester,
+              RepaintBoundary(
+                key: boundary,
+                child: ColoredBox(
+                  color: palette.background,
+                  child: Padding(
+                    padding: const EdgeInsets.all(inset * 1.0),
+                    child: SizedBox(
+                      width: width * 1.0,
+                      height: height * 1.0,
+                      child: YoButton(
+                        label: 'Spróbuj ponownie',
+                        variant: variant,
+                        height: height * 1.0,
+                        onPressed: () {},
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              theme: theme,
+              media: MediaQueryData(highContrast: highContrast),
+            );
+            final label = tester.getRect(find.text('Spróbuj ponownie'));
+            final rest = await snapshot(tester, boundary);
+
+            final node = Focus.of(
+              tester.element(find.text('Spróbuj ponownie')),
+            );
+            node.requestFocus();
+            await settle(tester);
+            expect(node.hasPrimaryFocus, isTrue);
+            final focused = await snapshot(tester, boundary);
+
+            final ink = variant == YoButtonVariant.primary
+                ? theme.colorScheme.onPrimary
+                : theme.colorScheme.onError;
+            // Mid-edge probes: straight runs, clear of the rounded corners.
+            for (final side in sides) {
+              final at = read(focused, walk(side));
+              final was = read(rest, walk(side));
+              for (final i in const [3, 4]) {
+                expect(
+                  distance(at[i], ink),
+                  lessThan(8),
+                  reason: '$side: the inner band is the on-colour',
+                );
+              }
+              if (twoTone) {
+                for (final i in const [1, 2]) {
+                  expect(
+                    distance(at[i], palette.focus),
+                    lessThan(8),
+                    reason:
+                        '$side: ${3 - i} px outside is the focus band, '
+                        'got ${at[i]}',
+                  );
+                }
+                expect(
+                  contrast(at[1], palette.background),
+                  greaterThanOrEqualTo(3),
+                );
+                expect(
+                  contrast(at[1], at[0]),
+                  greaterThanOrEqualTo(3),
+                  reason: '$side: outer band ${at[1]} vs ${at[0]}',
+                );
+                expect(
+                  distance(at[0], was[0]),
+                  lessThan(2),
+                  reason: '$side: the indicator ends 2 px outside',
+                );
+              } else {
+                for (final i in const [0, 1, 2]) {
+                  expect(
+                    distance(at[i], was[i]),
+                    lessThan(2),
+                    reason: '$side: nothing outside the shape in Dark',
+                  );
+                }
+              }
+            }
+            expect(tester.getRect(find.text('Spróbuj ponownie')), label);
+
+            node.unfocus();
+            await settle(tester);
+            final after = await snapshot(tester, boundary);
+            for (final side in sides) {
+              final now = read(after, walk(side));
+              final was = read(rest, walk(side));
+              for (var i = 0; i < 3; i++) {
+                expect(
+                  distance(now[i], was[i]),
+                  lessThan(2),
+                  reason: '$side: the indicator leaves with focus',
+                );
+              }
+            }
+          } finally {
+            debugDisableShadows = true;
+          }
+        });
+      }
     }
   });
 

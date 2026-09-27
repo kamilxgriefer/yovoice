@@ -647,7 +647,32 @@ class _ServerTile extends StatefulWidget {
 
 class _ServerTileState extends State<_ServerTile> {
   bool _hovered = false;
+
+  /// The row's own node. The ring follows its PRIMARY focus: the InkWell's
+  /// `onFocusChange` reports focus-within, so the row's "…" button taking
+  /// focus would otherwise light a second ring around the whole row
+  /// (as `YoChannelRow` does it).
+  final FocusNode _focusNode = FocusNode(debugLabel: 'ServerDirectoryRow');
   bool _focused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_handleFocus);
+  }
+
+  void _handleFocus() {
+    final focused = _focusNode.hasPrimaryFocus;
+    if (focused != _focused) setState(() => _focused = focused);
+  }
+
+  @override
+  void dispose() {
+    _focusNode
+      ..removeListener(_handleFocus)
+      ..dispose();
+    super.dispose();
+  }
 
   static InteractiveInkFeatureFactory get _splashFactory =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android
@@ -825,15 +850,13 @@ class _ServerTileState extends State<_ServerTile> {
               borderRadius: AppRadius.block,
             ),
             child: InkWell(
+              focusNode: _focusNode,
               onTap: busy ? null : onTap,
               onLongPress: busy ? null : actions,
               onSecondaryTap: busy ? null : actions,
               splashFactory: _splashFactory,
               onHover: (value) {
                 if (_hovered != value) setState(() => _hovered = value);
-              },
-              onFocusChange: (value) {
-                if (_focused != value) setState(() => _focused = value);
               },
               overlayColor: WidgetStateProperty.resolveWith((states) {
                 if (states.contains(WidgetState.pressed)) return pressedWash;

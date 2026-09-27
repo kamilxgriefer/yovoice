@@ -1237,6 +1237,25 @@ void main() {
           matching: find.byType(Icon),
         ),
       ),
+      // Final review (A11Y-02): the row itself (from its name, whose
+      // nearest focus node is the row's own; `focus-row` above lands on the
+      // avatar's profile target) carries the row ring ...
+      (
+        'focus-row-self',
+        () => find.descendant(
+          of: find.byKey(const ValueKey('conversation-row-${_me}_ola')),
+          matching: find.text('Ola Nowak'),
+        ),
+      ),
+      // ... and the row's own "…" button carries the one ring, the row
+      // around it unringed.
+      (
+        'focus-row-more',
+        () => find.descendant(
+          of: find.byKey(const ValueKey('conversation-row-${_me}_ola')),
+          matching: find.byIcon(Icons.more_horiz_rounded),
+        ),
+      ),
     ]) {
       final name = frame.name('chats', state);
       _capture('list ${frame.width.toInt()} $name', (tester) async {
@@ -1746,6 +1765,48 @@ void main() {
         await _teardown(tester);
       });
     });
+  }
+
+  // Final review: keyboard focus on the voice-message sheet's record bead
+  // (F1 / A11Y-01, the bead's own ring 3 px outside it) and on a text
+  // bubble's context action (A11Y-04, ringed where the message is, not
+  // around its 48 px gutter).
+  for (final frame in [_Frame(390, _dark, 1), _Frame(390, _pearl, 1)]) {
+    for (final state in const ['focus-record', 'focus-bubble']) {
+      final name = frame.name('conversation', state);
+      _capture('thread ${frame.width.toInt()} $name', (tester) async {
+        await _ignoringAudioPluginNoise(() async {
+          await _pumpScreen(
+            tester,
+            frame,
+            _chat(
+              _FixtureMessageService(),
+              recorderFactory: () => VoiceMomentRecorder(
+                backend: FakeRecorderBackend(),
+                capture: FakeAudioCapture()..result = FakeRecordedAudio(),
+                clock: FakeStopwatch(),
+              ),
+            ),
+          );
+          if (state == 'focus-record') {
+            await tester.tap(find.byTooltip('Nagraj wiadomość głosową'));
+            await _settle(tester);
+            await _focusOn(
+              tester,
+              find.byKey(const ValueKey('voice-message-record-bead')),
+            );
+          } else {
+            await _focusOn(
+              tester,
+              find.text('To co, widzimy się dziś na serwerze o 20?'),
+            );
+          }
+          await _capturePng(tester, name, pixelRatio: _pixelRatio(frame));
+          expect(tester.takeException(), isNull);
+          await _teardown(tester);
+        });
+      });
+    }
   }
 
   // Keyboard focus on a header disc, the composer's mic disc and a reaction

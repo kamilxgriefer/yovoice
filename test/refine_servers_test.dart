@@ -190,6 +190,29 @@ void main() {
         expect(edge.top.color, AppPalette.dark.focus);
         expect(rowEdge(tester, 'b').top.width, 1);
         expect([for (final finder in watched) tester.getRect(finder)], before);
+
+        // One more Tab lands on the row's own "…" button: that button
+        // carries the focus indicator alone, never a second ring around the
+        // whole row (the row ring follows its PRIMARY focus).
+        final more = find.byKey(const ValueKey('server-directory-actions-a'));
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pumpAndSettle();
+        expect(more, findsOneWidget);
+        expect(
+          Focus.of(
+            tester.element(
+              find.descendant(
+                of: more,
+                matching: find.byIcon(Icons.more_horiz_rounded),
+              ),
+            ),
+          ).hasPrimaryFocus,
+          isTrue,
+          reason: 'the Tab after the row is its "…" button',
+        );
+        expect(rowEdge(tester, 'a').top.color, isNot(AppPalette.dark.focus));
+        expect(rowEdge(tester, 'a').top.width, 1);
+        expect([for (final finder in watched) tester.getRect(finder)], before);
       });
     }
 
@@ -1146,6 +1169,131 @@ void main() {
             reason: 'the ring ($ink) must be what is painted, got $focused',
           );
           // The ring is a foreground: the label does not move.
+          expect(tester.getRect(find.text('Stwórz serwer')), label);
+        });
+      }
+    }
+
+    // The same indicator as `YoGradientFilledButton`: on Pearl and under
+    // high contrast a 2 px `focus` band joins the ink band just outside the
+    // stadium (the ink band alone measured 1.11:1 against the Pearl page);
+    // Dark keeps the ink band alone and paints nothing outside.
+    for (final (themeName, theme, highContrast) in [
+      ('Dark', AppTheme.darkTheme, false),
+      ('Dark HC', AppTheme.darkHighContrastTheme, true),
+      ('Pearl', AppTheme.lightTheme, false),
+      ('Pearl HC', AppTheme.lightHighContrastTheme, true),
+    ]) {
+      final palette = theme.extension<AppPalette>()!;
+      final twoTone = !palette.isDark || highContrast;
+      final brightness = theme.brightness;
+      final scheme = theme.colorScheme;
+      final cases = <String, (Gradient, Color, Color)>{
+        'servers-create': (
+          AppGradients.primaryAction(scheme),
+          scheme.primary,
+          scheme.onPrimary,
+        ),
+        'server-join (community)': () {
+          final visuals = ServerIdentity.of(
+            ServerType.community,
+          ).resolve(brightness);
+          return (visuals.ctaGradient, visuals.cta, visuals.onCta);
+        }(),
+      };
+      for (final MapEntry(key: name, value: (gradient, fill, ink))
+          in cases.entries) {
+        testWidgets('the $name focus indicator reads against the page '
+            '($themeName)', (tester) async {
+          final strategy = FocusManager.instance.highlightStrategy;
+          FocusManager.instance.highlightStrategy =
+              FocusHighlightStrategy.alwaysTraditional;
+          addTearDown(() => FocusManager.instance.highlightStrategy = strategy);
+          const inset = 8.0;
+          final boundary = GlobalKey();
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: theme,
+              home: MediaQuery(
+                data: MediaQueryData(highContrast: highContrast),
+                child: Scaffold(
+                  body: Center(
+                    child: RepaintBoundary(
+                      key: boundary,
+                      child: ColoredBox(
+                        color: palette.background,
+                        child: Padding(
+                          padding: const EdgeInsets.all(inset),
+                          child: ServerGradientFilledButton(
+                            buttonKey: const ValueKey('cta'),
+                            onPressed: () {},
+                            gradient: gradient,
+                            fill: fill,
+                            foreground: ink,
+                            lifted: false,
+                            icon: const Icon(Icons.add_rounded),
+                            label: const Text('Stwórz serwer'),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final button = tester.getSize(find.byKey(const ValueKey('cta')));
+          final midX = inset + button.width / 2;
+          // [0] 3 px, [1] 2 px, [2] 1 px outside the top edge; [3] [4] the
+          // first two pixel rows inside it.
+          final probes = [
+            for (final dy in const [-3, -2, -1, 0, 1]) Offset(midX, inset + dy),
+          ];
+          final label = tester.getRect(find.text('Stwórz serwer'));
+          final rest = [
+            for (final at in probes) await pixelAt(tester, boundary, at),
+          ];
+
+          await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+          await tester.pumpAndSettle();
+          expect(
+            Focus.of(tester.element(find.text('Stwórz serwer'))).hasFocus,
+            isTrue,
+          );
+          final at = [
+            for (final at in probes) await pixelAt(tester, boundary, at),
+          ];
+
+          for (final i in const [3, 4]) {
+            expect(
+              distance(at[i], ink),
+              lessThan(24),
+              reason: 'the inner band is the ink, got ${at[i]}',
+            );
+          }
+          if (twoTone) {
+            for (final i in const [1, 2]) {
+              expect(
+                distance(at[i], palette.focus),
+                lessThan(8),
+                reason: '${3 - i} px outside is the focus band, got ${at[i]}',
+              );
+            }
+            expect(
+              contrast(at[1], palette.background),
+              greaterThanOrEqualTo(3),
+            );
+            expect(distance(at[0], rest[0]), lessThan(2));
+          } else {
+            for (final i in const [0, 1, 2]) {
+              expect(
+                distance(at[i], rest[i]),
+                lessThan(2),
+                reason: 'Dark paints nothing outside the stadium',
+              );
+            }
+          }
           expect(tester.getRect(find.text('Stwórz serwer')), label);
         });
       }

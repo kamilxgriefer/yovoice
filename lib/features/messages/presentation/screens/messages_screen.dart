@@ -1557,7 +1557,31 @@ class _ConversationRowSurface extends StatefulWidget {
 }
 
 class _ConversationRowSurfaceState extends State<_ConversationRowSurface> {
+  /// The row's own node. The ring follows its PRIMARY focus: the InkWell's
+  /// `onFocusChange` reports focus-within, so the row's "…" button taking
+  /// focus would otherwise light a second ring around the whole row
+  /// (as `YoChannelRow` does it).
+  final FocusNode _focusNode = FocusNode(debugLabel: 'ConversationRow');
   bool _focused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_handleFocus);
+  }
+
+  void _handleFocus() {
+    final focused = _focusNode.hasPrimaryFocus;
+    if (focused != _focused) setState(() => _focused = focused);
+  }
+
+  @override
+  void dispose() {
+    _focusNode
+      ..removeListener(_handleFocus)
+      ..dispose();
+    super.dispose();
+  }
 
   /// R2 / R16: the pressed wash is the feedback. No ink ripple on iOS,
   /// macOS, web or desktop; Android keeps its sparkle (as `YoCard` does).
@@ -1591,13 +1615,11 @@ class _ConversationRowSurfaceState extends State<_ConversationRowSurface> {
         borderRadius: radius,
         clipBehavior: Clip.antiAlias,
         child: InkWell(
+          focusNode: _focusNode,
           onTap: widget.onTap,
           onLongPress: widget.onLongPress,
           borderRadius: radius,
           splashFactory: splashFactory,
-          onFocusChange: (focused) {
-            if (focused != _focused) setState(() => _focused = focused);
-          },
           overlayColor: WidgetStateProperty.resolveWith((states) {
             if (states.contains(WidgetState.pressed)) {
               return palette.interactiveForeground.withValues(alpha: .10);

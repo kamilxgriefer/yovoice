@@ -5,6 +5,93 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED IN SOURCE — the final review of build 37 (2026-09-27, 3.2.0+37, ADR-227)
+
+Found by the final release review of the integrated refine-look tree
+(`refine-work/final` at `5eb374c0`) and fixed in source there; not committed
+to `main`, nothing deployed. Frames: `/home/user/evidence/final/` (Flutter
+test-renderer captures; nothing here was looked at on a device).
+
+- **REGRESSION of build 36, FIXED — keyboard focus on the chat recorder's
+  record bead was invisible (WCAG 2.4.7).** B7 put the opaque 72 px
+  `YoGradientDisc` inside an `IconButton` of the same size and never passed
+  `focused:`; the button's theme focus side paints under its child, so the
+  bead covered it (between rest and focus no pixel changed by 3:1). Build 36
+  had `IconButton.filled` with a visible ring. The button now reports its
+  states through a `WidgetStatesController` and the bead draws R14's 2 px
+  ring 3 px outside itself. Test: `chats_refine_look_test.dart`, "keyboard
+  focus on the recorder bead paints its ring outside the bead" (pixels ≥ 3:1
+  from rest, Dark and Pearl). Frames: `conversation_390_*_focus-record.png`.
+- **FIXED — two focus rings on Chats list rows and Servers directory rows.**
+  The row ring followed `InkWell.onFocusChange`, which reports focus WITHIN
+  the row, so Tab onto the row's own "…" button (or a Chats row's avatar)
+  lit the row ring beside the button's own. Both rows now ring only while
+  their own node has primary focus, as `YoChannelRow` does. Tests:
+  `chats_refine_look_test.dart` ("the row ring follows the row's own
+  focus…", 390 and 1440) and `refine_servers_test.dart` (one more Tab onto
+  "…"). Frames: `chats_390_*_focus-row{,-self,-more}.png`,
+  `directory_{390,1440}_*_focus-row-more.png`.
+- **FIXED — the same gradient action had three focus looks.** `YoButton`
+  primary and danger (the empty- and error-state CTAs, premium, media
+  review, the reel composer) and the servers' `ServerGradientFilledButton`
+  (`servers-create`, `server-join`, `server-public-join`) drew only the lone
+  2 px on-colour band, which melts into the Pearl page (1.11:1). The painter
+  moved out of `YoGradientFilledButton` into the shared
+  `YoActionFocusIndicatorPainter`, and all three now draw the two-tone
+  indicator on Pearl and under high contrast (inner on-colour band, outer
+  `focus` band); Dark keeps the inner band alone. Tests:
+  `yo_refine_primitives_test.dart` (YoButton primary and danger, four
+  themes) and `refine_servers_test.dart` (create and community join, four
+  themes). Frames: `company-files_*_empty-focus*.png`,
+  `directory_*_focus-cta.png`, `workspace_*_focus-join.png`.
+- **FIXED — the W4 record bead's focus ring sat on the bead's own edge**
+  (1.8–2.5:1 against the gradient, and against R14's "3 px outside"). The
+  `AccessibleTapRegion` (whose file is protected) is now 106 px, 5 px wider
+  than the bead on every side, inside the bead's unchanged 96 px layout
+  slot, so its ring draws 3 px outside the bead and nothing moves; the hit
+  target stays the 96 px slot. Its pointer-hover hairline now also sits
+  outside the bead. Tests: `record_voice_moment_halo_test.dart` (region 106,
+  slot and bead 96, concentric; ring pixels ≥ 3:1 in Dark and Pearl).
+  Frames: `recorder_1440_*_idle-focus.png`, `recorder_1440_dark_*_idle-hover.png`.
+- **FIXED — a focused voice clip in a chat bubble showed two rings, the
+  outer one around the bubble's 48 px gutter, and the inner one cut the
+  clock's last digit.** `AccessibleContextAction` lit its ring from
+  `FocusableActionDetector.onShowFocusHighlight` (focus within); it now
+  rings only on its own primary focus, and a new `ringInsets` keeps the
+  bubble's ring and hover wash off the gutter and the gap below. The bubble
+  row's own ring (`VoicePlayerRowStyle.inline`) sits 4 px outside the row,
+  in the bubble's padding, clear of the clock; paint only. Tests:
+  `accessibility_context_action_test.dart`, `voice_player_row_test.dart`.
+  Frames: `conversation_390_*_voice-focus-{in,out}.png`,
+  `conversation_390_*_focus-bubble.png`.
+- **FIXED — flat violet slabs outside the light budget.** The friend-request
+  Accept / Decline pair (Notifications, the top notification banner, Friends
+  requests, Add friend results) and Blocked users' Unblock kept the 3.0
+  `colors.primary` slab and the opaque `borderStrong` outline: Accept is the
+  R7 accent now, Decline and Unblock R7 neutral (keys and spoken labels
+  unchanged). The Friends header "Dodaj znajomego" (key
+  `friends-find-new-person`, now on the `FilledButton` through the new
+  `YoGradientFilledButton.buttonKey`) and the TOTP "Zweryfikuj i kontynuuj"
+  (`totp-verify-button`, radius 12 like the rest of the sign-in chain) are
+  the R5 gradient; Friends without a lift (its budget has none). Frames:
+  `notifications_*`, `friends_*`, `blocked_*`, `totp_*` in the same folder.
+- **FIXED while fixing the above — Add friend's Accept → Friends switch
+  would have crashed** ("Failed to interpolate TextStyles with different
+  inherit values"): the R7 accent's label is laid over the theme's
+  `labelLarge`, the lineage every other state of that button uses. Caught by
+  `add_friend_accept_decline_test.dart`.
+
+**Still OPEN (from this review):**
+
+- A focused text bubble's ring runs along the bubble's start edge, where
+  the time row below it also starts, so the ring touches that time's first
+  digit. Same as before this round on that side; the fix is a start inset
+  on the meta row, a layout change left for a later pass.
+- The design-consistency follow-ups the review raised (one secondary /
+  error recipe, one search-field shape, the Moment detail composer, the
+  segmented-pill adopter) are Roadmap items under the build 37 entry, not
+  defects.
+
 ## Refine look (build 37, 3.2.0+37) — found and fixed during the refine batches (2026-09-27, ADR-227)
 
 Every item below was found by the per-batch independent visual+accessibility and code reviews of the

@@ -751,9 +751,25 @@ painter over the button, so the pair never seams and focus moves no layout;
 the neutral emphasis keeps `AppFinish.tonalNeutral`'s own 2 px `focus` edge.
 The button owns its indicator: never wrap it in a second ring (a
 `_FocusOutline`-style wrapper), which would double or thicken it the moment
-either painter changed. Plain themed `FilledButton`s still draw the inner
+either painter changed. The painter is shared —
+`YoActionFocusIndicatorPainter` (`lib/shared/widgets/buttons/`) — and
+`YoButton`'s primary and danger variants and the servers'
+`ServerGradientFilledButton` (its band in the template's `onCta`) draw the
+same two-tone indicator from it, so one filled action never shows three
+different focus looks. Plain themed `FilledButton`s still draw the inner
 white band alone, so on Pearl they carry the same outer-side gap; that is an
 open item in [Bugs.md](Bugs.md), not an accepted pattern.
+
+A ring that follows `InkWell.onFocusChange` or
+`FocusableActionDetector.onShowFocusHighlight` lights up for focus WITHIN
+the widget: a row whose own "…" button takes focus would draw a second ring
+around the whole row. A container that holds focusable children rings only
+while its own node has primary focus (`focusNode.hasPrimaryFocus`, as
+`YoChannelRow`, the Chats and Servers directory rows and
+`AccessibleContextAction` do). An opaque bead or disc that fills its
+button exactly hides the button's theme focus side (painted under the
+child): feed the button's focused state to `YoGradientDisc(focused:)`, which
+draws R14's ring 3 px outside the disc.
 
 Voice rooms (including their shared stage and compact live capsule), calls,
 recording/review, story viewing, image croppers, the branded auth/startup

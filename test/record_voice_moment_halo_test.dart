@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:record/record.dart' show Amplitude;
@@ -150,7 +151,18 @@ void main() {
         matching: find.byType(AccessibleTapRegion),
       );
       expect(region, findsOneWidget);
-      expect(tester.getSize(region), const Size(96, 96));
+      // The bead keeps its 96 px layout slot (and hit target); the region is
+      // 5 px wider on every side, centred on the bead, so its focus ring
+      // sits 3 px outside the bead (R14) instead of on the gradient's edge.
+      final bead = find.byKey(const ValueKey('voice-record-bead'));
+      expect(tester.getSize(bead), const Size(96, 96));
+      expect(tester.getSize(region), const Size(106, 106));
+      expect(tester.getCenter(region), tester.getCenter(bead));
+      final slot = find
+          .ancestor(of: region, matching: find.byType(SizedBox))
+          .first;
+      expect(tester.getSize(slot), const Size(96, 96));
+      expect(tester.getCenter(slot), tester.getCenter(bead));
 
       final discs = tester
           .widgetList<YoGradientDisc>(
@@ -272,6 +284,104 @@ void main() {
       expect(halo, findsNothing);
       expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
     });
+
+    for (final (themeName, theme) in [
+      ('Dark', AppTheme.darkTheme),
+      ('Pearl', AppTheme.lightTheme),
+    ]) {
+      testWidgets('keyboard focus rings the bead 3 px outside it, and the '
+          'ring reads ($themeName)', (tester) async {
+        useSurface(tester, medium);
+        final strategy = FocusManager.instance.highlightStrategy;
+        FocusManager.instance.highlightStrategy =
+            FocusHighlightStrategy.alwaysTraditional;
+        addTearDown(() => FocusManager.instance.highlightStrategy = strategy);
+        final harness = build();
+        await tester.pumpWidget(host(harness.screen, theme: theme));
+        await tester.pumpAndSettle();
+
+        final bead = find.byKey(const ValueKey('voice-record-bead'));
+        final beadRect = tester.getRect(bead);
+        final boundary = tester.renderObject<RenderRepaintBoundary>(
+          find.ancestor(of: bead, matching: find.byType(RepaintBoundary)).first,
+        );
+        final origin = boundary.localToGlobal(Offset.zero);
+        Future<ByteData> shot() async => (await tester.runAsync(() async {
+          final image = await boundary.toImage();
+          try {
+            return await image.toByteData();
+          } finally {
+            image.dispose();
+          }
+        }))!;
+        Color pixel(ByteData bytes, Offset global) {
+          final x = (global.dx - origin.dx).floor();
+          final y = (global.dy - origin.dy).floor();
+          final i = (y * boundary.size.width.round() + x) * 4;
+          return Color.fromARGB(
+            bytes.getUint8(i + 3),
+            bytes.getUint8(i),
+            bytes.getUint8(i + 1),
+            bytes.getUint8(i + 2),
+          );
+        }
+
+        double contrast(Color a, Color b) {
+          final la = a.computeLuminance();
+          final lb = b.computeLuminance();
+          return la > lb ? (la + .05) / (lb + .05) : (lb + .05) / (la + .05);
+        }
+
+        final c = beadRect.center;
+        final r = beadRect.width / 2;
+        // [ring] 4 px outside the bead: the middle of the 2 px ring (3–5 px
+        // out). [edge] 1 px inside it: the bead's own rim.
+        List<Offset> around(double d) => [
+          Offset(c.dx - d, c.dy),
+          Offset(c.dx + d - 1, c.dy),
+          Offset(c.dx, c.dy - d),
+          Offset(c.dx, c.dy + d - 1),
+        ];
+        final ring = around(r + 4);
+        final edge = around(r - 1);
+        final rest = await shot();
+
+        Focus.of(tester.element(find.byIcon(Icons.mic_rounded))).requestFocus();
+        // The region's ring fades in over 120 ms from the frame after the
+        // focus change; a single long pump would only start it.
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump(const Duration(milliseconds: 400));
+        final focused = await shot();
+        expect(tester.getRect(bead), beadRect, reason: 'focus moves nothing');
+
+        // The capture screen is immersive-dark in both app themes: its ring
+        // is the palette in force around the bead.
+        final palette = tester.element(bead).appPalette;
+        for (final at in ring) {
+          final was = pixel(rest, at);
+          final now = pixel(focused, at);
+          expect(
+            contrast(now, palette.focus),
+            lessThan(1.15),
+            reason: '$at is the focus ring, got $now',
+          );
+          expect(
+            contrast(now, was),
+            greaterThanOrEqualTo(3),
+            reason: '$at: ring $now against rest $was',
+          );
+        }
+        // The ring is not drawn over the gradient's own edge any more.
+        for (final at in edge) {
+          expect(
+            contrast(pixel(focused, at), palette.focus),
+            greaterThan(1.15),
+            reason: '$at: the bead\'s rim stays the bead',
+          );
+        }
+      });
+    }
 
     testWidgets('requesting shows the bead at 35 % with a white spinner', (
       tester,

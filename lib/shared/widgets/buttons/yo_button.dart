@@ -10,6 +10,7 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_action_focus_indicator.dart';
 import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 
 enum YoButtonVariant { primary, secondary, ghost, danger }
@@ -148,101 +149,112 @@ class _YoButtonState extends State<YoButton> {
 
     Widget button = ConstrainedBox(
       constraints: BoxConstraints(minHeight: controlHeight),
-      child: AnimatedContainer(
-        duration: quickDuration,
-        curve: Curves.easeOut,
-        decoration: _decoration(palette, colors, highContrast: highContrast),
-        foregroundDecoration: _stateRing(palette, colors),
-        child: ElevatedButton(
-          onPressed: _isInteractive ? widget.onPressed : null,
-          statesController: _states,
-          onHover: (value) {
-            if (_hovered != value) setState(() => _hovered = value);
-          },
-          onFocusChange: (value) {
-            if (_focused != value) setState(() => _focused = value);
-          },
-          style: ButtonStyle(
-            // The AnimatedContainer's decoration owns the edge and
-            // [_stateRing] the focus / hover ring. The theme's
-            // `elevatedButtonTheme.side` (1 px `border` when disabled —
-            // which a loading button is — and 2 px `onPrimary` when
-            // focused) would otherwise draw a second ring inside them.
-            side: const WidgetStatePropertyAll(BorderSide.none),
-            elevation: const WidgetStatePropertyAll(0),
-            shadowColor: const WidgetStatePropertyAll(Colors.transparent),
-            backgroundColor: const WidgetStatePropertyAll(Colors.transparent),
-            foregroundColor: WidgetStatePropertyAll(foreground),
-            overlayColor: WidgetStateProperty.resolveWith((states) {
-              if (states.contains(WidgetState.pressed)) {
-                // R5: the primary action's washes are white @ .10 / .06.
-                return foreground.withValues(alpha: primary ? .10 : .16);
-              }
-              if (states.contains(WidgetState.hovered)) {
-                return foreground.withValues(alpha: primary ? .06 : .08);
-              }
-              if (states.contains(WidgetState.focused)) {
-                return palette.focus.withValues(alpha: .12);
-              }
-              return null;
-            }),
-            padding: const WidgetStatePropertyAll(
-              EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+      // The filled variants' outer focus band (Pearl, high contrast): white
+      // alone melts into a light page. Always in the tree, so focus never
+      // remounts the button; it paints nothing in Dark or out of focus.
+      child: CustomPaint(
+        foregroundPainter: _focusIndicator(
+          palette,
+          colors,
+          highContrast: highContrast,
+          textDirection: Directionality.maybeOf(context),
+        ),
+        child: AnimatedContainer(
+          duration: quickDuration,
+          curve: Curves.easeOut,
+          decoration: _decoration(palette, colors, highContrast: highContrast),
+          foregroundDecoration: _stateRing(palette, colors),
+          child: ElevatedButton(
+            onPressed: _isInteractive ? widget.onPressed : null,
+            statesController: _states,
+            onHover: (value) {
+              if (_hovered != value) setState(() => _hovered = value);
+            },
+            onFocusChange: (value) {
+              if (_focused != value) setState(() => _focused = value);
+            },
+            style: ButtonStyle(
+              // The AnimatedContainer's decoration owns the edge and
+              // [_stateRing] the focus / hover ring. The theme's
+              // `elevatedButtonTheme.side` (1 px `border` when disabled —
+              // which a loading button is — and 2 px `onPrimary` when
+              // focused) would otherwise draw a second ring inside them.
+              side: const WidgetStatePropertyAll(BorderSide.none),
+              elevation: const WidgetStatePropertyAll(0),
+              shadowColor: const WidgetStatePropertyAll(Colors.transparent),
+              backgroundColor: const WidgetStatePropertyAll(Colors.transparent),
+              foregroundColor: WidgetStatePropertyAll(foreground),
+              overlayColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.pressed)) {
+                  // R5: the primary action's washes are white @ .10 / .06.
+                  return foreground.withValues(alpha: primary ? .10 : .16);
+                }
+                if (states.contains(WidgetState.hovered)) {
+                  return foreground.withValues(alpha: primary ? .06 : .08);
+                }
+                if (states.contains(WidgetState.focused)) {
+                  return palette.focus.withValues(alpha: .12);
+                }
+                return null;
+              }),
+              padding: const WidgetStatePropertyAll(
+                EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              ),
+              minimumSize: WidgetStatePropertyAll(
+                Size(AppSizing.minimumTouchTarget, controlHeight),
+              ),
+              shape: const WidgetStatePropertyAll(
+                RoundedRectangleBorder(borderRadius: AppRadius.lg),
+              ),
             ),
-            minimumSize: WidgetStatePropertyAll(
-              Size(AppSizing.minimumTouchTarget, controlHeight),
-            ),
-            shape: const WidgetStatePropertyAll(
-              RoundedRectangleBorder(borderRadius: AppRadius.lg),
-            ),
-          ),
-          child: AnimatedSwitcher(
-            duration: standardDuration,
-            // A busy control still has to say what it is busy with. Replacing
-            // the whole child with a bare spinner made every caller's label —
-            // including a publish footer's live "Publishing 42%" / "Finishing…"
-            // stage — invisible to a sighted user, who then read the motionless
-            // spinner as a hang. The spinner stays; the label rides beside it,
-            // `Flexible` so 320 px at 200% text wraps instead of overflowing.
-            child: Row(
-              key: ValueKey<String>(widget.isLoading ? 'loading' : 'content'),
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: <Widget>[
-                if (widget.isLoading) ...<Widget>[
-                  SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      color: foreground,
-                      // No theme track (`surfaceSunken`): on the primary
-                      // gradient it drew a dark ring around the spinner.
-                      backgroundColor: Colors.transparent,
+            child: AnimatedSwitcher(
+              duration: standardDuration,
+              // A busy control still has to say what it is busy with. Replacing
+              // the whole child with a bare spinner made every caller's label —
+              // including a publish footer's live "Publishing 42%" / "Finishing…"
+              // stage — invisible to a sighted user, who then read the motionless
+              // spinner as a hang. The spinner stays; the label rides beside it,
+              // `Flexible` so 320 px at 200% text wraps instead of overflowing.
+              child: Row(
+                key: ValueKey<String>(widget.isLoading ? 'loading' : 'content'),
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  if (widget.isLoading) ...<Widget>[
+                    SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: foreground,
+                        // No theme track (`surfaceSunken`): on the primary
+                        // gradient it drew a dark ring around the spinner.
+                        backgroundColor: Colors.transparent,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                  ] else if (widget.icon != null) ...<Widget>[
+                    IconTheme(
+                      data: IconThemeData(color: foreground, size: 22),
+                      child: widget.icon!,
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  Flexible(
+                    child: Text(
+                      widget.label,
+                      maxLines: textScale >= 1.6 ? 2 : 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: AppTypography.titleMedium.copyWith(
+                        color: foreground,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                ] else if (widget.icon != null) ...<Widget>[
-                  IconTheme(
-                    data: IconThemeData(color: foreground, size: 22),
-                    child: widget.icon!,
-                  ),
-                  const SizedBox(width: 10),
                 ],
-                Flexible(
-                  child: Text(
-                    widget.label,
-                    maxLines: textScale >= 1.6 ? 2 : 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: AppTypography.titleMedium.copyWith(
-                      color: foreground,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -332,6 +344,38 @@ class _YoButtonState extends State<YoButton> {
     return BoxDecoration(
       borderRadius: AppRadius.lg,
       border: Border.all(color: color, width: width),
+    );
+  }
+
+  /// The filled variants' two-tone indicator on a light canvas or under
+  /// high contrast (refine-look R5, as `YoGradientFilledButton` draws it):
+  /// the [_stateRing]'s 2 px on-colour band just inside, and a 2 px
+  /// `palette.focus` band just outside, painted as one so they never seam.
+  /// Dark keeps the inner band alone; the outlined variants already ring in
+  /// `palette.focus`.
+  YoActionFocusIndicatorPainter _focusIndicator(
+    AppPalette palette,
+    ColorScheme colors, {
+    required bool highContrast,
+    required TextDirection? textDirection,
+  }) {
+    final halo = _isDisabled
+        ? null
+        : YoActionFocusIndicatorPainter.haloFor(
+            palette,
+            highContrast: highContrast,
+          );
+    final edge = switch (widget.variant) {
+      YoButtonVariant.primary => colors.onPrimary,
+      YoButtonVariant.danger => colors.onError,
+      YoButtonVariant.secondary || YoButtonVariant.ghost => null,
+    };
+    return YoActionFocusIndicatorPainter(
+      states: _states,
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.lg),
+      edge: halo == null ? null : edge,
+      halo: halo,
+      textDirection: textDirection,
     );
   }
 

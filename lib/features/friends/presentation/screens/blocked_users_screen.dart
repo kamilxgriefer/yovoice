@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -270,20 +271,27 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                   ),
                                 ],
                               );
+                              // R7 neutral: glass under the control
+                              // hairline (borderStrong under high
+                              // contrast), not an opaque outline.
                               final button = OutlinedButton(
                                 onPressed: processing
                                     ? null
                                     : () => _unblock(user),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor:
-                                      palette.interactiveForeground,
-                                  disabledForegroundColor: palette.textTertiary,
-                                  side: BorderSide(color: palette.borderStrong),
-                                  minimumSize: const Size(0, 44),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
+                                style:
+                                    AppFinish.tonalNeutral(
+                                      palette,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      highContrast: MediaQuery.highContrastOf(
+                                        context,
+                                      ),
+                                    ).copyWith(
+                                      minimumSize: const WidgetStatePropertyAll(
+                                        Size(0, 44),
+                                      ),
+                                    ),
                                 child: processing
                                     ? const SizedBox(
                                         width: 15,

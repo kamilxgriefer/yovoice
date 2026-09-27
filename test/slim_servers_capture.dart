@@ -686,6 +686,30 @@ void main() {
               _tabTo(tester, find.byKey(const ValueKey('server-directory-s'))),
         );
       });
+      // Final review (A11Y-02): Tab past the row onto its own "…" button;
+      // only the button is ringed, never the row around it too.
+      final focusRowMore = _name(
+        'directory',
+        width,
+        light,
+        1,
+        'focus-row-more',
+      );
+      _captureWidgets(focusRowMore, (tester) async {
+        _traditionalFocus();
+        await capture(
+          tester,
+          name: focusRowMore,
+          width: width,
+          height: height,
+          light: light,
+          child: _directory(),
+          before: (tester) => _tabTo(
+            tester,
+            find.byKey(const ValueKey('server-directory-actions-s')),
+          ),
+        );
+      });
       final focusJoin = _name('workspace', width, light, 1, 'focus-join');
       _captureWidgets(focusJoin, (tester) async {
         _traditionalFocus();

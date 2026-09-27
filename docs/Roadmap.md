@@ -50,8 +50,12 @@ review and a code review, findings fixed before landing):
   chips, the logo on Wersja and on system notices.
 - **B10 Auth + Startup** (W1) — the real logo with its bloom and one glint per
   launch; the gradient sign-in CTA.
-- **Cross-batch** — one visible keyboard-focus indicator on every gradient
-  action (two-tone on Pearl and under high contrast), no focus layout shifts.
+- **Cross-batch and final review** — one keyboard-focus indicator shared by
+  every filled labelled action (two-tone on Pearl and under high contrast),
+  rings that follow their own node's focus (no doubled rings, no focus layout
+  shifts), the chat recorder bead's focus restored, and the last flat violet
+  slabs (friend-request Accept, the Friends header CTA, TOTP verify) moved
+  onto R7 / R5.
 
 Verification: `flutter analyze` clean; the full Flutter suite on the
 integrated tree; dock bytes and rail frames identical to `main` after every
@@ -65,8 +69,13 @@ company stage scenes; an adopter for the segmented-pill finish
 (`server_local_tabs.dart`); the channel-row live pill at 200 %; a Pearl tune
 of the Community/Podcast join; the role pill in the glass family; the Profile
 wide measure at 1440 (spec §12.5); fold `ServerGradientFilledButton` into the
-primitive; the doubled ring on a focused chat voice row; the outer-side focus
-gap on plain themed `FilledButton`s in Pearl.
+primitive; the outer-side focus gap on plain themed `FilledButton`s in Pearl; one
+secondary / error recipe (`YoButton.secondary` onto R7 neutral, which
+restyles every error state, and a real retry for Friends); one search-field
+shape (Friends and Add friend onto the R9 pill, which needs an additive field
+key on `YoSearchField` / `YoTextField`); the Moment detail comment composer
+in the Chats composer finish; a start inset on a focused text bubble's meta
+row so its ring clears the time.
 
 ## Cost cuts after build 36 (ADR-226) — source on `nb3/cost-cuts`, NOTHING DEPLOYED — 2026-09-26
 

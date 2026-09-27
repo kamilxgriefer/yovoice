@@ -10,6 +10,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -726,6 +727,57 @@ void main() {
       semantics.dispose();
     });
 
+    for (final size in const [Size(390, 844), Size(1440, 900)]) {
+      testWidgets('the row ring follows the row\'s own focus, never its '
+          '"…" button (${size.width.toInt()})', (tester) async {
+        _surface(tester, size);
+        final strategy = FocusManager.instance.highlightStrategy;
+        FocusManager.instance.highlightStrategy =
+            FocusHighlightStrategy.alwaysTraditional;
+        addTearDown(() => FocusManager.instance.highlightStrategy = strategy);
+        await tester.pumpWidget(
+          _host(_list(_Service(conversations: [_conversation()]))),
+        );
+        await tester.pumpAndSettle();
+
+        final palette = AppTheme.darkTheme.extension<AppPalette>()!;
+        final row = find.byKey(
+          const ValueKey('conversation-row-$_conversationId'),
+        );
+        Color ring() =>
+            ((tester.widget<AnimatedContainer>(row).foregroundDecoration!
+                            as BoxDecoration)
+                        .border!
+                    as Border)
+                .top
+                .color;
+        final more = find.descendant(
+          of: row,
+          matching: find.byIcon(Icons.more_horiz_rounded),
+        );
+        final rowRect = tester.getRect(row);
+        expect(ring(), Colors.transparent);
+
+        // The row itself: one ring around it.
+        // The row InkWell's own Focus (the first under the row).
+        tester
+            .widget<Focus>(
+              find.descendant(of: row, matching: find.byType(Focus)).first,
+            )
+            .focusNode!
+            .requestFocus();
+        await tester.pumpAndSettle();
+        expect(ring(), palette.focus);
+
+        // The row's "…" button: its own indicator alone.
+        Focus.of(tester.element(more)).requestFocus();
+        await tester.pumpAndSettle();
+        expect(Focus.of(tester.element(more)).hasPrimaryFocus, isTrue);
+        expect(ring(), Colors.transparent);
+        expect(tester.getRect(row), rowRect, reason: 'focus moves nothing');
+      });
+    }
+
     testWidgets('the compose disc is the one CTA lift', (tester) async {
       _surface(tester, const Size(390, 844));
       await tester.pumpWidget(
@@ -1035,6 +1087,130 @@ void main() {
         );
         expect(send.emphasis, YoActionEmphasis.lifted);
 
+        await tester.pumpWidget(const SizedBox.shrink());
+      });
+    }
+
+    // The bead is opaque and exactly the record button's size, so the
+    // button's own theme focus side (painted UNDER its child) is covered.
+    // Keyboard focus must be the bead's R14 ring, 3 px outside it, and it
+    // must read: the ring pixels change by at least 3:1 from rest.
+    for (final (themeName, theme) in [
+      ('Dark', AppTheme.darkTheme),
+      ('Pearl', AppTheme.lightTheme),
+    ]) {
+      testWidgets('keyboard focus on the recorder bead paints its ring '
+          'outside the bead ($themeName)', (tester) async {
+        _surface(tester, const Size(390, 844));
+        final strategy = FocusManager.instance.highlightStrategy;
+        FocusManager.instance.highlightStrategy =
+            FocusHighlightStrategy.alwaysTraditional;
+        addTearDown(() => FocusManager.instance.highlightStrategy = strategy);
+        // Real blurred shadows, as on a device: the ring must read against
+        // the bead's contact shadow as well as the sheet.
+        debugDisableShadows = false;
+        try {
+          await tester.pumpWidget(
+            _host(
+              _chat(
+                _Service(messages: _oneMessage()),
+                recorderFactory: () => VoiceMomentRecorder(
+                  backend: FakeRecorderBackend(),
+                  capture: FakeAudioCapture()..result = FakeRecordedAudio(),
+                  clock: FakeStopwatch(),
+                ),
+              ),
+              theme: theme,
+            ),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(find.byTooltip('Record voice message'));
+          await tester.pumpAndSettle();
+
+          final bead = find.byKey(const ValueKey('voice-message-record-bead'));
+          YoGradientDisc disc() => tester.widget<YoGradientDisc>(bead);
+          final button = find.ancestor(
+            of: bead,
+            matching: find.byType(IconButton),
+          );
+          expect(button, findsOneWidget);
+          expect(disc().focused, isFalse);
+          final beadRect = tester.getRect(bead);
+
+          final boundary = tester.renderObject<RenderRepaintBoundary>(
+            find
+                .ancestor(of: bead, matching: find.byType(RepaintBoundary))
+                .first,
+          );
+          final origin = boundary.localToGlobal(Offset.zero);
+          Future<ByteData> shot() async => (await tester.runAsync(() async {
+            final image = await boundary.toImage();
+            try {
+              return await image.toByteData();
+            } finally {
+              image.dispose();
+            }
+          }))!;
+          Color pixel(ByteData bytes, Offset global) {
+            final x = (global.dx - origin.dx).floor();
+            final y = (global.dy - origin.dy).floor();
+            final i = (y * boundary.size.width.round() + x) * 4;
+            return Color.fromARGB(
+              bytes.getUint8(i + 3),
+              bytes.getUint8(i),
+              bytes.getUint8(i + 1),
+              bytes.getUint8(i + 2),
+            );
+          }
+
+          double contrast(Color a, Color b) {
+            final la = a.computeLuminance();
+            final lb = b.computeLuminance();
+            return la > lb ? (la + .05) / (lb + .05) : (lb + .05) / (la + .05);
+          }
+
+          // 4 px outside the bead: the middle of the 2 px ring.
+          final c = beadRect.center;
+          final r = beadRect.width / 2 + 4;
+          final probes = [
+            Offset(c.dx - r, c.dy),
+            Offset(c.dx + r - 1, c.dy),
+            Offset(c.dx, c.dy - r),
+            Offset(c.dx, c.dy + r - 1),
+          ];
+          final rest = await shot();
+
+          Focus.of(tester.element(bead)).requestFocus();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(disc().focused, isTrue);
+          // Focus moves nothing.
+          expect(tester.getRect(bead), beadRect);
+          final focused = await shot();
+
+          final palette = theme.extension<AppPalette>()!;
+          for (final at in probes) {
+            final was = pixel(rest, at);
+            final now = pixel(focused, at);
+            expect(
+              contrast(now, palette.focus),
+              lessThan(1.1),
+              reason: '$at is the focus ring, got $now',
+            );
+            expect(
+              contrast(now, was),
+              greaterThanOrEqualTo(3),
+              reason: '$at: ring $now against rest $was',
+            );
+          }
+
+          FocusManager.instance.primaryFocus?.unfocus();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(disc().focused, isFalse);
+        } finally {
+          debugDisableShadows = true;
+        }
         await tester.pumpWidget(const SizedBox.shrink());
       });
     }

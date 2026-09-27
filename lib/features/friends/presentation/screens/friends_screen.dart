@@ -27,6 +27,7 @@ import 'package:yovoice/features/friends/presentation/widgets/friend_suggestions
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -918,7 +919,6 @@ class _FriendsScreenState extends State<FriendsScreen> {
 
   Widget _buildHeader() {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
@@ -963,20 +963,20 @@ class _FriendsScreenState extends State<FriendsScreen> {
               ),
             ],
           );
-          final action = FilledButton.icon(
-            key: const ValueKey('friends-find-new-person'),
+          // The page's labelled primary action is the R5 gradient, as on
+          // every other page, without a lift: Friends' light budget has
+          // none. Same key (on the FilledButton), size, padding and shape.
+          final action = YoGradientFilledButton(
+            buttonKey: const ValueKey('friends-find-new-person'),
             onPressed: _openAddFriend,
-            style: FilledButton.styleFrom(
-              minimumSize: const Size(0, 48),
-              backgroundColor: colors.primary,
-              foregroundColor: colors.onPrimary,
-              padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+            emphasis: YoActionEmphasis.flat,
+            minimumSize: const Size(0, 48),
+            padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
             ),
             icon: const Icon(Icons.person_add_alt_1_rounded, size: 20),
-            label: Text(
+            child: Text(
               copy.text('Add friend', 'Dodaj znajomego'),
               textAlign: TextAlign.center,
               style: const TextStyle(fontWeight: FontWeight.w700),
@@ -1723,7 +1723,6 @@ class FriendRequestCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
     final name = request.senderName.trim().isNotEmpty
         ? request.senderName.trim()
@@ -1806,24 +1805,29 @@ class FriendRequestCard extends StatelessWidget {
                     final stackActions =
                         media.textScaler.scale(1) > 1.4 ||
                         media.size.width < 374;
+                    final highContrast = MediaQuery.highContrastOf(context);
+                    final shape = RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    );
+                    const size = WidgetStatePropertyAll(Size.fromHeight(48));
+                    // R7, as the shared FriendRequestDecisionButtons: Accept
+                    // is the accent tonal and Decline the neutral one — a
+                    // list of requests is not a stack of violet slabs.
                     final accept = FilledButton.icon(
                       key: const ValueKey('friend-request-accept'),
                       onPressed: processing ? null : onAccept,
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(48),
-                        backgroundColor: colors.primary,
-                        foregroundColor: colors.onPrimary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
+                      style: AppFinish.tonalAccent(
+                        palette,
+                        shape: shape,
+                        highContrast: highContrast,
+                      ).copyWith(minimumSize: size),
                       icon: processing
                           ? SizedBox(
                               width: 15,
                               height: 15,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: colors.onPrimary,
+                                color: palette.interactiveForeground,
                               ),
                             )
                           : const Icon(Icons.check_rounded, size: 18),
@@ -1832,14 +1836,12 @@ class FriendRequestCard extends StatelessWidget {
                     final decline = OutlinedButton.icon(
                       key: const ValueKey('friend-request-decline'),
                       onPressed: processing ? null : onDecline,
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size.fromHeight(48),
-                        foregroundColor: palette.textPrimary,
-                        side: BorderSide(color: palette.borderStrong),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
+                      style: AppFinish.tonalNeutral(
+                        palette,
+                        foreground: palette.textPrimary,
+                        shape: shape,
+                        highContrast: highContrast,
+                      ).copyWith(minimumSize: size),
                       icon: const Icon(Icons.close_rounded, size: 18),
                       label: Text(copy.text('Decline', 'Odrzuć')),
                     );
