@@ -905,6 +905,21 @@ class AnimatedTotpCodeInputState extends State<AnimatedTotpCodeInput>
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final geometry = debugGeometry;
+    // Light has a source (refine-look principle 4): under high contrast the
+    // stage's primary glow is decoration without one, and is not drawn. The
+    // box stays in the tree, so flipping the system switch never remounts
+    // the code field beside it.
+    final stageGlow = MediaQuery.highContrastOf(context)
+        ? const BoxDecoration()
+        : BoxDecoration(
+            gradient: RadialGradient(
+              radius: .72,
+              colors: <Color>[
+                AppColors.primary.withValues(alpha: .16),
+                palette.surfaceSunken.withValues(alpha: 0),
+              ],
+            ),
+          );
     final animations = Listenable.merge(<Listenable>[
       _digitController,
       _phaseController,
@@ -946,15 +961,8 @@ class AnimatedTotpCodeInputState extends State<AnimatedTotpCodeInput>
                           Positioned.fill(
                             bottom: geometry.statusSlotHeight,
                             child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                gradient: RadialGradient(
-                                  radius: .72,
-                                  colors: <Color>[
-                                    AppColors.primary.withValues(alpha: .16),
-                                    palette.surfaceSunken.withValues(alpha: 0),
-                                  ],
-                                ),
-                              ),
+                              key: const ValueKey<String>('totp-stage-glow'),
+                              decoration: stageGlow,
                             ),
                           ),
                           Positioned.fill(

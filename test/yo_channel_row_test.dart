@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -492,39 +493,125 @@ void main() {
   });
 
   group('keyboard focus', () {
-    testWidgets('a focused channel row draws a 2 px focus edge; an '
-        'unfocused one keeps its plain shape', (tester) async {
+    Future<Color> pixelAt(
+      WidgetTester tester,
+      GlobalKey boundary,
+      Offset at,
+    ) async {
+      final render =
+          boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final bytes = await tester.runAsync(() async {
+        final image = await render.toImage();
+        try {
+          return await image.toByteData();
+        } finally {
+          image.dispose();
+        }
+      });
+      final width = render.size.width.round();
+      final i = (at.dy.floor() * width + at.dx.floor()) * 4;
+      return Color.fromARGB(
+        bytes!.getUint8(i + 3),
+        bytes.getUint8(i),
+        bytes.getUint8(i + 1),
+        bytes.getUint8(i + 2),
+      );
+    }
+
+    double distance(Color a, Color b) =>
+        ((a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs()) * 255;
+
+    // A plain row (no `selectedDecoration`: the management sheet's) used to
+    // carry its ring on the tile's shape, whose `Ink` pads the content by the
+    // edge's width, so tabbing onto it moved the row by 2 px. The ring is now
+    // the same foreground a decorated row draws.
+    testWidgets('a focused plain channel row draws a 2 px foreground focus '
+        'edge and moves nothing; an unfocused one draws none', (tester) async {
       for (final (theme, palette) in [
         (AppTheme.darkTheme, AppPalette.dark),
         (AppTheme.lightTheme, AppPalette.light),
       ]) {
+        final boundary = GlobalKey();
         await tester.pumpWidget(
           MaterialApp(
             theme: theme,
             home: Scaffold(
-              body: YoChannelRow(
-                tileKey: key,
-                label: 'Salon',
-                icon: Icons.tag_rounded,
-                onTap: () {},
+              body: Align(
+                alignment: Alignment.topCenter,
+                child: RepaintBoundary(
+                  key: boundary,
+                  child: SizedBox(
+                    width: 320,
+                    child: YoChannelRow(
+                      tileKey: key,
+                      label: 'Salon',
+                      icon: Icons.tag_rounded,
+                      // The management sheet's row: a 56 px floor and an
+                      // access line.
+                      minHeight: 56,
+                      subtitle: const Text('Wszyscy na serwerze'),
+                      onTap: () {},
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
         );
-        expect(
-          tester.widget<ListTile>(find.byKey(key)).shape,
-          const RoundedRectangleBorder(borderRadius: AppRadius.md),
+        final tile = find.byKey(key);
+        final watched = [
+          tile,
+          find.text('Salon'),
+          find.text('Wszyscy na serwerze'),
+          find.byIcon(Icons.tag_rounded),
+        ];
+        DecoratedBox ring() => tester.widget<DecoratedBox>(
+          find.ancestor(of: tile, matching: find.byType(DecoratedBox)).first,
         );
+        const plain = RoundedRectangleBorder(borderRadius: AppRadius.md);
+        // The top edge's second pixel row, on its straight run.
+        const probe = Offset(160, 1);
+
+        expect(tester.widget<ListTile>(tile).shape, plain);
+        final before = [for (final finder in watched) tester.getRect(finder)];
+        expect(
+          distance(await pixelAt(tester, boundary, probe), palette.focus),
+          greaterThan(60),
+          reason: 'no ring at rest',
+        );
+
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-        await tester.pump();
-        final shape =
-            tester.widget<ListTile>(find.byKey(key)).shape!
-                as RoundedRectangleBorder;
-        expect(shape.side.color, palette.focus);
-        expect(shape.side.width, greaterThanOrEqualTo(2));
-        expect(shape.borderRadius, AppRadius.md);
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<ListTile>(tile).focusNode!.hasPrimaryFocus,
+          isTrue,
+        );
+        // Neither the row nor its name, access line or glyph moves.
+        expect([for (final finder in watched) tester.getRect(finder)], before);
+        // The tile itself never takes an edge.
+        expect(tester.widget<ListTile>(tile).shape, plain);
+        final edge = ring();
+        expect(edge.position, DecorationPosition.foreground);
+        final decoration = edge.decoration as BoxDecoration;
+        expect(decoration.borderRadius, AppRadius.md);
+        final border = decoration.border! as Border;
+        expect(border.isUniform, isTrue);
+        expect(border.top.color, palette.focus);
+        expect(border.top.width, 2);
+        final painted = await pixelAt(tester, boundary, probe);
+        expect(
+          distance(painted, palette.focus),
+          lessThan(8),
+          reason:
+              'the ring (${palette.focus}) is what is painted, '
+              'got $painted',
+        );
+
         // Reset focus between themes.
         FocusManager.instance.primaryFocus?.unfocus();
+        await tester.pumpAndSettle();
+        expect((ring().decoration as BoxDecoration).border, isNull);
+        expect([for (final finder in watched) tester.getRect(finder)], before);
         await tester.pumpWidget(const SizedBox());
       }
     });

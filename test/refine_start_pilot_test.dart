@@ -857,6 +857,147 @@ void main() {
       expect(find.descendant(of: create, matching: find.byType(Ink)), findsOneWidget);
     });
 
+    // Cross-batch review: the pill used to get its ring from two painters
+    // (a `_FocusOutline` wrapper AND the button's own indicator) that only
+    // happened to coincide. The button now owns its one indicator in every
+    // emphasis, and no wrapper around it paints a ring.
+    for (final brightness in Brightness.values) {
+      final palette = brightness == Brightness.dark
+          ? AppPalette.dark
+          : AppPalette.light;
+      for (final emphasis in YoActionEmphasis.values) {
+        testWidgets('the focused create pill shows one indicator, from the '
+            'button itself (${brightness.name}, ${emphasis.name})', (
+          tester,
+        ) async {
+          _useView(tester, const Size(390, 900));
+          final strategy = FocusManager.instance.highlightStrategy;
+          FocusManager.instance.highlightStrategy =
+              FocusHighlightStrategy.alwaysTraditional;
+          addTearDown(() => FocusManager.instance.highlightStrategy = strategy);
+          final boundary = GlobalKey();
+          await tester.pumpWidget(
+            _host(
+              RepaintBoundary(
+                key: boundary,
+                child: ColoredBox(
+                  color: palette.background,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: HomeQuickActions(
+                      onCreateRoom: () {},
+                      onFriends: () {},
+                      createEmphasis: emphasis,
+                    ),
+                  ),
+                ),
+              ),
+              brightness: brightness,
+            ),
+          );
+          await tester.pump(const Duration(milliseconds: 400));
+          final create = find.byKey(const ValueKey('home-quick-create-server'));
+
+          // No box between the pill row and the button, and none inside the
+          // button, draws a ring: the indicator is the button's own painter
+          // (gradient) or its `Material` side (neutral).
+          bool paintsRing(Widget widget) =>
+              widget is DecoratedBox &&
+              switch (widget.decoration) {
+                BoxDecoration(:final border) => border != null,
+                ShapeDecoration(:final shape) =>
+                  shape is OutlinedBorder && shape.side != BorderSide.none,
+                _ => false,
+              };
+          final ring = find.byWidgetPredicate(paintsRing);
+          expect(
+            find.descendant(
+              of: find.byType(HomeQuickActions),
+              matching: find.ancestor(of: create, matching: ring),
+            ),
+            findsNothing,
+          );
+          expect(find.descendant(of: create, matching: ring), findsNothing);
+
+          Future<List<Color>> scanLeftEdge() async {
+            final render =
+                boundary.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
+            final origin = tester.getTopLeft(find.byKey(boundary));
+            final pill = tester.getRect(create).shift(-origin);
+            final bytes = await tester.runAsync(() async {
+              final image = await render.toImage();
+              try {
+                return await image.toByteData();
+              } finally {
+                image.dispose();
+              }
+            });
+            final stride = render.size.width.round();
+            // Across the pill's left end at its vertical centre: 3, 2 and
+            // 1 px outside the shape, then 1, 2 and 3 px inside.
+            final y = pill.center.dy.floor();
+            final left = pill.left.round();
+            return [
+              for (var x = left - 3; x < left + 3; x++)
+                Color.fromARGB(
+                  bytes!.getUint8((y * stride + x) * 4 + 3),
+                  bytes.getUint8((y * stride + x) * 4),
+                  bytes.getUint8((y * stride + x) * 4 + 1),
+                  bytes.getUint8((y * stride + x) * 4 + 2),
+                ),
+            ];
+          }
+
+          double distance(Color a, Color b) =>
+              ((a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs()) * 255;
+
+          final rest = await scanLeftEdge();
+          final focus = Focus.of(
+            tester.element(
+              find.descendant(of: create, matching: find.byType(Text)).first,
+            ),
+          );
+          focus.requestFocus();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(focus.hasPrimaryFocus, isTrue);
+          final at = await scanLeftEdge();
+
+          final white = Theme.of(tester.element(create)).colorScheme.onPrimary;
+          // A curved end: one pixel row is still slightly anti-aliased.
+          const curve = 30.0;
+          if (emphasis == YoActionEmphasis.neutral) {
+            // The tonal `focus` edge, 2 px inside, nothing outside.
+            expect(distance(at[4], palette.focus), lessThan(curve));
+            expect(distance(at[3], palette.focus), lessThan(curve * 2));
+            expect(distance(at[5], palette.focus), greaterThan(60));
+            for (final i in const [0, 1, 2]) {
+              expect(distance(at[i], rest[i]), lessThan(2));
+            }
+            return;
+          }
+          // One contiguous 2 px onPrimary band just inside the shape...
+          expect(distance(at[3], white), lessThan(curve), reason: '${at[3]}');
+          expect(distance(at[4], white), lessThan(curve), reason: '${at[4]}');
+          expect(distance(at[5], white), greaterThan(60), reason: '${at[5]}');
+          if (brightness == Brightness.dark) {
+            // ...and in Dark nothing outside it.
+            for (final i in const [0, 1, 2]) {
+              expect(distance(at[i], rest[i]), lessThan(2));
+            }
+          } else {
+            // ...and in Pearl the one outer `focus` band, 2 px, then the
+            // page again.
+            expect(distance(at[1], palette.focus), lessThan(curve));
+            expect(distance(at[2], palette.focus), lessThan(curve));
+            expect(distance(at[0], rest[0]), lessThan(2));
+          }
+        });
+      }
+    }
+
     testWidgets('"Masz chwilę?" is an untinted block with the 48 px voice '
         'bead at rest', (tester) async {
       _useView(tester, const Size(390, 900));

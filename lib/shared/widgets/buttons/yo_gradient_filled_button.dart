@@ -44,13 +44,26 @@ enum YoActionEmphasis {
 /// the same when a screen promotes or demotes the action under the reader.
 ///
 /// States: hover white @ .06 and a stronger lift; pressed white @ .10 with the
-/// lift sunk; focus the existing 2 px `onPrimary` edge; disabled
+/// lift sunk; focus is ONE keyboard-focus indicator painted over the whole
+/// button and moving nothing (below); disabled
 /// `surfaceSunken` with `textTertiary` and no lift. [busy] keeps the
 /// gradient, halves the lift and shows an 18 px white spinner beside the
 /// label; the button stays enabled and focusable (a disabled one would drop
 /// keyboard focus and be announced as dimmed) but ignores presses, and its
 /// semantics value says it is loading. Under high contrast the lift is
 /// dropped.
+///
+/// The focus indicator (UI.md, semantic colour ownership): a 2 px `onPrimary`
+/// band just inside the shape, which measures at least 3:1 against the
+/// gradient in every state. On a light canvas (Pearl) and whenever high
+/// contrast is on, a 2 px `palette.focus` band just outside the shape joins
+/// it, because white alone melts into a light page (1.1:1 on Pearl's
+/// `background`). Both bands are one painter over the button, so the pair
+/// never seams; the style's `side` still resolves the inner edge for
+/// `FilledButton` semantics, but `Material` paints it under the opaque
+/// gradient, unseen. The neutral emphasis keeps `AppFinish.tonalNeutral`'s
+/// own `focus` edge instead. A wrapper must never add a second ring around
+/// this button.
 ///
 /// Never set this through `filledButtonTheme` (84 call sites recolour
 /// `FilledButton`s) and never use it for repeated, list, retry or tonal
@@ -105,6 +118,9 @@ class YoGradientFilledButton extends StatefulWidget {
 
   /// Passed through to the [FilledButton]; the lift follows its states.
   final WidgetStatesController? statesController;
+
+  /// Each band of the keyboard-focus indicator, in logical pixels.
+  static const double focusBandWidth = 2;
 
   @override
   State<YoGradientFilledButton> createState() => _YoGradientFilledButtonState();
@@ -190,6 +206,18 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
     Color foreground(Set<WidgetState> s) =>
         enabled ? scheme.onPrimary : palette.textTertiary;
 
+    // The keyboard focus edge: the fill's own `onPrimary`, 2 px (UI.md,
+    // semantic colour ownership). `Material` paints this `side` under the
+    // opaque gradient (`borderOnForeground: false`), so what the reader sees
+    // is [_FocusIndicatorPainter]; the style keeps it for the button's own
+    // state resolution.
+    BorderSide focusEdge(Set<WidgetState> s) => s.contains(WidgetState.focused)
+        ? BorderSide(
+            color: scheme.onPrimary,
+            width: YoGradientFilledButton.focusBandWidth,
+          )
+        : BorderSide.none;
+
     // Geometry is the same in every emphasis, so demoting the action never
     // moves a neighbour.
     final geometry = ButtonStyle(
@@ -244,11 +272,7 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
               }
               return null;
             }),
-            side: WidgetStateProperty.resolveWith(
-              (s) => s.contains(WidgetState.focused)
-                  ? BorderSide(color: scheme.onPrimary, width: 2)
-                  : BorderSide.none,
-            ),
+            side: WidgetStateProperty.resolveWith(focusEdge),
             backgroundBuilder: enabled
                 ? (context, states, child) => Ink(
                     // Keep `color` null behind the gradient (see
@@ -310,21 +334,102 @@ class _YoGradientFilledButtonState extends State<YoGradientFilledButton> {
       duration: AppMotion.resolve(context, AppMotion.quick),
       curve: AppMotion.standardCurve,
       decoration: ShapeDecoration(shape: widget.shape, shadows: lift),
-      child: FilledButton(
-        // FilledButton defaults to Clip.none, which lets the gradient `Ink`
-        // paint as a rectangle past a stadium or rounded shape.
-        clipBehavior: Clip.antiAlias,
-        onPressed: !enabled
-            ? null
-            : busy
-            ? _ignorePress
-            : widget.onPressed,
-        focusNode: widget.focusNode,
-        autofocus: widget.autofocus,
-        statesController: _states,
-        style: widget.style == null ? style : style.merge(widget.style),
-        child: label,
+      // Always in the tree, so a focus or emphasis change never remounts the
+      // button; it repaints from the button's own states and moves nothing.
+      child: CustomPaint(
+        foregroundPainter: _FocusIndicatorPainter(
+          states: _states,
+          shape: widget.shape,
+          edge: neutral || !enabled ? null : scheme.onPrimary,
+          // White alone melts into a light page; high contrast asks for the
+          // stronger indicator on either canvas.
+          halo: neutral || !enabled || (palette.isDark && !highContrast)
+              ? null
+              : palette.focus,
+          textDirection: Directionality.maybeOf(context),
+        ),
+        child: FilledButton(
+          // FilledButton defaults to Clip.none, which lets the gradient `Ink`
+          // paint as a rectangle past a stadium or rounded shape.
+          clipBehavior: Clip.antiAlias,
+          onPressed: !enabled
+              ? null
+              : busy
+              ? _ignorePress
+              : widget.onPressed,
+          focusNode: widget.focusNode,
+          autofocus: widget.autofocus,
+          statesController: _states,
+          style: widget.style == null ? style : style.merge(widget.style),
+          child: label,
+        ),
       ),
     );
   }
+}
+
+/// The button's one keyboard-focus indicator, painted over everything the
+/// button draws (gradient, hover and press washes, spinner) and outside its
+/// clip, so the outer band can sit beyond the shape without moving layout.
+///
+/// Inner band: [edge], the 2 px just inside the shape. Outer band: [halo],
+/// the 2 px just outside it. The halo is laid first from 1 px inside the
+/// edge to 2 px outside, then the inner band over it, so the shape's edge
+/// always falls on solid colour and the curved ends never show a seam of
+/// the page between the two bands.
+class _FocusIndicatorPainter extends CustomPainter {
+  _FocusIndicatorPainter({
+    required this.states,
+    required this.shape,
+    required this.edge,
+    required this.halo,
+    required this.textDirection,
+  }) : super(repaint: states);
+
+  /// The button's own states. The button reports focus through this
+  /// controller, sometimes while it is being built; listening here only
+  /// repaints, which is safe at any point in the frame.
+  final WidgetStatesController states;
+  final OutlinedBorder shape;
+  final Color? edge;
+  final Color? halo;
+  final TextDirection? textDirection;
+
+  static const double _band = YoGradientFilledButton.focusBandWidth;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final edge = this.edge;
+    if (edge == null || !states.value.contains(WidgetState.focused)) return;
+    final rect = Offset.zero & size;
+    final halo = this.halo;
+    if (halo != null) {
+      // One stroke spanning [-1, +band] around the shape's edge (for a
+      // 2 px band: 3 px wide at strokeAlign 1/3); the inner band then covers
+      // its inner pixel.
+      const width = _band + 1;
+      shape
+          .copyWith(
+            side: BorderSide(
+              color: halo,
+              width: width,
+              strokeAlign: (_band - 1) / width,
+            ),
+          )
+          .paint(canvas, rect, textDirection: textDirection);
+    }
+    shape
+        .copyWith(
+          side: BorderSide(color: edge, width: _band),
+        )
+        .paint(canvas, rect, textDirection: textDirection);
+  }
+
+  @override
+  bool shouldRepaint(_FocusIndicatorPainter old) =>
+      old.states != states ||
+      old.shape != shape ||
+      old.edge != edge ||
+      old.halo != halo ||
+      old.textDirection != textDirection;
 }

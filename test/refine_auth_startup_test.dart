@@ -640,45 +640,70 @@ void main() {
         'gradient', (tester) async {
       LaunchGlint.debugReset(spent: true);
       _viewport(tester, const Size(390, 844));
+      final strategy = FocusManager.instance.highlightStrategy;
+      FocusManager.instance.highlightStrategy =
+          FocusHighlightStrategy.alwaysTraditional;
+      addTearDown(() => FocusManager.instance.highlightStrategy = strategy);
       await tester.pumpWidget(_app(login()));
       await tester.pump();
       final submit = find.byKey(const ValueKey('auth-login-submit'));
-      final edge = find.descendant(
+      final button = find.descendant(
         of: submit,
-        matching: find.byKey(const ValueKey('auth-primary-focus-edge')),
+        matching: find.byType(FilledButton),
       );
+      // The edge is painted by the shared primitive, over its own gradient
+      // (the button's `side` alone sits beneath the gradient, unseen): read
+      // the pixel the screen actually shows, in the second column of the
+      // button's left edge, at mid-height.
       Future<List<int>> edgePixel() async {
-        final painter = tester.widget<CustomPaint>(edge).foregroundPainter!;
-        final size = tester.getSize(edge);
+        final rect = tester.getRect(button);
+        final probe = Rect.fromLTWH(
+          rect.left.floorToDouble() + 1,
+          rect.center.dy.floorToDouble(),
+          1,
+          1,
+        );
         return (await tester.runAsync(() async {
-          final recorder = ui.PictureRecorder();
-          painter.paint(ui.Canvas(recorder), size);
-          final picture = recorder.endRecording();
-          final image = await picture.toImage(
-            size.width.ceil(),
-            size.height.ceil(),
-          );
+          final layer =
+              tester.binding.renderViews.first.debugLayer! as OffsetLayer;
+          final image = await layer.toImage(probe);
           try {
             final bytes = (await image.toByteData(
               format: ui.ImageByteFormat.rawRgba,
             ))!.buffer.asUint8List();
-            final at = ((size.height ~/ 2) * size.width.ceil()) * 4;
-            return bytes.sublist(at, at + 4);
+            return bytes.sublist(0, 4);
           } finally {
             image.dispose();
-            picture.dispose();
           }
         }))!;
       }
 
-      expect((await edgePixel())[3], 0, reason: 'no edge without focus');
+      final rest = await edgePixel();
+      expect(
+        rest,
+        isNot(const [255, 255, 255, 255]),
+        reason: 'no edge without focus: the gradient shows',
+      );
+      final label = tester.getRect(
+        find.descendant(of: submit, matching: find.byType(Text)),
+      );
+      final size = tester.getSize(submit);
       Focus.of(
         tester.element(
           find.descendant(of: submit, matching: find.byType(Text)),
         ),
       ).requestFocus();
       await tester.pump();
+      await tester.pump();
       expect(await edgePixel(), [255, 255, 255, 255]);
+      // The edge is a foreground: focus moves nothing.
+      expect(
+        tester.getRect(
+          find.descendant(of: submit, matching: find.byType(Text)),
+        ),
+        label,
+      );
+      expect(tester.getSize(submit), size);
     });
 
     testWidgets('busy keeps the gradient, half the lift, the spinner and '
@@ -895,6 +920,71 @@ void main() {
       expect(find.byType(LaunchGlintMark), findsNothing);
       await tester.pump(const Duration(seconds: 2));
       expect(LaunchGlint.spent, isFalse);
+    });
+
+    testWidgets('the code stage glow keeps its look and draws nothing under '
+        'high contrast (principle 4), without remounting the field', (
+      tester,
+    ) async {
+      _viewport(tester, const Size(390, 844));
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await tester.pumpWidget(totpTestApp(FakeTotpChallenge()));
+      await tester.pump();
+      final glow = find.byKey(totpStageGlowKey);
+      BoxDecoration decoration() =>
+          tester.widget<DecoratedBox>(glow).decoration as BoxDecoration;
+      expect(glow, findsOneWidget);
+      final gradient = decoration().gradient! as RadialGradient;
+      expect(gradient.radius, .72);
+      expect(gradient.colors.first, AppColors.primary.withValues(alpha: .16));
+      expect(gradient.colors.last.a, 0);
+      final field = find.descendant(
+        of: find.byKey(totpCodeInputKey),
+        matching: find.byType(EditableText),
+      );
+      await tester.enterText(field, '12');
+      await tester.pump();
+      final fieldState = tester.state(field);
+
+      // The system switch flips while the screen is open.
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(highContrast: true);
+      await tester.pump();
+      expect(glow, findsOneWidget);
+      final flat = decoration();
+      expect(flat.gradient, isNull);
+      expect(flat.color, isNull);
+      expect(flat.boxShadow, isNull);
+      expect(flat.image, isNull);
+      expect(flat.border, isNull);
+      expect(tester.state(field), same(fieldState));
+      expect(tester.widget<EditableText>(field).controller.text, '12');
+
+      // And back: the glow returns exactly.
+      tester.platformDispatcher.clearAccessibilityFeaturesTestValue();
+      await tester.pump();
+      expect(decoration().gradient, gradient);
+    });
+
+    testWidgets('a TOTP screen opened under high contrast draws no stage '
+        'glow', (tester) async {
+      _viewport(tester, const Size(390, 844));
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(highContrast: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await tester.pumpWidget(totpTestApp(FakeTotpChallenge()));
+      await tester.pump();
+      final decoration =
+          tester.widget<DecoratedBox>(find.byKey(totpStageGlowKey)).decoration
+              as BoxDecoration;
+      expect(decoration.gradient, isNull);
+      expect(decoration.color, isNull);
+      // The code cells themselves are still there.
+      expect(find.byKey(totpNodeKey(0)), findsOneWidget);
     });
 
     Widget gate({Object? error}) => ProviderScope(

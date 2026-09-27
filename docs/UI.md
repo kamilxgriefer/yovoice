@@ -726,6 +726,24 @@ above 3:1 against the actual brand or error fill; `focus` remains the correct
 ring on neutral surfaces. `navigationOutline` is deliberately not a focus
 token.
 
+That white boundary only reads on its inner side: on Pearl's light page its
+outer side measures 1.11:1 against `background` (1.00:1 on a white card), so
+the control seems to shrink by two pixels instead of gaining a ring. The
+screen's labelled primary action, `YoGradientFilledButton`, therefore draws
+**one two-tone indicator** on a light canvas and whenever high contrast is
+on: the 2 px `onPrimary` band just inside the shape (≥3:1 against the
+gradient in rest, hover and busy) plus a 2 px `focus` band just outside it
+(Pearl `#6F1DCE`: 6.92:1 on `background`, 7.66:1 on white, 5.27:1 over its
+own lift glow; Dark high contrast `#D986FF`: 8.39:1 on `background`). Dark
+keeps the white band alone (20:1 on its page). Both bands come from one
+painter over the button, so the pair never seams and focus moves no layout;
+the neutral emphasis keeps `AppFinish.tonalNeutral`'s own 2 px `focus` edge.
+The button owns its indicator: never wrap it in a second ring (a
+`_FocusOutline`-style wrapper), which would double or thicken it the moment
+either painter changed. Plain themed `FilledButton`s still draw the inner
+white band alone, so on Pearl they carry the same outer-side gap; that is an
+open item in [Bugs.md](Bugs.md), not an accepted pattern.
+
 Voice rooms (including their shared stage and compact live capsule), calls,
 recording/review, story viewing, image croppers, the branded auth/startup
 curtain and its inbox-confirmation sheet, and the explicitly dark staff/creator

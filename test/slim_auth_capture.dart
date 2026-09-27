@@ -273,13 +273,20 @@ List<_Shot> _shots() => <_Shot>[
   // The launch glint mid-pass (UNVERIFIED until seen on a device).
   for (final width in const [390.0, 1440.0])
     _Shot(screen: _Screen.login, width: width, state: 'glint', glint: true),
-  // Focus, validation, availability and 200 % text evidence.
-  const _Shot(
-    screen: _Screen.login,
-    width: 1440,
-    state: 'focus-submit',
-    interaction: _Interaction.focusSubmit,
-  ),
+  // Focus, validation, availability and 200 % text evidence. The primary
+  // action's focus indicator in both app themes (the chain is the same
+  // immersive dark atom in each), and under high contrast, where it gains
+  // its outer `focus` band.
+  for (final pearl in const [false, true])
+    for (final highContrast in const [false, true])
+      _Shot(
+        screen: _Screen.login,
+        width: 1440,
+        pearl: pearl,
+        state: 'focus-submit',
+        interaction: _Interaction.focusSubmit,
+        highContrast: highContrast,
+      ),
   const _Shot(
     screen: _Screen.login,
     width: 1440,
