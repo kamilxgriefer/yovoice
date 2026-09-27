@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 
 import '../../data/models/server_type.dart';
@@ -59,6 +60,40 @@ class ServerIdentity {
 
   static ServerIdentity of(ServerType type) => _identities[type]!;
 
+  /// The lit gem of a LIVE session orb (refine-look §6, the director-verified
+  /// stops): the template's accent lifted 12 % toward white into the midpoint
+  /// of its primary and accent, with the ink that reads on BOTH stops —
+  /// friends 11.0:1, podcast 5.6:1, family 9.6:1, company 7.8:1 in
+  /// [AppColors.contrastInk], community 5.05 / 5.96:1 in white. The same in
+  /// Dark and Pearl: a gem is an object, not a surface.
+  static const _liveGems = <ServerType, (Color, Color, Color)>{
+    ServerType.friends: (
+      Color(0xFF70E5E9),
+      Color(0xFF5CE1E6),
+      AppColors.contrastInk,
+    ),
+    ServerType.podcast: (
+      Color(0xFFFF7D90),
+      Color(0xFFFF5474),
+      AppColors.contrastInk,
+    ),
+    ServerType.family: (
+      Color(0xFF4DE89B),
+      Color(0xFF2EDB84),
+      AppColors.contrastInk,
+    ),
+    ServerType.company: (
+      Color(0xFF76CEFF),
+      Color(0xFF58B5FF),
+      AppColors.contrastInk,
+    ),
+    ServerType.community: (
+      Color(0xFFA528F0),
+      Color(0xFF8A2BE2),
+      AppColors.white,
+    ),
+  };
+
   ServerIdentityVisuals resolve(Brightness brightness) {
     final dark = brightness == Brightness.dark;
     final scheme = ColorScheme.fromSeed(
@@ -78,6 +113,7 @@ class ServerIdentity {
     final onCta = cta.computeLuminance() > .32
         ? AppColors.contrastInk
         : AppColors.white;
+    final (gemTop, gemBottom, onGem) = _liveGems[type]!;
     return ServerIdentityVisuals(
       foreground: foreground,
       selectedForeground: _readableForeground(
@@ -104,6 +140,40 @@ class ServerIdentity {
       selectedWash: selectedWash,
       orbit: primary.withValues(alpha: dark ? .09 : .12),
       focus: palette.textPrimary,
+      liveOrbGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [gemTop, gemBottom],
+      ),
+      onLiveOrb: onGem,
+      // R5 identity variant: the fill deepens toward the Dark canvas under a
+      // white label and brightens toward white under an ink one, so the
+      // label only ever gains contrast across the sweep.
+      ctaGradient: LinearGradient(
+        colors: onCta == AppColors.white
+            ? [cta, Color.lerp(cta, AppPalette.dark.background, .16)!]
+            : [Color.lerp(cta, AppColors.white, .14)!, cta],
+      ),
+      // The "unlit" identity finish: a quiet top-lit glass of the template's
+      // hue, for anything that marks a place rather than a live event.
+      unlitGradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Color.alphaBlend(
+            primary.withValues(alpha: dark ? .18 : .12),
+            palette.surfaceRaised,
+          ),
+          Color.alphaBlend(
+            primary.withValues(alpha: dark ? .06 : .04),
+            palette.surface,
+          ),
+        ],
+      ),
+      unlitEdge: dark ? primary.withValues(alpha: .28) : palette.hairline,
+      // The admission and invite introduction cards carry the template's
+      // own ink as a faint edge instead of the neutral hairline.
+      identityEdge: foreground.withValues(alpha: .30),
     );
   }
 
@@ -138,6 +208,12 @@ class ServerIdentityVisuals {
     required this.selectedWash,
     required this.orbit,
     required this.focus,
+    required this.liveOrbGradient,
+    required this.onLiveOrb,
+    required this.ctaGradient,
+    required this.unlitGradient,
+    required this.unlitEdge,
+    required this.identityEdge,
   });
   final Color foreground;
   final Color selectedForeground;
@@ -153,6 +229,36 @@ class ServerIdentityVisuals {
   final Color selectedWash;
   final Color orbit;
   final Color focus;
+
+  /// The LIVE session orb's gem (both themes) and the symbol ink on it.
+  final LinearGradient liveOrbGradient;
+  final Color onLiveOrb;
+
+  /// The join action's identity gradient (refine-look R5): [cta] into a
+  /// deeper stop under a white label, or a brighter stop into [cta] under an
+  /// ink label. The focus ring is still [onCta].
+  final LinearGradient ctaGradient;
+
+  /// The quiet orb, the module icon chip and the microphone orb: the
+  /// template's hue at .18 / .12 over `surfaceRaised` into .06 / .04 over
+  /// `surface`, top-lit.
+  final LinearGradient unlitGradient;
+
+  /// The unlit finish's 1 px edge: the template's primary at .28 in Dark,
+  /// the neutral `hairline` in Pearl (which adds the block shadow instead).
+  final Color unlitEdge;
+
+  /// The template's ink at .30: the edge of the admission and the invite
+  /// introduction cards.
+  final Color identityEdge;
+
+  /// The selected channel row, drawn through
+  /// `YoChannelRow.selectedDecoration`: the flat identity wash of the
+  /// approved panel (no gradient, edge or shadow). Taking the row's
+  /// decorated path paints its keyboard focus ring as a foreground, so
+  /// focusing a row never moves the list.
+  BoxDecoration get rowSelection =>
+      BoxDecoration(color: selectedWash, borderRadius: AppRadius.md);
 }
 
 /// The keyboard focus ring for a control whose fill this slice overrides.
@@ -172,6 +278,30 @@ WidgetStateProperty<BorderSide?> serverFocusRing(Color foreground) =>
           ? BorderSide(color: foreground, width: 2)
           : null,
     );
+
+/// The workspace's decorative separators — the header rules, the panel's
+/// divider and the columns' vertical rules (refine-look §8.2, principle 4):
+/// the palette's `hairline`, and `borderStrong` again under high contrast.
+Color serverDivider(BuildContext context) {
+  final palette = context.appPalette;
+  return MediaQuery.highContrastOf(context)
+      ? palette.borderStrong
+      : palette.hairline;
+}
+
+/// A member count whose number and noun never part at a line break
+/// ("12\u00A0osób"): the first space after a digit becomes a non-breaking
+/// one. The words are unchanged, so every reader hears the same copy.
+String serverKeepCountTogether(String count) =>
+    count.replaceFirstMapped(RegExp(r'(\d) '), (match) => '${match[1]}\u00A0');
+
+/// "Prywatny serwer \u00B7 12 os\u00F3b" as one meta line that only breaks after the
+/// separator: the dot stays with the words before it (a non-breaking space
+/// ahead of it) and the count stays with its noun
+/// ([serverKeepCountTogether]), so a wrap never starts a line with "\u00B7" and
+/// never strands a bare number. The words are unchanged.
+String serverMetaLine(String kind, String count) =>
+    '$kind\u00A0\u00B7 ${serverKeepCountTogether(count)}';
 
 /// The selector is an explicitly approved responsive exception to page rhythm.
 abstract final class ServerSelectorMetrics {

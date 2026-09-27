@@ -243,6 +243,30 @@ void main() {
           greaterThanOrEqualTo(3),
           reason: '$type CTA rings at ${contrast(side.color, fill)}:1',
         );
+        // Refine-look R5 paints the join in the identity gradient, so the
+        // ring (and the label in the same ink) must hold on BOTH stops that
+        // are actually painted, not only on the reported solid fill.
+        final painted = tester.widget<Ink>(
+          find.descendant(of: qaJoin, matching: find.byType(Ink)),
+        );
+        final gradient =
+            (painted.decoration! as BoxDecoration).gradient! as LinearGradient;
+        expect(gradient.colors, hasLength(2), reason: '$type CTA gradient');
+        final label = button.style!.foregroundColor!.resolve(focused)!;
+        for (final stop in gradient.colors) {
+          expect(stop.a, 1, reason: '$type CTA stop $stop is translucent');
+          expect(
+            contrast(side.color, stop),
+            greaterThanOrEqualTo(3),
+            reason:
+                '$type CTA rings at ${contrast(side.color, stop)}:1 on $stop',
+          );
+          expect(
+            contrast(label, stop),
+            greaterThanOrEqualTo(4.5),
+            reason: '$type CTA label reads ${contrast(label, stop)}:1 on $stop',
+          );
+        }
       }
     });
   });

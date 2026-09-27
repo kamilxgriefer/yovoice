@@ -29,6 +29,7 @@ class YoChannelRow extends StatefulWidget {
     this.selected = false,
     this.selectedForeground,
     this.selectedWash,
+    this.selectedDecoration,
     this.iconSemanticLabel,
     this.iconColor,
     this.subtitle,
@@ -54,6 +55,17 @@ class YoChannelRow extends StatefulWidget {
   /// The server template's identity ink and wash for the selected row.
   final Color? selectedForeground;
   final Color? selectedWash;
+
+  /// The selected row's finish (refine-look handoff): a fill, gradient and
+  /// shadow painted through `Ink` on the list's own `Material`, under the
+  /// row's ink, with the decoration's [BoxDecoration.border] drawn as a
+  /// foreground edge — so selecting a row never moves its content by the
+  /// edge's width. It replaces [selectedWash] while [selected]; null keeps
+  /// the plain tile, which paints [selectedWash] itself. On a decorated row
+  /// the 2 px keyboard focus ring is a foreground too (it takes the edge's
+  /// place while focused), so tabbing onto the row never moves it either.
+  /// The caller decides what the finish says — a flat wash is a finish.
+  final BoxDecoration? selectedDecoration;
 
   /// Voiced by the glyph when it carries meaning on its own (the lock).
   final String? iconSemanticLabel;
@@ -86,7 +98,9 @@ class YoChannelRow extends StatefulWidget {
   State<YoChannelRow> createState() => _YoChannelRowState();
 }
 
-/// Keyboard focus is a 2 px [AppPalette.focus] edge on the row's own shape.
+/// Keyboard focus is a 2 px [AppPalette.focus] edge: on the tile's own shape
+/// for a plain row, as a foreground over a row with a
+/// [YoChannelRow.selectedDecoration] (which never shifts its content).
 /// The theme's focus tint alone is about 1.25:1 against the list surface, so
 /// a desktop or web user tabbing through a channel column could not see
 /// where they were (WCAG 2.4.7); the server rail beside it already draws the
@@ -115,37 +129,74 @@ class _YoChannelRowState extends State<YoChannelRow> {
   }
 
   @override
-  Widget build(BuildContext context) => ListTile(
-    key: widget.tileKey,
-    focusNode: _focusNode,
-    selected: widget.selected,
-    selectedColor: widget.selectedForeground,
-    selectedTileColor: widget.selectedWash,
-    minTileHeight: widget.minHeight,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-    shape: _focused
-        ? RoundedRectangleBorder(
-            borderRadius: AppRadius.md,
-            side: BorderSide(color: context.appPalette.focus, width: 2),
-          )
-        : const RoundedRectangleBorder(borderRadius: AppRadius.md),
-    leading: Icon(
-      widget.icon,
-      size: 21,
-      color: widget.iconColor,
-      semanticLabel: widget.iconSemanticLabel,
-    ),
-    title: Text(
-      widget.label,
-      style: AppTypography.bodyMedium,
-      maxLines: widget.labelMaxLines,
-      softWrap: widget.labelMaxLines > 1,
-      overflow: TextOverflow.ellipsis,
-    ),
-    subtitle: widget.subtitle,
-    trailing: widget.trailing,
-    onTap: widget.onTap,
-  );
+  Widget build(BuildContext context) {
+    final finish = widget.selectedDecoration;
+    final decoration = widget.selected ? finish : null;
+    final radius = finish?.borderRadius ?? AppRadius.md;
+    final focusSide = BorderSide(color: context.appPalette.focus, width: 2);
+    final Widget tile = ListTile(
+      key: widget.tileKey,
+      focusNode: _focusNode,
+      selected: widget.selected,
+      selectedColor: widget.selectedForeground,
+      // A decorated selection paints its own fill underneath the tile.
+      selectedTileColor: decoration == null
+          ? widget.selectedWash
+          : Colors.transparent,
+      // On a decorated row the ring alone says "focused" (R16): the theme's
+      // focus tint would otherwise wash over the finish and the ink on it.
+      focusColor: finish == null ? null : Colors.transparent,
+      minTileHeight: widget.minHeight,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+      // A plain row keeps its focus edge on the tile's shape (the tile's
+      // `Ink` pads its content by that edge). A decorated row never gives
+      // its tile an edge: the ring is drawn over it below.
+      shape: _focused && finish == null
+          ? RoundedRectangleBorder(borderRadius: radius, side: focusSide)
+          : RoundedRectangleBorder(borderRadius: radius),
+      leading: Icon(
+        widget.icon,
+        size: 21,
+        color: widget.iconColor,
+        semanticLabel: widget.iconSemanticLabel,
+      ),
+      title: Text(
+        widget.label,
+        style: AppTypography.bodyMedium,
+        maxLines: widget.labelMaxLines,
+        softWrap: widget.labelMaxLines > 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: widget.subtitle,
+      trailing: widget.trailing,
+      onTap: widget.onTap,
+    );
+    if (finish == null) return tile;
+    // One tree for every state of a decorated row — selected or not, focused
+    // or not — so selecting it (or tabbing onto it) never remounts the tile
+    // and never drops its focus. The fill goes through `Ink` WITHOUT its
+    // border: `Ink` adds a decoration's border to its padding, which would
+    // shift the row by the edge's width the moment it is selected. For the
+    // same reason the focus ring is this foreground, not the tile's shape.
+    return Ink(
+      decoration: BoxDecoration(
+        color: decoration?.color,
+        gradient: decoration?.gradient,
+        boxShadow: decoration?.boxShadow,
+        borderRadius: radius,
+      ),
+      child: DecoratedBox(
+        position: DecorationPosition.foreground,
+        decoration: BoxDecoration(
+          border: _focused
+              ? Border.fromBorderSide(focusSide)
+              : decoration?.border,
+          borderRadius: radius,
+        ),
+        child: tile,
+      ),
+    );
+  }
 }
 
 /// One media channel (voice, stage, meeting) in a channel list.
@@ -179,6 +230,7 @@ class YoVoiceChannelRow extends StatelessWidget {
     this.selected = false,
     this.selectedForeground,
     this.selectedWash,
+    this.selectedDecoration,
     this.iconSemanticLabel,
     this.liveBadge,
     this.liveSince,
@@ -201,6 +253,9 @@ class YoVoiceChannelRow extends StatelessWidget {
   final bool selected;
   final Color? selectedForeground;
   final Color? selectedWash;
+
+  /// See [YoChannelRow.selectedDecoration].
+  final BoxDecoration? selectedDecoration;
   final String? iconSemanticLabel;
 
   /// A small marker the caller builds when something in this channel waits
@@ -354,6 +409,7 @@ class YoVoiceChannelRow extends StatelessWidget {
           selected: selected,
           selectedForeground: selectedForeground,
           selectedWash: selectedWash,
+          selectedDecoration: selectedDecoration,
           subtitle: subtitle,
           trailing: markers.isEmpty
               ? null

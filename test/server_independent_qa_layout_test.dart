@@ -98,9 +98,15 @@ void main() {
               );
               final reason = 'live: $type $width ×$scale';
               expect(tester.takeException(), isNull, reason: reason);
+              // Refine-look §8.2: the channel header says LIVE with a lamp
+              // (`server-live-lamp`, an 8 px dot before the clock line)
+              // instead of a second pill; the pill stays on the scene's card
+              // and on the rows. Either is the marker, and neither may be
+              // crushed.
+              final lamp = find.byKey(const ValueKey('server-live-lamp'));
               expect(
-                qaLivePill,
-                findsWidgets,
+                qaLivePill.evaluate().length + lamp.evaluate().length,
+                greaterThan(0),
                 reason: '$reason — a live generation showed no marker',
               );
               final markers = qaLivePill.evaluate().length;
@@ -109,6 +115,17 @@ void main() {
                   tester.getSize(qaLivePill.at(index)).height,
                   greaterThan(8),
                   reason: '$reason — a live marker was crushed to a bar',
+                );
+              }
+              for (var index = 0; index < lamp.evaluate().length; index++) {
+                final dot = find.descendant(
+                  of: lamp.at(index),
+                  matching: find.byType(FadeTransition),
+                );
+                expect(
+                  tester.getSize(dot).shortestSide,
+                  greaterThanOrEqualTo(8),
+                  reason: '$reason — the live lamp was crushed',
                 );
               }
               expect(
