@@ -5,7 +5,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/features/achievements/presentation/screens/achievements_screen.dart';
 import 'package:yovoice/features/bug_reports/presentation/bug_report_launcher.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_studio_screen.dart';
@@ -24,6 +26,7 @@ import 'package:yovoice/features/settings/presentation/screens/settings_screen.d
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/screens/staff_center_screen.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -237,8 +240,14 @@ Future<MoreDestination?> showDesktopMoreMenu(
 }) async {
   final palette = context.appPalette;
   final colors = Theme.of(context).colorScheme;
+  final highContrast = MediaQuery.highContrastOf(context);
   final copy = AppLocalizations.of(context);
   final lockColor = palette.warningForeground;
+  // Above 1.3 × text the fixed 300 px panel cut every subtitle to one line
+  // ("Osoby warte obser…") and the 58 px rows touched: large text gets a
+  // wider panel, two subtitle lines and 4 px of air above and below each
+  // row. Nothing changes at the default size.
+  final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.3;
   // Moments and Servers are deliberately absent: they are rail items, and
   // listing them here as well would show the same destination twice.
   // Friends and Find creators remain secondary destinations in this popover.
@@ -318,29 +327,40 @@ Future<MoreDestination?> showDesktopMoreMenu(
     // around the panel on the dark Home surface; a translucent one
     // reads as depth instead.
     shadowColor: palette.shadow.withValues(alpha: .24),
-    // Slim: radius 12 and a tonal glyph (container pair), so the popover
-    // adds no second violet accent next to the rail's selected item.
+    // Refine-look R16: the tile radius (16), a hairline edge (`borderStrong`
+    // under high contrast) and the tonal glyph box, so the popover adds no
+    // second violet accent next to the rail's selected item. Its opener, the
+    // rail item, is untouched.
     shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(12),
-      side: BorderSide(color: palette.border),
+      borderRadius: AppRadius.tile,
+      side: BorderSide(
+        color: highContrast ? palette.borderStrong : palette.hairline,
+      ),
     ),
-    constraints: const BoxConstraints(minWidth: 264, maxWidth: 300),
+    constraints: BoxConstraints(minWidth: 264, maxWidth: largeText ? 360 : 300),
     items: [
       for (final (destination, icon, label, subtitle) in items)
         PopupMenuItem<MoreDestination>(
           value: destination,
           height: 58,
+          padding: largeText
+              ? const EdgeInsets.symmetric(horizontal: 12, vertical: 4)
+              : null,
           child: Row(
             children: [
               Container(
                 width: 34,
                 height: 34,
                 alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: colors.primaryContainer,
-                  borderRadius: BorderRadius.circular(10),
+                decoration: AppFinish.glyphBox(
+                  colors,
+                  highContrast: highContrast,
                 ),
-                child: Icon(icon, size: 22, color: colors.onPrimaryContainer),
+                child: Icon(
+                  icon,
+                  size: 22,
+                  color: palette.interactiveForeground,
+                ),
               ),
               const SizedBox(width: 11),
               Expanded(
@@ -358,7 +378,7 @@ Future<MoreDestination?> showDesktopMoreMenu(
                     ),
                     Text(
                       subtitle,
-                      maxLines: 1,
+                      maxLines: largeText ? 2 : 1,
                       overflow: TextOverflow.ellipsis,
                       // Explicit w500: the menu item's inherited label
                       // weight made the secondary line as heavy as the title.
@@ -486,6 +506,83 @@ staffEntriesFor(StaffCapabilities capabilities) {
   return entries;
 }
 
+/// The floating More sheet's fill (refine-look R16). Dark keeps its raised
+/// surface; Pearl sits on the paper canvas so the lit white tiles lift off
+/// it. High contrast stays one flat raised surface.
+@visibleForTesting
+Color moreSheetSurface(AppPalette palette, {bool highContrast = false}) =>
+    !highContrast && !palette.isDark
+    ? palette.background
+    : palette.surfaceRaised;
+
+/// The sheet's lift. Pearl: a plum contact line plus one soft, pulled-in
+/// drop — it replaces the old @ .34 band, which read as a muddy plum smear
+/// under the sheet. Dark keeps its black drop (invisible on the scrim, but
+/// it keeps the edge from glowing). None under high contrast.
+@visibleForTesting
+List<BoxShadow> moreSheetShadows(
+  AppPalette palette, {
+  bool highContrast = false,
+}) {
+  if (highContrast) return const <BoxShadow>[];
+  if (palette.isDark) {
+    return <BoxShadow>[
+      BoxShadow(
+        color: palette.shadow.withValues(alpha: .34),
+        blurRadius: 28,
+        offset: const Offset(0, 12),
+      ),
+    ];
+  }
+  return <BoxShadow>[
+    BoxShadow(
+      color: palette.shadow.withValues(alpha: .10),
+      blurRadius: 2,
+      offset: const Offset(0, 1),
+    ),
+    BoxShadow(
+      color: palette.shadow.withValues(alpha: .24),
+      blurRadius: 40,
+      offset: const Offset(0, 18),
+      spreadRadius: -12,
+    ),
+  ];
+}
+
+/// A launcher tile's surface (refine-look R16): radius `tile`, Dark `glass`,
+/// Pearl `surfaceRaised` with the block shadow pair. The edge is painted by
+/// the tile itself. High contrast: flat `surface`, no shadow.
+@visibleForTesting
+BoxDecoration moreTileDecoration(
+  AppPalette palette, {
+  bool highContrast = false,
+}) {
+  if (highContrast) {
+    return BoxDecoration(color: palette.surface, borderRadius: AppRadius.tile);
+  }
+  return BoxDecoration(
+    color: palette.isDark ? palette.glass : palette.surfaceRaised,
+    borderRadius: AppRadius.tile,
+    boxShadow: palette.blockShadows,
+  );
+}
+
+/// The one-layer row / tile washes (R16): hover textPrimary @ .04 (Dark) or
+/// interactiveForeground @ .05 (Pearl), pressed interactiveForeground @ .10.
+/// Focus is a ring, not a wash.
+WidgetStateProperty<Color?> _moreRowOverlay(AppPalette palette) =>
+    WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.pressed)) {
+        return palette.interactiveForeground.withValues(alpha: .10);
+      }
+      if (states.contains(WidgetState.hovered)) {
+        return palette.isDark
+            ? palette.textPrimary.withValues(alpha: .04)
+            : palette.interactiveForeground.withValues(alpha: .05);
+      }
+      return Colors.transparent;
+    });
+
 class MoreSheet extends StatefulWidget {
   const MoreSheet({
     this.capabilityService,
@@ -606,20 +703,19 @@ class _MoreSheetState extends State<MoreSheet> {
     // its own content up to a share of the viewport.
     final media = MediaQuery.of(context);
     final dockClearance = 84 + media.viewPadding.bottom;
+    final highContrast = media.highContrast;
+    final sheetSurface = moreSheetSurface(palette, highContrast: highContrast);
     final content = Container(
+      key: const ValueKey('more-sheet-surface'),
       margin: EdgeInsets.fromLTRB(10, 0, 10, dockClearance),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: palette.surfaceRaised,
+        color: sheetSurface,
         borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: palette.border),
-        boxShadow: [
-          BoxShadow(
-            color: palette.shadow.withValues(alpha: .34),
-            blurRadius: 28,
-            offset: const Offset(0, 12),
-          ),
-        ],
+        border: Border.all(
+          color: highContrast ? palette.borderStrong : palette.hairline,
+        ),
+        boxShadow: moreSheetShadows(palette, highContrast: highContrast),
       ),
       // Slim: the floating sheet is one flat surface. The page scenery that
       // used to be repeated inside it (`YoAtmosphereArt`) stays on the canvas
@@ -632,7 +728,7 @@ class _MoreSheetState extends State<MoreSheet> {
               YoModalSheetChrome(
                 key: ValueKey('more-sheet-drag-handle'),
                 sheetLabel: copy.text('More menu', 'Menu Więcej'),
-                surfaceColor: palette.surfaceRaised,
+                surfaceColor: sheetSurface,
                 // In the chrome band, opposite Close: it adds no height, so
                 // the compact sheet still fits 320x568 without scrolling.
                 leading: widget.onReportBug == null
@@ -667,13 +763,15 @@ class _MoreSheetState extends State<MoreSheet> {
                                 _AvailabilityRow(
                                   profileService: widget.profileService,
                                 ),
-                                // The sheet's one headline: 20 px w800.
+                                // The sheet's one headline: 20 px, calmed
+                                // to the w700 cap (refine-look §2.6).
                                 Text(
                                   copy.more,
                                   style: TextStyle(
                                     color: palette.textPrimary,
                                     fontSize: 20,
-                                    fontWeight: FontWeight.w800,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: -.3,
                                   ),
                                 ),
                               ],
@@ -1002,6 +1100,7 @@ class _MoreTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    final highContrast = MediaQuery.highContrastOf(context);
     final lockColor = palette.warningForeground;
     final copy = AppLocalizations.of(context);
     final semanticLabel = [
@@ -1018,96 +1117,86 @@ class _MoreTile extends StatelessWidget {
       label: semanticLabel,
       onTap: open,
       excludeSemantics: true,
-      // Slim tile: one flat layer (1 px `palette.border`, radius 12) with a
-      // tonal 22 px glyph — the sheet carries no violet accent of its own.
-      child: Material(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          onTap: open,
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            // The launcher's compact density, as a floor rather than a fixed
-            // height: short labels keep the 62dp row the grid always drew and
-            // a comfortable 44px+ touch target, longer ones grow the row.
-            constraints: const BoxConstraints(minHeight: 62),
-            // 6 + 32 + 8 (was 8 + 34 + 8): four more pixels for the label,
-            // so "Powiadomienia" stays one word on a 390 px phone. The
-            // column-count estimate above still subtracts the old 58, which
-            // keeps every grid/fallback branch decision exactly as it was.
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: palette.border),
-            ),
-            child: Stack(
+      // Refine-look R16 tile: radius 16, Dark glass / Pearl lit white with
+      // the block shadow pair, a hairline edge and the tonal glyph box — the
+      // sheet still carries no violet accent of its own.
+      child: _MoreTileSurface(
+        onTap: open,
+        // The launcher's compact density, as a floor rather than a fixed
+        // height: short labels keep the 62dp row the grid always drew and
+        // a comfortable 44px+ touch target, longer ones grow the row.
+        minHeight: 62,
+        // 6 + 32 + 8 (was 8 + 34 + 8): four more pixels for the label,
+        // so "Powiadomienia" stays one word on a 390 px phone. The
+        // column-count estimate above still subtracts the old 58, which
+        // keeps every grid/fallback branch decision exactly as it was.
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        child: Stack(
+          children: [
+            Row(
               children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: colors.primaryContainer,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(
-                        icon,
-                        color: colors.onPrimaryContainer,
-                        size: 22,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Two lines each: the tile column is ~110dp wide on
-                          // a 392dp phone, which is narrower than "Znajdź
-                          // twórców", "Powiadomienia" or "Osoby warte
-                          // obserwowania" — and narrower still on a 360dp one
-                          // or at 1.3x text. The row grows to hold them; the
-                          // ellipsis stays as the bound for a longer locale.
-                          Text(
-                            label,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: palette.textPrimary,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 1),
-                          Text(
-                            subtitle,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: palette.textSecondary,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                if (isLocked)
-                  Positioned(
-                    top: 0,
-                    right: 0,
-                    child: Icon(
-                      Icons.lock_rounded,
-                      key: ValueKey('mobile-premium-lock-${destination.name}'),
-                      color: lockColor,
-                      size: 16,
-                    ),
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: AppFinish.glyphBox(
+                    colors,
+                    highContrast: highContrast,
                   ),
+                  child: Icon(
+                    icon,
+                    color: palette.interactiveForeground,
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Two lines each: the tile column is ~110dp wide on
+                      // a 392dp phone, which is narrower than "Znajdź
+                      // twórców", "Powiadomienia" or "Osoby warte
+                      // obserwowania" — and narrower still on a 360dp one
+                      // or at 1.3x text. The row grows to hold them; the
+                      // ellipsis stays as the bound for a longer locale.
+                      Text(
+                        label,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
-          ),
+            if (isLocked)
+              Positioned(
+                top: 0,
+                right: 0,
+                child: Icon(
+                  Icons.lock_rounded,
+                  key: ValueKey('mobile-premium-lock-${destination.name}'),
+                  color: lockColor,
+                  size: 16,
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -1131,18 +1220,15 @@ class _WideMoreTile extends StatelessWidget {
   final bool isLocked;
 
   /// Staff entries carry their tier's color from the theme; everything
-  /// else keeps the sheet's violet accent.
+  /// else keeps the sheet's tonal glyph box.
   final Color? accentColor;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    // Ordinary rows are tonal (container pair); staff rows keep their tier's
-    // role colour, which is identity, not a decorative accent.
-    final accent = accentColor ?? colors.onPrimaryContainer;
-    final glyphSurface =
-        accentColor?.withValues(alpha: .18) ?? colors.primaryContainer;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final accent = accentColor;
     final lockColor = palette.warningForeground;
     final copy = AppLocalizations.of(context);
     final semanticLabel = [
@@ -1152,6 +1238,25 @@ class _WideMoreTile extends StatelessWidget {
     ].join(', ');
     void open() => Navigator.pop(context, destination);
 
+    // Ordinary rows use the tonal glyph box (R16); staff rows keep their
+    // tier's role colour — on the glyph and the edge — because it is
+    // identity, not a decorative accent.
+    final glyph = Container(
+      width: 38,
+      height: 38,
+      decoration: accent == null
+          ? AppFinish.glyphBox(colors, highContrast: highContrast)
+          : BoxDecoration(
+              color: accent.withValues(alpha: .18),
+              borderRadius: AppRadius.card,
+            ),
+      child: Icon(
+        icon,
+        color: accent ?? palette.interactiveForeground,
+        size: 22,
+      ),
+    );
+
     return Semantics(
       key: ValueKey('more-destination-${destination.name}'),
       button: true,
@@ -1159,68 +1264,124 @@ class _WideMoreTile extends StatelessWidget {
       label: semanticLabel,
       onTap: open,
       excludeSemantics: true,
-      child: Material(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          onTap: open,
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 58),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: accentColor?.withValues(alpha: .5) ?? palette.border,
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: glyphSurface,
-                    borderRadius: BorderRadius.circular(10),
+      child: _MoreTileSurface(
+        onTap: open,
+        minHeight: 58,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        edgeColor: accent?.withValues(alpha: .5),
+        child: Row(
+          children: [
+            glyph,
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                  child: Icon(icon, color: accent, size: 22),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label,
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        style: TextStyle(
-                          color: palette.textSecondary,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (isLocked) ...[
-                  const SizedBox(width: 6),
-                  Icon(
-                    Icons.lock_rounded,
-                    key: ValueKey('mobile-premium-lock-${destination.name}'),
-                    color: lockColor,
-                    size: 17,
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 11,
+                    ),
                   ),
                 ],
-                const SizedBox(width: 4),
-                Icon(Icons.chevron_right_rounded, color: palette.textTertiary),
-              ],
+              ),
+            ),
+            if (isLocked) ...[
+              const SizedBox(width: 6),
+              Icon(
+                Icons.lock_rounded,
+                key: ValueKey('mobile-premium-lock-${destination.name}'),
+                color: lockColor,
+                size: 17,
+              ),
+            ],
+            const SizedBox(width: 4),
+            Icon(Icons.chevron_right_rounded, color: palette.textTertiary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The shared R16 tile surface of the More sheet: the [moreTileDecoration]
+/// fill (and Pearl lift) under a transparent Material, so the row washes
+/// paint on the tile; a 1 px hairline edge ([edgeColor] for a staff row,
+/// `borderStrong` under high contrast); a 2 px focus ring painted as a
+/// foreground, so focus never shifts the layout; and the .97 touch press.
+class _MoreTileSurface extends StatefulWidget {
+  const _MoreTileSurface({
+    required this.onTap,
+    required this.minHeight,
+    required this.padding,
+    required this.child,
+    this.edgeColor,
+  });
+
+  final VoidCallback onTap;
+  final double minHeight;
+  final EdgeInsetsGeometry padding;
+  final Widget child;
+  final Color? edgeColor;
+
+  @override
+  State<_MoreTileSurface> createState() => _MoreTileSurfaceState();
+}
+
+class _MoreTileSurfaceState extends State<_MoreTileSurface> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final edge =
+        widget.edgeColor ??
+        (highContrast ? palette.borderStrong : palette.hairline);
+    return YoPressFeedback(
+      scale: YoPressFeedback.tile,
+      child: DecoratedBox(
+        decoration: moreTileDecoration(palette, highContrast: highContrast),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            onTap: widget.onTap,
+            borderRadius: AppRadius.tile,
+            overlayColor: _moreRowOverlay(palette),
+            // The tile already answers a press with the .97 scale and the
+            // pressed wash; like YoCard (R2), no ink ripple on top of that
+            // off Android, and InkSparkle on Android.
+            splashFactory:
+                !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+                ? InkSparkle.splashFactory
+                : NoSplash.splashFactory,
+            onFocusChange: (value) {
+              if (_focused != value) setState(() => _focused = value);
+            },
+            child: Container(
+              constraints: BoxConstraints(minHeight: widget.minHeight),
+              padding: widget.padding,
+              decoration: BoxDecoration(
+                borderRadius: AppRadius.tile,
+                border: Border.all(color: edge),
+              ),
+              foregroundDecoration: _focused
+                  ? BoxDecoration(
+                      borderRadius: AppRadius.tile,
+                      border: Border.all(color: palette.focus, width: 2),
+                    )
+                  : null,
+              child: widget.child,
             ),
           ),
         ),

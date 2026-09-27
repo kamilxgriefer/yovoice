@@ -173,6 +173,11 @@ class UserAvatar extends StatelessWidget {
 ///   get `palette.hairline` in both themes. Which one shows is decided by
 ///   whether the fallback is actually on screen, so a photo that fails to
 ///   load swaps to the letter ring with it.
+/// * High contrast (refine-look principle 4): no gradient, top light or
+///   letter shadow. The letter disc is the darker letter-avatar stop (the
+///   higher-contrast one for the white initial), an opaque custom fill stays
+///   solid, and both letters and photos get a 1 px `palette.borderStrong`
+///   ring.
 class _BrandAvatar extends StatefulWidget {
   const _BrandAvatar({
     required this.radius,
@@ -215,10 +220,17 @@ class _BrandAvatarState extends State<_BrandAvatar> {
     final fill = widget.backgroundColor;
     final usesLetterGradient = fill == UserAvatar.defaultFill;
     final opaque = fill.a >= 1;
+    final highContrast = MediaQuery.maybeHighContrastOf(context) ?? false;
 
     final Decoration decoration;
     final Color resolvedFill;
-    if (usesLetterGradient) {
+    if (highContrast && usesLetterGradient) {
+      resolvedFill = AppGradients.letterAvatar.colors.last;
+      decoration = BoxDecoration(color: resolvedFill);
+    } else if (highContrast && opaque) {
+      decoration = BoxDecoration(color: fill);
+      resolvedFill = fill;
+    } else if (usesLetterGradient) {
       decoration = BoxDecoration(gradient: AppGradients.letterAvatar);
       resolvedFill = AppGradients.letterAvatar.colors.first;
     } else if (opaque) {
@@ -255,7 +267,7 @@ class _BrandAvatarState extends State<_BrandAvatar> {
               fontSize: diameter * .38,
               letterSpacing: -.3,
               height: 1.1,
-              shadows: diameter >= 40
+              shadows: diameter >= 40 && !highContrast
                   ? <Shadow>[
                       Shadow(
                         color: AppColors.black.withValues(alpha: .25),
@@ -267,7 +279,9 @@ class _BrandAvatarState extends State<_BrandAvatar> {
             ),
           );
 
-    final letterRing = palette.isDark
+    final letterRing = highContrast
+        ? palette.borderStrong
+        : palette.isDark
         ? AppColors.white.withValues(alpha: .08)
         : null;
 
@@ -300,7 +314,9 @@ class _BrandAvatarState extends State<_BrandAvatar> {
               painter: _AvatarRingPainter(
                 showsFallback: _showsFallback,
                 letterRing: letterRing,
-                photoRing: palette.hairline,
+                photoRing: highContrast
+                    ? palette.borderStrong
+                    : palette.hairline,
               ),
             ),
           ),

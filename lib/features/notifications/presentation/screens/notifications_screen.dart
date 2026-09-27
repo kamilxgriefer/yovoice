@@ -7,11 +7,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/badges/yo_metric_pill.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
 import 'package:flutter/semantics.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
@@ -357,18 +359,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       backgroundColor: palette.background,
       body: YoPageBackground(
         key: const ValueKey('notifications-background'),
-        decoration: BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment(-0.85, -0.95),
-            radius: 1.25,
-            colors: [
-              colors.primaryContainer.withValues(alpha: .68),
-              palette.backgroundTop,
-              palette.background,
-            ],
-            stops: [0, 0.38, 1],
-          ),
-        ),
+        // Refine-look R1: the one shared canvas radial (Chats / Friends /
+        // Settings), replacing this screen's own primaryContainer @ .68
+        // bloom, which read about twice as strong as its siblings and broke
+        // the light budget (Notifications emits no light). Omitted under
+        // high contrast.
+        decoration: MediaQuery.highContrastOf(context)
+            ? null
+            : BoxDecoration(gradient: palette.canvasGlow(colors.primary)),
         child: SafeArea(
           child: ResponsiveContentFrame(
             width: ResponsiveContentWidth.list,
@@ -410,14 +408,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Slim title: the screen's one headline, 22 px w800.
-                Text(
-                  copy.notifications,
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.3,
+                // The screen's one headline: `screenTitle` (22 w700 -0.5).
+                // "Powiadomienia" is one long word: at 200 % text it is
+                // wider than a phone row and used to break mid-word, so the
+                // single line scales down only as far as it must to fit.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Text(
+                    copy.notifications,
+                    maxLines: 1,
+                    style: AppTypography.screenTitle.copyWith(
+                      color: palette.textPrimary,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 3),
@@ -780,7 +783,7 @@ class _ActivityHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final colors = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
     return LayoutBuilder(
       builder: (context, constraints) {
         final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
@@ -802,8 +805,11 @@ class _ActivityHeader extends StatelessWidget {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.end,
+                  // `interactiveForeground`, not `colors.primary`: 12 px
+                  // #7B2FF7 on the Dark canvas was 3.35:1, under AA for
+                  // text; this is 7.37:1 Dark / 6.27:1 Pearl.
                   style: TextStyle(
-                    color: colors.primary,
+                    color: palette.interactiveForeground,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
@@ -956,7 +962,7 @@ class _FriendRequestCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: palette.surface,
         borderRadius: BorderRadius.circular(_notificationCardRadius),
-        border: Border.all(color: palette.border),
+        border: Border.all(color: _cardEdge(context)),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -1045,7 +1051,7 @@ class _UnreadMessageCard extends StatelessWidget {
           padding: _notificationCardPadding,
           decoration: BoxDecoration(
             borderRadius: radius,
-            border: Border.all(color: palette.border),
+            border: Border.all(color: _cardEdge(context)),
           ),
           child: Row(
             children: [
@@ -1094,7 +1100,7 @@ class _UnreadMessageCard extends StatelessWidget {
                   style: TextStyle(
                     color: colors.onError,
                     fontSize: 10,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -1346,31 +1352,46 @@ class _NotificationCard extends StatelessWidget {
     final usesLargeText = scaledBodySize >= 21;
     final localizedTitle = _localizedTitle(context);
 
-    final avatar = Stack(
-      children: [
-        _Avatar(
-          userId: notification.actorId,
-          name: notification.actorName,
-          photoUrl: notification.actorPhotoUrl ?? '',
-        ),
-        Positioned(
-          right: -2,
-          bottom: -2,
-          child: Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: palette.surfaceRaised,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              _icons[notification.type] ?? Icons.notifications_rounded,
-              color: colors.primary,
-              size: 13,
-            ),
-          ),
-        ),
-      ],
-    );
+    // Only a notice with no actor is YO Voice itself; a system row that
+    // names a person keeps that person's avatar.
+    final systemSender =
+        notification.type == NotificationType.system &&
+        notification.actorId.isEmpty;
+    // The system sender is the real logo, bare (refine-look §4): the type
+    // badge would cut into the mark, and the logo already says who sent it.
+    // The badge is decoration without semantics, so nothing is lost.
+    final avatar = systemSender
+        ? const _Avatar(
+            userId: '',
+            name: 'YO Voice',
+            photoUrl: '',
+            systemSender: true,
+          )
+        : Stack(
+            children: [
+              _Avatar(
+                userId: notification.actorId,
+                name: notification.actorName,
+                photoUrl: notification.actorPhotoUrl ?? '',
+              ),
+              Positioned(
+                right: -2,
+                bottom: -2,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: palette.surfaceRaised,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    _icons[notification.type] ?? Icons.notifications_rounded,
+                    color: colors.primary,
+                    size: 13,
+                  ),
+                ),
+              ),
+            ],
+          );
     final notificationCopy = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1533,9 +1554,7 @@ class _NotificationCard extends StatelessWidget {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(_notificationCardRadius),
                 border: Border.all(
-                  color: notification.isRead
-                      ? palette.border
-                      : colors.primary.withValues(alpha: 0.55),
+                  color: _cardEdge(context, unread: !notification.isRead),
                 ),
               ),
               child: LayoutBuilder(
@@ -1592,32 +1611,68 @@ class _Avatar extends StatelessWidget {
     required this.userId,
     required this.name,
     required this.photoUrl,
+    this.systemSender = false,
   });
 
   final String userId;
   final String name;
   final String photoUrl;
 
+  /// A notice YO Voice itself sent: a `system` row with no actor. It shows
+  /// the real logo, bare, instead of a letter disc (refine-look §4).
+  final bool systemSender;
+
   /// Slim avatar: 44 px (40–48 band), no decorative gradient ring.
   static const double diameter = 44;
 
+  /// The system sender's logo box inside the 44 px slot.
+  static const double logoSize = 40;
+
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    if (systemSender) {
+      return const SizedBox(
+        width: diameter,
+        height: diameter,
+        child: Center(
+          child: YoBrandMark(
+            key: ValueKey('notification-system-sender-logo'),
+            size: logoSize,
+            light: YoBrandLight.none,
+          ),
+        ),
+      );
+    }
     return SizedBox(
       width: diameter,
       height: diameter,
       child: ClipOval(
+        // R10 brand finish: the one letter gradient and a hairline ring.
         child: UserAvatar(
           radius: diameter / 2,
           userId: userId,
           photoUrl: photoUrl,
           displayName: name,
-          backgroundColor: colors.primary,
+          finish: UserAvatarFinish.brand,
         ),
       ),
     );
   }
+}
+
+/// The 1 px edge of the inbox's cards. They stay one flat `surface` layer
+/// in every mode; the edge is `border` (an unread activity row keeps its
+/// primary @ .55 tint, which carries the unread state with the dot). High
+/// contrast brings back `borderStrong`, and an unread row gets the full
+/// `interactiveForeground` instead of a translucent tint.
+Color _cardEdge(BuildContext context, {bool unread = false}) {
+  final palette = context.appPalette;
+  if (MediaQuery.highContrastOf(context)) {
+    return unread ? palette.interactiveForeground : palette.borderStrong;
+  }
+  return unread
+      ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.55)
+      : palette.border;
 }
 
 /// Slim card geometry shared by the inbox's three card kinds: radius 12 and
@@ -1723,7 +1778,7 @@ class _EmptyState extends StatelessWidget {
               style: TextStyle(
                 color: palette.textPrimary,
                 fontSize: 18,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 7),
@@ -1742,8 +1797,9 @@ class _EmptyState extends StatelessWidget {
                 onPressed: onRetry,
                 child: Text(
                   copy.text('Try again', 'Spróbuj ponownie'),
+                  // AA text contrast in Dark (primary was ≈ 3.4:1).
                   style: TextStyle(
-                    color: colors.primary,
+                    color: palette.interactiveForeground,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),

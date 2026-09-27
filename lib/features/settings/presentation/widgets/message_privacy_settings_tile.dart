@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/settings/data/models/message_privacy.dart';
 import 'package:yovoice/features/settings/data/services/message_privacy_service.dart';
@@ -54,17 +55,23 @@ class _MessagePrivacySettingsTileState
                   ),
                 )
               : null,
+          // R16 row washes and glyph box, matching the Settings rows it
+          // sits between (refine-look §8.6).
+          hoverColor: palette.isDark
+              ? palette.textPrimary.withValues(alpha: .04)
+              : palette.interactiveForeground.withValues(alpha: .05),
+          splashColor: palette.interactiveForeground.withValues(alpha: .10),
           leading: Container(
             width: 40,
             height: 40,
             alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: colors.primaryContainer,
-              borderRadius: BorderRadius.circular(12),
+            decoration: AppFinish.glyphBox(
+              colors,
+              highContrast: MediaQuery.highContrastOf(context),
             ),
             child: Icon(
               Icons.forum_outlined,
-              color: colors.onPrimaryContainer,
+              color: palette.interactiveForeground,
               size: 22,
             ),
           ),

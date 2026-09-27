@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/features/settings/presentation/screens/app_language_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/appearance_settings_screen.dart';
 
@@ -87,7 +89,8 @@ class _SectionLabel extends StatelessWidget {
     return Semantics(
       header: true,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+        // Inset 16 like Settings' own group labels (refine-look §8.6).
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
         child: Text(
           text.toUpperCase(),
           style: TextStyle(
@@ -110,16 +113,32 @@ class _PreferenceGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    // The same flat group as the Settings rows around it: one layer, 1 px
-    // `palette.border`, radius 12.
-    return Material(
-      color: palette.surfaceMuted,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: palette.border),
+    final highContrast = MediaQuery.highContrastOf(context);
+    // The same group as the Settings groups around it (refine-look R2): the
+    // top-lit block fill, a hairline edge, radius 20 and Pearl's shadow pair
+    // on an outer box; the fill is `Ink` on a transparent Material so the
+    // row's ink still paints above it. High contrast: flat `surface`,
+    // `borderStrong`, no gradient or shadow.
+    final fill = AppFinish.blockFill(palette, highContrast: highContrast);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: AppRadius.block,
+        boxShadow: fill.boxShadow,
       ),
-      clipBehavior: Clip.antiAlias,
-      child: child,
+      child: Material(
+        type: MaterialType.transparency,
+        shape: RoundedRectangleBorder(
+          borderRadius: AppRadius.block,
+          side: BorderSide(
+            color: highContrast ? palette.borderStrong : palette.hairline,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Ink(
+          decoration: BoxDecoration(color: fill.color, gradient: fill.gradient),
+          child: child,
+        ),
+      ),
     );
   }
 }
@@ -149,15 +168,21 @@ class _PreferenceTile extends StatelessWidget {
       minLeadingWidth: 40,
       horizontalTitleGap: 12,
       onTap: onTap,
+      // R16 row washes, as on the Settings rows around it.
+      hoverColor: palette.isDark
+          ? palette.textPrimary.withValues(alpha: .04)
+          : palette.interactiveForeground.withValues(alpha: .05),
+      splashColor: palette.interactiveForeground.withValues(alpha: .10),
+      // R16 glyph box: the scheme's container pair, `interactiveForeground`.
       leading: Container(
         width: 40,
         height: 40,
         alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: colors.primaryContainer,
-          borderRadius: BorderRadius.circular(12),
+        decoration: AppFinish.glyphBox(
+          colors,
+          highContrast: MediaQuery.highContrastOf(context),
         ),
-        child: Icon(icon, color: colors.onPrimaryContainer, size: 22),
+        child: Icon(icon, color: palette.interactiveForeground, size: 22),
       ),
       title: Text(
         title,
