@@ -104,6 +104,17 @@ regional quota), then delete the schedule with
 
 ## Build 36 (YO Voice 3.1.0+36) — one deploy order for the whole build (source only, NOTHING DEPLOYED)
 
+> **Update 2026-09-27 — this entry's status is superseded.** Build 36 reached
+> `main` as one linear release commit, `3fb4e3e4` (`release: YO Voice 3.1.0
+> (36)`), whose tree is byte-identical to `nb/integrate` `edb6709f` (tag
+> `build-36`). That commit records the backend deploy of 2026-09-26 as read
+> back (270 functions ACTIVE, 25 created, 260 updated; Firestore and Storage
+> rules released and diffed identical; 51 indexes READY). Firebase Hosting
+> serves `3.1.0` build `36` (`version.json` read on 2026-09-27). The refine
+> session's comparison page stated on 2026-09-26 that build 36 is with
+> testers; the store consoles were not re-read for this note. The text below
+> is the state as written on 2026-09-26 and is kept as the record.
+
 Source: `nb/integrate` at `5d514a79` (the build 36 review round) plus this
 documentation commit. It carries everything that is not yet in production:
 
