@@ -58,7 +58,6 @@ class HomeQuickActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final colors = Theme.of(context).colorScheme;
     final palette = context.appPalette;
     final highContrast = MediaQuery.highContrastOf(context);
     return LayoutBuilder(
@@ -88,31 +87,29 @@ class HomeQuickActions extends StatelessWidget {
             AppRhythm.tight;
         final stacked =
             constraints.maxWidth < minimumActionWidth * 2 + AppRhythm.item;
-        // Filled primary controls take their `onPrimary` foreground as the
-        // 2 px keyboard boundary (UI.md); a neutral pill keeps `focus`.
-        final neutralCreate = createEmphasis == YoActionEmphasis.neutral;
-        final createPill = _FocusOutline(
-          radius: 999,
-          color: neutralCreate ? null : colors.onPrimary,
-          child: Tooltip(
-            message: copy.homeStartConversation,
-            // Shrink-wrapped inside the primitive: Material otherwise
-            // inflates the LAYOUT box to 48 px around a 44 px control, and
-            // those two invisible pixels turned Home's declared 12 px gap
-            // into a measured 14. The 44 px target is the `minimumSize`.
-            child: YoGradientFilledButton(
-              key: const ValueKey('home-quick-create-server'),
-              onPressed: onCreateRoom,
-              style: const ButtonStyle(visualDensity: VisualDensity.standard),
-              minimumSize: const Size(0, AppSizing.minimumTouchTarget),
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppRhythm.title,
-                vertical: AppRhythm.tight,
-              ),
-              emphasis: createEmphasis,
-              icon: const Icon(Icons.add_rounded, size: 20),
-              child: Text(copy.homeCreateServer, textAlign: TextAlign.center),
+        // No `_FocusOutline` here: the primitive owns its one keyboard-focus
+        // indicator in every emphasis (the gradient's `onPrimary` band, with
+        // its outer `focus` band in Pearl and high contrast; the neutral
+        // pill's `focus` edge), and a wrapper ring on top of it would double
+        // or thicken the ring the moment either painter changed (UI.md).
+        final createPill = Tooltip(
+          message: copy.homeStartConversation,
+          // Shrink-wrapped inside the primitive: Material otherwise
+          // inflates the LAYOUT box to 48 px around a 44 px control, and
+          // those two invisible pixels turned Home's declared 12 px gap
+          // into a measured 14. The 44 px target is the `minimumSize`.
+          child: YoGradientFilledButton(
+            key: const ValueKey('home-quick-create-server'),
+            onPressed: onCreateRoom,
+            style: const ButtonStyle(visualDensity: VisualDensity.standard),
+            minimumSize: const Size(0, AppSizing.minimumTouchTarget),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppRhythm.title,
+              vertical: AppRhythm.tight,
             ),
+            emphasis: createEmphasis,
+            icon: const Icon(Icons.add_rounded, size: 20),
+            child: Text(copy.homeCreateServer, textAlign: TextAlign.center),
           ),
         );
         final create = createRoomKey == null
@@ -457,14 +454,14 @@ class HomeRoomsLoading extends StatelessWidget {
 
 /// A parent focus scope paints the boundary without stealing the native
 /// control's keyboard focus or introducing a second semantic action.
+///
+/// It paints the palette `focus` ring for neutral surfaces only. A filled
+/// primary control (`YoGradientFilledButton`) paints its own indicator and
+/// is never wrapped in one.
 class _FocusOutline extends StatefulWidget {
-  const _FocusOutline({required this.child, required this.radius, this.color});
+  const _FocusOutline({required this.child, required this.radius});
   final Widget child;
   final double radius;
-
-  /// The boundary colour; defaults to the palette `focus` ring for neutral
-  /// surfaces. A filled primary control passes its `onPrimary`.
-  final Color? color;
   @override
   State<_FocusOutline> createState() => _FocusOutlineState();
 }
@@ -482,9 +479,7 @@ class _FocusOutlineState extends State<_FocusOutline> {
         borderRadius: BorderRadius.circular(widget.radius),
         border: Border.all(
           width: 2,
-          color: _focused
-              ? (widget.color ?? context.appPalette.focus)
-              : Colors.transparent,
+          color: _focused ? context.appPalette.focus : Colors.transparent,
         ),
       ),
       child: widget.child,

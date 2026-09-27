@@ -2240,7 +2240,7 @@ InputDecoration authInputDecoration({
 /// Height of an auth field (and of the primary auth button beside it).
 const double authFieldHeight = 52;
 
-class AuthPrimaryButton extends StatefulWidget {
+class AuthPrimaryButton extends StatelessWidget {
   const AuthPrimaryButton({
     required this.label,
     required this.loading,
@@ -2265,29 +2265,12 @@ class AuthPrimaryButton extends StatefulWidget {
   static const double labelLineHeight = 1.2;
   static const double verticalPadding = 12;
 
-  @override
-  State<AuthPrimaryButton> createState() => _AuthPrimaryButtonState();
-}
-
-class _AuthPrimaryButtonState extends State<AuthPrimaryButton> {
-  /// The button's own states; the focus edge below follows them.
-  final WidgetStatesController _states = WidgetStatesController();
-
   /// Stands in for `onPressed` while the chain is locked, so the action
   /// keeps its enabled finish; input is blocked around it.
   static void _locked() {}
 
   @override
-  void dispose() {
-    _states.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final label = widget.label;
-    final loading = widget.loading;
-    final onPressed = widget.onPressed;
     final copy = AppLocalizations.of(context);
     // The chain locks every action (onPressed == null) while one runs or the
     // mode relay plays. As before, a locked action keeps its fill rather
@@ -2295,8 +2278,9 @@ class _AuthPrimaryButtonState extends State<AuthPrimaryButton> {
     // pointer and focus are blocked around it. Only the action whose own
     // work runs is busy: it keeps half its lift, shows the white spinner
     // and keeps keyboard focus. The button's radius 12, 52 px height, the
-    // 2 px `onPrimary` focus edge and this one semantics node are
-    // unchanged.
+    // 2 px `onPrimary` focus edge (which `YoGradientFilledButton` paints
+    // over its own gradient; under high contrast it adds its outer `focus`
+    // band) and this one semantics node are unchanged.
     final locked = onPressed == null;
     final idleLock = locked && !loading;
     return Semantics(
@@ -2314,40 +2298,28 @@ class _AuthPrimaryButtonState extends State<AuthPrimaryButton> {
             ignoring: locked,
             child: ExcludeFocus(
               excluding: idleLock,
-              // The 2 px `onPrimary` focus edge is painted over the
-              // gradient: a FilledButton draws its `side` beneath its
-              // content, where the gradient `Ink` would hide it.
-              child: CustomPaint(
-                key: const ValueKey('auth-primary-focus-edge'),
-                foregroundPainter: _AuthFocusEdgePainter(
-                  states: _states,
-                  color: Theme.of(context).colorScheme.onPrimary,
-                  radius: _AuthRadius.control,
+              child: YoGradientFilledButton(
+                onPressed: onPressed ?? _locked,
+                busy: loading,
+                emphasis: idleLock || !lifted
+                    ? YoActionEmphasis.flat
+                    : YoActionEmphasis.lifted,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(_AuthRadius.control),
                 ),
-                child: YoGradientFilledButton(
-                  statesController: _states,
-                  onPressed: onPressed ?? _locked,
-                  busy: loading,
-                  emphasis: idleLock || !widget.lifted
-                      ? YoActionEmphasis.flat
-                      : YoActionEmphasis.lifted,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(_AuthRadius.control),
-                  ),
-                  minimumSize: const Size(64, authFieldHeight),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: AuthPrimaryButton.verticalPadding,
-                  ),
-                  child: Text(
-                    label,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: AppImmersiveColors.textPrimary,
-                      fontSize: 16,
-                      height: AuthPrimaryButton.labelLineHeight,
-                      fontWeight: FontWeight.w700,
-                    ),
+                minimumSize: const Size(64, authFieldHeight),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: AuthPrimaryButton.verticalPadding,
+                ),
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: AppImmersiveColors.textPrimary,
+                    fontSize: 16,
+                    height: AuthPrimaryButton.labelLineHeight,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -2357,46 +2329,6 @@ class _AuthPrimaryButtonState extends State<AuthPrimaryButton> {
       ),
     );
   }
-}
-
-/// The primary action's 2 px keyboard-focus edge, inside its radius-12
-/// shape, painted whenever the button reports [WidgetState.focused] (as the
-/// solid button's `side` did). It repaints from the states alone, so a focus
-/// change never rebuilds the button.
-class _AuthFocusEdgePainter extends CustomPainter {
-  _AuthFocusEdgePainter({
-    required this.states,
-    required this.color,
-    required this.radius,
-  }) : super(repaint: states);
-
-  static const double width = 2;
-
-  final WidgetStatesController states;
-  final Color color;
-  final double radius;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (!states.value.contains(WidgetState.focused)) return;
-    final edge = RRect.fromRectAndRadius(
-      (Offset.zero & size).deflate(width / 2),
-      Radius.circular(radius - width / 2),
-    );
-    canvas.drawRRect(
-      edge,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = width
-        ..color = color,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_AuthFocusEdgePainter oldDelegate) =>
-      oldDelegate.states != states ||
-      oldDelegate.color != color ||
-      oldDelegate.radius != radius;
 }
 
 class _EnsureVisibleOnFocus extends StatefulWidget {

@@ -510,28 +510,20 @@ class _ProfileContent extends StatelessWidget {
       key: const ValueKey('profile-actions'),
       // Refine-look R5: the page's one CTA — the primary action gradient
       // and its lift (the light budget's one CTA lift on Profile). It is
-      // still a FilledButton inside.
-      //
-      // Its gradient is ink laid above the FilledButton's shape border, so
-      // the primitive's 2 px `onPrimary` focus edge never shows; the ring
-      // draws that same edge on top, inside the button's shape.
-      primary: ProfileFocusRing(
-        color: Theme.of(context).colorScheme.onPrimary,
-        borderRadius: const BorderRadius.all(
-          Radius.circular(ProfileActionBar.radius),
-        ),
-        child: YoGradientFilledButton(
-          key: const ValueKey('profile-edit-button'),
-          onPressed: onEdit,
-          shape: ProfileActionBar.shape,
-          minimumSize: minimumSize,
-          padding: padding,
-          child: Text(
-            copy.text('Edit profile', 'Edytuj profil'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
+      // still a FilledButton inside, and it paints its own keyboard-focus
+      // indicator over the gradient, so it is never wrapped in a second
+      // ring (UI.md, semantic colour ownership).
+      primary: YoGradientFilledButton(
+        key: const ValueKey('profile-edit-button'),
+        onPressed: onEdit,
+        shape: ProfileActionBar.shape,
+        minimumSize: minimumSize,
+        padding: padding,
+        child: Text(
+          copy.text('Edit profile', 'Edytuj profil'),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
       // R7 neutral: glass, control hairline, page ink.

@@ -104,10 +104,11 @@ class ProfileMeasure extends StatelessWidget {
 /// [child] (or anything inside it) holds focus: no layout change, and it
 /// lands above whatever the child paints.
 ///
-/// Two profile controls need it:
+/// Two profile surfaces need it:
 ///
-/// * the gradient CTAs ("Edytuj profil", a friend's "Zadzwoń"). Their fill
-///   is an `Ink` gradient laid through `backgroundBuilder`, and ink paints
+/// * a friend's "Zadzwoń", whose own gradient style (not
+///   `YoGradientFilledButton`, which paints its own indicator) is an `Ink`
+///   gradient laid through `backgroundBuilder`, and ink paints
 ///   above the button Material's own shape border, so the 2 px `onPrimary`
 ///   focus edge their styles resolve (R5) never reaches the screen. This
 ///   draws that same edge on top, inside the button's shape

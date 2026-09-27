@@ -51,6 +51,59 @@ is a regression of build 36 unless it says so.
 - **UNVERIFIED on a device** — the startup/sign-in glint, bead gloss and rim at 34–52 px, the W4 amplitude
   halo, haptics and Pearl contact shadows. All refine evidence is Flutter test-renderer frames, plus one real
   Chromium render of the production web sign-in screen.
+## FIXED IN SOURCE — refine-look focus and high-contrast defects caught by the cross-batch review (2026-09-27, cross-batch round, build 37)
+
+Found in the refine-look cross-batch review of the integrated B1–B6, B9, B10
+state. Fixed in source; ships with build 37 (3.2.0+37).
+
+- **The primary gradient action showed no keyboard focus at all.**
+  `YoGradientFilledButton` resolved a 2 px `onPrimary` focus `side`, but a
+  `FilledButton`'s `Material` paints `side` under its child
+  (`borderOnForeground: false`, `button_style_button.dart:609` in the Flutter
+  SDK) and the opaque gradient `Ink` covered it. Only the auth button showed a
+  ring, from a separate painter in `responsive_auth_screen.dart`, and the Start
+  "Stwórz serwer" pill from a `_FocusOutline` wrapper. Invisible on
+  `home-empty-create-server`, `moments-create-cta`, the Moments empty-state
+  CTA and `moment-detail-reply-voice`. Fixed: the button paints its own
+  indicator over everything it draws, and the auth-only painter is gone.
+- **On Pearl that white ring melted into the page, and high contrast did not
+  help.** Its outer side measured 1.11:1 on `background`, 1.04:1 on
+  `surface` and 1.00:1 on white cards, so the pill seemed to shrink by 2 px
+  on focus; the Pearl high-contrast render was identical. Fixed: on a light
+  canvas and under high contrast the indicator is two-tone, the 2 px
+  `onPrimary` band inside plus a 2 px `focus` band outside (6.92:1 on Pearl's
+  `background`, 8.39:1 for Dark high contrast). Rule in
+  [UI.md](UI.md#semantic-colour-ownership), below the palette table.
+- **The Start "Stwórz serwer" pill drew its ring from two painters.** The
+  `_FocusOutline(color: onPrimary)` wrapper and the button's own ring only
+  happened to coincide, so any change to either would have doubled or
+  thickened it. Fixed: the wrapper is gone; the button's indicator (or, in the
+  neutral emphasis, its tonal `focus` edge) is the only one.
+- **A plain `YoChannelRow` grew and moved on focus.** In the channel
+  management sheet a focused row went from 54 to 58 px and its title shifted
+  2 px right and down, because focus added an edge to the `ListTile` shape.
+  Fixed: a plain row draws the same foreground ring as a decorated one and its
+  shape never takes an edge. Those rows have no `onTap`, so only directional
+  (D-pad) navigation focuses them.
+- **The TOTP stage glow stayed on under high contrast.** Fixed:
+  `AnimatedTotpCodeInput` keeps the `totp-stage-glow` box but paints nothing
+  in it under `MediaQuery.highContrastOf`.
+
+Regression tests: `test/yo_refine_primitives_test.dart` (the indicator's
+pixels in Dark, Dark HC, Pearl and Pearl HC, stadium and radius 12, rest,
+hover and busy, plus the neutral emphasis), `test/refine_start_pilot_test.dart`
+(one indicator on the create pill in all three emphases),
+`test/yo_channel_row_test.dart`, `test/refine_auth_startup_test.dart`.
+
+**Still OPEN:**
+
+- **Plain themed `FilledButton`s have the same outer-side gap on Pearl.**
+  `AppTheme`'s `filledButtonTheme` still uses the lone 2 px `onPrimary` band.
+  This follows from the same geometry; it was not rendered in this pass.
+- **Two more `_FocusOutline` wrappers double a ring.** The Start "Znajomi"
+  pill and the circle-recovery "Znajomi" button wrap `OutlinedButton`s whose
+  own style already paints a coincident 2 px `focus` edge. The two rings look
+  like one today; the fix is the same as for the create pill.
 
 ## FIXED — the keep-warm pinger's tests hung on Node 22 in CI (2026-09-26, `nb3/cost-cuts`, ADR-226)
 

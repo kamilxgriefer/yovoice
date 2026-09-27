@@ -16,6 +16,7 @@ const totpCodeInputKey = ValueKey<String>('totp-code-input');
 const totpFactorDropdownKey = ValueKey<String>('totp-factor-dropdown');
 const totpVerifyButtonKey = ValueKey<String>('totp-verify-button');
 const totpMotionStageKey = ValueKey<String>('totp-motion-stage');
+const totpStageGlowKey = ValueKey<String>('totp-stage-glow');
 const totpStatusChannelKey = ValueKey<String>('totp-status-channel');
 const totpLogoKey = ValueKey<String>('totp-logo');
 const totpSuccessBadgeKey = ValueKey<String>('totp-success-badge');

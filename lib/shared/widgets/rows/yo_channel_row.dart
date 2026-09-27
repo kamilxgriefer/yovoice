@@ -61,10 +61,11 @@ class YoChannelRow extends StatefulWidget {
   /// row's ink, with the decoration's [BoxDecoration.border] drawn as a
   /// foreground edge — so selecting a row never moves its content by the
   /// edge's width. It replaces [selectedWash] while [selected]; null keeps
-  /// the plain tile, which paints [selectedWash] itself. On a decorated row
-  /// the 2 px keyboard focus ring is a foreground too (it takes the edge's
-  /// place while focused), so tabbing onto the row never moves it either.
-  /// The caller decides what the finish says — a flat wash is a finish.
+  /// the plain tile, which paints [selectedWash] itself. On every row the
+  /// 2 px keyboard focus ring is a foreground too (on a decorated row it
+  /// takes the edge's place while focused), so tabbing onto the row never
+  /// moves it either. The caller decides what the finish says — a flat wash
+  /// is a finish.
   final BoxDecoration? selectedDecoration;
 
   /// Voiced by the glyph when it carries meaning on its own (the lock).
@@ -98,9 +99,10 @@ class YoChannelRow extends StatefulWidget {
   State<YoChannelRow> createState() => _YoChannelRowState();
 }
 
-/// Keyboard focus is a 2 px [AppPalette.focus] edge: on the tile's own shape
-/// for a plain row, as a foreground over a row with a
-/// [YoChannelRow.selectedDecoration] (which never shifts its content).
+/// Keyboard focus is a 2 px [AppPalette.focus] edge drawn as a foreground
+/// over the row, plain or with a [YoChannelRow.selectedDecoration], so it
+/// never shifts the row's content (the tile's own shape would: its `Ink`
+/// pads the content by the shape's edge, which moved a plain row by 2 px).
 /// The theme's focus tint alone is about 1.25:1 against the list surface, so
 /// a desktop or web user tabbing through a channel column could not see
 /// where they were (WCAG 2.4.7); the server rail beside it already draws the
@@ -148,12 +150,9 @@ class _YoChannelRowState extends State<YoChannelRow> {
       focusColor: finish == null ? null : Colors.transparent,
       minTileHeight: widget.minHeight,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-      // A plain row keeps its focus edge on the tile's shape (the tile's
-      // `Ink` pads its content by that edge). A decorated row never gives
-      // its tile an edge: the ring is drawn over it below.
-      shape: _focused && finish == null
-          ? RoundedRectangleBorder(borderRadius: radius, side: focusSide)
-          : RoundedRectangleBorder(borderRadius: radius),
+      // The tile never takes an edge (its `Ink` pads its content by the
+      // shape's edge): the ring is drawn over it below.
+      shape: RoundedRectangleBorder(borderRadius: radius),
       leading: Icon(
         widget.icon,
         size: 21,
@@ -171,13 +170,26 @@ class _YoChannelRowState extends State<YoChannelRow> {
       trailing: widget.trailing,
       onTap: widget.onTap,
     );
-    if (finish == null) return tile;
+    // The focus ring (and a decorated row's selected edge) is a foreground
+    // over the tile, on the tile's own radius, so it never moves the row.
+    // It is in the tree in every state, so tabbing onto a row never
+    // remounts the tile and never drops its focus.
+    final ringed = DecoratedBox(
+      position: DecorationPosition.foreground,
+      decoration: BoxDecoration(
+        border: _focused
+            ? Border.fromBorderSide(focusSide)
+            : decoration?.border,
+        borderRadius: radius,
+      ),
+      child: tile,
+    );
+    if (finish == null) return ringed;
     // One tree for every state of a decorated row — selected or not, focused
-    // or not — so selecting it (or tabbing onto it) never remounts the tile
-    // and never drops its focus. The fill goes through `Ink` WITHOUT its
-    // border: `Ink` adds a decoration's border to its padding, which would
-    // shift the row by the edge's width the moment it is selected. For the
-    // same reason the focus ring is this foreground, not the tile's shape.
+    // or not — so selecting it never remounts the tile either. The fill goes
+    // through `Ink` WITHOUT its border: `Ink` adds a decoration's border to
+    // its padding, which would shift the row by the edge's width the moment
+    // it is selected; the edge is the foreground above.
     return Ink(
       decoration: BoxDecoration(
         color: decoration?.color,
@@ -185,16 +197,7 @@ class _YoChannelRowState extends State<YoChannelRow> {
         boxShadow: decoration?.boxShadow,
         borderRadius: radius,
       ),
-      child: DecoratedBox(
-        position: DecorationPosition.foreground,
-        decoration: BoxDecoration(
-          border: _focused
-              ? Border.fromBorderSide(focusSide)
-              : decoration?.border,
-          borderRadius: radius,
-        ),
-        child: tile,
-      ),
+      child: ringed,
     );
   }
 }

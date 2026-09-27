@@ -475,6 +475,340 @@ void main() {
     });
   });
 
+  group('YoGradientFilledButton keyboard-focus indicator (cross-batch '
+      'review)', () {
+    // A FilledButton's `Material` paints `side` UNDER its child
+    // (`borderOnForeground: false`), where the opaque gradient `Ink` covers
+    // it: the edge resolved on the style was never seen. These read the
+    // PAINTED pixels across the shape's edge, in every theme the button
+    // ships in, for both shapes it is used with, at rest, hovered and busy.
+    //
+    // Acceptance (review of the Pearl indicator):
+    //  (a) the indicator pixel touching the gradient is >= 3:1 against it;
+    //  (b) the outermost indicator pixel is >= 3:1 against
+    //      `palette.background` and against what is painted beside it;
+    //  (c) focus moves no rect.
+    // White alone is 1.1:1 on Pearl's background, so Pearl and high
+    // contrast add a 2 px `focus` band outside the shape; Dark keeps the
+    // white band alone (18:1 on its page).
+    const inset = 8;
+    const width = 240;
+    const height = 52;
+    const right = inset + width;
+    const bottom = inset + height;
+    const midX = inset + width ~/ 2;
+    // At the vertical centre a stadium's end is within 0.02 px of straight
+    // across one pixel row.
+    const midY = inset + height ~/ 2;
+
+    // Walks one straight run of the edge from the page into the shape:
+    // [0] [1] [2] are 3, 2 and 1 px outside, [3] [4] [5] 1, 2 and 3 px
+    // inside.
+    List<(int, int)> walk(String side) => [
+      for (final d in const [-3, -2, -1, 0, 1, 2])
+        switch (side) {
+          'top' => (midX, inset + d),
+          'bottom' => (midX, bottom - 1 - d),
+          'left' => (inset + d, midY),
+          _ => (right - 1 - d, midY),
+        },
+    ];
+    const sides = ['top', 'bottom', 'left', 'right'];
+
+    Future<(ByteData, int)> snapshot(
+      WidgetTester tester,
+      GlobalKey boundary,
+    ) async {
+      final render =
+          boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final bytes = await tester.runAsync(() async {
+        final image = await render.toImage();
+        try {
+          return await image.toByteData();
+        } finally {
+          image.dispose();
+        }
+      });
+      return (bytes!, render.size.width.round());
+    }
+
+    List<Color> read((ByteData, int) shot, List<(int, int)> at) {
+      final (bytes, stride) = shot;
+      return [
+        for (final (x, y) in at)
+          Color.fromARGB(
+            bytes.getUint8((y * stride + x) * 4 + 3),
+            bytes.getUint8((y * stride + x) * 4),
+            bytes.getUint8((y * stride + x) * 4 + 1),
+            bytes.getUint8((y * stride + x) * 4 + 2),
+          ),
+      ];
+    }
+
+    double contrast(Color a, Color b) {
+      final la = a.computeLuminance();
+      final lb = b.computeLuminance();
+      return la > lb ? (la + .05) / (lb + .05) : (lb + .05) / (la + .05);
+    }
+
+    double distance(Color a, Color b) =>
+        ((a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs()) * 255;
+
+    Widget host(
+      GlobalKey boundary,
+      AppPalette palette,
+      YoGradientFilledButton button,
+    ) => RepaintBoundary(
+      key: boundary,
+      child: ColoredBox(
+        color: palette.background,
+        child: Padding(
+          padding: const EdgeInsets.all(inset * 1.0),
+          child: SizedBox(
+            width: width * 1.0,
+            height: height * 1.0,
+            child: button,
+          ),
+        ),
+      ),
+    );
+
+    // A single long pump only STARTS an animation (its first tick has
+    // elapsed 0): the lift's hover glow and the neutral pill's `Material`
+    // shape both animate, the latter from the frame after the focus
+    // change. A busy spinner never settles, so no pumpAndSettle.
+    Future<void> settle(WidgetTester tester) async {
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    // Where a stadium's end curves, one pixel row is still ~2 % anti-aliased.
+    double tolerance(OutlinedBorder shape, String side) =>
+        shape is StadiumBorder && (side == 'left' || side == 'right') ? 30 : 8;
+
+    void traditionalFocus() {
+      final strategy = FocusManager.instance.highlightStrategy;
+      FocusManager.instance.highlightStrategy =
+          FocusHighlightStrategy.alwaysTraditional;
+      addTearDown(() => FocusManager.instance.highlightStrategy = strategy);
+    }
+
+    for (final (themeName, theme, highContrast) in [
+      ('Dark', AppTheme.darkTheme, false),
+      ('Dark HC', AppTheme.darkHighContrastTheme, true),
+      ('Pearl', AppTheme.lightTheme, false),
+      ('Pearl HC', AppTheme.lightHighContrastTheme, true),
+    ]) {
+      final palette = theme.extension<AppPalette>()!;
+      final twoTone = !palette.isDark || highContrast;
+      for (final (shapeName, shape) in <(String, OutlinedBorder)>[
+        ('stadium', const StadiumBorder()),
+        (
+          'radius 12',
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ]) {
+        for (final state in const ['rest', 'hover', 'busy']) {
+          testWidgets('focus paints one indicator that reads against the '
+              'gradient and the page and moves nothing ($themeName, '
+              '$shapeName, $state)', (tester) async {
+            traditionalFocus();
+            final focus = FocusNode();
+            addTearDown(focus.dispose);
+            final boundary = GlobalKey();
+            // Real blurred lifts, as on a device: the outer band must read
+            // against the glow as well as the page.
+            debugDisableShadows = false;
+            try {
+              await _pump(
+                tester,
+                host(
+                  boundary,
+                  palette,
+                  YoGradientFilledButton(
+                    onPressed: () {},
+                    focusNode: focus,
+                    shape: shape,
+                    busy: state == 'busy',
+                    minimumSize: const Size(64, 52),
+                    icon: const Icon(Icons.add_rounded),
+                    child: const Text('Stwórz serwer'),
+                  ),
+                ),
+                theme: theme,
+                media: MediaQueryData(highContrast: highContrast),
+              );
+              if (state == 'hover') {
+                final mouse = await tester.createGesture(
+                  kind: PointerDeviceKind.mouse,
+                );
+                await mouse.addPointer(location: Offset.zero);
+                addTearDown(mouse.removePointer);
+                await mouse.moveTo(tester.getCenter(find.byType(FilledButton)));
+                await settle(tester);
+              }
+              Rect glyphRect() => state == 'busy'
+                  ? tester.getRect(find.byType(CircularProgressIndicator))
+                  : tester.getRect(find.byIcon(Icons.add_rounded));
+              final button = tester.getRect(find.byType(FilledButton));
+              final label = tester.getRect(find.text('Stwórz serwer'));
+              final glyph = glyphRect();
+              final rest = await snapshot(tester, boundary);
+
+              focus.requestFocus();
+              await settle(tester);
+              expect(focus.hasPrimaryFocus, isTrue);
+              final focused = await snapshot(tester, boundary);
+
+              final ink = theme.colorScheme.onPrimary;
+              for (final side in sides) {
+                final at = read(focused, walk(side));
+                final was = read(rest, walk(side));
+                // The inner band: 2 px of onPrimary just inside the edge.
+                for (final i in const [3, 4]) {
+                  expect(
+                    distance(at[i], ink),
+                    lessThan(tolerance(shape, side)),
+                    reason:
+                        '$side: ${i - 2} px inside the edge is the '
+                        'onPrimary band, got ${at[i]}',
+                  );
+                }
+                // (a) where the band meets the gradient.
+                expect(
+                  contrast(at[4], at[5]),
+                  greaterThanOrEqualTo(3),
+                  reason: '$side: band ${at[4]} vs gradient ${at[5]}',
+                );
+                expect(
+                  distance(at[5], ink),
+                  greaterThan(60),
+                  reason: '$side: the band is 2 px, not a fill',
+                );
+                if (twoTone) {
+                  for (final i in const [1, 2]) {
+                    expect(
+                      distance(at[i], palette.focus),
+                      lessThan(tolerance(shape, side)),
+                      reason:
+                          '$side: ${3 - i} px outside the edge is the '
+                          'focus band, got ${at[i]}',
+                    );
+                  }
+                  // (b) the outer band against the page and whatever is
+                  // painted beside it (the lift's glow in Pearl).
+                  expect(
+                    contrast(at[1], palette.background),
+                    greaterThanOrEqualTo(3),
+                  );
+                  expect(
+                    contrast(at[1], at[0]),
+                    greaterThanOrEqualTo(3),
+                    reason: '$side: outer band ${at[1]} vs ${at[0]}',
+                  );
+                  expect(
+                    distance(at[0], was[0]),
+                    lessThan(2),
+                    reason: '$side: the indicator ends 2 px outside',
+                  );
+                } else {
+                  // (b) white is the outermost pixel; nothing is painted
+                  // outside the shape.
+                  expect(
+                    contrast(at[3], palette.background),
+                    greaterThanOrEqualTo(3),
+                  );
+                  expect(
+                    contrast(at[3], at[2]),
+                    greaterThanOrEqualTo(3),
+                    reason: '$side: band ${at[3]} vs page ${at[2]}',
+                  );
+                  for (final i in const [0, 1, 2]) {
+                    expect(
+                      distance(at[i], was[i]),
+                      lessThan(2),
+                      reason: '$side: no band outside the shape in Dark',
+                    );
+                  }
+                }
+              }
+              // (c) a foreground: focus moves no rect.
+              expect(tester.getRect(find.byType(FilledButton)), button);
+              expect(tester.getRect(find.text('Stwórz serwer')), label);
+              expect(glyphRect(), glyph);
+
+              focus.unfocus();
+              await settle(tester);
+              final after = await snapshot(tester, boundary);
+              for (final side in sides) {
+                final now = read(after, walk(side));
+                final was = read(rest, walk(side));
+                for (var i = 0; i < 5; i++) {
+                  expect(
+                    distance(now[i], was[i]),
+                    lessThan(2),
+                    reason: '$side: the indicator leaves with focus',
+                  );
+                }
+              }
+            } finally {
+              debugDisableShadows = true;
+            }
+          });
+        }
+      }
+
+      testWidgets('the neutral emphasis keeps its one tonal focus edge and '
+          'paints nothing outside ($themeName)', (tester) async {
+        traditionalFocus();
+        final focus = FocusNode();
+        addTearDown(focus.dispose);
+        final boundary = GlobalKey();
+        await _pump(
+          tester,
+          host(
+            boundary,
+            palette,
+            YoGradientFilledButton(
+              onPressed: () {},
+              focusNode: focus,
+              emphasis: YoActionEmphasis.neutral,
+              child: const Text('Stwórz serwer'),
+            ),
+          ),
+          theme: theme,
+          media: MediaQueryData(highContrast: highContrast),
+        );
+        final rest = await snapshot(tester, boundary);
+        focus.requestFocus();
+        await settle(tester);
+        expect(focus.hasPrimaryFocus, isTrue);
+        final focused = await snapshot(tester, boundary);
+        for (final side in sides) {
+          final at = read(focused, walk(side));
+          final was = read(rest, walk(side));
+          for (final i in const [3, 4]) {
+            expect(
+              distance(at[i], palette.focus),
+              // `Material` clips its own curved end, which anti-aliases
+              // that one pixel a second time.
+              lessThan(side == 'left' || side == 'right' ? 60 : 8),
+              reason: '$side: the tonal focus edge, got ${at[i]}',
+            );
+          }
+          for (final i in const [0, 1, 2]) {
+            expect(
+              distance(at[i], was[i]),
+              lessThan(2),
+              reason: '$side: nothing is painted outside a neutral pill',
+            );
+          }
+        }
+      });
+    }
+  });
+
   group('YoCard semantic label (review D1)', () {
     testWidgets('one label replaces the children and keeps tap and focus', (
       tester,
