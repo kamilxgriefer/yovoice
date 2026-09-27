@@ -60,6 +60,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
@@ -605,6 +606,35 @@ void main() {
         );
         await _settle(tester);
         await _shoot(tester, v, v.name('company-files', 'empty'));
+      });
+      // Final review (A11Y-03): keyboard focus on the empty state's YoButton
+      // primary — the on-colour band inside and, on Pearl and under high
+      // contrast, the `focus` band outside it.
+      _capture(v.name('company-files', 'empty-focus'), (tester) async {
+        _configure(tester, v);
+        await tester.pumpWidget(
+          _app(dark: v.dark, home: _workspace(_companyRepository(), 'files')),
+        );
+        await _settle(tester);
+        final strategy = FocusManager.instance.highlightStrategy;
+        FocusManager.instance.highlightStrategy =
+            FocusHighlightStrategy.alwaysTraditional;
+        try {
+          Focus.of(
+            tester.element(
+              find
+                  .descendant(
+                    of: find.byType(YoButton),
+                    matching: find.byType(Text),
+                  )
+                  .first,
+            ),
+          ).requestFocus();
+          await _settle(tester);
+          await _shoot(tester, v, v.name('company-files', 'empty-focus'));
+        } finally {
+          FocusManager.instance.highlightStrategy = strategy;
+        }
       });
     }
 

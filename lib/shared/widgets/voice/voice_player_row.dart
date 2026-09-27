@@ -170,6 +170,7 @@ class _VoicePlayerRowState extends State<VoicePlayerRow> {
   @override
   Widget build(BuildContext context) {
     final border = style.borderColor;
+    final outset = style.focusRingOutset;
     final onTap = _withHaptic(widget.onTap);
     Widget row = InkWell(
       key: widget.tapKey,
@@ -186,13 +187,21 @@ class _VoicePlayerRowState extends State<VoicePlayerRow> {
       child: Stack(
         // The row keeps exactly the constraints it had without the ring.
         fit: StackFit.passthrough,
+        // An outset ring paints past the row's edge; nothing else overflows.
+        clipBehavior: outset == 0 ? Clip.hardEdge : Clip.none,
         children: [
           _content(border),
-          Positioned.fill(
+          Positioned(
+            left: -outset,
+            top: -outset,
+            right: -outset,
+            bottom: -outset,
             child: IgnorePointer(
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  borderRadius: style.borderRadius,
+                  borderRadius: outset == 0
+                      ? style.borderRadius
+                      : style.borderRadius + BorderRadius.circular(outset),
                   border: Border.all(
                     color: _focused
                         ? style.focusRing ?? context.appPalette.focus
@@ -611,6 +620,7 @@ class VoicePlayerRowStyle {
     this.waveformBarRadius = 1,
     this.waveformConstraints,
     this.focusRing,
+    this.focusRingOutset = 0,
     this.beadTone,
     this.beadSize,
     this.unplayed,
@@ -708,6 +718,10 @@ class VoicePlayerRowStyle {
     // The focus ring takes the bubble's own ink: violet `focus` would vanish
     // on the outgoing brand gradient, the injected foreground never does.
     focusRing: foreground,
+    // The clock runs to the row's end edge: a ring over that edge cut its
+    // last digit ("0:42"). 4 px out it clears the digits by 2 px and stays
+    // inside the bubble's padding.
+    focusRingOutset: 4,
   );
 
   /// The chat voice bubble in the refine-look finish (§8.3, R13 / R14): the
@@ -800,6 +814,12 @@ class VoicePlayerRowStyle {
 
   /// The 2 px keyboard-focus ring. `null` takes [AppPalette.focus].
   final Color? focusRing;
+
+  /// How far outside the row's edge the focus ring's box sits (its radius
+  /// grows by the same amount). 0 draws it over the row's own edge; the
+  /// bubble row, whose clock runs to its end edge, draws it clear of the
+  /// digits in the bubble's own padding. Paint only: nothing moves.
+  final double focusRingOutset;
 
   /// The R14 voice bead's tone, or `null` for the legacy control (the icon
   /// box / bordered disc drawn from [controlFill], [controlBorderColor],

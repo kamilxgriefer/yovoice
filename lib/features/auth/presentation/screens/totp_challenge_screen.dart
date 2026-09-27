@@ -7,7 +7,6 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
@@ -16,6 +15,7 @@ import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/responsive_auth_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/animated_totp_code_input.dart';
 import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
@@ -393,25 +393,24 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
                                       minHeight: 52,
                                       minWidth: 44,
                                     ),
-                                    child: FilledButton(
-                                      key: const ValueKey<String>(
+                                    // The sign-in chain's R5 action, as
+                                    // on the auth screen before it: the
+                                    // gradient and the one lift at the
+                                    // auth radius 12; locked, the R5 flat
+                                    // sunken fill. The key stays on the
+                                    // FilledButton.
+                                    child: YoGradientFilledButton(
+                                      buttonKey: const ValueKey<String>(
                                         'totp-verify-button',
                                       ),
                                       onPressed: _locked ? null : _submit,
-                                      style: FilledButton.styleFrom(
-                                        foregroundColor: AppColors.white,
-                                        backgroundColor: AppColors.primary,
-                                        disabledBackgroundColor:
-                                            palette.surfaceRaised,
-                                        disabledForegroundColor:
-                                            palette.textTertiary,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: AppSpacing.lg,
-                                          vertical: AppSpacing.md,
-                                        ),
-                                        shape: const RoundedRectangleBorder(
-                                          borderRadius: AppRadius.lg,
-                                        ),
+                                      minimumSize: const Size(44, 52),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: AppSpacing.lg,
+                                        vertical: AppSpacing.md,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
                                       ),
                                       child: Text(
                                         _verifyButtonLabel(context),

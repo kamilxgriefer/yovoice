@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
@@ -119,4 +120,137 @@ void main() {
       expect(opens, 1);
     },
   );
+
+  group('the context action draws one focus ring', () {
+    void traditionalFocus() {
+      final strategy = FocusManager.instance.highlightStrategy;
+      FocusManager.instance.highlightStrategy =
+          FocusHighlightStrategy.alwaysTraditional;
+      addTearDown(() => FocusManager.instance.highlightStrategy = strategy);
+    }
+
+    /// The action's own ring: the last overlay it paints over its child.
+    Border ring(WidgetTester tester) {
+      final overlay = find
+          .descendant(
+            of: find.byType(AccessibleContextAction),
+            matching: find.byType(IgnorePointer),
+          )
+          .last;
+      final box = tester.widget<AnimatedContainer>(
+        find.descendant(of: overlay, matching: find.byType(AnimatedContainer)),
+      );
+      return (box.decoration! as BoxDecoration).border! as Border;
+    }
+
+    testWidgets('a focused child keeps its own ring; the action rings only '
+        'when it is focused itself', (tester) async {
+      traditionalFocus();
+      final theme = ThemeData.dark();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: AccessibleContextAction(
+                onOpen: () {},
+                child: SizedBox(
+                  width: 240,
+                  height: 96,
+                  child: Column(
+                    children: [
+                      const Text('A voice message'),
+                      TextButton(onPressed: () {}, child: const Text('Play')),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          theme: theme,
+        ),
+      );
+      final focus = tester
+          .element(find.text('A voice message'))
+          .appPalette
+          .focus;
+      expect(ring(tester).top.color, Colors.transparent);
+
+      // The action itself: its ring.
+      Focus.of(tester.element(find.text('A voice message'))).requestFocus();
+      await tester.pumpAndSettle();
+      expect(ring(tester).top.color, focus);
+      expect(ring(tester).top.width, 2);
+
+      // A focusable child inside it: the child's own indicator alone.
+      Focus.of(tester.element(find.text('Play'))).requestFocus();
+      await tester.pumpAndSettle();
+      expect(
+        Focus.of(tester.element(find.text('Play'))).hasPrimaryFocus,
+        isTrue,
+      );
+      expect(ring(tester).top.color, isNot(focus));
+      expect(ring(tester).top.width, 1);
+    });
+
+    for (final (sender, name) in const [
+      ('friend', 'incoming'),
+      ('me', 'outgoing'),
+    ]) {
+      testWidgets('a $name bubble is ringed where the message is, not around '
+          'its 48 px gutter', (tester) async {
+        traditionalFocus();
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: MessageBubble(
+                message: Message(
+                  id: 'm1',
+                  conversationId: 'c1',
+                  senderId: sender,
+                  type: MessageType.text,
+                  content: 'Hello from a friend',
+                  sentAt: DateTime(2026, 8, 16, 12),
+                  readBy: const [],
+                  reactions: const {},
+                ),
+                currentUserId: 'me',
+                onLongPress: () {},
+              ),
+            ),
+          ),
+        );
+        Focus.of(
+          tester.element(find.text('Hello from a friend')),
+        ).requestFocus();
+        await tester.pumpAndSettle();
+        final overlay = find
+            .descendant(
+              of: find.byType(AccessibleContextAction),
+              matching: find.byType(IgnorePointer),
+            )
+            .last;
+        final ringRect = tester.getRect(
+          find.descendant(
+            of: overlay,
+            matching: find.byType(AnimatedContainer),
+          ),
+        );
+        final action = tester.getRect(find.byType(AccessibleContextAction));
+        final message = tester.getRect(
+          find
+              .descendant(
+                of: find.byType(AccessibleContextAction),
+                matching: find.byType(Column),
+              )
+              .first,
+        );
+        expect(ring(tester).top.width, 2, reason: 'the bubble is focused');
+        expect(ringRect, message, reason: 'the ring hugs the message');
+        expect(action.width - ringRect.width, 48, reason: 'not the gutter');
+      });
+    }
+  });
 }

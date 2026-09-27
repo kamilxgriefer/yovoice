@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -50,7 +51,7 @@ class FriendRequestDecisionButtons extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
+    final highContrast = MediaQuery.highContrastOf(context);
     final busy = busyAccept || busyDecline;
     final height = dense ? 44.0 : 48.0;
     final shape = RoundedRectangleBorder(
@@ -85,14 +86,18 @@ class FriendRequestDecisionButtons extends StatelessWidget {
       child: FilledButton.icon(
         key: acceptKey,
         onPressed: busy ? null : onAccept,
-        style: FilledButton.styleFrom(
-          minimumSize: Size.fromHeight(height),
-          backgroundColor: colors.primary,
-          foregroundColor: colors.onPrimary,
-          shape: shape,
-        ),
+        // R7 accent, not a violet slab: request cards repeat down a list,
+        // and a screen keeps one violet fill (refine-look principle 6).
+        style:
+            AppFinish.tonalAccent(
+              palette,
+              shape: shape,
+              highContrast: highContrast,
+            ).copyWith(
+              minimumSize: WidgetStatePropertyAll(Size.fromHeight(height)),
+            ),
         icon: busyAccept
-            ? progress(colors.onPrimary)
+            ? progress(palette.interactiveForeground)
             : const Icon(Icons.check_rounded, size: 18),
         label: Text(
           copy.text('Accept', 'Akceptuj'),
@@ -116,12 +121,17 @@ class FriendRequestDecisionButtons extends StatelessWidget {
       child: OutlinedButton.icon(
         key: declineKey,
         onPressed: busy ? null : onDecline,
-        style: OutlinedButton.styleFrom(
-          minimumSize: Size.fromHeight(height),
-          foregroundColor: palette.textPrimary,
-          side: BorderSide(color: palette.borderStrong),
-          shape: shape,
-        ),
+        // R7 neutral: glass under the control hairline (borderStrong again
+        // under high contrast).
+        style:
+            AppFinish.tonalNeutral(
+              palette,
+              foreground: palette.textPrimary,
+              shape: shape,
+              highContrast: highContrast,
+            ).copyWith(
+              minimumSize: WidgetStatePropertyAll(Size.fromHeight(height)),
+            ),
         icon: busyDecline
             ? progress(palette.textPrimary)
             : const Icon(Icons.close_rounded, size: 18),

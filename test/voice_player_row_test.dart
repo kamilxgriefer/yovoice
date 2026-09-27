@@ -513,5 +513,41 @@ void main() {
       await tester.pump();
       expect(rings(tester), contains(Colors.white));
     });
+
+    testWidgets('the bubble row\'s ring sits 4 px outside the row, clear of '
+        'the clock that runs to its end edge; nothing moves', (tester) async {
+      await pumpRow(
+        tester,
+        row: VoicePlayerRow(
+          status: VoicePlayerRowStatus.idle,
+          durationSeconds: 42,
+          semanticsLabel: 'clip',
+          onTap: () {},
+          style: inline(),
+        ),
+      );
+      final row = find.byType(VoicePlayerRow);
+      final clock = tester.getRect(find.text('0:42'));
+      final rest = tester.getRect(row);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      final ring = find.descendant(
+        of: row,
+        matching: find.byWidgetPredicate(
+          (w) =>
+              w is DecoratedBox &&
+              w.decoration is BoxDecoration &&
+              ((w.decoration as BoxDecoration).border as Border?)?.top.color ==
+                  Colors.white,
+        ),
+      );
+      expect(ring, findsOneWidget);
+      final box = tester.getRect(ring);
+      expect(box, rest.inflate(4));
+      // The 2 px ring's inner edge is 2 px clear of the clock's glyph box.
+      expect(box.right - 2 - clock.right, greaterThanOrEqualTo(2));
+      expect(tester.getRect(row), rest);
+      expect(tester.getRect(find.text('0:42')), clock);
+    });
   });
 }

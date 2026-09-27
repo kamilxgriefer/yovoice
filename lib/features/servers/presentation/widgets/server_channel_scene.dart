@@ -9,6 +9,7 @@ import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/shared/widgets/badges/yo_badge.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_action_focus_indicator.dart';
 
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
@@ -319,7 +320,10 @@ class _LampDotState extends State<_LampDot>
 /// States: hover and press wash [foreground] at .06 / .10 and move the lift
 /// (hover .40 / blur 22, pressed y 3 at 60 %); keyboard focus paints the
 /// 2 px [serverFocusRing] as a foreground over the gradient (the style's
-/// `side` alone would sit under it, unseen); disabled is the theme's flat
+/// `side` alone would sit under it, unseen), and on a light canvas or under
+/// high contrast a 2 px `palette.focus` band joins it just outside the
+/// stadium — the same two-tone indicator as `YoGradientFilledButton`
+/// ([YoActionFocusIndicatorPainter]); disabled is the theme's flat
 /// sunken fill with no gradient and no lift. [lifted] false keeps the
 /// gradient without the lift where another action already owns the screen's
 /// one lift. High contrast keeps the gradient (the fill IS the control) and
@@ -407,64 +411,84 @@ class _ServerGradientFilledButtonState
             pressed: _pressed,
           );
     final ink = widget.foreground;
+    // Pearl and high contrast: the `palette.focus` band just outside the ink
+    // band, as `YoGradientFilledButton` draws it — the ink band alone melts
+    // into a light page. Painted over the button and outside its clip, and
+    // always in the tree, so focus moves and remounts nothing; Dark keeps
+    // the ink band below alone.
+    final halo = enabled
+        ? YoActionFocusIndicatorPainter.haloFor(
+            context.appPalette,
+            highContrast: MediaQuery.highContrastOf(context),
+          )
+        : null;
     return AnimatedContainer(
       duration: AppMotion.resolve(context, AppMotion.quick),
       curve: AppMotion.standardCurve,
       decoration: ShapeDecoration(shape: const StadiumBorder(), shadows: lift),
-      child: FilledButton.icon(
-        key: widget.buttonKey,
-        onPressed: widget.onPressed,
-        statesController: _states,
-        // FilledButton defaults to Clip.none, which would let the gradient
-        // `Ink` paint as a rectangle past the stadium.
-        clipBehavior: Clip.antiAlias,
-        style:
-            FilledButton.styleFrom(
-              backgroundColor: widget.fill,
-              foregroundColor: ink,
-              minimumSize: widget.minimumSize,
-              textStyle: widget.textStyle,
-              elevation: 0,
-              shadowColor: Colors.transparent,
-            ).copyWith(
-              side: serverFocusRing(ink),
-              overlayColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.pressed)) {
-                  return ink.withValues(alpha: .10);
-                }
-                if (states.contains(WidgetState.hovered)) {
-                  return ink.withValues(alpha: .06);
-                }
-                return null;
-              }),
-              backgroundBuilder: enabled
-                  ? (context, states, child) => Ink(
-                      // Keep `color` null behind the gradient (see
-                      // yo_button.dart).
-                      decoration: BoxDecoration(gradient: widget.gradient),
-                      // The button's own `Material` paints `side` UNDER its
-                      // child (`borderOnForeground: false`), where this
-                      // opaque gradient covers it. The focus ring is
-                      // therefore drawn again here, as a foreground over the
-                      // gradient; a `DecoratedBox` adds no padding, so focus
-                      // never moves the label.
-                      child: DecoratedBox(
-                        key: const ValueKey('server-gradient-focus-ring'),
-                        position: DecorationPosition.foreground,
-                        decoration: ShapeDecoration(
-                          shape: StadiumBorder(
-                            side:
-                                serverFocusRing(ink).resolve(states) ??
-                                BorderSide.none,
+      child: CustomPaint(
+        foregroundPainter: YoActionFocusIndicatorPainter(
+          states: _states,
+          shape: const StadiumBorder(),
+          edge: halo == null ? null : ink,
+          halo: halo,
+          textDirection: Directionality.maybeOf(context),
+        ),
+        child: FilledButton.icon(
+          key: widget.buttonKey,
+          onPressed: widget.onPressed,
+          statesController: _states,
+          // FilledButton defaults to Clip.none, which would let the gradient
+          // `Ink` paint as a rectangle past the stadium.
+          clipBehavior: Clip.antiAlias,
+          style:
+              FilledButton.styleFrom(
+                backgroundColor: widget.fill,
+                foregroundColor: ink,
+                minimumSize: widget.minimumSize,
+                textStyle: widget.textStyle,
+                elevation: 0,
+                shadowColor: Colors.transparent,
+              ).copyWith(
+                side: serverFocusRing(ink),
+                overlayColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.pressed)) {
+                    return ink.withValues(alpha: .10);
+                  }
+                  if (states.contains(WidgetState.hovered)) {
+                    return ink.withValues(alpha: .06);
+                  }
+                  return null;
+                }),
+                backgroundBuilder: enabled
+                    ? (context, states, child) => Ink(
+                        // Keep `color` null behind the gradient (see
+                        // yo_button.dart).
+                        decoration: BoxDecoration(gradient: widget.gradient),
+                        // The button's own `Material` paints `side` UNDER its
+                        // child (`borderOnForeground: false`), where this
+                        // opaque gradient covers it. The focus ring is
+                        // therefore drawn again here, as a foreground over the
+                        // gradient; a `DecoratedBox` adds no padding, so focus
+                        // never moves the label.
+                        child: DecoratedBox(
+                          key: const ValueKey('server-gradient-focus-ring'),
+                          position: DecorationPosition.foreground,
+                          decoration: ShapeDecoration(
+                            shape: StadiumBorder(
+                              side:
+                                  serverFocusRing(ink).resolve(states) ??
+                                  BorderSide.none,
+                            ),
                           ),
+                          child: child,
                         ),
-                        child: child,
-                      ),
-                    )
-                  : null,
-            ),
-        icon: widget.icon,
-        label: widget.label,
+                      )
+                    : null,
+              ),
+          icon: widget.icon,
+          label: widget.label,
+        ),
       ),
     );
   }

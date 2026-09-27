@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:image_picker/image_picker.dart';
@@ -4031,8 +4032,45 @@ class _VoiceMessageRecorderSheetState
   bool _publishing = false;
   String? _error;
 
+  /// The record button's own states. The bead is opaque and exactly the
+  /// button's size, so the button's theme focus side (painted UNDER its
+  /// child) is covered; the bead draws R14's ring 3 px outside itself
+  /// instead, from these states, as `VoiceBeadButton` does.
+  final WidgetStatesController _recordStates = WidgetStatesController();
+  bool _recordHovered = false;
+  bool _recordFocused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _recordStates.addListener(_recordStatesChanged);
+  }
+
+  void _recordStatesChanged() {
+    if (!mounted) return;
+    final hovered = _recordStates.value.contains(WidgetState.hovered);
+    final focused = _recordStates.value.contains(WidgetState.focused);
+    if (hovered == _recordHovered && focused == _recordFocused) return;
+    // The button can report a state while it builds; apply it after the
+    // frame in that case rather than marking this sheet dirty mid-build.
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback(
+        (_) => _recordStatesChanged(),
+      );
+      return;
+    }
+    setState(() {
+      _recordHovered = hovered;
+      _recordFocused = focused;
+    });
+  }
+
   @override
   void dispose() {
+    _recordStates
+      ..removeListener(_recordStatesChanged)
+      ..dispose();
     _timer?.cancel();
     _capStopGrace?.cancel();
     unawaited(_previewStateSubscription?.cancel());
@@ -4350,6 +4388,7 @@ class _VoiceMessageRecorderSheetState
                 // — that is the capture screen's.
                 child: IconButton(
                   onPressed: _publishing ? null : _toggleRecording,
+                  statesController: _recordStates,
                   style: IconButton.styleFrom(
                     fixedSize: const Size.square(_recordBeadSize),
                     minimumSize: const Size.square(_recordBeadSize),
@@ -4367,6 +4406,12 @@ class _VoiceMessageRecorderSheetState
                       status: _publishing
                           ? YoDiscStatus.disabled
                           : YoDiscStatus.idle,
+                      // R14: keyboard focus is the bead's own 2 px ring,
+                      // 3 px outside it (WCAG 2.4.7) — the button's theme
+                      // side paints under this opaque bead, unseen. Hover
+                      // lifts the contact shadow.
+                      focused: _recordFocused && !_publishing,
+                      hovered: _recordHovered && !_publishing,
                       glyph: AnimatedSwitcher(
                         duration: AppMotion.decorative(context)
                             ? const Duration(milliseconds: 160)
