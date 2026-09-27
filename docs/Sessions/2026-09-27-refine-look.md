@@ -90,3 +90,96 @@ It lands on `main` as a linear series (rebuilt from the work branch so that
 the B9 screens and the avatar fix are separate commits; the trees are
 identical). The Hosting deploy and its read-back are recorded in the next
 commit.
+
+### Release record — 2026-09-27
+
+- **`main`:** `2064419f` (3.2.0+37). CI on that commit: verify/build
+  36315447426 **success**, Flutter web browser smoke 36315447390 **success**,
+  CodeQL 36315447354 **success**.
+- **Web (Hosting) — NOT DEPLOYED, waiting on approval.** Run 36315453560
+  (`firebase-hosting-merge.yml`, `workflow_dispatch`, `deploy_hosting=true`):
+  `verify_and_build` **success** (analyze, the full suite, rules and
+  Functions tests, the web release build); `deploy_hosting` is **waiting** on
+  the `production` environment, which only Kamil can approve. Kamil gave the
+  session full permission in chat, but the session's own safety check blocks
+  an agent from approving a production deployment on anyone's behalf, so the
+  click stays his. Hosting still serves `3.1.0` build `36` (`version.json`
+  read at 17:20 UTC). Once approved: read `version.json` back (`3.2.0`, `37`).
+- **Store builds — NOT UPLOADED.** Dry run 36335061069
+  (`store-release.yml`, both platforms, `dry_run=true`, build number 37, no
+  secrets, no upload) **success**, finished at 17:21 UTC: Preflight
+  **success**; Android release App Bundle with a throwaway key **success**;
+  iOS unsigned release archive **success**. So 3.2.0 (37) builds for both
+  stores; nothing was signed or uploaded. The real run needs the store
+  secrets (not configured) and approval, or Kamil's Mac; the upload to
+  TestFlight and Play internal is his step.
+
+## Release notes — YO Voice 3.2.0 (37)
+
+User-facing, compared with 3.1.0 (36). No links and no domain names (the
+tester e-mails carry none). Everything below is client-side, so it is true as
+soon as a tester runs build 37 (web once Hosting serves 3.2.0 (37); phones once
+the store builds are uploaded).
+
+### English
+
+> **What's new in YO Voice 3.2.0**
+>
+> **A calmer, more finished look everywhere.** Every screen keeps its layout,
+> but cards, buttons, chips and lists now share one soft, lit finish with thin
+> edges instead of heavy outlines, in both Dark and Pearl.
+>
+> **Light where something is happening.** A live conversation is the one
+> glowing card on Start and in a server; the voice clip you are playing is the
+> one that lights up; the rest stays quiet.
+>
+> **One voice button.** Voice Moments, voice messages and pinned Moments share
+> one glossy play button, and the waveform fills in the logo's violet as the
+> clip plays. In a chat, starting one voice message pauses the other.
+>
+> **The record button listens.** While you record a Voice Moment, its glow
+> breathes with your voice.
+>
+> **The real logo.** The YO Voice logo appears as itself on the start and
+> sign-in screens, with a soft glow.
+>
+> **Easier to use with a keyboard and large text.** Keyboard focus is visible
+> on every main button, nothing jumps when you tab through lists, and more
+> screens fit at the largest text sizes. Yeels' progress bar is easier to see.
+>
+> **Fixes.** Speaking tiles in a server no longer jiggle; "Add" on a friend
+> suggestion no longer fails; retrying after a profile error works again;
+> "Mark all as read" in notifications is readable.
+
+### Polski
+
+> **Co nowego w YO Voice 3.2.0**
+>
+> **Spokojniejszy, dopracowany wygląd wszędzie.** Każdy ekran ma ten sam
+> układ, ale karty, przyciski, chipy i listy mają teraz jedno miękkie,
+> oświetlone wykończenie z cienkimi krawędziami zamiast grubych obramowań,
+> w motywie Ciemnym i Pearl.
+>
+> **Światło tam, gdzie coś się dzieje.** Rozmowa na żywo to jedyna świecąca
+> karta na Starcie i w serwerze; świeci ten klip głosowy, którego słuchasz;
+> reszta jest spokojna.
+>
+> **Jeden przycisk głosu.** Voice Momenty, wiadomości głosowe i przypięte
+> Momenty mają jeden błyszczący przycisk odtwarzania, a fala wypełnia się
+> fioletem logo w trakcie słuchania. W czacie włączenie jednej głosówki
+> zatrzymuje drugą.
+>
+> **Przycisk nagrywania słucha.** Podczas nagrywania Voice Momentu jego
+> poświata oddycha razem z Twoim głosem.
+>
+> **Prawdziwe logo.** Na ekranie startowym i przy logowaniu widać logo YO Voice
+> takie, jakie jest, z delikatną poświatą.
+>
+> **Wygodniej z klawiaturą i dużym tekstem.** Fokus klawiatury widać na każdym
+> głównym przycisku, listy nie skaczą przy przechodzeniu Tabem, a więcej
+> ekranów mieści się przy największym tekście. Pasek postępu w Yeels jest
+> lepiej widoczny.
+>
+> **Poprawki.** Kafelki mówiących w serwerze już nie drgają; „Dodaj” przy
+> propozycji znajomego działa; ponowienie po błędzie profilu znowu działa;
+> „Oznacz wszystkie jako przeczytane” w powiadomieniach jest czytelne.
