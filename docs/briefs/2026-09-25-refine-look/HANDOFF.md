@@ -1,5 +1,11 @@
 # refine/look: handoff to continue on another computer
 
+> **Status 2026-09-27: completed.** The work was continued in a Claude Code
+> cloud session after both Mac sessions went unreachable, finished (B3
+> evidence, B4–B10, the B12 handoff, the docs) and released as build 37
+> (3.2.0+37). Record: [Sessions/2026-09-27-refine-look.md](../../Sessions/2026-09-27-refine-look.md).
+> The text below is the handoff as written on 2026-09-26.
+
 Written 2026-09-26 12:40 CEST by the Mac session "YO Voice testowa aktualizacja". Kamil asked to move this work to the computer he is using: "przenieś pracę tutaj na ten komputer". The Mac rollout is **stopped**, so nothing else writes to this branch.
 
 ## What this is
