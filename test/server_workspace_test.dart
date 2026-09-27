@@ -132,20 +132,48 @@ void main() {
                 ? AppPalette.light.surfaceMuted
                 : AppPalette.dark.surfaceMuted,
           );
-          final surface = Color.alphaBlend(
+          // The panel paints the selected wash through the row's decorated
+          // path: an `Ink` under a transparent tile colour (so a focus ring
+          // never shifts the list). Measure the ink against what is
+          // actually painted — the decoration's colour and any gradient
+          // stops, over the tile colour, over the panel's own material.
+          final finish = find.ancestor(
+            of: selected,
+            matching: find.byType(Ink),
+          );
+          expect(
+            finish,
+            findsWidgets,
+            reason: '$type / light=$light: the selected wash is not painted',
+          );
+          final painted =
+              tester.widget<Ink>(finish.first).decoration! as BoxDecoration;
+          final base = Color.alphaBlend(
             tile.selectedTileColor!,
             material.color!,
           );
-          final textLuminance = tile.selectedColor!.computeLuminance();
-          final surfaceLuminance = surface.computeLuminance();
-          final ratio = textLuminance > surfaceLuminance
-              ? (textLuminance + .05) / (surfaceLuminance + .05)
-              : (surfaceLuminance + .05) / (textLuminance + .05);
+          final washes = <Color>[
+            if (painted.color case final color?) Color.alphaBlend(color, base),
+            if (painted.gradient case final LinearGradient gradient)
+              for (final stop in gradient.colors) Color.alphaBlend(stop, base),
+          ];
           expect(
-            ratio,
-            greaterThanOrEqualTo(4.5),
-            reason: '$type / light=$light',
+            washes,
+            isNotEmpty,
+            reason: '$type / light=$light: the selected row paints no wash',
           );
+          final textLuminance = tile.selectedColor!.computeLuminance();
+          for (final surface in washes) {
+            final surfaceLuminance = surface.computeLuminance();
+            final ratio = textLuminance > surfaceLuminance
+                ? (textLuminance + .05) / (surfaceLuminance + .05)
+                : (surfaceLuminance + .05) / (textLuminance + .05);
+            expect(
+              ratio,
+              greaterThanOrEqualTo(4.5),
+              reason: '$type / light=$light on $surface',
+            );
+          }
         }
       }
     },
@@ -185,6 +213,11 @@ void main() {
             // a group of channels and says nothing about a session.
             expect(
               find.byKey(const ValueKey('server-live-pill')),
+              findsNothing,
+              reason: '$type $width $scale',
+            );
+            expect(
+              find.byKey(const ValueKey('server-live-lamp')),
               findsNothing,
               reason: '$type $width $scale',
             );

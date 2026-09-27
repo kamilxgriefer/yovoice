@@ -69,7 +69,10 @@ final qaFabricatedCount = RegExp(
 
 /// A recording claim. Recording has no contract at all (contract §3), so a
 /// surface may say it does not work, and may never say that it does.
-final qaRecordingClaim = RegExp(r'(?<!nie )jest\s+nagrywan', caseSensitive: false);
+final qaRecordingClaim = RegExp(
+  r'(?<!nie )jest\s+nagrywan',
+  caseSensitive: false,
+);
 
 Server qaServer(
   ServerType type, {
@@ -95,8 +98,9 @@ String qaFirstText(ServerType type) => serverTemplateChannelsFor(
 ).firstWhere((seed) => seed.kind == ServerChannelKind.text).seedKey;
 
 /// The template's first media channel — the one a join can be tested on.
-String qaFirstMedia(ServerType type) =>
-    serverTemplateChannelsFor(type).firstWhere((seed) => seed.kind.isMedia).seedKey;
+String qaFirstMedia(ServerType type) => serverTemplateChannelsFor(
+  type,
+).firstWhere((seed) => seed.kind.isMedia).seedKey;
 
 /// The destination each board is actually about (contract §4.2): board 01's
 /// `Salon`, board 02's `Scena LIVE`, board 05's `Studio LIVE`, board 04's
@@ -154,10 +158,10 @@ List<ServerChannel> qaChannels(
               : RoomExperience.community,
           mediaMode: seeds[i].mediaMode,
           schemaVersion: 1,
-          liveness:
-              seeds[i].seedKey == media ? liveness : ServerChannelLiveness.idle,
-          activeSessionId:
-              seeds[i].seedKey == media ? activeSessionId : null,
+          liveness: seeds[i].seedKey == media
+              ? liveness
+              : ServerChannelLiveness.idle,
+          activeSessionId: seeds[i].seedKey == media ? activeSessionId : null,
         ),
   ];
 }
@@ -197,9 +201,13 @@ Finder get qaJoin => find.byKey(const ValueKey('server-join'));
 Finder get qaDock => find.byKey(const ValueKey('server-conversation-dock'));
 Finder get qaDockStatus => find.byKey(const ValueKey('server-dock-status'));
 Finder get qaPanel => find.byKey(const ValueKey('server-panel'));
-Finder get qaOpenChannels =>
-    find.byKey(const ValueKey('server-open-channels'));
+Finder get qaOpenChannels => find.byKey(const ValueKey('server-open-channels'));
 Finder get qaLivePill => find.byKey(const ValueKey('server-live-pill'));
+
+/// The channel header's live marker above a media scene (refine-look §8.2):
+/// the lamp that replaced the header's pill. Every "nothing claims
+/// liveness" check asserts it next to [qaLivePill].
+Finder get qaLiveLamp => find.byKey(const ValueKey('server-live-lamp'));
 Finder get qaLeave => find.byKey(const ValueKey('server-dock-leave'));
 
 /// Every string this surface actually puts in front of a reader: the text of
@@ -219,7 +227,9 @@ List<String> qaRenderedStrings(WidgetTester tester) {
       // A span the widget tree cannot flatten carries no literal text.
     }
   }
-  for (final semantics in tester.widgetList<Semantics>(find.byType(Semantics))) {
+  for (final semantics in tester.widgetList<Semantics>(
+    find.byType(Semantics),
+  )) {
     final label = semantics.properties.label;
     if (label != null && label.isNotEmpty) out.add(label);
   }

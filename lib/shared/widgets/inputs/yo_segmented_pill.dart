@@ -59,6 +59,9 @@ class YoSegmentedPill extends StatelessWidget {
     this.iconSize = 17,
     this.fontSize = 13,
     this.labelMaxLines = 1,
+    this.thumbDecoration,
+    this.selectedForeground,
+    this.hairlineTrack = false,
     super.key,
   }) : assert(segments.length > 0, 'A segmented pill needs a segment.');
 
@@ -84,6 +87,20 @@ class YoSegmentedPill extends StatelessWidget {
   /// than truncate; the compact toolbar keeps one line.
   final int labelMaxLines;
 
+  /// The sliding thumb's finish (refine-look handoff), e.g. a tonal identity
+  /// thumb with a 1 px edge, or an ink inversion. It is painted, never laid
+  /// out, so an edge on it moves no label. Null keeps the solid primary
+  /// thumb.
+  final Decoration? thumbDecoration;
+
+  /// The selected label, glyph and focus ring on a custom [thumbDecoration].
+  /// Null keeps `onPrimary`, which only reads on the default primary thumb.
+  final Color? selectedForeground;
+
+  /// Draws the track's edge in the palette's `hairline` instead of `border`
+  /// (`border` again under high contrast).
+  final bool hairlineTrack;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
@@ -108,10 +125,12 @@ class YoSegmentedPill extends StatelessWidget {
                   widthFactor: 1 / count,
                   heightFactor: 1,
                   child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: colors.primary,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
+                    decoration:
+                        thumbDecoration ??
+                        BoxDecoration(
+                          color: colors.primary,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
                   ),
                 ),
               ),
@@ -129,6 +148,7 @@ class YoSegmentedPill extends StatelessWidget {
                   onTap: () => onSelected(index),
                   minHeight: segmentMinHeight + 2 * trackPadding,
                   ringInset: trackPadding,
+                  selectedForeground: selectedForeground ?? colors.onPrimary,
                   iconSize: iconSize,
                   fontSize: fontSize,
                   maxLines: labelMaxLines,
@@ -151,7 +171,11 @@ class YoSegmentedPill extends StatelessWidget {
       // cost every segment two pixels of target.
       foregroundDecoration: BoxDecoration(
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: palette.border),
+        border: Border.all(
+          color: hairlineTrack && !MediaQuery.highContrastOf(context)
+              ? palette.hairline
+              : palette.border,
+        ),
       ),
       child: body,
     );
@@ -165,6 +189,7 @@ class _Segment extends StatefulWidget {
     required this.onTap,
     required this.minHeight,
     required this.ringInset,
+    required this.selectedForeground,
     required this.iconSize,
     required this.fontSize,
     required this.maxLines,
@@ -178,6 +203,9 @@ class _Segment extends StatefulWidget {
 
   /// Keeps the focus ring on the thumb's edge rather than on the track's.
   final double ringInset;
+
+  /// The ink on the thumb: the label, the glyph, the washes and the ring.
+  final Color selectedForeground;
   final double iconSize;
   final double fontSize;
   final int maxLines;
@@ -192,9 +220,9 @@ class _SegmentState extends State<_Segment> {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final selected = widget.selected;
-    final foreground = selected ? colors.onPrimary : palette.textSecondary;
+    final onThumb = widget.selectedForeground;
+    final foreground = selected ? onThumb : palette.textSecondary;
     final icon = widget.segment.icon;
     return Semantics(
       button: true,
@@ -217,15 +245,11 @@ class _SegmentState extends State<_Segment> {
           },
           overlayColor: WidgetStateProperty.resolveWith((states) {
             if (states.contains(WidgetState.pressed)) {
-              return (selected
-                      ? colors.onPrimary
-                      : palette.interactiveForeground)
+              return (selected ? onThumb : palette.interactiveForeground)
                   .withValues(alpha: .14);
             }
             if (states.contains(WidgetState.hovered)) {
-              return (selected
-                      ? colors.onPrimary
-                      : palette.interactiveForeground)
+              return (selected ? onThumb : palette.interactiveForeground)
                   .withValues(alpha: .07);
             }
             return null;
@@ -279,7 +303,7 @@ class _SegmentState extends State<_Segment> {
                         // close to the fill; the thumb's own foreground stays
                         // visible on it.
                         color: _focused
-                            ? (selected ? colors.onPrimary : palette.focus)
+                            ? (selected ? onThumb : palette.focus)
                             : Colors.transparent,
                         width: 2,
                       ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
@@ -273,7 +274,7 @@ class _ServerPanelState extends State<ServerPanel> {
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: AppTypography.titleMedium.copyWith(
-                                fontWeight: FontWeight.w800,
+                                fontWeight: FontWeight.w700,
                                 color: palette.textPrimary,
                               ),
                             ),
@@ -297,8 +298,12 @@ class _ServerPanelState extends State<ServerPanel> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '${copy.serverKindSubtitle(server.type, server.privacy)} · '
-                        '${copy.serverMembers(server.memberCount)}',
+                        // Non-breaking spaces keep "12 osób" whole and the
+                        // dot with the words before it when this wraps.
+                        serverMetaLine(
+                          copy.serverKindSubtitle(server.type, server.privacy),
+                          copy.serverMembers(server.memberCount),
+                        ),
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: AppTypography.bodySmall.copyWith(
@@ -348,12 +353,20 @@ class _ServerPanelState extends State<ServerPanel> {
           ],
           if (canInvite) ...[
             const SizedBox(height: 12),
+            // Refine-look R7 neutral: glass, a control hairline and the
+            // interactive ink — not a second outline beside the rows.
             OutlinedButton.icon(
               key: const ValueKey('server-invite-action'),
               onPressed: server.isHeld ? null : widget.onInvite,
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size.fromHeight(48),
-              ),
+              style:
+                  AppFinish.tonalNeutral(
+                    palette,
+                    highContrast: MediaQuery.highContrastOf(context),
+                  ).merge(
+                    OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                  ),
               icon: const Icon(Icons.person_add_outlined, size: 18),
               label: Text(copy.serverInvite),
             ),
@@ -369,7 +382,7 @@ class _ServerPanelState extends State<ServerPanel> {
               ),
           ],
           const SizedBox(height: 8),
-          Divider(color: palette.border, height: 24),
+          Divider(color: serverDivider(context), height: 24),
           if (channels.isEmpty)
             Padding(
               padding: const EdgeInsets.all(8),
@@ -411,6 +424,7 @@ class _ServerPanelState extends State<ServerPanel> {
                   selected: widget.homeSelected,
                   selectedForeground: colors.selectedForeground,
                   selectedWash: colors.selectedWash,
+                  selectedDecoration: colors.rowSelection,
                   onTap: onHome!,
                 ),
               ),
@@ -570,6 +584,10 @@ class _PanelChannelRow extends StatelessWidget {
       channel.kind,
       restricted: restricted,
     );
+    // Every row keeps the approved flat identity wash. It is drawn through
+    // the row's decorated path, which paints the keyboard focus ring as a
+    // foreground: tabbing through the list never moves a row.
+    final selection = colors.rowSelection;
     if (!channel.kind.isMedia) {
       return YoChannelRow(
         tileKey: ValueKey('server-channel-${channel.id}'),
@@ -579,6 +597,7 @@ class _PanelChannelRow extends StatelessWidget {
         selected: selected,
         selectedForeground: colors.selectedForeground,
         selectedWash: colors.selectedWash,
+        selectedDecoration: selection,
         trailing: questionsWaiting && !selected
             ? ServerWaitingDot(
                 key: ValueKey('server-channel-questions-waiting-${channel.id}'),
@@ -605,9 +624,10 @@ class _PanelChannelRow extends StatelessWidget {
           selected: selected,
           selectedForeground: colors.selectedForeground,
           selectedWash: colors.selectedWash,
-          // The same key as the header's pill: one finder addresses every
-          // live marker in the shell, so "nothing claims liveness" can be
-          // asserted once instead of per surface.
+          selectedDecoration: selection,
+          // The same key as the session card's pill: one finder addresses
+          // every live marker in the shell, so "nothing claims liveness" can
+          // be asserted once instead of per surface.
           liveBadge: live ? ServerLivePill(label: copy.serverLivePill) : null,
           liveSince: live && channel.liveness.startedAt != null
               ? copy.serverLiveSinceShort(

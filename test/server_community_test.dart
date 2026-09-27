@@ -171,6 +171,7 @@ void main() {
     );
     // Not live, so no pill anywhere — including the panel row.
     expect(livePill, findsNothing);
+    expect(find.byKey(const ValueKey('server-live-lamp')), findsNothing);
     expect(find.text('Scena jeszcze nie nadaje'), findsWidgets);
     expect(find.textContaining(fabricated), findsNothing);
     // Nothing counts a reaction, so no reaction is drawn.

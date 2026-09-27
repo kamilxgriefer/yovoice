@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
@@ -417,8 +418,9 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
   }
 
   /// The Questions channel whose new questions wait for this host, or null.
-  String? _waitingQuestions(Server server) =>
-      _attention.isWaiting(server.id) ? _attention.watchedChannel(server.id) : null;
+  String? _waitingQuestions(Server server) => _attention.isWaiting(server.id)
+      ? _attention.watchedChannel(server.id)
+      : null;
 
   void _listen() {
     _server = _repository.watchServer(widget.serverId);
@@ -695,7 +697,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         Container(
           padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
           decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(color: palette.border)),
+            border: Border(bottom: BorderSide(color: serverDivider(context))),
           ),
           child: Row(
             children: [
@@ -1003,7 +1005,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                     onOpen: _openServer,
                     questionsWaiting: _attention.isWaiting,
                   ),
-                  VerticalDivider(width: 1, color: context.appPalette.border),
+                  VerticalDivider(width: 1, color: serverDivider(context)),
                   SizedBox(
                     width: panelWidth,
                     child: ServerPanel(
@@ -1030,7 +1032,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                       questionsWaitingChannelId: waitingQuestions,
                     ),
                   ),
-                  VerticalDivider(width: 1, color: context.appPalette.border),
+                  VerticalDivider(width: 1, color: serverDivider(context)),
                   Expanded(
                     // The panel and the context column are fixed; the centre
                     // used to take everything else, so at 1920 the family
@@ -1082,7 +1084,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                     ),
                   ),
                   if (showContextPanel) ...[
-                    VerticalDivider(width: 1, color: context.appPalette.border),
+                    VerticalDivider(width: 1, color: serverDivider(context)),
                     SizedBox(
                       width: contextWidth,
                       child: _contextThread(
@@ -1407,7 +1409,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
           Container(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
             decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: palette.border)),
+              border: Border(bottom: BorderSide(color: serverDivider(context))),
             ),
             child: Row(
               children: [
@@ -1709,12 +1711,18 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     final railServers = _railServers(server);
     final showRail =
         railServers.length >= ServerWorkspaceScreen.phoneRailMinimumServers;
+    final palette = context.appPalette;
     final picked = await showModalBottomSheet<Object>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       showDragHandle: true,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
+      // Refine-look §8.2: the sheet IS the panel's surface, so the handle
+      // band no longer sits on a second tone above it (the "two-tone band");
+      // a hairline marks the top edge instead (R16: the top side only).
+      backgroundColor: palette.surfaceMuted,
+      shape: _SheetTopEdge(side: BorderSide(color: serverDivider(context))),
       builder: (sheetContext) => FractionallySizedBox(
         heightFactor: .88,
         child: _WithServerRail(
@@ -1727,6 +1735,10 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                     onOpen: (target) =>
                         Navigator.of(sheetContext).pop(_ServerRequest(target)),
                     questionsWaiting: _attention.isWaiting,
+                    // One surface from the handle band down: the rail
+                    // column takes the sheet's own tone instead of starting
+                    // a darker, square-topped column under the band.
+                    surface: palette.surfaceMuted,
                   ),
                 )
               : null,
@@ -1761,9 +1773,8 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                           ).pop(_SheetAction.invite),
                     onAddChannel: addChannel == null
                         ? null
-                        : () => Navigator.of(
-                            sheetContext,
-                          ).pop(_SheetAction.add),
+                        : () =>
+                              Navigator.of(sheetContext).pop(_SheetAction.add),
                     onManage:
                         !(role?.canModerate ?? false) ||
                             _repository is! ServerManagementRepository
@@ -1835,17 +1846,22 @@ class _ServerRail extends StatelessWidget {
     required this.selectedId,
     required this.onOpen,
     this.questionsWaiting,
+    this.surface,
   });
   final List<Server> servers;
   final String selectedId;
   final ValueChanged<Server> onOpen;
   final bool Function(String serverId)? questionsWaiting;
 
+  /// The column's fill: the canvas beside the desktop panel (null), the
+  /// sheet's own surface inside the phone's `Kanały` sheet.
+  final Color? surface;
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     return Material(
-      color: context.appPalette.background,
+      color: surface ?? context.appPalette.background,
       child: SizedBox(
         width: ServerWorkspaceScreen.serverRailWidth,
         child: ListView.separated(
@@ -1868,7 +1884,9 @@ class _ServerRail extends StatelessWidget {
                   server.id != selectedId &&
                       (questionsWaiting?.call(server.id) ?? false)
                   ? ServerWaitingDot(
-                      key: ValueKey('server-rail-questions-waiting-${server.id}'),
+                      key: ValueKey(
+                        'server-rail-questions-waiting-${server.id}',
+                      ),
                       semanticLabel: copy.serverQuestionsWaitingLabel,
                     )
                   : null,
@@ -1878,6 +1896,51 @@ class _ServerRail extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The `Kanały` sheet's shape (refine-look R16): the 28 px rounded top of a
+/// sheet, with its hairline on the top side only. A
+/// `RoundedRectangleBorder` side would also ring the sides and the bottom
+/// wherever the sheet is narrower than the screen. The top edge thins out
+/// around the corners, as a light catching the rim would.
+class _SheetTopEdge extends OutlinedBorder {
+  const _SheetTopEdge({super.side});
+
+  static const _radius = BorderRadius.vertical(top: Radius.circular(28));
+  static const _shape = RoundedRectangleBorder(borderRadius: _radius);
+
+  @override
+  EdgeInsetsGeometry get dimensions => EdgeInsets.only(top: side.strokeInset);
+
+  @override
+  Path getInnerPath(Rect rect, {TextDirection? textDirection}) =>
+      _shape.getInnerPath(rect, textDirection: textDirection);
+
+  @override
+  Path getOuterPath(Rect rect, {TextDirection? textDirection}) =>
+      _shape.getOuterPath(rect, textDirection: textDirection);
+
+  @override
+  void paint(Canvas canvas, Rect rect, {TextDirection? textDirection}) {
+    if (side.style == BorderStyle.none || side.width == 0) return;
+    Border(
+      top: side,
+    ).paint(canvas, rect, textDirection: textDirection, borderRadius: _radius);
+  }
+
+  @override
+  _SheetTopEdge copyWith({BorderSide? side}) =>
+      _SheetTopEdge(side: side ?? this.side);
+
+  @override
+  ShapeBorder scale(double t) => _SheetTopEdge(side: side.scale(t));
+
+  @override
+  bool operator ==(Object other) =>
+      other is _SheetTopEdge && other.side == side;
+
+  @override
+  int get hashCode => side.hashCode;
 }
 
 /// The phone sheet's body with the rail beside it, when there is one.
@@ -1894,7 +1957,7 @@ class _WithServerRail extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         rail,
-        VerticalDivider(width: 1, color: context.appPalette.border),
+        VerticalDivider(width: 1, color: serverDivider(context)),
         Expanded(child: child),
       ],
     );
@@ -1991,6 +2054,10 @@ class _PhoneSurface extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final largeText = MediaQuery.textScalerOf(context).scale(16) > 24;
+    final tonal = AppFinish.tonalNeutral(
+      palette,
+      highContrast: MediaQuery.highContrastOf(context),
+    );
     final channel = selected;
     // Board 03 states the family's real boundary on the phone header, beside
     // a lock; every other template keeps the member line it already had.
@@ -2026,7 +2093,9 @@ class _PhoneSurface extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
                     decoration: BoxDecoration(
-                      border: Border(bottom: BorderSide(color: palette.border)),
+                      border: Border(
+                        bottom: BorderSide(color: serverDivider(context)),
+                      ),
                     ),
                     child: Row(
                       children: [
@@ -2106,13 +2175,18 @@ class _PhoneSurface extends StatelessWidget {
                         ),
                         if (showChannelsButton) ...[
                           const SizedBox(width: 8),
+                          // Refine-look R7 neutral: glass, a control
+                          // hairline and the interactive ink, keeping each
+                          // widget type and the surface's own key.
                           if (largeText)
                             IconButton.outlined(
                               key: const ValueKey('server-open-channels'),
                               onPressed: onChannels,
                               tooltip: copy.serverChannels,
-                              style: IconButton.styleFrom(
-                                minimumSize: const Size(48, 48),
+                              style: tonal.merge(
+                                IconButton.styleFrom(
+                                  minimumSize: const Size(48, 48),
+                                ),
                               ),
                               icon: ServerWaitingDot.on(
                                 waiting: channelsWaiting,
@@ -2127,10 +2201,12 @@ class _PhoneSurface extends StatelessWidget {
                             OutlinedButton.icon(
                               key: const ValueKey('server-open-channels'),
                               onPressed: onChannels,
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: const Size(48, 48),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
+                              style: tonal.merge(
+                                OutlinedButton.styleFrom(
+                                  minimumSize: const Size(48, 48),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                  ),
                                 ),
                               ),
                               icon: ServerWaitingDot.on(
@@ -2198,14 +2274,12 @@ class _PublicServerAdmission extends StatelessWidget {
         padding: const EdgeInsets.all(24),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
+          // Refine-look §8.2: an R2 block at the sheet radius, edged in the
+          // template's own ink at .30.
           child: Container(
             key: const ValueKey('server-public-admission'),
             padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: palette.surface,
-              borderRadius: AppRadius.xl,
-              border: Border.all(color: colors.iconBorder),
-            ),
+            decoration: _identityBlock(context, colors, AppRadius.xl),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -2215,7 +2289,7 @@ class _PublicServerAdmission extends StatelessWidget {
                   size: 64,
                   bordered: false,
                   textStyle: AppTypography.headlineSmall.copyWith(
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -2268,14 +2342,15 @@ class _PublicServerAdmission extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 18),
-                FilledButton.icon(
-                  key: const ValueKey('server-public-join'),
+                // The admission's one action: the server join, in the
+                // template's identity gradient (R5).
+                ServerGradientFilledButton(
+                  buttonKey: const ValueKey('server-public-join'),
                   onPressed: joining ? null : onJoin,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: colors.cta,
-                    foregroundColor: colors.onCta,
-                    minimumSize: const Size.fromHeight(48),
-                  ).copyWith(side: serverFocusRing(colors.onCta)),
+                  gradient: colors.ctaGradient,
+                  fill: colors.cta,
+                  foreground: colors.onCta,
+                  minimumSize: const Size.fromHeight(48),
                   icon: joining
                       ? const SizedBox.square(
                           dimension: 18,
@@ -2319,11 +2394,10 @@ class _MeetingPeoplePanel extends StatelessWidget {
       final people = session.participants;
       if (people.isEmpty) return const SizedBox.shrink();
       final copy = AppLocalizations.of(context);
-      final palette = context.appPalette;
       return Container(
         constraints: const BoxConstraints(maxHeight: maxHeight),
         decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: palette.border)),
+          border: Border(bottom: BorderSide(color: serverDivider(context))),
         ),
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
@@ -2337,6 +2411,27 @@ class _MeetingPeoplePanel extends StatelessWidget {
         ),
       );
     },
+  );
+}
+
+/// The R2 block with the template's ink at .30 as its edge — the admission
+/// and the invite introduction, the two cards that speak for the server
+/// itself. High contrast: flat `surface` and `borderStrong`.
+BoxDecoration _identityBlock(
+  BuildContext context,
+  ServerIdentityVisuals colors,
+  BorderRadius radius,
+) {
+  final palette = context.appPalette;
+  final highContrast = MediaQuery.highContrastOf(context);
+  return AppFinish.block(
+    palette,
+    radius: radius,
+    highContrast: highContrast,
+  ).copyWith(
+    border: Border.all(
+      color: highContrast ? palette.borderStrong : colors.identityEdge,
+    ),
   );
 }
 
@@ -2361,11 +2456,7 @@ class _InviteIntroduction extends StatelessWidget {
     return Container(
       key: const ValueKey('server-invite-introduction'),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: AppRadius.lg,
-        border: Border.all(color: colors.iconBorder),
-      ),
+      decoration: _identityBlock(context, colors, AppRadius.block),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

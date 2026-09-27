@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
@@ -73,6 +76,9 @@ class ServerChannelHeader extends StatelessWidget {
         : restricted
         ? copy.serverChannelRestricted
         : copy.serverChannelKindTitle(channel.kind);
+    final subtitleStyle = AppTypography.bodySmall.copyWith(
+      color: palette.textSecondary,
+    );
     return Container(
       key: const ValueKey('server-channel-header'),
       padding: EdgeInsets.symmetric(
@@ -80,7 +86,7 @@ class ServerChannelHeader extends StatelessWidget {
         vertical: compact ? 10 : 14,
       ),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: palette.border)),
+        border: Border(bottom: BorderSide(color: serverDivider(context))),
       ),
       child: Row(
         children: [
@@ -105,28 +111,26 @@ class ServerChannelHeader extends StatelessWidget {
                           .copyWith(color: palette.textPrimary),
                 ),
                 const SizedBox(height: 2),
-                // The pill and the live line share one row while they fit and
-                // fall onto two lines when they do not, instead of the pill
-                // holding its intrinsic width unflexed and being cut: at
-                // 320 px / 200 % text the single piece of contract-backed
-                // truth on this screen rendered as `NA ŻY`, and on board 04
-                // as a 13-px red bar with no word in it at all.
-                Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    if (live) ServerLivePill(label: copy.serverLivePill),
-                    Text(
-                      subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTypography.bodySmall.copyWith(
-                        color: palette.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
+                // Refine-look §8.2: above a media scene the header says LIVE
+                // with a lamp — a small pulsing dot before the unchanged
+                // "Na żywo od 19:40" — instead of a second red pill; the
+                // pill itself stays on the scene's card and on the channel
+                // rows. The lamp and its line flex together, so at 320 px /
+                // 200 % text the line wraps under the dot rather than being
+                // cut.
+                if (live)
+                  ServerLiveLamp(
+                    semanticLabel: copy.serverLivePill,
+                    label: subtitle,
+                    style: subtitleStyle,
+                  )
+                else
+                  Text(
+                    subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: subtitleStyle,
+                  ),
               ],
             ),
           ),
@@ -146,9 +150,11 @@ String serverLiveClock(BuildContext context, DateTime startedAt) =>
 /// The one liveness marker, used only when the channel document says live.
 ///
 /// A keyed alias of the canonical `YoBadge(variant: YoBadgeVariant.live)`:
-/// the `server-live-pill` key is the contract every server test counts
-/// (header pill, stage marker and the channel row's trailing marker all share
-/// it), so it lives here, once, and the badge itself carries no key.
+/// the `server-live-pill` key is the contract every server test counts (the
+/// session card's pill, the stage marker and the channel row's trailing
+/// marker all share it; the channel header says LIVE with
+/// [ServerLiveLamp]), so it lives here, once, and the badge itself carries
+/// no key.
 class ServerLivePill extends StatelessWidget {
   const ServerLivePill({required this.label, super.key});
   final String label;
@@ -159,6 +165,309 @@ class ServerLivePill extends StatelessWidget {
     label: label,
     variant: YoBadgeVariant.live,
   );
+}
+
+/// The channel header's LIVE lamp (refine-look §8.2): an 8 px dot in
+/// [AppColors.live] — pulsing three bounded 1.2 s cycles when it appears, like
+/// the badge's own dot, and still under Reduce Motion — then 6 px, then the
+/// unchanged "Na żywo od 19:40".
+///
+/// The dot is the marker and is announced as [semanticLabel] (the same
+/// `copy.serverLivePill` the pill says); the line keeps its own text node. The
+/// widget carries `server-live-lamp`, so "nothing claims liveness" can still
+/// be asserted for the header next to the `server-live-pill` count.
+class ServerLiveLamp extends StatelessWidget {
+  const ServerLiveLamp({
+    required this.semanticLabel,
+    required this.label,
+    required this.style,
+    super.key = const ValueKey('server-live-lamp'),
+  });
+
+  final String semanticLabel;
+  final String label;
+  final TextStyle style;
+
+  static const double dotSize = 8;
+  static const double gap = 6;
+
+  @override
+  Widget build(BuildContext context) {
+    // The dot sits on the centre of the FIRST line at any text size, so a
+    // line that wraps at 200 % never drags it down to the middle of two.
+    final line =
+        MediaQuery.textScalerOf(context).scale(style.fontSize ?? 12) *
+        (style.height ?? 1.2);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(top: ((line - dotSize) / 2).clamp(0, 99)),
+          child: Semantics(
+            label: semanticLabel,
+            child: const ExcludeSemantics(child: _LampDot(size: dotSize)),
+          ),
+        ),
+        const SizedBox(width: gap),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The lamp's dot: opacity 1 → .55 → 1, three mirrored 1.2 s cycles when it
+/// appears, then at rest — the live badge's bounded pulse, so a persistent
+/// server screen never ticks forever for a decoration and every surface
+/// still settles. Parked at 1 whenever decorative motion is off.
+class _LampDot extends StatefulWidget {
+  const _LampDot({required this.size});
+  final double size;
+
+  @override
+  State<_LampDot> createState() => _LampDotState();
+}
+
+class _LampDotState extends State<_LampDot>
+    with SingleTickerProviderStateMixin {
+  static const int _cycles = 3;
+  static const Duration _cycle = Duration(milliseconds: 1200);
+
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: _cycle * _cycles,
+    value: 1,
+  );
+  late final Animation<double> _opacity = TweenSequence<double>([
+    for (var i = 0; i < _cycles; i++) ...[
+      TweenSequenceItem(
+        tween: Tween<double>(
+          begin: 1,
+          end: .55,
+        ).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 1,
+      ),
+      TweenSequenceItem(
+        tween: Tween<double>(
+          begin: .55,
+          end: 1,
+        ).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 1,
+      ),
+    ],
+  ]).animate(_controller);
+  bool _pulsed = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (AppMotion.decorative(context)) {
+      if (!_pulsed) {
+        _pulsed = true;
+        _controller.forward(from: 0);
+      }
+    } else {
+      _pulsed = false;
+      _controller
+        ..stop()
+        ..value = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+    opacity: _opacity,
+    child: SizedBox.square(
+      dimension: widget.size,
+      child: const DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: AppColors.live,
+        ),
+      ),
+    ),
+  );
+}
+
+/// A server's one labelled CTA with the refine-look R5 finish: an identity
+/// (or brand) gradient laid on the button through `backgroundBuilder`, and
+/// the rail's tight coloured lift ([AppFinish.actionLift]) on an outer box so
+/// the button's own clip never cuts it.
+///
+/// It is the same `YoGradientFilledButton` recipe, kept here as a real
+/// [FilledButton] that carries the caller's key because the servers slice
+/// addresses `server-join`, `server-public-join` and `servers-create` as a
+/// [FilledButton] (its `onPressed`, its `enabled` and — for the WCAG 1.4.11
+/// focus-ring test — its `backgroundColor`). [fill] is therefore still the
+/// reported and underlying colour; the gradient's stops only ever move away
+/// from [foreground], so the [serverFocusRing] measured on [fill] holds on
+/// both stops.
+///
+/// States: hover and press wash [foreground] at .06 / .10 and move the lift
+/// (hover .40 / blur 22, pressed y 3 at 60 %); keyboard focus paints the
+/// 2 px [serverFocusRing] as a foreground over the gradient (the style's
+/// `side` alone would sit under it, unseen); disabled is the theme's flat
+/// sunken fill with no gradient and no lift. [lifted] false keeps the
+/// gradient without the lift where another action already owns the screen's
+/// one lift. High contrast keeps the gradient (the fill IS the control) and
+/// drops the lift. Never for repeated, list, retry or tonal actions.
+class ServerGradientFilledButton extends StatefulWidget {
+  const ServerGradientFilledButton({
+    required this.buttonKey,
+    required this.onPressed,
+    required this.icon,
+    required this.label,
+    required this.gradient,
+    required this.fill,
+    required this.foreground,
+    this.liftColor,
+    this.lifted = true,
+    this.minimumSize = const Size(48, 48),
+    this.textStyle,
+    super.key,
+  });
+
+  /// The key of the [FilledButton] itself.
+  final Key buttonKey;
+  final VoidCallback? onPressed;
+  final Widget icon;
+  final Widget label;
+  final Gradient gradient;
+
+  /// The solid colour under the gradient, reported as `backgroundColor`.
+  final Color fill;
+  final Color foreground;
+
+  /// Defaults to [fill].
+  final Color? liftColor;
+  final bool lifted;
+  final Size minimumSize;
+  final TextStyle? textStyle;
+
+  @override
+  State<ServerGradientFilledButton> createState() =>
+      _ServerGradientFilledButtonState();
+}
+
+class _ServerGradientFilledButtonState
+    extends State<ServerGradientFilledButton> {
+  final _states = WidgetStatesController();
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _states.addListener(_statesChanged);
+  }
+
+  @override
+  void dispose() {
+    _states
+      ..removeListener(_statesChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  // Only hover and press move the lift; focus and disabled paint nothing
+  // here, so they never rebuild this widget.
+  void _statesChanged() {
+    if (!mounted) return;
+    final hovered = _states.value.contains(WidgetState.hovered);
+    final pressed = _states.value.contains(WidgetState.pressed);
+    if (hovered == _hovered && pressed == _pressed) return;
+    setState(() {
+      _hovered = hovered;
+      _pressed = pressed;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.onPressed != null;
+    final lift =
+        !enabled || !widget.lifted || MediaQuery.highContrastOf(context)
+        ? const <BoxShadow>[]
+        : AppFinish.actionLift(
+            widget.liftColor ?? widget.fill,
+            hovered: _hovered,
+            pressed: _pressed,
+          );
+    final ink = widget.foreground;
+    return AnimatedContainer(
+      duration: AppMotion.resolve(context, AppMotion.quick),
+      curve: AppMotion.standardCurve,
+      decoration: ShapeDecoration(shape: const StadiumBorder(), shadows: lift),
+      child: FilledButton.icon(
+        key: widget.buttonKey,
+        onPressed: widget.onPressed,
+        statesController: _states,
+        // FilledButton defaults to Clip.none, which would let the gradient
+        // `Ink` paint as a rectangle past the stadium.
+        clipBehavior: Clip.antiAlias,
+        style:
+            FilledButton.styleFrom(
+              backgroundColor: widget.fill,
+              foregroundColor: ink,
+              minimumSize: widget.minimumSize,
+              textStyle: widget.textStyle,
+              elevation: 0,
+              shadowColor: Colors.transparent,
+            ).copyWith(
+              side: serverFocusRing(ink),
+              overlayColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.pressed)) {
+                  return ink.withValues(alpha: .10);
+                }
+                if (states.contains(WidgetState.hovered)) {
+                  return ink.withValues(alpha: .06);
+                }
+                return null;
+              }),
+              backgroundBuilder: enabled
+                  ? (context, states, child) => Ink(
+                      // Keep `color` null behind the gradient (see
+                      // yo_button.dart).
+                      decoration: BoxDecoration(gradient: widget.gradient),
+                      // The button's own `Material` paints `side` UNDER its
+                      // child (`borderOnForeground: false`), where this
+                      // opaque gradient covers it. The focus ring is
+                      // therefore drawn again here, as a foreground over the
+                      // gradient; a `DecoratedBox` adds no padding, so focus
+                      // never moves the label.
+                      child: DecoratedBox(
+                        key: const ValueKey('server-gradient-focus-ring'),
+                        position: DecorationPosition.foreground,
+                        decoration: ShapeDecoration(
+                          shape: StadiumBorder(
+                            side:
+                                serverFocusRing(ink).resolve(states) ??
+                                BorderSide.none,
+                          ),
+                        ),
+                        child: child,
+                      ),
+                    )
+                  : null,
+            ),
+        icon: widget.icon,
+        label: widget.label,
+      ),
+    );
+  }
 }
 
 /// Mounts the scene a channel kind calls for.
@@ -326,23 +635,35 @@ class ServerSessionScene extends StatelessWidget {
               session.phase == ServerSessionPhase.reconnecting);
       final live = channel.liveness.isLive;
       final module = _boardModule(context, copy, colors);
-      return SingleChildScrollView(
+      // Refine-look R4 / W2 at card scale. The card is lit only while the
+      // channel document says LIVE and this device has not joined it; once
+      // connected it carries the voice accent's edge and corner instead, and
+      // every other state is the plain R2 block. A held root is quiet.
+      final cardState = server.isHeld
+          ? ServerSessionCardState.quiet
+          : here && session.isConnected
+          ? ServerSessionCardState.connected
+          : live && !here
+          ? ServerSessionCardState.live
+          : ServerSessionCardState.quiet;
+      final inset = compact ? AppSpacing.md : AppSpacing.lg;
+      final scroll = SingleChildScrollView(
         key: const ValueKey('server-channel-content-scroll'),
-        padding: EdgeInsets.all(compact ? AppSpacing.md : AppSpacing.lg),
+        padding: EdgeInsets.all(inset),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
+            ServerSessionCard(
+              state: cardState,
+              accent: ServerIdentity.of(server.type).accent,
+              colors: colors,
+              igniteKey:
+                  cardState == ServerSessionCardState.live &&
+                      channel.liveness.startedAt != null
+                  ? '${server.id}/${channel.id}/'
+                        '${channel.liveness.startedAt!.microsecondsSinceEpoch}'
+                  : null,
               padding: EdgeInsets.all(compact ? 16 : 24),
-              decoration: BoxDecoration(
-                color: palette.surface,
-                borderRadius: AppRadius.lg,
-                border: Border.all(
-                  color: here && session.isConnected
-                      ? palette.audioAccent
-                      : palette.border,
-                ),
-              ),
               child: Column(
                 children: [
                   // Tiles exist only while the provider reports a roster, so
@@ -358,7 +679,13 @@ class ServerSessionScene extends StatelessWidget {
                       compact: compact,
                     ),
                   ] else if (!_video)
-                    _Orb(server: server, colors: colors, live: live),
+                    _Orb(
+                      server: server,
+                      colors: colors,
+                      // The gem is lit by the same fact as the card: a live
+                      // generation this device has not joined.
+                      live: cardState == ServerSessionCardState.live,
+                    ),
                   const SizedBox(height: 20),
                   Text(
                     here && session.isConnected
@@ -454,6 +781,41 @@ class ServerSessionScene extends StatelessWidget {
           ],
         ),
       );
+      // Content that scrolls past the scene's end dissolves into the canvas
+      // over the last [inset] px instead of stopping on a hard line just
+      // above the conversation bar. The fade is exactly as tall as the
+      // scroll padding, so at the end of the scroll it lies over empty
+      // padding and never dims the last card. High contrast keeps the plain
+      // edge (no decorative gradient); the scroller keeps its place in the
+      // tree either way.
+      return Stack(
+        fit: StackFit.passthrough,
+        children: [
+          scroll,
+          if (!MediaQuery.highContrastOf(context))
+            PositionedDirectional(
+              start: 0,
+              end: 0,
+              bottom: 0,
+              height: inset,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  key: const ValueKey('server-session-edge-fade'),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        palette.background.withValues(alpha: 0),
+                        palette.background,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
     },
   );
 
@@ -491,6 +853,305 @@ class ServerSessionScene extends StatelessWidget {
   }
 }
 
+/// Which light a session card carries (refine-look R4).
+enum ServerSessionCardState {
+  /// The plain R2 block: quiet, held, or joining.
+  quiet,
+
+  /// LIVE and not joined here: the W2 recipe at card scale.
+  live,
+
+  /// This device is in the conversation: the voice accent's edge and a
+  /// corner tint, no glow.
+  connected,
+}
+
+/// The session scene's card.
+///
+/// * [ServerSessionCardState.quiet] — R2: the top-lit block fill, a 1 px
+///   hairline edge and Pearl's shadow pair.
+/// * [ServerSessionCardState.live] — W2 at card scale: the live tile's base
+///   (the identity wash over `surfaceRaised`), a corner light in the
+///   identity [accent] whose reach is capped at 200 px, the 1 px live rim, a
+///   Dark specular top line and the live under-glow — which replaces the
+///   block shadow. This is the workspace's one emitted light.
+/// * [ServerSessionCardState.connected] — a 1.5 px `audioAccent` edge and an
+///   `audioAccent` corner tint (.12 / .08). No glow.
+///
+/// **Ignite (W2).** The first time a live generation ([igniteKey]: server,
+/// channel and `startedAt`) is seen, the glow and the corner light fade in
+/// over [AppMotion.entrance] and then rest. Rebuilds, a channel switch and a
+/// return to the server never replay it; a new `startedAt` is a new key and
+/// lights once more. No translate, scale or loop, and nothing at all under
+/// Reduce Motion, accessible navigation or a paused ticker.
+///
+/// Edges are painted as a foreground and the tree is the same in every
+/// state, so a state change (a join) never moves the content by a pixel nor
+/// remounts it — keyboard focus stays where it was. High contrast: a flat
+/// `surface`, a 1 px `borderStrong` edge (1.5 px solid live / `audioAccent`
+/// in the lit states), no light.
+class ServerSessionCard extends StatefulWidget {
+  const ServerSessionCard({
+    required this.state,
+    required this.accent,
+    required this.colors,
+    required this.padding,
+    required this.child,
+    this.igniteKey,
+    super.key,
+  });
+
+  final ServerSessionCardState state;
+
+  /// The template's bright accent ([ServerIdentity.accent]).
+  final Color accent;
+  final ServerIdentityVisuals colors;
+  final EdgeInsets padding;
+  final Widget child;
+
+  /// Names the live generation on screen (`server/channel/startedAt`), so its
+  /// light ignites once per generation. Null never ignites.
+  final String? igniteKey;
+
+  /// The connected corner tint's peak (Dark / Pearl), below the lead-block
+  /// tint because the edge already says "connected".
+  static const double connectedTintDark = .12;
+  static const double connectedTintPearl = .08;
+
+  /// Forgets which live generations have already ignited (tests only).
+  @visibleForTesting
+  static void debugResetIgnitions() => _ignited.clear();
+
+  /// App-lifetime on purpose, like Start's live tiles: the workspace is
+  /// rebuilt on every channel switch and remounted on every return, and
+  /// neither may replay the light. Bounded to the most recent generations.
+  static final Set<String> _ignited = <String>{};
+  static const int _ignitedMemory = 32;
+
+  /// Whether [key] is seen for the first time (and remembers it).
+  static bool _firstSight(String key) {
+    if (_ignited.contains(key)) return false;
+    _ignited.add(key);
+    if (_ignited.length > _ignitedMemory) _ignited.remove(_ignited.first);
+    return true;
+  }
+
+  @override
+  State<ServerSessionCard> createState() => _ServerSessionCardState();
+}
+
+class _ServerSessionCardState extends State<ServerSessionCard>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _ignite;
+  CurvedAnimation? _igniteCurve;
+  Animation<double> _light = kAlwaysCompleteAnimation;
+  bool _checked = false;
+
+  bool get _live => widget.state == ServerSessionCardState.live;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_checked) return;
+    _checked = true;
+    _maybeIgnite();
+  }
+
+  @override
+  void didUpdateWidget(covariant ServerSessionCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.igniteKey != oldWidget.igniteKey ||
+        widget.state != oldWidget.state) {
+      _maybeIgnite();
+    }
+  }
+
+  void _maybeIgnite() {
+    final key = widget.igniteKey;
+    if (!_live || key == null || !ServerSessionCard._firstSight(key)) return;
+    if (!AppMotion.decorative(context)) {
+      _light = kAlwaysCompleteAnimation;
+      return;
+    }
+    // One controller and one curve for the card's lifetime, reused by every
+    // later generation, so an ignition never leaves a listener behind.
+    final controller = _ignite ??= AnimationController(
+      vsync: this,
+      duration: AppMotion.entrance,
+    );
+    _light = _igniteCurve ??= CurvedAnimation(
+      parent: controller,
+      curve: AppMotion.entranceCurve,
+    );
+    controller.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _igniteCurve?.dispose();
+    _ignite?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final duration = AppMotion.resolve(context, AppMotion.quick);
+    final live = _live;
+    final connected = widget.state == ServerSessionCardState.connected;
+
+    final BoxDecoration fill;
+    if (highContrast) {
+      fill = BoxDecoration(
+        color: palette.surface,
+        borderRadius: AppRadius.block,
+      );
+    } else if (live) {
+      fill = BoxDecoration(
+        color: Color.alphaBlend(widget.colors.cardWash, palette.surfaceRaised),
+        borderRadius: AppRadius.block,
+      );
+    } else {
+      fill = AppFinish.blockFill(palette);
+    }
+
+    final Border edge;
+    if (live) {
+      edge = AppFinish.liveRim(palette, highContrast: highContrast);
+    } else if (connected) {
+      edge = Border.all(color: palette.audioAccent, width: 1.5);
+    } else {
+      edge = AppFinish.blockEdge(palette, highContrast: highContrast);
+    }
+
+    final lit = live && !highContrast;
+    final specular = live
+        ? AppFinish.liveSpecular(palette, highContrast: highContrast)
+        : null;
+    final tintAlpha = palette.isDark
+        ? ServerSessionCard.connectedTintDark
+        : ServerSessionCard.connectedTintPearl;
+
+    final card = AnimatedContainer(
+      key: const ValueKey('server-session-card'),
+      duration: duration,
+      curve: AppMotion.standardCurve,
+      decoration: fill,
+      foregroundDecoration: BoxDecoration(
+        borderRadius: AppRadius.block,
+        border: edge,
+      ),
+      child: ClipRRect(
+        borderRadius: AppRadius.block,
+        child: Stack(
+          // The content keeps the card's full width (a loose Stack would let
+          // the centred column shrink to its widest line).
+          fit: StackFit.passthrough,
+          children: [
+            if (lit)
+              Positioned.fill(
+                key: const ValueKey('server-session-corner-layer'),
+                child: IgnorePointer(
+                  child: FadeTransition(
+                    opacity: _light,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => DecoratedBox(
+                        key: const ValueKey('server-session-corner'),
+                        decoration: BoxDecoration(
+                          gradient: AppFinish.liveCorner(
+                            widget.accent,
+                            palette,
+                            shortestSide: constraints.biggest.shortestSide,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            if (connected && !highContrast)
+              PositionedDirectional(
+                key: const ValueKey('server-session-tint'),
+                top: AppFinish.cornerTintTop,
+                end: AppFinish.cornerTintEnd,
+                width: AppFinish.cornerTintSize,
+                height: AppFinish.cornerTintSize,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          palette.audioAccent.withValues(alpha: tintAlpha),
+                          palette.audioAccent.withValues(alpha: 0),
+                        ],
+                        stops: const [0, .68],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            if (specular != null)
+              Positioned(
+                key: const ValueKey('server-session-specular'),
+                left: 0,
+                right: 0,
+                top: 0,
+                height: 1,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(gradient: specular),
+                  ),
+                ),
+              ),
+            // The edge is a foreground; one extra pixel keeps the content
+            // exactly where the old in-layout 1 px border left it.
+            Padding(
+              key: const ValueKey('server-session-card-content'),
+              padding: widget.padding + const EdgeInsets.all(1),
+              child: widget.child,
+            ),
+          ],
+        ),
+      ),
+    );
+    // The under-glow is its own layer behind the card, so the card's clip
+    // never cuts it and it replaces the block shadow rather than adding one.
+    // The layer is there in every state (empty when not lit), so the card
+    // itself never changes its place in the tree.
+    return Stack(
+      clipBehavior: Clip.none,
+      fit: StackFit.passthrough,
+      children: [
+        Positioned.fill(
+          child: IgnorePointer(
+            child: FadeTransition(
+              opacity: _light,
+              child: DecoratedBox(
+                key: lit ? const ValueKey('server-session-glow') : null,
+                decoration: BoxDecoration(
+                  borderRadius: AppRadius.block,
+                  boxShadow: lit
+                      ? AppFinish.liveGlow(palette)
+                      : const <BoxShadow>[],
+                ),
+              ),
+            ),
+          ),
+        ),
+        card,
+      ],
+    );
+  }
+}
+
+/// The session's identity orb, 112 px.
+///
+/// LIVE (and not joined): the template's lit gem
+/// ([ServerIdentityVisuals.liveOrbGradient]) with the symbol in its own ink
+/// and a 1 px white @ .14 rim — no glow and no pulse, the badge's dot
+/// already pulses. Otherwise the "unlit" identity glass.
 class _Orb extends StatelessWidget {
   const _Orb({required this.server, required this.colors, required this.live});
   final Server server;
@@ -499,23 +1160,51 @@ class _Orb extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
+    key: const ValueKey('server-session-orb'),
     width: 112,
     height: 112,
-    decoration: BoxDecoration(
-      shape: BoxShape.circle,
-      color: colors.iconSurface,
-      border: Border.all(
-        color: live ? colors.foreground : colors.iconBorder,
-        width: live ? 2 : 1,
-      ),
-    ),
+    decoration: serverOrbDecoration(context, colors, live: live),
     child: Center(
       child: ServerTypeSymbol(
         type: server.type,
-        color: colors.foreground,
+        color: live ? colors.onLiveOrb : colors.foreground,
         size: 46,
       ),
     ),
+  );
+}
+
+/// The decoration of an identity disc: the lit gem when [live], the unlit
+/// identity glass otherwise (quiet orbs, the module empty state). High
+/// contrast keeps the gem's deeper stop flat (its ink is measured on it) and
+/// gives both a `borderStrong` edge, with no gradient or shadow.
+BoxDecoration serverOrbDecoration(
+  BuildContext context,
+  ServerIdentityVisuals colors, {
+  bool live = false,
+}) {
+  final palette = context.appPalette;
+  final highContrast = MediaQuery.highContrastOf(context);
+  if (live) {
+    return BoxDecoration(
+      shape: BoxShape.circle,
+      color: highContrast ? colors.liveOrbGradient.colors.last : null,
+      gradient: highContrast ? null : colors.liveOrbGradient,
+      border: Border.all(
+        color: highContrast
+            ? palette.borderStrong
+            : AppColors.white.withValues(alpha: .14),
+      ),
+    );
+  }
+  return BoxDecoration(
+    shape: BoxShape.circle,
+    color: highContrast ? palette.surface : null,
+    gradient: highContrast ? null : colors.unlitGradient,
+    border: Border.all(
+      color: highContrast ? palette.borderStrong : colors.unlitEdge,
+    ),
+    boxShadow: AppFinish.blockShadows(palette, highContrast: highContrast),
   );
 }
 
@@ -684,15 +1373,15 @@ class ServerJoinAction extends StatelessWidget {
         style: AppTypography.bodySmall.copyWith(color: palette.textSecondary),
       );
     }
-    return FilledButton.icon(
-      key: const ValueKey('server-join'),
+    // The workspace's one lifted action (refine-look R5, identity variant).
+    return ServerGradientFilledButton(
+      buttonKey: const ValueKey('server-join'),
       onPressed: onJoin,
-      style: FilledButton.styleFrom(
-        backgroundColor: colors.cta,
-        foregroundColor: colors.onCta,
-        minimumSize: fullWidth ? const Size.fromHeight(56) : const Size(48, 48),
-        textStyle: fullWidth ? AppTypography.titleSmall : null,
-      ).copyWith(side: serverFocusRing(colors.onCta)),
+      gradient: colors.ctaGradient,
+      fill: colors.cta,
+      foreground: colors.onCta,
+      minimumSize: fullWidth ? const Size.fromHeight(56) : const Size(48, 48),
+      textStyle: fullWidth ? AppTypography.titleSmall : null,
       icon: Icon(serverJoinIcon(channel, live: live), size: 18),
       label: Text(label),
     );
@@ -879,10 +1568,9 @@ class ServerChannelEmptyState extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(24),
         constraints: const BoxConstraints(minHeight: 250),
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: AppRadius.lg,
-          border: Border.all(color: palette.border),
+        decoration: AppFinish.block(
+          palette,
+          highContrast: MediaQuery.highContrastOf(context),
         ),
         child: Column(
           children: [
@@ -907,11 +1595,7 @@ class ServerChannelEmptyState extends StatelessWidget {
               Container(
                 width: 112,
                 height: 112,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: colors.iconSurface,
-                  border: Border.all(color: colors.iconBorder),
-                ),
+                decoration: serverOrbDecoration(context, colors),
                 child: Center(
                   child: Icon(
                     serverChannelIcon(channel.kind),

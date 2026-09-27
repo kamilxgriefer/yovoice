@@ -183,6 +183,7 @@ void main() {
         expect(qaJoin, findsNothing, reason: reason);
         expect(qaDock, findsNothing, reason: reason);
         expect(qaLivePill, findsNothing, reason: reason);
+        expect(qaLiveLamp, findsNothing, reason: reason);
         expect(repository.calls, isEmpty, reason: reason);
       }
     });
@@ -204,6 +205,8 @@ void main() {
             final reason = 'held $type at $width';
             expect(tester.takeException(), isNull, reason: reason);
             expect(qaLivePill, findsNothing, reason: reason);
+            expect(qaLiveLamp, findsNothing, reason: reason);
+            expect(qaLiveLamp, findsNothing, reason: reason);
             expect(qaDock, findsNothing, reason: reason);
             for (final join in tester.widgetList<ButtonStyleButton>(qaJoin)) {
               expect(
@@ -628,45 +631,46 @@ void main() {
     );
 
     testWidgets(
-        'leaving releases the link, asks nothing of the server on the press '
-        'path, and sends only the release backstop', (
-      tester,
-    ) async {
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final repository = TestServerRepository()
-        ..servers = [qaServer(ServerType.friends)]
-        ..channels = qaChannels(ServerType.friends);
-      final connector = FakeServerMediaConnector();
-      await pumpServers(
-        tester,
-        qaWorkspace(
-          repository,
-          channelId: qaFirstMedia(ServerType.friends),
-          connector: connector,
-        ),
-        size: const Size(1440, 900),
-      );
-      final link = await qaJoinAndSettle(tester, connector, roster: qaRoster);
-      final before = repository.calls.length;
-      final releasesBefore = repository.releases.length;
-      await tester.tap(qaLeave);
-      await tester.pumpAndSettle();
-      expect(link.disconnects, 1);
-      expect(qaDock, findsNothing);
-      expect(qaJoin, findsOneWidget, reason: 'leaving has to be reversible');
-      expect(
-        repository.calls.length,
-        before,
-        reason: 'leaving asked the server for something a press never ordered',
-      );
-      // Since the empty-channel fix, leaving also sends the release backstop.
-      // It ends nothing by itself: the server decides after the grace.
-      expect(
-        repository.releases.length,
-        releasesBefore + 1,
-        reason: 'leaving must send the release signal exactly once',
-      );
-    });
+      'leaving releases the link, asks nothing of the server on the press '
+      'path, and sends only the release backstop',
+      (tester) async {
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final repository = TestServerRepository()
+          ..servers = [qaServer(ServerType.friends)]
+          ..channels = qaChannels(ServerType.friends);
+        final connector = FakeServerMediaConnector();
+        await pumpServers(
+          tester,
+          qaWorkspace(
+            repository,
+            channelId: qaFirstMedia(ServerType.friends),
+            connector: connector,
+          ),
+          size: const Size(1440, 900),
+        );
+        final link = await qaJoinAndSettle(tester, connector, roster: qaRoster);
+        final before = repository.calls.length;
+        final releasesBefore = repository.releases.length;
+        await tester.tap(qaLeave);
+        await tester.pumpAndSettle();
+        expect(link.disconnects, 1);
+        expect(qaDock, findsNothing);
+        expect(qaJoin, findsOneWidget, reason: 'leaving has to be reversible');
+        expect(
+          repository.calls.length,
+          before,
+          reason:
+              'leaving asked the server for something a press never ordered',
+        );
+        // Since the empty-channel fix, leaving also sends the release backstop.
+        // It ends nothing by itself: the server decides after the grace.
+        expect(
+          repository.releases.length,
+          releasesBefore + 1,
+          reason: 'leaving must send the release signal exactly once',
+        );
+      },
+    );
 
     testWidgets(
       'a member without moderator power is told a quiet stage is not live '

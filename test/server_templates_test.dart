@@ -485,7 +485,10 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Tylko na zaproszenie'), findsWidgets);
-      expect(find.text('Tylko na zaproszenie · 8 osób'), findsOneWidget);
+      expect(
+        find.text('Tylko na zaproszenie\u00A0· 8\u00A0osób'),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('server-home-board')), findsOneWidget);
       expect(find.text('Rodzinny pulpit'), findsOneWidget);
       expect(

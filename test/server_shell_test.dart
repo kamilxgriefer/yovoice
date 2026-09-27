@@ -172,6 +172,11 @@ void main() {
               findsNothing,
               reason: reason,
             );
+            expect(
+              find.byKey(const ValueKey('server-live-lamp')),
+              findsNothing,
+              reason: reason,
+            );
             expect(find.textContaining(fabricatedCount), findsNothing);
             expect(dock, findsNothing, reason: reason);
             expect(repository.calls, isEmpty, reason: reason);
@@ -226,8 +231,8 @@ void main() {
       matching: find.byIcon(Icons.lock_outline),
     );
     expect(hr, findsOneWidget);
-    expect(find.text('Prywatny serwer · 12 osób'), findsNothing);
-    expect(find.text('Przestrzeń firmowa · 12 osób'), findsOneWidget);
+    expect(find.text('Prywatny serwer\u00A0· 12\u00A0osób'), findsNothing);
+    expect(find.text('Przestrzeń firmowa\u00A0· 12\u00A0osób'), findsOneWidget);
   });
 
   testWidgets('the panel subtitle and the phone header count real members', (
@@ -247,7 +252,7 @@ void main() {
       ),
       size: const Size(1100, 800),
     );
-    expect(find.text('Prywatny serwer · 12 osób'), findsOneWidget);
+    expect(find.text('Prywatny serwer\u00A0· 12\u00A0osób'), findsOneWidget);
     await pumpServers(
       tester,
       ServerWorkspaceScreen(
@@ -1281,9 +1286,7 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final repository = TestServerRepository()
         ..servers = [shellServer(ServerType.friends)]
-        ..friends = const [
-          ServerInviteCandidate(id: 'u2', displayName: 'Ola'),
-        ];
+        ..friends = const [ServerInviteCandidate(id: 'u2', displayName: 'Ola')];
 
       await pumpServers(
         tester,

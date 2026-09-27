@@ -329,6 +329,7 @@ void main() {
     );
     expect(find.text('Scena jeszcze nie nadaje'), findsWidgets);
     expect(livePill, findsNothing);
+    expect(find.byKey(const ValueKey('server-live-lamp')), findsNothing);
     // `startSession` needs moderator power on a stage, so no button is drawn
     // for a member that the Rules would refuse.
     expect(join, findsNothing);
