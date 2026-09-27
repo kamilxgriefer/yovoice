@@ -555,6 +555,7 @@ class _MessageContent extends StatelessWidget {
           privateMediaLoader: privateMediaLoader,
           audioPlayerFactory: audioPlayerFactory,
           voiceSourcePreparer: voiceSourcePreparer,
+          outgoing: onBrandSurface,
         );
       case MessageType.image:
         return _ImageMessageContent(
@@ -669,6 +670,42 @@ Future<void> _disposeVideoResources({
   ]);
 }
 
+/// The one audio floor every direct-message voice clip shares (refine-look
+/// W3: in a thread exactly one clip plays, so exactly one bead glows).
+///
+/// A bubble takes the floor when it starts or resumes its clip, and every
+/// other bubble then stands down: one that is playing pauses (keeping its
+/// real position, so a tap resumes it where it was), one that is still
+/// loading lets that load go. A clip the platform starts late — a resume
+/// already queued when another bubble took the floor — pauses itself as soon
+/// as it reports `playing`.
+///
+/// The floor is app-wide, not per thread: the shared-media Voice tab pushed
+/// over a thread is a second surface playing the same kind of clip, and the
+/// two must not overlap either. It records WHO holds it (a bubble's state),
+/// never a message id, because the same message can be mounted twice (in the
+/// thread and in its shared-media tab).
+class _DirectVoiceFloor extends ChangeNotifier {
+  Object? _holder;
+
+  /// Whether a bubble other than [owner] holds the floor.
+  bool isHeldByAnother(Object owner) =>
+      _holder != null && !identical(_holder, owner);
+
+  void take(Object owner) {
+    _holder = owner;
+    notifyListeners();
+  }
+
+  /// Leaves quietly: an empty floor asks nobody to stand down, and a bubble
+  /// leaves it while the tree is being torn down.
+  void leave(Object owner) {
+    if (identical(_holder, owner)) _holder = null;
+  }
+}
+
+final _DirectVoiceFloor _directVoiceFloor = _DirectVoiceFloor();
+
 class _VoiceMessageContent extends StatefulWidget {
   const _VoiceMessageContent({
     required this.message,
@@ -679,6 +716,7 @@ class _VoiceMessageContent extends StatefulWidget {
     required this.privateMediaLoader,
     required this.audioPlayerFactory,
     required this.voiceSourcePreparer,
+    this.outgoing,
   });
 
   final Message message;
@@ -690,6 +728,14 @@ class _VoiceMessageContent extends StatefulWidget {
   privateMediaLoader;
   final AudioPlayer Function()? audioPlayerFactory;
   final DirectVoiceSourcePreparer? voiceSourcePreparer;
+
+  /// The chat bubble's side (refine-look §8.3, R13 / R14): `true` on the
+  /// outgoing brand gradient, `false` on an incoming bubble. Either draws
+  /// [VoicePlayerRowStyle.bubble] and pours the waveform toward the player's
+  /// real position. `null` is the shared-media Voice tab, which keeps the
+  /// legacy inline row and tracks no position. A call site never switches
+  /// between null and a side.
+  final bool? outgoing;
 
   @override
   State<_VoiceMessageContent> createState() => _VoiceMessageContentState();
@@ -707,18 +753,113 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
   bool _failed = false;
   PreparedDirectVoiceSource? _preparedSource;
 
+  /// The bubble's REAL playback position, 0..1, or null for the still
+  /// silhouette. Only the player's own position events move it, divided by
+  /// the length the player reported (the message's recorded length until it
+  /// does); nothing extrapolates it or derives it from a timer. It goes back
+  /// to null on completion, on stop, on a source change and when the bubble
+  /// goes away. The waveform listens to it directly, so a position tick
+  /// repaints the bars and never rebuilds this bubble.
+  final ValueNotifier<double?> _position = ValueNotifier<double?>(null);
+  StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<Duration>? _durationSubscription;
+  StreamSubscription<void>? _completionSubscription;
+  Duration? _reportedDuration;
+
+  bool get _tracksPosition => widget.outgoing != null;
+
   @override
   void initState() {
     super.initState();
     _player = widget.audioPlayerFactory?.call() ?? AudioPlayer();
     _stateSubscription = _player.onPlayerStateChanged.listen((state) {
       if (!mounted) return;
+      if (state == PlayerState.stopped ||
+          state == PlayerState.completed ||
+          state == PlayerState.disposed) {
+        _resetPosition();
+      }
+      if (state == PlayerState.playing &&
+          _directVoiceFloor.isHeldByAnother(this)) {
+        // A late platform start (a resume queued before another bubble took
+        // the floor) must not overlap the clip that holds it.
+        unawaited(_yieldPlayback());
+      }
       setState(() {
         _playing = state == PlayerState.playing;
         _paused = state == PlayerState.paused;
       });
     });
+    _directVoiceFloor.addListener(_onFloorChanged);
+    if (_tracksPosition) {
+      // The player's event streams can carry platform errors; the play
+      // future and the state stream own failure, so these only listen.
+      _positionSubscription = _player.onPositionChanged.listen(
+        _onPosition,
+        onError: (Object _, StackTrace __) {},
+      );
+      _durationSubscription = _player.onDurationChanged.listen(
+        _onDuration,
+        onError: (Object _, StackTrace __) {},
+      );
+      _completionSubscription = _player.onPlayerComplete.listen(
+        (_) => _resetPosition(),
+        onError: (Object _, StackTrace __) {},
+      );
+    }
   }
+
+  /// A position counts only while this bubble's clip is playing or paused:
+  /// the update a player sends after a stop, a completion or a replaced
+  /// source must not bring an old fill back.
+  void _onPosition(Duration position) {
+    if (!mounted || (!_playing && !_paused)) return;
+    final length = _reportedDuration ?? _recordedLength;
+    if (length == null) return;
+    _position.value = (position.inMicroseconds / length.inMicroseconds).clamp(
+      0.0,
+      1.0,
+    );
+  }
+
+  /// Only the clip being loaded or played may report its length.
+  void _onDuration(Duration duration) {
+    if (!mounted || duration <= Duration.zero) return;
+    if (!_loading && !_playing && !_paused) return;
+    _reportedDuration = duration;
+  }
+
+  Duration? get _recordedLength {
+    final seconds = widget.message.durationSeconds ?? 0;
+    return seconds > 0 ? Duration(seconds: seconds) : null;
+  }
+
+  void _resetPosition() => _position.value = null;
+
+  /// Another bubble took the floor ([_directVoiceFloor]): stand down.
+  void _onFloorChanged() {
+    if (!mounted || !_directVoiceFloor.isHeldByAnother(this)) return;
+    if (_loading) {
+      // Let the load go. A newer generation makes the fetch, the preparation
+      // and the play stand down, and [_playOwnedSource] stops a play that is
+      // already in flight; a source already prepared stays for a later tap.
+      _mediaGeneration += 1;
+      setState(() => _loading = false);
+    }
+    if (_playing) unawaited(_yieldPlayback());
+  }
+
+  /// Pauses for the clip that holds the floor, keeping this clip's position.
+  /// A player that cannot pause is stopped rather than left sounding.
+  Future<void> _yieldPlayback() => _runPlayerCommand(() async {
+    // It may have paused, stopped or finished since this was queued.
+    if (!mounted || !_playing) return;
+    try {
+      await _player.pause();
+    } catch (_) {
+      await _player.stop();
+    }
+  }).catchError((Object _) {});
 
   @override
   void didUpdateWidget(covariant _VoiceMessageContent oldWidget) {
@@ -734,6 +875,10 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
       _playing = false;
       _paused = false;
       _failed = false;
+      _reportedDuration = null;
+      _resetPosition();
+      // The replaced clip is being stopped; it no longer holds the floor.
+      _directVoiceFloor.leave(this);
       unawaited(_interruptPlayerAndDisposeSource(prepared));
     }
   }
@@ -742,7 +887,15 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
   void dispose() {
     _mediaGeneration += 1;
     final prepared = _takePreparedSource();
+    _directVoiceFloor
+      ..removeListener(_onFloorChanged)
+      ..leave(this);
     unawaited(_stateSubscription?.cancel());
+    // Cancelled before the notifier goes, so no late position can land.
+    unawaited(_positionSubscription?.cancel());
+    unawaited(_durationSubscription?.cancel());
+    unawaited(_completionSubscription?.cancel());
+    _position.dispose();
     unawaited(_disposePlayerAndSource(prepared));
     super.dispose();
   }
@@ -843,12 +996,16 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
       return;
     }
     if (_paused) {
+      _directVoiceFloor.take(this);
       await _runPlayerCommand(_player.resume);
       return;
     }
     final generation = ++_mediaGeneration;
     final snapshot = _mediaSnapshot;
     if (!_ownsMediaLoad(generation, snapshot)) return;
+    // One clip at a time: whatever else plays or loads stands down now,
+    // before this clip's bytes are even fetched.
+    _directVoiceFloor.take(this);
     try {
       setState(() {
         _loading = true;
@@ -912,6 +1069,7 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
   Widget build(BuildContext context) {
     final duration = widget.message.durationSeconds ?? 0;
     final copy = AppLocalizations.of(context);
+    final outgoing = widget.outgoing;
 
     return VoicePlayerRow(
       status: _loading
@@ -924,9 +1082,10 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
           ? VoicePlayerRowStatus.paused
           : VoicePlayerRowStatus.idle,
       durationSeconds: duration,
-      // No progress: this player reports play / pause / loading / failed and
-      // no position, so the bars stay a still silhouette rather than a fill
-      // invented from the duration.
+      // The bubble pours the waveform toward the player's REAL position
+      // ([_position]); the shared-media Voice tab passes nothing and keeps
+      // the still silhouette. Neither ever invents a fill from the duration.
+      progress: outgoing == null ? null : _position,
       semanticsLabel: _failed
           ? copy.text(
               'Voice message unavailable. Tap to retry.',
@@ -941,11 +1100,24 @@ class _VoiceMessageContentState extends State<_VoiceMessageContent> {
             ),
       onTap: _toggle,
       tapKey: ValueKey<String>('direct-voice-${widget.message.id}'),
-      style: VoicePlayerRowStyle.inline(
-        foreground: widget.foregroundColor,
-        mutedForeground: widget.mutedForegroundColor,
-        errorForeground: widget.errorForegroundColor,
-      ),
+      // Refine-look R14 / R13: the 34 px voice bead — the brand bead on an
+      // incoming bubble, lit only while this clip plays; white @ .22 on the
+      // outgoing gradient, never lit — over the poured waveform. The inks
+      // stay the bubble's own (clock, focus ring).
+      style: outgoing == null
+          ? VoicePlayerRowStyle.inline(
+              foreground: widget.foregroundColor,
+              mutedForeground: widget.mutedForegroundColor,
+              errorForeground: widget.errorForegroundColor,
+            )
+          : VoicePlayerRowStyle.bubble(
+              outgoing: outgoing,
+              palette: context.appPalette,
+              colors: Theme.of(context).colorScheme,
+              foreground: widget.foregroundColor,
+              mutedForeground: widget.mutedForegroundColor,
+              errorForeground: widget.errorForegroundColor,
+            ),
     );
   }
 }
