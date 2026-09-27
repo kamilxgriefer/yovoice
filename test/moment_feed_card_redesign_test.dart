@@ -5,15 +5,16 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
-import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
+import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
 import 'moments_overview_test_support.dart';
 import 'voice_moment_test_doubles.dart';
 
 /// The 06 Voice card: one caption block, the format badge from 600, the
-/// 48/32/88 transport row, the action row's wrap rules, hover, the liked
-/// heart role, no view counts, and "Odpowiedz głosem" into the recorder.
+/// 48 bead / 36 waveform / clock-under-the-wave transport, the action row's
+/// wrap rules, hover, the liked heart role, no view counts, and "Odpowiedz
+/// głosem" into the recorder.
 void main() {
   late VoidCallback restoreIdentity;
 
@@ -129,21 +130,32 @@ void main() {
     }
   });
 
-  testWidgets('transport row: 48 disc, 32 waveform under a transparent seek '
-      'slider, 88 reserved for the time', (tester) async {
+  // Refine-look §8.4 / R13: the 48 bead keeps its size; the waveform is
+  // 36 high with 3 px bars and 2 px gaps in the palette's unplayed ink, the
+  // played sweep spread across the whole run; the clock moved UNDER the
+  // wave, end-aligned, so the 88 px reserved box is gone.
+  testWidgets('transport row: 48 bead, 36 waveform under a transparent seek '
+      'slider, the time under the wave at its end', (tester) async {
     await pumpCards(tester, size: const Size(768, 1024));
     final play = find.byKey(const ValueKey('moment-row-play-m4'));
     expect(tester.getSize(play), const Size(48, 48));
-    final wave = find.descendant(
-      of: find.byKey(const ValueKey('moment-row-m4')),
-      matching: find.byType(StoryWaveform),
-    );
+    final card = find.byKey(const ValueKey('moment-row-m4'));
+    final palette = AppPalette.of(tester.element(card));
+    final wave = find.descendant(of: card, matching: find.byType(YoWaveform));
     expect(wave, findsOneWidget);
-    expect(tester.getSize(wave).height, 32);
-    final waveform = tester.widget<StoryWaveform>(wave);
+    expect(tester.getSize(wave).height, 36);
+    final waveform = tester.widget<YoWaveform>(wave);
     expect(waveform.barWidth, 3);
-    expect(waveform.barGap, 3);
+    expect(waveform.barGap, 2);
     expect(waveform.playedGradient, isNotNull);
+    expect(waveform.color, palette.waveUnplayed);
+    expect(waveform.continuousProgress, isTrue);
+    expect(waveform.gradientSpan, YoWaveformGradientSpan.full);
+    expect(
+      waveform.progress,
+      isNull,
+      reason: 'a clip that is not playing is a still silhouette',
+    );
     final slider = tester.widget<Slider>(
       find.byKey(const ValueKey('moment-row-progress-m4')),
     );
@@ -151,13 +163,18 @@ void main() {
     expect(slider.value, 0);
     expect(slider.onChanged, isNull, reason: 'idle: no seeking');
     final time = find.byKey(const ValueKey('moment-row-time-m4'));
-    expect(tester.getSize(time).width, 88);
     expect(tester.widget<Text>(time).data, '0:12');
     // The slider lies over the waveform: same vertical band.
-    final sliderRect = tester.getRect(find.byKey(const ValueKey('moment-row-progress-m4')));
+    final sliderRect = tester.getRect(
+      find.byKey(const ValueKey('moment-row-progress-m4')),
+    );
     final waveRect = tester.getRect(wave);
     expect(sliderRect.top, lessThanOrEqualTo(waveRect.top));
     expect(sliderRect.bottom, greaterThanOrEqualTo(waveRect.bottom));
+    // The clock sits under the wave, flush with its end.
+    final timeRect = tester.getRect(time);
+    expect(timeRect.top, greaterThanOrEqualTo(waveRect.bottom));
+    expect(timeRect.right, closeTo(sliderRect.right, 1));
     expect(tester.takeException(), isNull);
   });
 
@@ -196,23 +213,36 @@ void main() {
     await pumpCards(tester, size: const Size(1440, 900));
     final card = find.byKey(const ValueKey('moment-row-m4'));
     final palette = AppPalette.of(tester.element(card));
-    Material material() => tester.widget<Material>(
-      find.descendant(of: card, matching: find.byType(Material)).first,
-    );
-    expect(material().color, palette.surface);
-    expect(
-      (material().shape as RoundedRectangleBorder).side.color,
-      palette.border,
-    );
+    // Refine-look R2: the card is a block — the palette's top-lit gradient
+    // under a 1 px hairline that becomes `hairlineHover` under a pointer
+    // (it was a flat `surface` with `border` → `borderStrong`).
+    Color edge() =>
+        ((tester
+                        .widget<DecoratedBox>(
+                          find.byKey(const ValueKey('moment-row-edge-m4')),
+                        )
+                        .decoration
+                    as BoxDecoration)
+                .border!
+            as Border)
+            .top
+            .color;
+    final fills = tester
+        .widgetList<DecoratedBox>(
+          find.descendant(of: card, matching: find.byType(DecoratedBox)),
+        )
+        .map((box) => box.decoration)
+        .whereType<BoxDecoration>()
+        .map((decoration) => decoration.gradient)
+        .whereType<LinearGradient>();
+    expect(fills, contains(palette.blockGradient));
+    expect(edge(), palette.hairline);
     final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await gesture.addPointer(location: Offset.zero);
     addTearDown(gesture.removePointer);
     await gesture.moveTo(tester.getCenter(card));
     await tester.pump();
-    expect(
-      (material().shape as RoundedRectangleBorder).side.color,
-      palette.borderStrong,
-    );
+    expect(edge(), palette.hairlineHover);
 
     await reveal(tester, 'm6');
     final likeIcon = tester.widget<Icon>(

@@ -8,17 +8,26 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/moments/presentation/widgets/moment_conversation_thread.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_progress_ring.dart';
-import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart'
-    show StoryWaveform;
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/voice/voice_player_row.dart'
+    show VoicePourWaveform;
+import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
 import 'moment_listen_test_support.dart';
 
 double _ringProgress(WidgetTester tester) =>
     tester.widget<MomentProgressRing>(find.byType(MomentProgressRing)).progress;
 
-double _waveProgress(WidgetTester tester) =>
-    tester.widgetList<StoryWaveform>(find.byType(StoryWaveform)).first.progress;
+/// The player card's waveform (refine-look R13: a [YoWaveform] poured toward
+/// the real position by [VoicePourWaveform]).
+double? _waveProgress(WidgetTester tester) => tester
+    .widget<YoWaveform>(
+      find.descendant(
+        of: find.byKey(const ValueKey('moment-detail-waveform')),
+        matching: find.byType(YoWaveform),
+      ),
+    )
+    .progress;
 
 double _sliderValue(WidgetTester tester) => tester
     .widget<Slider>(find.byKey(const ValueKey('moment-detail-position')))
@@ -60,6 +69,10 @@ void main() {
     expect(find.text('0:00'), findsOneWidget);
 
     await playTo(tester, harness, const Duration(seconds: 18));
+    // The waveform POURS toward each real position over ~200 ms (R13: it
+    // tweens between two real positions and never extrapolates); once the
+    // pour lands it reads the one value every other reader shows.
+    await tester.pump(VoicePourWaveform.pourDuration);
 
     expect(_ringProgress(tester), closeTo(0.4, 1e-9));
     expect(_waveProgress(tester), closeTo(0.4, 1e-9));

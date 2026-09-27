@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 
@@ -70,13 +74,16 @@ class ImmersiveChromeOption {
 /// cannot parse them as one row even at an accessibility text size:
 ///
 /// | | level 1 | level 2 |
-/// | shape | large text + short glow line | smaller filter controls |
-/// | selected | violet ink + line + weight | low-opacity wash + weight |
+/// | shape | large text + short gradient line | 36 px chips in 48 targets |
+/// | selected | strongest ink + line + weight | ink-inverted chip + weight |
 /// | type | 17 px, w800 selected | 13 px, w700 selected |
 ///
 /// No [TextDecoration] appears anywhere in this chrome. Selection is carried
-/// by a separate line, weight AND by the `selected` semantic flag, never by
-/// colour alone.
+/// by a separate line or an inverted fill, weight AND by the `selected`
+/// semantic flag, never by colour alone. (Refine-look §8.4 / R8: the line is
+/// the logo's gradient with a brand glow; the chips invert — `textPrimary`
+/// fill with canvas ink on the page, a white fill with the immersive canvas
+/// as ink over media.)
 ///
 /// The chrome is deliberately theme-invariant: it sits directly over media,
 /// not over a separate header surface, so Dark and Pearl are identical here.
@@ -251,11 +258,21 @@ class _FormatRow extends StatelessWidget {
 
 /// Level 1 -- two large, trackless text tabs over media or the page canvas.
 ///
-/// The selected tab uses violet ink, stronger weight and a short glowing line.
-/// The line is a separate shape rather than a text decoration, so it stays
-/// crisp at large text sizes and supplies a non-colour selection cue. There
-/// is deliberately no track, thumb or tile fill: the visual control is only
-/// the two labels, while each label retains a full 48 px interaction target.
+/// The selected tab uses the strongest ink (`textPrimary` on the canvas,
+/// white over media), w800 and a short glowing line: a 30 × 3 bar in the
+/// logo's gradient ([AppGradients.primary]) with a `brandGlow` shadow. The
+/// unselected tab is `textTertiary` w600 on the canvas and white @ .78 over
+/// media. The line is a separate shape rather than a text decoration, so it
+/// stays crisp at large text sizes and supplies a non-colour selection cue.
+/// There is deliberately no track, thumb or tile fill: the visual control is
+/// only the two labels, while each label retains a full 48 px interaction
+/// target.
+///
+/// Over media the words keep their 8-way glyph outline. The softer
+/// three-shadow stack the refine spec proposes is gated on an Accessibility
+/// measurement on a pure-white frame; until that passes, the outline — the
+/// spec's named fallback — stays. Under high contrast the line is a solid
+/// bar without the glow.
 class ImmersiveSegmentedSwitch extends StatelessWidget {
   const ImmersiveSegmentedSwitch({
     required this.segments,
@@ -277,10 +294,10 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
 
   /// True when the switch sits on the page CANVAS instead of over media.
   ///
-  /// Over media the selected violet and white inactive label use the fixed
-  /// immersive palette because the luminance beneath them is unknown. On the
-  /// canvas the same trackless geometry uses theme-aware text and interaction
-  /// roles for Dark and Pearl.
+  /// Over media the labels are white (the inactive one at .78) with a glyph
+  /// outline because the luminance beneath them is unknown. On the canvas
+  /// the same trackless geometry uses theme-aware text roles for Dark and
+  /// Pearl.
   final bool onCanvas;
 
   /// The narrowest a segment may be. Over media 72 keeps the two-item
@@ -312,7 +329,10 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
     Widget body = accessibilityLayout
         ? LayoutBuilder(
             builder: (context, constraints) => Wrap(
-              spacing: 0,
+              // The segments drop their side padding at this size, so the
+              // Wrap keeps the two words apart ("Głos Yeels", never
+              // "GłosYeels").
+              spacing: AppRhythm.item,
               runSpacing: AppRhythm.hairline,
               children: <Widget>[
                 for (var index = 0; index < count; index++) segment(index),
@@ -427,15 +447,23 @@ class _SwitchSegmentState extends State<_SwitchSegment>
     final selected = widget.selected;
     final onCanvas = widget.onCanvas;
     final palette = onCanvas ? context.appPalette : null;
-    // The fixed immersive violet clears AA against the header scrim even over
-    // bright footage. Canvas tabs use theme-aware interaction and copy roles.
-    // In both cases selection also changes weight and gains a separate line.
-    final selectedForeground =
-        palette?.interactiveForeground ?? AppPalette.dark.interactiveForeground;
-    final foreground = palette == null
-        ? (selected ? selectedForeground : Colors.white)
-        : (selected ? selectedForeground : palette.textSecondary);
+    final highContrast = MediaQuery.highContrastOf(context);
+    // Canvas: the strongest ink selected, the tertiary one resting. Over
+    // media: white, the resting tab at .78; the glyph outline carries the
+    // local contrast on any frame.
+    final Color foreground;
+    if (palette != null) {
+      foreground = selected ? palette.textPrimary : palette.textTertiary;
+    } else {
+      foreground = selected
+          ? AppColors.white
+          : AppColors.white.withValues(alpha: .78);
+    }
     final focusRing = palette == null ? Colors.white : palette.focus;
+    // The line: the logo's gradient with an emitted brand glow — a solid
+    // bar and no glow under high contrast.
+    final lineGlow = (palette ?? AppPalette.dark).brandGlow;
+    final lineSolid = palette?.textPrimary ?? AppColors.white;
     final accessibilityLayout =
         MediaQuery.textScalerOf(context).scale(1) >= 1.6;
     return Semantics(
@@ -512,12 +540,15 @@ class _SwitchSegmentState extends State<_SwitchSegment>
                         width: selected ? 30 : 0,
                         height: 3,
                         decoration: BoxDecoration(
-                          color: selected
-                              ? selectedForeground
-                              : Colors.transparent,
-                          borderRadius: const BorderRadius.all(
-                            Radius.circular(999),
-                          ),
+                          color: !selected
+                              ? Colors.transparent
+                              : highContrast
+                              ? lineSolid
+                              : null,
+                          gradient: selected && !highContrast
+                              ? AppGradients.primary
+                              : null,
+                          borderRadius: AppRadius.pill,
                           boxShadow: selected
                               ? <BoxShadow>[
                                   if (!onCanvas)
@@ -526,12 +557,8 @@ class _SwitchSegmentState extends State<_SwitchSegment>
                                       blurRadius: 0,
                                       spreadRadius: 2,
                                     ),
-                                  BoxShadow(
-                                    color: selectedForeground.withValues(
-                                      alpha: .62,
-                                    ),
-                                    blurRadius: 8,
-                                  ),
+                                  if (!highContrast)
+                                    BoxShadow(color: lineGlow, blurRadius: 8),
                                 ]
                               : null,
                         ),
@@ -572,11 +599,13 @@ class _SwitchSegmentState extends State<_SwitchSegment>
   }
 }
 
-/// Level 2 -- the quieter one, by construction.
+/// Level 2 -- the quieter one, by construction: refine-look R8 chips.
 ///
-/// No track, no thumb, no container of its own. The selected filter gets a
-/// low-opacity white wash; the unselected ones are plain text. It scrolls
-/// horizontally and never wraps, which is the existing filter behaviour.
+/// No track and no container of its own; each chip is 36 px of ink inside a
+/// 48 px target. Over media the selected chip is a white fill with the
+/// immersive canvas as ink (w700) and the others sit on a translucent black
+/// plate with white w600 labels. It scrolls horizontally and never wraps,
+/// which is the existing filter behaviour.
 class ImmersiveFilterRow extends StatelessWidget {
   const ImmersiveFilterRow({
     required this.options,
@@ -593,10 +622,11 @@ class ImmersiveFilterRow extends StatelessWidget {
   final ValueChanged<int> onSelected;
   final String? groupLabel;
 
-  /// On the page canvas the selected chip is a low-opacity PRIMARY wash and
-  /// the unselected ones are plain secondary text: no card, fill or outline
-  /// under a chip that is not chosen (Slim redesign). Over media (default)
-  /// the existing white wash and plain text stay unchanged.
+  /// On the page canvas the chips take the palette's R8 finish: the selected
+  /// one is an ink inversion (`textPrimary` fill, canvas-coloured w700
+  /// label, no edge), the others a transparent fill with a control hairline
+  /// and a `textSecondary` w600 label. Over media (default) the white /
+  /// translucent-plate pair described above.
   final bool onCanvas;
 
   /// Scroll padding, so a full-bleed row can keep the page gutter as the
@@ -667,10 +697,30 @@ class _FilterInkState extends State<_FilterInk>
     revealIfSelectionGained(oldWidget.selected);
   }
 
+  bool _hovered = false;
+  bool _pressed = false;
+
+  void _setHovered(bool value) {
+    if (_hovered != value) setState(() => _hovered = value);
+  }
+
+  void _setPressed(bool value) {
+    if (_pressed != value) setState(() => _pressed = value);
+  }
+
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
     if (widget.onCanvas) return _buildOnCanvas(context, selected);
+    // Over media: a white chip with canvas ink when chosen, a translucent
+    // black plate with white ink otherwise. The plate darkens a step under
+    // a pointer or a press. The resting label keeps the glyph outline, so
+    // it holds its contrast even where the plate sits on a white frame; the
+    // chosen label is dark ink on white and needs none.
+    final plate = AppFinish.chipOverMediaFill(selected: selected);
+    final fill = selected || !(_hovered || _pressed)
+        ? plate
+        : plate.withValues(alpha: plate.a + (_pressed ? .24 : .14));
     return Semantics(
       button: true,
       selected: selected,
@@ -685,6 +735,10 @@ class _FilterInkState extends State<_FilterInk>
         child: InkWell(
           onTap: selected ? () {} : widget.onTap,
           customBorder: const StadiumBorder(),
+          splashFactory: NoSplash.splashFactory,
+          overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+          onHover: _setHovered,
+          onHighlightChanged: _setPressed,
           onFocusChange: (focused) {
             if (_focused != focused) setState(() => _focused = focused);
           },
@@ -695,16 +749,27 @@ class _FilterInkState extends State<_FilterInk>
             child: Center(
               child: AnimatedContainer(
                 duration: AppMotion.resolve(context, AppMotion.quick),
-                constraints: const BoxConstraints(minHeight: 36),
-                padding: const EdgeInsets.symmetric(horizontal: AppRhythm.item),
+                constraints: const BoxConstraints(
+                  minHeight: AppFinish.chipHeight,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppFinish.chipPaddingH,
+                ),
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: selected
-                      ? Colors.white.withValues(alpha: .16)
-                      : Colors.transparent,
-                  borderRadius: const BorderRadius.all(Radius.circular(999)),
+                  color: fill,
+                  borderRadius: AppRadius.pill,
+                  // The focus ring must differ from the fill it sits on: a
+                  // white ring vanished into the chosen chip's white fill
+                  // (the default-selected "Odkrywaj"), so there it is the
+                  // chip's own dark ink. The dark halo below keeps the
+                  // chip's edge on a light frame either way.
                   border: Border.all(
-                    color: _focused ? Colors.white : Colors.transparent,
+                    color: !_focused
+                        ? Colors.transparent
+                        : selected
+                        ? AppFinish.chipOverMediaLabel(selected: true)
+                        : Colors.white,
                     width: 2,
                   ),
                   boxShadow: _focused
@@ -722,11 +787,11 @@ class _FilterInkState extends State<_FilterInk>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
+                    color: AppFinish.chipOverMediaLabel(selected: selected),
+                    fontSize: AppFinish.chipFontSize,
                     height: 1.2,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    shadows: _immersiveChromeTextShadows,
+                    fontWeight: AppFinish.chipWeight(selected: selected),
+                    shadows: selected ? null : _immersiveChromeTextShadows,
                   ),
                 ),
               ),
@@ -737,13 +802,28 @@ class _FilterInkState extends State<_FilterInk>
     );
   }
 
-  /// The canvas chip: the same 36-in-48 ink and the same semantics, in
-  /// palette roles. Selection is carried by the primary wash AND the
-  /// weight AND the ink, never by colour alone; the unselected chip has no
-  /// background of its own.
+  /// The canvas chip (R8): the same 36-in-48 ink and the same semantics, in
+  /// palette roles. Selection is carried by the ink inversion AND the
+  /// weight AND the `selected` flag, never by colour alone; a resting chip
+  /// is a hairline outline with no fill, glass under a pointer and a
+  /// textPrimary @ .10 wash while pressed. High contrast brings back
+  /// `borderStrong`.
   Widget _buildOnCanvas(BuildContext context, bool selected) {
     final palette = context.appPalette;
-    final primary = Theme.of(context).colorScheme.primary;
+    final highContrast = MediaQuery.highContrastOf(context);
+    // The 1 px edge is always there (transparent on the chosen chip), and
+    // focus paints its 2 px ring as a foreground, so neither selecting nor
+    // focusing a chip ever changes its size or nudges its neighbours.
+    final edge = AppFinish.chipBorder(
+      palette,
+      selected: selected,
+      highContrast: highContrast,
+    );
+    final focusRing = AppFinish.chipBorder(
+      palette,
+      selected: selected,
+      focused: true,
+    );
     return Semantics(
       button: true,
       selected: selected,
@@ -758,6 +838,11 @@ class _FilterInkState extends State<_FilterInk>
         child: InkWell(
           onTap: selected ? () {} : widget.onTap,
           customBorder: const StadiumBorder(),
+          // The fill carries hover and press; no second wash, no ripple.
+          splashFactory: NoSplash.splashFactory,
+          overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+          onHover: _setHovered,
+          onHighlightChanged: _setPressed,
           onFocusChange: (focused) {
             if (_focused != focused) setState(() => _focused = focused);
           },
@@ -766,30 +851,40 @@ class _FilterInkState extends State<_FilterInk>
             child: Center(
               child: AnimatedContainer(
                 duration: AppMotion.resolve(context, AppMotion.quick),
-                constraints: const BoxConstraints(minHeight: 36),
-                padding: const EdgeInsets.symmetric(horizontal: AppRhythm.item),
+                constraints: const BoxConstraints(
+                  minHeight: AppFinish.chipHeight,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppFinish.chipPaddingH,
+                ),
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: selected
-                      ? primary.withValues(alpha: .14)
-                      : Colors.transparent,
-                  borderRadius: const BorderRadius.all(Radius.circular(999)),
-                  border: Border.all(
-                    color: _focused ? palette.focus : Colors.transparent,
-                    width: _focused ? 2 : 1,
+                  color: AppFinish.chipFill(
+                    palette,
+                    selected: selected,
+                    hovered: _hovered,
+                    pressed: _pressed,
+                    highContrast: highContrast,
                   ),
+                  borderRadius: AppRadius.pill,
+                  border:
+                      edge ?? Border.all(color: Colors.transparent, width: 1),
                 ),
+                foregroundDecoration: _focused
+                    ? BoxDecoration(
+                        borderRadius: AppRadius.pill,
+                        border: focusRing,
+                      )
+                    : null,
                 child: Text(
                   widget.option.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: selected
-                        ? palette.textPrimary
-                        : palette.textSecondary,
-                    fontSize: 13,
+                    color: AppFinish.chipLabel(palette, selected: selected),
+                    fontSize: AppFinish.chipFontSize,
                     height: 1.2,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    fontWeight: AppFinish.chipWeight(selected: selected),
                   ),
                 ),
               ),

@@ -138,7 +138,14 @@ void main() {
         find.byKey(ValueKey('moment-card-${moment.id}')),
       );
       final decoration = card.decoration! as BoxDecoration;
-      expect(decoration.color, _palette(brightness).surface);
+      // Refine-look R2: the card is a block — the palette's own top-lit
+      // gradient (blockTop → surface) under its hairline — not a flat fill.
+      expect(decoration.color, isNull);
+      expect(decoration.gradient, _palette(brightness).blockGradient);
+      expect(
+        (decoration.border! as Border).top.color,
+        _palette(brightness).hairline,
+      );
       final author = tester.widget<Text>(find.text(moment.authorName));
       expect(author.style?.color, _palette(brightness).textPrimary);
       expect(tester.takeException(), isNull);
@@ -196,12 +203,18 @@ void main() {
         find.byKey(ValueKey('moment-featured-${moment.id}')),
         findsNothing,
       );
-      final material = tester.widget<Material>(
-        find.descendant(of: card, matching: find.byType(Material)).first,
-      );
-      // The 06 Voice card paints `surface` (the board's card tone, C30);
-      // `surfaceRaised` stays the mini-player disc and composer fill.
-      expect(material.color, _palette(brightness).surface);
+      // The 06 Voice card paints the palette's R2 block gradient (refine-look:
+      // blockTop → `surface`, the board's card tone); `surfaceRaised` stays
+      // the mini-player disc and composer fill.
+      final fills = tester
+          .widgetList<DecoratedBox>(
+            find.descendant(of: card, matching: find.byType(DecoratedBox)),
+          )
+          .map((box) => box.decoration)
+          .whereType<BoxDecoration>()
+          .map((decoration) => decoration.gradient)
+          .whereType<LinearGradient>();
+      expect(fills, contains(_palette(brightness).blockGradient));
       final author = tester.widget<Text>(
         find.descendant(of: card, matching: find.text(moment.authorName)),
       );

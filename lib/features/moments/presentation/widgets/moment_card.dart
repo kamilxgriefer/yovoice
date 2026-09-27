@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
@@ -14,14 +15,23 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_comment_preview.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_mentions.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/voice/voice_player_row.dart'
+    show VoiceBeadGlyph, voiceBeadStartHaptic;
 import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
 /// An audio-first Moment card: identity, caption, a compact waveform with
 /// play state and duration, and the real reaction/comment counts.
+///
+/// Refine-look: the card is an R2 block (top-lit fill, hairline, Pearl
+/// lift, radius 20) and its transport is the R14 voice bead, lit only while
+/// this card's own player plays. No corner tint: the card lights its bead,
+/// never its block (the profile's pinned Moment is a budget without a tint).
 ///
 /// Shared with the creator pinned-Moment surfaces and mobile Home — its
 /// constructor is deliberately backward compatible.
@@ -39,8 +49,12 @@ class MomentCard extends StatefulWidget {
     this.feedService,
     this.contentReportService,
     this.playerFactory,
+    this.playDiscSize = defaultPlayDiscSize,
     super.key,
   });
+
+  /// The bead's diameter here (W3: 44 on the card).
+  static const double defaultPlayDiscSize = 44;
 
   final VoiceMoment moment;
   final VoidCallback onComments;
@@ -85,6 +99,11 @@ class MomentCard extends StatefulWidget {
   /// the failure asynchronously — after any frame a test could inspect.
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
+
+  /// The voice bead's diameter; a host with more room (the profile's pinned
+  /// Moment, W3: 52 / 48 compact) passes its own. The tap target never goes
+  /// below 44.
+  final double playDiscSize;
 
   @override
   State<MomentCard> createState() => _MomentCardState();
@@ -370,10 +389,9 @@ class _MomentCardState extends State<MomentCard> {
       key: ValueKey('moment-card-${moment.id}'),
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        color: palette.surface,
-        border: Border.all(color: palette.border),
+      decoration: AppFinish.block(
+        palette,
+        highContrast: MediaQuery.highContrastOf(context),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -421,7 +439,7 @@ class _MomentCardState extends State<MomentCard> {
                             style: TextStyle(
                               color: palette.textPrimary,
                               fontSize: 13.5,
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
                         ),
@@ -463,14 +481,20 @@ class _MomentCardState extends State<MomentCard> {
           const SizedBox(height: 12),
           Row(
             children: [
-              _PlayButton(playing: _playing, enabled: playable, onTap: _toggle),
+              _PlayButton(
+                playing: _playing,
+                enabled: playable,
+                onTap: _toggle,
+                size: widget.playDiscSize,
+              ),
               const SizedBox(width: 12),
               // Decorative on purpose: no per-Moment amplitude is recorded and
-              // MomentCard has no position source, so the silhouette is still.
+              // MomentCard has no position source, so the silhouette is still
+              // — in the palette's neutral unplayed ink (R13).
               Expanded(
                 child: YoWaveform(
                   height: 26,
-                  color: AppColors.primary.withValues(alpha: .45),
+                  color: palette.waveUnplayed,
                   barGap: 2.4,
                   barRadius: 2,
                 ),
@@ -679,39 +703,82 @@ class _LikeButton extends StatelessWidget {
   }
 }
 
-class _PlayButton extends StatelessWidget {
+/// The card's transport: the R14 voice bead (gloss, lit only while this
+/// card plays, a flat disc when the Moment has no playable media), inside
+/// a circular ink target of at least 44 px. The node, its label and the
+/// ink well are the ones the card always had.
+class _PlayButton extends StatefulWidget {
   const _PlayButton({
     required this.playing,
     required this.enabled,
     required this.onTap,
+    required this.size,
   });
 
   final bool playing;
   final bool enabled;
   final VoidCallback onTap;
+  final double size;
+
+  @override
+  State<_PlayButton> createState() => _PlayButtonState();
+}
+
+class _PlayButtonState extends State<_PlayButton> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  /// R14: a light haptic when the tap STARTS this clip (phones only), as
+  /// every other voice bead does.
+  void _press() {
+    if (!widget.playing) voiceBeadStartHaptic();
+    widget.onTap();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
+    final enabled = widget.enabled;
+    final target = widget.size < 44 ? 44.0 : widget.size;
     return Semantics(
       button: enabled,
-      label: playing
+      label: widget.playing
           ? copy.text('Pause this Moment', 'Wstrzymaj ten Moment')
           : copy.text('Play this Moment', 'Odtwórz ten Moment'),
-      child: Material(
-        color: enabled ? colors.primary : colors.primary.withValues(alpha: .25),
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: enabled ? onTap : null,
-          child: SizedBox(
-            width: 44,
-            height: 44,
-            child: Icon(
-              playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-              color: colors.onPrimary,
-              size: 22,
+      child: YoPressFeedback(
+        scale: YoPressFeedback.disc,
+        enabled: enabled,
+        child: Material(
+          type: MaterialType.transparency,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: enabled ? _press : null,
+            // The bead carries hover, press and focus itself.
+            overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+            splashFactory: NoSplash.splashFactory,
+            onHover: (value) {
+              if (value != _hovered) setState(() => _hovered = value);
+            },
+            onFocusChange: (value) {
+              if (value != _focused) setState(() => _focused = value);
+            },
+            child: SizedBox.square(
+              dimension: target,
+              child: Center(
+                child: YoGradientDisc(
+                  size: widget.size,
+                  emphasis: widget.playing && enabled
+                      ? YoDiscEmphasis.lit
+                      : YoDiscEmphasis.rest,
+                  gloss: true,
+                  status: enabled ? YoDiscStatus.idle : YoDiscStatus.disabled,
+                  hovered: _hovered && enabled,
+                  focused: _focused,
+                  nudgePlay: !widget.playing,
+                  glyph: VoiceBeadGlyph(playing: widget.playing),
+                ),
+              ),
             ),
           ),
         ),
