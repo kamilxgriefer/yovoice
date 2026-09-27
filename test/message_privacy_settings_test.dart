@@ -142,9 +142,24 @@ void main() {
       find.byKey(const ValueKey('message-privacy-settings-tile')),
     );
     expect((tile.title! as Text).style!.color, AppPalette.light.textPrimary);
+    // Refine-look R16 (spec §8.6): the glyph box is the scheme's container
+    // pair as a diagonal gradient, like every Settings row around it.
+    final scheme = AppTheme.lightTheme.colorScheme;
+    final glyph = (tile.leading! as Container).decoration! as BoxDecoration;
+    expect((glyph.gradient! as LinearGradient).colors, [
+      scheme.primaryContainer,
+      scheme.secondaryContainer,
+    ]);
     expect(
-      ((tile.leading! as Container).decoration! as BoxDecoration).color,
-      AppTheme.lightTheme.colorScheme.primaryContainer,
+      tester
+          .widget<Icon>(
+            find.descendant(
+              of: find.byKey(const ValueKey('message-privacy-settings-tile')),
+              matching: find.byIcon(Icons.forum_outlined),
+            ),
+          )
+          .color,
+      AppPalette.light.interactiveForeground,
     );
     await tester.tap(
       find.byKey(const ValueKey('message-privacy-settings-tile')),

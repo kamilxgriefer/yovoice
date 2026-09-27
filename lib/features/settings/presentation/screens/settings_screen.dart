@@ -12,7 +12,10 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/bug_reports/bug_report_config.dart';
@@ -39,6 +42,8 @@ import 'package:yovoice/features/settings/data/services/message_privacy_service.
 import 'package:yovoice/features/settings/presentation/screens/two_factor_authentication_screen.dart';
 import 'package:yovoice/features/settings/presentation/widgets/appearance_language_settings_section.dart';
 import 'package:yovoice/features/settings/presentation/widgets/message_privacy_settings_tile.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
+import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -401,10 +406,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: palette.background,
       body: YoPageBackground(
+        key: const ValueKey('settings-canvas'),
         section: YoPageSection.more,
+        // Refine-look R1: the Chats / Friends canvas radial, adopted
+        // unchanged under the study scenery. Omitted under high contrast.
+        decoration: MediaQuery.highContrastOf(context)
+            ? null
+            : BoxDecoration(gradient: palette.canvasGlow(colors.primary)),
         child: SafeArea(
           child: ResponsiveContentFrame(
             width: ResponsiveContentWidth.list,
@@ -414,6 +426,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 SettingsHeaderBar(
                   showBackButton: !widget.isRootTab,
                   onBack: () => Navigator.of(context).pop(),
+                  rootTitleInset: _settingsGutter,
                 ),
                 Expanded(
                   child: StreamBuilder<UserProfile>(
@@ -457,7 +470,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final emailVerified = _authService.currentUser?.emailVerified ?? false;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 48),
+      padding: const EdgeInsets.fromLTRB(
+        _settingsGutter,
+        8,
+        _settingsGutter,
+        48,
+      ),
       children: [
         // Identity editing lives on the Profile screen (its Edit button),
         // not in Settings — Settings is configuration, Profile is content.
@@ -663,8 +681,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                       ),
                     ),
+                    // Two rows in one group child: the group only divides
+                    // its own children, so the row divider is drawn here.
+                    const _SettingsRowDivider(),
                     _SettingsTile(
-                      icon: Icons.circle,
+                      // An outline glyph like every other chrome row (the
+                      // filled dot read as a presence badge).
+                      icon: Icons.history_rounded,
                       title: copy.text(
                         'Show my recent activity',
                         'Pokazuj ostatnią aktywność',
@@ -1003,7 +1026,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _SettingsTile(
               icon: Icons.support_agent_rounded,
               title: copy.text('Contact support', 'Skontaktuj się z pomocą'),
-              subtitle: 'support@yovoice.app',
+              // The break opportunity after "@" keeps the address whole
+              // on each line at 200 % text instead of "support@yovoice.a /
+              // pp"; screen readers get the plain address.
+              subtitle: 'support@${_breakOpportunity}yovoice.app',
               onTap: () => _openUrl('mailto:support@yovoice.app'),
             ),
           ],
@@ -1014,7 +1040,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _SettingsGroup(
           children: [
             _SettingsTile(
+              key: const ValueKey('settings-version'),
               icon: Icons.info_outline_rounded,
+              // Refine-look §4: the real logo, bare, at 40 in the leading
+              // slot — no glyph box, no bloom (a list is never lit).
+              leading: const YoBrandMark(
+                key: ValueKey('settings-version-logo'),
+                size: _settingsLeadingBox,
+                light: YoBrandLight.none,
+              ),
               title: copy.text('Version', 'Wersja'),
               subtitle: _packageInfo == null
                   ? copy.text('Loading…', 'Ładowanie…')
@@ -1124,7 +1158,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 20,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
               const SizedBox(height: 8),
@@ -1310,9 +1344,10 @@ class _ProfileHeroCard extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final expanded = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
-    // Slim (phase 6): one flat layer — 1 px `palette.border`, radius 12, a
-    // 48 px avatar and no decorative gradient ring around it.
-    const radius = BorderRadius.all(Radius.circular(12));
+    // Refine-look R2 + R3: the page's ONE lit block — the top-lit block
+    // finish with the primary corner tint, the doorway to Profile. The
+    // outer Semantics keeps the single spoken button exactly as before, so
+    // the card itself announces nothing of its own.
     return Semantics(
       button: true,
       label: copy.text(
@@ -1321,80 +1356,73 @@ class _ProfileHeroCard extends StatelessWidget {
       ),
       onTap: onTap,
       excludeSemantics: true,
-      child: Material(
-        color: palette.surface,
-        borderRadius: radius,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: radius,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-            decoration: BoxDecoration(
-              borderRadius: radius,
-              border: Border.all(color: palette.border),
+      child: YoCard(
+        key: const ValueKey('settings-profile-hero'),
+        tint: colors.primary,
+        semanticButton: false,
+        onTap: onTap,
+        padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+        child: Row(
+          crossAxisAlignment: expanded
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.center,
+          children: [
+            // `photoUrl` is null on every server-projected profile, so
+            // this hero could only ever paint the initial. The uid
+            // resolves through the viewer-authorized grant instead.
+            UserAvatar(
+              key: const ValueKey('settings-profile-hero-avatar'),
+              radius: 24,
+              userId: profile.uid,
+              mediaRevision: profile.profileUpdatedAt,
+              displayName: profile.displayName,
+              finish: UserAvatarFinish.brand,
             ),
-            child: Row(
-              crossAxisAlignment: expanded
-                  ? CrossAxisAlignment.start
-                  : CrossAxisAlignment.center,
-              children: [
-                // `photoUrl` is null on every server-projected profile, so
-                // this hero could only ever paint the initial. The uid
-                // resolves through the viewer-authorized grant instead.
-                UserAvatar(
-                  key: const ValueKey('settings-profile-hero-avatar'),
-                  radius: 24,
-                  userId: profile.uid,
-                  mediaRevision: profile.profileUpdatedAt,
-                  displayName: profile.displayName,
-                  backgroundColor: colors.primary,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        profile.displayName,
-                        maxLines: expanded ? 3 : 1,
-                        overflow: expanded
-                            ? TextOverflow.visible
-                            : TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        copy.text(
-                          'Edit profile details and photos',
-                          'Edytuj dane profilu i zdjęcia',
-                        ),
-                        maxLines: expanded ? null : 2,
-                        overflow: expanded
-                            ? TextOverflow.visible
-                            : TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: palette.textSecondary,
-                          fontSize: 12.5,
-                        ),
-                      ),
-                    ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    profile.displayName,
+                    maxLines: expanded ? 3 : 1,
+                    overflow: expanded
+                        ? TextOverflow.visible
+                        : TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -.2,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Padding(
-                  padding: EdgeInsets.only(top: expanded ? 8 : 0),
-                  child: Icon(
-                    Icons.chevron_right_rounded,
-                    color: palette.textTertiary,
+                  const SizedBox(height: 2),
+                  Text(
+                    copy.text(
+                      'Edit profile details and photos',
+                      'Edytuj dane profilu i zdjęcia',
+                    ),
+                    maxLines: expanded ? null : 2,
+                    overflow: expanded
+                        ? TextOverflow.visible
+                        : TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 12.5,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
+            const SizedBox(width: 8),
+            Padding(
+              padding: EdgeInsets.only(top: expanded ? 8 : 0),
+              child: Icon(
+                Icons.chevron_right_rounded,
+                color: palette.textTertiary,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1410,11 +1438,17 @@ class _GroupLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     // A group label, not a section heading (ADR-209, section-header
-    // family): the brief's 11 px w700 uppercase with .08em tracking.
+    // family): the brief's 11 px w700 uppercase with .08em tracking. Inset
+    // 16 (refine-look §8.6), so it starts on the rows' own padding edge.
     return Semantics(
       header: true,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+        padding: const EdgeInsets.fromLTRB(
+          _settingsRowPadding,
+          0,
+          _settingsRowPadding,
+          8,
+        ),
         child: Text(
           text.toUpperCase(),
           style: TextStyle(
@@ -1499,37 +1533,67 @@ class _SettingsGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    // One flat layer: 1 px border, radius 12, no shadow. A Material rather
-    // than a decorated Container, so the rows' ink (splash, hover, focus)
-    // paints on the group instead of underneath its fill.
-    return Material(
-      color: palette.surfaceMuted,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: danger ? colors.error.withValues(alpha: .45) : palette.border,
-        ),
+    final highContrast = MediaQuery.highContrastOf(context);
+    // Refine-look R2: the block finish — the top-lit fill, a hairline edge,
+    // radius 20 and Pearl's shadow pair (on an outer box, so the clip never
+    // cuts it). The danger group keeps its error @ .45 edge. The fill is
+    // painted with `Ink` on a transparent Material, so the rows' ink
+    // (splash, hover, focus) still paints on the group, above the fill.
+    // High contrast: flat `surface`, `borderStrong`, no gradient or shadow.
+    final edge = danger
+        ? colors.error.withValues(alpha: .45)
+        : highContrast
+        ? palette.borderStrong
+        : palette.hairline;
+    final fill = AppFinish.blockFill(palette, highContrast: highContrast);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: AppRadius.block,
+        boxShadow: fill.boxShadow,
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          for (var index = 0; index < children.length; index++) ...[
-            if (index > 0)
-              Divider(
-                height: 1,
-                thickness: 1,
-                indent: _settingsRowTextInset,
-                color: palette.border,
-              ),
-            children[index],
-          ],
-        ],
+      child: Material(
+        type: MaterialType.transparency,
+        shape: RoundedRectangleBorder(
+          borderRadius: AppRadius.block,
+          side: BorderSide(color: edge),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Ink(
+          decoration: BoxDecoration(color: fill.color, gradient: fill.gradient),
+          child: Column(
+            children: [
+              for (var index = 0; index < children.length; index++) ...[
+                if (index > 0) const _SettingsRowDivider(),
+                children[index],
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
-class _SettingsTile extends StatelessWidget {
+/// The hairline between two rows of a group, indented to the text edge
+/// (`border` under high contrast).
+class _SettingsRowDivider extends StatelessWidget {
+  const _SettingsRowDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return Divider(
+      height: 1,
+      thickness: 1,
+      indent: _settingsRowTextInset,
+      color: MediaQuery.highContrastOf(context)
+          ? palette.border
+          : palette.hairline,
+    );
+  }
+}
+
+class _SettingsTile extends StatefulWidget {
   const _SettingsTile({
     super.key,
     required this.icon,
@@ -1538,6 +1602,7 @@ class _SettingsTile extends StatelessWidget {
     this.trailing,
     this.onTap,
     this.danger = false,
+    this.leading,
   });
 
   final IconData icon;
@@ -1547,17 +1612,46 @@ class _SettingsTile extends StatelessWidget {
   final VoidCallback? onTap;
   final bool danger;
 
+  /// Replaces the glyph box in the 40 px leading slot (the "Wersja" row's
+  /// bare logo). [icon] is then unused.
+  final Widget? leading;
+
+  @override
+  State<_SettingsTile> createState() => _SettingsTileState();
+}
+
+class _SettingsTileState extends State<_SettingsTile> {
+  // The row's own node: the ring follows PRIMARY focus, so a Switch inside
+  // the row (a focus descendant) shows its own indicator, not two at once.
+  late final FocusNode _focusNode = FocusNode(debugLabel: 'Settings row')
+    ..addListener(_syncFocus);
+  bool _focused = false;
+
+  void _syncFocus() {
+    final focused = _focusNode.hasPrimaryFocus;
+    if (_focused != focused) setState(() => _focused = focused);
+  }
+
+  @override
+  void dispose() {
+    _focusNode
+      ..removeListener(_syncFocus)
+      ..dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final icon = widget.icon;
+    final title = widget.title;
+    final subtitle = widget.subtitle;
+    final trailing = widget.trailing;
+    final onTap = widget.onTap;
+    final danger = widget.danger;
+    final leading = widget.leading;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    // One accent per screen: the row glyph is tonal (the container pair the
-    // message-privacy row already used), not a saturated violet on a violet
-    // wash. Danger rows keep the error ink.
-    final iconColor = danger ? colors.error : colors.onPrimaryContainer;
-    final iconSurface = danger
-        ? colors.error.withValues(alpha: .14)
-        : colors.primaryContainer;
+    final highContrast = MediaQuery.highContrastOf(context);
     final titleColor = danger ? colors.error : palette.textPrimary;
     final textScale = MediaQuery.textScalerOf(context).scale(1);
     final expanded = textScale >= 1.6;
@@ -1571,13 +1665,40 @@ class _SettingsTile extends StatelessWidget {
     final subtitleWidget = subtitle == null
         ? null
         : Text(
-            subtitle!,
+            subtitle,
+            // A zero-width space only offers a line break (the support
+            // address); it is never part of what a screen reader says.
+            semanticsLabel: subtitle.contains(_breakOpportunity)
+                ? subtitle.replaceAll(_breakOpportunity, '')
+                : null,
             maxLines: expanded ? null : 3,
             overflow: expanded ? TextOverflow.visible : TextOverflow.ellipsis,
             style: TextStyle(color: palette.textSecondary, fontSize: 12.5),
           );
 
-    return MergeSemantics(
+    // Refine-look R16 glyph box: radius 12, the scheme's container pair as
+    // a soft diagonal, the glyph in `interactiveForeground` — still no
+    // saturated violet on a violet wash. Danger rows keep the error ink.
+    final glyph =
+        leading ??
+        Container(
+          width: _settingsLeadingBox,
+          height: _settingsLeadingBox,
+          alignment: Alignment.center,
+          decoration: danger
+              ? BoxDecoration(
+                  color: colors.error.withValues(alpha: .14),
+                  borderRadius: AppRadius.card,
+                )
+              : AppFinish.glyphBox(colors, highContrast: highContrast),
+          child: Icon(
+            icon,
+            color: danger ? colors.error : palette.interactiveForeground,
+            size: 22,
+          ),
+        );
+
+    final tile = MergeSemantics(
       child: ListTile(
         // Slim rows: 64 px floor (56–68 band), 40 px leading box with a
         // 22 px glyph, text edge at [_settingsRowTextInset].
@@ -1590,16 +1711,17 @@ class _SettingsTile extends StatelessWidget {
         titleAlignment: expanded
             ? ListTileTitleAlignment.top
             : ListTileTitleAlignment.center,
+        // R16 row washes: hover textPrimary @ .04 (Dark) / interactive
+        // @ .05 (Pearl), pressed interactive @ .10.
+        hoverColor: palette.isDark
+            ? palette.textPrimary.withValues(alpha: .04)
+            : palette.interactiveForeground.withValues(alpha: .05),
+        splashColor: palette.interactiveForeground.withValues(alpha: .10),
         onTap: onTap,
-        leading: Container(
-          width: _settingsLeadingBox,
-          height: _settingsLeadingBox,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: iconSurface,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, color: iconColor, size: 22),
+        focusNode: _focusNode,
+        leading: SizedBox.square(
+          dimension: _settingsLeadingBox,
+          child: Center(child: glyph),
         ),
         title: Text(
           title,
@@ -1627,8 +1749,44 @@ class _SettingsTile extends StatelessWidget {
         trailing: stackTrailing ? null : effectiveTrailing,
       ),
     );
+
+    // R16 focus: a 2 px `focus` ring at radius 16 over the row (the
+    // Material focus wash alone moved it by only ≈ 1.3:1). It is painted
+    // above the tile, so focus never shifts the layout, and sits 4 px
+    // inside the row — concentric with the group's radius-20 clip, so the
+    // first and last rows keep the whole ring inside the rounded corners.
+    return Stack(
+      children: [
+        tile,
+        if (_focused)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Padding(
+                key: const ValueKey('settings-row-focus-ring'),
+                padding: const EdgeInsets.all(_settingsFocusRingInset),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: AppRadius.tile,
+                    border: Border.all(color: palette.focus, width: 2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 }
+
+/// The page gutter: blocks, and the root-tab title, start here.
+const double _settingsGutter = 16;
+
+/// How far a Settings row's focus ring sits inside the row: 20 − 16, so the
+/// radius-16 ring is concentric with the radius-20 group corners.
+const double _settingsFocusRingInset = 4;
+
+/// Marks a place a long token may wrap (see the support address).
+const String _breakOpportunity = '\u200B';
 
 class _VerifiedChip extends StatelessWidget {
   const _VerifiedChip({required this.verified});
@@ -1661,7 +1819,7 @@ class _VerifiedChip extends StatelessWidget {
         style: TextStyle(
           color: foreground,
           fontSize: 10,
-          fontWeight: FontWeight.w800,
+          fontWeight: FontWeight.w700,
           letterSpacing: .4,
         ),
       ),
@@ -1759,6 +1917,7 @@ class SettingsHeaderBar extends StatelessWidget {
   const SettingsHeaderBar({
     required this.showBackButton,
     required this.onBack,
+    this.rootTitleInset = 6,
     super.key,
   });
 
@@ -1769,23 +1928,33 @@ class SettingsHeaderBar extends StatelessWidget {
 
   final VoidCallback onBack;
 
+  /// Where the title starts when there is no Back button. [SettingsScreen]
+  /// passes its 16 px block gutter so the title lines up with the groups
+  /// under it (refine-look §8.6 aligns the group labels to the rows the same
+  /// way); the header on its own keeps its original 6.
+  final double rootTitleInset;
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 10, 18, 6),
+      padding: EdgeInsetsDirectional.fromSTEB(
+        showBackButton ? 6 : rootTitleInset,
+        10,
+        18,
+        6,
+      ),
       child: Row(
         children: [
           if (showBackButton) ...[
-            // Slim title row (≤ 56 px): a 44 px Back target and a 22 px
-            // w800 title, the screen's one headline.
+            // Slim title row (≤ 56 px): a 44 px Back target (the R9 glass
+            // disc with its control hairline) and the screen's one headline
+            // in `screenTitle` (22 w700 -0.5).
             YoIconButton(
               icon: Icons.arrow_back_ios_new_rounded,
               iconSize: 18,
               size: 44,
-              backgroundColor: palette.surface,
-              borderColor: palette.border,
               onPressed: onBack,
             ),
             const SizedBox(width: 6),
@@ -1795,11 +1964,8 @@ class SettingsHeaderBar extends StatelessWidget {
               copy.text('Settings', 'Ustawienia'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: AppTypography.screenTitle.copyWith(
                 color: palette.textPrimary,
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.3,
               ),
             ),
           ),

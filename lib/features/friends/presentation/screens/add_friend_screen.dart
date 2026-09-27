@@ -541,13 +541,13 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Slim title: the screen's one headline, 22 px w800.
+                // The screen's one headline: 22 px, calmed to the w700 cap.
                 Text(
                   copy.text('Add friends', 'Dodaj znajomych'),
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 22,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                     letterSpacing: -0.3,
                   ),
                 ),
@@ -861,7 +861,7 @@ class _UserResultCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 13,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
@@ -897,7 +897,7 @@ class _UserResultCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   fontSize: 13,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),
@@ -1037,12 +1037,18 @@ class _UserAvatar extends StatelessWidget {
     final palette = context.appPalette;
 
     // Slim: a 2 px neutral ring replaces the decorative violet gradient (and
-    // its two inline hexes); the 52 px geometry is unchanged.
+    // its two inline hexes); the 52 px geometry is unchanged. Refine-look
+    // calms it to the hairline around the R10 brand avatar.
     return Container(
       width: 52,
       height: 52,
       padding: const EdgeInsets.all(2),
-      decoration: BoxDecoration(shape: BoxShape.circle, color: palette.border),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: MediaQuery.highContrastOf(context)
+            ? palette.border
+            : palette.hairline,
+      ),
       child: ProfilePhotoButton(
         userId: user.id,
         displayName: user.displayName,
@@ -1055,7 +1061,7 @@ class _UserAvatar extends StatelessWidget {
           mediaRevision: user.profileUpdatedAt,
           mediaService: profileMediaService,
           displayName: user.displayName,
-          backgroundColor: palette.surfaceSunken,
+          finish: UserAvatarFinish.brand,
         ),
       ),
     );
@@ -1103,7 +1109,7 @@ class _SearchState extends StatelessWidget {
               style: TextStyle(
                 color: palette.textPrimary,
                 fontSize: 18,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 8),

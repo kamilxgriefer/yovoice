@@ -120,7 +120,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                         style: TextStyle(
                           color: palette.textPrimary,
                           fontSize: 22,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w700,
                           letterSpacing: -0.3,
                         ),
                       ),
@@ -163,7 +163,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                 style: TextStyle(
                                   color: palette.textPrimary,
                                   fontSize: 18,
-                                  fontWeight: FontWeight.w800,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
                               const SizedBox(height: 8),
@@ -205,7 +205,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                 style: TextStyle(
                                   color: palette.textPrimary,
                                   fontSize: 18,
-                                  fontWeight: FontWeight.w800,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
                               const SizedBox(height: 8),
@@ -253,7 +253,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                     mediaRevision: user.profileUpdatedAt,
                                     mediaService: _profileMediaService,
                                     displayName: user.displayName,
-                                    backgroundColor: palette.surfaceSunken,
+                                    finish: UserAvatarFinish.brand,
                                   ),
                                   const SizedBox(width: 12),
                                   Expanded(
@@ -264,7 +264,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                                       style: TextStyle(
                                         color: palette.textPrimary,
                                         fontSize: 14,
-                                        fontWeight: FontWeight.w800,
+                                        fontWeight: FontWeight.w700,
                                       ),
                                     ),
                                   ),

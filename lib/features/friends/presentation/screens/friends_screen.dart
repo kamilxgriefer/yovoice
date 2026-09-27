@@ -3,12 +3,17 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_icons.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -621,7 +626,6 @@ class _FriendsScreenState extends State<FriendsScreen> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final useCoordinatedScroll =
         MediaQuery.sizeOf(context).width < 440 &&
         MediaQuery.textScalerOf(context).scale(1) >= 1.5;
@@ -629,22 +633,13 @@ class _FriendsScreenState extends State<FriendsScreen> {
       key: const ValueKey('friends-screen'),
       backgroundColor: palette.background,
       body: YoPageBackground(
-        decoration: BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment(-.86, -.96),
-            radius: 1.25,
-            colors: [
-              Color.lerp(
-                palette.backgroundTop,
-                colors.primary,
-                isDark ? .18 : .055,
-              )!,
-              palette.backgroundTop,
-              palette.background,
-            ],
-            stops: const [0, .38, 1],
-          ),
-        ),
+        key: const ValueKey('friends-canvas'),
+        // Refine-look R1: the canvas radial this screen always painted,
+        // now read from the one `canvasGlow` getter (pixel-identical).
+        // Omitted under high contrast.
+        decoration: MediaQuery.highContrastOf(context)
+            ? null
+            : BoxDecoration(gradient: palette.canvasGlow(colors.primary)),
         child: SafeArea(
           bottom: false,
           child: ResponsiveContentFrame(
@@ -934,12 +929,11 @@ class _FriendsScreenState extends State<FriendsScreen> {
               MediaQuery.textScalerOf(context).scale(1) > 1.35;
           final leading = <Widget>[
             if (!widget.isRootTab) ...[
+              // The R9 glass disc with its control hairline.
               YoIconButton(
                 icon: Icons.arrow_back_ios_new_rounded,
                 iconSize: 18,
                 size: 48,
-                backgroundColor: palette.surface,
-                borderColor: palette.border,
                 onPressed: () => Navigator.of(context).pop(),
               ),
               const SizedBox(width: 10),
@@ -948,14 +942,11 @@ class _FriendsScreenState extends State<FriendsScreen> {
           final title = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Slim title: the screen's one headline, 22 px w800.
+              // The screen's one headline: `screenTitle` (22 w700 -0.5).
               Text(
                 copy.text('Friends', 'Znajomi'),
-                style: TextStyle(
+                style: AppTypography.screenTitle.copyWith(
                   color: palette.textPrimary,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -.3,
                 ),
               ),
               const SizedBox(height: 4),
@@ -988,7 +979,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
             label: Text(
               copy.text('Add friend', 'Dodaj znajomego'),
               textAlign: TextAlign.center,
-              style: const TextStyle(fontWeight: FontWeight.w800),
+              style: const TextStyle(fontWeight: FontWeight.w700),
             ),
           );
 
@@ -1076,71 +1067,72 @@ class _FriendsScreenState extends State<FriendsScreen> {
 
   Widget _buildFilters() {
     final copy = AppLocalizations.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18),
-      child: StreamBuilder<int>(
-        key: ValueKey('friend-request-count-$_requestCountGeneration'),
-        stream: _requestCountStream,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            _requestFanoutFailed = true;
-          }
-          final requestCount = snapshot.data ?? 0;
-          // Start-aligned: in the loose-width Column a horizontal scroll
-          // view shrink-wraps its chips and was centred on a wide window.
-          return Align(
-            alignment: AlignmentDirectional.centerStart,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  _FilterChip(
-                    label: copy.text('All', 'Wszyscy'),
-                    selected: _filter == _FriendsFilter.all,
-                    onTap: () => _selectFilter(_FriendsFilter.all),
+    // The 18 px gutter lives INSIDE the horizontal scroller, so a chip row
+    // wider than the screen runs out under the screen edge instead of
+    // being cut mid-word at the content gutter.
+    return StreamBuilder<int>(
+      key: ValueKey('friend-request-count-$_requestCountGeneration'),
+      stream: _requestCountStream,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          _requestFanoutFailed = true;
+        }
+        final requestCount = snapshot.data ?? 0;
+        // Start-aligned: in the loose-width Column a horizontal scroll
+        // view shrink-wraps its chips and was centred on a wide window.
+        return Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            child: Row(
+              children: [
+                _FilterChip(
+                  label: copy.text('All', 'Wszyscy'),
+                  selected: _filter == _FriendsFilter.all,
+                  onTap: () => _selectFilter(_FriendsFilter.all),
+                ),
+                const SizedBox(width: 8),
+                _FilterChip(
+                  label: copy.text('Online', 'Online'),
+                  selected: _filter == _FriendsFilter.online,
+                  onTap: () => _selectFilter(_FriendsFilter.online),
+                ),
+                const SizedBox(width: 8),
+                _FilterChip(
+                  label: requestCount > 0
+                      ? copy.text(
+                          'Requests $requestCount',
+                          'Zaproszenia $requestCount',
+                        )
+                      : copy.text('Requests', 'Zaproszenia'),
+                  semanticLabel: requestCount > 0
+                      ? copy.text(
+                          'Friend requests, $requestCount pending',
+                          'Zaproszenia do znajomych, oczekujących: $requestCount',
+                        )
+                      : copy.text(
+                          'Friend requests',
+                          'Zaproszenia do znajomych',
+                        ),
+                  selected: _filter == _FriendsFilter.requests,
+                  onTap: () => _selectFilter(_FriendsFilter.requests),
+                ),
+                const SizedBox(width: 8),
+                _FilterChip(
+                  label: copy.text('Blocked', 'Zablokowani'),
+                  semanticLabel: copy.text(
+                    'Blocked users',
+                    'Zablokowani użytkownicy',
                   ),
-                  const SizedBox(width: 8),
-                  _FilterChip(
-                    label: copy.text('Online', 'Online'),
-                    selected: _filter == _FriendsFilter.online,
-                    onTap: () => _selectFilter(_FriendsFilter.online),
-                  ),
-                  const SizedBox(width: 8),
-                  _FilterChip(
-                    label: requestCount > 0
-                        ? copy.text(
-                            'Requests $requestCount',
-                            'Zaproszenia $requestCount',
-                          )
-                        : copy.text('Requests', 'Zaproszenia'),
-                    semanticLabel: requestCount > 0
-                        ? copy.text(
-                            'Friend requests, $requestCount pending',
-                            'Zaproszenia do znajomych, oczekujących: $requestCount',
-                          )
-                        : copy.text(
-                            'Friend requests',
-                            'Zaproszenia do znajomych',
-                          ),
-                    selected: _filter == _FriendsFilter.requests,
-                    onTap: () => _selectFilter(_FriendsFilter.requests),
-                  ),
-                  const SizedBox(width: 8),
-                  _FilterChip(
-                    label: copy.text('Blocked', 'Zablokowani'),
-                    semanticLabel: copy.text(
-                      'Blocked users',
-                      'Zablokowani użytkownicy',
-                    ),
-                    selected: false,
-                    onTap: _openBlockedUsers,
-                  ),
-                ],
-              ),
+                  selected: false,
+                  onTap: _openBlockedUsers,
+                ),
+              ],
             ),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -1551,7 +1543,6 @@ class _FriendCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
 
     // Slim: a list row, not a card per friend — no box, no border, no
@@ -1559,122 +1550,132 @@ class _FriendCard extends StatelessWidget {
     // avatar carrying exactly one presence mark (the dot), and a 1 px
     // divider indented to the text edge. The transparent Material keeps
     // the row's ink visible over the page canvas.
-    final row = Material(
-      type: MaterialType.transparency,
-      child: InkWell(
-        onTap: onProfile,
-        onLongPress: () => _showOptions(context),
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: _rowInset,
-            vertical: 8,
-          ),
-          child: Row(
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // Tonal disc: with no card behind the row, the old
-                  // `surfaceSunken` initial disc vanished into the canvas.
-                  UserAvatar(
-                    radius: _avatarSize / 2,
-                    userId: friend.id,
-                    mediaRevision: friend.profileUpdatedAt,
-                    mediaService: profileMediaService,
-                    displayName: friend.displayName,
-                    backgroundColor: colors.primaryContainer,
-                  ),
-                  Positioned(
-                    right: -1,
-                    bottom: -1,
-                    child: AvailabilityDot(
-                      status: PeopleStatus.fromPresence(
-                        isOnline: friend.isOnline,
-                        availability: friend.availability,
-                      ),
-                      size: 14,
-                      borderColor: palette.background,
-                      borderWidth: 2.5,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(width: _avatarGap),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    final highContrast = MediaQuery.highContrastOf(context);
+    final row = _RowFocusRing(
+      builder: (focusNode) => Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: onProfile,
+          onLongPress: () => _showOptions(context),
+          // R16 rows stay one layer: radius 16, hover textPrimary @ .04 (Dark)
+          // / interactive @ .05 (Pearl), pressed interactive @ .10.
+          borderRadius: AppRadius.tile,
+          overlayColor: _rowOverlay(palette),
+          focusNode: focusNode,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: _rowInset,
+              vertical: 8,
+            ),
+            child: Row(
+              children: [
+                Stack(
+                  clipBehavior: Clip.none,
                   children: [
-                    Wrap(
-                      spacing: 6,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          friend.displayName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: palette.textPrimary,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        UserIdentityBadges(uid: friend.id),
-                      ],
+                    // R10 brand finish: the one letter gradient (never a
+                    // per-person hue), so the initial never vanishes into the
+                    // canvas of a row with no card behind it.
+                    UserAvatar(
+                      radius: _avatarSize / 2,
+                      userId: friend.id,
+                      mediaRevision: friend.profileUpdatedAt,
+                      mediaService: profileMediaService,
+                      displayName: friend.displayName,
+                      finish: UserAvatarFinish.brand,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _presenceLabel(friend, copy) ??
-                          (friend.username.isNotEmpty
-                              ? '@${friend.username}'
-                              : copy.text('Offline', 'Offline')),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: _presenceColor(friend, palette),
-                        fontSize: 12,
+                    Positioned(
+                      right: -1,
+                      bottom: -1,
+                      child: AvailabilityDot(
+                        status: PeopleStatus.fromPresence(
+                          isOnline: friend.isOnline,
+                          availability: friend.availability,
+                        ),
+                        size: 14,
+                        borderColor: palette.background,
+                        borderWidth: 2.5,
                       ),
                     ),
                   ],
                 ),
-              ),
-              IconButton.filledTonal(
-                tooltip: openingChat
-                    ? copy.text('Opening chat…', 'Otwieranie czatu…')
-                    : copy.text('Message', 'Wiadomość'),
-                onPressed: openingChat ? null : onMessage,
-                style: IconButton.styleFrom(
-                  backgroundColor: colors.secondaryContainer,
-                  foregroundColor: colors.onSecondaryContainer,
-                  disabledBackgroundColor: colors.secondaryContainer,
-                  disabledForegroundColor: colors.onSecondaryContainer,
-                ),
-                icon: openingChat
-                    ? SizedBox(
-                        width: 17,
-                        height: 17,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: colors.onSecondaryContainer,
+                const SizedBox(width: _avatarGap),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 6,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            friend.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: palette.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          UserIdentityBadges(uid: friend.id),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _presenceLabel(friend, copy) ??
+                            (friend.username.isNotEmpty
+                                ? '@${friend.username}'
+                                : copy.text('Offline', 'Offline')),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _presenceColor(friend, palette),
+                          fontSize: 12,
                         ),
-                      )
-                    : const Icon(Icons.chat_bubble_rounded, size: 20),
-              ),
-              const SizedBox(width: 2),
-              IconButton(
-                key: ValueKey('friend-options-${friend.id}'),
-                tooltip: copy.template(
-                  'Options for {name}',
-                  'Opcje dla {name}',
-                  values: <String, Object>{'name': friend.displayName},
+                      ),
+                    ],
+                  ),
                 ),
-                onPressed: () => _showOptions(context),
-                icon: Icon(
-                  Icons.more_vert_rounded,
-                  color: palette.textSecondary,
+                // R7 neutral: a glass disc with the control hairline and an
+                // outline glyph in `interactiveForeground` — the row's action
+                // without a second tonal violet.
+                IconButton.filledTonal(
+                  tooltip: openingChat
+                      ? copy.text('Opening chat…', 'Otwieranie czatu…')
+                      : copy.text('Message', 'Wiadomość'),
+                  onPressed: openingChat ? null : onMessage,
+                  style: AppFinish.tonalNeutral(
+                    palette,
+                    shape: const CircleBorder(),
+                    highContrast: highContrast,
+                  ),
+                  icon: openingChat
+                      ? SizedBox(
+                          width: 17,
+                          height: 17,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: palette.interactiveForeground,
+                          ),
+                        )
+                      : const Icon(AppIcons.chat, size: 20),
                 ),
-              ),
-            ],
+                const SizedBox(width: 2),
+                IconButton(
+                  key: ValueKey('friend-options-${friend.id}'),
+                  tooltip: copy.template(
+                    'Options for {name}',
+                    'Opcje dla {name}',
+                    values: <String, Object>{'name': friend.displayName},
+                  ),
+                  onPressed: () => _showOptions(context),
+                  icon: Icon(
+                    Icons.more_vert_rounded,
+                    color: palette.textSecondary,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1689,7 +1690,7 @@ class _FriendCard extends StatelessWidget {
           height: 1,
           thickness: 1,
           indent: _textInset,
-          color: palette.border,
+          color: highContrast ? palette.border : palette.hairline,
         ),
       ],
     );
@@ -1752,7 +1753,7 @@ class FriendRequestCard extends StatelessWidget {
                 userId: request.senderId,
                 mediaService: profileMediaService,
                 displayName: name,
-                backgroundColor: palette.surfaceSunken,
+                finish: UserAvatarFinish.brand,
               );
               if (onOpenProfile == null) return avatar;
               final openLabel = copy.template(
@@ -1900,7 +1901,85 @@ class FriendRequestCard extends StatelessWidget {
   }
 }
 
-class _FilterChip extends StatelessWidget {
+/// R16 row focus: a 2 px `focus` ring at radius 16 over a one-layer row,
+/// painted above it so focus never shifts the layout. The Material focus
+/// wash alone moved the row by only ≈ 1.3:1. [builder] hands the row's
+/// InkWell its focus node; the ring follows that node's PRIMARY focus, so
+/// it moves off the row when Tab reaches the message or options button
+/// inside it (they draw their own) instead of doubling up.
+class _RowFocusRing extends StatefulWidget {
+  const _RowFocusRing({required this.builder});
+
+  final Widget Function(FocusNode focusNode) builder;
+
+  @override
+  State<_RowFocusRing> createState() => _RowFocusRingState();
+}
+
+class _RowFocusRingState extends State<_RowFocusRing> {
+  late final FocusNode _focusNode = FocusNode(debugLabel: 'Friend row')
+    ..addListener(_syncFocus);
+  bool _focused = false;
+
+  void _syncFocus() {
+    final focused = _focusNode.hasPrimaryFocus;
+    if (_focused != focused) setState(() => _focused = focused);
+  }
+
+  @override
+  void dispose() {
+    _focusNode
+      ..removeListener(_syncFocus)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return Stack(
+      children: [
+        widget.builder(_focusNode),
+        if (_focused)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                key: const ValueKey('friend-row-focus-ring'),
+                decoration: BoxDecoration(
+                  borderRadius: AppRadius.tile,
+                  border: Border.all(color: palette.focus, width: 2),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// R16 one-layer row washes: hover textPrimary @ .04 (Dark) or
+/// interactiveForeground @ .05 (Pearl), pressed interactiveForeground @ .10.
+WidgetStateProperty<Color?> _rowOverlay(AppPalette palette) =>
+    WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.pressed)) {
+        return palette.interactiveForeground.withValues(alpha: .10);
+      }
+      if (states.contains(WidgetState.hovered)) {
+        return palette.isDark
+            ? palette.textPrimary.withValues(alpha: .04)
+            : palette.interactiveForeground.withValues(alpha: .05);
+      }
+      return null;
+    });
+
+/// Refine-look R8 single-select filter chip: 36 px visual inside the
+/// unchanged 48 px target, 14 px sides, a 13 px label. Unselected is
+/// transparent with a control hairline and a `textSecondary` label;
+/// selected is an ink inversion (`textPrimary` fill, `background` label
+/// w700, no edge), so "Add friend" stays the screen's one violet. Hover
+/// lays `glass`, a press textPrimary @ .10. The target's own selected edge
+/// is switched off and its focus / hover ring sits on the chip itself.
+class _FilterChip extends StatefulWidget {
   const _FilterChip({
     required this.label,
     this.semanticLabel,
@@ -1914,32 +1993,95 @@ class _FilterChip extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_FilterChip> createState() => _FilterChipState();
+}
+
+class _FilterChipState extends State<_FilterChip> {
+  static const double _target = 48;
+
+  bool _hovered = false;
+  bool _pressed = false;
+  Offset? _downPosition;
+
+  void _press(bool value) {
+    if (_pressed != value) setState(() => _pressed = value);
+  }
+
+  /// A drag that starts on the chip belongs to the scroller (or to nobody):
+  /// once the pointer travels past the touch slop no tap can follow, so the
+  /// pressed fill lets go instead of riding along for the whole swipe.
+  void _pointerMoved(PointerMoveEvent event) {
+    final down = _downPosition;
+    if (!_pressed || down == null) return;
+    if ((event.position - down).distance > kTouchSlop) _press(false);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    return AccessibleTapRegion(
-      selected: selected,
-      semanticLabel: semanticLabel ?? label,
-      onTap: onTap,
-      borderRadius: 99,
-      minimumSize: const Size(48, 48),
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 48),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
-        // Selected is tonal (container pair), so "Add friend" stays the
-        // screen's one violet accent.
-        decoration: BoxDecoration(
-          color: selected ? colors.primaryContainer : palette.surface,
-          borderRadius: BorderRadius.circular(99),
-          border: selected ? null : Border.all(color: palette.border),
+    final highContrast = MediaQuery.highContrastOf(context);
+    final selected = widget.selected;
+    // Up to 1.3 × text the label fits the 36 px chip, which is centred in
+    // the 48 px target; above it the chip grows to the whole target so it
+    // never crops, and the ring follows it.
+    final compact = MediaQuery.textScalerOf(context).scale(1) <= 1.3;
+    final chipHeight = compact ? AppFinish.chipHeight : _target;
+    return Listener(
+      onPointerDown: (event) {
+        _downPosition = event.position;
+        _press(true);
+      },
+      onPointerMove: _pointerMoved,
+      onPointerUp: (_) => _press(false),
+      onPointerCancel: (_) => _press(false),
+      child: AccessibleTapRegion(
+        selected: selected,
+        selectedBorderColor: Colors.transparent,
+        semanticLabel: widget.semanticLabel ?? widget.label,
+        onTap: widget.onTap,
+        onHover: (value) {
+          if (_hovered != value) setState(() => _hovered = value);
+        },
+        borderRadius: 999,
+        minimumSize: const Size(_target, _target),
+        focusRingInsets: EdgeInsets.symmetric(
+          vertical: (_target - chipHeight) / 2,
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? colors.onPrimaryContainer : palette.textPrimary,
-            fontSize: 12,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+        child: Container(
+          constraints: BoxConstraints(minHeight: chipHeight),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppFinish.chipPaddingH,
+            vertical: 6,
+          ),
+          decoration: BoxDecoration(
+            color: AppFinish.chipFill(
+              palette,
+              selected: selected,
+              hovered: _hovered,
+              pressed: _pressed,
+              highContrast: highContrast,
+            ),
+            borderRadius: AppRadius.pill,
+            border: AppFinish.chipBorder(
+              palette,
+              selected: selected,
+              highContrast: highContrast,
+            ),
+          ),
+          // Shrink-wrapped: a Container `alignment` would stretch the
+          // chip to any bounded width it is offered.
+          child: Center(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: Text(
+              widget.label,
+              style: AppTypography.labelLarge.copyWith(
+                color: AppFinish.chipLabel(palette, selected: selected),
+                fontSize: AppFinish.chipFontSize,
+                letterSpacing: 0,
+                fontWeight: AppFinish.chipWeight(selected: selected),
+              ),
+            ),
           ),
         ),
       ),
@@ -1997,7 +2139,7 @@ class _EmptyState extends StatelessWidget {
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 18,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 8),

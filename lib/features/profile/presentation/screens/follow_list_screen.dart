@@ -28,7 +28,6 @@ class FollowListScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final isFollowers = type == FollowListType.followers;
     final stream = isFollowers
         ? _service.watchFollowers(userId)
@@ -109,7 +108,7 @@ class FollowListScreen extends StatelessWidget {
                         radius: 24,
                         userId: user.uid,
                         displayName: user.displayName,
-                        backgroundColor: colors.primary,
+                        finish: UserAvatarFinish.brand,
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -124,7 +123,7 @@ class FollowListScreen extends StatelessWidget {
                                   user.displayName,
                                   style: TextStyle(
                                     color: palette.textPrimary,
-                                    fontWeight: FontWeight.w800,
+                                    fontWeight: FontWeight.w700,
                                     fontSize: 15,
                                   ),
                                 ),

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
@@ -82,43 +84,49 @@ class FriendSuggestionCard extends StatelessWidget {
   /// one ellipsized line so no text scale can overflow it.
   Widget _action(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
+    final highContrast = MediaQuery.highContrastOf(context);
+    const shape = RoundedRectangleBorder(borderRadius: AppRadius.card);
+    const padding = EdgeInsets.symmetric(horizontal: 14);
+    // "Add" is the refine-look R7 neutral tonal action (glass, control
+    // hairline, `interactiveForeground` label): the page's one accent stays
+    // its own primary CTA. A request that went out keeps its status colours
+    // ("Sent" amber, "Friends" green), which say what happened.
+    // Both states grow from the same tonal base, so the button's text style
+    // keeps one lineage and "Add" → "Sent" animates instead of failing to
+    // interpolate a theme style against an Inter one.
+    final tonal = AppFinish.tonalNeutral(
+      palette,
+      shape: shape,
+      highContrast: highContrast,
+    ).copyWith(padding: const WidgetStatePropertyAll(padding));
+    final ButtonStyle style;
+    if (_isComplete) {
+      final surface = _isFriend
+          ? palette.successSurface
+          : palette.warningSurface;
+      final ink = _isFriend
+          ? palette.successForeground
+          : palette.warningForeground;
+      style = tonal.copyWith(
+        backgroundColor: WidgetStatePropertyAll(surface),
+        foregroundColor: WidgetStatePropertyAll(ink),
+        iconColor: WidgetStatePropertyAll(ink),
+        side: const WidgetStatePropertyAll(BorderSide.none),
+      );
+    } else {
+      style = tonal;
+    }
     final button = FilledButton.icon(
       onPressed: isProcessing || _isComplete ? null : onPressed,
-      style: FilledButton.styleFrom(
-        // Tonal, not the screen's violet: the page's one accent is its own
-        // primary CTA (Slim: one accent per screen).
-        backgroundColor: _isFriend
-            ? palette.successSurface
-            : _isSent
-            ? palette.warningSurface
-            : colors.primaryContainer,
-        disabledBackgroundColor: _isFriend
-            ? palette.successSurface
-            : _isSent
-            ? palette.warningSurface
-            : palette.surfaceMuted,
-        foregroundColor: _isFriend
-            ? palette.successForeground
-            : _isSent
-            ? palette.warningForeground
-            : colors.onPrimaryContainer,
-        disabledForegroundColor: _isFriend
-            ? palette.successForeground
-            : _isSent
-            ? palette.warningForeground
-            : palette.textTertiary,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
+      style: style,
       icon: isProcessing
           ? SizedBox(
               width: 15,
               height: 15,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: colors.onPrimary,
+                color: palette.interactiveForeground,
               ),
             )
           : Icon(
@@ -135,11 +143,20 @@ class FriendSuggestionCard extends StatelessWidget {
                   : copy.text('Add', 'Dodaj')),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
       ),
     );
 
     return SizedBox(height: 44, child: button);
+  }
+
+  /// The 2 px ring around the avatar: the hairline (`border` under high
+  /// contrast) — a quiet edge, not a second outline around the brand disc.
+  static Color _ringColor(BuildContext context) {
+    final palette = context.appPalette;
+    return MediaQuery.highContrastOf(context)
+        ? palette.border
+        : palette.hairline;
   }
 
   @override
@@ -155,14 +172,15 @@ class FriendSuggestionCard extends StatelessWidget {
     final identity = Row(
       children: [
         // Slim: a 2 px neutral ring replaces the decorative violet gradient
-        // (and its two inline hexes); the geometry is unchanged.
+        // (and its two inline hexes); the geometry is unchanged. Refine-look
+        // calms it to the hairline, around the R10 brand avatar.
         Container(
           width: 52,
           height: 52,
           padding: const EdgeInsets.all(2),
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: palette.border,
+            color: _ringColor(context),
           ),
           child: ProfilePhotoButton(
             userId: suggestion.uid,
@@ -177,7 +195,7 @@ class FriendSuggestionCard extends StatelessWidget {
                 mediaRevision: suggestion.profileUpdatedAt,
                 mediaService: profileMediaService,
                 displayName: suggestion.displayName,
-                backgroundColor: palette.surfaceSunken,
+                finish: UserAvatarFinish.brand,
               ),
             ),
           ),
@@ -275,7 +293,7 @@ class FriendSuggestionCard extends StatelessWidget {
               padding: const EdgeInsets.all(2),
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: palette.border,
+                color: _ringColor(context),
               ),
               child: ProfilePhotoButton(
                 userId: suggestion.uid,
@@ -290,7 +308,7 @@ class FriendSuggestionCard extends StatelessWidget {
                     mediaRevision: suggestion.profileUpdatedAt,
                     mediaService: profileMediaService,
                     displayName: suggestion.displayName,
-                    backgroundColor: palette.surfaceSunken,
+                    finish: UserAvatarFinish.brand,
                   ),
                 ),
               ),

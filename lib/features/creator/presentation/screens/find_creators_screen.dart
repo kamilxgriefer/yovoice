@@ -1,9 +1,14 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/creator/data/models/creator_search_result.dart';
 import 'package:yovoice/features/creator/data/services/creator_directory_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
@@ -394,7 +399,7 @@ class _Header extends StatelessWidget {
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 30,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w700,
                     letterSpacing: -.7,
                   ),
                 ),
@@ -547,7 +552,15 @@ class _FilterBar extends StatelessWidget {
   }
 }
 
-class _FilterChip extends StatelessWidget {
+/// Refine-look R8 single-select filter chip: 36 px visual inside a 48 px
+/// target, 14 px sides, a 13 px label. Unselected is transparent with a
+/// control hairline and a `textSecondary` label; selected is an ink
+/// inversion (`textPrimary` fill, canvas label w700, no edge) instead of a
+/// second violet. Hover lays `glass`, a press textPrimary @ .10. The
+/// target's own selected edge is switched off and its focus / hover ring
+/// sits on the chip itself. This screen is always the immersive dark
+/// surface, so the palette is the Dark one in both appearances.
+class _FilterChip extends StatefulWidget {
   const _FilterChip({
     required this.filterKey,
     required this.label,
@@ -563,42 +576,95 @@ class _FilterChip extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_FilterChip> createState() => _FilterChipState();
+}
+
+class _FilterChipState extends State<_FilterChip> {
+  static const double _target = 48;
+
+  bool _hovered = false;
+  bool _pressed = false;
+  Offset? _downPosition;
+
+  void _press(bool value) {
+    if (_pressed != value) setState(() => _pressed = value);
+  }
+
+  /// A drag that starts on the chip belongs to the scroller (or to nobody):
+  /// once the pointer travels past the touch slop no tap can follow, so the
+  /// pressed fill lets go instead of riding along for the whole swipe.
+  void _pointerMoved(PointerMoveEvent event) {
+    final down = _downPosition;
+    if (!_pressed || down == null) return;
+    if ((event.position - down).distance > kTouchSlop) _press(false);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return AccessibleTapRegion(
-      key: filterKey,
-      semanticLabel: semanticLabel,
-      selected: selected,
-      onTap: onTap,
-      borderRadius: 999,
-      child: ExcludeSemantics(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 44),
-          child: DecoratedBox(
-            decoration: ShapeDecoration(
-              color: selected
-                  ? _FindCreatorsScreenState._accent.withValues(alpha: .18)
-                  : _FindCreatorsScreenState._surface,
-              shape: StadiumBorder(
-                side: BorderSide(
-                  color: selected
-                      ? _FindCreatorsScreenState._accent
-                      : _FindCreatorsScreenState._border,
-                ),
+    final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final selected = widget.selected;
+    // Up to 1.3 × text the label fits the 36 px chip, centred in the 48 px
+    // target; above it the chip grows to the whole target and the ring
+    // follows it.
+    final compact = MediaQuery.textScalerOf(context).scale(1) <= 1.3;
+    final chipHeight = compact ? AppFinish.chipHeight : _target;
+    return Listener(
+      onPointerDown: (event) {
+        _downPosition = event.position;
+        _press(true);
+      },
+      onPointerMove: _pointerMoved,
+      onPointerUp: (_) => _press(false),
+      onPointerCancel: (_) => _press(false),
+      child: AccessibleTapRegion(
+        key: widget.filterKey,
+        semanticLabel: widget.semanticLabel,
+        selected: selected,
+        selectedBorderColor: Colors.transparent,
+        onTap: widget.onTap,
+        onHover: (value) {
+          if (_hovered != value) setState(() => _hovered = value);
+        },
+        borderRadius: 999,
+        minimumSize: const Size(_target, _target),
+        focusRingInsets: EdgeInsets.symmetric(
+          vertical: (_target - chipHeight) / 2,
+        ),
+        child: ExcludeSemantics(
+          child: Container(
+            constraints: BoxConstraints(minHeight: chipHeight),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppFinish.chipPaddingH,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: AppFinish.chipFill(
+                palette,
+                selected: selected,
+                hovered: _hovered,
+                pressed: _pressed,
+                highContrast: highContrast,
+              ),
+              borderRadius: AppRadius.pill,
+              border: AppFinish.chipBorder(
+                palette,
+                selected: selected,
+                highContrast: highContrast,
               ),
             ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-              child: Center(
-                widthFactor: 1,
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: selected
-                        ? const Color(0xFFE0B9FF)
-                        : _FindCreatorsScreenState._muted,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                  ),
+            // Shrink-wrapped: a Container `alignment` would stretch the
+            // chip across the Wrap's whole width.
+            child: Center(
+              widthFactor: 1,
+              heightFactor: 1,
+              child: Text(
+                widget.label,
+                style: AppTypography.labelLarge.copyWith(
+                  color: AppFinish.chipLabel(palette, selected: selected),
+                  fontSize: AppFinish.chipFontSize,
+                  letterSpacing: 0,
+                  fontWeight: AppFinish.chipWeight(selected: selected),
                 ),
               ),
             ),
@@ -696,7 +762,7 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 16,
-                              fontWeight: FontWeight.w900,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
                           _CreatorStatusBadge(uid: creator.uid),
@@ -953,7 +1019,7 @@ class _IdentityBadge extends StatelessWidget {
                   style: TextStyle(
                     color: color,
                     fontSize: 10.5,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w700,
                     letterSpacing: .25,
                   ),
                 ),
@@ -1001,7 +1067,7 @@ class _DirectoryState extends StatelessWidget {
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 18,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
               const SizedBox(height: 7),
