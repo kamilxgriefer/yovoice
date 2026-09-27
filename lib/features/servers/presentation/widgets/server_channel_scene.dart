@@ -752,7 +752,12 @@ String? serverLiveGeneration(Server server, ServerChannel channel) {
 ///   an `audioAccent` corner tint (.12 / .08). No glow.
 ///
 /// Every edge is painted as a foreground, so a state change never moves the
-/// content by a pixel. High contrast: a flat `surface` (a sunken picture:
+/// content by a pixel, and the widget tree has ONE shape in every state
+/// (spec §13, B4): the under-glow, the corner light, the connected tint and
+/// the specular line are always present and paint nothing while they are
+/// off, so a conversation starting, being joined or ending never re-creates
+/// the content — keyboard focus and a screen reader's place survive it.
+/// High contrast: a flat `surface` (a sunken picture:
 /// `surfaceSunken`) and a 1 px `borderStrong` edge (1.5 px solid live /
 /// `audioAccent` in the lit states), no gradient, tint or glow.
 class ServerSessionCard extends StatefulWidget {
@@ -948,6 +953,15 @@ class _ServerSessionCardState extends State<ServerSessionCard>
       edge = AppFinish.blockEdge(palette, highContrast: highContrast);
     }
 
+    // Which lights are ON. Every light layer below is ALWAYS in the tree and
+    // simply paints nothing while it is off (spec §13, B4): inserting or
+    // removing a layer when a conversation starts, is joined or ends would
+    // change the card's tree shape, and Flutter would rebuild the content
+    // under a new element — a focused `server-join` would lose keyboard
+    // focus and a screen reader its place.
+    final glowOn = live && !highContrast;
+    final cornerOn = live && !highContrast;
+    final tintOn = connected && !highContrast;
     final specular = live
         ? AppFinish.liveSpecular(palette, highContrast: highContrast)
         : null;
@@ -968,60 +982,64 @@ class _ServerSessionCardState extends State<ServerSessionCard>
           // the centred column shrink to its widest line).
           fit: StackFit.passthrough,
           children: [
-            if (live && !highContrast)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: FadeTransition(
-                    opacity: _light,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) => DecoratedBox(
-                        key: const ValueKey('server-session-corner'),
-                        decoration: BoxDecoration(
-                          gradient: AppFinish.liveCorner(
-                            widget.accent,
-                            palette,
-                            shortestSide: constraints.biggest.shortestSide,
-                          ),
-                        ),
+            // The live corner light (transparent unless lit).
+            Positioned.fill(
+              child: IgnorePointer(
+                child: FadeTransition(
+                  opacity: _light,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => DecoratedBox(
+                      key: const ValueKey('server-session-corner'),
+                      decoration: BoxDecoration(
+                        gradient: cornerOn
+                            ? AppFinish.liveCorner(
+                                widget.accent,
+                                palette,
+                                shortestSide: constraints.biggest.shortestSide,
+                              )
+                            : null,
                       ),
                     ),
                   ),
                 ),
               ),
-            if (connected && !highContrast)
-              PositionedDirectional(
-                key: const ValueKey('server-session-tint'),
-                top: AppFinish.cornerTintTop,
-                end: AppFinish.cornerTintEnd,
-                width: AppFinish.cornerTintSize,
-                height: AppFinish.cornerTintSize,
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: [
-                          palette.audioAccent.withValues(alpha: tintAlpha),
-                          palette.audioAccent.withValues(alpha: 0),
-                        ],
-                        stops: const [0, .68],
-                      ),
-                    ),
+            ),
+            // The connected corner tint (transparent unless connected).
+            PositionedDirectional(
+              key: const ValueKey('server-session-tint'),
+              top: AppFinish.cornerTintTop,
+              end: AppFinish.cornerTintEnd,
+              width: AppFinish.cornerTintSize,
+              height: AppFinish.cornerTintSize,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: tintOn
+                        ? RadialGradient(
+                            colors: [
+                              palette.audioAccent.withValues(alpha: tintAlpha),
+                              palette.audioAccent.withValues(alpha: 0),
+                            ],
+                            stops: const [0, .68],
+                          )
+                        : null,
                   ),
                 ),
               ),
-            if (specular != null)
-              Positioned(
-                left: 0,
-                right: 0,
-                top: 0,
-                height: 1,
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(gradient: specular),
-                  ),
+            ),
+            // The Dark specular top line (transparent unless lit).
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              height: 1,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(gradient: specular),
                 ),
               ),
+            ),
             // The edge is a foreground; one extra pixel keeps the content
             // exactly where the old in-layout 1 px border left it.
             Padding(
@@ -1032,10 +1050,10 @@ class _ServerSessionCardState extends State<ServerSessionCard>
         ),
       ),
     );
-    if (!live || highContrast) return card;
     // The under-glow is its own layer behind the card, so the card's clip
     // never cuts it, the ignite fades only the light (never the card) and
-    // it replaces the block shadow rather than adding one.
+    // it replaces the block shadow rather than adding one. It is always
+    // here, shadowless while the card is not lit (see above).
     return Stack(
       clipBehavior: Clip.none,
       fit: StackFit.passthrough,
@@ -1048,7 +1066,9 @@ class _ServerSessionCardState extends State<ServerSessionCard>
                 key: const ValueKey('server-session-glow'),
                 decoration: BoxDecoration(
                   borderRadius: radius,
-                  boxShadow: ServerSessionCard.cardGlow(palette),
+                  boxShadow: glowOn
+                      ? ServerSessionCard.cardGlow(palette)
+                      : const <BoxShadow>[],
                 ),
               ),
             ),

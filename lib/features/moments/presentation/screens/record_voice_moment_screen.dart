@@ -3536,12 +3536,13 @@ class _RecordHalo extends StatelessWidget {
 
 /// One lifetime mode with a visible boundary, selected state and 48-pt target.
 ///
-/// The selected mode is R8's ink inversion — a white pill with the immersive
-/// canvas as its ink, the selected chip of the Yeels chrome beside it —
-/// rather than a solid violet slab: on the review step the violet fill
-/// belongs to "Opublikuj" alone (refine-look §2.6), and the violet slab fell
-/// to 3.0:1 against the raised panel finish. The unselected mode keeps its
-/// 3:1 outline; the selected flag, the ink and the fill carry the state.
+/// The selected mode is the tonal selection of refine-look spec §13 (B6):
+/// a white @.12 fill, a 1.5 px `interactiveForeground` edge (≥ 3:1 on the
+/// panel), a white w700 label and a trailing check as the non-colour cue.
+/// R8's ink inversion is for content-width chips only; on a half-width
+/// option it became the heaviest element on the step and pulled the eye
+/// from "Opublikuj", which owns the step's one emphasis (§2.6). The
+/// unselected mode keeps its 3:1 outline.
 class _AvailabilityModeButton extends StatelessWidget {
   const _AvailabilityModeButton({
     required this.label,
@@ -3571,7 +3572,7 @@ class _AvailabilityModeButton extends StatelessWidget {
       ),
       child: Material(
         color: selected
-            ? AppImmersiveColors.textPrimary
+            ? AppImmersiveColors.textPrimary.withValues(alpha: .12)
             : AppImmersiveColors.background.withValues(alpha: .55),
         borderRadius: BorderRadius.circular(999),
         child: InkWell(
@@ -3583,8 +3584,9 @@ class _AvailabilityModeButton extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(999),
               border: Border.all(
+                width: selected ? 1.5 : 1,
                 color: selected
-                    ? AppImmersiveColors.textPrimary
+                    ? AppPalette.dark.interactiveForeground
                     : AppImmersiveColors.textTertiary.withValues(
                         alpha: enabled ? 1 : .5,
                       ),
@@ -3597,7 +3599,7 @@ class _AvailabilityModeButton extends StatelessWidget {
                   icon,
                   size: 15,
                   color: selected
-                      ? AppImmersiveColors.background
+                      ? AppImmersiveColors.textPrimary
                       : AppImmersiveColors.textSecondary,
                 ),
                 const SizedBox(width: 6),
@@ -3606,7 +3608,7 @@ class _AvailabilityModeButton extends StatelessWidget {
                     label,
                     style: TextStyle(
                       color: selected
-                          ? AppImmersiveColors.background
+                          ? AppImmersiveColors.textPrimary
                           : (enabled
                                 ? AppImmersiveColors.textSecondary
                                 : AppImmersiveColors.textTertiary),
@@ -3615,6 +3617,15 @@ class _AvailabilityModeButton extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (selected) ...[
+                  const SizedBox(width: 6),
+                  Icon(
+                    Icons.check_rounded,
+                    key: const ValueKey('availability-selected-check'),
+                    size: 16,
+                    color: AppPalette.dark.interactiveForeground,
+                  ),
+                ],
               ],
             ),
           ),

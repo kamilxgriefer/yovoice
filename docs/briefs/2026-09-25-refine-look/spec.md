@@ -645,3 +645,32 @@ Every batch follows the CLAUDE.md loop, with `flutter analyze` clean and targete
 8. **The w800 → w700 type calming** touches many literals. It goes primitives first, owners next, so goldens and text-width tests will shift.
 9. **Scaffold.extendBody** (content running under the dock) is deliberately **not** proposed; that is Kamil's call.
 10. **ADR-211** must land in B1, superseding ADR-209's "Cards: radius 12, no decorative gradient, glow or shadow", "4 px tail / flat reaction pill / hairline separator" and "Titles 22 px w800". It must also clarify "one accent per screen" as the light budget. Owner: Technical Documentation Manager.
+
+---
+
+## 13. Amendments made during the rollout (lead designer, 2026-09-26)
+
+These are recorded so later batches never revert them. Each was forced by a measured contrast, legibility or consistency problem found in the rendered frames. All of them stay inside the approved direction; Kamil's decisions (variant B, dock and rail untouched) are unaffected.
+
+**B5, Głos: accepted as amendments to R8, R12, R14, R17, W3 and §8.4.**
+1. **R8, over media:** the control plate goes .35 → .55. Plated labels drop the 8-way stroke. The plated label measures 4.74:1 over a pure white frame.
+2. **§8.4:** the unselected over-media format word is white 1.0, not .78.
+3. **§8.4:** the local-panel format badge ink is `textSecondary`, not `textTertiary` (6.47:1 when lit).
+4. **R12:** the expiry ring track is `waveUnplayed` (2:1) and its arc is `textSecondary` (3.5:1). It still turns amber under 1 h.
+5. **R14:** the bead glyph is .5d, not .42d.
+6. **W3, high contrast:** the lit edge of the playing card is `textPrimary`, not `interactiveForeground`.
+7. **R17:** the Moments empty/error disc sits on an opaque block base, so the scenery does not show through.
+8. **Transport slider:** it uses the variant-B played sweep (`AppGradients.voicePlayed`), consistent with Kamil's variant-B choice for the waveform.
+
+**B6, capture and Yeels: design calls.**
+1. **R8 scope:** the ink inversion (solid white fill) is for chips only, at content width and 36 px. A segmented option that spans the form width (for example "Na określony czas" on the review step) instead uses a tonal selected state:
+   - fill white @.12;
+   - a 1.5 px `interactiveForeground` edge;
+   - a white w700 label;
+   - its existing leading icon or check, as the non-colour cue.
+   This keeps the step's one emphasis on the gradient "Opublikuj".
+2. **Yeels on desktop (≥1100):** "Utwórz Yeel" in the local panel becomes the `YoGradientFilledButton`, mirroring Głos's "Utwórz". The header "+" stays, because it is the route to a Voice Moment and nothing is removed. At ≥1100 it is demoted to a tonal R7 disc (glass fill with a `hairlineControl` edge), which leaves one violet fill per screen.
+3. **Plates:** `overlayControlPlateColor` .55, `overlayControlPlateHoverColor` .70 and `overlayControlPlateHairline` (white .14) apply to icon plates. `overlayPlateColor` stays .72 for plates that carry words.
+
+**B4, Servers: required fix.**
+- **Stable tree shape:** the session card keeps the same widget tree shape in every state (quiet, live, connected, high contrast). The under-glow layer is always present and simply transparent when not live. Without this, focus and screen-reader position are lost when a conversation starts or ends.

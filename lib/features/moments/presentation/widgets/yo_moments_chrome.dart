@@ -195,10 +195,12 @@ class YoMomentsHeader extends StatelessWidget {
         : YoMomentsCreateButton(
             onTap: onCreate!,
             compact: true,
-            // On Yeels the stage's own panel carries a create action too, so
-            // this disc rests there and the screen never shows two lifted
-            // create actions in two finishes (the light budget: one lift).
+            // On Yeels the stage's own panel carries the gradient create
+            // action, so this disc steps down to tonal there and the screen
+            // never shows two violet create actions in two finishes (the
+            // light budget; refine-look spec §13, B6).
             lifted: selectedFormat == YoMomentsFormat.voice,
+            tonal: selectedFormat == YoMomentsFormat.reels,
           );
     final switcher = YoMomentsFormatSwitch(
       selected: selectedFormat,
@@ -604,6 +606,7 @@ class YoMomentsCreateButton extends StatelessWidget {
     required this.onTap,
     this.compact = false,
     this.lifted = true,
+    this.tonal = false,
     super.key,
   });
 
@@ -613,10 +616,36 @@ class YoMomentsCreateButton extends StatelessWidget {
   /// Whether the compact disc carries the screen's one CTA lift.
   final bool lifted;
 
+  /// The compact disc as a tonal R7 disc (glass fill, `hairlineControl`
+  /// edge, `interactiveForeground` glyph) instead of the gradient disc.
+  /// Yeels uses it: there the stage panel's gradient "Utwórz Yeel" is the
+  /// screen's one violet create action (refine-look spec §13, B6).
+  final bool tonal;
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final label = copy.contextualText('yoMoments.create', 'Create', 'Utwórz');
+    if (compact && tonal) {
+      final palette = context.appPalette;
+      return IconButton(
+        key: const ValueKey<String>('moments-create-cta'),
+        onPressed: onTap,
+        tooltip: label,
+        icon: const Icon(Icons.add_rounded),
+        constraints: const BoxConstraints(
+          minWidth: AppSizing.standardControlHeight,
+          minHeight: AppSizing.standardControlHeight,
+        ),
+        style: IconButton.styleFrom(
+          shape: const CircleBorder(),
+          backgroundColor: palette.glass,
+          foregroundColor: palette.interactiveForeground,
+          side: BorderSide(color: palette.hairlineControl),
+          fixedSize: const Size.square(AppSizing.standardControlHeight),
+        ),
+      );
+    }
     if (compact) {
       return YoGradientDiscButton(
         disc: (hovered, focused) => YoGradientDisc(

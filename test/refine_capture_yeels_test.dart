@@ -474,8 +474,8 @@ void main() {
     });
 
     testWidgets('the review step: the preview is the R14 bead, "Opublikuj" '
-        'the one R5 action and the selected availability an R8 ink '
-        'inversion', (tester) async {
+        'the one R5 action and the selected availability the tonal '
+        'selection of spec §13', (tester) async {
       _useSurface(tester, const Size(390, 844));
       final clock = FakeStopwatch();
       final player = FakePreviewAudioPlayer(
@@ -539,20 +539,33 @@ void main() {
         YoActionEmphasis.lifted,
       );
 
-      // The selected availability: a white pill with the canvas as ink.
+      // The selected availability: the tonal selection of spec §13 (B6) —
+      // a white @.12 fill, a 1.5 px interactive edge that holds 3:1 on the
+      // panel, a white label and a check as the non-colour cue. Not the
+      // chip-scale ink inversion (that slab outweighed "Opublikuj").
       final timed = find.byKey(const ValueKey('availability-timed'));
       final fill = tester
           .widget<Material>(
             find.descendant(of: timed, matching: find.byType(Material)).first,
           )
           .color;
-      expect(fill, AppImmersiveColors.textPrimary);
+      expect(fill, AppImmersiveColors.textPrimary.withValues(alpha: .12));
       final label = tester.widget<Text>(
         find.descendant(of: timed, matching: find.byType(Text)),
       );
-      expect(label.style?.color, AppImmersiveColors.background);
+      expect(label.style?.color, AppImmersiveColors.textPrimary);
+      expect(
+        find.descendant(
+          of: timed,
+          matching: find.byKey(const ValueKey('availability-selected-check')),
+        ),
+        findsOneWidget,
+      );
       for (final stop in _panelStops) {
-        expect(_contrast(fill!, stop), greaterThanOrEqualTo(3));
+        expect(
+          _contrast(AppPalette.dark.interactiveForeground, stop),
+          greaterThanOrEqualTo(3),
+        );
       }
       expect(tester.takeException(), isNull);
     });

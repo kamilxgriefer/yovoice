@@ -31,6 +31,7 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_progress_row.da
 import 'package:yovoice/features/reels/presentation/widgets/reel_overlay_measure.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reels_toolbar.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
@@ -2264,18 +2265,20 @@ class _ReelsLocalPanel extends StatelessWidget {
           ),
           if (showCreate) ...<Widget>[
             const SizedBox(height: AppRhythm.section),
-            FilledButton.tonalIcon(
-              key: const ValueKey('reels-create-persistent'),
+            // Refine-look spec §13 (B6): on wide Yeels this is the screen's
+            // one create action — the R5 gradient with the lift, mirroring
+            // Głos's "Utwórz" — and the header "+" steps down to a tonal
+            // disc (YoMomentsCreateButton.tonal), so the page never shows
+            // two violet create actions in two finishes.
+            YoGradientFilledButton(
+              buttonKey: const ValueKey('reels-create-persistent'),
               onPressed: onCreate,
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(
-                  double.infinity,
-                  AppSizing.standardControlHeight,
-                ),
-                shape: const StadiumBorder(),
+              minimumSize: const Size(
+                double.infinity,
+                AppSizing.standardControlHeight,
               ),
               icon: const Icon(Icons.video_call_rounded, size: 18),
-              label: Text(
+              child: Text(
                 createLabel,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

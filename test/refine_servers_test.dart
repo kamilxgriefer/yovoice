@@ -2,6 +2,7 @@
 // session card's light budget, the header lamp, the identity tokens, the
 // conversation bar's glass controls and the speaking-ring jitter fix.
 
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -27,6 +28,7 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 import 'server_independent_qa_support.dart';
 import 'server_test_support.dart';
+import 'support/server_session_lights.dart';
 
 double _contrast(Color a, Color b) {
   final la = a.computeLuminance();
@@ -85,9 +87,34 @@ Widget _highContrast(Widget child) => Builder(
 );
 
 Finder get _card => find.byKey(const ValueKey('server-session-card'));
-Finder get _glow => find.byKey(const ValueKey('server-session-glow'));
-Finder get _corner => find.byKey(const ValueKey('server-session-corner'));
-Finder get _tint => find.byKey(const ValueKey('server-session-tint'));
+Finder get _glow => ServerSessionLight.glow.layers;
+
+/// Which lights of the one session card on screen are ON. Spec §13 (B4):
+/// the card keeps ONE tree shape in every state, so each light layer is
+/// always there — lit or not — and a light is on when its layer paints.
+/// Presence of every layer is asserted too; a null light is not checked.
+void _expectLights(
+  WidgetTester tester, {
+  required bool glow,
+  required bool corner,
+  bool? tint,
+  String? reason,
+}) {
+  final expected = <ServerSessionLight, bool?>{
+    ServerSessionLight.glow: glow,
+    ServerSessionLight.corner: corner,
+    ServerSessionLight.tint: tint,
+  };
+  for (final MapEntry(key: light, value: on) in expected.entries) {
+    expect(light.layers, findsOneWidget, reason: '${light.key} ($reason)');
+    if (on == null) continue;
+    expect(
+      light.isLit(tester),
+      on,
+      reason: '${light.key} ${on ? 'lit' : 'dark'} ($reason)',
+    );
+  }
+}
 Finder get _orb => find.byKey(const ValueKey('server-session-orb'));
 
 void main() {
@@ -430,9 +457,7 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpServers(tester, _salon(), size: const Size(1440, 900));
       expect(_card, findsOneWidget);
-      expect(_glow, findsNothing);
-      expect(_corner, findsNothing);
-      expect(_tint, findsNothing);
+      _expectLights(tester, glow: false, corner: false, tint: false);
       final colors = ServerIdentity.of(
         ServerType.friends,
       ).resolve(Brightness.dark);
@@ -446,9 +471,7 @@ void main() {
     ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpServers(tester, _salon(live: true), size: const Size(1440, 900));
-      expect(_glow, findsOneWidget);
-      expect(_corner, findsOneWidget);
-      expect(_tint, findsNothing);
+      _expectLights(tester, glow: true, corner: true, tint: false);
       final colors = ServerIdentity.of(
         ServerType.friends,
       ).resolve(Brightness.dark);
@@ -523,9 +546,7 @@ void main() {
         size: const Size(1440, 900),
       );
       await qaJoinAndSettle(tester, connector, roster: qaRoster);
-      expect(_glow, findsNothing);
-      expect(_corner, findsNothing);
-      expect(_tint, findsOneWidget);
+      _expectLights(tester, glow: false, corner: false, tint: true);
       final card = tester.widget<AnimatedContainer>(_card);
       final edge =
           (card.foregroundDecoration! as BoxDecoration).border! as Border;
@@ -541,8 +562,7 @@ void main() {
         size: const Size(1440, 900),
       );
       expect(_card, findsOneWidget);
-      expect(_glow, findsNothing);
-      expect(_corner, findsNothing);
+      _expectLights(tester, glow: false, corner: false);
     });
 
     testWidgets('high contrast: no glow or corner, a solid live rim', (
@@ -554,8 +574,7 @@ void main() {
         _highContrast(_salon(live: true)),
         size: const Size(1440, 900),
       );
-      expect(_glow, findsNothing);
-      expect(_corner, findsNothing);
+      _expectLights(tester, glow: false, corner: false);
       final card = tester.widget<AnimatedContainer>(_card);
       final rim =
           (card.foregroundDecoration! as BoxDecoration).border! as Border;
@@ -610,6 +629,82 @@ void main() {
       expect(glowOpacity(), lessThan(.1));
       await tester.pumpAndSettle();
       expect(glowOpacity(), 1);
+    });
+
+    // Spec §13 (B4, "stable tree shape"): the card lit up by inserting a
+    // glow layer ABOVE its content, so the content — the focused join with
+    // it — was rebuilt under a new element the moment a conversation
+    // started, and again when it ended. Keyboard focus fell back to the
+    // page and a screen reader lost its place.
+    testWidgets('a conversation starting and ending keeps the focused join '
+        'and its state (B4 NEW-1)', (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final snapshots = StreamController<List<ServerChannel>>.broadcast();
+      addTearDown(snapshots.close);
+      final repository = TestServerRepository()
+        ..servers = [qaServer(ServerType.friends)]
+        ..channelStream = snapshots.stream;
+      List<ServerChannel> channels({required bool live}) => qaChannels(
+        ServerType.friends,
+        liveness: live ? _live : ServerChannelLiveness.idle,
+        activeSessionId: live ? 'session-live' : null,
+      );
+      await pumpServers(
+        tester,
+        qaWorkspace(repository, channelId: 'lounge'),
+        size: const Size(1440, 900),
+        settle: false,
+      );
+      // The channel listener mounts once the member row has arrived; the
+      // broadcast fixture emits only after that.
+      await tester.pump();
+      snapshots.add(channels(live: false));
+      await tester.pumpAndSettle();
+      _expectLights(tester, glow: false, corner: false, tint: false);
+
+      // The join's own node: the one its InkWell's `Focus` creates.
+      FocusNode joinFocus() {
+        final focus = find
+            .descendant(of: qaJoin, matching: find.byType(Focus))
+            .first;
+        final inside = find
+            .descendant(of: focus, matching: find.byType(MouseRegion))
+            .first;
+        return Focus.of(tester.element(inside), createDependency: false);
+      }
+
+      final node = joinFocus();
+      final button = tester.state(qaJoin);
+      final card = tester.state(find.byType(ServerSessionCard));
+      node.requestFocus();
+      await tester.pump();
+      expect(node.hasPrimaryFocus, isTrue);
+
+      for (final live in const [true, false]) {
+        final state = live ? 'live' : 'quiet again';
+        snapshots.add(channels(live: live));
+        await tester.pumpAndSettle();
+        // The snapshot really flipped the card's light…
+        _expectLights(
+          tester,
+          glow: live,
+          corner: live,
+          tint: false,
+          reason: state,
+        );
+        expect(
+          find.byKey(const ValueKey('server-live-lamp')),
+          live ? findsOneWidget : findsNothing,
+          reason: state,
+        );
+        // …and nothing under it was re-created: the same card state, the
+        // same join state, the same focus node, still focused.
+        expect(tester.state(find.byType(ServerSessionCard)), same(card));
+        expect(tester.state(qaJoin), same(button), reason: state);
+        expect(joinFocus(), same(node), reason: state);
+        expect(node.hasPrimaryFocus, isTrue, reason: state);
+      }
+      expect(tester.takeException(), isNull);
     });
   });
 
@@ -1179,11 +1274,23 @@ void main() {
         for (final size in const [Size(390, 844), Size(1440, 900)]) {
           ServerSessionCard.debugResetIgnitions();
           await pumpServers(tester, template(type), size: size);
-          expect(_glow, findsOneWidget, reason: '$type $size live');
-          expect(_corner, findsOneWidget, reason: '$type $size live');
+          // One card, one layer of each light, exactly one of them lit.
+          _expectLights(
+            tester,
+            glow: true,
+            corner: true,
+            tint: false,
+            reason: '$type $size live',
+          );
+          expect(ServerSessionLight.glow.litCount(tester), 1);
           await pumpServers(tester, template(type, live: false), size: size);
-          expect(_glow, findsNothing, reason: '$type $size quiet');
-          expect(_corner, findsNothing, reason: '$type $size quiet');
+          _expectLights(
+            tester,
+            glow: false,
+            corner: false,
+            tint: false,
+            reason: '$type $size quiet',
+          );
         }
       }
     });

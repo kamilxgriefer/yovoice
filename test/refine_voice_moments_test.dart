@@ -1346,31 +1346,51 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
     });
 
-    testWidgets('V5: on Yeels the header "+" rests; on Głos it keeps the '
-        'lift', (tester) async {
-      Future<YoDiscEmphasis> emphasisFor(YoMomentsFormat format) async {
-        await tester.pumpWidget(
-          _themed(
-            YoMomentsHeader(
-              selectedFormat: format,
-              onFormatSelected: (_) {},
-              gutter: 24,
-              onCreate: () {},
-            ),
+    testWidgets('V5 + spec §13 (B6): on Yeels the header "+" is a tonal '
+        'disc (the stage panel owns the gradient create); on Głos it keeps '
+        'the lifted gradient disc', (tester) async {
+      Future<void> pumpHeader(YoMomentsFormat format) => tester.pumpWidget(
+        _themed(
+          YoMomentsHeader(
+            selectedFormat: format,
+            onFormatSelected: (_) {},
+            gutter: 24,
+            onCreate: () {},
           ),
-        );
-        return tester
-            .widget<YoGradientDisc>(
-              find.descendant(
-                of: find.byKey(const ValueKey('moments-create-cta')),
-                matching: find.byType(YoGradientDisc),
-              ),
-            )
-            .emphasis;
-      }
+        ),
+      );
+      final create = find.byKey(const ValueKey('moments-create-cta'));
 
-      expect(await emphasisFor(YoMomentsFormat.reels), YoDiscEmphasis.rest);
-      expect(await emphasisFor(YoMomentsFormat.voice), YoDiscEmphasis.lift);
+      await pumpHeader(YoMomentsFormat.reels);
+      expect(
+        find.descendant(of: create, matching: find.byType(YoGradientDisc)),
+        findsNothing,
+      );
+      final tonal = tester.widget<IconButton>(create).style!;
+      final palette = AppPalette.dark;
+      expect(
+        tonal.backgroundColor!.resolve(const <WidgetState>{}),
+        palette.glass,
+      );
+      expect(
+        tonal.foregroundColor!.resolve(const <WidgetState>{}),
+        palette.interactiveForeground,
+      );
+      expect(
+        tonal.side!.resolve(const <WidgetState>{})!.color,
+        palette.hairlineControl,
+      );
+      expect(tester.getSize(create), const Size.square(48));
+
+      await pumpHeader(YoMomentsFormat.voice);
+      expect(
+        tester
+            .widget<YoGradientDisc>(
+              find.descendant(of: create, matching: find.byType(YoGradientDisc)),
+            )
+            .emphasis,
+        YoDiscEmphasis.lift,
+      );
     });
 
     for (final pearl in <bool>[false, true]) {

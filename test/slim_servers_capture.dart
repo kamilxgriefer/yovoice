@@ -26,7 +26,12 @@
 //     (the invite introduction after creation);
 //   - `workspace-sheet`: the phone `Kanały` sheet (390, 100 % / 200 %);
 //   - `template-<type>`: each of the five boards on its own destination,
-//     LIVE, at 390 and 1440;
+//     LIVE, at 390 and 1440; and the four boards beside the friends
+//     workspace (family lounge, podcast studio, community stage, company
+//     shared screen) also `quiet` and `connected` (a real join through
+//     their own `server-join`, then the provider's roster) at 390 and 1440,
+//     plus one `connected-hc` frame each (390, Dark, high contrast) — the
+//     re-check of spec §13, B4 (every live surface, every state);
 //   - `*-hc`: system high contrast for the live and connected workspace and
 //     the directory;
 //   - review round (accessibility A11Y-1 / A11Y-2): `connected-muted` (the
@@ -52,6 +57,10 @@
 // exception, but writes nothing: a harness self-check. Every refine case
 // also asserts that the state it is named for is really on screen (e.g. a
 // `connected` frame fails rather than showing a join that did not happen).
+// The session card's light layers (`server-session-glow`, `-corner`,
+// `-tint`) are always in the tree since spec §13 (B4, one tree shape in
+// every state), so for them "shown" means lit and "hidden" means dark
+// (test/support/server_session_lights.dart).
 //
 // Every frame renders with Reduce Motion on (the header lamp's pulse and the
 // session card's one-time ignite are at rest, exactly as they settle), with
@@ -90,6 +99,7 @@ import 'server_independent_qa_support.dart' as qa;
 import 'server_templates_test.dart' as boards;
 import 'server_test_support.dart';
 import 'support/material_icons_font.dart';
+import 'support/server_session_lights.dart';
 
 const _outputDirectory = String.fromEnvironment(
   'SLIM_CAPTURE_OUT',
@@ -264,16 +274,25 @@ Widget _admission() {
   return qa.qaWorkspace(repository);
 }
 
-/// Each board on the destination it is about, LIVE.
-Widget _template(ServerType type) {
+/// Each board on the destination it is about, LIVE unless [live] is false.
+/// [connector] is the provider a `connected` frame joins through.
+Widget _template(
+  ServerType type, {
+  bool live = true,
+  FakeServerMediaConnector? connector,
+}) {
   final repository = TestServerRepository()
     ..servers = [qa.qaServer(type)]
     ..channels = qa.qaChannels(
       type,
-      liveness: _liveSince,
-      activeSessionId: 'session-live',
+      liveness: live ? _liveSince : ServerChannelLiveness.idle,
+      activeSessionId: live ? 'session-live' : null,
     );
-  return qa.qaWorkspace(repository, channelId: qa.qaBoardChannel(type));
+  return qa.qaWorkspace(
+    repository,
+    channelId: qa.qaBoardChannel(type),
+    connector: connector,
+  );
 }
 
 final _surfaces = <String, Widget Function()>{
@@ -410,6 +429,14 @@ const _connectedKeys = [
   'server-participant-ring-ola',
 ];
 const _phoneAndDesktop = [(390.0, 844.0), (1440.0, 900.0)];
+
+/// The four boards whose live surface is not the friends session card: the
+/// family lounge, the podcast studio, the community stage and the company
+/// meeting's shared screen.
+final _otherTemplates = [
+  for (final type in ServerType.values)
+    if (type != ServerType.friends) type,
+];
 const _themes = [false, true];
 
 /// Real shadows for the duration of one capture case. Restored inside the
@@ -664,7 +691,14 @@ void _refineMatrix() {
     // The state this frame is named for is really on screen (or really
     // absent): a join that silently failed must not produce a frame that
     // claims "connected".
+    // A session card light is always in the tree; it counts as shown only
+    // while it paints.
     for (final key in shows) {
+      final light = ServerSessionLight.byKey(key);
+      if (light != null) {
+        expect(light.isLit(tester), isTrue, reason: '$name: $key not lit');
+        continue;
+      }
       expect(
         find.byKey(ValueKey(key)),
         findsWidgets,
@@ -672,6 +706,11 @@ void _refineMatrix() {
       );
     }
     for (final key in hides) {
+      final light = ServerSessionLight.byKey(key);
+      if (light != null) {
+        expect(light.isLit(tester), isFalse, reason: '$name: $key lit');
+        continue;
+      }
       expect(find.byKey(ValueKey(key)), findsNothing, reason: '$name: $key');
     }
     await _shoot(tester, captureKey: captureKey, name: name, width: width);
@@ -845,6 +884,35 @@ void _refineMatrix() {
           size: size,
           light: light,
           child: () => _template(type),
+          shows: const ['server-session-glow', 'server-session-corner'],
+        );
+      }
+      // Spec §13 (B4): the four live surfaces beside the friends session
+      // card, quiet and in the conversation (the friends card is the
+      // `workspace` quiet / connected frames above).
+      for (final type in _otherTemplates) {
+        frame(
+          'template-${type.name}',
+          'quiet',
+          size: size,
+          light: light,
+          child: () => _template(type, live: false),
+          hides: const [
+            'server-session-glow',
+            'server-session-corner',
+            'server-session-tint',
+          ],
+        );
+        final connector = FakeServerMediaConnector();
+        frame(
+          'template-${type.name}',
+          'connected',
+          size: size,
+          light: light,
+          child: () => _template(type, connector: connector),
+          before: (tester) => _joinWithRoster(tester, connector),
+          shows: const ['server-session-tint', 'server-conversation-dock'],
+          hides: const ['server-session-glow', 'server-session-corner'],
         );
       }
     }
@@ -894,6 +962,26 @@ void _refineMatrix() {
     highContrast: true,
     child: _directory,
   );
+  // One connected high-contrast frame per other template: the solid
+  // `audioAccent` edge, no tint and no glow.
+  for (final type in _otherTemplates) {
+    final connector = FakeServerMediaConnector();
+    frame(
+      'template-${type.name}',
+      'connected-hc',
+      size: _sizes.first,
+      light: false,
+      highContrast: true,
+      child: () => _template(type, connector: connector),
+      before: (tester) => _joinWithRoster(tester, connector),
+      shows: const ['server-conversation-dock'],
+      hides: const [
+        'server-session-tint',
+        'server-session-glow',
+        'server-session-corner',
+      ],
+    );
+  }
 
   _reviewRoundFrames(frame);
 }
