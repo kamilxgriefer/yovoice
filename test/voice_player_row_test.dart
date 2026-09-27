@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
 import 'package:yovoice/shared/widgets/voice/voice_player_row.dart';
 import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
 
@@ -124,8 +125,11 @@ void main() {
     );
   });
 
+  // Refine-look R14: the thread row's transport became the voice bead, whose
+  // busy state is a white spinner on the logo gradient (it was an
+  // `audioAccent` spinner on a bordered disc). The bubble keeps its own ink.
   testWidgets('the spinner has its own ink, so a bubble can keep it readable '
-      'on the brand gradient while a thread row uses the audio accent', (
+      'on the brand gradient while the thread row\'s bead spins white', (
     tester,
   ) async {
     await pumpRow(
@@ -166,7 +170,14 @@ void main() {
             find.byType(CircularProgressIndicator),
           )
           .color,
-      AppPalette.dark.audioAccent,
+      Colors.white,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(YoGradientDisc),
+        matching: find.byType(CircularProgressIndicator),
+      ),
+      findsOneWidget,
     );
   });
 
@@ -235,9 +246,10 @@ void main() {
     expect(bars.height, 32);
   });
 
-  testWidgets('a real position sweeps the Moment player waveform', (
-    tester,
-  ) async {
+  // Refine-look R13: the thread row now draws the R13 waveform — its own
+  // `waveUnplayed` ink, the played sweep across the whole run, poured toward
+  // each real position — instead of the Moment player's StoryWaveform pair.
+  testWidgets('a real position pours the thread row waveform', (tester) async {
     final progress = ValueNotifier<double>(.25);
     addTearDown(progress.dispose);
 
@@ -256,17 +268,23 @@ void main() {
       ),
     );
 
-    expect(
-      tester.widget<StoryWaveform>(find.byType(StoryWaveform)).progress,
-      .25,
-    );
+    YoWaveform wave() => tester.widget<YoWaveform>(find.byType(YoWaveform));
+    expect(find.byType(StoryWaveform), findsNothing);
+    expect(wave().progress, .25, reason: 'the first position is painted');
+    expect(wave().color, AppPalette.dark.waveUnplayed);
+    expect(wave().continuousProgress, isTrue);
+    expect(wave().gradientSpan, YoWaveformGradientSpan.full);
 
     progress.value = .8;
     await tester.pump();
+    await tester.pump(VoicePourWaveform.pourDuration ~/ 2);
     expect(
-      tester.widget<StoryWaveform>(find.byType(StoryWaveform)).progress,
-      .8,
+      wave().progress,
+      allOf(greaterThan(.25), lessThan(.8)),
+      reason: 'the fill pours toward the new position, never past it',
     );
+    await tester.pump(VoicePourWaveform.pourDuration);
+    expect(wave().progress, closeTo(.8, 1e-9));
   });
 
   testWidgets('the inline row shrink-wraps and the contained row fills', (

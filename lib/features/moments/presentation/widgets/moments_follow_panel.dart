@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
@@ -11,9 +12,13 @@ import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart'
+    show momentBlockSplashFactory;
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -277,6 +282,9 @@ class _MomentsFollowPanelState extends State<MomentsFollowPanel> {
   }
 }
 
+/// The panel's blocks take the R2 finish (refine-look §8.4), so the three
+/// columns at 1440 read as one family: the top-lit fill, a hairline and
+/// Pearl's lift. The rows inside stay one layer.
 class _PanelCard extends StatelessWidget {
   const _PanelCard({required this.child});
 
@@ -285,16 +293,19 @@ class _PanelCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    return Material(
-      color: palette.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: AppRadius.lg,
-        side: BorderSide(color: palette.border),
+    return DecoratedBox(
+      decoration: AppFinish.block(
+        palette,
+        highContrast: MediaQuery.highContrastOf(context),
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(AppRhythm.title),
-        child: child,
+      child: Material(
+        type: MaterialType.transparency,
+        shape: const RoundedRectangleBorder(borderRadius: AppRadius.block),
+        clipBehavior: Clip.antiAlias,
+        child: Padding(
+          padding: const EdgeInsets.all(AppRhythm.title),
+          child: child,
+        ),
       ),
     );
   }
@@ -333,6 +344,7 @@ class _PersonRow extends StatelessWidget {
           userId: friend.id,
           photoUrl: friend.photoUrl,
           displayName: friend.displayName,
+          finish: UserAvatarFinish.brand,
         ),
         const SizedBox(width: AppRhythm.item),
         Expanded(
@@ -544,12 +556,19 @@ class _MomentsFollowButtonState extends State<MomentsFollowButton> {
                 'Obserwuj: {name}',
                 values: <String, Object>{'name': widget.displayName},
               );
+        // The stadium's ends grow with the label: at 200 % text the pill
+        // is taller, its round ends eat further into a fixed 12 px inset
+        // and the word ran into the edge. The inset follows the text size
+        // (12 at 100 %, ~19 at 160 % and above) so the label keeps clear
+        // of the curve.
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final inset = AppRhythm.item * textScale.clamp(1.0, 1.6);
         final style = OutlinedButton.styleFrom(
           minimumSize: Size(
             AppSizing.minimumTouchTarget,
             widget.compact ? 36 : AppSizing.standardControlHeight,
           ),
-          padding: const EdgeInsets.symmetric(horizontal: AppRhythm.item),
+          padding: EdgeInsets.symmetric(horizontal: inset),
           // The theme's padded tap target supplies the 48 box around the
           // 36 ink; a compact visual density would shrink that box to 40.
           shape: const StadiumBorder(),
@@ -593,17 +612,27 @@ class _MomentsFollowButtonState extends State<MomentsFollowButton> {
   }
 }
 
-/// "Add your moment / Record a Voice Moment" — the panel's create card.
-class _RecordCard extends StatelessWidget {
+/// "Add your moment / Record a Voice Moment" — the panel's create card: an
+/// R2 block whose mic is the voice bead at rest (refine-look R14, 48 px,
+/// gloss, contact shadow only — it lights up nowhere, nothing is playing).
+class _RecordCard extends StatefulWidget {
   const _RecordCard({required this.onTap});
 
   final VoidCallback onTap;
 
   @override
+  State<_RecordCard> createState() => _RecordCardState();
+}
+
+class _RecordCardState extends State<_RecordCard> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
+    final highContrast = MediaQuery.highContrastOf(context);
     final title = copy.text('Add your moment', 'Dodaj swoją chwilę');
     final subtitle = copy.text('Record a Voice Moment', 'Nagraj Voice Moment');
     return Semantics(
@@ -611,55 +640,79 @@ class _RecordCard extends StatelessWidget {
       button: true,
       label: title,
       hint: subtitle,
-      onTap: onTap,
+      onTap: widget.onTap,
       excludeSemantics: true,
-      child: Material(
-        key: const ValueKey('moments-follow-panel-record'),
-        color: palette.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: AppRadius.lg,
-          side: BorderSide(color: palette.border),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(AppRhythm.title),
-            child: Row(
-              children: <Widget>[
-                Container(
-                  width: AppSizing.standardControlHeight,
-                  height: AppSizing.standardControlHeight,
-                  decoration: BoxDecoration(
-                    color: colors.primary,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(Icons.mic_rounded, color: colors.onPrimary),
-                ),
-                const SizedBox(width: AppRhythm.item),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Text(
-                        title,
-                        style: AppTypography.titleSmall.copyWith(
-                          color: palette.textPrimary,
-                        ),
+      child: YoPressFeedback(
+        child: DecoratedBox(
+          decoration: AppFinish.block(
+            palette,
+            hovered: _hovered,
+            highContrast: highContrast,
+          ),
+          position: DecorationPosition.background,
+          child: Material(
+            key: const ValueKey('moments-follow-panel-record'),
+            type: MaterialType.transparency,
+            shape: RoundedRectangleBorder(
+              borderRadius: AppRadius.block,
+              side: _focused
+                  ? BorderSide(color: palette.focus, width: 2)
+                  : BorderSide.none,
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: widget.onTap,
+              splashFactory: momentBlockSplashFactory,
+              overlayColor: WidgetStateProperty.resolveWith(
+                (states) => states.contains(WidgetState.pressed)
+                    ? AppFinish.blockPressedWash(palette)
+                    : Colors.transparent,
+              ),
+              onHover: (value) {
+                if (value != _hovered) setState(() => _hovered = value);
+              },
+              onFocusChange: (value) {
+                if (value != _focused) setState(() => _focused = value);
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(AppRhythm.title),
+                child: Row(
+                  children: <Widget>[
+                    YoGradientDisc(
+                      size: AppSizing.standardControlHeight,
+                      gloss: true,
+                      icon: Icons.mic_rounded,
+                      hovered: _hovered,
+                    ),
+                    const SizedBox(width: AppRhythm.item),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Text(
+                            title,
+                            style: AppTypography.titleSmall.copyWith(
+                              color: palette.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitle,
+                            style: AppTypography.bodySmall.copyWith(
+                              color: palette.textSecondary,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        style: AppTypography.bodySmall.copyWith(
-                          color: palette.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: palette.textSecondary,
+                    ),
+                  ],
                 ),
-                Icon(Icons.chevron_right_rounded, color: palette.textSecondary),
-              ],
+              ),
             ),
           ),
         ),

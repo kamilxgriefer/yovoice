@@ -111,7 +111,10 @@ void main() {
     }
   });
 
-  testWidgets('the motif is five static primary-wash bars: never cyan, never '
+  // Refine-look §8.4 moved the motif from the primary wash (primary @ .32)
+  // to the palette's single neutral `waveUnplayed` ink; everything else this
+  // test pins (static, never cyan, never read aloud, 24 × 16) is unchanged.
+  testWidgets('the motif is five static neutral bars: never cyan, never '
       'animated, never read aloud', (tester) async {
     await pumpFeed(tester, size: const Size(768, 1024));
     final capsule = find.byKey(const ValueKey('moments-capsule-maja'));
@@ -121,9 +124,9 @@ void main() {
     );
     expect(bars, findsOneWidget);
     final palette = AppPalette.of(tester.element(capsule));
-    expect(MomentCapsuleBars.color(), isNot(AppColors.accent));
-    expect(MomentCapsuleBars.color(), isNot(palette.audioAccent));
-    expect(MomentCapsuleBars.color(), AppColors.primary.withValues(alpha: .32));
+    expect(MomentCapsuleBars.color(palette), isNot(AppColors.accent));
+    expect(MomentCapsuleBars.color(palette), isNot(palette.audioAccent));
+    expect(MomentCapsuleBars.color(palette), palette.waveUnplayed);
     expect(MomentCapsuleBars.amplitudes, hasLength(5));
     expect(
       find.descendant(of: bars, matching: find.byType(AnimatedContainer)),
@@ -147,6 +150,7 @@ void main() {
         .map((c) => (c.decoration as BoxDecoration).color)
         .toList();
     expect(paintedAfter, paintedBefore);
+    expect(paintedBefore, everyElement(palette.waveUnplayed));
     expect(tester.getSize(bars), const Size(24, 16));
   });
 

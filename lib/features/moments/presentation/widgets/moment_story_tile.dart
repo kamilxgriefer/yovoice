@@ -1,14 +1,18 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_gradients.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -383,6 +387,10 @@ class MomentStoryTile extends StatelessWidget {
 /// passes 2.5 / 2 for its larger disc. The keyed widget is the ring
 /// `Container` whose `BoxDecoration` carries the gradient — a test reads
 /// it from there, so the ring never becomes a border or a painter.
+///
+/// [finish] is the avatar's own finish inside the ring (refine-look R10):
+/// the Moments feed passes [UserAvatarFinish.brand]; the Home rails keep
+/// the default flat disc.
 class MomentSeenAvatar extends StatelessWidget {
   const MomentSeenAvatar({
     required this.seen,
@@ -395,6 +403,7 @@ class MomentSeenAvatar extends StatelessWidget {
     this.mediaRevision,
     this.displayName,
     this.fallbackIcon,
+    this.finish = UserAvatarFinish.flat,
     super.key,
   });
 
@@ -416,6 +425,7 @@ class MomentSeenAvatar extends StatelessWidget {
   final Object? mediaRevision;
   final String? displayName;
   final IconData? fallbackIcon;
+  final UserAvatarFinish finish;
 
   /// The feed row's band and gap — what the discover tiles drew before the
   /// disc was shared.
@@ -434,7 +444,6 @@ class MomentSeenAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
     return Container(
       key: ringKey,
       width: diameter,
@@ -446,29 +455,73 @@ class MomentSeenAvatar extends StatelessWidget {
         // Moment flips from unheard to heard; only the stops change.
         gradient: MomentStoryTile.ringGradient(context, seen: seen),
       ),
-      child: Container(
-        padding: EdgeInsets.all(ringInset),
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: palette.surfaceSunken,
-        ),
-        child: Opacity(
-          opacity: seen ? .62 : 1,
-          // The initial inside an avatar is a GRAPHIC sized off the disc,
-          // never copy: at 200 % text it grows past the circle and is
-          // clipped mid-glyph. The labels around it scale normally.
-          child: MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: TextScaler.noScaling),
-            child: UserAvatar(
-              radius: (diameter - (ringWidth + ringInset) * 2) / 2,
-              userId: userId,
-              photoUrl: photoUrl,
-              mediaRevision: mediaRevision,
-              displayName: displayName,
-              fallbackIcon: fallbackIcon,
-            ),
+      child: _SeenFace(
+        seen: seen,
+        inset: ringInset,
+        radius: (diameter - (ringWidth + ringInset) * 2) / 2,
+        userId: userId,
+        photoUrl: photoUrl,
+        mediaRevision: mediaRevision,
+        displayName: displayName,
+        fallbackIcon: fallbackIcon,
+        finish: finish,
+      ),
+    );
+  }
+}
+
+/// Inside the ring: the surface-coloured gap, then the avatar — dimmed once
+/// every link was heard. Shared by [MomentSeenAvatar] and the capsule, whose
+/// ring is its own keyed box.
+class _SeenFace extends StatelessWidget {
+  const _SeenFace({
+    required this.seen,
+    required this.inset,
+    required this.radius,
+    required this.userId,
+    required this.photoUrl,
+    required this.mediaRevision,
+    required this.displayName,
+    required this.fallbackIcon,
+    required this.finish,
+  });
+
+  final bool seen;
+  final double inset;
+  final double radius;
+  final String? userId;
+  final String? photoUrl;
+  final Object? mediaRevision;
+  final String? displayName;
+  final IconData? fallbackIcon;
+  final UserAvatarFinish finish;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return Container(
+      padding: EdgeInsets.all(inset),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: palette.surfaceSunken,
+      ),
+      child: Opacity(
+        opacity: seen ? .62 : 1,
+        // The initial inside an avatar is a GRAPHIC sized off the disc,
+        // never copy: at 200 % text it grows past the circle and is
+        // clipped mid-glyph. The labels around it scale normally.
+        child: MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.noScaling),
+          child: UserAvatar(
+            radius: radius,
+            userId: userId,
+            photoUrl: photoUrl,
+            mediaRevision: mediaRevision,
+            displayName: displayName,
+            fallbackIcon: fallbackIcon,
+            finish: finish,
           ),
         ),
       ),
@@ -647,19 +700,31 @@ class _MomentViewedIdsState extends State<MomentViewedIds> {
       widget.builder(context, widget.viewedIds ?? _viewedIds);
 }
 
-/// One author capsule of the YO Moments overview strip: a small avatar, the
-/// author's name and a DECORATIVE sound motif, 48 tall inside a 14-radius
-/// pill.
+/// The ink rule of the Moments R2 blocks (refine-look R2): `InkSparkle`
+/// on Android and NO ripple on iOS, macOS, the web or a desktop — the
+/// block's pressed wash carries the press there. Scoped to the blocks that
+/// ask for it (the feed card, the author capsule, the calm panel's record
+/// card); the theme's global splash is unchanged.
+InteractiveInkFeatureFactory get momentBlockSplashFactory =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+    ? InkSparkle.splashFactory
+    : NoSplash.splashFactory;
+
+/// One author capsule of the YO Moments overview strip: the author's
+/// avatar in its seen/unseen ring, the name and a DECORATIVE sound motif, in
+/// a 48 px pill (refine-look §8.4).
 ///
-/// The unheard/heard fact rides on the capsule's border — the same two ring
-/// stops [MomentStoryTile.ringColors] defines, so the strip and the story
-/// rails cannot drift apart: a 2 px brand gradient means this account has
-/// not heard everything in the chain; a 1 px quiet hairline means every
-/// link was heard. The five bars are decoration and nothing else: no
-/// per-Moment amplitude data exists, they are never cyan (cyan means audio
-/// PROGRESS in this destination) and they never animate, so they cannot
-/// suggest a listen in progress.
-class MomentAuthorCapsule extends StatelessWidget {
+/// The capsule itself is a chip-like R2 block — the top-lit fill and a
+/// hairline, no Pearl lift (`elevated: false`) — so the strip reads as one
+/// quiet row. The unheard/heard fact rides on the 38 px ring around the
+/// avatar: the same stops [MomentStoryTile.ringColors] defines (the brand
+/// gradient while anything in the chain is unheard, the quiet line plus a
+/// dimmed avatar once every link was heard), and the name is w700 while
+/// unheard, `textSecondary` w600 once heard. The five bars are decoration
+/// and nothing else: no per-Moment amplitude data exists, they are one
+/// neutral ink (`waveUnplayed`, never cyan — cyan means audio PROGRESS) and
+/// they never animate, so they cannot suggest a listen in progress.
+class MomentAuthorCapsule extends StatefulWidget {
   const MomentAuthorCapsule({
     required this.name,
     required this.seen,
@@ -685,12 +750,17 @@ class MomentAuthorCapsule extends StatelessWidget {
   final bool showBars;
 
   static const double height = 48;
-  static const double avatarDiameter = 32;
-  static const double nameMaxWidth = 96;
-  static const double unheardBorderWidth = 2;
-  static const double heardBorderWidth = 1;
 
-  /// The border container, so a widget test can read the painted stops.
+  /// The ringed avatar's outer diameter.
+  static const double avatarDiameter = 38;
+  static const double nameMaxWidth = 96;
+
+  /// The ring's band, the same in both states so nothing moves when a chain
+  /// flips to heard; only the stops change.
+  static const double ringWidth = MomentSeenAvatar.defaultRingWidth;
+  static const double ringInset = MomentSeenAvatar.defaultRingInset;
+
+  /// The ring box, so a widget test can read the painted stops.
   @visibleForTesting
   static const Key borderKey = ValueKey('moment-author-capsule-border');
 
@@ -699,85 +769,139 @@ class MomentAuthorCapsule extends StatelessWidget {
   static const Key barsKey = ValueKey('moment-author-capsule-bars');
 
   @override
+  State<MomentAuthorCapsule> createState() => _MomentAuthorCapsuleState();
+}
+
+class _MomentAuthorCapsuleState extends State<MomentAuthorCapsule> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final seen = widget.seen;
     final state = seen
         ? copy.text('already heard', 'odsłuchane')
         : copy.text('not heard yet', 'nieodsłuchane');
-    final borderWidth = seen ? heardBorderWidth : unheardBorderWidth;
+    const shape = StadiumBorder();
+    const inset =
+        (MomentAuthorCapsule.height - MomentAuthorCapsule.avatarDiameter) / 2;
+    final ring = DecoratedBox(
+      key: MomentAuthorCapsule.borderKey,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: MomentStoryTile.ringGradient(context, seen: seen),
+      ),
+      child: SizedBox.square(
+        dimension: MomentAuthorCapsule.avatarDiameter,
+        child: Padding(
+          padding: const EdgeInsets.all(MomentAuthorCapsule.ringWidth),
+          child: _SeenFace(
+            seen: seen,
+            inset: MomentAuthorCapsule.ringInset,
+            radius:
+                (MomentAuthorCapsule.avatarDiameter -
+                    (MomentAuthorCapsule.ringWidth +
+                            MomentAuthorCapsule.ringInset) *
+                        2) /
+                2,
+            userId: widget.userId,
+            photoUrl: widget.photoUrl,
+            mediaRevision: null,
+            displayName: widget.displayName ?? widget.name,
+            fallbackIcon: null,
+            finish: UserAvatarFinish.brand,
+          ),
+        ),
+      ),
+    );
+    final block = AppFinish.block(
+      palette,
+      radius: AppRadius.pill,
+      hovered: _hovered,
+      elevated: false,
+      highContrast: highContrast,
+    );
     return Semantics(
       button: true,
-      label: '$semanticLabel, $state',
-      onTap: onTap,
+      label: '${widget.semanticLabel}, $state',
+      onTap: widget.onTap,
       excludeSemantics: true,
-      child: SizedBox(
-        height: height,
-        child: DecoratedBox(
-          key: borderKey,
-          decoration: BoxDecoration(
-            borderRadius: AppRadius.md,
-            gradient: MomentStoryTile.ringGradient(context, seen: seen),
+      child: YoPressFeedback(
+        scale: YoPressFeedback.tile,
+        child: AnimatedContainer(
+          duration: AppMotion.resolve(context, AppMotion.quick),
+          curve: AppMotion.standardCurve,
+          height: MomentAuthorCapsule.height,
+          decoration: block,
+          // Always present (transparent at rest): a decoration that came
+          // and went would re-parent the ink well and drop its focus node.
+          foregroundDecoration: BoxDecoration(
+            borderRadius: AppRadius.pill,
+            border: Border.all(
+              color: _focused ? palette.focus : Colors.transparent,
+              width: 2,
+            ),
           ),
-          child: Padding(
-            padding: EdgeInsets.all(borderWidth),
-            child: Material(
-              color: palette.surface,
-              borderRadius: BorderRadius.circular(14 - borderWidth),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: onTap,
-                child: Padding(
-                  padding: EdgeInsetsDirectional.fromSTEB(
-                    AppRhythm.tight - borderWidth,
-                    0,
-                    AppRhythm.item - borderWidth,
-                    0,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Opacity(
-                        opacity: seen ? .62 : 1,
-                        child: MediaQuery(
-                          data: MediaQuery.of(
-                            context,
-                          ).copyWith(textScaler: TextScaler.noScaling),
-                          child: UserAvatar(
-                            radius: avatarDiameter / 2,
-                            userId: userId,
-                            photoUrl: photoUrl,
-                            displayName: displayName ?? name,
-                          ),
+          child: Material(
+            type: MaterialType.transparency,
+            shape: shape,
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: widget.onTap,
+              customBorder: shape,
+              splashFactory: momentBlockSplashFactory,
+              overlayColor: WidgetStateProperty.resolveWith(
+                (states) => states.contains(WidgetState.pressed)
+                    ? AppFinish.blockPressedWash(palette)
+                    : Colors.transparent,
+              ),
+              onHover: (value) {
+                if (value != _hovered) setState(() => _hovered = value);
+              },
+              onFocusChange: (value) {
+                if (value != _focused) setState(() => _focused = value);
+              },
+              child: Padding(
+                padding: const EdgeInsetsDirectional.fromSTEB(
+                  inset - 1,
+                  0,
+                  AppRhythm.item,
+                  0,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ring,
+                    const SizedBox(width: AppRhythm.tight),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth:
+                            MomentAuthorCapsule.nameMaxWidth *
+                            MomentStoryTile.textScaleOf(context),
+                      ),
+                      child: Text(
+                        widget.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textScaler: MediaQuery.textScalerOf(
+                          context,
+                        ).clamp(maxScaleFactor: 2),
+                        style: AppTypography.titleSmall.copyWith(
+                          color: seen
+                              ? palette.textSecondary
+                              : palette.textPrimary,
+                          fontWeight: seen ? FontWeight.w600 : FontWeight.w700,
                         ),
                       ),
+                    ),
+                    if (widget.showBars) ...[
                       const SizedBox(width: AppRhythm.tight),
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth:
-                              nameMaxWidth *
-                              MomentStoryTile.textScaleOf(context),
-                        ),
-                        child: Text(
-                          name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textScaler: MediaQuery.textScalerOf(
-                            context,
-                          ).clamp(maxScaleFactor: 2),
-                          style: AppTypography.titleSmall.copyWith(
-                            color: seen
-                                ? palette.textSecondary
-                                : palette.textPrimary,
-                          ),
-                        ),
-                      ),
-                      if (showBars) ...[
-                        const SizedBox(width: AppRhythm.tight),
-                        const MomentCapsuleBars(key: barsKey),
-                      ],
+                      const MomentCapsuleBars(key: MomentAuthorCapsule.barsKey),
                     ],
-                  ),
+                  ],
                 ),
               ),
             ),
@@ -788,8 +912,9 @@ class MomentAuthorCapsule extends StatelessWidget {
   }
 }
 
-/// Five static bars, `AppColors.primary` at .32 in both themes. Painted
-/// once; nothing here listens to a player.
+/// Five static bars in the palette's neutral `waveUnplayed` ink (refine-look
+/// §8.4: one colour, never cyan, never the brand wash). Painted once;
+/// nothing here listens to a player.
 class MomentCapsuleBars extends StatelessWidget {
   const MomentCapsuleBars({super.key});
 
@@ -798,10 +923,11 @@ class MomentCapsuleBars extends StatelessWidget {
   static const List<double> amplitudes = <double>[.45, .8, .6, 1, .5];
 
   /// The one colour the motif may use.
-  static Color color() => AppColors.primary.withValues(alpha: .32);
+  static Color color(AppPalette palette) => palette.waveUnplayed;
 
   @override
   Widget build(BuildContext context) {
+    final ink = color(context.appPalette);
     return ExcludeSemantics(
       child: SizedBox(
         width: width,
@@ -815,7 +941,7 @@ class MomentCapsuleBars extends StatelessWidget {
                 width: 3,
                 height: height * amplitude,
                 decoration: BoxDecoration(
-                  color: color(),
+                  color: ink,
                   borderRadius: BorderRadius.circular(1.5),
                 ),
               ),

@@ -21,6 +21,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
 
@@ -130,10 +131,13 @@ void main() {
       final yeels = tester.widget<Text>(find.text('Yeels'));
       expect(voice.style?.fontSize, 17);
       expect(voice.style?.fontWeight, FontWeight.w800);
-      expect(voice.style?.color, AppPalette.dark.interactiveForeground);
+      // Refine-look §8.4: over media the selected word is white w800 and the
+      // resting one white @ .78 (it was violet / white); selection is still
+      // weight + the line + the `selected` flag, never colour alone.
+      expect(voice.style?.color, Colors.white);
       expect(yeels.style?.fontSize, 17);
       expect(yeels.style?.fontWeight, FontWeight.w600);
-      expect(yeels.style?.color, Colors.white);
+      expect(yeels.style?.color, Colors.white.withValues(alpha: .78));
       final crispOutline = voice.style!.shadows!.where(
         (shadow) => shadow.blurRadius == 0 && shadow.offset != Offset.zero,
       );
@@ -141,8 +145,19 @@ void main() {
         crispOutline.length,
         greaterThanOrEqualTo(8),
         reason:
-            'The selected violet word needs a glyph-local dark outline on '
-            'bright media now that the full-width scrim is gone.',
+            'The selected word needs a glyph-local dark outline on bright '
+            'media now that the full-width scrim is gone (the soft-shadow '
+            'alternative is gated on an Accessibility measurement).',
+      );
+      expect(
+        yeels.style!.shadows!
+            .where(
+              (shadow) =>
+                  shadow.blurRadius == 0 && shadow.offset != Offset.zero,
+            )
+            .length,
+        greaterThanOrEqualTo(8),
+        reason: 'the resting word keeps the same outline over media',
       );
       expect(
         _contrast(voice.style!.color!, Colors.black),
@@ -159,6 +174,8 @@ void main() {
       expect(tester.getSize(inactive).width, 0);
       final indicator =
           tester.widget<AnimatedContainer>(active).decoration as BoxDecoration;
+      // The line is the logo's gradient (refine-look §8.4).
+      expect(indicator.gradient, AppGradients.primary);
       expect(
         indicator.boxShadow,
         contains(
@@ -226,8 +243,10 @@ void main() {
     );
   });
 
+  // Refine-look §8.4 moved the canvas tabs from interactive violet /
+  // textSecondary to textPrimary w800 / textTertiary w600, still per theme.
   for (final brightness in Brightness.values) {
-    testWidgets('canvas active violet adapts to ${brightness.name}', (
+    testWidgets('canvas active ink adapts to ${brightness.name}', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -247,11 +266,31 @@ void main() {
           : AppPalette.light;
       expect(
         tester.widget<Text>(find.text('Yeels')).style?.color,
-        palette.interactiveForeground,
+        palette.textPrimary,
       );
       expect(
         tester.widget<Text>(find.text('Voice')).style?.color,
-        palette.textSecondary,
+        palette.textTertiary,
+      );
+      final line =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.byKey(
+                      const ValueKey<String>(
+                        'immersive-format-indicator-Yeels',
+                      ),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect(line.gradient, AppGradients.primary);
+      expect(
+        line.boxShadow,
+        contains(
+          isA<BoxShadow>()
+              .having((shadow) => shadow.color, 'color', palette.brandGlow)
+              .having((shadow) => shadow.blurRadius, 'blur', 8),
+        ),
       );
     });
   }
