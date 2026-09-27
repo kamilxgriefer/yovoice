@@ -15,6 +15,8 @@ import 'package:yovoice/features/auth/presentation/screens/forgot_password_scree
 import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/auth_social_button.dart';
+import 'package:yovoice/features/auth/presentation/widgets/startup_loading_screen.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 enum AuthMode { login, register }
@@ -1177,7 +1179,16 @@ class AuthModeRail extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final scaledLineHeight = MediaQuery.textScalerOf(context).scale(14) * 1.2;
-    final railHeight = math.max(52.0, 8 + (scaledLineHeight * 2));
+    // Room for two label lines inside the selected tile, clear of its edge,
+    // so a wrapped label at large text never runs into the edge line. At
+    // 100 % the rail stays 52.
+    final railHeight = math.max(
+      52.0,
+      2 * _ModeRailButton.inset +
+          2 * (_ModeRailButton.edgeWidth + _ModeRailButton.labelGap) +
+          scaledLineHeight * 2,
+    );
+    final highContrast = MediaQuery.highContrastOf(context);
     return Semantics(
       container: true,
       label: copy.text('Authentication mode', 'Tryb uwierzytelniania'),
@@ -1193,10 +1204,33 @@ class AuthModeRail extends StatelessWidget {
                 ? Curves.easeInOutCubic.transform(progress)
                 : 1.0;
             final capsuleX = sourceX + ((targetX - sourceX) * travel);
-            // Slim: a flat primary tile on a surface track. The track keeps
-            // its authBorderStrong outline (≈3.6:1 on surface) and the tile
-            // is solid primary (≈3.1:1 on surface, white label ≈5.9:1) with
-            // no gradient and no glow.
+            // A tonal tile on a surface track (refine-look §10): the track
+            // keeps its authBorderStrong outline (≈3.6:1 on surface). The
+            // tile is primary @ .26 over surface inside a 1.5 px primary
+            // edge — the edge holds the same ≈3.08:1 against the track that
+            // the solid tile did, and the white w700 label reads ≈14.5:1 —
+            // so the screen's one violet fill is its primary action. Under
+            // high contrast the tile stays solid primary (white ≈5.8:1).
+            final tile = highContrast
+                ? BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(
+                      _ModeRailButton.tileRadius,
+                    ),
+                  )
+                : BoxDecoration(
+                    color: Color.alphaBlend(
+                      AppColors.primary.withValues(alpha: .26),
+                      AppImmersiveColors.surface,
+                    ),
+                    borderRadius: BorderRadius.circular(
+                      _ModeRailButton.tileRadius,
+                    ),
+                    border: Border.all(
+                      color: AppColors.primary,
+                      width: _ModeRailButton.edgeWidth,
+                    ),
+                  );
             return DecoratedBox(
               decoration: BoxDecoration(
                 color: AppImmersiveColors.surface,
@@ -1214,12 +1248,8 @@ class AuthModeRail extends StatelessWidget {
                     child: Padding(
                       padding: const EdgeInsets.all(_ModeRailButton.inset),
                       child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: AppColors.primary,
-                          borderRadius: BorderRadius.circular(
-                            _ModeRailButton.tileRadius,
-                          ),
-                        ),
+                        key: const ValueKey('auth-mode-rail-tile'),
+                        decoration: tile,
                       ),
                     ),
                   ),
@@ -1280,6 +1310,12 @@ class _ModeRailButton extends StatefulWidget {
 
   /// Gap between the rail's outline and the selected tile.
   static const double inset = 4;
+
+  /// The selected tile's primary edge.
+  static const double edgeWidth = 1.5;
+
+  /// The least space between that edge and a wrapped label.
+  static const double labelGap = 3.5;
 
   /// Width of the keyboard-focus boundary (authFocus).
   static const double focusWidth = 2;
@@ -1397,6 +1433,8 @@ class _ModeRailButtonState extends State<_ModeRailButton> {
                           ? AppImmersiveColors.textPrimary
                           : AppImmersiveColors.textSecondary,
                       fontSize: 14,
+                      // The line box the rail height reserves.
+                      height: 1.2,
                       fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                     ),
                   ),
@@ -1647,14 +1685,9 @@ class _DesktopBrandPanel extends StatelessWidget {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              ExcludeSemantics(
-                                child: Image.asset(
-                                  'assets/images/yo-voice-favicon-512.png',
-                                  width: 96,
-                                  height: 96,
-                                  fit: BoxFit.contain,
-                                  filterQuality: FilterQuality.high,
-                                ),
+                              // The real logo, lit (refine-look §4).
+                              const ExcludeSemantics(
+                                child: LaunchGlintMark(size: 96),
                               ),
                               const SizedBox(height: 20),
                               const Text(
@@ -1859,11 +1892,10 @@ class _AuthBrandHeader extends StatelessWidget {
         curve: Curves.easeInOutCubic,
         width: logoSize,
         height: logoSize,
-        child: Image.asset(
-          'assets/images/yo-voice-favicon-512.png',
-          fit: BoxFit.contain,
-          filterQuality: FilterQuality.high,
-        ),
+        // The real logo, lit (refine-look §4), laid out once at the larger
+        // size and scaled with the box, so its bloom and glint stay
+        // concentric while the mark eases between 56 and 44.
+        child: const FittedBox(child: LaunchGlintMark(size: 56)),
       ),
     );
     final copy = Column(
@@ -2208,11 +2240,12 @@ InputDecoration authInputDecoration({
 /// Height of an auth field (and of the primary auth button beside it).
 const double authFieldHeight = 52;
 
-class AuthPrimaryButton extends StatelessWidget {
+class AuthPrimaryButton extends StatefulWidget {
   const AuthPrimaryButton({
     required this.label,
     required this.loading,
     required this.onPressed,
+    this.lifted = true,
     super.key,
   });
 
@@ -2220,9 +2253,52 @@ class AuthPrimaryButton extends StatelessWidget {
   final bool loading;
   final VoidCallback? onPressed;
 
+  /// Whether the action carries the screen's one R5 lift. A recovery action
+  /// outside the sign-in chain (the profile-bootstrap retry) keeps the
+  /// gradient without it (refine-look R5: no lift on retry actions).
+  final bool lifted;
+
+  /// The label's line box (× its size) and the space kept above and below
+  /// it, so a label wrapped by large text grows the button with room
+  /// around it instead of touching the fill's edge. At 100 % the button
+  /// stays [authFieldHeight].
+  static const double labelLineHeight = 1.2;
+  static const double verticalPadding = 12;
+
+  @override
+  State<AuthPrimaryButton> createState() => _AuthPrimaryButtonState();
+}
+
+class _AuthPrimaryButtonState extends State<AuthPrimaryButton> {
+  /// The button's own states; the focus edge below follows them.
+  final WidgetStatesController _states = WidgetStatesController();
+
+  /// Stands in for `onPressed` while the chain is locked, so the action
+  /// keeps its enabled finish; input is blocked around it.
+  static void _locked() {}
+
+  @override
+  void dispose() {
+    _states.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final label = widget.label;
+    final loading = widget.loading;
+    final onPressed = widget.onPressed;
     final copy = AppLocalizations.of(context);
+    // The chain locks every action (onPressed == null) while one runs or the
+    // mode relay plays. As before, a locked action keeps its fill rather
+    // than greying out — now the R5 gradient, with the lift dropped — and
+    // pointer and focus are blocked around it. Only the action whose own
+    // work runs is busy: it keeps half its lift, shows the white spinner
+    // and keeps keyboard focus. The button's radius 12, 52 px height, the
+    // 2 px `onPrimary` focus edge and this one semantics node are
+    // unchanged.
+    final locked = onPressed == null;
+    final idleLock = locked && !loading;
     return Semantics(
       container: true,
       button: true,
@@ -2234,46 +2310,93 @@ class AuthPrimaryButton extends StatelessWidget {
       child: ExcludeSemantics(
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: authFieldHeight),
-          // Slim: solid primary, radius 12, no gradient and no glow. The
-          // FilledButton keeps the 2 px `colorScheme.onPrimary` focus
-          // boundary it inherits from `filledButtonTheme`, so `side` is
-          // deliberately left unset here. While the chain is busy (loading
-          // or a mode relay) the fill stays primary, as the old gradient did.
-          child: FilledButton(
-            onPressed: onPressed,
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: AppImmersiveColors.textPrimary,
-              disabledBackgroundColor: AppColors.primary,
-              disabledForegroundColor: AppImmersiveColors.textPrimary,
-              elevation: 0,
-              shadowColor: Colors.transparent,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(_AuthRadius.control),
-              ),
-            ),
-            child: loading
-                ? const SizedBox.square(
-                    dimension: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.4,
-                      color: AppImmersiveColors.textPrimary,
-                    ),
-                  )
-                : Text(
+          child: IgnorePointer(
+            ignoring: locked,
+            child: ExcludeFocus(
+              excluding: idleLock,
+              // The 2 px `onPrimary` focus edge is painted over the
+              // gradient: a FilledButton draws its `side` beneath its
+              // content, where the gradient `Ink` would hide it.
+              child: CustomPaint(
+                key: const ValueKey('auth-primary-focus-edge'),
+                foregroundPainter: _AuthFocusEdgePainter(
+                  states: _states,
+                  color: Theme.of(context).colorScheme.onPrimary,
+                  radius: _AuthRadius.control,
+                ),
+                child: YoGradientFilledButton(
+                  statesController: _states,
+                  onPressed: onPressed ?? _locked,
+                  busy: loading,
+                  emphasis: idleLock || !widget.lifted
+                      ? YoActionEmphasis.flat
+                      : YoActionEmphasis.lifted,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(_AuthRadius.control),
+                  ),
+                  minimumSize: const Size(64, authFieldHeight),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: AuthPrimaryButton.verticalPadding,
+                  ),
+                  child: Text(
                     label,
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: AppImmersiveColors.textPrimary,
                       fontSize: 16,
+                      height: AuthPrimaryButton.labelLineHeight,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
+                ),
+              ),
+            ),
           ),
         ),
       ),
     );
   }
+}
+
+/// The primary action's 2 px keyboard-focus edge, inside its radius-12
+/// shape, painted whenever the button reports [WidgetState.focused] (as the
+/// solid button's `side` did). It repaints from the states alone, so a focus
+/// change never rebuilds the button.
+class _AuthFocusEdgePainter extends CustomPainter {
+  _AuthFocusEdgePainter({
+    required this.states,
+    required this.color,
+    required this.radius,
+  }) : super(repaint: states);
+
+  static const double width = 2;
+
+  final WidgetStatesController states;
+  final Color color;
+  final double radius;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (!states.value.contains(WidgetState.focused)) return;
+    final edge = RRect.fromRectAndRadius(
+      (Offset.zero & size).deflate(width / 2),
+      Radius.circular(radius - width / 2),
+    );
+    canvas.drawRRect(
+      edge,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = width
+        ..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_AuthFocusEdgePainter oldDelegate) =>
+      oldDelegate.states != states ||
+      oldDelegate.color != color ||
+      oldDelegate.radius != radius;
 }
 
 class _EnsureVisibleOnFocus extends StatefulWidget {

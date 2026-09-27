@@ -15,6 +15,7 @@ import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/responsive_auth_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/animated_totp_code_input.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
@@ -320,14 +321,14 @@ class _TotpChallengeScreenState extends State<TotpChallengeScreen> {
                                       Navigator.of(context).maybePop(),
                                 ),
                                 const SizedBox(height: AppSpacing.sm),
-                                Center(
-                                  child: Image.asset(
-                                    'assets/images/yo-voice-favicon-512.png',
-                                    key: const ValueKey<String>('totp-logo'),
-                                    width: 76,
-                                    height: 76,
-                                    fit: BoxFit.contain,
-                                    filterQuality: FilterQuality.high,
+                                // The real logo, lit (refine-look §4).
+                                // No glint here: the launch's one glint
+                                // belongs to startup or the sign-in screen.
+                                const Center(
+                                  child: YoBrandMark(
+                                    key: ValueKey<String>('totp-logo'),
+                                    size: 76,
+                                    light: YoBrandLight.bloom,
                                   ),
                                 ),
                                 const SizedBox(height: AppSpacing.md),

@@ -1,19 +1,24 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/auth_error_localizer.dart';
 import 'package:yovoice/features/auth/presentation/screens/login_screen.dart';
+import 'package:yovoice/features/auth/presentation/screens/responsive_auth_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/startup_loading_screen.dart';
 import 'package:yovoice/features/auth/providers/auth_provider.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/reels/presentation/navigation/reel_link_coordinator.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 
 /// The shortest a normal cold launch keeps the app-owned startup surface.
@@ -306,7 +311,7 @@ class _AuthenticatedEntryState extends State<_AuthenticatedEntry> {
         }
 
         if (snapshot.hasError) {
-          return _ProfileBootstrapErrorScreen(
+          return ProfileBootstrapErrorScreen(
             onRetry: _retryProfileBootstrap,
             onSignOut: _signOut,
           );
@@ -374,10 +379,19 @@ Future<void> ensureAuthenticatedProfileWithRetry(
   Error.throwWithStackTrace(lastError!, lastStackTrace!);
 }
 
-class _ProfileBootstrapErrorScreen extends StatelessWidget {
-  const _ProfileBootstrapErrorScreen({
+/// Shown when profile bootstrap still fails after its retries (for example
+/// offline on a first sign-in). It shares the auth-gate failure layout; its
+/// retry is a recovery action, not the sign-in chain's step, so it keeps the
+/// gradient without the R5 lift (R5: never on retry actions).
+///
+/// Public only so tests and the capture harness can render it directly; the
+/// app reaches it through [AuthGate].
+@visibleForTesting
+class ProfileBootstrapErrorScreen extends StatelessWidget {
+  const ProfileBootstrapErrorScreen({
     required this.onRetry,
     required this.onSignOut,
+    super.key,
   });
 
   final VoidCallback onRetry;
@@ -386,81 +400,41 @@ class _ProfileBootstrapErrorScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final content = Scaffold(
-      backgroundColor: const Color(0xFF0D0618),
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.cloud_off_rounded,
-                    color: Color(0xFFC05CFF),
-                    size: 58,
-                  ),
-                  const SizedBox(height: 20),
-                  Text(
-                    copy.text(
-                      'Finishing your profile',
-                      'Kończymy konfigurację profilu',
-                    ),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 25,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    copy.text(
-                      'Your account is secure. Check your connection and try '
-                          'again to finish setting up YO Voice.',
-                      'Twoje konto jest bezpieczne. Sprawdź połączenie i spróbuj '
-                          'ponownie, aby dokończyć konfigurację YO Voice.',
-                    ),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Color(0xFFB8B1C8),
-                      fontSize: 15,
-                      height: 1.45,
-                    ),
-                  ),
-                  const SizedBox(height: 26),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: FilledButton(
-                      onPressed: onRetry,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFA02BFF),
-                        foregroundColor: Colors.white,
-                      ),
-                      child: Text(
-                        copy.text('TRY AGAIN', 'SPRÓBUJ PONOWNIE'),
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: () => unawaited(onSignOut()),
-                    child: Text(
-                      copy.text('Use another account', 'Użyj innego konta'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+    return _GateFailure(
+      // A connection problem, not a failed sign-in: its glyph keeps the
+      // warning role rather than the error red.
+      icon: Icons.cloud_off_rounded,
+      iconColor: AppColors.warning,
+      title: copy.text(
+        'Finishing your profile',
+        'Kończymy konfigurację profilu',
+      ),
+      // Size and copy unchanged; weight at the w700 cap (refine-look §2.6).
+      titleStyle: const TextStyle(
+        color: AppImmersiveColors.textPrimary,
+        fontSize: 25,
+        fontWeight: FontWeight.w700,
+      ),
+      message: copy.text(
+        'Your account is secure. Check your connection and try '
+            'again to finish setting up YO Voice.',
+        'Twoje konto jest bezpieczne. Sprawdź połączenie i spróbuj '
+            'ponownie, aby dokończyć konfigurację YO Voice.',
+      ),
+      messageStyle: const TextStyle(
+        color: AppImmersiveColors.textSecondary,
+        fontSize: 15,
+        height: 1.45,
+      ),
+      retryLabel: copy.text('TRY AGAIN', 'SPRÓBUJ PONOWNIE'),
+      onRetry: onRetry,
+      liftedRetry: false,
+      secondary: TextButton(
+        key: const ValueKey('profile-bootstrap-sign-out'),
+        onPressed: () => unawaited(onSignOut()),
+        child: Text(copy.text('Use another account', 'Użyj innego konta')),
       ),
     );
-    return YoImmersiveDarkSurface(child: content);
   }
 }
 
@@ -473,79 +447,217 @@ class _AuthErrorScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final message = localizedAuthError(context, error);
+    return _GateFailure(
+      icon: Icons.error_outline_rounded,
+      iconColor: AppColors.error,
+      title: copy.text('Something went wrong', 'Coś poszło nie tak'),
+      titleStyle: const TextStyle(
+        color: AppImmersiveColors.textPrimary,
+        fontSize: 22,
+        fontWeight: FontWeight.w700,
+      ),
+      message: localizedAuthError(context, error),
+      messageStyle: const TextStyle(
+        color: AppImmersiveColors.textSecondary,
+        fontSize: 14,
+        height: 1.5,
+      ),
+      retryLabel: copy.text('TRY AGAIN', 'SPRÓBUJ PONOWNIE'),
+      onRetry: onRetry,
+    );
+  }
+}
+
+/// A full-screen failure of the auth gate (refine-look §8.7): the sign-in
+/// chain's calm [AuthBackdrop], the real logo at 64 with its bloom, a 20 px
+/// status glyph before the unchanged title, the unchanged copy and the
+/// chain's gradient action ([AuthPrimaryButton]: 52 px, radius 12, full
+/// width; lifted only when [liftedRetry]). Immersive dark in both themes.
+///
+/// Narrow: the content spans the width inside the sign-in form's 16 px
+/// gutter, so the retry is as wide as the chain's other actions. Medium and
+/// wide: it is capped at [maxContentWidth] and centred. Long copy or large
+/// text scrolls instead of overflowing, and the title never breaks mid-word
+/// ([titleScaler]).
+class _GateFailure extends StatelessWidget {
+  const _GateFailure({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.titleStyle,
+    required this.message,
+    required this.messageStyle,
+    required this.retryLabel,
+    required this.onRetry,
+    this.liftedRetry = true,
+    this.secondary,
+  });
+
+  static const double logoSize = 64;
+  static const double iconSize = 20;
+  static const double iconGap = 8;
+  static const double titleLineHeight = 1.2;
+  static const double maxContentWidth = 440;
+
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final TextStyle titleStyle;
+  final String message;
+  final TextStyle messageStyle;
+  final String retryLabel;
+  final VoidCallback onRetry;
+  final bool liftedRetry;
+  final Widget? secondary;
+
+  /// The title's text scale: the reader's own, clamped only as far as the
+  /// title's longest word needs to fit [width] on one line (a narrow phone
+  /// at very large text), so the heading never breaks mid-word. The message
+  /// and the actions always keep the full scale (the same rule as the
+  /// delete-account headline).
+  static TextScaler titleScaler(
+    BuildContext context, {
+    required String title,
+    required TextStyle style,
+    required double width,
+  }) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final fontSize = style.fontSize ?? 14;
+    final current = scaler.scale(fontSize) / fontSize;
+    if (current <= 1) return scaler;
+    final direction = Directionality.of(context);
+    var widest = 0.0;
+    for (final word in title.split(RegExp(r'\s+'))) {
+      if (word.isEmpty) continue;
+      final painter = TextPainter(
+        text: TextSpan(text: word, style: style),
+        textDirection: direction,
+        maxLines: 1,
+      )..layout();
+      widest = math.max(widest, painter.width);
+      painter.dispose();
+    }
+    if (widest <= 0) return scaler;
+    // One px of slack for glyph rounding at the line's end.
+    final fits = (width - 1) / widest;
+    if (current <= fits) return scaler;
+    return scaler.clamp(maxScaleFactor: math.max(1.0, fits));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const padding = EdgeInsets.symmetric(horizontal: 16, vertical: 24);
     final content = Scaffold(
-      backgroundColor: const Color(0xFF0D0618),
-      body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  Icons.error_outline_rounded,
-                  size: 56,
-                  color: Color(0xFFC026FF),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  copy.text('Something went wrong', 'Coś poszło nie tak'),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
+      backgroundColor: AppImmersiveColors.background,
+      body: AuthBackdrop(
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, viewport) {
+              final columnWidth = math.min(
+                viewport.maxWidth - padding.horizontal,
+                viewport.maxWidth < 600 ? double.infinity : maxContentWidth,
+              );
+              final resolvedTitleStyle = DefaultTextStyle.of(
+                context,
+              ).style.merge(titleStyle.copyWith(height: titleLineHeight));
+              final scaler = titleScaler(
+                context,
+                title: title,
+                style: resolvedTitleStyle,
+                width: columnWidth - iconSize - iconGap,
+              );
+              final firstLine =
+                  scaler.scale(resolvedTitleStyle.fontSize!) * titleLineHeight;
+              final iconTop = math.max(0.0, (firstLine - iconSize) / 2);
+              return SingleChildScrollView(
+                padding: padding,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: math.max(
+                      0,
+                      viewport.maxHeight - padding.vertical,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Color(0xFF9189A6),
-                    fontSize: 14,
-                    height: 1.5,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  height: 54,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [
-                          Color(0xFF6A00FF),
-                          Color(0xFFA12BFF),
-                          Color(0xFFC026FF),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: columnWidth),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const ExcludeSemantics(
+                            child: YoBrandMark(
+                              key: ValueKey('auth-gate-logo'),
+                              size: logoSize,
+                              light: YoBrandLight.bloom,
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Centred on the title's first line, also when
+                              // large text wraps it.
+                              Padding(
+                                padding: EdgeInsets.only(top: iconTop),
+                                child: ExcludeSemantics(
+                                  child: Icon(
+                                    icon,
+                                    key: const ValueKey(
+                                      'auth-gate-status-icon',
+                                    ),
+                                    size: iconSize,
+                                    color: iconColor,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: iconGap),
+                              Flexible(
+                                child: Text(
+                                  title,
+                                  // One line is centred with its glyph as a
+                                  // unit. A title wrapped by large text is a
+                                  // block as wide as its longest line whose
+                                  // lines start beside the glyph, so the
+                                  // glyph always leads the first word
+                                  // instead of floating beside a short
+                                  // first line.
+                                  textAlign: TextAlign.start,
+                                  textWidthBasis: TextWidthBasis.longestLine,
+                                  textScaler: scaler,
+                                  style: resolvedTitleStyle,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            message,
+                            textAlign: TextAlign.center,
+                            style: messageStyle,
+                          ),
+                          const SizedBox(height: 24),
+                          SizedBox(
+                            width: double.infinity,
+                            child: AuthPrimaryButton(
+                              key: const ValueKey('auth-gate-retry'),
+                              label: retryLabel,
+                              loading: false,
+                              onPressed: onRetry,
+                              lifted: liftedRetry,
+                            ),
+                          ),
+                          if (secondary != null) ...[
+                            const SizedBox(height: 8),
+                            secondary!,
+                          ],
                         ],
                       ),
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: ElevatedButton(
-                      onPressed: onRetry,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        shadowColor: Colors.transparent,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                      ),
-                      child: Text(
-                        copy.text('TRY AGAIN', 'SPRÓBUJ PONOWNIE'),
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1,
-                        ),
-                      ),
                     ),
                   ),
                 ),
-              ],
-            ),
+              );
+            },
           ),
         ),
       ),

@@ -22,6 +22,7 @@ import 'package:yovoice/features/rooms/presentation/widgets/mini_player/active_r
 import 'package:yovoice/features/rooms/presentation/widgets/mini_player/compact_active_room_bar.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/mini_player/expanded_mini_chat.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/mini_player/live_chat_preview.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
 
 /// The persistent live-room mini player: a VIEW over the one
 /// [VoiceCallService] session. It never rebuilds or reconnects RTC —
@@ -1152,7 +1153,7 @@ class _MorphingRoomOrb extends StatelessWidget {
             Opacity(
               opacity: 1 - progress,
               child: Image.asset(
-                'assets/images/yo-voice-favicon-512.png',
+                YoBrandMark.markAsset,
                 fit: BoxFit.contain,
                 filterQuality: FilterQuality.high,
               ),
