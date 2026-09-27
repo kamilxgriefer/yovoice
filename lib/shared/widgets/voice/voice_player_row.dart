@@ -48,7 +48,7 @@ enum VoicePlayerRowStatus { idle, loading, playing, paused, failed }
 /// Honesty rule, inherited from [YoWaveform]: no per-clip amplitude is
 /// recorded anywhere, so the bars are a fixed silhouette. [progress] is the
 /// player's REAL reported position or nothing at all — a row whose player
-/// exposes no position (the direct-message bubble reports play / pause /
+/// exposes no position (the shared-media Voice tab reports play / pause /
 /// loading / failed only) passes null and gets a still silhouette rather than
 /// a fill invented from a duration.
 ///
@@ -58,12 +58,11 @@ enum VoicePlayerRowStatus { idle, loading, playing, paused, failed }
 ///   `surfaceMuted` card, the 40 px voice bead (refine-look R14) lit only
 ///   while this clip plays, and the R13 waveform poured toward the real
 ///   position.
-/// * [VoicePlayerRowStyle.inline] — the chat bubble: no surface of its own
-///   (the bubble supplies it), a bare 44 px icon box, and colours injected by
-///   the caller because the same row sits on a brand gradient (white ink) and
-///   on a neutral incoming bubble (`textPrimary`). The bubble opts into the
-///   34 px bead and the R13 inks through the factory's additive parameters;
-///   without them it draws exactly what it drew before.
+/// * [VoicePlayerRowStyle.inline] — the shared-media Voice tab row: no
+///   surface of its own, a bare 44 px icon box, and colours injected by the
+///   caller. The chat bubble uses [VoicePlayerRowStyle.bubble], the same
+///   inline shape with the 34 px bead and the R13 inks (white on the outgoing
+///   brand gradient, `textPrimary` on a neutral incoming bubble).
 ///
 /// **Wiring the chat voice bubble (refine-look §8.3, R13 / R14).** Every
 /// piece is additive; a bubble that passes none of it is unchanged.

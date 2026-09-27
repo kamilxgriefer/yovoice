@@ -41,6 +41,14 @@ is a regression of build 36 unless it says so.
 - **FIXED — the startup harness drew tofu for Arabic, Hebrew and CJK** (it registered only the first
   fallback font it found); the auth and profile harnesses painted every shadow as a hard band
   (`debugDisableShadows` left on). Evidence-only defects (B10, B8).
+- **FIXED — two direct-message voice clips could play at once and both light** (W3 says one thing glows
+  per thread): each bubble arbitrated only its own player. Direct-message clips now share one app-wide floor
+  keyed by bubble identity; starting, retrying or resuming a clip pauses any other (keeping its position) and
+  drops a load still in flight.
+- **OPEN — a focused chat voice row draws two rings**: the row's own 2 px ring (which also crosses the
+  clock's last digit) and the message-level ring from `accessible_context_action.dart`
+  (`FocusableActionDetector.onShowFocusHighlight` fires on descendant focus). Pre-existing; both files are
+  outside the refine batches.
 - **KNOWN — `test/desktop_sidebar_screenshot.dart` has two failing cases on `main`** ("more popover keeps
   home content still", "short viewport keeps the complete rail fixed"), and the rail's world-map marker
   follows the wall clock, so a parity baseline must be rendered in the same hour as the run it is compared

@@ -14,6 +14,60 @@ someone decide what to pick up next.
 
 ---
 
+## YO Voice 3.2.0 (37) — the refine look (ADR-227) — 2026-09-27
+
+**Status: done in source on `main` as `3.2.0+37`; see the release record for
+what is deployed.** Client-only: no Functions, rules, indexes or Storage
+changes, so no backend deploy is needed for this build. Record:
+[Sessions/2026-09-27-refine-look.md](Sessions/2026-09-27-refine-look.md).
+Decision: [ADR-227](Decisions.md#adr-227-the-refine-look--afterglows-finish-on-the-30-layout-under-a-light-budget).
+Spec: [briefs/2026-09-25-refine-look/spec.md](briefs/2026-09-25-refine-look/spec.md).
+
+Kamil's brief (2026-09-25): 3.0 "wciąż wygląda strasznie tanio" — improve
+what exists, use the real logo, "simple, but super wow", and do not touch the
+navigation bar. Every screen keeps its layout, sections, copy, keys and
+features; every block gets Afterglow's finish; light comes only from the real
+logo, a real LIVE block and a voice actually playing or recording.
+
+Done, one batch per area (each with an independent visual+accessibility
+review and a code review, findings fixed before landing):
+
+- **B1–B3** foundations and primitives (`AppFinish`, `YoCard`,
+  `YoGradientFilledButton`, `YoGradientDisc`, `YoCountBadge`,
+  `YoProgressRing`, `YoBrandMark`, brand avatars), the Start pilot and the
+  shared controls — built on the Mac on 2026-09-25/26.
+- **B4 Servers** — lit live session card (W2), gem orbs, one lifted join,
+  equal-height directory pairs, the speaking-tile jiggle fixed.
+- **B5 Voice bead + Głos** (W3) — one glossy bead, one lit card, waveform
+  variant B poured from real positions, the expiry ring.
+- **B6 Capture + Yeels** (W4) — the record button's halo follows the real
+  amplitude; a Yeels sweep you can actually see (3.6:1).
+- **B7 Chats** — calm unread rows, R15 bubbles, the lit composer; the voice
+  bubble gets the bead and one voice at a time.
+- **B8 Profile** — one finish and one wide measure for own and friend
+  profiles; the dead error retry fixed.
+- **B9 More, Settings, Friends, Notifications** — tiles, groups, ink-inversion
+  chips, the logo on Wersja and on system notices.
+- **B10 Auth + Startup** (W1) — the real logo with its bloom and one glint per
+  launch; the gradient sign-in CTA.
+- **Cross-batch** — one visible keyboard-focus indicator on every gradient
+  action (two-tone on Pearl and under high contrast), no focus layout shifts.
+
+Verification: `flutter analyze` clean; the full Flutter suite on the
+integrated tree; dock bytes and rail frames identical to `main` after every
+batch (same-hour base); ~900 test-renderer frames at 390/768/1440, Dark and
+Pearl, 100/200 %, high contrast, focus, RTL spot; one real Chromium render of
+the production web sign-in screen. **UNVERIFIED on a device**: the glint,
+bead gloss at 34–52 px, the W4 halo, haptics, Pearl contact shadows.
+
+Follow-ups (not in this build): the W2 lit card on the podcast/community/
+company stage scenes; an adopter for the segmented-pill finish
+(`server_local_tabs.dart`); the channel-row live pill at 200 %; a Pearl tune
+of the Community/Podcast join; the role pill in the glass family; the Profile
+wide measure at 1440 (spec §12.5); fold `ServerGradientFilledButton` into the
+primitive; the doubled ring on a focused chat voice row; the outer-side focus
+gap on plain themed `FilledButton`s in Pearl.
+
 ## Cost cuts after build 36 (ADR-226) — source on `nb3/cost-cuts`, NOTHING DEPLOYED — 2026-09-26
 
 Owner approved cost plan C1 + C3 ("Cut both"; C2 needed none): no export

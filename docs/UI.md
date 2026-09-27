@@ -489,7 +489,18 @@ after-frames of the original phase-0 gate were not produced
   theme's focus tint alone measured about 1.25:1. `progress` is the player's REAL position
   or nothing: a surface without a position stream passes null and gets a still
   `YoWaveform` silhouette — never a fill invented from the duration — while a
-  surface with one gets `StoryWaveform` swept by `audioProgressGradient`. Copy
+  surface with one gets the refine-look R13 pour. Since build 37 the chat
+  bubble uses `VoicePlayerRowStyle.bubble(outgoing:)` (ADR-227): incoming is
+  the 34 px brand bead, lit only while that clip plays, with the
+  `AppGradients.voicePlayed` sweep; outgoing is the white @ .22 bead that
+  never lights, with white bars. Its `progress` is the player's
+  `onPositionChanged` ÷ the reported length (the recorded length until one is
+  reported), counted only while playing or paused (audioplayers sends a
+  position after `stop()` and after completion) and reset on stop,
+  completion, source change and dispose. Direct-message clips share one
+  app-wide audio floor keyed by bubble identity, so starting one pauses any
+  other and a thread never lights two beads. The shared-media Voice tab keeps
+  `.inline` with no position. Copy
   never enters this file (`lib/shared/` is under the localization guard), so
   `semanticsLabel` arrives localized; `semanticsContainer` /
   `excludeChildSemantics` / `toggled` choose between the thread row's own
