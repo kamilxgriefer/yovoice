@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
@@ -143,9 +144,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  for (final entry in <(String, ThemeData)>[
-    ('Dark', AppTheme.darkTheme),
-    ('Pearl', AppTheme.lightTheme),
+  for (final entry in <(String, ThemeData, AppPalette)>[
+    ('Dark', AppTheme.darkTheme, AppPalette.dark),
+    ('Pearl', AppTheme.lightTheme, AppPalette.light),
   ]) {
     testWidgets(
       '${entry.$1} gives Vibe and identity icons accessible contrast',
@@ -165,11 +166,19 @@ void main() {
           theme: entry.$2,
         );
 
-        final vibeSurface = tester
-            .widget<Material>(
-              find.byKey(const ValueKey('profile-vibe-surface')),
-            )
-            .color!;
+        // Refine-look §8.5: the vibe sticker is the primary action sweep
+        // (scheme primary → secondary); its ink must read on both ends.
+        final scheme = entry.$2.colorScheme;
+        final palette = entry.$3;
+        final vibeStops = <Color>[scheme.primary, scheme.secondary];
+        expect(
+          tester
+              .widget<Material>(
+                find.byKey(const ValueKey('profile-vibe-surface')),
+              )
+              .color,
+          scheme.primary,
+        );
         final vibeLabel = tester
             .widget<Text>(find.byKey(const ValueKey('profile-vibe-label')))
             .style!
@@ -179,28 +188,34 @@ void main() {
               find.byKey(const ValueKey('profile-vibe-accent-icon')),
             )
             .color!;
-        expect(
-          _contrastRatio(vibeLabel, vibeSurface),
-          greaterThanOrEqualTo(4.5),
-          reason: '${entry.$1} VIBE is small text, not decorative ink',
-        );
-        expect(_contrastRatio(vibeIcon, vibeSurface), greaterThanOrEqualTo(3));
-
-        final linkSurface = tester
+        final linkPlate = tester
             .widget<Material>(
               find.byKey(const ValueKey('profile-vibe-link-surface-$uri')),
             )
             .color!;
-        for (final key in const [
-          'profile-vibe-link-leading-$uri',
-          'profile-vibe-link-trailing-$uri',
-        ]) {
-          final icon = tester.widget<Icon>(find.byKey(ValueKey(key))).color!;
+        for (final vibeSurface in vibeStops) {
           expect(
-            _contrastRatio(icon, linkSurface),
-            greaterThanOrEqualTo(3),
-            reason: '${entry.$1} link action icon $key',
+            _contrastRatio(vibeLabel, vibeSurface),
+            greaterThanOrEqualTo(4.5),
+            reason: '${entry.$1} VIBE is small text, not decorative ink',
           );
+          expect(
+            _contrastRatio(vibeIcon, vibeSurface),
+            greaterThanOrEqualTo(3),
+          );
+          // The link plate is translucent over the sweep.
+          final linkSurface = Color.alphaBlend(linkPlate, vibeSurface);
+          for (final key in const [
+            'profile-vibe-link-leading-$uri',
+            'profile-vibe-link-trailing-$uri',
+          ]) {
+            final icon = tester.widget<Icon>(find.byKey(ValueKey(key))).color!;
+            expect(
+              _contrastRatio(icon, linkSurface),
+              greaterThanOrEqualTo(3),
+              reason: '${entry.$1} link action icon $key',
+            );
+          }
         }
 
         final iconColors = <Color>[];
@@ -214,7 +229,12 @@ void main() {
           final container = tester.widget<Container>(
             find.byKey(ValueKey('profile-identity-chip-$label')),
           );
-          final surface = (container.decoration! as BoxDecoration).color!;
+          // One neutral pill (refine-look §8.5): Dark glass, Pearl white.
+          final chipFill = (container.decoration! as BoxDecoration).color!;
+          expect(
+            chipFill,
+            palette.isDark ? palette.glass : palette.surfaceRaised,
+          );
           final icon = tester
               .widget<Icon>(
                 find.byKey(ValueKey('profile-identity-chip-icon-$label')),
@@ -222,16 +242,21 @@ void main() {
               .color!;
           final text = tester.widget<Text>(find.text(label)).style!.color!;
           iconColors.add(icon);
-          expect(
-            _contrastRatio(icon, surface),
-            greaterThanOrEqualTo(3),
-            reason: '${entry.$1} $label icon',
-          );
-          expect(
-            _contrastRatio(text, surface),
-            greaterThanOrEqualTo(4.5),
-            reason: '${entry.$1} $label text',
-          );
+          // The Dark glass is translucent: measure what it composites to on
+          // either end of the section's top-lit fill.
+          for (final section in palette.blockGradient.colors) {
+            final surface = Color.alphaBlend(chipFill, section);
+            expect(
+              _contrastRatio(icon, surface),
+              greaterThanOrEqualTo(3),
+              reason: '${entry.$1} $label icon',
+            );
+            expect(
+              _contrastRatio(text, surface),
+              greaterThanOrEqualTo(4.5),
+              reason: '${entry.$1} $label text',
+            );
+          }
         }
         expect(iconColors.toSet(), hasLength(3));
         expect(tester.takeException(), isNull);

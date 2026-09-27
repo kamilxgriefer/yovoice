@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_upsell_sheet.dart';
@@ -14,6 +15,8 @@ import 'package:yovoice/features/profile/data/services/profile_media_service.dar
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/image_crop_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_layout.dart';
+import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
@@ -547,36 +550,31 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   mediaService: widget.mediaService,
                 ),
                 const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _ImageAction(
-                        label: _pendingAvatar == null
-                            ? copy.text('Change avatar', 'Zmień awatar')
-                            : copy.text('Avatar ready', 'Awatar gotowy'),
-                        icon: Icons.account_circle_outlined,
-                        loading: _pickingAvatar,
-                        onTap: () => _pick(ProfileImageKind.avatar),
-                        onClear: _pendingAvatar == null
-                            ? null
-                            : () => _clearPending(ProfileImageKind.avatar),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _ImageAction(
-                        label: _pendingBanner == null
-                            ? copy.text('Change banner', 'Zmień baner')
-                            : copy.text('Banner ready', 'Baner gotowy'),
-                        icon: Icons.panorama_outlined,
-                        loading: _pickingBanner,
-                        onTap: () => _pick(ProfileImageKind.banner),
-                        onClear: _pendingBanner == null
-                            ? null
-                            : () => _clearPending(ProfileImageKind.banner),
-                      ),
-                    ),
-                  ],
+                _ImageActions(
+                  avatar: _ImageAction(
+                    key: const ValueKey('edit-profile-avatar-action'),
+                    label: _pendingAvatar == null
+                        ? copy.text('Change avatar', 'Zmień awatar')
+                        : copy.text('Avatar ready', 'Awatar gotowy'),
+                    icon: Icons.account_circle_outlined,
+                    loading: _pickingAvatar,
+                    onTap: () => _pick(ProfileImageKind.avatar),
+                    onClear: _pendingAvatar == null
+                        ? null
+                        : () => _clearPending(ProfileImageKind.avatar),
+                  ),
+                  banner: _ImageAction(
+                    key: const ValueKey('edit-profile-banner-action'),
+                    label: _pendingBanner == null
+                        ? copy.text('Change banner', 'Zmień baner')
+                        : copy.text('Banner ready', 'Baner gotowy'),
+                    icon: Icons.panorama_outlined,
+                    loading: _pickingBanner,
+                    onTap: () => _pick(ProfileImageKind.banner),
+                    onClear: _pendingBanner == null
+                        ? null
+                        : () => _clearPending(ProfileImageKind.banner),
+                  ),
                 ),
                 if (_hasPendingImages) ...[
                   const SizedBox(height: 10),
@@ -753,16 +751,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             labelStyle: TextStyle(color: palette.textSecondary),
             hintStyle: TextStyle(color: palette.textTertiary),
             helperStyle: TextStyle(color: palette.textSecondary),
+            // Borders come from the theme (refine-look §8.5: one radius
+            // family): `AppRadius.md` 14 with `borderStrong`, the 2 px focus
+            // edge and the error edges.
             filled: true,
             fillColor: palette.surfaceRaised,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide(color: palette.borderStrong),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide(color: palette.borderStrong),
-            ),
           ),
         ),
       ),
@@ -886,7 +879,7 @@ class _SectionLabel extends StatelessWidget {
         style: TextStyle(
           color: palette.textSecondary,
           fontSize: 11,
-          fontWeight: FontWeight.w800,
+          fontWeight: FontWeight.w700,
           letterSpacing: 1.4,
         ),
       ),
@@ -928,7 +921,6 @@ class _ProfileImagePreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final pendingBannerBytes = pendingBanner?.bytes;
     final pendingAvatarBytes = pendingAvatar?.bytes;
 
@@ -947,7 +939,8 @@ class _ProfileImagePreview extends StatelessWidget {
             final height = geometry.textLine + extent + 12 * scale;
             return ClipRRect(
               key: const ValueKey('edit-profile-hero-preview'),
-              borderRadius: BorderRadius.circular(18),
+              // The block radius, like every profile section.
+              borderRadius: AppRadius.block,
               child: ColoredBox(
                 // The page canvas the real hero melts into.
                 color: palette.background,
@@ -989,6 +982,8 @@ class _ProfileImagePreview extends StatelessWidget {
                                     fit: BoxFit.cover,
                                   ),
                                 )
+                              // The hero's own finish, so the preview shows
+                              // exactly what the profile will.
                               : UserAvatar(
                                   radius: radius,
                                   userId: profile.uid,
@@ -996,7 +991,7 @@ class _ProfileImagePreview extends StatelessWidget {
                                   mediaRevision: profile.profileUpdatedAt,
                                   mediaService: mediaService,
                                   displayName: profile.displayName,
-                                  backgroundColor: colors.primary,
+                                  finish: UserAvatarFinish.brand,
                                 ),
                         ),
                       ),
@@ -1012,6 +1007,34 @@ class _ProfileImagePreview extends StatelessWidget {
   }
 }
 
+/// The two image actions: side by side, or stacked full width once body
+/// text reaches ≈150 % ([ProfileLayout.largeText]) so each keeps its whole
+/// label ("Zmień awatar" vs "Zmień baner") instead of both ellipsizing to
+/// the same "Zmień …".
+class _ImageActions extends StatelessWidget {
+  const _ImageActions({required this.avatar, required this.banner});
+
+  final Widget avatar;
+  final Widget banner;
+
+  @override
+  Widget build(BuildContext context) {
+    if (ProfileLayout.largeText(context)) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [avatar, const SizedBox(height: 10), banner],
+      );
+    }
+    return Row(
+      children: [
+        Expanded(child: avatar),
+        const SizedBox(width: 12),
+        Expanded(child: banner),
+      ],
+    );
+  }
+}
+
 class _ImageAction extends StatelessWidget {
   const _ImageAction({
     required this.label,
@@ -1019,6 +1042,7 @@ class _ImageAction extends StatelessWidget {
     required this.loading,
     required this.onTap,
     this.onClear,
+    super.key,
   });
 
   final String label;
@@ -1032,12 +1056,14 @@ class _ImageAction extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
+    // Both layers share the `tile` radius (16), so the ink, the fill and
+    // the edge are one shape.
     return Material(
       color: palette.surface,
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: AppRadius.tile,
       child: InkWell(
         onTap: loading ? null : onTap,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: AppRadius.tile,
         // Compact ROW, not a tall tile: these are two small controls, and
         // the old stacked-icon-over-label blocks dominated the form for
         // what is a secondary action. Pick / crop / validate / upload
@@ -1046,7 +1072,7 @@ class _ImageAction extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             border: Border.all(color: palette.borderStrong),
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: AppRadius.tile,
           ),
           child: Row(
             children: [
@@ -1064,9 +1090,11 @@ class _ImageAction extends StatelessWidget {
                 ),
               const SizedBox(width: 10),
               Expanded(
+                // Stacked at large text, the label has the full width and
+                // may wrap rather than cut a word.
                 child: Text(
                   label,
-                  maxLines: 1,
+                  maxLines: ProfileLayout.largeText(context) ? 3 : 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: palette.textPrimary,
@@ -1116,13 +1144,10 @@ class _AccountTypePicker extends StatelessWidget {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: palette.border),
-      ),
+    // The account-type block is a profile block (R2): top-lit fill,
+    // hairline, radius 20 and Pearl's lift.
+    return YoCard(
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1131,7 +1156,9 @@ class _AccountTypePicker extends StatelessWidget {
             style: TextStyle(
               color: palette.textPrimary,
               fontSize: 16,
-              fontWeight: FontWeight.w800,
+              height: 1.25,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -.25,
             ),
           ),
           const SizedBox(height: 6),
