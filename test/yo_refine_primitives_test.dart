@@ -885,6 +885,51 @@ void main() {
       expect(decoration.gradient, isNull);
       expect(decoration.color, translucent);
     });
+
+    testWidgets('brand is flat under high contrast (no gradient, no shadow)', (
+      tester,
+    ) async {
+      Future<BoxDecoration> fillOf(UserAvatar avatar) async {
+        await _pump(
+          tester,
+          avatar,
+          media: const MediaQueryData(highContrast: true),
+        );
+        final fill = tester.widget<DecoratedBox>(
+          find
+              .descendant(
+                of: find.byType(ClipOval),
+                matching: find.byType(DecoratedBox),
+              )
+              .first,
+        );
+        return fill.decoration as BoxDecoration;
+      }
+
+      final letter = await fillOf(
+        const UserAvatar(
+          radius: 24,
+          displayName: 'Ada',
+          finish: UserAvatarFinish.brand,
+        ),
+      );
+      expect(letter.gradient, isNull);
+      expect(letter.color, AppGradients.letterAvatar.colors.last);
+      final text = tester.widget<Text>(find.text('A'));
+      expect(text.style!.shadows, isNull);
+      expect(text.style!.color, AppColors.white);
+
+      final custom = await fillOf(
+        const UserAvatar(
+          radius: 24,
+          displayName: 'Bo',
+          backgroundColor: AppColors.primary,
+          finish: UserAvatarFinish.brand,
+        ),
+      );
+      expect(custom.gradient, isNull);
+      expect(custom.color, AppColors.primary);
+    });
   });
 
   group('YoEmptyState leading', () {
