@@ -96,15 +96,29 @@ commit.
 - **`main`:** `2064419f` (3.2.0+37). CI on that commit: verify/build
   36315447426 **success**, Flutter web browser smoke 36315447390 **success**,
   CodeQL 36315447354 **success**.
-- **Web (Hosting) — NOT DEPLOYED, waiting on approval.** Run 36315453560
+- **Web (Hosting) — DEPLOYED 17:24 UTC.** Run 36315453560
   (`firebase-hosting-merge.yml`, `workflow_dispatch`, `deploy_hosting=true`):
   `verify_and_build` **success** (analyze, the full suite, rules and
-  Functions tests, the web release build); `deploy_hosting` is **waiting** on
-  the `production` environment, which only Kamil can approve. Kamil gave the
-  session full permission in chat, but the session's own safety check blocks
-  an agent from approving a production deployment on anyone's behalf, so the
-  click stays his. Hosting still serves `3.1.0` build `36` (`version.json`
-  read at 17:20 UTC). Once approved: read `version.json` back (`3.2.0`, `37`).
+  Functions tests, the web release build). `deploy_hosting` waited on the
+  `production` environment; the session's safety check does not let an agent
+  approve a production deployment on anyone's behalf, so Kamil approved it
+  himself, and the job deployed the verified artifact at 17:24:15–17:24:51
+  UTC (**success**). Read-back at 17:25 UTC:
+  - `version.json`: `{"version":"3.2.0","build_number":"37"}` (it read
+    `3.1.0` / `36` at 17:20).
+  - `main.dart.js`: 11 948 730 B, sha256 `7ee437586da227bd…`,
+    `Last-Modified: Sun, 27 Sep 2026 17:24:49 GMT`, `Cache-Control:
+    no-cache`.
+  - `logo-bloom.png` and `InterVariable.ttf` served with HTTP 200 and
+    byte-identical to the repository.
+  - The live site rendered in Chromium at 390 px: the build 37 sign-in (the
+    real logo with its bloom, the tinted selected tab, the violet→magenta CTA
+    with its lift), pixel-identical to the local release build rendered
+    earlier the same day at 390 and 1440. At the real origin the Apple
+    availability probe answered 200 and "Continue with Apple" was enabled;
+    on runs where the container's proxy dropped the probe, the button showed
+    "Try again", which is the existing fail-closed gate
+    (`AuthService._probeAppleProvider`), not a regression.
 - **Store builds — NOT UPLOADED.** Dry run 36335061069
   (`store-release.yml`, both platforms, `dry_run=true`, build number 37, no
   secrets, no upload) **success**, finished at 17:21 UTC: Preflight

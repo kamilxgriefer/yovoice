@@ -4,6 +4,22 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## Build 37 release round — web deployed, store uploads outstanding (2026-09-27)
+
+Source: `main` at `2064419fd83463322a7b1087b150f0d5091bc0f8` (`pubspec.yaml`
+`3.2.0+37`, the refine look, ADR-227). Client-only: no Functions, rules,
+indexes or Storage changes, so there is no backend step. Full record, with
+the read-backs: [Sessions/2026-09-27-refine-look.md](Sessions/2026-09-27-refine-look.md#release-record--2026-09-27).
+
+- **Web:** Hosting run 36315453560 (`workflow_dispatch`, `deploy_hosting=true`)
+  deployed at 17:24 UTC after Kamil approved the `production` environment;
+  `version.json` reads `3.2.0` / `37`.
+- **iOS and Android:** store dry run 36335061069 built the unsigned iOS
+  archive and an Android App Bundle (throwaway key); nothing was signed or
+  uploaded. `store-release.yml` has no store secrets yet, so the TestFlight
+  and Play internal uploads of `3.2.0+37` are still to be done from Kamil's
+  Mac (or by that workflow once its secrets exist).
+
 ## Cost cuts after build 36 (ADR-226) — source only, NOTHING DEPLOYED
 
 Source: branch `nb3/cost-cuts` on top of `main` 3.1.0+36 (`3fb4e3e4`), whose
