@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
@@ -11,8 +13,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
@@ -44,7 +48,10 @@ import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dar
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_composer_panel.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -1343,7 +1350,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontSize: 20,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -.3,
                     ),
                   ),
                 ),
@@ -1771,31 +1779,17 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final copy = AppLocalizations.of(context);
 
     return Scaffold(
       key: const ValueKey('chat-screen'),
       backgroundColor: palette.background,
       body: YoPageBackground(
-        section: YoPageSection.chats,
+        // Refine-look R1: the list's canvas and, in Pearl, the quiet
+        // watermark instead of the lounge photo's grey furniture.
+        section: palette.isDark ? YoPageSection.chats : null,
         key: const ValueKey('chat-screen-background'),
-        decoration: BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment(-.75, -1),
-            radius: 1.2,
-            colors: [
-              Color.lerp(
-                palette.backgroundTop,
-                colors.primary,
-                isDark ? .18 : .055,
-              )!,
-              palette.backgroundTop,
-              palette.background,
-            ],
-            stops: const [0, .35, 1],
-          ),
-        ),
+        decoration: BoxDecoration(gradient: palette.canvasGlow(colors.primary)),
         child: SafeArea(
           bottom: false,
           child: ResponsiveContentFrame(
@@ -1931,9 +1925,30 @@ class _ChatScreenState extends State<ChatScreen> {
                           final nextMessage = messageIndex + 1 < messages.length
                               ? messages[messageIndex + 1]
                               : null;
+                          final newerMessage = messageIndex > 0
+                              ? messages[messageIndex - 1]
+                              : null;
                           final showDate =
                               nextMessage == null ||
                               !_sameDay(message.sentAt, nextMessage.sentAt);
+                          // Refine-look §8.3 runs: the same sender, the same
+                          // day, under two minutes apart and no reactions.
+                          // The time row is left to the newer bubble only
+                          // when it prints exactly the same thing.
+                          final joinsOlder =
+                              !showDate &&
+                              MessageBubble.continuesRun(nextMessage, message);
+                          final joinsNewer =
+                              newerMessage != null &&
+                              MessageBubble.continuesRun(message, newerMessage);
+                          final showMeta =
+                              !joinsNewer ||
+                              !MessageBubble.sharesMeta(
+                                context,
+                                message,
+                                newerMessage,
+                                _currentUserId,
+                              );
 
                           return Column(
                             key: ValueKey(message.id),
@@ -1943,6 +1958,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                 message: message,
                                 currentUserId: _currentUserId,
                                 onLongPress: () => _messageActions(message),
+                                joinsOlder: joinsOlder,
+                                joinsNewer: joinsNewer,
+                                showMeta: showMeta,
                               ),
                             ],
                           );
@@ -2118,7 +2136,14 @@ class _ChatHeader extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
           decoration: BoxDecoration(
             color: palette.navigationSurface.withValues(alpha: .96),
-            border: Border(bottom: BorderSide(color: palette.border)),
+            // Refine-look §8.3: a hairline, not an outline.
+            border: Border(
+              bottom: BorderSide(
+                color: MediaQuery.highContrastOf(context)
+                    ? palette.borderStrong
+                    : palette.hairline,
+              ),
+            ),
           ),
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -2188,7 +2213,7 @@ class _ChatHeader extends StatelessWidget {
                                         style: TextStyle(
                                           color: palette.textPrimary,
                                           fontSize: 15,
-                                          fontWeight: FontWeight.w800,
+                                          fontWeight: FontWeight.w700,
                                         ),
                                       ),
                                       if (!reflowActions)
@@ -2220,15 +2245,21 @@ class _ChatHeader extends StatelessWidget {
                           'Start voice call',
                           'Rozpocznij połączenie głosowe',
                         ),
-                  icon: callBusy
-                      ? SizedBox.square(
-                          dimension: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: colors.primary,
+                  icon: _HeaderDisc(
+                    child: callBusy
+                        ? SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: colors.primary,
+                            ),
+                          )
+                        : Icon(
+                            Icons.call_rounded,
+                            color: palette.textPrimary,
+                            size: _HeaderDisc.glyphSize,
                           ),
-                        )
-                      : Icon(Icons.call_rounded, color: palette.textPrimary),
+                  ),
                 ),
                 IconButton(
                   onPressed: callBusy ? null : onVideoCall,
@@ -2239,11 +2270,14 @@ class _ChatHeader extends StatelessWidget {
                           'Start video call',
                           'Rozpocznij połączenie wideo',
                         ),
-                  icon: Icon(
-                    Icons.videocam_rounded,
-                    color: callBusy
-                        ? palette.textTertiary
-                        : palette.textPrimary,
+                  icon: _HeaderDisc(
+                    child: Icon(
+                      Icons.videocam_rounded,
+                      color: callBusy
+                          ? palette.textTertiary
+                          : palette.textPrimary,
+                      size: _HeaderDisc.glyphSize,
+                    ),
                   ),
                 ),
                 if (archiveBusy)
@@ -2258,9 +2292,12 @@ class _ChatHeader extends StatelessWidget {
                     tooltip: copy.text('Conversation options', 'Opcje rozmowy'),
                     style: _actionStyle,
                     color: palette.surfaceRaised,
-                    icon: Icon(
-                      Icons.more_horiz_rounded,
-                      color: palette.textPrimary,
+                    icon: _HeaderDisc(
+                      child: Icon(
+                        Icons.more_horiz_rounded,
+                        color: palette.textPrimary,
+                        size: _HeaderDisc.glyphSize,
+                      ),
                     ),
                     onSelected: (value) {
                       if (value == 'mute') {
@@ -2486,24 +2523,53 @@ class _ArchiveBusyControl extends StatelessWidget {
           child: SizedBox.square(
             dimension: 44,
             child: Center(
-              child: reduceMotion
-                  ? Icon(
-                      Icons.hourglass_top_rounded,
-                      key: const ValueKey('chat-archive-static'),
-                      color: palette.interactiveForeground,
-                      size: 20,
-                    )
-                  : SizedBox.square(
-                      key: const ValueKey('chat-archive-progress'),
-                      dimension: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
+              child: _HeaderDisc(
+                child: reduceMotion
+                    ? Icon(
+                        Icons.hourglass_top_rounded,
+                        key: const ValueKey('chat-archive-static'),
                         color: palette.interactiveForeground,
+                        size: 20,
+                      )
+                    : SizedBox.square(
+                        key: const ValueKey('chat-archive-progress'),
+                        dimension: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: palette.interactiveForeground,
+                        ),
                       ),
-                    ),
+              ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// A header action's face: a 36 px neutral glass disc (R7 / R9) inside the
+/// existing 44 px target; flat `surface` with `borderStrong` under high
+/// contrast.
+class _HeaderDisc extends StatelessWidget {
+  const _HeaderDisc({required this.child});
+
+  final Widget child;
+
+  static const double size = 36;
+  static const double glyphSize = 20;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: size,
+      child: DecoratedBox(
+        decoration: AppFinish.glassDecoration(
+          context.appPalette,
+          shape: BoxShape.circle,
+          highContrast: MediaQuery.highContrastOf(context),
+        ),
+        child: Center(child: child),
       ),
     );
   }
@@ -2564,7 +2630,8 @@ class _EmptyConversation extends StatelessWidget {
                     style: TextStyle(
                       color: palette.textPrimary,
                       fontSize: 21,
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -.3,
                     ),
                   ),
                   // DM privacy defaults to `everyone` and
@@ -2593,7 +2660,7 @@ class _EmptyConversation extends StatelessWidget {
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: palette.focus,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ],
@@ -2623,39 +2690,49 @@ class _DateDivider extends StatelessWidget {
         ? copy.yesterday
         : copy.calendarDate(date);
 
-    // Slim date separator: a 1 px hairline either side of the day, the day
-    // itself as quiet 11 px meta. The label may take two lines at a large
-    // text size rather than push the hairlines off the row.
-    final rule = Expanded(
-      child: Divider(height: 1, thickness: 1, color: palette.border),
-    );
+    // Refine-look R15 date separator: the day as a centred glass pill (11 /
+    // w700, +.6 tracking, shown in capitals). The capitals are presentation
+    // only; a screen reader hears the day as written. The label may take two
+    // lines at a large text size rather than overflow the row.
+    final highContrast = MediaQuery.highContrastOf(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: LayoutBuilder(
-        builder: (context, constraints) => Row(
-          children: [
-            rule,
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: (constraints.maxWidth - 48).clamp(0, double.infinity),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Text(
-                  label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: palette.textSecondary,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
+        builder: (context, constraints) => Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: (constraints.maxWidth - 48).clamp(0, double.infinity),
+            ),
+            child: Semantics(
+              label: label,
+              child: ExcludeSemantics(
+                child: Container(
+                  key: const ValueKey('chat-date-separator'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 3,
+                  ),
+                  decoration: AppFinish.glassDecoration(
+                    palette,
+                    radius: AppRadius.pill,
+                    highContrast: highContrast,
+                  ),
+                  child: Text(
+                    label.toUpperCase(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: .6,
+                    ),
                   ),
                 ),
               ),
             ),
-            rule,
-          ],
+          ),
         ),
       ),
     );
@@ -2682,10 +2759,11 @@ class _TypingIndicator extends StatelessWidget {
         children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-            decoration: BoxDecoration(
-              color: palette.surfaceRaised,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: palette.border),
+            // The incoming bubble's finish, tail included (R15).
+            decoration: MessageBubble.incomingDecoration(
+              palette,
+              highContrast: MediaQuery.highContrastOf(context),
+              textDirection: Directionality.of(context),
             ),
             child: const Row(
               children: [
@@ -2723,6 +2801,12 @@ class _TypingDotState extends State<_TypingDot>
   late final Animation<double> _animation;
   Timer? _delayTimer;
 
+  /// The pulse is decoration on top of a real event (the other person is
+  /// typing): under Reduce Motion, accessible navigation or a paused
+  /// TickerMode the dots stand still at full size. Null until the first
+  /// dependency pass decides.
+  bool? _pulse;
+
   @override
   void initState() {
     super.initState();
@@ -2734,9 +2818,24 @@ class _TypingDotState extends State<_TypingDot>
       begin: .55,
       end: 1,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+  }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final pulse = AppMotion.decorative(context);
+    if (pulse == _pulse) return;
+    _pulse = pulse;
+    _delayTimer?.cancel();
+    if (!pulse) {
+      _controller.value = 1;
+      return;
+    }
+    // Each dot (re)starts after its own delay, on the first beat and on a
+    // resume alike (a covering route popping, Reduce Motion switching off),
+    // so the three keep their wave instead of pulsing in unison.
     _delayTimer = Timer(Duration(milliseconds: widget.delay), () {
-      if (mounted) {
+      if (mounted && _pulse == true) {
         _controller.repeat(reverse: true);
       }
     });
@@ -2781,7 +2880,13 @@ class _ReplyPreview extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(14, 6, 4, 6),
       decoration: BoxDecoration(
         color: palette.surfaceRaised,
-        border: Border(top: BorderSide(color: palette.border)),
+        border: Border(
+          top: BorderSide(
+            color: MediaQuery.highContrastOf(context)
+                ? palette.borderStrong
+                : palette.hairline,
+          ),
+        ),
       ),
       child: Row(
         children: [
@@ -2805,7 +2910,7 @@ class _ReplyPreview extends StatelessWidget {
                   style: TextStyle(
                     color: palette.focus,
                     fontSize: 11,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -2966,142 +3071,143 @@ class _QueuedTextMessageBubble extends StatelessWidget {
         values: {'message': entry.text},
       ),
       child: Align(
-        alignment: Alignment.centerRight,
-        child: Padding(
-          padding: const EdgeInsets.only(left: 54, bottom: 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              ExcludeSemantics(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 11,
-                  ),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0xFF9026DF), Color(0xFF641CC2)],
+        alignment: AlignmentDirectional.centerEnd,
+        // Refine-look R15: the sent bubble's exact decoration, padding,
+        // 560 px measure and 48 px gutter, so nothing moves when the server
+        // accepts it. A failed send adds a 1.5 px `error` edge.
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxWidth: MessageBubble.maxBubbleWidth + 48,
+          ),
+          child: Padding(
+            padding: const EdgeInsetsDirectional.only(
+              start: 48,
+              bottom: MessageBubble.gap,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                ExcludeSemantics(
+                  child: Container(
+                    key: ValueKey('queued-message-bubble-${entry.id}'),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
                     ),
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(20),
-                      topRight: Radius.circular(20),
-                      bottomLeft: Radius.circular(20),
-                      bottomRight: Radius.circular(5),
+                    decoration: MessageBubble.outgoingDecoration(
+                      colors,
+                      failed: failed,
+                      textDirection: Directionality.of(context),
                     ),
-                    border: failed
-                        ? Border.all(color: const Color(0xFFFF668B))
-                        : null,
-                  ),
-                  child: Text(
-                    entry.text,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14.5,
-                      height: 1.35,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Semantics(
-                liveRegion: true,
-                label: copy.template(
-                  'Message status: {status}',
-                  'Status wiadomości: {status}',
-                  values: {'status': status},
-                ),
-                child: ExcludeSemantics(
-                  child: Wrap(
-                    alignment: WrapAlignment.end,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 5,
-                    runSpacing: 2,
-                    children: [
-                      Text(
-                        MaterialLocalizations.of(context).formatTimeOfDay(
-                          TimeOfDay.fromDateTime(entry.queuedAt.toLocal()),
-                          alwaysUse24HourFormat:
-                              MediaQuery.alwaysUse24HourFormatOf(context),
-                        ),
-                        style: TextStyle(
-                          color: palette.textTertiary,
-                          fontSize: 10,
-                        ),
+                    child: Text(
+                      entry.text,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14.5,
+                        height: 1.35,
                       ),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(_statusIcon, size: 14, color: statusColor),
-                          const SizedBox(width: 3),
-                          Flexible(
-                            child: Text(
-                              status,
-                              style: TextStyle(
-                                color: statusColor,
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-              if (failed) ...[
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Semantics(
                   liveRegion: true,
                   label: copy.template(
-                    'Why it was not sent: {guidance}',
-                    'Dlaczego nie wysłano: {guidance}',
-                    values: {'guidance': failureGuidance!},
+                    'Message status: {status}',
+                    'Status wiadomości: {status}',
+                    values: {'status': status},
                   ),
                   child: ExcludeSemantics(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 310),
-                      child: Text(
-                        failureGuidance,
-                        textAlign: TextAlign.right,
-                        style: TextStyle(
-                          color: palette.textSecondary,
-                          fontSize: 11.5,
-                          height: 1.3,
+                    child: Wrap(
+                      alignment: WrapAlignment.end,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 5,
+                      runSpacing: 2,
+                      children: [
+                        Text(
+                          MaterialLocalizations.of(context).formatTimeOfDay(
+                            TimeOfDay.fromDateTime(entry.queuedAt.toLocal()),
+                            alwaysUse24HourFormat:
+                                MediaQuery.alwaysUse24HourFormatOf(context),
+                          ),
+                          style: TextStyle(
+                            color: palette.textTertiary,
+                            fontSize: 10,
+                          ),
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(_statusIcon, size: 14, color: statusColor),
+                            const SizedBox(width: 3),
+                            Flexible(
+                              child: Text(
+                                status,
+                                style: TextStyle(
+                                  color: statusColor,
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (failed) ...[
+                  const SizedBox(height: 6),
+                  Semantics(
+                    liveRegion: true,
+                    label: copy.template(
+                      'Why it was not sent: {guidance}',
+                      'Dlaczego nie wysłano: {guidance}',
+                      values: {'guidance': failureGuidance!},
+                    ),
+                    child: ExcludeSemantics(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 310),
+                        child: Text(
+                          failureGuidance,
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            color: palette.textSecondary,
+                            fontSize: 11.5,
+                            height: 1.3,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Wrap(
-                  alignment: WrapAlignment.end,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 4,
-                  runSpacing: 2,
-                  children: [
-                    TextButton(
-                      onPressed: onDiscard,
-                      style: TextButton.styleFrom(
-                        foregroundColor: palette.textSecondary,
-                        minimumSize: const Size(64, 44),
+                  const SizedBox(height: 2),
+                  Wrap(
+                    alignment: WrapAlignment.end,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 4,
+                    runSpacing: 2,
+                    children: [
+                      TextButton(
+                        onPressed: onDiscard,
+                        style: TextButton.styleFrom(
+                          foregroundColor: palette.textSecondary,
+                          minimumSize: const Size(64, 44),
+                        ),
+                        child: Text(copy.text('Remove', 'Usuń')),
                       ),
-                      child: Text(copy.text('Remove', 'Usuń')),
-                    ),
-                    TextButton(
-                      onPressed: onRetry,
-                      style: TextButton.styleFrom(
-                        foregroundColor: palette.focus,
-                        minimumSize: const Size(64, 44),
+                      TextButton(
+                        onPressed: onRetry,
+                        style: TextButton.styleFrom(
+                          foregroundColor: palette.focus,
+                          minimumSize: const Size(64, 44),
+                        ),
+                        child: Text(copy.text('Retry', 'Spróbuj ponownie')),
                       ),
-                      child: Text(copy.text('Retry', 'Spróbuj ponownie')),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -3211,6 +3317,7 @@ class _QueuedMediaMessageCard extends StatelessWidget {
       MessageType.gif => copy.text('Your message', 'Twoja wiadomość'),
     };
     final statusColor = failed ? colors.onErrorContainer : palette.focus;
+    final highContrast = MediaQuery.highContrastOf(context);
     final maxWidth = (MediaQuery.sizeOf(context).width * 0.82).clamp(
       220.0,
       380.0,
@@ -3224,23 +3331,26 @@ class _QueuedMediaMessageCard extends StatelessWidget {
         values: {'subject': semanticSubject, 'status': status},
       ),
       child: Align(
-        alignment: Alignment.centerRight,
+        alignment: AlignmentDirectional.centerEnd,
         child: Container(
           constraints: BoxConstraints(maxWidth: maxWidth),
-          margin: const EdgeInsets.only(left: 24, bottom: 10),
-          padding: const EdgeInsets.fromLTRB(14, 12, 10, 8),
-          decoration: BoxDecoration(
-            color: palette.surfaceMuted,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(20),
-              topRight: Radius.circular(20),
-              bottomLeft: Radius.circular(20),
-              bottomRight: Radius.circular(5),
-            ),
-            border: Border.all(
-              color: failed ? colors.onErrorContainer : palette.borderStrong,
-            ),
-          ),
+          margin: const EdgeInsetsDirectional.only(start: 24, bottom: 10),
+          padding: const EdgeInsetsDirectional.fromSTEB(14, 12, 10, 8),
+          // Refine-look: the block finish in the outgoing bubble's shape
+          // (radius 18, 6 px tail); a failed upload keeps its error edge.
+          decoration:
+              AppFinish.block(
+                palette,
+                radius: MessageBubble.bubbleRadius(
+                  isMine: true,
+                  textDirection: Directionality.of(context),
+                ),
+                highContrast: highContrast,
+              ).copyWith(
+                border: failed
+                    ? Border.all(color: colors.onErrorContainer, width: 1.5)
+                    : null,
+              ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -3250,11 +3360,15 @@ class _QueuedMediaMessageCard extends StatelessWidget {
                   Container(
                     width: 40,
                     height: 40,
-                    decoration: BoxDecoration(
-                      color: colors.primaryContainer,
-                      borderRadius: BorderRadius.circular(13),
+                    // The R16 glyph box.
+                    decoration: AppFinish.glyphBox(
+                      colors,
+                      highContrast: highContrast,
                     ),
-                    child: Icon(_kindIcon, color: colors.onPrimaryContainer),
+                    child: Icon(
+                      _kindIcon,
+                      color: palette.interactiveForeground,
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -3393,11 +3507,30 @@ class _Composer extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
 
-    // Slim composer (ADR-209): one 48 px row — a 48 px tonal media button
-    // and a 48 px field (radius 12, 1 px outline, 2 px focus edge drawn on
-    // top so focus never moves the text). Visual only: the field, its
-    // formatter, onTapOutside, the tap region and Back handling above are
-    // exactly as they were.
+    final highContrast = MediaQuery.highContrastOf(context);
+    final textScaler = MediaQuery.textScalerOf(context);
+    final hint = copy.text('Message…', 'Wiadomość…');
+    // Large text keeps the whole row on one axis and the placeholder whole:
+    // the pill trades 4 px of its start inset and its end inset (the emoji
+    // button beside it carries its own clearance) for the words, and the
+    // camera, emoji and action discs rise to centre on the field's last
+    // line. At 1.0 the row is exactly as before.
+    final largeText = textScaler.scale(16) / 16 > _largeTextScale;
+    final fieldPadding = EdgeInsetsDirectional.fromSTEB(
+      largeText ? 14 : 18,
+      _fieldVerticalPadding,
+      largeText ? 0 : 6,
+      _fieldVerticalPadding,
+    );
+    final actionLift = _actionLift(context, textScaler);
+
+    // Slim composer (ADR-209) with the refine-look finish: one 48 px row — a
+    // round 48 px media button on `surfaceMuted` with a hairline, and a
+    // 48 px pill field (radius 24, `borderStrong`, 2 px focus edge drawn on
+    // top so focus never moves the text) whose voice / send / saving action
+    // is a 36 px gradient disc. Visual only: the field, its formatter,
+    // onTapOutside, the tap region and Back handling above are exactly as
+    // they were.
     return Container(
       key: const ValueKey('chat-composer'),
       padding: EdgeInsets.fromLTRB(
@@ -3408,38 +3541,48 @@ class _Composer extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: palette.navigationSurface,
-        border: Border(top: BorderSide(color: palette.border)),
+        border: Border(
+          top: BorderSide(
+            color: highContrast ? palette.borderStrong : palette.hairline,
+          ),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          IconButton(
-            onPressed: sendingMedia ? null : onPhoto,
-            tooltip: sendingMedia
-                ? copy.text('Sending attachment', 'Wysyłanie załącznika')
-                : copy.text('Add photo or video', 'Dodaj zdjęcie lub film'),
-            style: IconButton.styleFrom(
-              backgroundColor: palette.surfaceMuted,
-              foregroundColor: palette.textPrimary,
-              fixedSize: const Size.square(_composerHeight),
-              minimumSize: const Size.square(_composerHeight),
-              padding: EdgeInsets.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              visualDensity: VisualDensity.standard,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+          Padding(
+            // Rises with the field's own discs (see `_actionLift`), so all
+            // four share one centre line at large text.
+            padding: EdgeInsets.only(bottom: actionLift),
+            child: IconButton(
+              onPressed: sendingMedia ? null : onPhoto,
+              tooltip: sendingMedia
+                  ? copy.text('Sending attachment', 'Wysyłanie załącznika')
+                  : copy.text('Add photo or video', 'Dodaj zdjęcie lub film'),
+              style: IconButton.styleFrom(
+                backgroundColor: palette.surfaceMuted,
+                foregroundColor: palette.textPrimary,
+                fixedSize: const Size.square(_composerHeight),
+                minimumSize: const Size.square(_composerHeight),
+                padding: EdgeInsets.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.standard,
+                shape: const CircleBorder(),
+                side: BorderSide(
+                  color: highContrast ? palette.borderStrong : palette.hairline,
+                ),
               ),
+              icon: sendingMedia
+                  ? SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colors.primary,
+                      ),
+                    )
+                  : const Icon(Icons.camera_alt_outlined, size: 22),
             ),
-            icon: sendingMedia
-                ? SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: colors.primary,
-                    ),
-                  )
-                : const Icon(Icons.camera_alt_outlined, size: 22),
           ),
           const SizedBox(width: 6),
           Expanded(
@@ -3449,14 +3592,14 @@ class _Composer extends StatelessWidget {
                 constraints: const BoxConstraints(minHeight: _composerHeight),
                 decoration: BoxDecoration(
                   color: palette.surfaceRaised,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(_fieldRadius),
                   border: Border.all(color: palette.borderStrong),
                 ),
                 // Always present (transparent when unfocused): toggling the
                 // decoration on and off would change the tree above the
                 // TextField and cost it its state and focus.
                 foregroundDecoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(_fieldRadius),
                   border: Border.all(
                     color: focusNode.hasFocus
                         ? palette.focus
@@ -3470,125 +3613,138 @@ class _Composer extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Expanded(
-                    child: TextField(
-                      controller: controller,
-                      focusNode: focusNode,
-                      // Never `readOnly: sending` — see _FrozenDraftFormatter.
-                      inputFormatters: sending
-                          ? const <TextInputFormatter>[_FrozenDraftFormatter()]
-                          : null,
-                      // Flutter's default does nothing for touch on Android
-                      // and iOS; a phone needs "tap elsewhere" to mean "put
-                      // the keyboard away". Desktop already unfocused on a
-                      // click outside, so nothing changes there.
-                      onTapOutside: (_) => onDismiss(),
-                      minLines: 1,
-                      maxLines: 5,
-                      textCapitalization: TextCapitalization.sentences,
-                      style: TextStyle(color: palette.textPrimary),
-                      decoration: InputDecoration(
-                        hintText: copy.text('Message…', 'Wiadomość…'),
-                        // At 320px and 200% text the field is narrow enough
-                        // that a wrapped placeholder would grow the composer
-                        // row and read as broken. Ellipsize instead.
-                        hintMaxLines: 1,
-                        hintStyle: TextStyle(color: palette.textTertiary),
-                        // The container above owns the one outline and the
-                        // focus edge; the theme's field outline would draw
-                        // a second box inside it.
-                        filled: false,
-                        // Dense, so the field is its line plus the padding
-                        // below (46 px inside the 1 px outline), not the
-                        // 48 px default floor plus the outline.
-                        isDense: true,
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        disabledBorder: InputBorder.none,
-                        contentPadding: const EdgeInsets.fromLTRB(
-                          14,
-                          11,
-                          6,
-                          11,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        // Never `readOnly: sending` — see _FrozenDraftFormatter.
+                        inputFormatters: sending
+                            ? const <TextInputFormatter>[
+                                _FrozenDraftFormatter(),
+                              ]
+                            : null,
+                        // Flutter's default does nothing for touch on Android
+                        // and iOS; a phone needs "tap elsewhere" to mean "put
+                        // the keyboard away". Desktop already unfocused on a
+                        // click outside, so nothing changes there.
+                        onTapOutside: (_) => onDismiss(),
+                        minLines: 1,
+                        maxLines: 5,
+                        textCapitalization: TextCapitalization.sentences,
+                        style: TextStyle(color: palette.textPrimary),
+                        decoration: InputDecoration(
+                          hintText: hint,
+                          // At 320px and 200% text the field is narrow enough
+                          // that a wrapped placeholder would grow the composer
+                          // row and read as broken. It steps down to fit
+                          // instead (see `_fittedHintStyle`), and ellipsizes
+                          // only below its 100 % size.
+                          hintMaxLines: 1,
+                          hintStyle: _fittedHintStyle(
+                            context,
+                            hint,
+                            available:
+                                constraints.maxWidth - fieldPadding.horizontal,
+                            color: palette.textTertiary,
+                          ),
+                          // The container above owns the one outline and the
+                          // focus edge; the theme's field outline would draw
+                          // a second box inside it.
+                          filled: false,
+                          // Dense, so the field is its line plus the padding
+                          // below (46 px inside the 1 px outline), not the
+                          // 48 px default floor plus the outline.
+                          isDense: true,
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          disabledBorder: InputBorder.none,
+                          contentPadding: fieldPadding,
                         ),
+                        onSubmitted: (_) => onSend(),
+                        // Reaching for the keyboard is the natural way to put
+                        // the picker away again.
+                        onTap: emojiPickerOpen ? onToggleEmoji : null,
                       ),
-                      onSubmitted: (_) => onSend(),
-                      // Reaching for the keyboard is the natural way to put
-                      // the picker away again.
-                      onTap: emojiPickerOpen ? onToggleEmoji : null,
                     ),
                   ),
                   // A tight slot: the shared button would otherwise pad its
                   // hit box to 48 px on touch platforms and push the field
                   // past 48 px. 46 px stays above the 44 px minimum.
-                  SizedBox.square(
-                    dimension: _fieldActionSize,
-                    child: YoEmojiComposerButton(
-                      open: emojiPickerOpen,
-                      onPressed: onToggleEmoji,
-                      color: palette.textTertiary,
-                      size: _fieldActionSize,
+                  Padding(
+                    padding: EdgeInsets.only(bottom: actionLift),
+                    child: SizedBox.square(
+                      dimension: _fieldActionSize,
+                      child: YoEmojiComposerButton(
+                        open: emojiPickerOpen,
+                        onPressed: onToggleEmoji,
+                        color: palette.textTertiary,
+                        size: _fieldActionSize,
+                      ),
                     ),
                   ),
-                  ValueListenableBuilder<TextEditingValue>(
-                    valueListenable: controller,
-                    builder: (context, value, _) {
-                      final hasText = value.text.trim().isNotEmpty;
+                  Padding(
+                    padding: EdgeInsets.only(bottom: actionLift),
+                    child: ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: controller,
+                      builder: (context, value, _) {
+                        final hasText = value.text.trim().isNotEmpty;
 
-                      return AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 180),
-                        // A local-persistence failure can move through
-                        // send -> saving -> send in less than one animation
-                        // frame. Keeping outgoing children in the default
-                        // Stack then duplicates their keys. Fade in only the
-                        // current affordance; the state itself is the useful
-                        // feedback here.
-                        layoutBuilder: (currentChild, _) =>
-                            currentChild ?? const SizedBox.shrink(),
-                        child: sending
-                            ? IconButton(
-                                key: const ValueKey('saving'),
-                                onPressed: null,
-                                style: _fieldActionStyle,
-                                tooltip: copy.text(
-                                  'Saving message',
-                                  'Zapisywanie wiadomości',
-                                ),
-                                icon: SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: colors.primary,
+                        return AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          // A local-persistence failure can move through
+                          // send -> saving -> send in less than one animation
+                          // frame. Keeping outgoing children in the default
+                          // Stack then duplicates their keys. Fade in only the
+                          // current affordance; the state itself is the useful
+                          // feedback here.
+                          layoutBuilder: (currentChild, _) =>
+                              currentChild ?? const SizedBox.shrink(),
+                          child: sending
+                              ? IconButton(
+                                  key: const ValueKey('saving'),
+                                  onPressed: null,
+                                  style: _fieldActionStyle,
+                                  tooltip: copy.text(
+                                    'Saving message',
+                                    'Zapisywanie wiadomości',
+                                  ),
+                                  icon: const _ComposerDisc(
+                                    status: YoDiscStatus.busy,
+                                  ),
+                                )
+                              : hasText
+                              ? IconButton(
+                                  key: const ValueKey('send'),
+                                  onPressed: onSend,
+                                  style: _fieldActionStyle,
+                                  tooltip: copy.text('Send', 'Wyślij'),
+                                  icon: const _ComposerDisc(
+                                    icon: Icons.send_rounded,
+                                    nudge: true,
+                                  ),
+                                )
+                              : IconButton(
+                                  key: const ValueKey('voice'),
+                                  onPressed: sendingMedia ? null : onVoice,
+                                  style: _fieldActionStyle,
+                                  tooltip: copy.text(
+                                    'Record voice message',
+                                    'Nagraj wiadomość głosową',
+                                  ),
+                                  // The voice bead (R14) at rest: it lights
+                                  // only where a voice actually plays.
+                                  icon: _ComposerDisc(
+                                    icon: Icons.mic_none_rounded,
+                                    gloss: true,
+                                    status: sendingMedia
+                                        ? YoDiscStatus.disabled
+                                        : YoDiscStatus.idle,
                                   ),
                                 ),
-                              )
-                            : hasText
-                            ? IconButton(
-                                key: const ValueKey('send'),
-                                onPressed: onSend,
-                                style: _fieldActionStyle,
-                                tooltip: copy.text('Send', 'Wyślij'),
-                                icon: Icon(
-                                  Icons.send_rounded,
-                                  color: colors.primary,
-                                ),
-                              )
-                            : IconButton(
-                                key: const ValueKey('voice'),
-                                onPressed: sendingMedia ? null : onVoice,
-                                style: _fieldActionStyle,
-                                tooltip: copy.text(
-                                  'Record voice message',
-                                  'Nagraj wiadomość głosową',
-                                ),
-                                icon: Icon(
-                                  Icons.mic_none_rounded,
-                                  color: palette.textPrimary,
-                                ),
-                              ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
                 ],
               ),
@@ -3599,9 +3755,83 @@ class _Composer extends StatelessWidget {
     );
   }
 
+  /// Above this text scale the field trades inset for words (see build).
+  static const double _largeTextScale = 1.3;
+
+  /// The field's vertical content padding: one line plus this is 46 px at
+  /// 1.0 text, the height of the action discs.
+  static const double _fieldVerticalPadding = 11;
+
+  /// How far the camera, emoji and action discs rise so their centre meets
+  /// the centre of the field's LAST line: zero while one line of text fits
+  /// the 46 px disc (every 1.0 layout), positive once the reader's text
+  /// makes a line taller than that.
+  static double _actionLift(BuildContext context, TextScaler textScaler) {
+    final style =
+        Theme.of(context).textTheme.bodyLarge ?? const TextStyle(fontSize: 16);
+    final painter = TextPainter(
+      text: TextSpan(text: ' ', style: style),
+      textScaler: textScaler,
+      textDirection: Directionality.of(context),
+      maxLines: 1,
+    )..layout();
+    final line = painter.height;
+    painter.dispose();
+    final field = line + _fieldVerticalPadding * 2;
+    return math.max(0.0, (field - _fieldActionSize) / 2);
+  }
+
+  /// The placeholder is the field's only visible label, so it is never cut
+  /// to a stub. Where it does not fit on one line at the reader's text size
+  /// (a 320 px phone at 200 %), it steps down until it does, but never below
+  /// its 100 % size; only below that does `hintMaxLines` ellipsize it.
+  static TextStyle _fittedHintStyle(
+    BuildContext context,
+    String hint, {
+    required double available,
+    required Color color,
+  }) {
+    final base = Theme.of(context).textTheme.bodyLarge ?? const TextStyle();
+    final size = base.fontSize ?? 16;
+    final textScaler = MediaQuery.textScalerOf(context);
+    final textDirection = Directionality.of(context);
+    double widthAt(double fontSize) {
+      final painter = TextPainter(
+        text: TextSpan(
+          text: hint,
+          style: base.copyWith(fontSize: fontSize),
+        ),
+        textScaler: textScaler,
+        textDirection: textDirection,
+        maxLines: 1,
+      )..layout();
+      final width = painter.width;
+      painter.dispose();
+      return width;
+    }
+
+    var width = widthAt(size);
+    if (available <= 0 || width <= available) return TextStyle(color: color);
+    final atRest = size * size / textScaler.scale(size);
+    // Letter spacing does not shrink with the size, so a proportional step
+    // lands a little wide; two more steps settle it. A hair under the exact
+    // fit, so rounding never tips it into an ellipsis.
+    var fitted = size;
+    for (var step = 0; step < 3 && width > available - 1; step++) {
+      fitted = math.max(atRest, fitted * (available - 1) / width);
+      if (fitted == atRest) break;
+      width = widthAt(fitted);
+    }
+    return TextStyle(color: color, fontSize: fitted);
+  }
+
   /// The composer row's height at 1.0 text: the media button and the
   /// field (its 1 px outline included) are both exactly this tall.
   static const double _composerHeight = 48;
+
+  /// A pill at the composer's height: the action disc at its end sits
+  /// concentric with the field's end cap.
+  static const double _fieldRadius = 24;
 
   /// The actions inside the field fill it edge to edge (48 minus the 1 px
   /// outline top and bottom) and stay above the 44 px target minimum.
@@ -3614,6 +3844,67 @@ class _Composer extends StatelessWidget {
     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
     visualDensity: VisualDensity.standard,
   );
+}
+
+/// The composer's voice / send / saving face (refine-look §8.3): a 36 px
+/// gradient disc inside the 46 px action target. The voice bead carries the
+/// R14 gloss; send and saving are the R6 icon disc. Its shadow is CONTAINED
+/// (brand glow × .6, blur 10, y 3, spread -3) so it stays inside the field;
+/// none when disabled or under high contrast. Draw-only: the `IconButton`
+/// around it keeps its key, tooltip, semantics and callback.
+class _ComposerDisc extends StatelessWidget {
+  const _ComposerDisc({
+    this.icon,
+    this.gloss = false,
+    this.nudge = false,
+    this.status = YoDiscStatus.idle,
+  });
+
+  final IconData? icon;
+  final bool gloss;
+
+  /// Nudges a forward glyph (send) so it reads optically centred.
+  final bool nudge;
+  final YoDiscStatus status;
+
+  static const double size = 36;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final lit =
+        status != YoDiscStatus.disabled && !MediaQuery.highContrastOf(context);
+    return YoPressFeedback(
+      scale: YoPressFeedback.disc,
+      enabled: status == YoDiscStatus.idle,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          boxShadow: lit
+              ? <BoxShadow>[
+                  BoxShadow(
+                    color: palette.brandGlow.withValues(
+                      alpha: palette.brandGlow.a * .6,
+                    ),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                    spreadRadius: -3,
+                  ),
+                ]
+              : const <BoxShadow>[],
+        ),
+        child: YoGradientDisc(
+          size: size,
+          icon: icon,
+          gloss: gloss,
+          // The nudge moves the glyph right; a send arrow mirrors under RTL,
+          // where that would push it away from its optical centre.
+          nudgePlay: nudge && Directionality.of(context) == TextDirection.ltr,
+          status: status,
+        ),
+      ),
+    );
+  }
 }
 
 class _ConversationHistoryErrorBanner extends StatelessWidget {
@@ -3699,6 +3990,17 @@ class _VoiceMessageRecorderSheet extends StatefulWidget {
 
 class _VoiceMessageRecorderSheetState
     extends State<_VoiceMessageRecorderSheet> {
+  /// The record bead: 72 px, the size of the control it replaced.
+  static const double _recordBeadSize = 72;
+
+  /// Preview and Send keep a real inset at every text size: Material's
+  /// scaled padding thins it to 4 px at 200 %, where both labels wrap and
+  /// would otherwise touch the stadium's ends.
+  static const EdgeInsets _reviewActionPadding = EdgeInsets.symmetric(
+    horizontal: 20,
+    vertical: 10,
+  );
+
   /// The product cap. The sheet stops itself here and keeps the take; the
   /// server accepts the slightly longer file a capped take always produces.
   static const Duration _cap = Duration(seconds: directVoiceMaxSeconds);
@@ -3956,7 +4258,7 @@ class _VoiceMessageRecorderSheetState
         decoration: BoxDecoration(
           color: palette.surfaceRaised,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          border: Border(top: BorderSide(color: palette.border)),
+          border: Border(top: BorderSide(color: _sheetEdgeColor(context))),
         ),
         child: Material(
           type: MaterialType.transparency,
@@ -3986,10 +4288,16 @@ class _VoiceMessageRecorderSheetState
                         'Record a voice message',
                         'Nagraj wiadomość głosową',
                       ),
+                key: const ValueKey('voice-message-recorder-title'),
+                // Centred like the timer and the bead below it, so a title
+                // that wraps (large text, "Nagrywanie wiadomości
+                // głosowej…") stays on the sheet's axis.
+                textAlign: TextAlign.center,
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 21,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -.3,
                 ),
               ),
               const SizedBox(height: 8),
@@ -4036,20 +4344,50 @@ class _VoiceMessageRecorderSheetState
                     : hasTake
                     ? copy.text('Record again', 'Nagraj ponownie')
                     : copy.text('Start recording', 'Rozpocznij nagrywanie'),
-                child: IconButton.filled(
+                // Refine-look W4, at rest only: the voice bead (logo gradient
+                // with its glass gloss) while idle, a solid live-red bead
+                // with an `onLive` stop glyph while recording. No halo here
+                // — that is the capture screen's.
+                child: IconButton(
                   onPressed: _publishing ? null : _toggleRecording,
                   style: IconButton.styleFrom(
-                    minimumSize: const Size.square(72),
-                    backgroundColor: _recording
-                        ? const Color(0xFFFF4F78)
-                        : colors.primary,
-                    foregroundColor: _recording
-                        ? AppColors.contrastInk
-                        : colors.onPrimary,
+                    fixedSize: const Size.square(_recordBeadSize),
+                    minimumSize: const Size.square(_recordBeadSize),
+                    padding: EdgeInsets.zero,
+                    shape: const CircleBorder(),
                   ),
-                  icon: Icon(
-                    _recording ? Icons.stop_rounded : Icons.mic_rounded,
-                    size: 34,
+                  icon: YoPressFeedback(
+                    scale: YoPressFeedback.disc,
+                    enabled: !_publishing,
+                    child: YoGradientDisc(
+                      key: const ValueKey('voice-message-record-bead'),
+                      size: _recordBeadSize,
+                      gloss: true,
+                      tone: _recording ? YoDiscTone.live : YoDiscTone.brand,
+                      status: _publishing
+                          ? YoDiscStatus.disabled
+                          : YoDiscStatus.idle,
+                      glyph: AnimatedSwitcher(
+                        duration: AppMotion.decorative(context)
+                            ? const Duration(milliseconds: 160)
+                            : Duration.zero,
+                        transitionBuilder: (child, animation) => FadeTransition(
+                          opacity: animation,
+                          child: ScaleTransition(
+                            scale: Tween<double>(
+                              begin: .6,
+                              end: 1,
+                            ).animate(animation),
+                            child: child,
+                          ),
+                        ),
+                        child: Icon(
+                          _recording ? Icons.stop_rounded : Icons.mic_rounded,
+                          key: ValueKey<bool>(_recording),
+                          size: 34,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -4059,12 +4397,27 @@ class _VoiceMessageRecorderSheetState
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: _publishing ? null : _togglePreview,
+                    // R7 neutral: glass with the control hairline.
+                    style:
+                        AppFinish.tonalNeutral(
+                          palette,
+                          foreground: palette.textPrimary,
+                          highContrast: MediaQuery.highContrastOf(context),
+                        ).copyWith(
+                          minimumSize: const WidgetStatePropertyAll(
+                            Size(64, 48),
+                          ),
+                          padding: const WidgetStatePropertyAll(
+                            _reviewActionPadding,
+                          ),
+                        ),
                     icon: Icon(
                       _previewState == PlayerState.playing
                           ? Icons.pause_rounded
                           : Icons.play_arrow_rounded,
                     ),
                     label: Text(
+                      textAlign: TextAlign.center,
                       _previewState == PlayerState.playing
                           ? copy.text('Pause preview', 'Wstrzymaj odsłuch')
                           : _previewState == PlayerState.paused
@@ -4079,18 +4432,18 @@ class _VoiceMessageRecorderSheetState
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: _publishing ? null : _send,
-                    icon: _publishing
-                        ? SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: colors.onPrimary,
-                            ),
-                          )
-                        : const Icon(Icons.send_rounded),
-                    label: Text(
+                  // The sheet's one labelled action (R5): the gradient and
+                  // its lift; the record bead above rests.
+                  child: YoGradientFilledButton(
+                    // Busy, not disabled, while it sends: the gradient stays
+                    // and presses are ignored (`_send` also guards).
+                    onPressed: _send,
+                    busy: _publishing,
+                    minimumSize: const Size(64, 48),
+                    padding: _reviewActionPadding,
+                    icon: _publishing ? null : const Icon(Icons.send_rounded),
+                    child: Text(
+                      textAlign: TextAlign.center,
                       _publishing
                           ? copy.text('Sending…', 'Wysyłanie…')
                           : copy.text(
@@ -4136,9 +4489,8 @@ class _MessageActionsSheet extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
-    final warning = Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFFFFB547)
-        : const Color(0xFF754A00);
+    final highContrast = MediaQuery.highContrastOf(context);
+    final warning = palette.warningForeground;
 
     return Container(
       padding: EdgeInsets.fromLTRB(
@@ -4149,7 +4501,8 @@ class _MessageActionsSheet extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: palette.surfaceRaised,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        border: Border(top: BorderSide(color: _sheetEdgeColor(context))),
       ),
       // Transparent Material, so the sheet keeps exactly this background
       // while the ListTiles below get a Material to paint their ink on.
@@ -4157,80 +4510,181 @@ class _MessageActionsSheet extends StatelessWidget {
       // Reply/Edit/Delete were silently rippling behind the container.
       child: Material(
         type: MaterialType.transparency,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            YoModalSheetChrome(
-              sheetLabel: copy.text('message actions', 'opcje wiadomości'),
-              surfaceColor: palette.surfaceRaised,
-            ),
-            const SizedBox(height: 1),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: reactions
-                  .map(
-                    (emoji) => InkWell(
-                      onTap: () => onReaction(emoji),
-                      customBorder: const CircleBorder(),
-                      child: Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Text(
-                          emoji,
-                          style: const TextStyle(fontSize: 27),
-                        ),
-                      ),
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
-            Divider(color: palette.border),
-            ListTile(
-              onTap: onReply,
-              leading: Icon(Icons.reply_rounded, color: palette.textPrimary),
-              title: Text(
-                copy.text('Reply', 'Odpowiedz'),
-                style: TextStyle(color: palette.textPrimary),
+        // Scrollable so a short viewport or a large text size never clips
+        // the last action.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              YoModalSheetChrome(
+                sheetLabel: copy.text('message actions', 'opcje wiadomości'),
+                surfaceColor: palette.surfaceRaised,
               ),
-            ),
-            if (isMine && canEdit)
+              const SizedBox(height: 1),
+              // Refine-look §8.3: each reaction in a 48 px glass disc (44 at
+              // 320 px). Emoji are pictures, not copy, so they do not scale
+              // with the reader's text — that is what overflowed the row at
+              // 200 %.
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  const gap = 4.0;
+                  final disc =
+                      ((constraints.maxWidth - gap * (reactions.length - 1)) /
+                              reactions.length)
+                          .clamp(_reactionDiscMin, _reactionDiscMax)
+                          .toDouble();
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      for (final emoji in reactions)
+                        _ReactionDisc(
+                          emoji: emoji,
+                          size: disc,
+                          onTap: () => onReaction(emoji),
+                        ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 6),
+              Divider(
+                color: highContrast ? palette.borderStrong : palette.hairline,
+              ),
               ListTile(
-                onTap: onEdit,
-                leading: Icon(Icons.edit_outlined, color: palette.textPrimary),
+                onTap: onReply,
+                leading: Icon(Icons.reply_rounded, color: palette.textPrimary),
                 title: Text(
-                  copy.text('Edit', 'Edytuj'),
+                  copy.text('Reply', 'Odpowiedz'),
                   style: TextStyle(color: palette.textPrimary),
                 ),
               ),
-            if (isMine)
-              ListTile(
-                onTap: onDelete,
-                leading: Icon(
-                  Icons.delete_outline_rounded,
-                  color: colors.onErrorContainer,
+              if (isMine && canEdit)
+                ListTile(
+                  onTap: onEdit,
+                  leading: Icon(
+                    Icons.edit_outlined,
+                    color: palette.textPrimary,
+                  ),
+                  title: Text(
+                    copy.text('Edit', 'Edytuj'),
+                    style: TextStyle(color: palette.textPrimary),
+                  ),
                 ),
-                title: Text(
-                  copy.text('Delete', 'Usuń'),
-                  style: TextStyle(color: colors.onErrorContainer),
+              if (isMine)
+                ListTile(
+                  onTap: onDelete,
+                  leading: Icon(
+                    Icons.delete_outline_rounded,
+                    color: colors.onErrorContainer,
+                  ),
+                  title: Text(
+                    copy.text('Delete', 'Usuń'),
+                    style: TextStyle(color: colors.onErrorContainer),
+                  ),
                 ),
-              ),
-            // Not offered on your own message. Reporting yourself is not
-            // a real intent, and every such report is a row a moderator
-            // has to open before discovering there is nothing to do.
-            if (!isMine)
-              ListTile(
-                key: const ValueKey('report-message'),
-                onTap: onReport,
-                leading: Icon(Icons.flag_outlined, color: warning),
-                title: Text(
-                  copy.text('Report message', 'Zgłoś wiadomość'),
-                  style: TextStyle(color: warning),
+              // Not offered on your own message. Reporting yourself is not
+              // a real intent, and every such report is a row a moderator
+              // has to open before discovering there is nothing to do.
+              if (!isMine)
+                ListTile(
+                  key: const ValueKey('report-message'),
+                  onTap: onReport,
+                  leading: Icon(Icons.flag_outlined, color: warning),
+                  title: Text(
+                    copy.text('Report message', 'Zgłoś wiadomość'),
+                    style: TextStyle(color: warning),
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
+
+  /// The reaction disc: 48 px, never under the 44 px target.
+  static const double _reactionDiscMax = 48;
+  static const double _reactionDiscMin = 44;
+}
+
+/// One reaction in the long-press sheet: a glass disc (flat `surface` with
+/// `borderStrong` under high contrast) holding the emoji at its picture
+/// size, with the 2 px focus ring rows use (R16) for the keyboard.
+class _ReactionDisc extends StatefulWidget {
+  const _ReactionDisc({
+    required this.emoji,
+    required this.size,
+    required this.onTap,
+  });
+
+  final String emoji;
+  final double size;
+  final VoidCallback onTap;
+
+  @override
+  State<_ReactionDisc> createState() => _ReactionDiscState();
+}
+
+class _ReactionDiscState extends State<_ReactionDisc> {
+  bool _focused = false;
+
+  /// No ink ripple on iOS, macOS, web or desktop (R2); Android's sparkle.
+  static InteractiveInkFeatureFactory get _splashFactory =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+      ? InkSparkle.splashFactory
+      : NoSplash.splashFactory;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return SizedBox.square(
+      dimension: widget.size,
+      child: Ink(
+        decoration: AppFinish.glassDecoration(
+          palette,
+          shape: BoxShape.circle,
+          highContrast: MediaQuery.highContrastOf(context),
+        ),
+        child: InkWell(
+          onTap: widget.onTap,
+          customBorder: const CircleBorder(),
+          splashFactory: _splashFactory,
+          onFocusChange: (focused) {
+            if (focused != _focused) setState(() => _focused = focused);
+          },
+          child: DecoratedBox(
+            // Drawn over the disc, so focus never moves the emoji.
+            position: DecorationPosition.foreground,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: _focused ? palette.focus : Colors.transparent,
+                width: 2,
+              ),
+            ),
+            child: Center(
+              child: Text(
+                widget.emoji,
+                textScaler: TextScaler.noScaling,
+                // The colour-emoji family first: Inter's own flat ❤ would
+                // otherwise win over the variation selector.
+                style: yoEmojiGlyphStyle(24),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A bottom sheet's hairline top edge (refine-look R16); `borderStrong`
+/// under high contrast.
+Color _sheetEdgeColor(BuildContext context) {
+  final palette = context.appPalette;
+  return MediaQuery.highContrastOf(context)
+      ? palette.borderStrong
+      : palette.hairline;
 }
 
 class _Avatar extends StatelessWidget {
@@ -4252,15 +4706,16 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Refine-look R10: the one brand letter fill instead of a flat violet
+    // coin; a photo gets the hairline ring.
     return UserAvatar(
       radius: radius,
       userId: userId,
-      // The brand violet by name instead of a near-identical inline hex.
-      backgroundColor: AppColors.primary,
       photoUrl: url,
       mediaRevision: mediaRevision,
       mediaService: profileMediaService,
       displayName: name,
+      finish: UserAvatarFinish.brand,
     );
   }
 }

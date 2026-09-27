@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -22,6 +23,7 @@ import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart'
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/badges/yo_count_badge.dart';
 import 'package:yovoice/shared/widgets/profile/profile_media_image.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -260,7 +262,13 @@ void main() {
             find.byKey(const ValueKey('incoming-message-bubble')),
           );
           final bubbleDecoration = bubble.decoration! as BoxDecoration;
-          expect(bubbleDecoration.color, palette.surfaceRaised);
+          // Refine-look R15: the incoming bubble is the lit block (it was a
+          // flat `surfaceRaised` fill).
+          expect(bubbleDecoration.gradient, palette.blockGradient);
+          expect(
+            (bubbleDecoration.border! as Border).top.color,
+            palette.hairline,
+          );
           final copy = tester.widget<Text>(
             find.text('Readable incoming message'),
           );
@@ -974,7 +982,7 @@ void main() {
       ),
     ]) {
       testWidgets(
-        'unread conversation highlights its full row and is announced in ${entry.name}',
+        'unread conversation is carried by weight and count and is announced in ${entry.name}',
         (tester) async {
           final service = _StubMessageService(
             messages: const [],
@@ -1006,16 +1014,37 @@ void main() {
               tester.widget<AnimatedContainer>(readRow).decoration!
                   as BoxDecoration;
 
-          expect(
-            unreadDecoration.color,
-            entry.theme.colorScheme.primaryContainer,
-          );
-          expect(unreadDecoration.border, isNotNull);
+          // Refine-look §8.3 deliberately retires the unread slab (it was a
+          // `primaryContainer` fill with an edge): both rows are one layer,
+          // radius 16, with no fill and no edge, and they keep the same size.
+          expect(unreadDecoration.color, Colors.transparent);
+          expect(unreadDecoration.border, isNull);
+          expect(unreadDecoration.borderRadius, AppRadius.tile);
           expect(readDecoration.color, Colors.transparent);
           expect(readDecoration.border, isNull);
+          expect(readDecoration.borderRadius, AppRadius.tile);
+          expect(tester.getSize(unreadRow), tester.getSize(readRow));
+
+          // Unread never relies on colour alone: the name and preview are
+          // heavier as well as brighter, and the count is printed.
+          final palette = entry.theme.extension<AppPalette>()!;
+          Text textIn(Finder row, String data) => tester.widget<Text>(
+            find.descendant(of: row, matching: find.text(data)),
+          );
+          final unreadName = textIn(unreadRow, 'Them');
+          final readName = textIn(readRow, 'Them');
+          expect(unreadName.style?.fontWeight, FontWeight.w700);
+          expect(readName.style?.fontWeight, FontWeight.w600);
+          expect(unreadName.style?.color, palette.textPrimary);
+          final unreadPreview = textIn(unreadRow, 'an archived thread');
+          final readPreview = textIn(readRow, 'an archived thread');
+          expect(unreadPreview.style?.fontWeight, FontWeight.w500);
+          expect(unreadPreview.style?.color, palette.textPrimary);
+          expect(readPreview.style?.fontWeight, FontWeight.w400);
+          expect(readPreview.style?.color, palette.textSecondary);
           expect(
-            tester.getSize(unreadRow).width,
-            tester.getSize(readRow).width,
+            find.descendant(of: readRow, matching: find.byType(YoCountBadge)),
+            findsNothing,
           );
 
           final badge = find.byKey(

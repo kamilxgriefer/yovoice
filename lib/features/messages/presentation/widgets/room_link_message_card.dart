@@ -179,9 +179,14 @@ class _RoomLinkCard extends StatelessWidget {
     final surface = onBrandSurface
         ? Colors.white.withValues(alpha: .14)
         : palette.surfaceMuted;
+    final highContrast = MediaQuery.highContrastOf(context);
+    // Refine-look: the block hairline, not an outline (`borderStrong` under
+    // high contrast).
     final border = onBrandSurface
         ? Colors.white.withValues(alpha: .22)
-        : palette.border;
+        : highContrast
+        ? palette.borderStrong
+        : palette.hairline;
     final typeLabel = room.isBroadcast
         ? copy.text('Podcast', 'Podcast')
         : copy.text('Voice channel', 'Kanał głosowy');
@@ -223,7 +228,7 @@ class _RoomLinkCard extends StatelessWidget {
                       color: onBrandSurface
                           ? Colors.white.withValues(alpha: .16)
                           : colors.primary.withValues(alpha: .14),
-                      borderRadius: BorderRadius.circular(11),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(
                       room.isBroadcast
@@ -246,7 +251,7 @@ class _RoomLinkCard extends StatelessWidget {
                           style: TextStyle(
                             color: foreground,
                             fontSize: 14,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                             height: 1.25,
                           ),
                         ),
@@ -271,7 +276,9 @@ class _RoomLinkCard extends StatelessWidget {
                   style: onBrandSurface
                       ? FilledButton.styleFrom(
                           backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF7821E8),
+                          // The theme's primary on white (5.3:1 / 7.0:1), not
+                          // a violet of its own.
+                          foregroundColor: colors.primary,
                           visualDensity: VisualDensity.compact,
                         )
                       : FilledButton.styleFrom(
