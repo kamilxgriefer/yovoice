@@ -7,8 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 
@@ -16,6 +19,118 @@ import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 String reelClockLabel(Duration value) {
   final total = value.inSeconds < 0 ? 0 : value.inSeconds;
   return '${total ~/ 60}:${(total % 60).toString().padLeft(2, '0')}';
+}
+
+/// The played part of a Reel's timeline (refine-look spec §8.4).
+///
+/// Over footage it is the logo's violet → magenta in the lifted form Kamil
+/// approved for every played voice sweep ([AppGradients.voicePlayed], spec
+/// §12.1): its Dark pair, #B082FA → #D46BFF, in BOTH appearances, because
+/// the bar always sits on the stage's dark legibility scrim, never on the
+/// app canvas. The raw logo pair ([AppColors.primary] → [AppColors.secondary])
+/// measured only 1.05–1.30:1 against the old white @ .32 track, so on a phone
+/// at rest — where the time labels are hidden — played and unplayed differed
+/// by hue alone (WCAG 1.4.11). See [reelMediaTrackColor] for what the lifted
+/// pair holds now. (The Pearl `audioAccent` teal it replaces was the same
+/// dark ink as the footage under it.) On an app surface it is the theme's
+/// AA-safe pair ([AppGradients.primaryAction]).
+///
+/// The sweep spans the WHOLE track and the played part only reveals it up to
+/// the playhead, so a given point of the bar never changes colour while the
+/// Reel plays: [fraction] places the gradient's end at the track's far end,
+/// beyond the played box. It runs from the start edge, so it mirrors in
+/// right-to-left.
+///
+/// High contrast paints no gradient at all (spec §2.4): see [_PlayedFill].
+@visibleForTesting
+LinearGradient reelPlayedGradient(
+  double fraction, {
+  required bool onMedia,
+  required ColorScheme scheme,
+}) {
+  final colors = onMedia
+      ? _mediaPlayedColors
+      : AppGradients.primaryAction(scheme).colors;
+  final end = fraction <= 0 ? 1.0 : -1 + 2 / fraction.clamp(0.0, 1.0);
+  return LinearGradient(
+    begin: AlignmentDirectional.centerStart,
+    end: AlignmentDirectional(end, 0),
+    colors: colors,
+  );
+}
+
+/// [AppGradients.voicePlayed] in the Dark palette, resolved once: over
+/// footage the sweep does not follow the app's appearance.
+final List<Color> _mediaPlayedColors = AppGradients.voicePlayed(
+  AppTheme.darkTheme.colorScheme,
+  AppPalette.dark,
+).colors;
+
+/// The unplayed track over footage.
+///
+/// White @ .14. On the phone stage the bar is the frame's bottom edge, under
+/// the 0x59 legibility wash and the 0xB8 peak of the footer scrim, and there
+/// — where the time labels are hidden at rest, so the bar alone carries the
+/// position — the lifted played sweep holds at least 3:1 against it on ANY
+/// frame: about 3.0:1 over pure-white footage, 3.6:1 on the captured frame,
+/// 5.5:1 over black. White @ .32, the spec's first value, left even the
+/// lifted pair at 1.7–2.8:1 there. On the card stage (600 and wider) the bar
+/// sits higher in a lighter part of the scrim and measures about 2.3:1, but
+/// the `0:07 / 0:18` labels beside it are always shown there, so the bar is
+/// never the only indicator.
+///
+/// Under high contrast the played part is solid white, which measures about
+/// 5.5:1 (phone stage) and 4.0:1 (card stage) against the brighter .32
+/// track, so that mode keeps .32 and shows the Reel's whole length more
+/// plainly.
+@visibleForTesting
+Color reelMediaTrackColor({required bool highContrast}) =>
+    Colors.white.withValues(alpha: highContrast ? .32 : .14);
+
+/// The played part of a timeline track: [fraction] of it, at full height,
+/// painted with [reelPlayedGradient]. Under high contrast it is one solid
+/// colour instead — white over footage, the theme's primary on a surface —
+/// because that mode removes every gradient (spec §2.4).
+class _PlayedFill extends StatelessWidget {
+  const _PlayedFill({
+    required this.fraction,
+    required this.onMedia,
+    this.keyed = false,
+  });
+
+  final double fraction;
+  final bool onMedia;
+
+  /// Only the resting bar's fill carries [playedKey]; the scrub track drawn
+  /// over it while a finger is down does not, so the key stays unique.
+  final bool keyed;
+
+  static const Key playedKey = ValueKey<String>('reel-progress-played');
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final decoration = MediaQuery.highContrastOf(context)
+        ? BoxDecoration(color: onMedia ? Colors.white : scheme.primary)
+        : BoxDecoration(
+            gradient: reelPlayedGradient(
+              fraction,
+              onMedia: onMedia,
+              scheme: scheme,
+            ),
+          );
+    return FractionallySizedBox(
+      widthFactor: fraction,
+      // Full height: a childless box under the Stack's loose height would
+      // otherwise lay out 0 px tall and draw no progress at all.
+      heightFactor: 1,
+      alignment: AlignmentDirectional.centerStart,
+      child: DecoratedBox(
+        key: keyed ? playedKey : null,
+        decoration: decoration,
+      ),
+    );
+  }
 }
 
 /// How far a Reel has played, as a bar.
@@ -28,6 +143,9 @@ String reelClockLabel(Duration value) {
 ///
 /// Colour never carries the meaning on its own: the same fact is the bar's
 /// length, the numeric labels of [ReelProgressTimes], and the spoken value.
+///
+/// The played part is the brand sweep of [reelPlayedGradient]; its box keeps
+/// the key [playedKey].
 class ReelProgressBar extends StatelessWidget {
   const ReelProgressBar({
     required this.position,
@@ -45,8 +163,8 @@ class ReelProgressBar extends StatelessWidget {
   final Duration total;
 
   /// True while the bar is drawn over footage of unknown luminance, which
-  /// decides the unplayed track: white at 32 % over media, a semantic tint
-  /// on an app surface.
+  /// decides the unplayed track: [reelMediaTrackColor] over media, a
+  /// semantic tint on an app surface.
   final bool onMedia;
 
   /// False while a [ReelProgressScrubber] over this bar carries the spoken
@@ -57,12 +175,15 @@ class ReelProgressBar extends StatelessWidget {
   /// last row of the frame, directly above the dock.
   static const double trackHeight = 2;
 
+  /// The played part's box inside [ReelProgressBar].
+  static const Key playedKey = _PlayedFill.playedKey;
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final unplayed = onMedia
-        ? Colors.white.withValues(alpha: .32)
+        ? reelMediaTrackColor(highContrast: MediaQuery.highContrastOf(context))
         : palette.textPrimary.withValues(alpha: .20);
     return RepaintBoundary(
       child: ValueListenableBuilder<Duration>(
@@ -79,13 +200,10 @@ class ReelProgressBar extends StatelessWidget {
               child: Stack(
                 children: <Widget>[
                   Positioned.fill(child: ColoredBox(color: unplayed)),
-                  FractionallySizedBox(
-                    widthFactor: fraction,
-                    // Full height: a childless box under the Stack's loose height
-                    // would otherwise lay out 0 px tall and draw no progress at all.
-                    heightFactor: 1,
-                    alignment: AlignmentDirectional.centerStart,
-                    child: ColoredBox(color: palette.audioAccent),
+                  _PlayedFill(
+                    fraction: fraction,
+                    onMedia: onMedia,
+                    keyed: true,
                   ),
                 ],
               ),
@@ -675,10 +793,25 @@ class _ScrubFeedback extends StatelessWidget {
             );
             final centerY = trackBottom - height / 2;
             final thumbCenterY = math.min(centerY, bandHeight - thumb / 2);
+            final highContrast = MediaQuery.highContrastOf(context);
+            // Over footage the grown track keeps the resting track's ink:
+            // a hover band has no thumb, so played vs unplayed must hold 3:1
+            // there too (a brighter track would sink the sweep below it).
             final unplayed = onMedia
-                ? Colors.white.withValues(alpha: .40)
+                ? reelMediaTrackColor(highContrast: highContrast)
                 : palette.textPrimary.withValues(alpha: .24);
-            final thumbColor = onMedia ? Colors.white : palette.audioAccent;
+            // The thumb is white over footage and the theme's primary on a
+            // surface. Over footage its ring is the logo violet, which edges
+            // the white disc at about 5.8:1; under high contrast the played
+            // part is solid white too, so the ring turns black to keep the
+            // thumb apart from it. On a surface the ring is the primary.
+            final scheme = Theme.of(context).colorScheme;
+            final thumbColor = onMedia ? Colors.white : scheme.primary;
+            final thumbRing = !onMedia
+                ? scheme.primary
+                : highContrast
+                ? AppColors.black
+                : AppColors.primary;
             final ring = Rect.fromLTRB(
               math.max(2, rect.left - 6),
               thumbCenterY - thumb / 2 - 4,
@@ -712,14 +845,7 @@ class _ScrubFeedback extends StatelessWidget {
                     child: Stack(
                       children: <Widget>[
                         Positioned.fill(child: ColoredBox(color: unplayed)),
-                        FractionallySizedBox(
-                          widthFactor: fraction,
-                          // Full height: a childless box under the Stack's loose height
-                          // would otherwise lay out 0 px tall and draw no progress at all.
-                          heightFactor: 1,
-                          alignment: AlignmentDirectional.centerStart,
-                          child: ColoredBox(color: palette.audioAccent),
-                        ),
+                        _PlayedFill(fraction: fraction, onMedia: onMedia),
                       ],
                     ),
                   ),
@@ -735,10 +861,7 @@ class _ScrubFeedback extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: thumbColor,
                         shape: BoxShape.circle,
-                        border: Border.all(
-                          color: palette.audioAccent,
-                          width: 2,
-                        ),
+                        border: Border.all(color: thumbRing, width: 2),
                       ),
                     ),
                   ),

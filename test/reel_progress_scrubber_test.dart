@@ -313,17 +313,28 @@ void main() {
         ),
       ),
     );
-    final fills = find.descendant(
+    // Refine-look §8.4: the played part is a gradient box now, not a second
+    // flat ColoredBox, so the track and the played fill are found apart.
+    final tracks = find.descendant(
       of: find.byKey(reelProgressBarKey),
       matching: find.byType(ColoredBox),
     );
-    final sizes = fills
+    final trackSizes = tracks
         .evaluate()
         .map((element) => (element.renderObject! as RenderBox).size)
         .toList();
-    expect(sizes, hasLength(2));
-    expect(sizes.last.width, 200);
-    expect(sizes.last.height, ReelProgressBar.trackHeight);
+    expect(trackSizes, hasLength(1));
+    expect(trackSizes.single.width, 400);
+    expect(trackSizes.single.height, ReelProgressBar.trackHeight);
+    final played = find.descendant(
+      of: find.byKey(reelProgressBarKey),
+      matching: find.byKey(ReelProgressBar.playedKey),
+    );
+    expect(played, findsOneWidget);
+    final playedSize =
+        (played.evaluate().single.renderObject! as RenderBox).size;
+    expect(playedSize.width, 200);
+    expect(playedSize.height, ReelProgressBar.trackHeight);
   });
 
   group('on the Yeel stage', () {

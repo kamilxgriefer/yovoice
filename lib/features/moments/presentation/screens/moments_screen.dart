@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
+import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
@@ -482,7 +483,6 @@ ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
 }) {
   final copy = AppLocalizations.of(context);
   final palette = context.appPalette;
-  final colors = Theme.of(context).colorScheme;
   final backLabel = MaterialLocalizations.of(context).backButtonTooltip;
   return ImmersiveFeedHeaderSlots(
     formatSwitch: ImmersiveSegmentedSwitch(
@@ -516,23 +516,16 @@ ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
             hoverPlateColor: onCanvas ? palette.surfaceMuted : null,
           )
         : null,
-    // On the canvas the create plate is the screen's one violet accent (a
-    // primary disc, like the wide header's); over media it stays the black
-    // plate every other media control is made of. Same control, key and
-    // spoken label in both.
-    trailing: OverlayPlateButton(
+    // The create `+` is the screen's one CTA: the refine-look R6 disc at 48
+    // (the logo's gradient, a white glyph and the one coloured lift), on the
+    // canvas and over footage alike (spec §8.4). Same control, key and
+    // spoken label in both; over media its light ignores the app theme.
+    trailing: OverlayBrandDiscButton(
       key: const ValueKey('moments-create-cta'),
       icon: Icons.add_rounded,
       semanticLabel: copy.text('CREATE', 'UTWÓRZ'),
       onTap: onCreate,
-      glyphColor: onCanvas ? colors.onPrimary : Colors.white,
-      plateColor: onCanvas ? colors.primary : null,
-      hoverPlateColor: onCanvas
-          ? Color.alphaBlend(
-              colors.onPrimary.withValues(alpha: .12),
-              colors.primary,
-            )
-          : null,
+      onMedia: !onCanvas,
     ),
   );
 }
@@ -552,7 +545,16 @@ class _YoMomentsCreateSheet extends StatelessWidget {
     return Material(
       key: const ValueKey<String>('yo-moments-create-sheet'),
       color: palette.surfaceRaised,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      // R16: a sheet's edge is the palette hairline (borderStrong under high
+      // contrast), never an opaque outline.
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        side: BorderSide(
+          color: MediaQuery.highContrastOf(context)
+              ? palette.borderStrong
+              : palette.hairline,
+        ),
+      ),
       clipBehavior: Clip.antiAlias,
       child: SafeArea(
         top: false,
@@ -620,9 +622,16 @@ class _YoMomentsCreateTile extends StatelessWidget {
   final String subtitle;
   final VoidCallback onTap;
 
+  /// The tile's glyph circle (spec §8.4: 44 px, primary @ .14).
+  static const double glyphCircle = 44;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
+    final primary = Theme.of(context).colorScheme.primary;
+    final textTheme = Theme.of(context).textTheme;
+    // One named button: the block below keeps the tap, focus and hover of
+    // the R2 primitive, and this node carries the spoken label and hint.
     return Semantics(
       container: true,
       button: true,
@@ -630,53 +639,49 @@ class _YoMomentsCreateTile extends StatelessWidget {
       hint: subtitle,
       onTap: onTap,
       excludeSemantics: true,
-      child: Material(
-        color: palette.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-          side: BorderSide(color: palette.border),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 72),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
+      child: YoCard(
+        onTap: onTap,
+        semanticButton: false,
+        minHeight: 72,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: <Widget>[
+            Container(
+              width: glyphCircle,
+              height: glyphCircle,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: primary.withValues(alpha: .14),
+              ),
+              child: icon,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: <Widget>[
-                  SizedBox.square(dimension: 36, child: Center(child: icon)),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: <Widget>[
-                        Text(
-                          label,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                color: palette.textPrimary,
-                                fontWeight: FontWeight.w800,
-                              ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          subtitle,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: palette.textSecondary),
-                        ),
-                      ],
+                  Text(
+                    label,
+                    style: textTheme.titleMedium?.copyWith(
+                      color: palette.textPrimary,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -.2,
                     ),
                   ),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    color: palette.textSecondary,
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: textTheme.bodySmall?.copyWith(
+                      color: palette.textSecondary,
+                    ),
                   ),
                 ],
               ),
             ),
-          ),
+            Icon(Icons.chevron_right_rounded, color: palette.textSecondary),
+          ],
         ),
       ),
     );
