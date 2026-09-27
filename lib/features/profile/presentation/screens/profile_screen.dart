@@ -1,3 +1,4 @@
+import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -6,7 +7,11 @@ import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/features/achievements/data/achievement_catalog.dart';
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/achievements/data/services/achievement_service.dart';
@@ -20,6 +25,7 @@ import 'package:yovoice/features/profile/presentation/screens/edit_profile_scree
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_journey_card.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_layout.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
@@ -28,28 +34,53 @@ import 'package:yovoice/features/servers/presentation/screens/server_workspace_s
 import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/creator/presentation/widgets/creator_pinned_moment_card.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_pinned_moment_screen.dart';
+import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
+import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_server_rail_item.dart';
 import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
+import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  const ProfileScreen({
+    super.key,
+    this.profileService,
+    this.achievementService,
+    this.serverRepository,
+    this.auth,
+    this.identityRepository,
+    this.mediaService,
+  });
+
+  /// Test / preview seams. Production leaves every one null and each
+  /// resolves its Firebase-backed default (lazily, so a seam-built screen
+  /// never touches an unconfigured Firebase app).
+  final ProfileService? profileService;
+  final AchievementService? achievementService;
+  final ServerRepository? serverRepository;
+  final FirebaseAuth? auth;
+  final PublicIdentityRepository? identityRepository;
+  final ProfileMediaService? mediaService;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final _profileService = ProfileService();
-  final _achievementService = AchievementService();
-  final _authService = AuthService();
-  final ServerRepository _serverRepository = ServerService();
-  late final Stream<List<Server>> _servers = _serverRepository.watchMyServers();
-  final _firebaseAuth = FirebaseAuth.instance;
-  final _firebaseFunctions = FirebaseFunctions.instanceFor(
-    region: 'europe-west1',
-  );
+  late final ProfileService _profileService =
+      widget.profileService ?? ProfileService();
+  late final AchievementService _achievementService =
+      widget.achievementService ?? AchievementService();
+  late final AuthService _authService = AuthService();
+  late final ServerRepository _serverRepository =
+      widget.serverRepository ?? ServerService();
+  late Stream<UserProfile> _profile = _profileService.watchCurrentProfile();
+  late Stream<List<Server>> _servers = _serverRepository.watchMyServers();
+  late final FirebaseAuth _firebaseAuth = widget.auth ?? FirebaseAuth.instance;
+  late final FirebaseFunctions _firebaseFunctions =
+      FirebaseFunctions.instanceFor(region: 'europe-west1');
 
   bool _isActivatingSuperAdmin = false;
   String _currentRole = 'user';
@@ -169,6 +200,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  /// Try again after the profile itself failed to load.
+  ///
+  /// `watchCurrentProfile()` hands every caller one shared, cached stream,
+  /// and a Firestore snapshot listener ends for good after an error. Asking
+  /// for it again would return that same dead stream object, and a
+  /// [StreamBuilder] only re-subscribes when its stream object changes. So
+  /// the cached entry is dropped first: the next call builds a fresh shared
+  /// stream with a new listener, and this page subscribes to it. (Pages
+  /// already holding the old stream keep it; the next one to subscribe
+  /// shares the new one.)
+  void _retryProfile() {
+    ProfileService.resetCurrentProfileCache();
+    setState(() {
+      _profile = _profileService.watchCurrentProfile();
+      _servers = _serverRepository.watchMyServers();
+    });
+  }
+
+  /// Try again after the servers list failed: `watchMyServers()` builds a
+  /// new stream on every call, and the healthy profile stream is kept.
+  void _retryServers() {
+    setState(() => _servers = _serverRepository.watchMyServers());
+  }
+
   void _showMessage(String message, {bool isError = false}) {
     if (!mounted) return;
     final colors = Theme.of(context).colorScheme;
@@ -187,25 +242,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     return StreamBuilder<UserProfile>(
-      stream: _profileService.watchCurrentProfile(),
+      stream: _profile,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return _ErrorView(
+          return ProfileErrorView(
             message: copy.text(
               friendlyErrorMessage(snapshot.error!),
               'Nie udało się wczytać profilu. Spróbuj ponownie.',
             ),
+            onRetry: _retryProfile,
           );
         }
         final profile = snapshot.data;
         if (profile == null) {
           return Scaffold(
+            key: const ValueKey('profile-loading'),
+            backgroundColor: context.appPalette.background,
             body: YoPageBackground(
-              child: Semantics(
-                liveRegion: true,
-                label: copy.text('Loading profile', 'Wczytywanie profilu'),
-                child: const ExcludeSemantics(
-                  child: Center(child: CircularProgressIndicator()),
+              // The populated page's canvas, so arriving data changes
+              // nothing but the content.
+              decoration: ProfileLayout.canvas(context),
+              // Back as on the error state: a pushed profile whose load
+              // hangs is never a dead end on desktop web, which has no
+              // system back gesture.
+              child: _WithBack(
+                child: Semantics(
+                  liveRegion: true,
+                  label: copy.text('Loading profile', 'Wczytywanie profilu'),
+                  child: const ExcludeSemantics(
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
                 ),
               ),
             ),
@@ -216,11 +282,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           stream: _servers,
           builder: (context, serversSnapshot) {
             if (serversSnapshot.hasError) {
-              return _ErrorView(
+              return ProfileErrorView(
                 message: copy.text(
                   'Your servers could not be loaded.',
                   'Nie udało się wczytać Twoich serwerów.',
                 ),
+                onRetry: _retryServers,
               );
             }
             final servers = serversSnapshot.data ?? const <Server>[];
@@ -254,7 +321,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               isActivatingSuperAdmin: _isActivatingSuperAdmin,
               currentRole: _currentRole,
               onActivateSuperAdmin: _activateSuperAdmin,
-              onLogout: _authService.signOut,
+              onLogout: () => _authService.signOut(),
+              identityRepository: widget.identityRepository,
+              mediaService: widget.mediaService,
             );
           },
         );
@@ -286,6 +355,8 @@ class ProfileScreenView extends StatelessWidget {
     this.identityRepository,
     this.mediaService,
     this.creatorPinnedPostService,
+    this.pinnedMomentService,
+    this.pinnedPlayerFactory,
     super.key,
   });
 
@@ -304,15 +375,25 @@ class ProfileScreenView extends StatelessWidget {
   final ProfileMediaService? mediaService;
   final CreatorPinnedPostService? creatorPinnedPostService;
 
+  /// Test / preview seams for the pinned Moment's playback (its media
+  /// resolver and its player). Production leaves both null.
+  final MomentService? pinnedMomentService;
+  final AudioPlayer Function()? pinnedPlayerFactory;
+
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Scaffold(
-      backgroundColor: context.appPalette.background,
+      backgroundColor: palette.background,
       // The scroll view runs the full width of the route so the banner can be
       // the header's full-bleed background; every readable block keeps the
       // 1040pt feed measure through ProfileHeader and the measured padding
       // below.
       body: YoPageBackground(
+        // Refine-look R1: the Chats / Friends canvas radial, the same one a
+        // friend's profile and every profile state paint; omitted under
+        // high contrast.
+        decoration: ProfileLayout.canvas(context),
         child: _ProfileContent(
           profile: profile,
           servers: servers,
@@ -328,6 +409,8 @@ class ProfileScreenView extends StatelessWidget {
           identityRepository: identityRepository,
           mediaService: mediaService,
           creatorPinnedPostService: creatorPinnedPostService,
+          pinnedMomentService: pinnedMomentService,
+          pinnedPlayerFactory: pinnedPlayerFactory,
         ),
       ),
     );
@@ -350,6 +433,8 @@ class _ProfileContent extends StatelessWidget {
     this.identityRepository,
     this.mediaService,
     this.creatorPinnedPostService,
+    this.pinnedMomentService,
+    this.pinnedPlayerFactory,
   });
 
   final UserProfile profile;
@@ -366,6 +451,8 @@ class _ProfileContent extends StatelessWidget {
   final PublicIdentityRepository? identityRepository;
   final ProfileMediaService? mediaService;
   final CreatorPinnedPostService? creatorPinnedPostService;
+  final MomentService? pinnedMomentService;
+  final AudioPlayer Function()? pinnedPlayerFactory;
 
   void _openFollowList(BuildContext context, FollowListType type) {
     Navigator.of(context).push<void>(
@@ -417,38 +504,42 @@ class _ProfileContent extends StatelessWidget {
 
   Widget _actions(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final palette = context.appPalette;
-    final shape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(ProfileActionBar.radius),
-    );
     const minimumSize = Size(0, ProfileActionBar.buttonHeight);
     const padding = EdgeInsets.symmetric(horizontal: 12);
     return ProfileActionBar(
       key: const ValueKey('profile-actions'),
-      primary: FilledButton(
-        key: const ValueKey('profile-edit-button'),
-        onPressed: onEdit,
-        style: FilledButton.styleFrom(
+      // Refine-look R5: the page's one CTA — the primary action gradient
+      // and its lift (the light budget's one CTA lift on Profile). It is
+      // still a FilledButton inside.
+      //
+      // Its gradient is ink laid above the FilledButton's shape border, so
+      // the primitive's 2 px `onPrimary` focus edge never shows; the ring
+      // draws that same edge on top, inside the button's shape.
+      primary: ProfileFocusRing(
+        color: Theme.of(context).colorScheme.onPrimary,
+        borderRadius: const BorderRadius.all(
+          Radius.circular(ProfileActionBar.radius),
+        ),
+        child: YoGradientFilledButton(
+          key: const ValueKey('profile-edit-button'),
+          onPressed: onEdit,
+          shape: ProfileActionBar.shape,
           minimumSize: minimumSize,
           padding: padding,
-          shape: shape,
-        ),
-        child: Text(
-          copy.text('Edit profile', 'Edytuj profil'),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w700),
+          child: Text(
+            copy.text('Edit profile', 'Edytuj profil'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
         ),
       ),
+      // R7 neutral: glass, control hairline, page ink.
       secondary: OutlinedButton(
         key: const ValueKey('profile-awards-button'),
         onPressed: onAchievements,
-        style: OutlinedButton.styleFrom(
-          minimumSize: minimumSize,
-          padding: padding,
-          shape: shape,
-          foregroundColor: palette.textPrimary,
-          side: BorderSide(color: palette.borderStrong),
+        style: ProfileActionBar.neutralStyle(context).merge(
+          OutlinedButton.styleFrom(minimumSize: minimumSize, padding: padding),
         ),
         child: Text(
           copy.text('Awards', 'Nagrody'),
@@ -547,50 +638,66 @@ class _ProfileContent extends StatelessWidget {
         ProfileMeasuredSliverPadding(
           maxWidth: ResponsiveContentWidth.feed.maxWidth,
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 124),
+          // From a 900 pt column every section takes the header cluster's
+          // 640 pt measure, start-aligned under it (the banner stays full
+          // width); phones and tablets use the whole column.
           sliver: SliverList.list(
             children: [
-              ProfileVoiceIdentityCard(profile: profile),
+              ProfileMeasure(child: ProfileVoiceIdentityCard(profile: profile)),
               if (profile.accountType != AccountType.personal)
-                CreatorPinnedMomentCard(
-                  creatorId: profile.uid,
-                  service: creatorPinnedPostService,
-                  outerPadding: const EdgeInsets.only(top: 12),
-                  onOpen: (moment) => Navigator.of(context).push<void>(
-                    MaterialPageRoute<void>(
-                      builder: (_) => CreatorPinnedMomentScreen(moment: moment),
+                ProfileMeasure(
+                  child: CreatorPinnedMomentCard(
+                    creatorId: profile.uid,
+                    service: creatorPinnedPostService,
+                    momentService: pinnedMomentService,
+                    playerFactory: pinnedPlayerFactory,
+                    outerPadding: const EdgeInsets.only(top: 12),
+                    onOpen: (moment) => Navigator.of(context).push<void>(
+                      MaterialPageRoute<void>(
+                        builder: (_) =>
+                            CreatorPinnedMomentScreen(moment: moment),
+                      ),
                     ),
                   ),
                 ),
               const SizedBox(height: 12),
-              ProfileJourneyCard(
-                communitiesCount: servers.length,
-                messageCount: profile.messageCount,
-                voiceMinutes: profile.voiceMinutes,
-                roomCount: servers
-                    .where((server) => server.ownerId == profile.uid)
-                    .length,
+              ProfileMeasure(
+                child: ProfileJourneyCard(
+                  communitiesCount: servers.length,
+                  messageCount: profile.messageCount,
+                  voiceMinutes: profile.voiceMinutes,
+                  roomCount: servers
+                      .where((server) => server.ownerId == profile.uid)
+                      .length,
+                ),
               ),
               const SizedBox(height: 12),
-              _ServersCard(
-                servers: servers,
-                currentUid: profile.uid,
-                isLoading: serversLoading,
-                onOpen: onOpenServer,
+              ProfileMeasure(
+                child: _ServersCard(
+                  servers: servers,
+                  currentUid: profile.uid,
+                  isLoading: serversLoading,
+                  onOpen: onOpenServer,
+                ),
               ),
               const SizedBox(height: 12),
-              _AchievementsCard(
-                profile: profile,
-                unlocked: unlocked,
-                onTap: onAchievements,
+              ProfileMeasure(
+                child: _AchievementsCard(
+                  profile: profile,
+                  unlocked: unlocked,
+                  onTap: onAchievements,
+                ),
               ),
               const SizedBox(height: 12),
-              _AccountCard(
-                onEdit: onEdit,
-                showSuperAdminActivation: showSuperAdminActivation,
-                isActivatingSuperAdmin: isActivatingSuperAdmin,
-                currentRole: currentRole,
-                onActivateSuperAdmin: onActivateSuperAdmin,
-                onLogout: onLogout,
+              ProfileMeasure(
+                child: _AccountCard(
+                  onEdit: onEdit,
+                  showSuperAdminActivation: showSuperAdminActivation,
+                  isActivatingSuperAdmin: isActivatingSuperAdmin,
+                  currentRole: currentRole,
+                  onActivateSuperAdmin: onActivateSuperAdmin,
+                  onLogout: onLogout,
+                ),
               ),
             ],
           ),
@@ -847,6 +954,13 @@ class _CommunityTile extends StatelessWidget {
   static const double _face = 52;
   static const double _width = 104;
 
+  /// The tile widens with the reader's text (up to 1.75×), so an enlarged
+  /// name and member count keep whole words instead of breaking mid-word;
+  /// the rail scrolls sideways for the rest.
+  static double width(BuildContext context) =>
+      _width *
+      (MediaQuery.textScalerOf(context).scale(13) / 13).clamp(1.0, 1.75);
+
   /// The rail's height: the face, then a name line and a two-line meta at
   /// the ambient text scale, so enlarged text grows the rail, never clips it.
   static double extent(BuildContext context) {
@@ -867,10 +981,10 @@ class _CommunityTile extends StatelessWidget {
       label: '$name, $badge, $subtitle',
       excludeSemantics: true,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppRadius.tile,
         onTap: onTap,
         child: SizedBox(
-          width: _width,
+          width: width(context),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
             child: Column(
@@ -888,9 +1002,9 @@ class _CommunityTile extends StatelessWidget {
                           child: Container(
                             padding: const EdgeInsets.all(2),
                             decoration: BoxDecoration(
-                              color: palette.surface,
+                              color: palette.surfaceRaised,
                               shape: BoxShape.circle,
-                              border: Border.all(color: palette.border),
+                              border: Border.all(color: palette.hairline),
                             ),
                             child: const Icon(
                               Icons.workspace_premium_rounded,
@@ -986,18 +1100,11 @@ class _AchievementsCard extends StatelessWidget {
               copy.text('Next: ${next.title}', 'Następny: ${next.title}'),
               style: TextStyle(
                 color: palette.textPrimary,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(99),
-              child: LinearProgressIndicator(
-                value: progress,
-                minHeight: 8,
-                backgroundColor: palette.surfaceSunken,
-              ),
-            ),
+            _ProgressPill(value: progress),
             const SizedBox(height: 7),
             Text(
               copy.text(
@@ -1081,70 +1188,66 @@ class _SuperAdminOption extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     return Column(
       children: [
-        ListTile(
-          onTap: isActivated || isLoading ? null : onTap,
-          // Flat tonal tile: no decorative gradient on a list row.
-          leading: Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: colors.primaryContainer,
-              borderRadius: BorderRadius.circular(12),
+        _RowFocusRing(
+          child: ListTile(
+            onTap: isActivated || isLoading ? null : onTap,
+            // Focus is the ring (R16), not a wash spilling past it.
+            focusColor: Colors.transparent,
+            minTileHeight: _Option.rowHeight,
+            horizontalTitleGap: _Option.titleGap,
+            leading: const _GlyphBox(icon: Icons.admin_panel_settings_rounded),
+            title: Text(
+              isActivated
+                  ? copy.text('SuperAdmin active', 'SuperAdmin aktywny')
+                  : copy.text('Activate SuperAdmin', 'Aktywuj SuperAdmin'),
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-            child: Icon(
-              Icons.admin_panel_settings_rounded,
-              color: colors.onPrimaryContainer,
-              size: 22,
+            subtitle: Text(
+              isActivated
+                  ? copy.text('Role: $currentRole', 'Rola: $currentRole')
+                  : copy.text(
+                      'Securely activate the owner role for this account.',
+                      'Bezpiecznie aktywuj rolę właściciela dla tego konta.',
+                    ),
+              style: TextStyle(color: palette.textSecondary, fontSize: 12),
             ),
-          ),
-          title: Text(
-            isActivated
-                ? copy.text('SuperAdmin active', 'SuperAdmin aktywny')
-                : copy.text('Activate SuperAdmin', 'Aktywuj SuperAdmin'),
-            style: TextStyle(
-              color: palette.textPrimary,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          subtitle: Text(
-            isActivated
-                ? copy.text('Role: $currentRole', 'Rola: $currentRole')
-                : copy.text(
-                    'Securely activate the owner role for this account.',
-                    'Bezpiecznie aktywuj rolę właściciela dla tego konta.',
+            trailing: isLoading
+                ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
+                  )
+                : Icon(
+                    isActivated
+                        ? Icons.verified_rounded
+                        : Icons.chevron_right_rounded,
+                    color: isActivated
+                        ? palette.interactiveForeground
+                        : palette.textTertiary,
                   ),
-            style: TextStyle(color: palette.textSecondary, fontSize: 12),
           ),
-          trailing: isLoading
-              ? const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2.5),
-                )
-              : Icon(
-                  isActivated
-                      ? Icons.verified_rounded
-                      : Icons.chevron_right_rounded,
-                  color: isActivated
-                      ? Theme.of(context).colorScheme.primary
-                      : palette.textTertiary,
-                ),
         ),
-        Divider(height: 1, indent: 58, endIndent: 16, color: palette.border),
+        const _RowDivider(),
       ],
     );
   }
 }
 
-/// One flat profile section: a single layer with a 1 px `palette.border`
-/// hairline and the Slim card radius (12), no gradient and no shadow.
+/// One profile section: the R2 block (refine-look §3) — the top-lit fill, a
+/// `hairline` edge, radius 20, Pearl's soft lift; a flat `surface` with a
+/// `borderStrong` edge under high contrast. The same finish as the header's
+/// stats band, so 12 and 20 never sit together on the page.
 ///
-/// It is a [Material] (not a coloured box) so the ink of the rows and taps
-/// inside it — the account list, a server face, the whole awards panel —
-/// paints on the section itself instead of underneath its fill.
+/// Its content sits on a transparent [Material], so the ink of the rows and
+/// taps inside it — the account list, a server face — paints on the section
+/// itself, above its fill. A section with [onTap] (the awards panel) is one
+/// button with the block's hover, press and focus states.
 class _Panel extends StatelessWidget {
   const _Panel({
     required this.child,
@@ -1157,21 +1260,13 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final body = Padding(padding: padding, child: child);
-    return Material(
-      color: palette.surface,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: palette.border),
+    return SizedBox(
+      width: double.infinity,
+      child: YoCard(
+        padding: padding,
+        onTap: onTap,
+        child: Material(type: MaterialType.transparency, child: child),
       ),
-      child: onTap == null
-          ? body
-          : InkWell(
-              onTap: onTap,
-              child: SizedBox(width: double.infinity, child: body),
-            ),
     );
   }
 }
@@ -1185,36 +1280,123 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    return Row(
-      children: [
-        Icon(icon, color: palette.interactiveForeground, size: 20),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            title,
-            style: TextStyle(
-              color: palette.textPrimary,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
-        if (action != null)
-          Text(
-            action!,
+    final heading = Text(
+      title,
+      style: TextStyle(
+        color: palette.textPrimary,
+        fontSize: 16,
+        height: 1.25,
+        fontWeight: FontWeight.w700,
+        letterSpacing: -.25,
+      ),
+    );
+    final action = this.action == null
+        ? null
+        : Text(
+            this.action!,
             style: TextStyle(
               color: palette.textSecondary,
               fontSize: 13,
               fontWeight: FontWeight.w600,
+              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+            ),
+          );
+    final titleRow = Row(
+      children: [
+        Icon(icon, color: palette.interactiveForeground, size: 20),
+        const SizedBox(width: 10),
+        Expanded(child: heading),
+        if (action != null && !ProfileLayout.largeText(context)) action,
+      ],
+    );
+    // At large text the count moves under the title, so the title keeps
+    // whole words instead of being squeezed beside it.
+    if (action == null || !ProfileLayout.largeText(context)) return titleRow;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        titleRow,
+        const SizedBox(height: 2),
+        Padding(
+          padding: const EdgeInsetsDirectional.only(start: 30),
+          child: action,
+        ),
+      ],
+    );
+  }
+}
+
+/// The next achievement's progress: an 8 px pill track with a
+/// `primaryAction` fill that grows once, over `entrance`, from empty to the
+/// real value (and on to a new value when it changes). The growth is
+/// decorative motion ([AppMotion.decorative]): none under Reduce Motion,
+/// accessible navigation or a paused [TickerMode]. The section keeps itself
+/// alive in the page's lazy list, so scrolling it away and back never
+/// replays the growth. The copy below it carries the numbers for screen
+/// readers; the bar adds the percentage.
+class _ProgressPill extends StatefulWidget {
+  const _ProgressPill({required this.value});
+
+  final double value;
+
+  @override
+  State<_ProgressPill> createState() => _ProgressPillState();
+}
+
+class _ProgressPillState extends State<_ProgressPill>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    final value = widget.value;
+    final palette = context.appPalette;
+    final scheme = Theme.of(context).colorScheme;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final clamped = value.clamp(0.0, 1.0);
+    return Semantics(
+      value: '${(clamped * 100).round()}%',
+      child: ExcludeSemantics(
+        child: Container(
+          key: const ValueKey('profile-achievement-progress'),
+          height: 8,
+          decoration: BoxDecoration(
+            color: palette.surfaceSunken,
+            borderRadius: AppRadius.pill,
+            border: highContrast
+                ? Border.all(color: palette.borderStrong)
+                : null,
+          ),
+          child: TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0, end: clamped),
+            duration: AppMotion.decorative(context)
+                ? AppMotion.entrance
+                : Duration.zero,
+            curve: AppMotion.entranceCurve,
+            builder: (context, progress, _) => FractionallySizedBox(
+              alignment: AlignmentDirectional.centerStart,
+              widthFactor: progress,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: AppGradients.primaryAction(scheme),
+                  borderRadius: AppRadius.pill,
+                ),
+              ),
             ),
           ),
-      ],
+        ),
+      ),
     );
   }
 }
 
 enum _IdentityChipTone { external, voice, learning }
 
+/// One identity detail as a neutral pill (refine-look §8.5): `glass` in
+/// Dark, a white fill in Pearl, a `hairline` edge and 12.5 w600 page ink.
+/// The tone lives only on the glyph.
 class _Chip extends StatelessWidget {
   const _Chip(this.label, this.icon, {required this.tone});
   final String label;
@@ -1224,34 +1406,32 @@ class _Chip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final theme = Theme.of(context);
     final colors = Theme.of(context).colorScheme;
+    final highContrast = MediaQuery.highContrastOf(context);
     final accent = switch (tone) {
       _IdentityChipTone.external => colors.tertiary,
       _IdentityChipTone.voice => palette.interactiveForeground,
       _IdentityChipTone.learning =>
-        theme.brightness == Brightness.dark
+        palette.isDark
             ? AppColors.vipGold
             : Color.lerp(AppColors.vipGold, palette.textPrimary, .62)!,
     };
-    final surface = Color.alphaBlend(
-      accent.withValues(
-        alpha: theme.brightness == Brightness.dark ? .055 : .03,
-      ),
-      palette.surfaceRaised,
-    );
-    final border = Color.alphaBlend(
-      accent.withValues(alpha: theme.brightness == Brightness.dark ? .18 : .12),
-      palette.border,
-    );
+    final Color surface;
+    if (highContrast) {
+      surface = palette.surface;
+    } else {
+      surface = palette.isDark ? palette.glass : palette.surfaceRaised;
+    }
     final usesLargeText = MediaQuery.textScalerOf(context).scale(12.5) >= 18;
     return Container(
       key: ValueKey('profile-identity-chip-$label'),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: surface,
-        borderRadius: BorderRadius.circular(99),
-        border: Border.all(color: border),
+        borderRadius: AppRadius.pill,
+        border: Border.all(
+          color: highContrast ? palette.borderStrong : palette.hairline,
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1283,6 +1463,83 @@ class _Chip extends StatelessWidget {
   }
 }
 
+/// A 40 px R16 glyph box: radius 12, the scheme's container pair as a soft
+/// diagonal, the glyph in `interactiveForeground`. [danger] keeps the
+/// logout row in error ink on the danger surface.
+class _GlyphBox extends StatelessWidget {
+  const _GlyphBox({required this.icon, this.danger = false});
+
+  final IconData icon;
+  final bool danger;
+
+  static const double size = 40;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final scheme = Theme.of(context).colorScheme;
+    final highContrast = MediaQuery.highContrastOf(context);
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: danger
+          ? BoxDecoration(
+              color: palette.dangerSurface,
+              borderRadius: AppRadius.card,
+            )
+          : AppFinish.glyphBox(scheme, highContrast: highContrast),
+      child: Icon(
+        icon,
+        size: 22,
+        color: danger ? scheme.error : palette.interactiveForeground,
+      ),
+    );
+  }
+}
+
+/// An account row's keyboard focus (refine-look R16): a 2 px `focus` ring
+/// at radius 16, painted over the row so nothing shifts, 4 px inside the
+/// row so it sits concentric with the block's radius-20 clip. The rows
+/// drop their focus wash (a full-bleed rectangle that spilled past the
+/// ring); hover and press keep theirs.
+class _RowFocusRing extends StatelessWidget {
+  const _RowFocusRing({required this.child});
+
+  final Widget child;
+
+  static const double inset = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    return ProfileFocusRing(
+      key: const ValueKey('profile-account-row-focus-ring'),
+      color: context.appPalette.focus,
+      borderRadius: const BorderRadius.all(Radius.circular(16)),
+      inset: const EdgeInsets.all(inset),
+      child: child,
+    );
+  }
+}
+
+/// The hairline between account rows, starting under the row titles.
+class _RowDivider extends StatelessWidget {
+  const _RowDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return Divider(
+      height: 1,
+      indent: _Option.dividerIndent,
+      endIndent: 16,
+      color: MediaQuery.highContrastOf(context)
+          ? palette.borderStrong
+          : palette.hairline,
+    );
+  }
+}
+
 class _Option extends StatelessWidget {
   const _Option({
     required this.icon,
@@ -1297,6 +1554,12 @@ class _Option extends StatelessWidget {
   final bool destructive;
   final bool showDivider;
 
+  /// Account rows (refine-look §8.5): 64 px tall, the title 12 px after a
+  /// 40 px glyph box, so rows and their hairlines start at 68.
+  static const double rowHeight = 64;
+  static const double titleGap = 12;
+  static const double dividerIndent = 16 + _GlyphBox.size + titleGap;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
@@ -1304,48 +1567,105 @@ class _Option extends StatelessWidget {
     final color = destructive ? colors.error : palette.textPrimary;
     return Column(
       children: [
-        ListTile(
-          onTap: onTap,
-          leading: Icon(
-            icon,
-            color: destructive ? colors.error : colors.primary,
-          ),
-          title: Text(
-            title,
-            style: TextStyle(color: color, fontWeight: FontWeight.w800),
-          ),
-          trailing: Icon(
-            Icons.chevron_right_rounded,
-            color: palette.textTertiary,
+        _RowFocusRing(
+          child: ListTile(
+            onTap: onTap,
+            // Focus is the ring (R16), not a wash spilling past it.
+            focusColor: Colors.transparent,
+            minTileHeight: rowHeight,
+            horizontalTitleGap: titleGap,
+            leading: _GlyphBox(icon: icon, danger: destructive),
+            title: Text(
+              title,
+              style: TextStyle(
+                color: color,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            trailing: Icon(
+              Icons.chevron_right_rounded,
+              color: palette.textTertiary,
+            ),
           ),
         ),
-        if (showDivider)
-          Divider(height: 1, indent: 58, endIndent: 16, color: palette.border),
+        if (showDivider) const _RowDivider(),
       ],
     );
   }
 }
 
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message});
+/// The page's error state: the shared [YoErrorState] (a plain-language
+/// explanation and Try again) on the page canvas, with Back when the page
+/// was pushed as a route. Loading keeps its spinner; nothing here is a
+/// placeholder for data that did not arrive.
+///
+/// Public for the same reason as [ProfileScreenView]: the capture harness
+/// renders this exact widget.
+class ProfileErrorView extends StatelessWidget {
+  const ProfileErrorView({required this.message, this.onRetry, super.key});
   final String message;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     return Scaffold(
+      key: const ValueKey('profile-error'),
       backgroundColor: palette.background,
       body: YoPageBackground(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text(
-              message,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: palette.textPrimary),
+        // The populated page's canvas, so Try again → loaded changes only
+        // the content, never the atmosphere.
+        decoration: ProfileLayout.canvas(context),
+        child: _WithBack(
+          child: Center(
+            child: SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: ProfileLayout.wideMeasure,
+                ),
+                child: YoErrorState(message: message, onRetry: onRetry),
+              ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The loading and error states' Back, when the profile was pushed as a
+/// route (in the desktop shell's content slot it is not, and the shell
+/// owns navigation).
+class _WithBack extends StatelessWidget {
+  const _WithBack({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
+    final canPop = Navigator.of(context).canPop();
+    return SafeArea(
+      child: Stack(
+        children: [
+          Positioned.fill(child: child),
+          if (canPop)
+            PositionedDirectional(
+              top: 4,
+              start: 6,
+              child: IconButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                tooltip: copy.text('Back', 'Wstecz'),
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                icon: Icon(
+                  Icons.arrow_back_rounded,
+                  color: palette.textPrimary,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

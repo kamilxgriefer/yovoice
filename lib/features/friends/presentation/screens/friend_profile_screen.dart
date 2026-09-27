@@ -32,7 +32,9 @@ import 'package:yovoice/features/profile/data/services/profile_media_service.dar
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_layout.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
+import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -588,27 +590,19 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             final isFollowing = followSnapshot.data ?? false;
             final palette = context.appPalette;
             final colors = Theme.of(context).colorScheme;
-            final isDark = Theme.of(context).brightness == Brightness.dark;
             final copy = AppLocalizations.of(context);
             return Scaffold(
               backgroundColor: palette.background,
               body: YoPageBackground(
                 key: const ValueKey('friend-profile-background'),
-                decoration: BoxDecoration(
-                  gradient: RadialGradient(
-                    center: Alignment(-.8, -1),
-                    radius: 1.3,
-                    colors: [
-                      Color.lerp(
-                        palette.backgroundTop,
-                        colors.primary,
-                        isDark ? .18 : .055,
-                      )!,
-                      palette.backgroundTop,
-                      palette.background,
-                    ],
-                  ),
-                ),
+                // Refine-look R1: the one canvas radial, the same getter the
+                // own profile paints, so both profiles share one canvas;
+                // omitted under high contrast.
+                decoration: MediaQuery.highContrastOf(context)
+                    ? BoxDecoration(color: palette.background)
+                    : BoxDecoration(
+                        gradient: palette.canvasGlow(colors.primary),
+                      ),
                 // The banner is the header's full-bleed background: it runs
                 // under the status bar and edge to edge (landscape insets
                 // included), so only the bottom inset stays a SafeArea and
@@ -654,8 +648,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                                     key: const ValueKey(
                                       'friend-profile-bio-frame',
                                     ),
+                                    // The profile's reading measure, so the
+                                    // bio never runs past the blocks.
                                     constraints: const BoxConstraints(
-                                      maxWidth: 680,
+                                      maxWidth: ProfileLayout.wideMeasure,
                                     ),
                                     child: Text(
                                       profile!.bio,
@@ -673,66 +669,72 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                               // Remove / Block at the foot are a friend's
                               // controls; a non-friend or a person already
                               // blocked reaches Block and Report from More.
+                              // On the wide layout they centre under the
+                              // 640 column, not under the 880 list measure.
                               if (_isFriends) ...[
                                 const SizedBox(height: 20),
-                                TextButton.icon(
-                                  onPressed: _removingFriend
-                                      ? null
-                                      : _confirmRemoveFriend,
-                                  icon: _removingFriend
-                                      ? const SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        )
-                                      : const Icon(
-                                          Icons.person_remove_outlined,
-                                        ),
-                                  label: Text(
-                                    _removingFriend
-                                        ? copy.text(
-                                            'Removing...',
-                                            'Usuwanie...',
+                                ProfileMeasure(
+                                  child: TextButton.icon(
+                                    onPressed: _removingFriend
+                                        ? null
+                                        : _confirmRemoveFriend,
+                                    icon: _removingFriend
+                                        ? const SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
                                           )
-                                        : copy.text(
-                                            'Remove friend',
-                                            'Usuń ze znajomych',
+                                        : const Icon(
+                                            Icons.person_remove_outlined,
                                           ),
-                                  ),
-                                  style: TextButton.styleFrom(
-                                    foregroundColor: palette.dangerForeground,
-                                    disabledForegroundColor:
-                                        palette.textTertiary,
+                                    label: Text(
+                                      _removingFriend
+                                          ? copy.text(
+                                              'Removing...',
+                                              'Usuwanie...',
+                                            )
+                                          : copy.text(
+                                              'Remove friend',
+                                              'Usuń ze znajomych',
+                                            ),
+                                    ),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: palette.dangerForeground,
+                                      disabledForegroundColor:
+                                          palette.textTertiary,
+                                    ),
                                   ),
                                 ),
-                                TextButton.icon(
-                                  onPressed: _blocking ? null : _confirmBlock,
-                                  icon: _blocking
-                                      ? const SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        )
-                                      : const Icon(Icons.block_rounded),
-                                  label: Text(
-                                    _blocking
-                                        ? copy.text(
-                                            'Blocking...',
-                                            'Blokowanie...',
+                                ProfileMeasure(
+                                  child: TextButton.icon(
+                                    onPressed: _blocking ? null : _confirmBlock,
+                                    icon: _blocking
+                                        ? const SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
                                           )
-                                        : copy.text(
-                                            'Block user',
-                                            'Zablokuj użytkownika',
-                                          ),
-                                  ),
-                                  style: TextButton.styleFrom(
-                                    foregroundColor: palette.dangerForeground,
-                                    disabledForegroundColor:
-                                        palette.textTertiary,
+                                        : const Icon(Icons.block_rounded),
+                                    label: Text(
+                                      _blocking
+                                          ? copy.text(
+                                              'Blocking...',
+                                              'Blokowanie...',
+                                            )
+                                          : copy.text(
+                                              'Block user',
+                                              'Zablokuj użytkownika',
+                                            ),
+                                    ),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: palette.dangerForeground,
+                                      disabledForegroundColor:
+                                          palette.textTertiary,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -854,14 +856,15 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           color: context.appPalette.background,
           border: Border.all(color: context.appPalette.borderStrong),
         ),
+        // R10, the same finish as the own profile's hero avatar.
         child: UserAvatar(
           radius: radius,
           userId: widget.friend.id,
           mediaRevision: revision,
           mediaService: _profileMediaService,
           displayName: name,
-          backgroundColor: context.appPalette.surfaceSunken,
           premium: profile?.premiumIdentity ?? widget.friend.premiumIdentity,
+          finish: UserAvatarFinish.brand,
         ),
       ),
     );
@@ -872,6 +875,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   /// announced) as a unit, the way the own profile groups them under its
   /// header.
   Widget _profileBody(UserProfile? profile) {
+    // The blocks join the stats' and actions' measure once this screen is
+    // in its wide layout, on the same rule as the own profile
+    // (refine-look §8.5 wide measure, ProfileLayout.wideFromWidth).
+    Widget measure(Widget child) => ProfileMeasure(child: child);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -880,24 +887,28 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         Align(
           alignment: AlignmentDirectional.centerStart,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
+            constraints: const BoxConstraints(
+              maxWidth: ProfileLayout.wideMeasure,
+            ),
             child: _socialStats(profile),
           ),
         ),
-        _mutualFriends(),
+        measure(_mutualFriends()),
         if (profile != null && profile.accountType != AccountType.personal)
-          CreatorPinnedMomentCard(
-            creatorId: widget.friend.id,
-            service: widget.creatorPinnedPostService,
-            outerPadding: const EdgeInsets.only(top: 12),
-            onOpen: (moment) => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => CreatorPinnedMomentScreen(moment: moment),
+          measure(
+            CreatorPinnedMomentCard(
+              creatorId: widget.friend.id,
+              service: widget.creatorPinnedPostService,
+              outerPadding: const EdgeInsets.only(top: 12),
+              onOpen: (moment) => Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) => CreatorPinnedMomentScreen(moment: moment),
+                ),
               ),
             ),
           ),
         const SizedBox(height: 12),
-        _voiceIdentity(profile),
+        measure(_voiceIdentity(profile)),
       ],
     );
   }
@@ -952,8 +963,8 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                   color: palette.textPrimary,
                   fontSize: isWide ? 26 : 22,
                   height: 1.15,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -.3,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: isWide ? -.6 : -.45,
                 ),
               ),
             ),
@@ -961,10 +972,12 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
               const SizedBox(height: 2),
               Text(
                 '@${profile!.username.replaceAll(' ', '').toLowerCase()}',
+                // The own profile header's handle, so both read alike.
                 style: TextStyle(
                   color: palette.textSecondary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
+                  fontSize: isWide ? 14 : 13,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: .1,
                 ),
               ),
             ],
@@ -972,40 +985,47 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             _status(),
           ],
         );
+        // The layout decisions above read the whole hero column; the row
+        // itself sits on the page's reading measure, so a trailing Follow
+        // ends on the same right edge as the stats, actions and blocks.
         if (stack) {
-          return Column(
+          return ProfileMeasure(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _avatar(profile, radius: radius),
+                const SizedBox(height: 12),
+                details,
+              ],
+            ),
+          );
+        }
+        return ProfileMeasure(
+          child: Row(
+            // Top-anchored: the row starts on the hero's text line, so a long
+            // name grows downward instead of pushing the avatar out of the hero.
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _avatar(profile, radius: radius),
-              const SizedBox(height: 12),
-              details,
-            ],
-          );
-        }
-        return Row(
-          // Top-anchored: the row starts on the hero's text line, so a long
-          // name grows downward instead of pushing the avatar out of the hero.
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _avatar(profile, radius: radius),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Padding(
-                padding: EdgeInsets.only(top: nameOffset),
-                child: details,
-              ),
-            ),
-            if (trailingFollow) ...[
-              const SizedBox(width: 12),
-              Padding(
-                padding: EdgeInsets.only(top: nameOffset),
-                child: ProfileActionBar(
-                  key: const ValueKey('friend-profile-actions'),
-                  primary: _followButton(isFollowing),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.only(top: nameOffset),
+                  child: details,
                 ),
               ),
+              if (trailingFollow) ...[
+                const SizedBox(width: 12),
+                Padding(
+                  padding: EdgeInsets.only(top: nameOffset),
+                  child: ProfileActionBar(
+                    key: const ValueKey('friend-profile-actions'),
+                    primary: _followButton(isFollowing),
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         );
       },
     );
@@ -1019,7 +1039,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     Widget measure(Widget child) => Align(
       alignment: AlignmentDirectional.centerStart,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640),
+        constraints: const BoxConstraints(maxWidth: ProfileLayout.wideMeasure),
         child: child,
       ),
     );
@@ -1412,24 +1432,24 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           return const SizedBox.shrink();
         }
 
-        return Container(
+        return YoCard(
           margin: const EdgeInsets.only(top: 12),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: palette.border),
-          ),
           child: Row(
             children: [
+              // Each face overlaps the next by 8 px only, so every initial
+              // stays whole beside its neighbour's ring.
               SizedBox(
-                width: 20 + (summary.sample.length.clamp(0, 4) * 14),
-                height: 28,
+                width:
+                    _MutualFriendAvatar.extent +
+                    (summary.sample.length.clamp(1, 4) - 1) *
+                        _MutualFriendAvatar.step,
+                height: _MutualFriendAvatar.extent,
                 child: Stack(
                   children: [
                     for (var i = 0; i < summary.sample.length.clamp(0, 4); i++)
-                      Positioned(
-                        left: i * 14.0,
+                      PositionedDirectional(
+                        start: i * _MutualFriendAvatar.step,
                         child: _MutualFriendAvatar(
                           friend: summary.sample[i],
                           mediaService: _profileMediaService,
@@ -1462,8 +1482,6 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   }
 
   Widget _followButton(bool isFollowing) {
-    final colors = Theme.of(context).colorScheme;
-    final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
     return ConstrainedBox(
       constraints: const BoxConstraints(
@@ -1472,17 +1490,14 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       child: FilledButton.icon(
         key: const ValueKey('friend-profile-follow-button'),
         onPressed: _changingFollow ? null : () => _toggleFollow(isFollowing),
-        style: FilledButton.styleFrom(
-          // Tonal in both states: Zadzwoń is the screen's one violet accent
-          // (ADR-209). The icon still tells Follow from Following.
-          backgroundColor: colors.secondaryContainer,
-          foregroundColor: colors.onSecondaryContainer,
-          disabledBackgroundColor: palette.surfaceMuted,
-          disabledForegroundColor: palette.textTertiary,
-          minimumSize: const Size(0, ProfileActionBar.buttonHeight),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(ProfileActionBar.radius),
+        // R7 neutral in both states: Zadzwoń is the screen's one violet
+        // fill and its one lift (the light budget), so Follow is glass, a
+        // control hairline and page ink. The icon still tells Follow from
+        // Following.
+        style: ProfileActionBar.neutralStyle(context).merge(
+          FilledButton.styleFrom(
+            minimumSize: const Size(0, ProfileActionBar.buttonHeight),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
           ),
         ),
         icon: _changingFollow
@@ -1518,15 +1533,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       ...?profile?.spokenLanguages,
       ...?profile?.learningLanguages,
     }.toList();
-    return Container(
-      width: double.infinity,
+    // Refine-look R2: the same block as the own profile's Voice identity.
+    return YoCard(
+      key: const ValueKey('friend-profile-voice-identity'),
       padding: const EdgeInsets.all(16),
-      // Slim: one flat layer, 1 px hairline, the card radius 12.
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: palette.border),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1544,14 +1554,16 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 16,
-                    fontWeight: FontWeight.w800,
+                    height: 1.25,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -.25,
                   ),
                 ),
               ),
             ],
           ),
           if (vibe.isNotEmpty) ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 13),
             ProfileVibeHeadline(
               key: const ValueKey('friend-profile-vibe'),
               vibe: vibe,
@@ -1592,6 +1604,9 @@ class _ProfileLoading extends StatelessWidget {
       key: const ValueKey('friend-profile-loading'),
       backgroundColor: context.appPalette.background,
       body: YoPageBackground(
+        // The populated profile's canvas (R1), so arriving data changes
+        // only the content.
+        decoration: ProfileLayout.canvas(context),
         child: Center(
           child: CircularProgressIndicator(
             color: context.appPalette.interactiveForeground,
@@ -1614,6 +1629,8 @@ class _UnavailableProfile extends StatelessWidget {
     return Scaffold(
       backgroundColor: palette.background,
       body: YoPageBackground(
+        // The same canvas as every other profile state.
+        decoration: ProfileLayout.canvas(context),
         child: SafeArea(
           child: ResponsiveContentFrame(
             width: ResponsiveContentWidth.list,
@@ -1666,7 +1683,9 @@ class _UnavailableProfile extends StatelessWidget {
                               style: TextStyle(
                                 color: palette.textPrimary,
                                 fontSize: 22,
-                                fontWeight: FontWeight.w900,
+                                height: 1.15,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -.45,
                               ),
                             ),
                             const SizedBox(height: 8),
@@ -1702,12 +1721,18 @@ class _MutualFriendAvatar extends StatelessWidget {
   final SuggestedFriend friend;
   final ProfileMediaService? mediaService;
 
+  /// The face with its 2 px ring in the block's own colour.
+  static const double extent = 28;
+
+  /// The distance between two faces in the stack (an 8 px overlap).
+  static const double step = 20;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     return Container(
-      width: 28,
-      height: 28,
+      width: extent,
+      height: extent,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: palette.surfaceSunken,
@@ -1721,7 +1746,7 @@ class _MutualFriendAvatar extends StatelessWidget {
         mediaRevision: friend.profileUpdatedAt,
         mediaService: mediaService,
         displayName: friend.displayName,
-        backgroundColor: palette.surfaceSunken,
+        finish: UserAvatarFinish.brand,
       ),
     );
   }

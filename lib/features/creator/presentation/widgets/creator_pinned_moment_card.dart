@@ -1,10 +1,14 @@
 import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/creator/data/models/creator_pinned_post.dart';
 import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -12,11 +16,19 @@ import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.d
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/cards/yo_card.dart';
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 
 // Slim redesign (phase 5): the card's three inline hexes (accent 0xFFB932FF,
 // surface 0xFF17101F, muted 0xFFA99DB3) and its dark gradient became palette
-// roles, so the pin reads as one flat profile section in Dark and in Pearl.
-// Accent: `interactiveForeground`; surface: `surface`; muted: `textSecondary`.
+// roles. Accent: `interactiveForeground`; muted: `textSecondary`.
+//
+// Refine-look §8.5: the card is an R2 block (`YoCard`: top-lit fill,
+// hairline, radius 20, Pearl's lift) and its play control is the R14 voice
+// bead (`YoGradientDisc`, 52 px, 48 compact) — the logo's glass, lit only
+// while this Moment actually plays. The card itself takes no tint: the
+// profile's colour block is the vibe sticker (the light budget).
 
 /// Reusable public-profile surface for a Creator's one pinned Voice Moment.
 /// It renders nothing when the exact-id read is missing, malformed, expired,
@@ -42,7 +54,8 @@ class CreatorPinnedMomentCard extends StatefulWidget {
   final bool compact;
   final EdgeInsetsGeometry outerPadding;
 
-  @visibleForTesting
+  /// Test / preview seam for the player (the profile capture harness plays
+  /// the pin through it). Production leaves it null.
   final AudioPlayer Function()? playerFactory;
 
   @visibleForTesting
@@ -124,108 +137,111 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
         }
         final moment = value.moment;
         final palette = context.appPalette;
-        final content = Container(
+        final content = SizedBox(
           width: double.infinity,
-          padding: EdgeInsets.all(widget.compact ? 12 : 16),
-          decoration: BoxDecoration(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: palette.border),
-          ),
-          child: Row(
-            children: [
-              _PinnedMomentPlayButton(
-                key: _playButtonKey,
-                moment: moment,
-                momentService: widget.momentService,
-                playerFactory: widget.playerFactory,
-              ),
-              const SizedBox(width: 13),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      copy.text(
-                        'PINNED VOICE MOMENT',
-                        'PRZYPIĘTY VOICE MOMENT',
-                      ),
-                      style: TextStyle(
-                        color: palette.interactiveForeground,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: .88,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      moment.caption.trim().isEmpty
-                          ? copy.text('Voice Moment', 'Voice Moment')
-                          : moment.caption,
-                      maxLines: widget.compact ? 1 : 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        height: 1.25,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 4,
-                      children: [
-                        _MomentMeta(
-                          icon: Icons.graphic_eq_rounded,
-                          label: moment.durationLabel,
-                          semanticLabel: copy.text(
-                            'Duration ${moment.durationLabel}',
-                            'Czas trwania: ${moment.durationLabel}',
-                          ),
-                        ),
-                        _MomentMeta(
-                          icon: Icons.favorite_border_rounded,
-                          label: '${moment.likeCount}',
-                          semanticLabel: _localizedLikeCount(
-                            moment.likeCount,
-                            copy,
-                          ),
-                        ),
-                        _MomentMeta(
-                          icon: Icons.chat_bubble_outline_rounded,
-                          label: '${moment.commentCount}',
-                          semanticLabel: _localizedCommentCount(
-                            moment.commentCount,
-                            copy,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+          child: YoCard(
+            padding: EdgeInsets.all(widget.compact ? 12 : 16),
+            child: Row(
+              children: [
+                _PinnedMomentPlayButton(
+                  key: _playButtonKey,
+                  moment: moment,
+                  momentService: widget.momentService,
+                  playerFactory: widget.playerFactory,
+                  compact: widget.compact,
                 ),
-              ),
-              if (widget.onOpen != null) ...[
-                const SizedBox(width: 8),
-                Semantics(
-                  button: true,
-                  label: copy.text(
-                    'Open pinned Voice Moment details',
-                    'Otwórz szczegóły przypiętego materiału Voice Moment',
-                  ),
-                  onTap: () => _openDetails(moment),
-                  excludeSemantics: true,
-                  child: IconButton(
-                    onPressed: () => _openDetails(moment),
-                    style: IconButton.styleFrom(
-                      minimumSize: const Size(48, 48),
-                      foregroundColor: palette.textSecondary,
-                    ),
-                    icon: const Icon(Icons.chevron_right_rounded),
+                const SizedBox(width: 13),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        copy.text(
+                          'PINNED VOICE MOMENT',
+                          'PRZYPIĘTY VOICE MOMENT',
+                        ),
+                        style: AppTypography.overline.copyWith(
+                          color: palette.interactiveForeground,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: .88,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        moment.caption.trim().isEmpty
+                            ? copy.text('Voice Moment', 'Voice Moment')
+                            : moment.caption,
+                        // At ≈150 % text and up the caption gets room to
+                        // wrap instead of losing its end to an ellipsis.
+                        maxLines: widget.compact
+                            ? 1
+                            : MediaQuery.textScalerOf(context).scale(14) >= 21
+                            ? 4
+                            : 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          height: 1.25,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 4,
+                        children: [
+                          _MomentMeta(
+                            icon: Icons.graphic_eq_rounded,
+                            label: moment.durationLabel,
+                            semanticLabel: copy.text(
+                              'Duration ${moment.durationLabel}',
+                              'Czas trwania: ${moment.durationLabel}',
+                            ),
+                          ),
+                          _MomentMeta(
+                            icon: Icons.favorite_border_rounded,
+                            label: '${moment.likeCount}',
+                            semanticLabel: _localizedLikeCount(
+                              moment.likeCount,
+                              copy,
+                            ),
+                          ),
+                          _MomentMeta(
+                            icon: Icons.chat_bubble_outline_rounded,
+                            label: '${moment.commentCount}',
+                            semanticLabel: _localizedCommentCount(
+                              moment.commentCount,
+                              copy,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
+                if (widget.onOpen != null) ...[
+                  const SizedBox(width: 8),
+                  Semantics(
+                    button: true,
+                    label: copy.text(
+                      'Open pinned Voice Moment details',
+                      'Otwórz szczegóły przypiętego materiału Voice Moment',
+                    ),
+                    onTap: () => _openDetails(moment),
+                    excludeSemantics: true,
+                    child: IconButton(
+                      onPressed: () => _openDetails(moment),
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(48, 48),
+                        foregroundColor: palette.textSecondary,
+                      ),
+                      icon: const Icon(Icons.chevron_right_rounded),
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         );
         return MomentExpiryBoundary(
@@ -245,24 +261,40 @@ class _PinnedMomentPlayButton extends StatefulWidget {
     required this.moment,
     this.momentService,
     this.playerFactory,
+    this.compact = false,
     super.key,
   });
 
   final VoiceMoment moment;
   final MomentService? momentService;
   final AudioPlayer Function()? playerFactory;
+  final bool compact;
 
   @override
   State<_PinnedMomentPlayButton> createState() =>
       _PinnedMomentPlayButtonState();
 }
 
-class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
+class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton>
+    with SingleTickerProviderStateMixin {
   late final AudioPlayer _player = (widget.playerFactory ?? AudioPlayer.new)();
   MomentService? _moments;
   late final StreamSubscription<void> _completeSubscription;
+  // The play ↔ pause morph (R14: AnimatedIcon, 200 ms easeInOut). It only
+  // moves on a real play / pause, and snaps under Reduce Motion.
+  late final AnimationController _glyph = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 200),
+  );
+  late final CurvedAnimation _glyphCurve = CurvedAnimation(
+    parent: _glyph,
+    curve: Curves.easeInOut,
+  );
   bool _playing = false;
   bool _changingPlayback = false;
+  bool _failed = false;
+  bool _hovered = false;
+  bool _focused = false;
 
   @override
   void initState() {
@@ -271,7 +303,7 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
     // require Firebase/Storage until the listener actually presses Play.
     _moments = widget.momentService;
     _completeSubscription = _player.onPlayerComplete.listen((_) {
-      if (mounted) setState(() => _playing = false);
+      if (mounted) _setPlaying(false);
     });
   }
 
@@ -283,6 +315,9 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
     }
     if (oldWidget.moment.id != widget.moment.id ||
         oldWidget.moment.mediaGeneration != widget.moment.mediaGeneration) {
+      // A new pin starts clean: the previous Moment's failure (the refresh
+      // glyph) never carries over to it.
+      _failed = false;
       unawaited(stopPlayback());
     }
   }
@@ -291,7 +326,25 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
   void dispose() {
     unawaited(_completeSubscription.cancel());
     unawaited(_player.dispose());
+    _glyphCurve.dispose();
+    _glyph.dispose();
     super.dispose();
+  }
+
+  /// Moves the playing state and the glyph with it: animated from a real
+  /// play / pause, snapped when decorative motion is off.
+  void _setPlaying(bool playing) {
+    setState(() => _playing = playing);
+    final target = playing ? 1.0 : 0.0;
+    if (AppMotion.decorative(context)) {
+      if (playing) {
+        _glyph.forward();
+      } else {
+        _glyph.reverse();
+      }
+    } else {
+      _glyph.value = target;
+    }
   }
 
   Future<void> stopPlayback() async {
@@ -299,17 +352,22 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
       await _player.stop();
     } finally {
       if (mounted) {
-        setState(() {
-          _playing = false;
-          _changingPlayback = false;
-        });
+        setState(() => _changingPlayback = false);
+        _setPlaying(false);
       }
     }
   }
 
   Future<void> _togglePlayback() async {
     if (_changingPlayback || !widget.moment.hasMediaReference) return;
-    setState(() => _changingPlayback = true);
+    final starting = !_playing;
+    setState(() {
+      _changingPlayback = true;
+      _failed = false;
+    });
+    if (starting && _hapticsPlatform) {
+      unawaited(HapticFeedback.lightImpact());
+    }
     try {
       if (_playing) {
         await _player.pause();
@@ -318,10 +376,11 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
         final uri = await moments.resolveMediaUri(momentId: widget.moment.id);
         await _player.play(UrlSource(uri.toString()));
       }
-      if (mounted) setState(() => _playing = !_playing);
+      if (mounted) _setPlaying(!_playing);
     } catch (_) {
       if (mounted) {
-        setState(() => _playing = false);
+        _setPlaying(false);
+        setState(() => _failed = true);
         ScaffoldMessenger.maybeOf(context)
           ?..hideCurrentSnackBar()
           ..showSnackBar(
@@ -340,13 +399,28 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
     }
   }
 
+  /// Haptics accompany a real play on the phones only.
+  static bool get _hapticsPlatform =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.android);
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final accent = context.appPalette.interactiveForeground;
+    final size = widget.compact ? 48.0 : 52.0;
+    final available = widget.moment.hasMediaReference;
+    final status = !available
+        ? YoDiscStatus.disabled
+        : _changingPlayback
+        ? YoDiscStatus.busy
+        : _failed
+        ? YoDiscStatus.failed
+        : YoDiscStatus.idle;
+    final canToggle = available && !_changingPlayback;
     return Semantics(
       button: true,
-      enabled: !_changingPlayback,
+      enabled: canToggle,
       label: _changingPlayback
           ? copy.text(
               'Preparing pinned Voice Moment',
@@ -361,22 +435,44 @@ class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
               'Play pinned Voice Moment',
               'Odtwórz przypięty Voice Moment',
             ),
-      onTap: _changingPlayback ? null : _togglePlayback,
+      onTap: canToggle ? _togglePlayback : null,
       excludeSemantics: true,
-      child: IconButton.filledTonal(
-        onPressed: _changingPlayback ? null : _togglePlayback,
-        style: IconButton.styleFrom(
-          minimumSize: const Size(48, 48),
-          backgroundColor: accent.withValues(alpha: .14),
-          foregroundColor: accent,
-          side: BorderSide(color: accent.withValues(alpha: .5)),
+      child: YoPressFeedback(
+        scale: YoPressFeedback.disc,
+        enabled: canToggle,
+        child: Material(
+          type: MaterialType.transparency,
+          shape: const CircleBorder(),
+          child: InkWell(
+            onTap: canToggle ? _togglePlayback : null,
+            customBorder: const CircleBorder(),
+            // The bead carries hover (a stronger contact) and focus (its own
+            // ring); no ink wash lands on the glass.
+            overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+            splashFactory: NoSplash.splashFactory,
+            onHover: (value) {
+              if (_hovered != value) setState(() => _hovered = value);
+            },
+            onFocusChange: (value) {
+              if (_focused != value) setState(() => _focused = value);
+            },
+            child: YoGradientDisc(
+              size: size,
+              // The profile's one emitted light: only while this Moment
+              // actually plays.
+              emphasis: _playing ? YoDiscEmphasis.lit : YoDiscEmphasis.rest,
+              gloss: true,
+              status: status,
+              hovered: _hovered,
+              focused: _focused,
+              nudgePlay: !_playing,
+              glyph: AnimatedIcon(
+                icon: AnimatedIcons.play_pause,
+                progress: _glyphCurve,
+              ),
+            ),
+          ),
         ),
-        icon: _changingPlayback
-            ? const SizedBox.square(
-                dimension: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : Icon(_playing ? Icons.pause_rounded : Icons.play_arrow_rounded),
       ),
     );
   }

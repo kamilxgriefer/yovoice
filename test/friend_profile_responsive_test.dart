@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -19,10 +21,13 @@ import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_layout.dart';
+import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
 import 'package:yovoice/shared/widgets/profile/profile_hero_backdrop.dart';
 import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class _EmptySocialGraphService implements SocialGraphService {
   @override
@@ -569,6 +574,112 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets('the friend body shares the own profile finish and measure', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    for (final (width, capped) in const [(390.0, false), (1440.0, true)]) {
+      tester.view.physicalSize = Size(width, 2400);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          home: buildScreen(key: ValueKey(width)),
+        ),
+      );
+      for (var pump = 0; pump < 8; pump++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+      final identity = find.byKey(
+        const ValueKey('friend-profile-voice-identity'),
+      );
+      final card = tester.widget<YoCard>(identity);
+      expect(card.radius, AppRadius.block, reason: 'R2 block, as own');
+      final stats = tester.getRect(
+        find.byKey(const ValueKey('friend-profile-stats')),
+      );
+      final block = tester.getRect(identity);
+      expect(block.left, stats.left, reason: '$width start-aligned');
+      if (capped) {
+        expect(block.width, ProfileLayout.wideMeasure, reason: '$width');
+      } else {
+        expect(block.width, width - 40, reason: '$width whole column');
+      }
+      // R10: the hero avatar has the own profile's brand finish.
+      final avatar = tester.widget<UserAvatar>(
+        find.descendant(
+          of: find.byType(ProfilePhotoButton),
+          matching: find.byType(UserAvatar),
+        ),
+      );
+      expect(avatar.finish, UserAvatarFinish.brand);
+      // Follow is R7 neutral: Zadzwoń keeps the one violet fill and lift.
+      final follow = find.byKey(const ValueKey('friend-profile-follow-button'));
+      if (follow.evaluate().isNotEmpty) {
+        final style = tester.widget<ButtonStyleButton>(follow).style!;
+        expect(
+          style.backgroundColor!.resolve(<WidgetState>{}),
+          AppFinish.glass(AppPalette.dark),
+        );
+      }
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('from 700 px Follow, the blocks, the bio and the footer '
+      'actions share one 640 column', (tester) async {
+    await enableCreatorAudience();
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    for (final width in const [390.0, 768.0, 1440.0]) {
+      tester.view.physicalSize = Size(width, 3000);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          home: buildScreen(key: ValueKey(width)),
+        ),
+      );
+      for (var pump = 0; pump < 8; pump++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+      final stats = tester.getRect(
+        find.byKey(const ValueKey('friend-profile-stats')),
+      );
+      final block = tester.getRect(
+        find.byKey(const ValueKey('friend-profile-voice-identity')),
+      );
+      final follow = tester.getRect(
+        find.byKey(const ValueKey('friend-profile-follow-button')),
+      );
+      final remove = tester.getRect(
+        find.widgetWithText(TextButton, 'Remove friend'),
+      );
+      final block_ = tester.getRect(
+        find.widgetWithText(TextButton, 'Block user'),
+      );
+      final bio = tester.getRect(
+        find.byKey(const ValueKey('friend-profile-bio-frame')),
+      );
+      final capped = width >= ProfileLayout.wideFromWidth;
+      expect(block.left, stats.left, reason: '$width');
+      expect(
+        block.width,
+        capped ? ProfileLayout.wideMeasure : width - 40,
+        reason: '$width',
+      );
+      // Follow ends on the column's right edge, beside the name (wide) or
+      // as the full-width bar (narrow).
+      expect(follow.right, moreOrLessEquals(block.right), reason: '$width');
+      // The destructive footer centres under the same column.
+      for (final rect in [remove, block_]) {
+        expect(rect.left, moreOrLessEquals(block.left), reason: '$width');
+        expect(rect.right, moreOrLessEquals(block.right), reason: '$width');
+      }
+      expect(bio.right, lessThanOrEqualTo(block.right + .01), reason: '$width');
+      expect(tester.takeException(), isNull, reason: '$width');
+    }
+  });
+
   testWidgets('profile canvas, copy and cards follow Pearl and dark palettes', (
     tester,
   ) async {
@@ -600,12 +711,16 @@ void main() {
       final stats = tester.widget<Container>(
         find.byKey(const ValueKey('friend-profile-stats')),
       );
+      // Refine-look §10: the stats band carries the R2 block finish (the
+      // top-lit fill and a hairline edge), like every profile section.
       final statsDecoration = stats.decoration! as BoxDecoration;
-      expect(statsDecoration.color, themeCase.palette.surface);
+      expect(statsDecoration.gradient, themeCase.palette.blockGradient);
+      expect(statsDecoration.color, isNull);
       expect(
         (statsDecoration.border! as Border).top.color,
-        themeCase.palette.border,
+        themeCase.palette.hairline,
       );
+      expect(statsDecoration.borderRadius, AppRadius.block);
 
       final displayName = tester.widget<Text>(find.text(longDisplayName));
       expect(displayName.style!.color, themeCase.palette.textPrimary);

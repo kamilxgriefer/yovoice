@@ -1,12 +1,17 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/achievements/presentation/widgets/title_badge.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_layout.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -163,9 +168,12 @@ class ProfileHeader extends StatelessWidget {
                 child: Align(
                   alignment: AlignmentDirectional.centerStart,
                   // On wide canvases the counters and buttons keep a
-                  // readable measure instead of stretching to 1040 px.
+                  // readable measure instead of stretching to 1040 px; the
+                  // body sections below join the same measure.
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 640),
+                    constraints: const BoxConstraints(
+                      maxWidth: ProfileLayout.wideMeasure,
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -256,7 +264,6 @@ class ProfileHeader extends StatelessWidget {
     double nameOffset = 0,
   }) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final nameSize = isWide ? 27.0 : 22.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -292,6 +299,9 @@ class ProfileHeader extends StatelessWidget {
                   color: palette.background,
                   border: Border.all(color: palette.borderStrong),
                 ),
+                // Refine-look R10: the one letter-avatar gradient, a calm
+                // w700 initial and a hairline ring on a photo. The cut-out
+                // ring above stays the only ring (no decorative one).
                 child: UserAvatar(
                   radius: avatarRadius,
                   userId: profile.uid,
@@ -299,8 +309,8 @@ class ProfileHeader extends StatelessWidget {
                   mediaRevision: profile.profileUpdatedAt,
                   mediaService: mediaService,
                   displayName: profile.displayName,
-                  backgroundColor: colors.primary,
                   premium: profile.premiumIdentity,
+                  finish: UserAvatarFinish.brand,
                 ),
               ),
             ),
@@ -339,8 +349,8 @@ class ProfileHeader extends StatelessWidget {
                               color: palette.textPrimary,
                               fontSize: nameSize,
                               height: 1.02,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -.35,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: isWide ? -.6 : -.45,
                             ),
                           ),
                         ),
@@ -477,11 +487,19 @@ class ProfileStat {
 }
 
 /// The profile's stats row, shared by the own profile and someone else's
-/// profile (Slim redesign, phase 5): one flat 1 px `palette.border` band,
-/// radius 12, counters side by side. It stacks into one counter per line
-/// once a counter's cell would drop below [minCellWidth] or body text reaches
-/// 21 px (≈150 % text), so labels are never squeezed and every tappable
-/// counter keeps a 44 px target.
+/// profile (Slim redesign, phase 5; refine-look §10 handoff): one band with
+/// the R2 block finish — the top-lit fill, a `hairline` edge, radius 20 and
+/// Pearl's soft lift (flat `surface` + `borderStrong` under high contrast) —
+/// the same finish as the profile sections below it, so 12 and 20 never sit
+/// together. Values are 17 w700 in tabular figures over 12 w600 labels that
+/// are never scaled down. Counters sit side by side, each as wide as its own
+/// words plus [cellPadding] of air on either side (at least [minCellWidth]),
+/// spaced evenly across the band, so a long label ("Obserwowani") never
+/// crowds its neighbour. When they no longer fit on one line, four or more
+/// counters fold into two per line; if even that does not fit, or body text
+/// reaches 21 px (≈150 % text), the band stacks one counter per line. Labels
+/// are never squeezed or truncated and every tappable counter keeps a 44 px
+/// target.
 class ProfileStatsRow extends StatelessWidget {
   const ProfileStatsRow({required this.stats, this.containerKey, super.key});
 
@@ -490,7 +508,7 @@ class ProfileStatsRow extends StatelessWidget {
   /// Rides the decorated band itself, so a finder can read its decoration.
   final Key? containerKey;
 
-  /// The narrowest counter cell the row accepts before it stacks.
+  /// The narrowest counter cell (its tap target included).
   static const double minCellWidth = 64;
 
   /// Compact display for large counts (1.8K / 1.2M) — board screen 5.
@@ -505,43 +523,153 @@ class ProfileStatsRow extends StatelessWidget {
     return '$value';
   }
 
+  /// A counter's label: 12 w600, never scaled down to fit (its tracking is
+  /// pinned so the theme's body tracking never widens it).
+  static TextStyle labelStyle(AppPalette palette) => TextStyle(
+    color: palette.textSecondary,
+    fontSize: 12,
+    height: 1.3,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 0,
+  );
+
+  /// The air each counter keeps on either side of its words.
+  static const double cellPadding = 8;
+
+  /// A counter's value: 17 w700 in tabular figures, so "148" and "111"
+  /// share a width.
+  static TextStyle valueStyle(AppPalette palette) => TextStyle(
+    color: palette.textPrimary,
+    fontSize: 17,
+    height: 1.2,
+    fontWeight: FontWeight.w700,
+    letterSpacing: -.2,
+    fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+  );
+
+  /// Each counter's natural width at the reader's text size: its wider line
+  /// (value or label) plus [cellPadding] on either side, at least
+  /// [minCellWidth].
+  static List<double> _naturalWidths(
+    BuildContext context,
+    AppPalette palette,
+    List<ProfileStat> stats,
+  ) {
+    final base = DefaultTextStyle.of(context).style;
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    double measure(String text, TextStyle style) {
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: base.merge(style)),
+        textDirection: direction,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      final width = painter.width;
+      painter.dispose();
+      return width;
+    }
+
+    return [
+      for (final stat in stats)
+        math.max(
+          minCellWidth,
+          math.max(
+                measure(stat.label, labelStyle(palette)),
+                measure(compact(stat.value), valueStyle(palette)),
+              ) +
+              cellPadding * 2,
+        ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final palette = context.appPalette;
-        final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
-        // Side by side while every counter keeps a readable cell; one per
-        // line once a cell would drop below [minCellWidth] or text is large.
-        final cellWidth = constraints.maxWidth / stats.length.clamp(1, 99);
-        final shouldStack = cellWidth < minCellWidth || scaledBodySize >= 21;
+        final highContrast = MediaQuery.highContrastOf(context);
+        final largeText =
+            MediaQuery.textScalerOf(context).scale(14) >=
+            ProfileLayout.largeTextBody;
+        final decoration = AppFinish.block(palette, highContrast: highContrast);
+        // The band's 1 px edge insets its content (a decoration's border is
+        // layout padding), so the counters get the band's width minus that
+        // edge. Measuring against the outer width let a total within 2 px
+        // of the band pick one line and overflow, and a widest counter
+        // within 1 px of half the band pick two per line and ellipsize.
+        final inner = math.max(
+          0.0,
+          constraints.maxWidth - decoration.padding.horizontal,
+        );
+        final widths = _naturalWidths(context, palette, stats);
+        final widest = widths.fold<double>(0, math.max);
+        final total = widths.fold<double>(0, (sum, width) => sum + width);
+        // Counters per line: all of them while their natural widths fit the
+        // band, two for four or more counters once they no longer do, and
+        // one at large text or when even half the band is too narrow.
+        final count = stats.length.clamp(1, 99);
+        final int perLine;
+        if (largeText) {
+          perLine = 1;
+        } else if (total <= inner) {
+          perLine = count;
+        } else if (count >= 4 && widest <= inner / 2) {
+          perLine = 2;
+        } else {
+          perLine = 1;
+        }
+        final divider = Divider(
+          height: 1,
+          indent: 16,
+          endIndent: 16,
+          color: highContrast ? palette.borderStrong : palette.hairline,
+        );
         final cells = [for (final stat in stats) _ProfileStatCell(stat: stat)];
+        final Widget body;
+        if (perLine == 1) {
+          body = Column(
+            children: [
+              for (var index = 0; index < cells.length; index++) ...[
+                cells[index],
+                if (index < cells.length - 1) divider,
+              ],
+            ],
+          );
+        } else if (perLine == count) {
+          body = Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              for (var index = 0; index < cells.length; index++)
+                SizedBox(width: widths[index], child: cells[index]),
+            ],
+          );
+        } else {
+          final lines = [
+            for (var start = 0; start < cells.length; start += perLine)
+              cells.sublist(start, (start + perLine).clamp(0, cells.length)),
+          ];
+          body = Column(
+            children: [
+              for (var index = 0; index < lines.length; index++) ...[
+                Row(
+                  children: [
+                    for (final cell in lines[index]) Expanded(child: cell),
+                    // A short last line keeps its cells the same width.
+                    for (var i = lines[index].length; i < perLine; i++)
+                      const Expanded(child: SizedBox.shrink()),
+                  ],
+                ),
+                if (index < lines.length - 1) divider,
+              ],
+            ],
+          );
+        }
         return Container(
           key: containerKey,
-          padding: EdgeInsets.symmetric(vertical: shouldStack ? 4 : 6),
-          decoration: BoxDecoration(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: palette.border),
-          ),
-          child: shouldStack
-              ? Column(
-                  children: [
-                    for (var index = 0; index < cells.length; index++) ...[
-                      cells[index],
-                      if (index < cells.length - 1)
-                        Divider(
-                          height: 1,
-                          indent: 16,
-                          endIndent: 16,
-                          color: palette.border,
-                        ),
-                    ],
-                  ],
-                )
-              : Row(
-                  children: [for (final cell in cells) Expanded(child: cell)],
-                ),
+          padding: EdgeInsets.symmetric(vertical: perLine == count ? 6 : 4),
+          decoration: decoration,
+          child: body,
         );
       },
     );
@@ -561,34 +689,26 @@ class _ProfileStatCell extends StatelessWidget {
         constraints: const BoxConstraints(minHeight: 48),
         child: Center(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
+            padding: const EdgeInsets.symmetric(
+              horizontal: ProfileStatsRow.cellPadding,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   ProfileStatsRow.compact(stat.value),
                   maxLines: 1,
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontSize: 17,
-                    height: 1.2,
-                    fontWeight: FontWeight.w800,
-                  ),
+                  style: ProfileStatsRow.valueStyle(palette),
                 ),
-                // A long single word ("Obserwujący") shrinks a little on a
-                // five-counter phone row instead of clipping.
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    stat.label,
-                    maxLines: 1,
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontSize: 12,
-                      height: 1.3,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
+                // Every label is the same 12 w600: a label that would not
+                // fit its cell stacks the row (ProfileStatsRow) instead of
+                // shrinking this one word.
+                Text(
+                  stat.label,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: ProfileStatsRow.labelStyle(palette),
                 ),
               ],
             ),
@@ -605,7 +725,8 @@ class _ProfileStatCell extends StatelessWidget {
       key: stat.key,
       onTap: onTap,
       semanticLabel: semanticLabel,
-      borderRadius: 12,
+      // Concentric with the band's 20 px block radius, inset by its 6 px.
+      borderRadius: 14,
       child: content,
     );
   }
@@ -639,6 +760,23 @@ class ProfileActionBar extends StatelessWidget {
   /// Below this width two labelled CTAs and the icon no longer fit on one
   /// line without truncating Polish labels, so they stack.
   static const double stackBelowWidth = 340;
+
+  /// The CTAs' shape: [radius] 12 on every profile action.
+  static const OutlinedBorder shape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.all(Radius.circular(radius)),
+  );
+
+  /// The R7 neutral tonal finish of every secondary profile action (glass
+  /// fill, control hairline, `textPrimary` ink, `borderStrong` under high
+  /// contrast), for `OutlinedButton`, `FilledButton`, `TextButton` or
+  /// `IconButton` alike: callers keep their widget types and keys.
+  static ButtonStyle neutralStyle(BuildContext context) =>
+      AppFinish.tonalNeutral(
+        context.appPalette,
+        foreground: context.appPalette.textPrimary,
+        shape: shape,
+        highContrast: MediaQuery.highContrastOf(context),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -680,7 +818,9 @@ class ProfileActionBar extends StatelessWidget {
   }
 }
 
-/// The icon action of a [ProfileActionBar]: a 44 px outlined square.
+/// The icon action of a [ProfileActionBar]: a 44 px square in the R7
+/// neutral tonal finish — glass fill, control hairline, `textPrimary` glyph —
+/// the same finish as the secondary action beside it.
 class ProfileActionIconButton extends StatelessWidget {
   const ProfileActionIconButton({
     required this.icon,
@@ -695,7 +835,6 @@ class ProfileActionIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
     return IconButton(
       onPressed: onPressed,
       tooltip: tooltip,
@@ -703,13 +842,7 @@ class ProfileActionIconButton extends StatelessWidget {
         minWidth: ProfileActionBar.buttonHeight,
         minHeight: ProfileActionBar.buttonHeight,
       ),
-      style: IconButton.styleFrom(
-        foregroundColor: palette.textPrimary,
-        side: BorderSide(color: palette.borderStrong),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ProfileActionBar.radius),
-        ),
-      ),
+      style: ProfileActionBar.neutralStyle(context),
       icon: Icon(icon, size: 22),
     );
   }
@@ -786,11 +919,70 @@ class ProfileQuickActions extends StatelessWidget {
         final scaledBody = MediaQuery.textScalerOf(context).scale(14);
         if (scaledBody >= 21) return _list(context);
         if (constraints.maxWidth >= wideFromWidth) return _wide(context);
-        if (constraints.maxWidth < gridBelowWidth) return _grid(context);
-        // Equal-height tiles even when one label is busy or scaled down.
-        return IntrinsicHeight(child: _tileRow(context, actions));
+        if (constraints.maxWidth < gridBelowWidth) {
+          return _grid(context, constraints.maxWidth);
+        }
+        // Equal-height tiles even when one label is busy.
+        return IntrinsicHeight(
+          child: _tileRow(
+            context,
+            actions,
+            labelSize: _tileLabelSize(context, actions, constraints.maxWidth),
+          ),
+        );
       },
     );
+  }
+
+  /// The tile label's natural size.
+  static const double tileLabelSize = 12;
+
+  /// The smallest shared tile label size before a label is left to its own
+  /// [FittedBox] guard (only on a row far narrower than any phone).
+  static const double minTileLabelSize = 10;
+
+  static const double _tileGap = 8;
+  static const double _tilePadding = 8;
+
+  static TextStyle _tileLabelStyle(double size) =>
+      TextStyle(fontSize: size, height: 16 / 12, fontWeight: FontWeight.w600);
+
+  /// One label size for every tile in a row of [rowWidth]: the natural 12 px
+  /// when every label (and every busy label) fits its tile, otherwise the
+  /// size at which the widest one does. A single long word ("Wiadomość")
+  /// no longer shrinks alone beside three full-size labels.
+  static double _tileLabelSize(
+    BuildContext context,
+    List<ProfileQuickAction> slots,
+    double rowWidth, {
+    int? perRow,
+  }) {
+    if (slots.isEmpty || !rowWidth.isFinite) return tileLabelSize;
+    final tiles = perRow ?? slots.length;
+    final tileWidth = (rowWidth - _tileGap * (tiles - 1)) / tiles;
+    final room = tileWidth - _tilePadding * 2;
+    final base = Theme.of(
+      context,
+    ).textTheme.labelLarge?.merge(_tileLabelStyle(tileLabelSize));
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    var widest = 0.0;
+    for (final slot in slots) {
+      for (final text in [slot.label, ?slot.busyLabel]) {
+        final painter = TextPainter(
+          text: TextSpan(text: text, style: base),
+          textDirection: direction,
+          textScaler: scaler,
+          maxLines: 1,
+        )..layout();
+        widest = math.max(widest, painter.width);
+        painter.dispose();
+      }
+    }
+    if (widest <= room || room <= 0) return tileLabelSize;
+    // Rounded down to a quarter pixel so the widest label fits with room.
+    final fitted = (tileLabelSize * room / widest * 4).floorToDouble() / 4;
+    return fitted.clamp(minTileLabelSize, tileLabelSize);
   }
 
   ButtonStyle _style(
@@ -803,44 +995,95 @@ class ProfileQuickActions extends StatelessWidget {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final primary = action.emphasis == ProfileQuickActionEmphasis.primary;
-    final shape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(ProfileActionBar.radius),
-    );
     // A busy slot is disabled but keeps its own colours, so the spinner
     // reads as progress rather than as "unavailable".
     final busy = action.busy;
-    final background = primary ? colors.primary : palette.surface;
-    final foreground = primary ? colors.onPrimary : palette.textPrimary;
-    return ButtonStyle(
+    Set<WidgetState> shown(Set<WidgetState> states) =>
+        busy ? (states.toSet()..remove(WidgetState.disabled)) : states;
+    final geometry = ButtonStyle(
       minimumSize: WidgetStatePropertyAll(minimumSize),
       padding: WidgetStatePropertyAll(padding),
       alignment: alignment,
-      shape: WidgetStatePropertyAll(shape),
+      shape: const WidgetStatePropertyAll(ProfileActionBar.shape),
       elevation: const WidgetStatePropertyAll(0),
-      tapTargetSize: MaterialTapTargetSize.padded,
+      // The primary's painted shape IS its target (never under 44 px), so
+      // the lift outside it hugs the gradient exactly.
+      tapTargetSize: primary
+          ? MaterialTapTargetSize.shrinkWrap
+          : MaterialTapTargetSize.padded,
+    );
+    if (!primary) {
+      // R7 neutral: glass fill, control hairline, `textPrimary` ink.
+      final tonal = ProfileActionBar.neutralStyle(context);
+      WidgetStateProperty<T?> keep<T>(WidgetStateProperty<T?>? property) =>
+          WidgetStateProperty.resolveWith(
+            (states) => property?.resolve(shown(states)),
+          );
+      return tonal
+          .copyWith(
+            backgroundColor: keep(tonal.backgroundColor),
+            foregroundColor: keep(tonal.foregroundColor),
+            iconColor: keep(tonal.iconColor),
+            side: keep(tonal.side),
+            // The same label base as the primary slot (the theme's
+            // labelLarge); each layout sets its own size and weight.
+            textStyle: WidgetStatePropertyAll(
+              Theme.of(context).textTheme.labelLarge,
+            ),
+          )
+          .merge(geometry);
+    }
+    // R5: the screen's one CTA paints `primaryAction` (the theme's primary
+    // into its AA-safe secondary) over its primary base colour; the lift is
+    // added around the button by [_button]. A disabled slot is a flat
+    // sunken fill.
+    final gradient = AppGradients.primaryAction(colors);
+    bool flat(Set<WidgetState> states) =>
+        shown(states).contains(WidgetState.disabled);
+    return ButtonStyle(
       backgroundColor: WidgetStateProperty.resolveWith(
-        (states) => states.contains(WidgetState.disabled) && !busy
-            ? palette.surfaceMuted
-            : background,
+        (states) => flat(states) ? palette.surfaceMuted : colors.primary,
       ),
       foregroundColor: WidgetStateProperty.resolveWith(
-        (states) => states.contains(WidgetState.disabled) && !busy
-            ? palette.textTertiary
-            : foreground,
+        (states) => flat(states) ? palette.textTertiary : colors.onPrimary,
       ),
-      overlayColor: WidgetStatePropertyAll(foreground.withValues(alpha: .08)),
+      iconColor: WidgetStateProperty.resolveWith(
+        (states) => flat(states) ? palette.textTertiary : colors.onPrimary,
+      ),
+      overlayColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.pressed)) {
+          return AppColors.white.withValues(alpha: .10);
+        }
+        if (states.contains(WidgetState.hovered)) {
+          return AppColors.white.withValues(alpha: .06);
+        }
+        return null;
+      }),
       side: WidgetStateProperty.resolveWith(
-        (states) => primary || (states.contains(WidgetState.disabled) && !busy)
-            ? BorderSide.none
-            : BorderSide(color: palette.border),
+        (states) => states.contains(WidgetState.focused)
+            ? BorderSide(color: colors.onPrimary, width: 2)
+            : BorderSide.none,
       ),
-    );
+      backgroundBuilder: (context, states, child) => flat(states)
+          ? child ?? const SizedBox.shrink()
+          : Ink(
+              decoration: BoxDecoration(gradient: gradient),
+              child: child,
+            ),
+    ).merge(geometry);
   }
 
+  /// A white (or tertiary, when disabled) spinner in the slot's own ink.
   Widget _spinner(double size) => SizedBox(
     width: size,
     height: size,
-    child: const CircularProgressIndicator(strokeWidth: 2),
+    child: Builder(
+      builder: (context) => CircularProgressIndicator(
+        strokeWidth: 2,
+        color: IconTheme.of(context).color,
+        backgroundColor: Colors.transparent,
+      ),
+    ),
   );
 
   Widget _button(
@@ -860,6 +1103,8 @@ class ProfileQuickActions extends StatelessWidget {
       key: action.key,
       onPressed: action.onPressed,
       style: style,
+      // Keeps the primary's gradient inside the rounded shape.
+      clipBehavior: Clip.antiAlias,
       child: Semantics(
         label: label,
         hint: hint,
@@ -867,6 +1112,36 @@ class ProfileQuickActions extends StatelessWidget {
         child: ExcludeSemantics(child: child),
       ),
     );
+    final primary = action.emphasis == ProfileQuickActionEmphasis.primary;
+    if (primary) {
+      // The gradient is ink laid above the button's shape border, so the
+      // style's 2 px `onPrimary` focus side never shows: draw it on top.
+      button = ProfileFocusRing(
+        color: Theme.of(context).colorScheme.onPrimary,
+        borderRadius: const BorderRadius.all(
+          Radius.circular(ProfileActionBar.radius),
+        ),
+        child: button,
+      );
+    }
+    final lifted =
+        primary &&
+        (action.onPressed != null || action.busy) &&
+        !MediaQuery.highContrastOf(context);
+    if (lifted) {
+      // The screen's one CTA lift (R5, the rail's values; half while busy),
+      // on an outer box so the button's clip never cuts it.
+      button = DecoratedBox(
+        decoration: ShapeDecoration(
+          shape: ProfileActionBar.shape,
+          shadows: AppFinish.actionLift(
+            AppColors.primary,
+            strength: action.busy ? .5 : 1,
+          ),
+        ),
+        child: button,
+      );
+    }
     if (tooltip) {
       button = Tooltip(
         message: action.semanticLabel,
@@ -877,7 +1152,11 @@ class ProfileQuickActions extends StatelessWidget {
     return button;
   }
 
-  Widget _tile(BuildContext context, ProfileQuickAction action) {
+  Widget _tile(
+    BuildContext context,
+    ProfileQuickAction action, {
+    double labelSize = tileLabelSize,
+  }) {
     final text = action.busy
         ? (action.busyLabel ?? action.label)
         : action.label;
@@ -888,7 +1167,10 @@ class ProfileQuickActions extends StatelessWidget {
         context,
         action,
         minimumSize: const Size(0, tileHeight),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        padding: const EdgeInsets.symmetric(
+          horizontal: _tilePadding,
+          vertical: 10,
+        ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -900,48 +1182,49 @@ class ProfileQuickActions extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          // Fits the tile at 100 % text the same way ProfileStatsRow fits
-          // its labels; larger text switches to the list layout instead.
+          // Every tile of the row shares [labelSize] (see _tileLabelSize);
+          // larger text switches to the list layout instead. The FittedBox
+          // is only a guard for a row narrower than any phone.
           FittedBox(
             fit: BoxFit.scaleDown,
-            child: Text(
-              text,
-              maxLines: 1,
-              style: const TextStyle(
-                fontSize: 12,
-                height: 16 / 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            child: Text(text, maxLines: 1, style: _tileLabelStyle(labelSize)),
           ),
         ],
       ),
     );
   }
 
-  Widget _tileRow(BuildContext context, List<ProfileQuickAction> slots) {
+  Widget _tileRow(
+    BuildContext context,
+    List<ProfileQuickAction> slots, {
+    required double labelSize,
+  }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         for (var i = 0; i < slots.length; i++) ...[
-          if (i > 0) const SizedBox(width: 8),
-          Expanded(child: _tile(context, slots[i])),
+          if (i > 0) const SizedBox(width: _tileGap),
+          Expanded(child: _tile(context, slots[i], labelSize: labelSize)),
         ],
       ],
     );
   }
 
-  Widget _grid(BuildContext context) {
+  Widget _grid(BuildContext context, double width) {
     final rows = <List<ProfileQuickAction>>[
       for (var i = 0; i < actions.length; i += 2)
         actions.sublist(i, i + 2 > actions.length ? actions.length : i + 2),
     ];
+    // One size across the whole grid, measured on its two-tile rows.
+    final labelSize = _tileLabelSize(context, actions, width, perRow: 2);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         for (var i = 0; i < rows.length; i++) ...[
           if (i > 0) const SizedBox(height: 8),
-          IntrinsicHeight(child: _tileRow(context, rows[i])),
+          IntrinsicHeight(
+            child: _tileRow(context, rows[i], labelSize: labelSize),
+          ),
         ],
       ],
     );
@@ -1076,21 +1359,13 @@ class PremiumIdentityBadge extends StatelessWidget {
             width: size,
             height: size,
             alignment: Alignment.center,
+            // The logo's own gradient with a white rim. No glow: on Profile
+            // emitted light belongs to the pinned Moment while it plays
+            // (the refine-look light budget).
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [AppColors.primary, AppColors.secondary],
-              ),
+              gradient: AppGradients.primary,
               border: Border.all(color: AppColors.white.withValues(alpha: .28)),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.secondary.withValues(alpha: .24),
-                  blurRadius: compact ? 8 : 10,
-                  spreadRadius: .5,
-                ),
-              ],
             ),
             child: Icon(
               // A plain check inside YO Voice's violet circle. The rosette
@@ -1120,6 +1395,13 @@ class PremiumIdentityChip extends PremiumIdentityBadge {
 /// The account type already persisted to Firestore and already drove
 /// Creator Studio and Settings, but nothing on the profile itself said
 /// which kind of account you were looking at.
+///
+/// Refine-look §10 proposes one 24 px glass pill family for this badge and
+/// the role pill. The role pill (`IdentityBadgePill`, which the desktop rail
+/// also renders) and `TitleBadge` cannot move in this batch, so this badge
+/// keeps the tinted, bold, compact finish it shares with them until the
+/// whole family moves together — a lone glass pill made the header's badge
+/// rail mix three styles.
 class AccountTypeBadge extends StatelessWidget {
   const AccountTypeBadge({
     required this.accountType,

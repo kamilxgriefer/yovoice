@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/audio/call_tone_service.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/calls/data/models/direct_call.dart';
@@ -715,7 +716,9 @@ void main() {
             } else {
               expect(call.height, greaterThanOrEqualTo(64), reason: reason);
             }
-            // Zadzwoń is the one accent; the others are hairline neutrals.
+            // Zadzwoń is the one accent: the primary action gradient over
+            // its primary base (refine-look R5); the others are R7 neutral
+            // glass with a control hairline.
             final callStyle = tester
                 .widget<ButtonStyleButton>(key('friend-profile-call-button'))
                 .style!;
@@ -724,17 +727,18 @@ void main() {
               scheme.primary,
               reason: reason,
             );
+            expect(callStyle.backgroundBuilder, isNotNull, reason: reason);
             final messageStyle = tester
                 .widget<ButtonStyleButton>(key('friend-profile-message-button'))
                 .style!;
             expect(
               messageStyle.backgroundColor!.resolve(<WidgetState>{}),
-              palette.surface,
+              AppFinish.glass(palette),
               reason: reason,
             );
             expect(
               messageStyle.side!.resolve(<WidgetState>{})!.color,
-              palette.border,
+              palette.hairlineControl,
               reason: reason,
             );
             expect(

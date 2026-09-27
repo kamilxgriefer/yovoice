@@ -5,8 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_layout.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_link.dart';
 
@@ -148,9 +151,11 @@ void main() {
           ),
         ),
       );
+      // Refine-look §8.5: on the violet sticker the focus ring is a 2 px
+      // white ring (the violet focus role would vanish on the sweep).
       expect(
         (focusedSurface.shape! as RoundedRectangleBorder).side,
-        BorderSide(color: AppPalette.dark.focus, width: 2),
+        const BorderSide(color: Colors.white, width: 2),
       );
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
@@ -245,18 +250,44 @@ void main() {
       );
     });
 
-    testWidgets('Dark and Pearl use semantic Vibe accents and link surfaces', (
+    testWidgets('Dark and Pearl paint the vibe sticker with readable ink', (
       tester,
     ) async {
-      for (final (theme, palette) in [
-        (AppTheme.darkTheme, AppPalette.dark),
-        (AppTheme.lightTheme, AppPalette.light),
-      ]) {
+      for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+        final scheme = theme.colorScheme;
         await _pumpVibe(
           tester,
           vibe: 'Now playing https://open.spotify.com/track/123',
           theme: theme,
         );
+
+        // Refine-look §8.5: the sticker is the primary action gradient on
+        // a slight diagonal over its primary base, radius `tile`, with no
+        // border and no shadow.
+        final surface = tester.widget<Material>(
+          find.byKey(const ValueKey('profile-vibe-surface')),
+        );
+        expect(surface.color, scheme.primary);
+        final shape = surface.shape! as RoundedRectangleBorder;
+        expect(shape.borderRadius, AppRadius.tile);
+        expect(shape.side, BorderSide.none);
+        expect(surface.elevation, 0);
+        final sweep =
+            tester
+                    .widget<Ink>(
+                      find.byKey(const ValueKey('profile-vibe-sweep')),
+                    )
+                    .decoration!
+                as BoxDecoration;
+        expect(
+          sweep.gradient,
+          AppGradients.primaryAction(
+            scheme,
+            begin: const Alignment(-1, -.35),
+            end: const Alignment(1, .35),
+          ),
+        );
+        final stops = <Color>[scheme.primary, scheme.secondary];
 
         final accentIcon = tester.widget<Icon>(
           find.byKey(const ValueKey('profile-vibe-accent-icon')),
@@ -264,28 +295,97 @@ void main() {
         final label = tester.widget<Text>(
           find.byKey(const ValueKey('profile-vibe-label')),
         );
-        final linkSurface = tester.widget<Material>(
-          find.byKey(
-            const ValueKey(
-              'profile-vibe-link-surface-https://open.spotify.com/track/123',
-            ),
-          ),
-        );
+        final description = tester.widget<Text>(find.text('Now playing'));
+        expect(accentIcon.color, Colors.white);
+        expect(label.style!.color, Colors.white);
+        expect(description.style!.color, Colors.white);
+        for (final stop in stops) {
+          expect(
+            _contrastRatio(Colors.white, stop),
+            greaterThanOrEqualTo(4.5),
+            reason: 'white ink on $stop',
+          );
+        }
 
-        expect(accentIcon.color, palette.interactiveForeground);
-        expect(label.style!.color, palette.interactiveForeground);
-        expect(
-          linkSurface.color,
-          theme.brightness == Brightness.dark
-              ? palette.surfaceSunken
-              : palette.surfaceRaised,
+        const uri = 'https://open.spotify.com/track/123';
+        final linkSurface = tester.widget<Material>(
+          find.byKey(const ValueKey('profile-vibe-link-surface-$uri')),
         );
+        final linkShape = linkSurface.shape! as RoundedRectangleBorder;
+        expect(linkShape.borderRadius, AppRadius.card);
         expect(
-          _contrastRatio(palette.textPrimary, linkSurface.color!),
-          greaterThanOrEqualTo(4.5),
+          linkShape.side,
+          BorderSide(color: Colors.white.withValues(alpha: .18)),
         );
+        final title = tester.widget<Text>(find.text('Spotify'));
+        final host = tester.widget<Text>(find.text('open.spotify.com'));
+        for (final stop in stops) {
+          // The plate is translucent contrast ink over the sweep.
+          final plate = Color.alphaBlend(linkSurface.color!, stop);
+          expect(
+            _contrastRatio(title.style!.color!, plate),
+            greaterThanOrEqualTo(4.5),
+          );
+          expect(
+            _contrastRatio(Color.alphaBlend(host.style!.color!, plate), plate),
+            greaterThanOrEqualTo(4.5),
+            reason: 'host line on the plate over $stop',
+          );
+          for (final key in const [
+            'profile-vibe-link-leading-$uri',
+            'profile-vibe-link-trailing-$uri',
+          ]) {
+            final icon = tester.widget<Icon>(find.byKey(ValueKey(key)));
+            expect(_contrastRatio(icon.color!, plate), greaterThanOrEqualTo(3));
+          }
+        }
         expect(tester.takeException(), isNull);
       }
+    });
+
+    testWidgets('a wide column caps the sticker at 560, start-aligned', (
+      tester,
+    ) async {
+      await _pumpVibe(tester, vibe: 'Late-night acoustic energy', width: 1000);
+      final rect = tester.getRect(
+        find.byKey(const ValueKey('profile-vibe-surface')),
+      );
+      expect(rect.width, ProfileLayout.vibeMaxWidth);
+      expect(rect.left, 18);
+      await _pumpVibe(tester, vibe: 'Late-night acoustic energy', width: 700);
+      expect(
+        tester
+            .getRect(find.byKey(const ValueKey('profile-vibe-surface')))
+            .width,
+        700 - 36,
+        reason: 'below a 700 px column the sticker takes the column',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('high contrast flattens the sticker and outlines it', (
+      tester,
+    ) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(highContrast: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await _pumpVibe(
+        tester,
+        vibe: 'Now playing https://open.spotify.com/track/123',
+      );
+      final surface = tester.widget<Material>(
+        find.byKey(const ValueKey('profile-vibe-surface')),
+      );
+      expect(surface.color, AppTheme.darkTheme.colorScheme.primary);
+      expect(
+        (surface.shape! as RoundedRectangleBorder).side,
+        BorderSide(color: AppPalette.dark.borderStrong),
+      );
+      expect(find.byKey(const ValueKey('profile-vibe-sweep')), findsNothing);
+      expect(find.byKey(const ValueKey('profile-vibe-glint')), findsNothing);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('pending launch can outlive the widget safely', (tester) async {
