@@ -4,7 +4,7 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
-## Build 37 release round — web deployed, store uploads outstanding (2026-09-27)
+## Build 37 release round — web, TestFlight and Play internal (2026-09-27)
 
 Source: `main` at `2064419fd83463322a7b1087b150f0d5091bc0f8` (`pubspec.yaml`
 `3.2.0+37`, the refine look, ADR-227). Client-only: no Functions, rules,
@@ -16,9 +16,25 @@ the read-backs: [Sessions/2026-09-27-refine-look.md](Sessions/2026-09-27-refine-
   `version.json` reads `3.2.0` / `37`.
 - **iOS and Android:** store dry run 36335061069 built the unsigned iOS
   archive and an Android App Bundle (throwaway key); nothing was signed or
-  uploaded. `store-release.yml` has no store secrets yet, so the TestFlight
-  and Play internal uploads of `3.2.0+37` are still to be done from Kamil's
-  Mac (or by that workflow once its secrets exist).
+  uploaded, because `store-release.yml` has no store secrets yet. The real
+  builds were made on Kamil's Mac from a clean worktree at `440ba7aa` (the
+  code of `2064419f`; the later commits are docs only):
+  - **iOS:** `flutter build ipa --release --export-options-plist=ios/ExportOptions.plist`,
+    `yo_voice.ipa` sha256 `a128859f…fd47df5`, uploaded with `altool`
+    at 21:50 UTC. ASC build `6c9c3856-d125-4a6f-84b9-af7ff1ac5ff4`, VALID at
+    about 21:56 UTC. It is in the internal group (IN_BETA_TESTING) and
+    attached to the external group "YO Voice Beta Testers". What to Test
+    (en-US) was stored and read back equal. The beta review was submitted:
+    WAITING_FOR_BETA_REVIEW, with Apple notifying external testers
+    automatically once approved.
+  - **Android:** `flutter build appbundle --release`, with the upload keystore
+    staged into the worktree for the build and removed right after.
+    `app-release-37.aab` sha256 `a7538e29…c9842241360`, signed by the
+    registered upload key (same fingerprint as 36). Play internal testing
+    release 31, "37 (3.2.0)", contains only the 37 bundle (36 is not
+    included). Supported devices are unchanged. Published 23:58 CEST;
+    read back "Dostępna dla testerów wewnętrznych".
+  - Evidence (outside the repo): `yovoice-evidence/2026-09-27/release-37/`.
 
 ## Cost cuts after build 36 (ADR-226) — source only, NOTHING DEPLOYED
 

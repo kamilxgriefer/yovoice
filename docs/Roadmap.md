@@ -17,8 +17,9 @@ someone decide what to pick up next.
 ## YO Voice 3.2.0 (37) — the refine look (ADR-227) — 2026-09-27
 
 **Status: on `main` as `3.2.0+37`; web deployed 2026-09-27 (Hosting serves
-3.2.0 (37)); the iOS and Android uploads for testers are outstanding (the
-store dry run builds both). See the release record.** Client-only: no Functions, rules, indexes or Storage
+3.2.0 (37)); iOS on TestFlight (internal testers now, external after Apple's
+beta review) and Android on Play internal testing since 2026-09-27 23:58
+CEST. See [DEPLOYMENT.md](DEPLOYMENT.md#build-37-release-round--web-testflight-and-play-internal-2026-09-27).** Client-only: no Functions, rules, indexes or Storage
 changes, so no backend deploy is needed for this build. Record:
 [Sessions/2026-09-27-refine-look.md](Sessions/2026-09-27-refine-look.md).
 Decision: [ADR-227](Decisions.md#adr-227-the-refine-look--afterglows-finish-on-the-30-layout-under-a-light-budget).

@@ -125,31 +125,41 @@ commit.
   **success**; Android release App Bundle with a throwaway key **success**;
   iOS unsigned release archive **success**. So 3.2.0 (37) builds for both
   stores; nothing was signed or uploaded. The real run needs the store
-  secrets (not configured) and approval, or Kamil's Mac; the upload to
-  TestFlight and Play internal is his step.
+  secrets (not configured) and approval, or Kamil's Mac.
+- **Store builds — UPLOADED 2026-09-27 from Kamil's Mac** (at his request).
+  TestFlight build 37 is in the internal group and submitted for the
+  external beta review. Play internal testing release "37 (3.2.0)" was
+  published at 23:58 CEST. Hashes and read-backs are in
+  [DEPLOYMENT.md](../DEPLOYMENT.md#build-37-release-round--web-testflight-and-play-internal-2026-09-27).
 
 ## Release notes — YO Voice 3.2.0 (37)
 
 User-facing, compared with 3.1.0 (36). No links and no domain names (the
 tester e-mails carry none). Everything below is client-side, so it is true as
 soon as a tester runs build 37 (web once Hosting serves 3.2.0 (37); phones once
-the store builds are uploaded).
+the store builds are uploaded). A read-only fact check against the code before
+the store upload corrected four overstatements and one untrue fix ("Add" on a
+friend suggestion never failed in 3.1.0; the crash existed only inside the
+unfinished B9 restyle). The text below is the corrected version that went to
+TestFlight.
 
 ### English
 
 > **What's new in YO Voice 3.2.0**
 >
-> **A calmer, more finished look everywhere.** Every screen keeps its layout,
-> but cards, buttons, chips and lists now share one soft, lit finish with thin
-> edges instead of heavy outlines, in both Dark and Pearl.
+> **A calmer, more finished look everywhere.** The screens keep their familiar
+> layout, but cards, buttons, chips and lists across the app now share one
+> soft, lit finish with thin edges instead of heavy outlines, in both Dark and
+> Pearl.
 >
 > **Light where something is happening.** A live conversation is the one
-> glowing card on Start and in a server; the voice clip you are playing is the
-> one that lights up; the rest stays quiet.
+> glowing card on Start and in a server; the voice clip you are playing lights
+> up; the rest stays quiet.
 >
 > **One voice button.** Voice Moments, voice messages and pinned Moments share
-> one glossy play button, and the waveform fills in the logo's violet as the
-> clip plays. In a chat, starting one voice message pauses the other.
+> one play button, and the waveform of a Moment or a message you receive fills
+> in the logo's violet as it plays. In a chat, starting one voice message
+> pauses the other.
 >
 > **The record button listens.** While you record a Voice Moment, its glow
 > breathes with your voice.
@@ -158,20 +168,20 @@ the store builds are uploaded).
 > sign-in screens, with a soft glow.
 >
 > **Easier to use with a keyboard and large text.** Keyboard focus is visible
-> on every main button, nothing jumps when you tab through lists, and more
-> screens fit at the largest text sizes. Yeels' progress bar is easier to see.
+> on every main button, server lists no longer shift when you tab through
+> them, and more screens fit at the largest text sizes. Yeels' progress bar is easier to see.
 >
-> **Fixes.** Speaking tiles in a server no longer jiggle; "Add" on a friend
-> suggestion no longer fails; retrying after a profile error works again;
-> "Mark all as read" in notifications is readable.
+> **Fixes.** Speaking tiles in a server no longer jiggle; when your profile
+> fails to load you can now try again; "Mark all as read" in notifications is
+> readable.
 
 ### Polski
 
 > **Co nowego w YO Voice 3.2.0**
 >
-> **Spokojniejszy, dopracowany wygląd wszędzie.** Każdy ekran ma ten sam
-> układ, ale karty, przyciski, chipy i listy mają teraz jedno miękkie,
-> oświetlone wykończenie z cienkimi krawędziami zamiast grubych obramowań,
+> **Spokojniejszy, dopracowany wygląd wszędzie.** Ekrany mają znajomy układ,
+> ale karty, przyciski, chipy i listy w całej aplikacji mają teraz jedno
+> miękkie, oświetlone wykończenie z cienkimi krawędziami zamiast grubych obramowań,
 > w motywie Ciemnym i Pearl.
 >
 > **Światło tam, gdzie coś się dzieje.** Rozmowa na żywo to jedyna świecąca
@@ -179,8 +189,8 @@ the store builds are uploaded).
 > reszta jest spokojna.
 >
 > **Jeden przycisk głosu.** Voice Momenty, wiadomości głosowe i przypięte
-> Momenty mają jeden błyszczący przycisk odtwarzania, a fala wypełnia się
-> fioletem logo w trakcie słuchania. W czacie włączenie jednej głosówki
+> Momenty mają jeden przycisk odtwarzania, a fala Momentu lub otrzymanej
+> wiadomości wypełnia się fioletem logo w trakcie słuchania. W czacie włączenie jednej głosówki
 > zatrzymuje drugą.
 >
 > **Przycisk nagrywania słucha.** Podczas nagrywania Voice Momentu jego
@@ -190,10 +200,10 @@ the store builds are uploaded).
 > takie, jakie jest, z delikatną poświatą.
 >
 > **Wygodniej z klawiaturą i dużym tekstem.** Fokus klawiatury widać na każdym
-> głównym przycisku, listy nie skaczą przy przechodzeniu Tabem, a więcej
+> głównym przycisku, listy serwerów nie przesuwają się przy przechodzeniu
+> Tabem, a więcej
 > ekranów mieści się przy największym tekście. Pasek postępu w Yeels jest
 > lepiej widoczny.
 >
-> **Poprawki.** Kafelki mówiących w serwerze już nie drgają; „Dodaj” przy
-> propozycji znajomego działa; ponowienie po błędzie profilu znowu działa;
-> „Oznacz wszystkie jako przeczytane” w powiadomieniach jest czytelne.
+> **Poprawki.** Kafelki mówiących w serwerze już nie drgają; gdy profil się
+> nie wczyta, możesz spróbować ponownie; „Oznacz wszystkie jako przeczytane” w powiadomieniach jest czytelne.
