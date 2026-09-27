@@ -25,6 +25,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/mini_player/compact_active_room_bar.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_mini_bar.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
 
 /// A controllable stand-in for the one live audio session. Nothing touches
 /// LiveKit: the player is a VIEW over this state.
@@ -420,10 +421,10 @@ void main() {
       final image = tester.widget<Image>(
         find.descendant(of: clone, matching: find.byType(Image)),
       );
-      expect(
-        (image.image as AssetImage).assetName,
-        'assets/images/yo-voice-favicon-512.png',
-      );
+      // refine-look §4: the in-app mark is always the real logo; the
+      // favicon stays with the platform configs.
+      expect((image.image as AssetImage).assetName, YoBrandMark.markAsset);
+      expect(YoBrandMark.markAsset, 'assets/images/logo.png');
       expect(
         find.descendant(of: clone, matching: find.byType(InkWell)),
         findsNothing,

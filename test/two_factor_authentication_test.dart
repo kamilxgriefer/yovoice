@@ -9,6 +9,7 @@ import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
 import 'package:yovoice/features/auth/presentation/widgets/animated_totp_code_input.dart';
 import 'package:yovoice/features/settings/presentation/screens/two_factor_authentication_screen.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
 
 import 'totp_challenge_test_support.dart';
 
@@ -991,15 +992,27 @@ void main() {
       await tester.pumpWidget(totpTestApp(FakeTotpChallenge()));
       await tester.pump();
 
-      final image = tester.widget<Image>(find.byKey(totpLogoKey));
-      expect(
-        image.image,
-        isA<AssetImage>().having(
-          (asset) => asset.assetName,
-          'assetName',
-          'assets/images/yo-voice-favicon-512.png',
-        ),
-      );
+      // refine-look §4 / §8.7: the real mark (`logo.png`) at 76 px with its
+      // bloom replaced the favicon plate; it is still drawn untinted.
+      final mark = tester.widget<YoBrandMark>(find.byKey(totpLogoKey));
+      expect(mark.size, 76);
+      expect(mark.light, YoBrandLight.bloom);
+      final image = tester
+          .widgetList<Image>(
+            find.descendant(
+              of: find.byKey(totpLogoKey),
+              matching: find.byType(Image),
+            ),
+          )
+          .singleWhere((image) {
+            final provider = image.image;
+            final asset = provider is ResizeImage
+                ? provider.imageProvider
+                : provider;
+            return asset is AssetImage &&
+                asset.assetName == YoBrandMark.markAsset;
+          });
+      expect(YoBrandMark.markAsset, 'assets/images/logo.png');
       expect(image.fit, BoxFit.contain);
       expect(image.color, isNull);
     });
