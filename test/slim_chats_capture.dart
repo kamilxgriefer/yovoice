@@ -14,6 +14,16 @@
 //             voice-message sheet idle, recording, review and sending, a
 //             thread carrying room-link cards, the header's archive-busy
 //             spinner, and an empty thread;
+//   * voice  — `voice-*` (refine-look §8.3, R13 / R14, and W3's one glow):
+//             a thread of two incoming and two outgoing clips at rest,
+//             with an incoming clip playing (the one lit bead) while an
+//             outgoing one waits paused, the reverse, a second incoming
+//             clip taking over from the first, busy and failed beads on
+//             both sides, and keyboard focus on each side, at 320, 390, 768
+//             and 1440 px. Each waveform pours to the player's REAL
+//             position: the bubbles' own `AudioPlayer`s run against a
+//             scripted audioplayers host (method + event channels), so the
+//             position travels the plugin's real `onPositionChanged` path;
 //   * sheets — New message (populated, empty, a search) and a row's
 //             conversation actions ("…");
 //   * checks — RTL spot frames (`-rtl`, Polish copy laid out right to
@@ -26,6 +36,12 @@
 // the "look at it" step proves something. There is no Firebase app behind
 // it: the message and friend services are the real classes over a fake
 // Firestore with only the streams the two screens read scripted.
+//
+// flutter_test paints every BoxShadow and elevation as a hard, unblurred
+// block (`debugDisableShadows`, meant for golden stability). Every case here
+// switches that off while it renders and restores it in a `finally` before
+// the binding checks its invariants ([_capture]), so the Pearl lift, the
+// bead's contact shadow and its glow render as they do on a device.
 //
 // It is NOT a test and deliberately does not end in `_test.dart`, so the
 // regular suite never writes artifacts. Run it explicitly:
@@ -42,6 +58,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:audioplayers/audioplayers.dart' show AudioPlayer;
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/gestures.dart';
@@ -69,6 +86,8 @@ import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dar
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/voice/voice_player_row.dart';
 
 import 'support/material_icons_font.dart';
 import 'voice_moment_test_doubles.dart';
@@ -88,6 +107,21 @@ String _outDir() {
   return configured == null || configured.trim().isEmpty
       ? _defaultOut
       : configured.trim();
+}
+
+/// One capture case, rendered with real shadows: `debugDisableShadows` is
+/// off for the whole case (every frame it paints, not only the raster) and
+/// restored in a `finally`, before the binding checks its invariants.
+void _capture(String description, WidgetTesterCallback body) {
+  testWidgets(description, (tester) async {
+    final previous = debugDisableShadows;
+    debugDisableShadows = false;
+    try {
+      await body(tester);
+    } finally {
+      debugDisableShadows = previous;
+    }
+  });
 }
 
 Future<ByteData> _read(String path) async {
@@ -480,6 +514,204 @@ List<Message> _roomLinkThread() {
   ];
 }
 
+/// A clip of the voice thread: where the scripted host serves it from, the
+/// length it reports, and the position it reports while the clip plays or is
+/// paused (so a frame holds one real mid-play position per clip).
+typedef _Clip = ({String url, Duration length, Duration position});
+
+const _Clip _incomingClip = (
+  url: 'https://media.yovoice.test/voice/v-in.m4a',
+  length: Duration(seconds: 42),
+  position: Duration(seconds: 19),
+);
+const _Clip _incomingSecondClip = (
+  url: 'https://media.yovoice.test/voice/v-in-2.m4a',
+  length: Duration(seconds: 31),
+  position: Duration(seconds: 12),
+);
+const _Clip _restClip = (
+  url: 'https://media.yovoice.test/voice/v-out-rest.m4a',
+  length: Duration(seconds: 18),
+  position: Duration(seconds: 5),
+);
+const _Clip _outgoingClip = (
+  url: 'https://media.yovoice.test/voice/v-out-play.m4a',
+  length: Duration(seconds: 25),
+  position: Duration(seconds: 8),
+);
+
+const _voiceClips = <String, _Clip>{
+  'v-in': _incomingClip,
+  'v-in-2': _incomingSecondClip,
+  'v-out-rest': _restClip,
+  'v-out-play': _outgoingClip,
+};
+
+/// A voice exchange: two clips from Ola in one run, then two of yours in one
+/// run. Which of them plays, pauses, loads or fails is the frame's state.
+List<Message> _voiceThread() {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day, 20, 14);
+  const conversationId = '${_me}_ola';
+  Message message(
+    String id,
+    String sender,
+    DateTime at, {
+    String content = 'voice',
+    MessageType type = MessageType.voice,
+  }) {
+    final clip = _voiceClips[id];
+    return Message(
+      id: id,
+      conversationId: conversationId,
+      senderId: sender,
+      type: type,
+      content: content,
+      sentAt: at,
+      readBy: const [_me, 'ola'],
+      reactions: const <String, String>{},
+      mediaUrl: clip?.url,
+      durationSeconds: clip?.length.inSeconds,
+    );
+  }
+
+  return [
+    message(
+      'v-out-play',
+      _me,
+      today.add(const Duration(minutes: 6, seconds: 40)),
+    ),
+    message(
+      'v-out-rest',
+      _me,
+      today.add(const Duration(minutes: 6, seconds: 10)),
+    ),
+    message(
+      'v-text',
+      _me,
+      today.add(const Duration(minutes: 5)),
+      content: 'Brzmi świetnie! Odpowiadam głosówką.',
+      type: MessageType.text,
+    ),
+    message(
+      'v-in-2',
+      'ola',
+      today.add(const Duration(minutes: 2, seconds: 30)),
+    ),
+    message('v-in', 'ola', today.add(const Duration(minutes: 2))),
+    message(
+      'v-intro',
+      'ola',
+      today,
+      content: 'Nagrałam Ci kawałek z próby, posłuchaj.',
+      type: MessageType.text,
+    ),
+  ];
+}
+
+/// The audioplayers host for the voice frames. Each bubble keeps its own
+/// real `AudioPlayer`; this answers that player's method channel and feeds
+/// its event channel the way the native side does — `onPrepared` and
+/// `onDuration` when a source is set, and the clip's position whenever the
+/// plugin's position updater asks for it. So the bubble's position comes
+/// through the plugin's real `onPositionChanged` stream, not a test seam.
+///
+/// A clip in [failing] is refused the way a native player refuses a source
+/// it cannot open (an error on the player's event channel and a failed
+/// call); a clip in [holding] is still buffering — its `onPrepared` waits
+/// for [release] — so its bubble shows the busy bead.
+class _ScriptedAudioHost {
+  _ScriptedAudioHost({
+    this.failing = const <String>{},
+    this.holding = const <String>{},
+  });
+
+  final Set<String> failing;
+  final Set<String> holding;
+  final _sources = <String, String>{};
+  final _sinks = <String, MockStreamHandlerEventSink>{};
+  final _held = <String, String>{};
+
+  static const _channel = MethodChannel('xyz.luan/audioplayers');
+
+  TestDefaultBinaryMessenger get _messenger =>
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+  void install() => _messenger.setMockMethodCallHandler(_channel, _handle);
+
+  /// Back to the silent host of every other case.
+  void uninstall() =>
+      _messenger.setMockMethodCallHandler(_channel, (_) async => null);
+
+  _Clip? _clipOf(String? playerId) {
+    final url = _sources[playerId];
+    return _voiceClips.values.where((clip) => clip.url == url).firstOrNull;
+  }
+
+  /// The held clip finishes buffering.
+  void release(String url) {
+    final playerId = _held.remove(url);
+    if (playerId != null) _prepared(playerId);
+  }
+
+  void _prepared(String playerId) {
+    final sink = _sinks[playerId];
+    sink?.success(<String, Object?>{
+      'event': 'audio.onPrepared',
+      'value': true,
+    });
+    final clip = _clipOf(playerId);
+    if (clip != null) {
+      sink?.success(<String, Object?>{
+        'event': 'audio.onDuration',
+        'value': clip.length.inMilliseconds,
+      });
+    }
+  }
+
+  Future<Object?> _handle(MethodCall call) async {
+    final arguments = (call.arguments as Map<Object?, Object?>?) ?? const {};
+    final playerId = arguments['playerId'] as String?;
+    switch (call.method) {
+      case 'create':
+        _messenger.setMockStreamHandler(
+          EventChannel('xyz.luan/audioplayers/events/$playerId'),
+          MockStreamHandler.inline(
+            onListen: (_, sink) {
+              _sinks[playerId!] = sink;
+            },
+          ),
+        );
+        return null;
+      case 'setSourceUrl':
+        final url = arguments['url']! as String;
+        _sources[playerId!] = url;
+        if (failing.contains(url)) {
+          _sinks[playerId]?.error(
+            code: 'AndroidAudioError',
+            message: 'MEDIA_ERROR_UNKNOWN {what:1, extra:-1004}',
+          );
+          throw PlatformException(
+            code: 'AndroidAudioError',
+            message: 'MEDIA_ERROR_UNKNOWN {what:1, extra:-1004}',
+          );
+        }
+        if (holding.contains(url)) {
+          _held[url] = playerId;
+          return null;
+        }
+        _prepared(playerId);
+        return null;
+      case 'getCurrentPosition':
+        return _clipOf(playerId)?.position.inMilliseconds ?? 0;
+      case 'getDuration':
+        return _clipOf(playerId)?.length.inMilliseconds;
+      default:
+        return null;
+    }
+  }
+}
+
 class _FixtureFriendService extends FriendService {
   _FixtureFriendService({this.friends = true})
     : super(
@@ -760,6 +992,43 @@ Future<void> _focusOn(WidgetTester tester, Finder inside) async {
   await _settle(tester);
 }
 
+/// The thread's message list: the one scrollable that runs bottom to top.
+final Finder _threadList = find.byWidgetPredicate(
+  (widget) => widget is Scrollable && widget.axisDirection == AxisDirection.up,
+);
+
+/// Scrolls the thread only as far as it takes to show [target] whole, as a
+/// person would before tapping it; nothing moves when it already shows (the
+/// thread keeps its resting scroll in every frame where it fits). A message
+/// the list has not even built yet (a long thread at 200 %) is found by
+/// walking the list from its resting scroll toward older messages.
+Future<void> _reveal(WidgetTester tester, Finder target) async {
+  if (target.evaluate().isEmpty) {
+    final position = tester.state<ScrollableState>(_threadList).position;
+    for (var offset = 0.0; target.evaluate().isEmpty; offset += 160) {
+      if (offset > position.maxScrollExtent + 160) break;
+      position.jumpTo(
+        offset < position.maxScrollExtent ? offset : position.maxScrollExtent,
+      );
+      await tester.pump();
+    }
+  }
+  final context = tester.element(target);
+  for (final policy in const [
+    ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+    ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+  ]) {
+    await Scrollable.ensureVisible(context, alignmentPolicy: policy);
+  }
+  await _settle(tester);
+}
+
+/// Back to the thread's resting scroll: the newest message at the bottom.
+Future<void> _restThread(WidgetTester tester) async {
+  tester.state<ScrollableState>(_threadList).position.jumpTo(0);
+  await _settle(tester);
+}
+
 void main() {
   late PublicIdentityRepository originalIdentityRepository;
 
@@ -779,6 +1048,13 @@ void main() {
     for (final channel in audioChannels) {
       messenger.setMockMethodCallHandler(channel, (_) async => null);
     }
+    // audioplayers initializes its global scope once per isolate and every
+    // player awaits that one future. Left to the first bubble, it would be
+    // completed inside that case's fake-async zone, and a player in any
+    // later case would wait on a zone nobody runs any more (no `create`, so
+    // no playback). Initialized here, in the real zone, a later player gets
+    // past it on the next real turn (`_warmImages` runs real time).
+    await AudioPlayer.global.ensureInitialized();
   });
 
   tearDownAll(() {
@@ -816,7 +1092,7 @@ void main() {
     _Frame(390, _pearl, 1, hc: true),
   ]) {
     final name = frame.name('chats', 'populated');
-    testWidgets('list ${frame.width.toInt()} $name', (tester) async {
+    _capture('list ${frame.width.toInt()} $name', (tester) async {
       await _pumpScreen(tester, frame, _list(_FixtureMessageService()));
       await _capturePng(tester, name, pixelRatio: _pixelRatio(frame));
       for (final id in const ['ola', 'marta']) {
@@ -835,7 +1111,7 @@ void main() {
     _Frame(390, _pearl, 1, hc: true),
   ]) {
     final name = frame.name('chats', 'empty');
-    testWidgets('list ${frame.width.toInt()} $name', (tester) async {
+    _capture('list ${frame.width.toInt()} $name', (tester) async {
       await _pumpScreen(
         tester,
         frame,
@@ -855,7 +1131,7 @@ void main() {
     _Frame(390, _dark, 2),
   ]) {
     final name = frame.name('chats', 'search-empty');
-    testWidgets('list ${frame.width.toInt()} $name', (tester) async {
+    _capture('list ${frame.width.toInt()} $name', (tester) async {
       await _pumpScreen(tester, frame, _list(_FixtureMessageService()));
       await tester.enterText(find.byType(TextField), 'zzz');
       await _settle(tester);
@@ -866,7 +1142,7 @@ void main() {
 
   for (final frame in [_Frame(390, _dark, 1), _Frame(390, _pearl, 1)]) {
     final name = frame.name('chats', 'archived-empty');
-    testWidgets('list ${frame.width.toInt()} $name', (tester) async {
+    _capture('list ${frame.width.toInt()} $name', (tester) async {
       await _pumpScreen(tester, frame, _list(_FixtureMessageService()));
       await tester.tap(find.byTooltip('Pokaż zarchiwizowane rozmowy'));
       await _settle(tester);
@@ -888,7 +1164,7 @@ void main() {
     (_Frame(390, _dark, 2), 'new-message-search'),
   ]) {
     final name = frame.name('chats', state);
-    testWidgets('sheet ${frame.width.toInt()} $name', (tester) async {
+    _capture('sheet ${frame.width.toInt()} $name', (tester) async {
       final empty = state == 'new-message-empty';
       await _pumpScreen(
         tester,
@@ -915,7 +1191,7 @@ void main() {
   // A row's "…" sheet: mute, archive, delete.
   for (final frame in _spots(hc: true)) {
     final name = frame.name('chats', 'actions-sheet');
-    testWidgets('sheet ${frame.width.toInt()} $name', (tester) async {
+    _capture('sheet ${frame.width.toInt()} $name', (tester) async {
       await _pumpScreen(tester, frame, _list(_FixtureMessageService()));
       await tester.tap(find.byIcon(Icons.more_horiz_rounded).first);
       await _settle(tester);
@@ -930,7 +1206,7 @@ void main() {
     _Frame(390, _pearl, 1, rtl: true),
   ]) {
     final name = frame.name('chats', 'populated');
-    testWidgets('list ${frame.width.toInt()} $name', (tester) async {
+    _capture('list ${frame.width.toInt()} $name', (tester) async {
       await _pumpScreen(tester, frame, _list(_FixtureMessageService()));
       await _capturePng(tester, name, pixelRatio: _pixelRatio(frame));
       expect(tester.takeException(), isNull);
@@ -963,7 +1239,7 @@ void main() {
       ),
     ]) {
       final name = frame.name('chats', state);
-      testWidgets('list ${frame.width.toInt()} $name', (tester) async {
+      _capture('list ${frame.width.toInt()} $name', (tester) async {
         await _pumpScreen(tester, frame, _list(_FixtureMessageService()));
         await _focusOn(tester, target());
         await _capturePng(tester, name, pixelRatio: _pixelRatio(frame));
@@ -975,7 +1251,7 @@ void main() {
   // Pointer hover on a row at 1440.
   for (final frame in [_Frame(1440, _dark, 1), _Frame(1440, _pearl, 1)]) {
     final name = frame.name('chats', 'hover-row');
-    testWidgets('list ${frame.width.toInt()} $name', (tester) async {
+    _capture('list ${frame.width.toInt()} $name', (tester) async {
       await _pumpScreen(tester, frame, _list(_FixtureMessageService()));
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await mouse.addPointer(location: Offset.zero);
@@ -1004,7 +1280,7 @@ void main() {
     _Frame(390, _pearl, 1, rtl: true),
   ]) {
     final name = frame.name('conversation', 'populated');
-    testWidgets('thread ${frame.width.toInt()} $name', (tester) async {
+    _capture('thread ${frame.width.toInt()} $name', (tester) async {
       await _ignoringAudioPluginNoise(() async {
         await _pumpScreen(tester, frame, _chat(_FixtureMessageService()));
         await _capturePng(tester, name, pixelRatio: _pixelRatio(frame));
@@ -1020,7 +1296,7 @@ void main() {
 
   for (final frame in _spots(hc: true)) {
     final name = frame.name('conversation', 'queued');
-    testWidgets('thread ${frame.width.toInt()} $name', (tester) async {
+    _capture('thread ${frame.width.toInt()} $name', (tester) async {
       await _ignoringAudioPluginNoise(() async {
         final outbox = MessageOutbox(storageKey: null, ownerId: _me);
         await tester.runAsync(() async {
@@ -1058,7 +1334,7 @@ void main() {
     _Frame(390, _pearl, 1, hc: true),
   ]) {
     final name = frame.name('conversation', 'sheet');
-    testWidgets('thread ${frame.width.toInt()} $name', (tester) async {
+    _capture('thread ${frame.width.toInt()} $name', (tester) async {
       await _ignoringAudioPluginNoise(() async {
         await _pumpScreen(tester, frame, _chat(_FixtureMessageService()));
         await tester.longPress(
@@ -1079,7 +1355,7 @@ void main() {
     _Frame(1440, _pearl, 1),
   ]) {
     final name = frame.name('conversation', 'composer');
-    testWidgets('thread ${frame.width.toInt()} $name', (tester) async {
+    _capture('thread ${frame.width.toInt()} $name', (tester) async {
       await _ignoringAudioPluginNoise(() async {
         await _pumpScreen(tester, frame, _chat(_FixtureMessageService()));
         await tester.enterText(find.byType(TextField), 'Będę o 19:50');
@@ -1108,7 +1384,7 @@ void main() {
     (_Frame(390, _dark, 1, hc: true), 'recorder-review-busy'),
   ]) {
     final name = frame.name('conversation', state);
-    testWidgets('thread ${frame.width.toInt()} $name', (tester) async {
+    _capture('thread ${frame.width.toInt()} $name', (tester) async {
       await _ignoringAudioPluginNoise(() async {
         final clock = FakeStopwatch();
         await _pumpScreen(
@@ -1153,7 +1429,7 @@ void main() {
   // the brand gradient.
   for (final frame in _spots(hc: true)) {
     final name = frame.name('conversation', 'room-link');
-    testWidgets('thread ${frame.width.toInt()} $name', (tester) async {
+    _capture('thread ${frame.width.toInt()} $name', (tester) async {
       await _ignoringAudioPluginNoise(() async {
         final auth = MockFirebaseAuth(
           signedIn: true,
@@ -1183,6 +1459,270 @@ void main() {
     });
   }
 
+  // Voice bubbles on the voice-bead API (refine-look §8.3, R13 / R14) and
+  // the thread's one audio floor (W3). Every bubble's real player gets its
+  // position from the scripted host, so each pour is a real position; the
+  // checks before each capture prove every tap landed, that each clip is in
+  // the state the frame claims, and that at most one bead is lit.
+  //
+  //   * voice-idle — nothing played: four still silhouettes, no light;
+  //   * voice-playing — your newest clip played, then Ola's first: hers is
+  //     the one lit bead (19 of 42 s poured), yours paused at 8 of 25 s;
+  //   * voice-out-playing — the reverse: your clip plays (the white bead,
+  //     never lit) and Ola's waits paused mid-way, so nothing is lit;
+  //   * voice-two-incoming — Ola's first clip, then her second: the second
+  //     is the one lit bead and the first is paused (the W3 repro);
+  //   * voice-busy-failed — two clips the player refused (the failed bead,
+  //     incoming and outgoing), then Ola's first still buffering (busy);
+  //   * voice-out-busy — your newest clip buffering (the busy white bead);
+  //   * voice-focus-in / voice-focus-out — keyboard focus on a clip at rest.
+  final voiceMatrix = <_Frame>[
+    for (final width in const [320.0, 390.0, 768.0, 1440.0])
+      for (final theme in [_dark, _pearl])
+        for (final scale in _textScales()) _Frame(width, theme, scale),
+    _Frame(390, _dark, 1, hc: true),
+    _Frame(390, _pearl, 1, hc: true),
+    _Frame(1440, _dark, 1, hc: true),
+    _Frame(390, _dark, 1, rtl: true),
+    _Frame(390, _pearl, 1, rtl: true),
+  ];
+  List<_Frame> voiceSpots({bool rtl = false, bool hc = true}) => [
+    for (final theme in [_dark, _pearl])
+      for (final scale in _textScales()) _Frame(390, theme, scale),
+    if (_textScales().contains(2.0)) _Frame(320, _dark, 2),
+    _Frame(768, _pearl, 1),
+    _Frame(1440, _dark, 1),
+    if (hc) _Frame(390, _dark, 1, hc: true),
+    if (hc) _Frame(390, _pearl, 1, hc: true),
+    if (rtl) _Frame(390, _dark, 1, rtl: true),
+  ];
+  const playing = VoicePlayerRowStatus.playing;
+  const paused = VoicePlayerRowStatus.paused;
+  const loading = VoicePlayerRowStatus.loading;
+  const failed = VoicePlayerRowStatus.failed;
+  final voiceCases =
+      <
+        ({
+          String state,
+          List<_Frame> frames,
+          Set<String> failing,
+          Set<String> holding,
+          List<String> taps,
+          Map<String, VoicePlayerRowStatus> expected,
+          String? lit,
+          String? focus,
+          String? reveal,
+        })
+      >[
+        (
+          state: 'voice-idle',
+          frames: voiceSpots(),
+          failing: const {},
+          holding: const {},
+          taps: const [],
+          expected: const {},
+          lit: null,
+          focus: null,
+          reveal: null,
+        ),
+        (
+          state: 'voice-playing',
+          frames: voiceMatrix,
+          failing: const {},
+          holding: const {},
+          taps: const ['v-out-play', 'v-in'],
+          expected: const {'v-in': playing, 'v-out-play': paused},
+          lit: 'v-in',
+          focus: null,
+          reveal: 'v-in',
+        ),
+        (
+          state: 'voice-out-playing',
+          frames: voiceSpots(rtl: true),
+          failing: const {},
+          holding: const {},
+          taps: const ['v-in', 'v-out-play'],
+          expected: const {'v-out-play': playing, 'v-in': paused},
+          lit: null,
+          focus: null,
+          reveal: 'v-out-play',
+        ),
+        (
+          state: 'voice-two-incoming',
+          frames: voiceSpots(rtl: true),
+          failing: const {},
+          holding: const {},
+          taps: const ['v-in', 'v-in-2'],
+          expected: const {'v-in-2': playing, 'v-in': paused},
+          lit: 'v-in-2',
+          focus: null,
+          reveal: 'v-in-2',
+        ),
+        (
+          state: 'voice-busy-failed',
+          frames: voiceSpots(),
+          failing: {_incomingSecondClip.url, _restClip.url},
+          holding: {_incomingClip.url},
+          taps: const ['v-in-2', 'v-out-rest', 'v-in'],
+          expected: const {
+            'v-in-2': failed,
+            'v-out-rest': failed,
+            'v-in': loading,
+          },
+          lit: null,
+          focus: null,
+          reveal: 'v-in',
+        ),
+        (
+          state: 'voice-out-busy',
+          frames: voiceSpots(),
+          failing: const {},
+          holding: {_outgoingClip.url},
+          taps: const ['v-out-play'],
+          expected: const {'v-out-play': loading},
+          lit: null,
+          focus: null,
+          reveal: 'v-out-play',
+        ),
+        for (final (state, id) in const [
+          ('voice-focus-in', 'v-in'),
+          ('voice-focus-out', 'v-out-rest'),
+        ])
+          (
+            state: state,
+            frames: [_Frame(390, _dark, 1), _Frame(390, _pearl, 1)],
+            failing: const {},
+            holding: const {},
+            taps: const [],
+            expected: const {},
+            lit: null,
+            focus: id,
+            reveal: id,
+          ),
+      ];
+  for (final voice in voiceCases) {
+    for (final frame in voice.frames) {
+      final name = frame.name('conversation', voice.state);
+      _capture('thread ${frame.width.toInt()} $name', (tester) async {
+        await _ignoringAudioPluginNoise(() async {
+          final host = _ScriptedAudioHost(
+            failing: voice.failing,
+            holding: voice.holding,
+          )..install();
+          try {
+            await _pumpScreen(
+              tester,
+              frame,
+              _chat(_FixtureMessageService(messages: _voiceThread())),
+            );
+            Finder tap(String id) =>
+                find.byKey(ValueKey<String>('direct-voice-$id'));
+            Finder rowOf(String id) => find.ancestor(
+              of: tap(id),
+              matching: find.byType(VoicePlayerRow),
+            );
+            YoGradientDisc bead(String id) => tester.widget<YoGradientDisc>(
+              find.descendant(
+                of: rowOf(id),
+                matching: find.byType(YoGradientDisc),
+              ),
+            );
+
+            for (final id in voice.taps) {
+              await _reveal(tester, tap(id));
+              await tester.tap(tap(id));
+              await _settle(tester);
+            }
+            final focus = voice.focus;
+            if (focus != null) {
+              await _reveal(tester, tap(focus));
+              await _focusOn(
+                tester,
+                find.descendant(
+                  of: tap(focus),
+                  matching: find.byType(YoGradientDisc),
+                ),
+              );
+              expect(
+                FocusManager.instance.primaryFocus?.context
+                    ?.findAncestorWidgetOfExactType<InkWell>()
+                    ?.key,
+                ValueKey<String>('direct-voice-$focus'),
+                reason: 'focus sits on the voice row itself',
+              );
+            }
+            // Every clip is checked, even one a narrow frame scrolls away.
+            var lit = 0;
+            for (final MapEntry(key: id, value: clip) in _voiceClips.entries) {
+              await _reveal(tester, tap(id));
+              final row = tester.widget<VoicePlayerRow>(rowOf(id));
+              final status = voice.expected[id] ?? VoicePlayerRowStatus.idle;
+              final progress = row.progress?.value;
+              // ignore: avoid_print
+              print(
+                '$name $id: ${row.status.name} progress=$progress '
+                'bead=${bead(id).tone.name}/${bead(id).emphasis.name}',
+              );
+              expect(row.status, status, reason: id);
+              expect(
+                progress,
+                status == playing || status == paused
+                    ? closeTo(
+                        clip.position.inMilliseconds /
+                            clip.length.inMilliseconds,
+                        1e-6,
+                      )
+                    : isNull,
+                reason: '$id pours to its real position or not at all',
+              );
+              expect(
+                bead(id).tone,
+                id.startsWith('v-in') ? YoDiscTone.brand : YoDiscTone.onBrand,
+              );
+              if (bead(id).emphasis == YoDiscEmphasis.lit) {
+                lit += 1;
+                expect(id, voice.lit, reason: 'only the playing clip glows');
+              }
+            }
+            expect(lit, voice.lit == null ? 0 : 1, reason: 'W3: one glow');
+
+            // The frame shows the clip it is about; a frame about the
+            // whole thread keeps the resting scroll.
+            final reveal = voice.reveal;
+            if (reveal != null) {
+              await _reveal(tester, tap(reveal));
+            } else {
+              await _restThread(tester);
+            }
+            await _capturePng(tester, name, pixelRatio: _pixelRatio(frame));
+            expect(tester.takeException(), isNull);
+
+            // A buffering clip finishes and plays, so nothing is left
+            // pending when the route goes.
+            for (final url in voice.holding) {
+              host.release(url);
+            }
+            if (voice.holding.isNotEmpty) {
+              await _settle(tester);
+              final busy = voice.expected.entries
+                  .firstWhere((entry) => entry.value == loading)
+                  .key;
+              expect(
+                tester.widget<VoicePlayerRow>(rowOf(busy)).status,
+                playing,
+              );
+            }
+          } finally {
+            // Also after a failed check: a clip left playing would keep the
+            // plugin's position ticker running into the next case.
+            await _teardown(tester);
+            host.uninstall();
+          }
+        });
+      });
+    }
+  }
+
   // The header while an archive is in flight: the spinner in its glass disc.
   for (final frame in [
     _Frame(390, _dark, 1),
@@ -1193,7 +1733,7 @@ void main() {
     _Frame(390, _pearl, 1, hc: true),
   ]) {
     final name = frame.name('conversation', 'archive-busy');
-    testWidgets('thread ${frame.width.toInt()} $name', (tester) async {
+    _capture('thread ${frame.width.toInt()} $name', (tester) async {
       await _ignoringAudioPluginNoise(() async {
         await _pumpScreen(tester, frame, _chat(_FixtureMessageService()));
         await tester.tap(find.byTooltip('Opcje rozmowy'));
@@ -1213,7 +1753,7 @@ void main() {
   for (final frame in [_Frame(390, _dark, 1), _Frame(390, _pearl, 1)]) {
     for (final state in const ['focus-header', 'focus-mic', 'focus-reaction']) {
       final name = frame.name('conversation', state);
-      testWidgets('thread ${frame.width.toInt()} $name', (tester) async {
+      _capture('thread ${frame.width.toInt()} $name', (tester) async {
         await _ignoringAudioPluginNoise(() async {
           await _pumpScreen(tester, frame, _chat(_FixtureMessageService()));
           switch (state) {
@@ -1238,7 +1778,7 @@ void main() {
 
   for (final frame in [_Frame(390, _dark, 1), _Frame(390, _pearl, 1)]) {
     final name = frame.name('conversation', 'empty');
-    testWidgets('thread ${frame.width.toInt()} $name', (tester) async {
+    _capture('thread ${frame.width.toInt()} $name', (tester) async {
       await _ignoringAudioPluginNoise(() async {
         await _pumpScreen(
           tester,

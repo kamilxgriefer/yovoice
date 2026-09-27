@@ -7,12 +7,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player/video_player.dart';
 
-import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_video_playback_source.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_voice_playback_source.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
 
 void main() {
   for (final entry in <String, ThemeData>{
@@ -33,15 +34,28 @@ void main() {
 
       await tester.tap(find.byIcon(Icons.play_arrow_rounded));
       await tester.pump();
-      final palette = entry.value.extension<AppPalette>()!;
+      // Refine-look R14: the incoming bubble spins inside its brand voice
+      // bead — a white spinner on the logo gradient, readable in both
+      // themes — where the legacy inline control spun in the bubble's
+      // `textPrimary` ink.
+      final bead = find.byType(YoGradientDisc);
+      expect(tester.widget<YoGradientDisc>(bead).tone, YoDiscTone.brand);
+      expect(tester.widget<YoGradientDisc>(bead).status, YoDiscStatus.busy);
       final loading = tester.widget<CircularProgressIndicator>(
-        find.byType(CircularProgressIndicator),
+        find.descendant(
+          of: bead,
+          matching: find.byType(CircularProgressIndicator),
+        ),
       );
-      expect(loading.color, palette.textPrimary);
+      expect(loading.color, AppColors.white);
 
       load.complete(null);
       await tester.pumpAndSettle();
-      expect(find.byIcon(Icons.refresh_rounded), findsOneWidget);
+      expect(tester.widget<YoGradientDisc>(bead).status, YoDiscStatus.failed);
+      expect(
+        find.descendant(of: bead, matching: find.byIcon(Icons.refresh_rounded)),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -1010,6 +1024,17 @@ class _FakeAudioPlayer implements AudioPlayer {
 
   @override
   Stream<PlayerState> get onPlayerStateChanged => _states.stream;
+
+  // The chat bubble also listens for the player's real position, length and
+  // completion (refine-look R13); this double reports none of them.
+  @override
+  Stream<Duration> get onPositionChanged => const Stream<Duration>.empty();
+
+  @override
+  Stream<Duration> get onDurationChanged => const Stream<Duration>.empty();
+
+  @override
+  Stream<void> get onPlayerComplete => const Stream<void>.empty();
 
   @override
   Future<void> play(
