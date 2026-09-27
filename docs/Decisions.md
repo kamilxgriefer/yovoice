@@ -16591,3 +16591,134 @@ for:
   under the regional CPU quota during the build 36 deploy), with the
   schedule deployed alone and read back before any warm path goes to 0 ([DEPLOYMENT.md](DEPLOYMENT.md#cost-cuts-after-build-36-adr-226--source-only-nothing-deployed)).
   `acceptDirectCall` is not in it: production is already 0.
+
+## ADR-227: The refine look — Afterglow's finish on the 3.0 layout, under a light budget
+
+**Date:** 2026-09-27 · **Status:** accepted (owner, 2026-09-25/26: "ja bym po
+prostu ulepszył to co już istnieje, i pamiętaj aby używać też obecnego logo";
+"coś jednocześnie prostego ale z drugiej strony super wow"; samples approved;
+waveform variant B chosen; "wprowadź wszystko gdy skończysz … pamiętaj aby
+nie ruszać graficznie paska nawigacyjnego"; 2026-09-27: "masz moje zgody na
+wszystko") · ships in `3.2.0+37` · spec:
+[`docs/briefs/2026-09-25-refine-look/spec.md`](briefs/2026-09-25-refine-look/spec.md) ·
+**Supersedes** from [ADR-209](#adr-209-slim-redesign-instagram--discord--twitch-w-języku-yo-voice)
+only these "Smuklej" rules: "Cards get no decorative gradients", "Radii: 12 for
+cards", the w800/w900 weight hierarchy, the 4 px bubble tail / flat reaction
+pill / hairline separator, and "one accent per screen" (now the light budget).
+Every other ADR-209 rule — one layer, one state = one primitive, the caller
+owns state and copy, counted keys, palette only, tests are never made green by
+editing assertions — stands.
+
+### Context
+
+Testers had 3.0.0 (the Slim redesign) and 3.1.0 (build 36). Kamil's verdict on
+3.0: "wciąż wygląda strasznie tanio". The audit in spec §1 found ten causes:
+the glossy logo shrunk inside a grey tile (and `YoLogo` pointing at a missing
+SVG), every block the same flat opaque slab with an opaque outline and four
+radii per screen, LIVE the dullest block on Start, no hero for the voice UI,
+flat and inconsistent primary actions, wireframe outlines on chips and icon
+buttons, coin-like letter avatars, three to five violets and w800/w900
+everywhere, a washed-out Pearl, and unfinished edges (a hard seam above the
+dock, a tofu box in the greeting). The "Afterglow" redesign (per-person aura
+hues, a display face) was shown and declined as a redesign; its block finish
+was what Kamil liked.
+
+### Decision
+
+1. **Improve what exists.** Screens, sections, order, components, copy, keys
+   and semantics stay. New tokens are derived getters on `AppPalette` (no new
+   constructor fields, no changed values), so the navigation dock and the
+   desktop rail — which read only existing values and whose files are not
+   edited — stay pixel-identical. Checked after every batch: the dock PNGs
+   byte for byte, the rail frames in columns 0..263, against a base rendered
+   in the same hour (the rail's world-map marker follows the clock).
+2. **One recipe per block type**, composed once in
+   `lib/core/theme/app_finish.dart` and applied through one primitive each:
+   `YoCard` (R2 block), `YoGradientFilledButton` (R5 primary),
+   `YoGradientDisc` (R6 disc and the R14 voice bead), `YoPressFeedback`,
+   `YoCountBadge`, `YoProgressRing`, `YoBrandMark`/`YoBrandLockup`,
+   `UserAvatar(finish: brand)`, `YoWaveform(continuousProgress)`. Screens opt
+   in; no hand-rolled decorations and no new hex literals in widgets (the five
+   server gem stops live in `server_identity.dart`).
+3. **The light budget.** Emitted light (bloom or glow) comes only from the real
+   logo, a real LIVE block and a voice actually playing or recording. Each
+   screen gets at most one CTA lift and at most one corner-tinted lead block.
+   Everything else is a top-lit gradient fill plus a 9–12 % hairline, with a
+   plum contact shadow in Pearl.
+4. **Hairlines, not outlines,** for decorative separation; text inputs keep
+   `borderStrong`. **High contrast** brings `borderStrong` back and removes
+   gradients, tints, gloss and glow — except where the fill *is* the control
+   and its label clears 4.5:1 on both stops: the R5 action gradient, the R14
+   bead and the outgoing chat bubble (`AppFinish`'s documented exception).
+5. **The real logo, bare**: `assets/images/logo.png` plus a pre-baked
+   `logo-bloom.png`; never boxed, never redrawn. One glint per launch, shared
+   by startup and sign-in, never under Reduce Motion.
+6. **Calm type, one violet**: Inter only, a w700 cap (w800 only for the
+   wordmark and the Głos | Yeels switch), new typography roles; a violet fill
+   only on the screen's one CTA and on the voice bead.
+7. **Honest motion**: motion starts from a real event, is bounded, and is zero
+   under Reduce Motion, accessible navigation or `TickerMode` off
+   (`AppMotion.decorative`). The W4 record halo follows the real normalised
+   amplitude; the waveform pours toward real position events and snaps on seek.
+8. **Waveform variant B** (Kamil, 2026-09-25): the played sweep is the logo's
+   violet → magenta (`AppGradients.voicePlayed`), lightened only as far as the
+   3:1 played/unplayed contrast needs. `audioAccent` (the cyan connected state)
+   is unchanged.
+9. **Radius family**: `AppRadius.block` 20, `tile` 16, `md` 14, `card` 12
+   (inputs, composers, glyph boxes), `pill`, `xl` 28 (sheets).
+
+### Deviations from the spec text, recorded rather than hidden
+
+- **Servers keep a local R5 button** (`ServerGradientFilledButton`): tests
+  address `servers-create`, `server-join` and `server-public-join` as a
+  `FilledButton` by key and read `backgroundColor: cta`, and the templates need
+  an ink label. Folding it into `YoGradientFilledButton` needs `buttonKey`,
+  `foreground` and `fill` on the primitive — a follow-up.
+- **Yeels played sweep**: the spec's [primary, secondary] on a white @ .32
+  track measured 1.05:1 against the unplayed track (hue only, WCAG 1.4.11).
+  It ships as the lightened voicePlayed pair on a white @ .14 track (3.6:1 at
+  rest); solid white under high contrast.
+- **Auth glint delay** 200 ms after first paint, not 350 ms: 350 + 900 ms
+  cannot settle inside the required 1.2 s.
+- **`AuthPrimaryButton` busy** follows only its own loading; a button locked
+  by another provider keeps its gradient, drops its lift and blocks input
+  instead of showing a misleading spinner.
+- **Empty-state and retry CTAs** use `YoGradientFilledButton` with flat or
+  neutral emphasis where another control already owns the screen's one lift
+  (the Chats compose disc, the Moments "+", R5's "never on retry" rule). The
+  chat recorder sheet's Send is the modal layer's one lift.
+- **The W4 halo** reaches about 30–47 px past the disc at full level (the spec
+  formula at Flutter's blur sigma), not the ~26 px discussed with the
+  countdown ring; the countdown ring is not on that screen.
+- **Profiles**: one wide-measure rule for both (body capped at 640 from
+  700 px); the `AccountTypeBadge` restyle is held because the rail renders the
+  same badge; the detail seek slider carries the voicePlayed sweep (its thumb
+  holds 6.2:1 / 7.5:1 and carries the state).
+- **The server conversation bar restyle** ("show Kamil before shipping")
+  shipped under the owner's blanket consent of 2026-09-27, geometry 1:1.
+
+### Reasoning
+
+Kamil asked for polish, not a new design, and the problems were finish, not
+structure. A light budget is what makes "wow" affordable: three sources of
+light keep the LIVE tile, the playing clip and the logo legible as the things
+that matter, where a glow on everything would read as cheap again. Derived
+getters and opt-in primitives keep the blast radius to the screens that adopt
+them and leave the dock and rail untouched by construction.
+
+### Consequences
+
+- Batches B1–B10 plus the B12 handoff landed together as build 37; the record
+  is [Sessions/2026-09-27-refine-look.md](Sessions/2026-09-27-refine-look.md).
+- Tests shifted only where a spec value changed deliberately; each batch
+  commit lists them. Every batch passed an independent visual+accessibility
+  review and a code review, and their findings were fixed before landing.
+- **Unverified on a device**: the startup/auth glint (captured as 50 ms PNG
+  sequences), gloss and rim at 34–52 px, the W4 amplitude halo, haptics, and
+  Pearl contact shadows on a real panel. All frames are Flutter
+  test-renderer captures; the §12.2 fallback (bloom only) stays available if
+  the glint reads cheap on a phone.
+- Follow-ups (Roadmap): the W2 lit card on the podcast/community/company
+  stage scenes, an adopter for the segmented-pill finish, the channel-row live
+  pill at 200 %, the Pearl identity-join tune, the role pill in the glass
+  family, the Profile wide measure at 1440 (spec §12.5).
