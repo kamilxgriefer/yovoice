@@ -75,5 +75,18 @@ The unpushed work is still on the Mac's disk; nothing of it is needed now.
 
 ## Release
 
-The release record — the `main` commit, the Hosting deploy run and its
-read-back — is appended below by the release commit.
+Release candidate verified on 2026-09-27 at 11:16 UTC, on the tree that lands
+on `main` (identical to `claude/affectionate-hopper-47fv5n` @ `0436eb4a`):
+
+- `flutter analyze`: no issues.
+- Full Flutter suite (`flutter test $(ls test/*_test.dart | sort)
+  --concurrency=3`): **6260 / 6260**.
+- Dock / rail parity against a base rendered at 11:09 UTC from `e9af91d8`:
+  8 dock PNGs byte-identical, 6 rail frames identical in columns 0..263
+  (the two known sidebar-harness failures on `main` also fail on the base).
+- `flutter build web --release` compiled on the integrated tree.
+
+It lands on `main` as a linear series (rebuilt from the work branch so that
+the B9 screens and the avatar fix are separate commits; the trees are
+identical). The Hosting deploy and its read-back are recorded in the next
+commit.
