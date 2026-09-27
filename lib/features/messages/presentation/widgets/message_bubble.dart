@@ -8,6 +8,8 @@ import 'package:video_player/video_player.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/presentation/widgets/direct_media_fullscreen_viewer.dart';
@@ -18,6 +20,7 @@ import 'package:yovoice/features/messages/presentation/widgets/room_link_message
 import 'package:yovoice/features/rooms/data/room_links.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_emoji_picker.dart';
 import 'package:yovoice/shared/widgets/media/yo_gif_view.dart';
 import 'package:yovoice/shared/widgets/voice/voice_player_row.dart';
 
@@ -26,6 +29,9 @@ class MessageBubble extends StatelessWidget {
     required this.message,
     required this.currentUserId,
     required this.onLongPress,
+    this.joinsOlder = false,
+    this.joinsNewer = false,
+    this.showMeta = true,
     this.privateMediaLoader,
     this.audioPlayerFactory,
     this.voiceSourcePreparer,
@@ -39,6 +45,21 @@ class MessageBubble extends StatelessWidget {
   final Message message;
   final String currentUserId;
   final VoidCallback onLongPress;
+
+  /// This bubble continues a run started by the OLDER bubble above it (see
+  /// [continuesRun]): its sender-side top corner tightens to the tail
+  /// radius so the run reads as one voice.
+  final bool joinsOlder;
+
+  /// The NEWER bubble below continues this bubble's run: the gap between
+  /// them tightens from 6 to 2 px.
+  final bool joinsNewer;
+
+  /// Whether the time / "edited" / read row is drawn under the bubble. The
+  /// thread hides it ONLY when the newer bubble of the same run carries the
+  /// identical time, edit state and read state ([sharesMeta]), so nothing
+  /// is lost; the hidden row stays in the semantics tree.
+  final bool showMeta;
   final Future<Uint8List?> Function(String? reference, int maxBytes)?
   privateMediaLoader;
   final AudioPlayer Function()? audioPlayerFactory;
@@ -52,21 +73,253 @@ class MessageBubble extends StatelessWidget {
   final RoomLinkResolver? roomLinkResolver;
   final RoomLinkOpener? roomLinkOpener;
 
+  // -------------------------------------------------------------------------
+  // Refine-look R15: one bubble finish, shared by sent and queued bubbles.
+  // -------------------------------------------------------------------------
+
+  /// The bubble radius.
+  static const double cornerRadius = 18;
+
+  /// The tail: the sender's bottom corner, and the sender-side top corner of
+  /// a bubble that continues a run.
+  static const double tailRadius = 6;
+
+  /// The inset of an image, video or GIF inside its bubble; the media keeps a
+  /// concentric radius (18 → 14, the 6 px tail → 2).
+  static const double mediaInset = 4;
+
+  /// The gap under a bubble: [runGap] inside a run, [gap] otherwise.
+  static const double gap = 6;
+  static const double runGap = 2;
+
+  /// Two messages closer than this, from the same sender on the same day
+  /// with no reactions between them, read as one run.
+  static const Duration runWindow = Duration(minutes: 2);
+
+  /// Radius 18 with a 6 px tail on the sender's bottom corner. A bubble that
+  /// continues a run also tightens its sender-side TOP corner to 6.
+  ///
+  /// The sender's side follows the reading direction: your bubbles sit at
+  /// the end of the line (right in LTR, left in RTL), so their tail does too.
+  static BorderRadius bubbleRadius({
+    required bool isMine,
+    bool joinsOlder = false,
+    TextDirection textDirection = TextDirection.ltr,
+  }) {
+    const round = Radius.circular(cornerRadius);
+    const tail = Radius.circular(tailRadius);
+    final senderOnRight = isMine == (textDirection == TextDirection.ltr);
+    return BorderRadius.only(
+      topLeft: !senderOnRight && joinsOlder ? tail : round,
+      topRight: senderOnRight && joinsOlder ? tail : round,
+      bottomLeft: senderOnRight ? round : tail,
+      bottomRight: senderOnRight ? tail : round,
+    );
+  }
+
+  /// The outgoing fill: the labelled-action gradient (white copy at least
+  /// 5.79:1 on both stops), no edge, no shadow. Queued bubbles paint exactly
+  /// this, so nothing changes when the server accepts one; a queued bubble
+  /// that failed gets a 1.5 px `error` edge.
+  static BoxDecoration outgoingDecoration(
+    ColorScheme scheme, {
+    BorderRadius? radius,
+    bool failed = false,
+    TextDirection textDirection = TextDirection.ltr,
+  }) => BoxDecoration(
+    // Keep `color` null behind the gradient (see `yo_button.dart`).
+    gradient: AppGradients.primaryAction(scheme),
+    borderRadius:
+        radius ?? bubbleRadius(isMine: true, textDirection: textDirection),
+    border: failed ? Border.all(color: scheme.error, width: 1.5) : null,
+  );
+
+  /// The incoming fill: the R2 block (top-lit gradient, hairline, Pearl's
+  /// soft lift); flat `surface` with `borderStrong` under high contrast.
+  static BoxDecoration incomingDecoration(
+    AppPalette palette, {
+    BorderRadius? radius,
+    bool highContrast = false,
+    TextDirection textDirection = TextDirection.ltr,
+  }) => AppFinish.block(
+    palette,
+    radius: radius ?? bubbleRadius(isMine: false, textDirection: textDirection),
+    highContrast: highContrast,
+  );
+
+  /// Whether [newer] continues [older]'s run: the same sender, the same day
+  /// (so never across a date separator), less than [runWindow] apart and no
+  /// reaction pill on either bubble.
+  static bool continuesRun(Message older, Message newer) {
+    if (older.senderId != newer.senderId) return false;
+    final a = older.sentAt.toLocal();
+    final b = newer.sentAt.toLocal();
+    if (a.year != b.year || a.month != b.month || a.day != b.day) return false;
+    if (b.difference(a).abs() >= runWindow) return false;
+    return _reactionSummary(older.reactions.values).isEmpty &&
+        _reactionSummary(newer.reactions.values).isEmpty;
+  }
+
+  /// Whether [a] and [b] print the identical meta row: the same displayed
+  /// time, the same edit state and, for your own messages, the same read
+  /// state. Only then may the older one leave its row to the newer one.
+  static bool sharesMeta(
+    BuildContext context,
+    Message a,
+    Message b,
+    String currentUserId,
+  ) {
+    if (_formatTime(context, a.sentAt) != _formatTime(context, b.sentAt)) {
+      return false;
+    }
+    if ((a.editedAt != null) != (b.editedAt != null)) return false;
+    if (a.isMine(currentUserId) != b.isMine(currentUserId)) return false;
+    if (!a.isMine(currentUserId)) return true;
+    return _wasRead(a, currentUserId) == _wasRead(b, currentUserId);
+  }
+
+  static bool _wasRead(Message message, String currentUserId) =>
+      message.readBy.any((id) => id != currentUserId);
+
+  /// Image, video and GIF bubbles (not deleted, not replies) hug their media
+  /// with a [mediaInset] frame.
+  static bool _isMediaBubble(Message message) {
+    if (message.isDeleted) return false;
+    if (message.replyToContent?.isNotEmpty == true) return false;
+    return switch (message.type) {
+      MessageType.gif => message.gif != null,
+      MessageType.image ||
+      MessageType.video => message.mediaUrl?.trim().isNotEmpty == true,
+      MessageType.text || MessageType.voice => false,
+    };
+  }
+
+  static BorderRadius _innerRadius(BorderRadius outer) {
+    Radius inset(Radius r) =>
+        Radius.circular((r.x - mediaInset).clamp(0, double.infinity));
+    return BorderRadius.only(
+      topLeft: inset(outer.topLeft),
+      topRight: inset(outer.topRight),
+      bottomLeft: inset(outer.bottomLeft),
+      bottomRight: inset(outer.bottomRight),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isMine = message.isMine(currentUserId);
-    final wasRead = message.readBy.any((id) => id != currentUserId);
+    final wasRead = _wasRead(message, currentUserId);
     final reactionSummary = _reactionSummary(message.reactions.values);
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
+    final highContrast = MediaQuery.highContrastOf(context);
     final bubbleForeground = isMine ? Colors.white : palette.textPrimary;
     // Outgoing metadata is small text on the brightest gradient stop. Keep it
     // opaque so the worst-case pair remains AA-readable in both themes.
     final bubbleMuted = isMine ? Colors.white : palette.textSecondary;
+    final radius = bubbleRadius(
+      isMine: isMine,
+      joinsOlder: joinsOlder,
+      textDirection: Directionality.of(context),
+    );
+    final media = _isMediaBubble(message);
+    final time = _formatTime(context, message.sentAt);
+    final edited = message.editedAt != null;
+    final metaStyle = TextStyle(color: palette.textTertiary, fontSize: 11);
+
+    Widget bubble = Container(
+      key: ValueKey(
+        isMine ? 'outgoing-message-bubble' : 'incoming-message-bubble',
+      ),
+      padding: media
+          ? const EdgeInsets.all(mediaInset)
+          : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: isMine
+          ? outgoingDecoration(colors, radius: radius)
+          : incomingDecoration(
+              palette,
+              radius: radius,
+              highContrast: highContrast,
+            ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (message.replyToContent?.isNotEmpty == true)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+              decoration: BoxDecoration(
+                color: isMine
+                    ? Colors.black.withValues(alpha: .18)
+                    : palette.surfaceMuted,
+                borderRadius: BorderRadius.circular(8),
+                border: BorderDirectional(
+                  start: BorderSide(
+                    color: isMine ? Colors.white : palette.focus,
+                    width: 3,
+                  ),
+                ),
+              ),
+              child: Text(
+                _localizedReplyPreview(message.replyToContent!, copy),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: bubbleMuted, fontSize: 12),
+              ),
+            ),
+          _MessageContent(
+            message: message,
+            currentUserId: currentUserId,
+            foregroundColor: bubbleForeground,
+            mutedForegroundColor: bubbleMuted,
+            errorForegroundColor: isMine
+                ? const Color(0xFFFFE0E7)
+                : colors.onErrorContainer,
+            privateMediaLoader: privateMediaLoader,
+            audioPlayerFactory: audioPlayerFactory,
+            voiceSourcePreparer: voiceSourcePreparer,
+            videoSourcePreparer: videoSourcePreparer,
+            videoAudioPreparer: videoAudioPreparer,
+            onBrandSurface: isMine,
+            roomLinkResolver: roomLinkResolver,
+            roomLinkOpener: roomLinkOpener,
+            mediaRadius: media ? _innerRadius(radius) : null,
+          ),
+        ],
+      ),
+    );
+
+    if (!showMeta) {
+      // The row is left to the newer bubble, which prints the identical
+      // time, edit state and read state. A screen reader still hears this
+      // bubble's time after its content: a strip over the bubble's own
+      // bottom padding carries it (a zero-size node would be dropped).
+      bubble = Stack(
+        children: [
+          bubble,
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: mediaInset,
+            child: Semantics(
+              label: [
+                time,
+                if (edited) copy.text('edited', 'edytowano'),
+              ].join(' '),
+              child: const SizedBox.expand(),
+            ),
+          ),
+        ],
+      );
+    }
 
     return Align(
-      alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+      alignment: isMine
+          ? AlignmentDirectional.centerEnd
+          : AlignmentDirectional.centerStart,
       child: AccessibleContextAction(
         onOpen: onLongPress,
         semanticLabel: isMine
@@ -78,154 +331,95 @@ class MessageBubble extends StatelessWidget {
                 'Open actions for this message',
                 'Otwórz opcje tej wiadomości',
               ),
-        borderRadius: 18,
-        // Slim bubble: compact padding, one 18 px radius with a 4 px tail
-        // corner, a 1 px hairline on incoming bubbles and no shadow. The
-        // outgoing brand gradient is the bubble's identity (and pinned by
-        // `message_bubble_overflow_test.dart`), so it stays. On a wide
-        // column the bubble stops at a readable measure instead of running
-        // the full width of the thread.
+        borderRadius: cornerRadius,
+        // Refine-look R15: radius 18 with a 6 px tail; the outgoing bubble
+        // is the labelled-action gradient, the incoming one the lit block
+        // (hairline, Pearl's soft lift). On a wide column the bubble stops
+        // at a readable measure instead of running the full width.
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: _maxBubbleWidth + 48),
+          constraints: const BoxConstraints(maxWidth: maxBubbleWidth + 48),
           child: Padding(
-            padding: EdgeInsets.only(
-              left: isMine ? 48 : 0,
-              right: isMine ? 0 : 48,
-              bottom: 6,
+            padding: EdgeInsetsDirectional.only(
+              start: isMine ? 48 : 0,
+              end: isMine ? 0 : 48,
+              bottom: joinsNewer ? runGap : gap,
             ),
             child: Column(
               crossAxisAlignment: isMine
                   ? CrossAxisAlignment.end
                   : CrossAxisAlignment.start,
               children: [
-                Container(
-                  key: ValueKey(
-                    isMine
-                        ? 'outgoing-message-bubble'
-                        : 'incoming-message-bubble',
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    gradient: isMine
-                        ? const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [Color(0xFFA72DFF), Color(0xFF7821E8)],
-                          )
-                        : null,
-                    color: isMine ? null : palette.surfaceRaised,
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(18),
-                      topRight: const Radius.circular(18),
-                      bottomLeft: Radius.circular(isMine ? 18 : 4),
-                      bottomRight: Radius.circular(isMine ? 4 : 18),
-                    ),
-                    border: isMine ? null : Border.all(color: palette.border),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (message.replyToContent?.isNotEmpty == true)
-                        Container(
-                          width: double.infinity,
-                          margin: const EdgeInsets.only(bottom: 6),
-                          padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-                          decoration: BoxDecoration(
-                            color: isMine
-                                ? Colors.black.withValues(alpha: .18)
-                                : palette.surfaceMuted,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border(
-                              left: BorderSide(
-                                color: isMine ? Colors.white : palette.focus,
-                                width: 3,
-                              ),
-                            ),
-                          ),
-                          child: Text(
-                            _localizedReplyPreview(
-                              message.replyToContent!,
-                              copy,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: bubbleMuted, fontSize: 12),
-                          ),
-                        ),
-                      _MessageContent(
-                        message: message,
-                        currentUserId: currentUserId,
-                        foregroundColor: bubbleForeground,
-                        mutedForegroundColor: bubbleMuted,
-                        errorForegroundColor: isMine
-                            ? const Color(0xFFFFE0E7)
-                            : colors.onErrorContainer,
-                        privateMediaLoader: privateMediaLoader,
-                        audioPlayerFactory: audioPlayerFactory,
-                        voiceSourcePreparer: voiceSourcePreparer,
-                        videoSourcePreparer: videoSourcePreparer,
-                        videoAudioPreparer: videoAudioPreparer,
-                        onBrandSurface: isMine,
-                        roomLinkResolver: roomLinkResolver,
-                        roomLinkOpener: roomLinkOpener,
-                      ),
-                    ],
-                  ),
-                ),
+                bubble,
                 if (reactionSummary.isNotEmpty) ...[
                   const SizedBox(height: 3),
-                  // A flat pill: it sits in the thread, it does not float
-                  // above it, so it carries a hairline and no shadow.
+                  // A stadium in its own slot under the bubble, never over
+                  // it: `surfaceRaised` with the block hairline.
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
                       vertical: 3,
                     ),
-                    decoration: BoxDecoration(
+                    decoration: ShapeDecoration(
                       color: palette.surfaceRaised,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: palette.border),
+                      shape: StadiumBorder(
+                        side: BorderSide(
+                          color: highContrast
+                              ? palette.borderStrong
+                              : palette.hairline,
+                        ),
+                      ),
                     ),
-                    child: Text(
-                      reactionSummary,
-                      style: const TextStyle(fontSize: 13),
+                    // Each emoji in the colour-emoji family (Inter's own
+                    // flat ❤ would otherwise win over the variation
+                    // selector); the counts stay in the app's type. It
+                    // reads exactly as the plain summary did.
+                    child: Text.rich(
+                      TextSpan(
+                        style: const TextStyle(fontSize: 13),
+                        children: [
+                          for (final (index, entry) in _reactionCounts(
+                            message.reactions.values,
+                          ).indexed) ...[
+                            if (index > 0) const TextSpan(text: ' '),
+                            TextSpan(
+                              text: entry.key,
+                              style: const TextStyle(
+                                fontFamily: yoEmojiFontFamily,
+                                fontFamilyFallback: yoEmojiFontFamilyFallback,
+                              ),
+                            ),
+                            if (entry.value > 1)
+                              TextSpan(text: ' ${entry.value}'),
+                          ],
+                        ],
+                      ),
                     ),
                   ),
                 ],
-                const SizedBox(height: 3),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _formatTime(context, message.sentAt),
-                      style: TextStyle(
-                        color: palette.textTertiary,
-                        fontSize: 11,
-                      ),
-                    ),
-                    if (message.editedAt != null) ...[
-                      const SizedBox(width: 4),
-                      Text(
-                        copy.text('edited', 'edytowano'),
-                        style: TextStyle(
-                          color: palette.textTertiary,
-                          fontSize: 11,
+                if (showMeta) ...[
+                  const SizedBox(height: 3),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(time, style: metaStyle),
+                      if (edited) ...[
+                        const SizedBox(width: 4),
+                        Text(
+                          copy.text('edited', 'edytowano'),
+                          style: metaStyle,
                         ),
-                      ),
+                      ],
+                      if (isMine) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          wasRead ? Icons.done_all_rounded : Icons.done_rounded,
+                          size: 14,
+                          color: wasRead ? palette.focus : palette.textTertiary,
+                        ),
+                      ],
                     ],
-                    if (isMine) ...[
-                      const SizedBox(width: 4),
-                      Icon(
-                        wasRead ? Icons.done_all_rounded : Icons.done_rounded,
-                        size: 14,
-                        color: wasRead ? palette.focus : palette.textTertiary,
-                      ),
-                    ],
-                  ],
-                ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -235,9 +429,13 @@ class MessageBubble extends StatelessWidget {
   }
 
   /// The widest a bubble grows on a desktop column: a readable measure.
-  static const double _maxBubbleWidth = 560;
+  static const double maxBubbleWidth = 560;
 
-  static String _reactionSummary(Iterable<String> reactions) {
+  /// Each distinct reaction with how many people chose it, in first-seen
+  /// order.
+  static Iterable<MapEntry<String, int>> _reactionCounts(
+    Iterable<String> reactions,
+  ) {
     final counts = <String, int>{};
 
     for (final reaction in reactions) {
@@ -248,7 +446,11 @@ class MessageBubble extends StatelessWidget {
       counts[reaction] = (counts[reaction] ?? 0) + 1;
     }
 
-    return counts.entries
+    return counts.entries;
+  }
+
+  static String _reactionSummary(Iterable<String> reactions) {
+    return _reactionCounts(reactions)
         .map(
           (entry) =>
               entry.value > 1 ? '${entry.key} ${entry.value}' : entry.key,
@@ -279,6 +481,7 @@ class _MessageContent extends StatelessWidget {
     required this.onBrandSurface,
     required this.roomLinkResolver,
     required this.roomLinkOpener,
+    this.mediaRadius,
   });
 
   final Message message;
@@ -295,6 +498,10 @@ class _MessageContent extends StatelessWidget {
   final bool onBrandSurface;
   final RoomLinkResolver? roomLinkResolver;
   final RoomLinkOpener? roomLinkOpener;
+
+  /// The media's clip inside a framed media bubble (concentric with the
+  /// bubble); null keeps each renderer's own 14 px radius.
+  final BorderRadius? mediaRadius;
 
   @override
   Widget build(BuildContext context) {
@@ -326,12 +533,18 @@ class _MessageContent extends StatelessWidget {
             style: TextStyle(color: foregroundColor),
           );
         }
-        return YoGifView(
+        final gifView = YoGifView(
           asset: gif,
           autoLoad:
               AppPreferencesScope.maybeOf(context)?.value.gifAutoLoadEnabled ??
               true,
+          // Inside a framed bubble the frame's concentric clip owns the
+          // corners (14, and 2 on the tail).
+          borderRadius: mediaRadius == null ? 14 : 0,
         );
+        final radius = mediaRadius;
+        if (radius == null) return gifView;
+        return ClipRRect(borderRadius: radius, child: gifView);
       case MessageType.voice:
         return _VoiceMessageContent(
           message: message,
@@ -350,6 +563,7 @@ class _MessageContent extends StatelessWidget {
           foregroundColor: foregroundColor,
           mutedForegroundColor: mutedForegroundColor,
           privateMediaLoader: privateMediaLoader,
+          clipRadius: mediaRadius,
         );
       case MessageType.video:
         return _VideoMessageContent(
@@ -361,6 +575,7 @@ class _MessageContent extends StatelessWidget {
           privateMediaLoader: privateMediaLoader,
           videoSourcePreparer: videoSourcePreparer,
           videoAudioPreparer: videoAudioPreparer,
+          clipRadius: mediaRadius,
         );
       case MessageType.text:
         final text = Text(
@@ -744,6 +959,7 @@ class _ImageMessageContent extends StatefulWidget {
     required this.privateMediaLoader,
     this.width = 210,
     this.height = 230,
+    this.clipRadius,
   });
 
   final Message message;
@@ -754,6 +970,9 @@ class _ImageMessageContent extends StatefulWidget {
   privateMediaLoader;
   final double width;
   final double height;
+
+  /// The photo's clip; null keeps the 14 px radius.
+  final BorderRadius? clipRadius;
 
   @override
   State<_ImageMessageContent> createState() => _ImageMessageContentState();
@@ -882,7 +1101,7 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
         focusContrastColor: Colors.black,
         child: ExcludeSemantics(
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: widget.clipRadius ?? BorderRadius.circular(14),
             child: Image(
               image: imageProvider,
               width: widget.width,
@@ -949,7 +1168,7 @@ class _ImageMessageContentState extends State<_ImageMessageContent> {
           focusContrastColor: Colors.black,
           child: ExcludeSemantics(
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: widget.clipRadius ?? BorderRadius.circular(14),
               child: Image(
                 image: imageProvider,
                 width: widget.width,
@@ -977,6 +1196,7 @@ class _VideoMessageContent extends StatefulWidget {
     required this.videoAudioPreparer,
     this.width = 238,
     this.height = 158,
+    this.clipRadius,
   });
 
   final Message message;
@@ -990,6 +1210,9 @@ class _VideoMessageContent extends StatefulWidget {
   final DirectVideoAudioPreparer? videoAudioPreparer;
   final double width;
   final double height;
+
+  /// The video's clip; null keeps the 14 px radius.
+  final BorderRadius? clipRadius;
 
   @override
   State<_VideoMessageContent> createState() => _VideoMessageContentState();
@@ -1367,7 +1590,7 @@ class _VideoMessageContentState extends State<_VideoMessageContent> {
         width: widget.width,
         height: widget.height,
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: widget.clipRadius ?? BorderRadius.circular(14),
           child: ColoredBox(
             color: Colors.black,
             child: Stack(

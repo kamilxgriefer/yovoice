@@ -63,7 +63,15 @@ void main() {
       );
       final decoration = bubble.decoration! as BoxDecoration;
       final text = tester.widget<Text>(find.text('Readable incoming message'));
-      expect(decoration.color, palette.surfaceRaised);
+      // Refine-look R15: the incoming bubble is the R2 block — the top-lit
+      // `blockGradient` from `blockTop` into `surface` with a hairline edge
+      // (it was a flat `surfaceRaised` fill with an outline).
+      expect(decoration.gradient, palette.blockGradient);
+      expect((decoration.gradient! as LinearGradient).colors, [
+        palette.blockTop,
+        palette.surface,
+      ]);
+      expect((decoration.border! as Border).top.color, palette.hairline);
       expect(text.style?.color, palette.textPrimary);
     });
   }
@@ -86,6 +94,13 @@ void main() {
       expect(decoration.gradient, isA<LinearGradient>());
       expect(decoration.color, isNull);
       expect(text.style?.color, Colors.white);
+      // Refine-look R15: the labelled-action pair, whose both stops hold
+      // white copy at 5.79:1 or better.
+      final scheme = AppTheme.lightTheme.colorScheme;
+      expect((decoration.gradient! as LinearGradient).colors, [
+        scheme.primary,
+        scheme.secondary,
+      ]);
     },
   );
 

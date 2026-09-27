@@ -2,13 +2,18 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_icons.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/core/theme/app_radius.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
@@ -16,9 +21,16 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/media/data/services/gif_catalog_service.dart';
 import 'package:yovoice/features/media/data/services/gif_message_controller.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
+import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/messages/presentation/widgets/delete_conversation_dialog.dart';
+import 'package:yovoice/shared/widgets/badges/yo_count_badge.dart';
+import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_search_field.dart';
+import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/availability_dot.dart';
@@ -457,226 +469,243 @@ class _MessagesScreenState extends State<MessagesScreen> {
       );
   }
 
+  /// The first-run inbox (the §4 logo moment): signed in, loaded, not
+  /// searching or browsing the archive, and nothing left in the inbox. It
+  /// is exactly the state in which the list below shows `_EmptyMessages`
+  /// with the real logo.
+  bool _showsFirstRunInbox(
+    AsyncSnapshot<List<Conversation>> snapshot,
+    String? currentUserId,
+  ) {
+    if (currentUserId == null || snapshot.hasError || !snapshot.hasData) {
+      return false;
+    }
+    if (_showArchived || _query.isNotEmpty) return false;
+    return snapshot.data!.every(
+      (conversation) => conversation.isArchivedFor(currentUserId),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUserId = _auth.currentUser?.uid;
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final canvas = BoxDecoration(gradient: palette.canvasGlow(colors.primary));
 
     return Scaffold(
       key: const ValueKey('messages-screen'),
       backgroundColor: palette.background,
-      body: YoPageBackground(
-        section: YoPageSection.chats,
-        key: const ValueKey('messages-screen-background'),
-        decoration: BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment(-.86, -.96),
-            radius: 1.25,
-            colors: [
-              Color.lerp(
-                palette.backgroundTop,
-                colors.primary,
-                isDark ? .18 : .055,
-              )!,
-              palette.backgroundTop,
-              palette.background,
-            ],
-            stops: const [0, .38, 1],
-          ),
-        ),
-        child: SafeArea(
-          bottom: false,
-          child: ResponsiveContentFrame(
-            width: ResponsiveContentWidth.list,
-            alignment: ResponsiveContentAlignment.topLeft,
-            child: StreamBuilder<List<FriendUser>>(
-              stream: _friendsStream,
-              builder: (context, friendsSnapshot) {
-                final friends = friendsSnapshot.data ?? const <FriendUser>[];
-                final friendsById = {
-                  for (final friend in friends) friend.id: friend,
-                };
-                // Header, search and friend rail can leave the viewport on a
-                // short screen / enlarged text. Conversations stay lazy rather
-                // than being shrink-wrapped into an eager all-message column.
-                return NestedScrollView(
-                  key: const ValueKey('messages-coordinated-scroll'),
-                  headerSliverBuilder: (context, innerBoxIsScrolled) => [
-                    SliverToBoxAdapter(
-                      child: _MessagesHeader(
-                        showArchived: _showArchived,
-                        onNewMessage: _showNewMessageSheet,
-                        onToggleArchived: () {
-                          setState(() => _showArchived = !_showArchived);
-                        },
-                      ),
-                    ),
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                        child: _SearchField(controller: _searchController),
-                      ),
-                    ),
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: _FriendsRow(
-                          friends: friends,
-                          onFriendSelected: _startChat,
-                          onFindFriends: widget.onFindFriends,
-                          onNewMessage: _showNewMessageSheet,
-                        ),
-                      ),
-                    ),
-                  ],
-                  body: StreamBuilder<List<Conversation>>(
-                    stream: _conversationsStream,
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting &&
-                          !snapshot.hasData) {
-                        return Center(
-                          child: CircularProgressIndicator(
-                            color: palette.interactiveForeground,
-                            strokeWidth: 2.5,
-                          ),
-                        );
-                      }
-
-                      if (snapshot.hasError) {
-                        return _MessagesError(
-                          message: _readableError(snapshot.error),
-                        );
-                      }
-
-                      if (currentUserId == null) {
-                        return _MessagesError(
-                          message: AppLocalizations.of(context).text(
-                            'Sign in to open your chats.',
-                            'Zaloguj się, aby otworzyć swoje czaty.',
-                          ),
-                        );
-                      }
-
-                      final allConversations =
-                          snapshot.data ?? const <Conversation>[];
-                      final conversations = allConversations
-                          .where((conversation) {
-                            final archived = conversation.isArchivedFor(
-                              currentUserId,
-                            );
-
-                            if (_showArchived != archived) {
-                              return false;
-                            }
-
-                            if (_query.isEmpty) {
-                              return true;
-                            }
-
-                            final otherId = conversation.otherUserId(
-                              currentUserId,
-                            );
-                            final name =
-                                (friendsById[otherId]?.displayName ??
-                                        conversation.displayNameFor(otherId))
-                                    .toLowerCase();
-                            final preview = conversationPreview(
-                              conversation,
-                              currentUserId,
-                              AppLocalizations.of(context),
-                            ).toLowerCase();
-
-                            return name.contains(_query) ||
-                                preview.contains(_query);
-                          })
-                          .toList(growable: false);
-
-                      if (conversations.isEmpty) {
-                        return _EmptyMessages(
-                          archived: _showArchived,
-                          hasSearch: _query.isNotEmpty,
-                          onNewMessage: _showNewMessageSheet,
-                        );
-                      }
-
-                      // One scroll view: the group label rides with the rows it
-                      // names, and the rows stay lazy. The label exists only
-                      // when there is a row under it (a section title is a
-                      // promise about content).
-                      return CustomScrollView(
-                        slivers: [
+      // The conversations are read above the canvas: the first-run inbox
+      // quiets the page's own brand art (see `_QuietCanvas`), so the canvas
+      // has to know what the list below it shows.
+      body: StreamBuilder<List<Conversation>>(
+        stream: _conversationsStream,
+        builder: (context, conversationsSnapshot) => YoPageBackground(
+          // Refine-look R1: Pearl takes the quiet watermark path instead of
+          // the lounge photo, whose furniture read as grey haze on the paper.
+          section: palette.isDark ? YoPageSection.chats : null,
+          key: const ValueKey('messages-screen-background'),
+          // The Chats radial, promoted unchanged to the palette (R1).
+          decoration: canvas,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _QuietCanvas(
+                visible: _showsFirstRunInbox(
+                  conversationsSnapshot,
+                  currentUserId,
+                ),
+                decoration: canvas,
+              ),
+              SafeArea(
+                bottom: false,
+                child: ResponsiveContentFrame(
+                  width: ResponsiveContentWidth.list,
+                  alignment: ResponsiveContentAlignment.topLeft,
+                  child: StreamBuilder<List<FriendUser>>(
+                    stream: _friendsStream,
+                    builder: (context, friendsSnapshot) {
+                      final friends =
+                          friendsSnapshot.data ?? const <FriendUser>[];
+                      final friendsById = {
+                        for (final friend in friends) friend.id: friend,
+                      };
+                      // Header, search and friend rail can leave the
+                      // viewport on a short screen / enlarged text.
+                      // Conversations stay lazy rather than being
+                      // shrink-wrapped into an eager all-message column.
+                      return NestedScrollView(
+                        key: const ValueKey('messages-coordinated-scroll'),
+                        headerSliverBuilder: (context, innerBoxIsScrolled) => [
                           SliverToBoxAdapter(
-                            child: _ConversationsGroupLabel(
-                              label: AppLocalizations.of(
-                                context,
-                              ).text('Messages', 'Wiadomości'),
-                            ),
-                          ),
-                          SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(8, 0, 8, 118),
-                            sliver: SliverList.separated(
-                              itemCount: conversations.length,
-                              separatorBuilder: (_, __) =>
-                                  const SizedBox(height: 2),
-                              itemBuilder: (context, index) {
-                                final conversation = conversations[index];
-                                final muted = conversation.isMutedFor(
-                                  currentUserId,
-                                );
-                                final otherUserId = conversation.otherUserId(
-                                  currentUserId,
-                                );
-                                final liveFriend = friendsById[otherUserId];
-
-                                return _ConversationTile(
-                                  conversation: conversation,
-                                  currentUserId: currentUserId,
-                                  liveFriend: liveFriend,
-                                  muted: muted,
-                                  preferenceBusy: _preferenceUpdatesInFlight
-                                      .contains(conversation.id),
-                                  service: _messageService,
-                                  onTap: () => _openConversation(
-                                    conversation,
-                                    liveFriend: liveFriend,
-                                  ),
-                                  onOpenProfile: () => showProfilePreview(
-                                    context,
-                                    userId: otherUserId,
-                                    displayName:
-                                        liveFriend?.displayName ??
-                                        conversation.displayNameFor(
-                                          otherUserId,
-                                        ),
-                                    photoUrl: liveFriend?.photoUrl ?? '',
-                                    firestore: widget.firestore,
-                                    auth: _auth,
-                                    messageService: _messageService,
-                                  ),
-                                  onArchive: () =>
-                                      _archiveConversation(conversation),
-                                  onUnarchive: () =>
-                                      _unarchiveConversation(conversation),
-                                  onToggleMute: () =>
-                                      _toggleMute(conversation, muted),
-                                  onDelete: () =>
-                                      _deleteConversation(conversation),
-                                );
+                            child: _MessagesHeader(
+                              showArchived: _showArchived,
+                              onNewMessage: _showNewMessageSheet,
+                              onToggleArchived: () {
+                                setState(() => _showArchived = !_showArchived);
                               },
                             ),
                           ),
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                              child: _SearchField(
+                                controller: _searchController,
+                              ),
+                            ),
+                          ),
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: _FriendsRow(
+                                friends: friends,
+                                onFriendSelected: _startChat,
+                                onFindFriends: widget.onFindFriends,
+                                onNewMessage: _showNewMessageSheet,
+                              ),
+                            ),
+                          ),
                         ],
+                        body: _conversationList(
+                          context,
+                          conversationsSnapshot,
+                          currentUserId: currentUserId,
+                          friendsById: friendsById,
+                        ),
                       );
                     },
                   ),
-                );
-              },
-            ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
+    );
+  }
+
+  /// The list under the header: loading, error, the empty states or the
+  /// lazy conversation rows.
+  Widget _conversationList(
+    BuildContext context,
+    AsyncSnapshot<List<Conversation>> snapshot, {
+    required String? currentUserId,
+    required Map<String, FriendUser> friendsById,
+  }) {
+    final palette = context.appPalette;
+    if (snapshot.connectionState == ConnectionState.waiting &&
+        !snapshot.hasData) {
+      return Center(
+        child: CircularProgressIndicator(
+          color: palette.interactiveForeground,
+          strokeWidth: 2.5,
+        ),
+      );
+    }
+
+    if (snapshot.hasError) {
+      return _MessagesError(message: _readableError(snapshot.error));
+    }
+
+    if (currentUserId == null) {
+      return _MessagesError(
+        message: AppLocalizations.of(context).text(
+          'Sign in to open your chats.',
+          'Zaloguj się, aby otworzyć swoje czaty.',
+        ),
+      );
+    }
+
+    final allConversations = snapshot.data ?? const <Conversation>[];
+    final conversations = allConversations
+        .where((conversation) {
+          final archived = conversation.isArchivedFor(currentUserId);
+
+          if (_showArchived != archived) {
+            return false;
+          }
+
+          if (_query.isEmpty) {
+            return true;
+          }
+
+          final otherId = conversation.otherUserId(currentUserId);
+          final name =
+              (friendsById[otherId]?.displayName ??
+                      conversation.displayNameFor(otherId))
+                  .toLowerCase();
+          final preview = conversationPreview(
+            conversation,
+            currentUserId,
+            AppLocalizations.of(context),
+          ).toLowerCase();
+
+          return name.contains(_query) || preview.contains(_query);
+        })
+        .toList(growable: false);
+
+    if (conversations.isEmpty) {
+      return _EmptyMessages(
+        archived: _showArchived,
+        hasSearch: _query.isNotEmpty,
+        onNewMessage: _showNewMessageSheet,
+      );
+    }
+
+    // One scroll view: the group label rides with the rows it
+    // names, and the rows stay lazy. The label exists only
+    // when there is a row under it (a section title is a
+    // promise about content).
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: _ConversationsGroupLabel(
+            label: AppLocalizations.of(context).text('Messages', 'Wiadomości'),
+          ),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 118),
+          sliver: SliverList.separated(
+            itemCount: conversations.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 2),
+            itemBuilder: (context, index) {
+              final conversation = conversations[index];
+              final muted = conversation.isMutedFor(currentUserId);
+              final otherUserId = conversation.otherUserId(currentUserId);
+              final liveFriend = friendsById[otherUserId];
+
+              return _ConversationTile(
+                conversation: conversation,
+                currentUserId: currentUserId,
+                liveFriend: liveFriend,
+                muted: muted,
+                preferenceBusy: _preferenceUpdatesInFlight.contains(
+                  conversation.id,
+                ),
+                service: _messageService,
+                onTap: () =>
+                    _openConversation(conversation, liveFriend: liveFriend),
+                onOpenProfile: () => showProfilePreview(
+                  context,
+                  userId: otherUserId,
+                  displayName:
+                      liveFriend?.displayName ??
+                      conversation.displayNameFor(otherUserId),
+                  photoUrl: liveFriend?.photoUrl ?? '',
+                  firestore: widget.firestore,
+                  auth: _auth,
+                  messageService: _messageService,
+                ),
+                onArchive: () => _archiveConversation(conversation),
+                onUnarchive: () => _unarchiveConversation(conversation),
+                onToggleMute: () => _toggleMute(conversation, muted),
+                onDelete: () => _deleteConversation(conversation),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -709,9 +738,10 @@ class _MessagesHeader extends StatelessWidget {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
 
-    // Slim title row (ADR-209): a 22 px w800 title on the left, two 44 px
-    // actions on the right, no card behind it, and the row itself stays
-    // within 56 px at 1.0 text.
+    // Slim title row (ADR-209) with the refine-look finish: the calm
+    // `screenTitle` (22 / w700), a bare 44 px archive action and the
+    // screen's one lifted CTA, the compose disc. The row stays within 56 px
+    // at 1.0 text.
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 6, 12, 6),
       child: Row(
@@ -724,12 +754,8 @@ class _MessagesHeader extends StatelessWidget {
                   showArchived
                       ? copy.text('Archived', 'Archiwum')
                       : copy.text('Chats', 'Czaty'),
-                  style: TextStyle(
+                  style: AppTypography.screenTitle.copyWith(
                     color: palette.textPrimary,
-                    fontSize: 22,
-                    height: 1.15,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -.4,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -753,7 +779,7 @@ class _MessagesHeader extends StatelessWidget {
             ),
           ),
           _HeaderButton(
-            icon: showArchived ? Icons.inbox_rounded : Icons.archive_outlined,
+            icon: showArchived ? Icons.inbox_rounded : AppIcons.archive,
             tooltip: showArchived
                 ? copy.text('Show inbox', 'Pokaż skrzynkę odbiorczą')
                 : copy.text(
@@ -764,6 +790,7 @@ class _MessagesHeader extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           _HeaderButton(
+            key: const ValueKey('messages-compose'),
             icon: Icons.edit_square,
             tooltip: copy.text(
               'Start a new message',
@@ -778,12 +805,13 @@ class _MessagesHeader extends StatelessWidget {
   }
 }
 
-class _HeaderButton extends StatelessWidget {
+class _HeaderButton extends StatefulWidget {
   const _HeaderButton({
     required this.icon,
     required this.tooltip,
     required this.onTap,
     this.highlighted = false,
+    super.key,
   });
 
   final IconData icon;
@@ -791,40 +819,60 @@ class _HeaderButton extends StatelessWidget {
   final VoidCallback onTap;
   final bool highlighted;
 
+  /// The compose disc: 40 px visual inside the 44 px target (R6).
+  static const double discSize = 40;
+
+  @override
+  State<_HeaderButton> createState() => _HeaderButtonState();
+}
+
+class _HeaderButtonState extends State<_HeaderButton> {
+  bool _hovered = false;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
 
     // 44 px targets. Only the primary action (New message) carries the
-    // screen's one accent; the other is a bare icon with no card behind it.
+    // screen's one CTA lift: the R6 icon disc in the logo's gradient with a
+    // white glyph. The archive action stays a bare glyph with no card.
+    final Widget face = widget.highlighted
+        ? YoPressFeedback(
+            scale: YoPressFeedback.disc,
+            child: YoGradientDisc(
+              size: _HeaderButton.discSize,
+              icon: widget.icon,
+              glyphSize: 20,
+              emphasis: YoDiscEmphasis.lift,
+              hovered: _hovered,
+            ),
+          )
+        : SizedBox(
+            width: 44,
+            height: 44,
+            child: Icon(widget.icon, color: palette.textPrimary, size: 22),
+          );
     return Tooltip(
-      message: tooltip,
+      message: widget.tooltip,
       excludeFromSemantics: true,
       child: AccessibleTapRegion(
-        semanticLabel: tooltip,
-        onTap: onTap,
+        semanticLabel: widget.tooltip,
+        onTap: widget.onTap,
+        circular: widget.highlighted,
         borderRadius: 12,
-        child: Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: highlighted ? colors.primary : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: ExcludeSemantics(
-            child: Icon(
-              icon,
-              color: highlighted ? colors.onPrimary : palette.textPrimary,
-              size: 22,
-            ),
-          ),
-        ),
+        onHover: widget.highlighted
+            ? (hovered) {
+                if (_hovered != hovered) setState(() => _hovered = hovered);
+              }
+            : null,
+        child: ExcludeSemantics(child: face),
       ),
     );
   }
 }
 
+/// The Chats search pill (refine-look R9): the shared `YoSearchField` — a
+/// 44 px stadium with its own magnifier, clear action and focus ring.
 class _SearchField extends StatelessWidget {
   const _SearchField({required this.controller});
 
@@ -832,47 +880,7 @@ class _SearchField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final copy = AppLocalizations.of(context);
-
-    return TextField(
-      controller: controller,
-      style: TextStyle(color: palette.textPrimary),
-      decoration: InputDecoration(
-        hintText: copy.text('Search', 'Szukaj'),
-        hintStyle: TextStyle(color: palette.textTertiary),
-        prefixIcon: Icon(Icons.search_rounded, color: palette.textSecondary),
-        suffixIcon: ValueListenableBuilder<TextEditingValue>(
-          valueListenable: controller,
-          builder: (context, value, _) {
-            if (value.text.isEmpty) {
-              return const SizedBox.shrink();
-            }
-
-            return IconButton(
-              onPressed: controller.clear,
-              tooltip: copy.text('Clear search', 'Wyczyść wyszukiwanie'),
-              icon: Icon(Icons.close_rounded, color: palette.textSecondary),
-            );
-          },
-        ),
-        filled: true,
-        fillColor: palette.surfaceRaised,
-        contentPadding: const EdgeInsets.symmetric(vertical: 12),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: palette.border),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: palette.border),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: palette.focus, width: 2),
-        ),
-      ),
-    );
+    return YoSearchField(controller: controller);
   }
 }
 
@@ -893,10 +901,20 @@ class _FriendsRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final labelScale = MediaQuery.textScalerOf(context).scale(11) / 11;
-    final height = 92.0 + (labelScale - 1).clamp(0.0, 2.0) * 14.0;
+    // Large text: a label wraps to a second line and its tile widens with
+    // the reader's text (up to a cap), so "Dodaj znajomego" or a first name
+    // and surname read in full instead of as a clipped stub. At 1.0 the
+    // rail is unchanged: one line, 108 px action tiles, 76 px friends.
+    final labelLines = labelScale > _FriendStory.wrapScale ? 2 : 1;
+    final actionWidth =
+        _FriendStory.actionWidth *
+        labelScale.clamp(1.0, _FriendStory.actionGrowthCap);
+    final friendWidth =
+        _FriendStory.friendWidth *
+        labelScale.clamp(1.0, _FriendStory.friendGrowthCap);
 
     return SizedBox(
-      height: height,
+      height: _FriendStory.railHeight(labelScale, labelLines),
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -905,17 +923,19 @@ class _FriendsRow extends StatelessWidget {
             key: const ValueKey('messages-add-friend'),
             label: copy.text('Add friend', 'Dodaj znajomego'),
             semanticLabel: copy.text('Add friend', 'Dodaj znajomego'),
-            icon: Icons.person_add_alt_1_rounded,
+            icon: AppIcons.addFriend,
             onTap: onFindFriends,
-            width: 108,
+            width: actionWidth,
+            labelLines: labelLines,
           ),
           _FriendStory(
             key: const ValueKey('messages-new-message'),
             label: copy.text('New message', 'Nowa wiadomość'),
             semanticLabel: copy.text('New message', 'Nowa wiadomość'),
-            icon: Icons.edit_square,
+            icon: AppIcons.compose,
             onTap: onNewMessage,
-            width: 108,
+            width: actionWidth,
+            labelLines: labelLines,
           ),
           ...friends
               .take(12)
@@ -926,6 +946,8 @@ class _FriendsRow extends StatelessWidget {
                       '${friend.displayName}, ${friend.isOnline ? copy.text('online', 'aktywny') : copy.text('offline', 'nieaktywny')}',
                   friend: friend,
                   onTap: () => onFriendSelected(friend),
+                  width: friendWidth,
+                  labelLines: labelLines,
                 ),
               ),
         ],
@@ -941,7 +963,8 @@ class _FriendStory extends StatelessWidget {
     required this.onTap,
     this.friend,
     this.icon,
-    this.width = 76,
+    this.width = friendWidth,
+    this.labelLines = 1,
     super.key,
   });
 
@@ -951,6 +974,36 @@ class _FriendStory extends StatelessWidget {
   final FriendUser? friend;
   final IconData? icon;
   final double width;
+
+  /// 1 at rest; 2 once the reader's text is larger than [wrapScale].
+  final int labelLines;
+
+  /// The tile widths at 1.0 text.
+  static const double actionWidth = 108;
+  static const double friendWidth = 76;
+
+  /// How far a tile widens with the text scale: an action tile to 1.3×
+  /// (140 px at 200 %), a friend to 1.9× (144 px), which holds two lines of
+  /// a Polish first name and surname at 200 %.
+  static const double actionGrowthCap = 1.3;
+  static const double friendGrowthCap = 1.9;
+
+  /// Above this text scale the label may take a second line.
+  static const double wrapScale = 1.15;
+
+  static const double _labelSize = 11;
+  static const double _labelHeight = 1.2;
+  static const double _labelGap = 6;
+
+  /// The breathing room under the label (focus ring and press scale).
+  static const double _railSlack = 14.8;
+
+  /// The rail's height for a text scale and label line count: 92 px at 1.0.
+  static double railHeight(double labelScale, int labelLines) =>
+      _markSize +
+      _labelGap +
+      labelLines * _labelSize * _labelHeight * labelScale +
+      _railSlack;
 
   @override
   Widget build(BuildContext context) {
@@ -967,6 +1020,51 @@ class _FriendStory extends StatelessWidget {
             availability: user.availability,
           );
 
+    final highContrast = MediaQuery.highContrastOf(context);
+    final action = icon;
+    // Refine-look §8.3: the two action tiles are R7-accent ghost discs (the
+    // one voice-of-the-app accent, never a filled violet coin); a friend is
+    // the brand-finished avatar inside a hairline band. The geometry is
+    // unchanged: a 58 px mark (2 px band around a radius-27 avatar).
+    final Widget mark = action != null
+        ? Container(
+            width: _markSize,
+            height: _markSize,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: highContrast
+                  ? palette.surface
+                  : palette.interactiveForeground.withValues(alpha: .06),
+              border: Border.all(
+                color: highContrast
+                    ? palette.borderStrong
+                    : palette.interactiveForeground.withValues(alpha: .55),
+                width: 1.5,
+              ),
+            ),
+            child: Icon(action, color: palette.interactiveForeground, size: 24),
+          )
+        : Container(
+            padding: const EdgeInsets.all(2),
+            // A quiet hairline band, never a story gradient and never a
+            // status ring: this rail carries no Moments state, and presence
+            // is already the dot below. One presence mark per avatar
+            // (ADR-209, presence dot).
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: highContrast ? palette.borderStrong : palette.hairline,
+            ),
+            child: UserAvatar(
+              radius: 27,
+              userId: user?.id,
+              photoUrl: hasPhoto ? user!.photoUrl : null,
+              mediaRevision: user?.profileUpdatedAt,
+              displayName: user?.displayName,
+              finish: UserAvatarFinish.brand,
+            ),
+          );
+
     return AccessibleTapRegion(
       onTap: onTap,
       semanticLabel: semanticLabel,
@@ -974,64 +1072,57 @@ class _FriendStory extends StatelessWidget {
       borderRadius: 18,
       minimumSize: const Size(48, 48),
       child: ExcludeSemantics(
-        child: SizedBox(
-          width: width,
-          child: Column(
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(2),
-                    // A quiet hairline, never a story gradient and never a
-                    // status ring: this rail carries no Moments state, and
-                    // presence is already the dot below. One presence mark
-                    // per avatar (ADR-209, presence dot); the geometry
-                    // (2 px band, radius-27 avatar) is unchanged.
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: palette.border,
-                    ),
-                    child: UserAvatar(
-                      radius: 27,
-                      userId: user?.id,
-                      photoUrl: hasPhoto ? user!.photoUrl : null,
-                      mediaRevision: user?.profileUpdatedAt,
-                      displayName: user?.displayName,
-                      fallbackIcon: icon,
-                    ),
-                  ),
-                  if (status != null && status != PeopleStatus.away)
-                    Positioned(
-                      right: 2,
-                      bottom: 2,
-                      child: AvailabilityDot(
-                        status: status,
-                        size: 15,
-                        borderColor: palette.background,
-                        borderWidth: 3,
+        child: YoPressFeedback(
+          scale: YoPressFeedback.tile,
+          enabled: onTap != null,
+          child: SizedBox(
+            width: width,
+            child: Column(
+              children: [
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    mark,
+                    if (status != null && status != PeopleStatus.away)
+                      PositionedDirectional(
+                        end: 2,
+                        bottom: 2,
+                        child: AvailabilityDot(
+                          status: status,
+                          size: 15,
+                          borderColor: palette.background,
+                          borderWidth: 2.5,
+                        ),
                       ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: palette.textSecondary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: _labelGap),
+                Text(
+                  label,
+                  maxLines: labelLines,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: action != null
+                        ? palette.interactiveForeground
+                        : palette.textSecondary,
+                    fontSize: _labelSize,
+                    height: _labelHeight,
+                    fontWeight: action != null
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  /// The rail's mark: a radius-27 avatar in its 2 px band.
+  static const double _markSize = 58;
 }
 
 class _ConversationTile extends StatelessWidget {
@@ -1071,6 +1162,18 @@ class _ConversationTile extends StatelessWidget {
 
   bool get _archived => conversation.isArchivedFor(currentUserId);
 
+  /// The leading glyph of a voice, photo or video preview (refine-look
+  /// §8.3); null for text, GIFs and an empty thread.
+  IconData? get _previewGlyph {
+    if (conversation.lastMessage.isEmpty) return null;
+    return switch (conversation.lastMessageType) {
+      MessageType.voice => Icons.mic_rounded,
+      MessageType.image => Icons.photo_outlined,
+      MessageType.video => Icons.videocam_outlined,
+      MessageType.text || MessageType.gif => null,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final otherUserId = conversation.otherUserId(currentUserId);
@@ -1087,230 +1190,160 @@ class _ConversationTile extends StatelessWidget {
       AppLocalizations.of(context),
     );
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
     final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.6;
     final isUnread = unread > 0;
-    // One flat row, radius 12, a 1 px hairline only where the unread wash
-    // needs an edge. At 1.0 text the row is exactly 68 px: the 58 px avatar
-    // plus 5 px above and below. The unread hairline insets the child by
-    // its own width, so that row gives the pixel back and both rows keep the
-    // same height and the same avatar column.
-    final radius = BorderRadius.circular(12);
-    final edge = isUnread ? 1.0 : 0.0;
+    // Refine-look §8.3: one layer in both states — no unread slab, no edge.
+    // Unread is carried by weight AND the count, never by colour alone: the
+    // name at w700 (w600 read), the preview in `textPrimary` at w500
+    // (`textSecondary` w400 read), the time in `focus` w700 and the gradient
+    // count. At 1.0 text the row is exactly 68 px: the 58 px avatar plus
+    // 5 px above and below.
+    final nameStyle =
+        (isUnread ? AppTypography.rowTitleUnread : AppTypography.rowTitle)
+            .copyWith(color: palette.textPrimary);
+    final previewStyle =
+        (isUnread ? AppTypography.rowPreviewUnread : AppTypography.rowPreview)
+            .copyWith(
+              color: isUnread ? palette.textPrimary : palette.textSecondary,
+            );
+    final timeStyle = TextStyle(
+      color: isUnread ? palette.focus : palette.textTertiary,
+      fontSize: 11,
+      fontWeight: isUnread ? FontWeight.w700 : FontWeight.w500,
+    );
+    final time = _relativeTime(context, conversation.lastActivityAt, copy);
+    final glyph = _previewGlyph;
+    final glyphColor = glyph == Icons.mic_rounded
+        ? palette.audioAccent
+        : previewStyle.color;
+    final avatar = _ConversationAvatar(
+      name: name,
+      photoUrl: photoUrl,
+      userId: otherUserId,
+      mediaRevision: friend?.profileUpdatedAt,
+      service: service,
+      onOpenProfile: onOpenProfile,
+    );
+    final badgeKey = ValueKey('conversation-unread-badge-${conversation.id}');
 
-    return AnimatedContainer(
-      key: ValueKey('conversation-row-${conversation.id}'),
-      duration: AppMotion.resolve(context, AppMotion.standard),
-      curve: Curves.easeOutCubic,
-      decoration: BoxDecoration(
-        color: isUnread ? colors.primaryContainer : Colors.transparent,
-        borderRadius: radius,
-        border: isUnread ? Border.all(color: palette.border) : null,
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: radius,
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: preferenceBusy ? null : onTap,
-          onLongPress: preferenceBusy ? null : () => _showActions(context),
-          borderRadius: radius,
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: 8 - edge,
-              vertical: (enlargedText ? 10 : 5) - edge,
-            ),
-            child: enlargedText
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+    return _ConversationRowSurface(
+      rowKey: ValueKey('conversation-row-${conversation.id}'),
+      onTap: preferenceBusy ? null : onTap,
+      onLongPress: preferenceBusy ? null : () => _showActions(context),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: 8,
+          vertical: enlargedText ? 10 : 5,
+        ),
+        child: enlargedText
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      Row(
-                        children: [
-                          _ConversationAvatar(
-                            name: name,
-                            photoUrl: photoUrl,
-                            userId: otherUserId,
-                            mediaRevision: friend?.profileUpdatedAt,
-                            service: service,
-                            onOpenProfile: onOpenProfile,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Wrap(
-                              spacing: 8,
-                              runSpacing: 6,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                Text(
-                                  _relativeTime(
-                                    context,
-                                    conversation.lastActivityAt,
-                                    copy,
-                                  ),
-                                  style: TextStyle(
-                                    color: isUnread
-                                        ? colors.onPrimaryContainer
-                                        : palette.textSecondary,
-                                    fontSize: 11,
-                                    fontWeight: isUnread
-                                        ? FontWeight.w800
-                                        : FontWeight.w500,
-                                  ),
-                                ),
-                                if (muted)
-                                  Icon(
-                                    Icons.notifications_off_outlined,
-                                    color: palette.textSecondary,
-                                    size: 18,
-                                  ),
-                                if (isUnread)
-                                  // A Wrap hands its children the full run
-                                  // width, and the badge's centring box
-                                  // would fill it — a counter the width of
-                                  // the row. Size it to its own content.
-                                  IntrinsicWidth(
-                                    child: _UnreadBadge(
-                                      key: ValueKey(
-                                        'conversation-unread-badge-${conversation.id}',
-                                      ),
-                                      count: unread,
-                                      enlarged: true,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          _actionsControl(context, name),
-                        ],
-                      ),
-                      const SizedBox(height: 9),
-                      Text(
-                        name,
-                        key: ValueKey(
-                          'conversation-expanded-name-${conversation.id}',
-                        ),
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontSize: 15,
-                          fontWeight: unread > 0
-                              ? FontWeight.w800
-                              : FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Text(
-                        preview,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: isUnread
-                              ? colors.onPrimaryContainer
-                              : palette.textSecondary,
-                          fontSize: 13,
-                          fontWeight: isUnread
-                              ? FontWeight.w700
-                              : FontWeight.w400,
-                        ),
-                      ),
-                    ],
-                  )
-                : Row(
-                    children: [
-                      _ConversationAvatar(
-                        name: name,
-                        photoUrl: photoUrl,
-                        userId: otherUserId,
-                        mediaRevision: friend?.profileUpdatedAt,
-                        service: service,
-                        onOpenProfile: onOpenProfile,
-                      ),
+                      avatar,
                       const SizedBox(width: 12),
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 6,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: palette.textPrimary,
-                                      fontSize: 15,
-                                      fontWeight: unread > 0
-                                          ? FontWeight.w800
-                                          : FontWeight.w600,
-                                    ),
-                                  ),
+                            Text(time, style: timeStyle),
+                            if (muted)
+                              Icon(
+                                Icons.notifications_off_outlined,
+                                color: palette.textSecondary,
+                                size: 18,
+                              ),
+                            if (isUnread)
+                              // A Wrap hands its children the full run
+                              // width; keep the count to its own content.
+                              IntrinsicWidth(
+                                child: _UnreadBadge(
+                                  key: badgeKey,
+                                  count: unread,
                                 ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _relativeTime(
-                                    context,
-                                    conversation.lastActivityAt,
-                                    copy,
-                                  ),
-                                  style: TextStyle(
-                                    color: unread > 0
-                                        ? palette.focus
-                                        : palette.textTertiary,
-                                    fontSize: 11,
-                                    fontWeight: unread > 0
-                                        ? FontWeight.w700
-                                        : FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    preview,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: unread > 0
-                                          ? palette.textPrimary
-                                          : palette.textSecondary,
-                                      fontSize: 13,
-                                      fontWeight: unread > 0
-                                          ? FontWeight.w600
-                                          : FontWeight.w400,
-                                    ),
-                                  ),
-                                ),
-                                if (muted) ...[
-                                  const SizedBox(width: 8),
-                                  Icon(
-                                    Icons.notifications_off_outlined,
-                                    color: palette.textSecondary,
-                                    size: 16,
-                                  ),
-                                ],
-                                if (isUnread) ...[
-                                  const SizedBox(width: 9),
-                                  _UnreadBadge(
-                                    key: ValueKey(
-                                      'conversation-unread-badge-${conversation.id}',
-                                    ),
-                                    count: unread,
-                                  ),
-                                ],
-                              ],
-                            ),
+                              ),
                           ],
                         ),
                       ),
                       _actionsControl(context, name),
                     ],
                   ),
-          ),
-        ),
+                  const SizedBox(height: 9),
+                  Text(
+                    name,
+                    key: ValueKey(
+                      'conversation-expanded-name-${conversation.id}',
+                    ),
+                    style: nameStyle,
+                  ),
+                  const SizedBox(height: 5),
+                  _PreviewLine(
+                    glyph: glyph,
+                    glyphColor: glyphColor,
+                    text: preview,
+                    style: previewStyle,
+                    maxLines: 3,
+                  ),
+                ],
+              )
+            : Row(
+                children: [
+                  avatar,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: nameStyle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(time, style: timeStyle),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _PreviewLine(
+                                glyph: glyph,
+                                glyphColor: glyphColor,
+                                text: preview,
+                                style: previewStyle,
+                                maxLines: 1,
+                              ),
+                            ),
+                            if (muted) ...[
+                              const SizedBox(width: 8),
+                              Icon(
+                                Icons.notifications_off_outlined,
+                                color: palette.textSecondary,
+                                size: 16,
+                              ),
+                            ],
+                            if (isUnread) ...[
+                              const SizedBox(width: 9),
+                              _UnreadBadge(key: badgeKey, count: unread),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  _actionsControl(context, name),
+                ],
+              ),
       ),
     );
   }
@@ -1319,6 +1352,8 @@ class _ConversationTile extends StatelessWidget {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
     if (!preferenceBusy) {
+      // Always visible, never hover-only: a quiet 20 px glyph on a 48 px
+      // target.
       return IconButton(
         onPressed: () => _showActions(context),
         tooltip: copy.template(
@@ -1326,7 +1361,10 @@ class _ConversationTile extends StatelessWidget {
           'Opcje rozmowy z {name}',
           values: {'name': name},
         ),
-        icon: Icon(Icons.more_horiz_rounded, color: palette.textSecondary),
+        constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+        padding: EdgeInsets.zero,
+        iconSize: 20,
+        icon: Icon(Icons.more_horiz_rounded, color: palette.textTertiary),
       );
     }
 
@@ -1478,41 +1516,155 @@ class _ConversationsGroupLabel extends StatelessWidget {
   }
 }
 
+/// The unread count: the one gradient [YoCountBadge] (refine-look R11). The
+/// badge itself is silent, so this node says the count in words.
 class _UnreadBadge extends StatelessWidget {
-  const _UnreadBadge({required this.count, this.enlarged = false, super.key});
+  const _UnreadBadge({required this.count, super.key});
 
   final int count;
-  final bool enlarged;
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
 
     return Semantics(
       label: copy.unreadMessages(count),
-      child: ExcludeSemantics(
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
-          alignment: Alignment.center,
-          padding: EdgeInsets.symmetric(
-            horizontal: enlarged ? 8 : 6,
-            vertical: enlarged ? 3 : 2,
-          ),
-          decoration: BoxDecoration(
-            color: colors.primary,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            count > 99 ? '99+' : '$count',
-            style: TextStyle(
-              color: colors.onPrimary,
-              fontSize: enlarged ? 11 : 10,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
+      child: ExcludeSemantics(child: YoCountBadge(count: count)),
+    );
+  }
+}
+
+/// A conversation row's one layer (refine-look R16): no fill at rest; a
+/// hover wash (textPrimary @ .04 Dark / interactiveForeground @ .05 Pearl),
+/// a pressed wash (interactiveForeground @ .10) and a 2 px focus ring at
+/// radius 16, painted over the row so focus never moves a pixel.
+class _ConversationRowSurface extends StatefulWidget {
+  const _ConversationRowSurface({
+    required this.rowKey,
+    required this.onTap,
+    required this.onLongPress,
+    required this.child,
+  });
+
+  final Key rowKey;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+  final Widget child;
+
+  @override
+  State<_ConversationRowSurface> createState() =>
+      _ConversationRowSurfaceState();
+}
+
+class _ConversationRowSurfaceState extends State<_ConversationRowSurface> {
+  bool _focused = false;
+
+  /// R2 / R16: the pressed wash is the feedback. No ink ripple on iOS,
+  /// macOS, web or desktop; Android keeps its sparkle (as `YoCard` does).
+  static InteractiveInkFeatureFactory get splashFactory =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+      ? InkSparkle.splashFactory
+      : NoSplash.splashFactory;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    const radius = AppRadius.tile;
+
+    return AnimatedContainer(
+      key: widget.rowKey,
+      duration: AppMotion.resolve(context, AppMotion.standard),
+      curve: Curves.easeOutCubic,
+      decoration: const BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: radius,
+      ),
+      foregroundDecoration: BoxDecoration(
+        borderRadius: radius,
+        border: Border.all(
+          color: _focused ? palette.focus : Colors.transparent,
+          width: 2,
         ),
       ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: radius,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: widget.onTap,
+          onLongPress: widget.onLongPress,
+          borderRadius: radius,
+          splashFactory: splashFactory,
+          onFocusChange: (focused) {
+            if (focused != _focused) setState(() => _focused = focused);
+          },
+          overlayColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.pressed)) {
+              return palette.interactiveForeground.withValues(alpha: .10);
+            }
+            if (states.contains(WidgetState.hovered)) {
+              return palette.isDark
+                  ? palette.textPrimary.withValues(alpha: .04)
+                  : palette.interactiveForeground.withValues(alpha: .05);
+            }
+            // Focus is the ring above, not a second wash.
+            return Colors.transparent;
+          }),
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+
+/// A preview line with an optional leading type glyph (15 px at 100 %). The
+/// glyph follows the reader's text size and sits centred on the first line;
+/// it is decoration (`ExcludeSemantics`) and the preview string is unchanged.
+class _PreviewLine extends StatelessWidget {
+  const _PreviewLine({
+    required this.glyph,
+    required this.glyphColor,
+    required this.text,
+    required this.style,
+    required this.maxLines,
+  });
+
+  static const double glyphSize = 15;
+
+  final IconData? glyph;
+  final Color? glyphColor;
+  final String text;
+  final TextStyle style;
+  final int maxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = Text(
+      text,
+      maxLines: maxLines,
+      overflow: TextOverflow.ellipsis,
+      style: style,
+    );
+    final icon = glyph;
+    if (icon == null) return label;
+    final scaler = MediaQuery.textScalerOf(context);
+    final size = scaler.scale(glyphSize);
+    final lineHeight =
+        scaler.scale(style.fontSize ?? 13) * (style.height ?? 1.35);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(
+            top: ((lineHeight - size) / 2).clamp(0, double.infinity),
+          ),
+          child: ExcludeSemantics(
+            child: Icon(icon, size: size, color: glyphColor),
+          ),
+        ),
+        SizedBox(width: scaler.scale(4)),
+        Flexible(child: label),
+      ],
     );
   }
 }
@@ -1608,26 +1760,25 @@ class _ConversationAvatarState extends State<_ConversationAvatar> {
             child: Stack(
               clipBehavior: Clip.none,
               children: [
+                // Refine-look R10: the one brand letter fill (the near-black
+                // Dark hole and the Pearl violet coin are both gone).
                 UserAvatar(
                   radius: 29,
                   userId: widget.userId,
-                  backgroundColor:
-                      Theme.of(context).brightness == Brightness.dark
-                      ? palette.surfaceSunken
-                      : Theme.of(context).colorScheme.primary,
                   photoUrl: photoUrl,
                   mediaRevision: widget.mediaRevision,
                   displayName: name,
+                  finish: UserAvatarFinish.brand,
                 ),
                 if (status != PeopleStatus.away)
-                  Positioned(
-                    right: 1,
+                  PositionedDirectional(
+                    end: 1,
                     bottom: 1,
                     child: AvailabilityDot(
                       status: status,
                       size: 16,
                       borderColor: palette.background,
-                      borderWidth: 3,
+                      borderWidth: 2.5,
                     ),
                   ),
               ],
@@ -1663,87 +1814,121 @@ class _ConversationActionsSheet extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
 
-    return Material(
-      color: palette.surfaceRaised,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          16,
-          12,
-          16,
-          18 + MediaQuery.paddingOf(context).bottom,
-        ),
-        // Scrollable since Delete joined Mute and Archive: three rows, one of
-        // them two-line, no longer fit a bottom sheet's default height at an
-        // enlarged text scale.
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              YoModalSheetChrome(
-                sheetLabel: copy.text('conversation actions', 'opcje rozmowy'),
-                surfaceColor: palette.surfaceRaised,
-              ),
-              const SizedBox(height: 2),
-              ListTile(
-                onTap: onMute,
-                leading: Icon(
-                  muted
-                      ? Icons.notifications_active_outlined
-                      : Icons.notifications_off_outlined,
-                  color: palette.textPrimary,
+    return DecoratedBox(
+      position: DecorationPosition.foreground,
+      decoration: _sheetEdge(context),
+      child: Material(
+        color: palette.surfaceRaised,
+        shape: const RoundedRectangleBorder(borderRadius: _sheetRadius),
+        clipBehavior: Clip.antiAlias,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            12,
+            16,
+            18 + MediaQuery.paddingOf(context).bottom,
+          ),
+          // Scrollable since Delete joined Mute and Archive: three rows, one of
+          // them two-line, no longer fit a bottom sheet's default height at an
+          // enlarged text scale.
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                YoModalSheetChrome(
+                  sheetLabel: copy.text(
+                    'conversation actions',
+                    'opcje rozmowy',
+                  ),
+                  surfaceColor: palette.surfaceRaised,
                 ),
-                title: Text(
-                  muted
-                      ? copy.text('Unmute messages', 'Włącz powiadomienia')
-                      : copy.text('Mute messages', 'Wycisz powiadomienia'),
-                  style: TextStyle(color: palette.textPrimary),
+                const SizedBox(height: 2),
+                ListTile(
+                  onTap: onMute,
+                  leading: Icon(
+                    muted
+                        ? Icons.notifications_active_outlined
+                        : Icons.notifications_off_outlined,
+                    color: palette.textPrimary,
+                  ),
+                  title: Text(
+                    muted
+                        ? copy.text('Unmute messages', 'Włącz powiadomienia')
+                        : copy.text('Mute messages', 'Wycisz powiadomienia'),
+                    style: TextStyle(color: palette.textPrimary),
+                  ),
                 ),
-              ),
-              ListTile(
-                key: const ValueKey('conversation-archive-action'),
-                onTap: onArchive,
-                leading: Icon(
-                  archived ? Icons.unarchive_outlined : Icons.archive_outlined,
-                  color: palette.textPrimary,
+                ListTile(
+                  key: const ValueKey('conversation-archive-action'),
+                  onTap: onArchive,
+                  leading: Icon(
+                    archived
+                        ? Icons.unarchive_outlined
+                        : Icons.archive_outlined,
+                    color: palette.textPrimary,
+                  ),
+                  title: Text(
+                    archived
+                        ? copy.text(
+                            'Unarchive conversation',
+                            'Przywróć z archiwum',
+                          )
+                        : copy.text(
+                            'Archive conversation',
+                            'Archiwizuj rozmowę',
+                          ),
+                    style: TextStyle(color: palette.textPrimary),
+                  ),
                 ),
-                title: Text(
-                  archived
-                      ? copy.text(
-                          'Unarchive conversation',
-                          'Przywróć z archiwum',
-                        )
-                      : copy.text('Archive conversation', 'Archiwizuj rozmowę'),
-                  style: TextStyle(color: palette.textPrimary),
+                // Last, and in the error colour: archiving is reversible and this
+                // is not.
+                ListTile(
+                  key: const ValueKey('conversation-delete-action'),
+                  onTap: onDelete,
+                  leading: Icon(
+                    Icons.delete_outline_rounded,
+                    color: colors.error,
+                  ),
+                  title: Text(
+                    copy.text('Delete chat', 'Usuń czat'),
+                    style: TextStyle(color: colors.error),
+                  ),
+                  subtitle: Text(
+                    copy.text(
+                      'Removes it for you only',
+                      'Usuwa tylko u Ciebie',
+                    ),
+                    style: TextStyle(color: palette.textSecondary),
+                  ),
                 ),
-              ),
-              // Last, and in the error colour: archiving is reversible and this
-              // is not.
-              ListTile(
-                key: const ValueKey('conversation-delete-action'),
-                onTap: onDelete,
-                leading: Icon(
-                  Icons.delete_outline_rounded,
-                  color: colors.error,
-                ),
-                title: Text(
-                  copy.text('Delete chat', 'Usuń czat'),
-                  style: TextStyle(color: colors.error),
-                ),
-                subtitle: Text(
-                  copy.text('Removes it for you only', 'Usuwa tylko u Ciebie'),
-                  style: TextStyle(color: palette.textSecondary),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
+}
+
+/// A bottom sheet's radius (refine-look §3.0, `AppRadius.xl`).
+const BorderRadius _sheetRadius = BorderRadius.vertical(
+  top: Radius.circular(28),
+);
+
+/// A bottom sheet's hairline top edge (R16), painted over the sheet;
+/// `borderStrong` under high contrast.
+BoxDecoration _sheetEdge(BuildContext context) {
+  final palette = context.appPalette;
+  return BoxDecoration(
+    borderRadius: _sheetRadius,
+    border: Border(
+      top: BorderSide(
+        color: MediaQuery.highContrastOf(context)
+            ? palette.borderStrong
+            : palette.hairline,
+      ),
+    ),
+  );
 }
 
 /// The "New message" bottom sheet.
@@ -1812,191 +1997,197 @@ class NewMessageSheetState extends State<NewMessageSheet> {
         // their background + ink splashes onto the nearest Material
         // ancestor. Painting it with a plain Container instead put an
         // opaque box between those tiles and the Material, hiding taps.
-        return Material(
-          key: const ValueKey('new-message-sheet-surface'),
-          color: palette.surfaceRaised,
-          clipBehavior: Clip.antiAlias,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          child: Column(
-            children: [
-              YoModalSheetChrome(
-                sheetLabel: copy.text('New message', 'Nowa wiadomość'),
-                surfaceColor: palette.surfaceRaised,
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 2, 20, 14),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    copy.text('New message', 'Nowa wiadomość'),
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
+        return DecoratedBox(
+          position: DecorationPosition.foreground,
+          decoration: _sheetEdge(context),
+          child: Material(
+            key: const ValueKey('new-message-sheet-surface'),
+            color: palette.surfaceRaised,
+            clipBehavior: Clip.antiAlias,
+            borderRadius: _sheetRadius,
+            child: Column(
+              children: [
+                YoModalSheetChrome(
+                  sheetLabel: copy.text('New message', 'Nowa wiadomość'),
+                  surfaceColor: palette.surfaceRaised,
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 2, 20, 14),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      copy.text('New message', 'Nowa wiadomość'),
+                      style: AppTypography.screenTitle.copyWith(
+                        color: palette.textPrimary,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 18),
-                child: _SearchField(controller: _controller),
-              ),
-              const SizedBox(height: 6),
-              Expanded(
-                child: StreamBuilder<List<Conversation>>(
-                  stream: widget.conversationsStream,
-                  builder: (context, conversationSnapshot) {
-                    final conversations =
-                        conversationSnapshot.data ?? const <Conversation>[];
-
-                    return StreamBuilder<List<FriendUser>>(
-                      stream: widget.friendsStream,
-                      builder: (context, friendSnapshot) {
-                        final friends =
-                            friendSnapshot.data ?? const <FriendUser>[];
-                        final friendsById = {
-                          for (final friend in friends) friend.id: friend,
-                        };
-                        final loading =
-                            conversationSnapshot.connectionState ==
-                                ConnectionState.waiting &&
-                            friendSnapshot.connectionState ==
-                                ConnectionState.waiting &&
-                            conversations.isEmpty &&
-                            friends.isEmpty;
-
-                        if (loading) {
-                          return Center(
-                            child: CircularProgressIndicator(
-                              color: palette.interactiveForeground,
-                            ),
-                          );
-                        }
-
-                        // Without this the sheet answered a failed query
-                        // with "You're all caught up", which reads as "you
-                        // have no friends" rather than "we couldn't load
-                        // them".
-                        final failed =
-                            (conversationSnapshot.hasError ||
-                                friendSnapshot.hasError) &&
-                            conversations.isEmpty &&
-                            friends.isEmpty;
-
-                        if (failed) {
-                          return const _NewMessageErrorState();
-                        }
-
-                        final recent =
-                            conversations
-                                .where(
-                                  (c) =>
-                                      !c.isArchivedFor(widget.currentUserId) &&
-                                      c.lastMessage.isNotEmpty,
-                                )
-                                .map((conversation) {
-                                  final otherId = conversation.otherUserId(
-                                    widget.currentUserId,
-                                  );
-                                  final friend = friendsById[otherId];
-                                  if (friend == null) return conversation;
-                                  return conversation.withParticipantIdentity(
-                                    userId: otherId,
-                                    displayName: friend.displayName,
-                                    photoUrl: friend.photoUrl ?? '',
-                                  );
-                                })
-                                .toList(growable: false)
-                              ..sort(Conversation.compareByRecentActivity);
-                        final recentIds = recent
-                            .map((c) => c.otherUserId(widget.currentUserId))
-                            .toSet();
-
-                        bool matchesQuery(String name, [String handle = '']) {
-                          if (_query.isEmpty) return true;
-                          return name.toLowerCase().contains(_query) ||
-                              handle.toLowerCase().contains(_query);
-                        }
-
-                        final filteredRecent = recent
-                            .take(6)
-                            .where((c) {
-                              final otherId = c.otherUserId(
-                                widget.currentUserId,
-                              );
-                              return matchesQuery(c.displayNameFor(otherId));
-                            })
-                            .toList(growable: false);
-
-                        final filteredFriends = friends
-                            .where(
-                              (friend) =>
-                                  !recentIds.contains(friend.id) &&
-                                  matchesQuery(
-                                    friend.displayName,
-                                    friend.username,
-                                  ),
-                            )
-                            .toList(growable: false);
-
-                        if (filteredRecent.isEmpty && filteredFriends.isEmpty) {
-                          return _NewMessageEmptyState(
-                            hasSearch: _query.isNotEmpty,
-                            hasNoFriendsAtAll: friends.isEmpty,
-                          );
-                        }
-
-                        return ListView(
-                          controller: scrollController,
-                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 28),
-                          children: [
-                            if (filteredRecent.isNotEmpty) ...[
-                              _NewMessageSectionLabel(
-                                copy.text('Recent', 'Ostatnie'),
-                              ),
-                              for (final conversation in filteredRecent)
-                                _RecentChatTile(
-                                  conversation: conversation,
-                                  currentUserId: widget.currentUserId,
-                                  liveFriend:
-                                      friendsById[conversation.otherUserId(
-                                        widget.currentUserId,
-                                      )],
-                                  onTap: () => widget.onConversationSelected(
-                                    conversation,
-                                  ),
-                                ),
-                              const SizedBox(height: 6),
-                            ],
-                            if (filteredFriends.isNotEmpty) ...[
-                              _NewMessageSectionLabel(
-                                copy.text('Friends', 'Znajomi'),
-                              ),
-                              for (final friend in filteredFriends)
-                                _FriendTile(
-                                  friend: friend,
-                                  onTap: () => widget.onFriendSelected(friend),
-                                ),
-                            ],
-                            const SizedBox(height: 10),
-                            _InviteFriendsTile(
-                              onTap: () => SharePlus.instance.share(
-                                ShareParams(
-                                  text: copy.text(
-                                    'Join me on YO Voice — the app for voice servers, Moments and real conversations: https://yovoice.app/download',
-                                    'Dołącz do mnie w YO Voice — aplikacji z serwerami głosowymi, Momentami i prawdziwymi rozmowami: https://yovoice.app/download',
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    );
-                  },
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  child: _SearchField(controller: _controller),
                 ),
-              ),
-            ],
+                const SizedBox(height: 6),
+                Expanded(
+                  child: StreamBuilder<List<Conversation>>(
+                    stream: widget.conversationsStream,
+                    builder: (context, conversationSnapshot) {
+                      final conversations =
+                          conversationSnapshot.data ?? const <Conversation>[];
+
+                      return StreamBuilder<List<FriendUser>>(
+                        stream: widget.friendsStream,
+                        builder: (context, friendSnapshot) {
+                          final friends =
+                              friendSnapshot.data ?? const <FriendUser>[];
+                          final friendsById = {
+                            for (final friend in friends) friend.id: friend,
+                          };
+                          final loading =
+                              conversationSnapshot.connectionState ==
+                                  ConnectionState.waiting &&
+                              friendSnapshot.connectionState ==
+                                  ConnectionState.waiting &&
+                              conversations.isEmpty &&
+                              friends.isEmpty;
+
+                          if (loading) {
+                            return Center(
+                              child: CircularProgressIndicator(
+                                color: palette.interactiveForeground,
+                              ),
+                            );
+                          }
+
+                          // Without this the sheet answered a failed query
+                          // with "You're all caught up", which reads as "you
+                          // have no friends" rather than "we couldn't load
+                          // them".
+                          final failed =
+                              (conversationSnapshot.hasError ||
+                                  friendSnapshot.hasError) &&
+                              conversations.isEmpty &&
+                              friends.isEmpty;
+
+                          if (failed) {
+                            return const _NewMessageErrorState();
+                          }
+
+                          final recent =
+                              conversations
+                                  .where(
+                                    (c) =>
+                                        !c.isArchivedFor(
+                                          widget.currentUserId,
+                                        ) &&
+                                        c.lastMessage.isNotEmpty,
+                                  )
+                                  .map((conversation) {
+                                    final otherId = conversation.otherUserId(
+                                      widget.currentUserId,
+                                    );
+                                    final friend = friendsById[otherId];
+                                    if (friend == null) return conversation;
+                                    return conversation.withParticipantIdentity(
+                                      userId: otherId,
+                                      displayName: friend.displayName,
+                                      photoUrl: friend.photoUrl ?? '',
+                                    );
+                                  })
+                                  .toList(growable: false)
+                                ..sort(Conversation.compareByRecentActivity);
+                          final recentIds = recent
+                              .map((c) => c.otherUserId(widget.currentUserId))
+                              .toSet();
+
+                          bool matchesQuery(String name, [String handle = '']) {
+                            if (_query.isEmpty) return true;
+                            return name.toLowerCase().contains(_query) ||
+                                handle.toLowerCase().contains(_query);
+                          }
+
+                          final filteredRecent = recent
+                              .take(6)
+                              .where((c) {
+                                final otherId = c.otherUserId(
+                                  widget.currentUserId,
+                                );
+                                return matchesQuery(c.displayNameFor(otherId));
+                              })
+                              .toList(growable: false);
+
+                          final filteredFriends = friends
+                              .where(
+                                (friend) =>
+                                    !recentIds.contains(friend.id) &&
+                                    matchesQuery(
+                                      friend.displayName,
+                                      friend.username,
+                                    ),
+                              )
+                              .toList(growable: false);
+
+                          if (filteredRecent.isEmpty &&
+                              filteredFriends.isEmpty) {
+                            return _NewMessageEmptyState(
+                              hasSearch: _query.isNotEmpty,
+                              hasNoFriendsAtAll: friends.isEmpty,
+                            );
+                          }
+
+                          return ListView(
+                            controller: scrollController,
+                            padding: const EdgeInsets.fromLTRB(12, 4, 12, 28),
+                            children: [
+                              if (filteredRecent.isNotEmpty) ...[
+                                _NewMessageSectionLabel(
+                                  copy.text('Recent', 'Ostatnie'),
+                                ),
+                                for (final conversation in filteredRecent)
+                                  _RecentChatTile(
+                                    conversation: conversation,
+                                    currentUserId: widget.currentUserId,
+                                    liveFriend:
+                                        friendsById[conversation.otherUserId(
+                                          widget.currentUserId,
+                                        )],
+                                    onTap: () => widget.onConversationSelected(
+                                      conversation,
+                                    ),
+                                  ),
+                                const SizedBox(height: 6),
+                              ],
+                              if (filteredFriends.isNotEmpty) ...[
+                                _NewMessageSectionLabel(
+                                  copy.text('Friends', 'Znajomi'),
+                                ),
+                                for (final friend in filteredFriends)
+                                  _FriendTile(
+                                    friend: friend,
+                                    onTap: () =>
+                                        widget.onFriendSelected(friend),
+                                  ),
+                              ],
+                              const SizedBox(height: 10),
+                              _InviteFriendsTile(
+                                onTap: () => SharePlus.instance.share(
+                                  ShareParams(
+                                    text: copy.text(
+                                      'Join me on YO Voice — the app for voice servers, Moments and real conversations: https://yovoice.app/download',
+                                      'Dołącz do mnie w YO Voice — aplikacji z serwerami głosowymi, Momentami i prawdziwymi rozmowami: https://yovoice.app/download',
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -2019,7 +2210,7 @@ class _NewMessageSectionLabel extends StatelessWidget {
         style: TextStyle(
           color: palette.textSecondary,
           fontSize: 12,
-          fontWeight: FontWeight.w800,
+          fontWeight: FontWeight.w700,
           letterSpacing: .3,
         ),
       ),
@@ -2047,24 +2238,28 @@ class _RecentChatTile extends StatelessWidget {
         liveFriend?.displayName ?? conversation.displayNameFor(otherId);
     final photoUrl = liveFriend?.photoUrl ?? conversation.photoUrlFor(otherId);
     final palette = context.appPalette;
+    // The name is the row's label: at large text it may take a second line
+    // (as the friend tiles below already do) rather than end in a stub.
+    final nameLines =
+        MediaQuery.textScalerOf(context).scale(16) / 16 > 1.3 ? 2 : 1;
 
     return ListTile(
       onTap: onTap,
       leading: UserAvatar(
         radius: 25,
         userId: otherId,
-        backgroundColor: palette.surfaceSunken,
         photoUrl: photoUrl,
         mediaRevision: liveFriend?.profileUpdatedAt,
         displayName: name,
+        finish: UserAvatarFinish.brand,
       ),
       title: Text(
         name,
-        maxLines: 1,
+        maxLines: nameLines,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
           color: palette.textPrimary,
-          fontWeight: FontWeight.w800,
+          fontWeight: FontWeight.w600,
         ),
       ),
       subtitle: Text(
@@ -2106,20 +2301,20 @@ class _FriendTile extends StatelessWidget {
             UserAvatar(
               radius: 25,
               userId: friend.id,
-              backgroundColor: palette.surfaceSunken,
               photoUrl: friend.photoUrl,
               mediaRevision: friend.profileUpdatedAt,
               displayName: friend.displayName,
+              finish: UserAvatarFinish.brand,
             ),
             if (friend.isOnline)
-              Positioned(
-                right: 0,
+              PositionedDirectional(
+                end: 0,
                 bottom: 0,
                 child: AvailabilityDot(
                   status: PeopleStatus.online,
                   size: 14,
                   borderColor: palette.surfaceRaised,
-                  borderWidth: 3,
+                  borderWidth: 2.5,
                 ),
               ),
           ],
@@ -2129,7 +2324,7 @@ class _FriendTile extends StatelessWidget {
         friend.displayName,
         style: TextStyle(
           color: palette.textPrimary,
-          fontWeight: FontWeight.w800,
+          fontWeight: FontWeight.w600,
         ),
       ),
       subtitle: Text(
@@ -2174,13 +2369,14 @@ class _InviteFriendsTile extends StatelessWidget {
               width: 40,
               height: 40,
               alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: colors.primaryContainer,
-                borderRadius: BorderRadius.circular(12),
+              // The R16 glyph box: the scheme's container pair, radius 12.
+              decoration: AppFinish.glyphBox(
+                colors,
+                highContrast: MediaQuery.highContrastOf(context),
               ),
               child: Icon(
-                Icons.person_add_alt_1_rounded,
-                color: colors.onPrimaryContainer,
+                AppIcons.addFriend,
+                color: palette.interactiveForeground,
                 size: 20,
               ),
             ),
@@ -2193,7 +2389,7 @@ class _InviteFriendsTile extends StatelessWidget {
                     copy.text('Invite friends', 'Zaproś znajomych'),
                     style: TextStyle(
                       color: palette.textPrimary,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w700,
                       fontSize: 13.5,
                     ),
                   ),
@@ -2254,29 +2450,15 @@ class _NewMessageEmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 64,
-              height: 64,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: palette.surfaceMuted,
-                shape: BoxShape.circle,
-                border: Border.all(color: palette.borderStrong),
-              ),
-              child: Icon(
-                hasSearch
-                    ? Icons.search_off_rounded
-                    : Icons.chat_bubble_outline_rounded,
-                color: palette.textSecondary,
-                size: 28,
-              ),
+            _QuietGlyphDisc(
+              icon: hasSearch ? Icons.search_off_rounded : AppIcons.chat,
             ),
             const SizedBox(height: 16),
             Text(
               title,
               style: TextStyle(
                 color: palette.textPrimary,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
                 fontSize: 16,
               ),
             ),
@@ -2337,7 +2519,7 @@ class _NewMessageErrorState extends StatelessWidget {
               ),
               style: TextStyle(
                 color: palette.textPrimary,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
                 fontSize: 16,
               ),
             ),
@@ -2372,9 +2554,14 @@ class _EmptyMessages extends StatelessWidget {
   final bool hasSearch;
   final VoidCallback onNewMessage;
 
+  /// The first-run logo: 88 px, 72 on a short viewport (refine-look §4).
+  static const double logoSize = 88;
+  static const double compactLogoSize = 72;
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
+    final inbox = !archived && !hasSearch;
     final title = hasSearch
         ? copy.text('No matching chats', 'Brak pasujących czatów')
         : archived
@@ -2395,7 +2582,6 @@ class _EmptyMessages extends StatelessWidget {
             'Rozpocznij prywatną rozmowę ze znajomym.',
           );
     final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
 
     return LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
@@ -2408,23 +2594,24 @@ class _EmptyMessages extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Flat tonal tile instead of a decorative two-hex gradient
-                // (Slim: no gradients on cards, palette roles only).
-                Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    color: colors.primaryContainer,
-                    borderRadius: BorderRadius.circular(16),
+                // The first-run invitation carries the real logo (bloom in
+                // Dark, a contact shadow in Pearl); the archived and search
+                // states keep a quiet topic glyph.
+                if (inbox)
+                  _LogoEntrance(
+                    child: YoBrandMark(
+                      key: const ValueKey('messages-empty-logo'),
+                      size: MediaQuery.sizeOf(context).height < 560
+                          ? compactLogoSize
+                          : logoSize,
+                    ),
+                  )
+                else
+                  _QuietGlyphDisc(
+                    icon: archived
+                        ? AppIcons.archive
+                        : Icons.search_off_rounded,
                   ),
-                  child: Icon(
-                    archived
-                        ? Icons.archive_outlined
-                        : Icons.chat_bubble_outline_rounded,
-                    color: colors.onPrimaryContainer,
-                    size: 30,
-                  ),
-                ),
                 const SizedBox(height: 16),
                 Text(
                   title,
@@ -2432,7 +2619,7 @@ class _EmptyMessages extends StatelessWidget {
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 18,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -2445,23 +2632,17 @@ class _EmptyMessages extends StatelessWidget {
                     height: 1.45,
                   ),
                 ),
-                if (!archived && !hasSearch) ...[
+                if (inbox) ...[
                   const SizedBox(height: 20),
-                  FilledButton.icon(
+                  // The labelled gradient without a second lift: the
+                  // header's compose disc is this screen's one CTA lift.
+                  YoGradientFilledButton(
+                    key: const ValueKey('messages-empty-new-message'),
                     onPressed: onNewMessage,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: colors.primary,
-                      foregroundColor: colors.onPrimary,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 13,
-                      ),
-                    ),
+                    emphasis: YoActionEmphasis.flat,
+                    minimumSize: const Size(64, 48),
                     icon: const Icon(Icons.edit_square),
-                    label: Text(
-                      copy.text('New message', 'Nowa wiadomość'),
-                      style: const TextStyle(fontWeight: FontWeight.w900),
-                    ),
+                    child: Text(copy.text('New message', 'Nowa wiadomość')),
                   ),
                 ],
               ],
@@ -2469,6 +2650,133 @@ class _EmptyMessages extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The first-run logo's entrance: a fade with a .96 → 1 scale over
+/// [AppMotion.entrance], played once, when the invitation first appears.
+/// Where decorative motion is off at that moment the logo starts at rest, and
+/// motion switching off mid-entrance finishes it at rest.
+///
+/// The same two transitions stay mounted in every state, so a return to the
+/// Chats tab, a covering route popping, or Reduce Motion / accessible
+/// navigation / `TickerMode` changing never swaps the subtree and never
+/// replays the entrance (spec §2.7: motion starts only from a real event).
+class _LogoEntrance extends StatefulWidget {
+  const _LogoEntrance({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_LogoEntrance> createState() => _LogoEntranceState();
+}
+
+class _LogoEntranceState extends State<_LogoEntrance>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: AppMotion.entrance,
+  );
+  late final Animation<double> _progress = CurvedAnimation(
+    parent: _controller,
+    curve: AppMotion.entranceCurve,
+  );
+  late final Animation<double> _scale = Tween<double>(
+    begin: .96,
+    end: 1,
+  ).animate(_progress);
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final animate = AppMotion.decorative(context);
+    if (!_started) {
+      _started = true;
+      if (animate) {
+        _controller.forward();
+      } else {
+        _controller.value = 1;
+      }
+    } else if (!animate && _controller.isAnimating) {
+      _controller.value = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      key: const ValueKey('messages-empty-logo-entrance'),
+      opacity: _progress,
+      child: ScaleTransition(scale: _scale, child: widget.child),
+    );
+  }
+}
+
+/// The first-run inbox's quiet canvas (spec §4, R17). While the real logo is
+/// on screen it is the page's only YO: the Dark lounge's neon wall sign sits
+/// right above it and Pearl's watermark ring right behind it, so the canvas
+/// drops to the bare radial for as long as the invitation shows.
+///
+/// The shared page background has no switch for its art, so this paints the
+/// same radial over it. It fades rather than being inserted or removed, so
+/// the list above never loses state, and it is omitted under high contrast,
+/// where the page draws no art anyway.
+class _QuietCanvas extends StatelessWidget {
+  const _QuietCanvas({required this.visible, required this.decoration});
+
+  final bool visible;
+  final Decoration decoration;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = visible && !MediaQuery.highContrastOf(context);
+    return IgnorePointer(
+      child: AnimatedOpacity(
+        key: const ValueKey('messages-quiet-canvas'),
+        opacity: shown ? 1 : 0,
+        duration: AppMotion.decorative(context)
+            ? AppMotion.entrance
+            : Duration.zero,
+        curve: AppMotion.entranceCurve,
+        child: DecoratedBox(decoration: decoration),
+      ),
+    );
+  }
+}
+
+/// A quiet 64 px topic disc for the archived, search and sheet empty states:
+/// the block fill with its hairline and a `textSecondary` glyph.
+class _QuietGlyphDisc extends StatelessWidget {
+  const _QuietGlyphDisc({required this.icon});
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
+    return Container(
+      width: 64,
+      height: 64,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: highContrast ? palette.surface : null,
+        gradient: highContrast ? null : palette.blockGradient,
+        border: Border.all(
+          color: highContrast ? palette.borderStrong : palette.hairline,
+        ),
+        boxShadow: AppFinish.blockShadows(palette, highContrast: highContrast),
+      ),
+      child: Icon(icon, color: palette.textSecondary, size: 28),
     );
   }
 }
