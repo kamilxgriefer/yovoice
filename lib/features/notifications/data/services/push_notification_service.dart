@@ -172,6 +172,7 @@ NotificationSoundProfile notificationSoundProfileFor(NotificationType type) {
     NotificationType.momentComment ||
     NotificationType.reelComment ||
     NotificationType.serverRole ||
+    NotificationType.pagePostComment ||
     NotificationType.liveStarted => NotificationSoundProfile.social,
     NotificationType.achievementUnlocked =>
       NotificationSoundProfile.achievement,
@@ -179,6 +180,8 @@ NotificationSoundProfile notificationSoundProfileFor(NotificationType type) {
     NotificationType.missedCall ||
     NotificationType.serverEventReminder ||
     NotificationType.moderation ||
+    NotificationType.pageModeration ||
+    NotificationType.pageLapse ||
     NotificationType.system => NotificationSoundProfile.alert,
   };
 }

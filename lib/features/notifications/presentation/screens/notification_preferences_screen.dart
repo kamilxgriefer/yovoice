@@ -66,10 +66,13 @@ const _kPreferenceGroups = [
 /// every type it covers is on.
 List<NotificationType> _coveredTypes(NotificationType type) =>
     switch (type) {
+      // A comment on your Page post is a comment too (ADR-233): the server
+      // honours this switch for it through `momentComment` as well.
       NotificationType.momentComment => const [
         NotificationType.momentComment,
         NotificationType.reelComment,
         NotificationType.commentMention,
+        NotificationType.pagePostComment,
       ],
       _ => <NotificationType>[type],
     };
@@ -128,6 +131,7 @@ String _labelFor(AppLocalizations copy, NotificationType type) {
     case NotificationType.momentComment:
     case NotificationType.reelComment:
     case NotificationType.commentMention:
+    case NotificationType.pagePostComment:
       return copy.text(
         'Comments and mentions',
         'Komentarze i oznaczenia',
@@ -141,7 +145,10 @@ String _labelFor(AppLocalizations copy, NotificationType type) {
     case NotificationType.achievementUnlocked:
       return copy.text('Achievements', 'Osiągnięcia');
     case NotificationType.moderation:
+    case NotificationType.pageModeration:
       return copy.text('Moderation', 'Moderacja');
+    case NotificationType.pageLapse:
+      return copy.text('Your Page', 'Twoja strona');
     case NotificationType.system:
       return copy.text('System announcements', 'Komunikaty systemowe');
   }

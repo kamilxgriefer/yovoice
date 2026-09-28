@@ -40,6 +40,8 @@ const _countStems = <String>[
   '{count} people liked this Yeel',
   '{count} people liked this comment',
   '{count} people reacted to this message',
+  // Premium Pages (ADR-233): the likers count line of a Page post.
+  '{count} people liked this post',
 ];
 
 /// The key a value's placeholders are compared with: a plural entry keeps the
@@ -231,6 +233,7 @@ void main() {
       ReelLikersTarget('r1'),
       VoiceMomentCommentLikersTarget('m1', 'c1'),
       ServerMessageReactorsTarget('s1', 'ch1', 'x1'),
+      PagePostLikersTarget('pp_0000000000000000000000000000000000000001'),
     ];
     // "person" is also Swedish, Danish and Norwegian, so it is not a signal.
     final english = RegExp(r'\b(people|liked|reacted)\b');
@@ -246,8 +249,12 @@ void main() {
       expect(pl.countLine(moment, 12), '12 osób polubiło ten Moment');
       expect(pl.countLine(moment, 25), '25 osób polubiło ten Moment');
       expect(
-        pl.countLine(targets.last, 3),
+        pl.countLine(const ServerMessageReactorsTarget('s1', 'ch1', 'x1'), 3),
         '3 osoby zareagowały na tę wiadomość',
+      );
+      expect(
+        pl.countLine(targets.last, 22),
+        '22 osoby polubiły ten post',
       );
     });
 

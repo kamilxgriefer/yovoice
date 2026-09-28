@@ -266,6 +266,9 @@ class NotificationService {
     if (recipientId == actor.uid) return;
     if (type == NotificationType.system ||
         type == NotificationType.moderation ||
+        type == NotificationType.pagePostComment ||
+        type == NotificationType.pageModeration ||
+        type == NotificationType.pageLapse ||
         type == NotificationType.achievementUnlocked ||
         type == NotificationType.liveStarted) {
       throw ArgumentError.value(

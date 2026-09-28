@@ -223,6 +223,15 @@ class LikersCopy {
       polishFew: '{count} osoby polubiły ten komentarz',
       polishMany: '{count} osób polubiło ten komentarz',
     ),
+    PagePostLikersTarget() => copy.pluralTemplate(
+      count: count,
+      stem: '{count} people liked this post',
+      englishOne: '{count} person liked this post',
+      englishOther: '{count} people liked this post',
+      polishOne: '{count} osoba polubiła ten post',
+      polishFew: '{count} osoby polubiły ten post',
+      polishMany: '{count} osób polubiło ten post',
+    ),
     ServerMessageReactorsTarget() => copy.pluralTemplate(
       count: count,
       stem: '{count} people reacted to this message',

@@ -96,6 +96,13 @@ const vipLikersTranslationKeys = <String>[
   '{count} people reacted to this message.few',
   '{count} people reacted to this message.many',
   '{count} people reacted to this message.other',
+  // Premium Pages (ADR-233): the likers count line of a Page post.
+  '{count} people liked this post.zero',
+  '{count} people liked this post.one',
+  '{count} people liked this post.two',
+  '{count} people liked this post.few',
+  '{count} people liked this post.many',
+  '{count} people liked this post.other',
 ];
 
 const vipLikersTranslations = <String, Map<String, String>>{
@@ -203,6 +210,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} Personen haben auf diese Nachricht reagiert',
     '{count} people reacted to this message.other':
         '{count} Personen haben auf diese Nachricht reagiert',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} Personen gefällt dieser Beitrag',
+    '{count} people liked this post.one':
+        '{count} Person gefällt dieser Beitrag',
+    '{count} people liked this post.two':
+        '{count} Personen gefällt dieser Beitrag',
+    '{count} people liked this post.few':
+        '{count} Personen gefällt dieser Beitrag',
+    '{count} people liked this post.many':
+        '{count} Personen gefällt dieser Beitrag',
+    '{count} people liked this post.other':
+        '{count} Personen gefällt dieser Beitrag',
   },
   'es': <String, String>{
     'likers.titleLikes': 'Me gusta',
@@ -311,6 +331,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} personas reaccionaron a este mensaje',
     '{count} people reacted to this message.other':
         '{count} personas reaccionaron a este mensaje',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        'A {count} personas les gustó esta publicación',
+    '{count} people liked this post.one':
+        'A {count} persona le gustó esta publicación',
+    '{count} people liked this post.two':
+        'A {count} personas les gustó esta publicación',
+    '{count} people liked this post.few':
+        'A {count} personas les gustó esta publicación',
+    '{count} people liked this post.many':
+        'A {count} personas les gustó esta publicación',
+    '{count} people liked this post.other':
+        'A {count} personas les gustó esta publicación',
   },
   'pt': <String, String>{
     'likers.titleLikes': 'Gostos',
@@ -413,6 +446,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} pessoas reagiram a esta mensagem',
     '{count} people reacted to this message.other':
         '{count} pessoas reagiram a esta mensagem',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} pessoas gostaram desta publicação',
+    '{count} people liked this post.one':
+        '{count} pessoa gostou desta publicação',
+    '{count} people liked this post.two':
+        '{count} pessoas gostaram desta publicação',
+    '{count} people liked this post.few':
+        '{count} pessoas gostaram desta publicação',
+    '{count} people liked this post.many':
+        '{count} pessoas gostaram desta publicação',
+    '{count} people liked this post.other':
+        '{count} pessoas gostaram desta publicação',
   },
   'pt_BR': <String, String>{
     'likers.titleLikes': 'Curtidas',
@@ -510,6 +556,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} pessoas reagiram a esta mensagem',
     '{count} people reacted to this message.other':
         '{count} pessoas reagiram a esta mensagem',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} pessoa curtiu esta publicação',
+    '{count} people liked this post.one':
+        '{count} pessoa curtiu esta publicação',
+    '{count} people liked this post.two':
+        '{count} pessoas curtiram esta publicação',
+    '{count} people liked this post.few':
+        '{count} pessoas curtiram esta publicação',
+    '{count} people liked this post.many':
+        '{count} pessoas curtiram esta publicação',
+    '{count} people liked this post.other':
+        '{count} pessoas curtiram esta publicação',
   },
   'fr': <String, String>{
     'likers.titleLikes': 'J’aime',
@@ -609,6 +668,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} personnes ont réagi à ce message',
     '{count} people reacted to this message.other':
         '{count} personnes ont réagi à ce message',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} personne a aimé cette publication',
+    '{count} people liked this post.one':
+        '{count} personne a aimé cette publication',
+    '{count} people liked this post.two':
+        '{count} personnes ont aimé cette publication',
+    '{count} people liked this post.few':
+        '{count} personnes ont aimé cette publication',
+    '{count} people liked this post.many':
+        '{count} personnes ont aimé cette publication',
+    '{count} people liked this post.other':
+        '{count} personnes ont aimé cette publication',
   },
   'it': <String, String>{
     'likers.titleLikes': 'Mi piace',
@@ -716,6 +788,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} persone hanno reagito a questo messaggio',
     '{count} people reacted to this message.other':
         '{count} persone hanno reagito a questo messaggio',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        'A {count} persone è piaciuto questo post',
+    '{count} people liked this post.one':
+        'A {count} persona è piaciuto questo post',
+    '{count} people liked this post.two':
+        'A {count} persone è piaciuto questo post',
+    '{count} people liked this post.few':
+        'A {count} persone è piaciuto questo post',
+    '{count} people liked this post.many':
+        'A {count} persone è piaciuto questo post',
+    '{count} people liked this post.other':
+        'A {count} persone è piaciuto questo post',
   },
   'nl': <String, String>{
     'likers.titleLikes': 'Vind-ik-leuks',
@@ -825,6 +910,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} mensen reageerden op dit bericht',
     '{count} people reacted to this message.other':
         '{count} mensen reageerden op dit bericht',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} mensen vinden dit bericht leuk',
+    '{count} people liked this post.one':
+        '{count} persoon vindt dit bericht leuk',
+    '{count} people liked this post.two':
+        '{count} mensen vinden dit bericht leuk',
+    '{count} people liked this post.few':
+        '{count} mensen vinden dit bericht leuk',
+    '{count} people liked this post.many':
+        '{count} mensen vinden dit bericht leuk',
+    '{count} people liked this post.other':
+        '{count} mensen vinden dit bericht leuk',
   },
   'ro': <String, String>{
     'likers.titleLikes': 'Aprecieri',
@@ -933,6 +1031,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} de persoane au reacționat la acest mesaj',
     '{count} people reacted to this message.other':
         '{count} de persoane au reacționat la acest mesaj',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} persoane au apreciat această postare',
+    '{count} people liked this post.one':
+        '{count} persoană a apreciat această postare',
+    '{count} people liked this post.two':
+        '{count} persoane au apreciat această postare',
+    '{count} people liked this post.few':
+        '{count} persoane au apreciat această postare',
+    '{count} people liked this post.many':
+        '{count} persoane au apreciat această postare',
+    '{count} people liked this post.other':
+        '{count} de persoane au apreciat această postare',
   },
   'tr': <String, String>{
     'likers.titleLikes': 'Beğeniler',
@@ -1023,6 +1134,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} kişi bu mesaja tepki verdi',
     '{count} people reacted to this message.other':
         '{count} kişi bu mesaja tepki verdi',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': 'Bu gönderiyi {count} kişi beğendi',
+    '{count} people liked this post.one': 'Bu gönderiyi {count} kişi beğendi',
+    '{count} people liked this post.two': 'Bu gönderiyi {count} kişi beğendi',
+    '{count} people liked this post.few': 'Bu gönderiyi {count} kişi beğendi',
+    '{count} people liked this post.many': 'Bu gönderiyi {count} kişi beğendi',
+    '{count} people liked this post.other': 'Bu gönderiyi {count} kişi beğendi',
   },
   'el': <String, String>{
     'likers.titleLikes': 'Μου αρέσει',
@@ -1133,6 +1251,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} άτομα αντέδρασαν σε αυτό το μήνυμα',
     '{count} people reacted to this message.other':
         '{count} άτομα αντέδρασαν σε αυτό το μήνυμα',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        'Σε {count} άτομα άρεσε αυτή η ανάρτηση',
+    '{count} people liked this post.one':
+        'Σε {count} άτομο άρεσε αυτή η ανάρτηση',
+    '{count} people liked this post.two':
+        'Σε {count} άτομα άρεσε αυτή η ανάρτηση',
+    '{count} people liked this post.few':
+        'Σε {count} άτομα άρεσε αυτή η ανάρτηση',
+    '{count} people liked this post.many':
+        'Σε {count} άτομα άρεσε αυτή η ανάρτηση',
+    '{count} people liked this post.other':
+        'Σε {count} άτομα άρεσε αυτή η ανάρτηση',
   },
   'hu': <String, String>{
     'likers.titleLikes': 'Kedvelések',
@@ -1242,6 +1373,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} személy reagált erre az üzenetre',
     '{count} people reacted to this message.other':
         '{count} személy reagált erre az üzenetre',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} embernek tetszik ez a bejegyzés',
+    '{count} people liked this post.one':
+        '{count} embernek tetszik ez a bejegyzés',
+    '{count} people liked this post.two':
+        '{count} embernek tetszik ez a bejegyzés',
+    '{count} people liked this post.few':
+        '{count} embernek tetszik ez a bejegyzés',
+    '{count} people liked this post.many':
+        '{count} embernek tetszik ez a bejegyzés',
+    '{count} people liked this post.other':
+        '{count} embernek tetszik ez a bejegyzés',
   },
   'uk': <String, String>{
     'likers.titleLikes': 'Вподобання',
@@ -1344,6 +1488,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} людей відреагували на це повідомлення',
     '{count} people reacted to this message.other':
         '{count} людей відреагували на це повідомлення',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': '{count} людей вподобали цей допис',
+    '{count} people liked this post.one': '{count} людина вподобала цей допис',
+    '{count} people liked this post.two': '{count} людини вподобали цей допис',
+    '{count} people liked this post.few': '{count} людини вподобали цей допис',
+    '{count} people liked this post.many': '{count} людей вподобали цей допис',
+    '{count} people liked this post.other': '{count} людей вподобали цей допис',
   },
   'ru': <String, String>{
     'likers.titleLikes': 'Лайки',
@@ -1448,6 +1599,14 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} человек отреагировали на это сообщение',
     '{count} people reacted to this message.other':
         '{count} человека отреагировали на это сообщение',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': '{count} человек оценили этот пост',
+    '{count} people liked this post.one': '{count} человек оценил этот пост',
+    '{count} people liked this post.two': '{count} человека оценили этот пост',
+    '{count} people liked this post.few': '{count} человека оценили этот пост',
+    '{count} people liked this post.many': '{count} человек оценили этот пост',
+    '{count} people liked this post.other':
+        '{count} человека оценили этот пост',
   },
   'cs': <String, String>{
     'likers.titleLikes': 'Líbí se',
@@ -1557,6 +1716,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} osoby reagovalo na tuto zprávu',
     '{count} people reacted to this message.other':
         '{count} osob reagovalo na tuto zprávu',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} osob dalo Líbí se tomuto příspěvku',
+    '{count} people liked this post.one':
+        '{count} osoba dala Líbí se tomuto příspěvku',
+    '{count} people liked this post.two':
+        '{count} osoby daly Líbí se tomuto příspěvku',
+    '{count} people liked this post.few':
+        '{count} osoby daly Líbí se tomuto příspěvku',
+    '{count} people liked this post.many':
+        '{count} osoby dalo Líbí se tomuto příspěvku',
+    '{count} people liked this post.other':
+        '{count} osob dalo Líbí se tomuto příspěvku',
   },
   'sk': <String, String>{
     'likers.titleLikes': 'Páči sa mi',
@@ -1667,6 +1839,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} osoby reagovalo na túto správu',
     '{count} people reacted to this message.other':
         '{count} osôb reagovalo na túto správu',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} osôb dalo Páči sa mi tomuto príspevku',
+    '{count} people liked this post.one':
+        '{count} osoba dala Páči sa mi tomuto príspevku',
+    '{count} people liked this post.two':
+        '{count} osoby dali Páči sa mi tomuto príspevku',
+    '{count} people liked this post.few':
+        '{count} osoby dali Páči sa mi tomuto príspevku',
+    '{count} people liked this post.many':
+        '{count} osoby dalo Páči sa mi tomuto príspevku',
+    '{count} people liked this post.other':
+        '{count} osôb dalo Páči sa mi tomuto príspevku',
   },
   'bg': <String, String>{
     'likers.titleLikes': 'Харесвания',
@@ -1762,6 +1947,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} души реагираха на това съобщение',
     '{count} people reacted to this message.other':
         '{count} души реагираха на това съобщение',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} души харесаха тази публикация',
+    '{count} people liked this post.one':
+        '{count} човек хареса тази публикация',
+    '{count} people liked this post.two':
+        '{count} души харесаха тази публикация',
+    '{count} people liked this post.few':
+        '{count} души харесаха тази публикация',
+    '{count} people liked this post.many':
+        '{count} души харесаха тази публикация',
+    '{count} people liked this post.other':
+        '{count} души харесаха тази публикация',
   },
   'hr': <String, String>{
     'likers.titleLikes': 'Sviđanja',
@@ -1870,6 +2068,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} osoba reagiralo je na ovu poruku',
     '{count} people reacted to this message.other':
         '{count} osoba reagiralo je na ovu poruku',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': 'Ova objava sviđa se {count} osoba',
+    '{count} people liked this post.one': 'Ova objava sviđa se {count} osobi',
+    '{count} people liked this post.two': 'Ova objava sviđa se {count} osobe',
+    '{count} people liked this post.few': 'Ova objava sviđa se {count} osobe',
+    '{count} people liked this post.many': 'Ova objava sviđa se {count} osoba',
+    '{count} people liked this post.other': 'Ova objava sviđa se {count} osoba',
   },
   'sr': <String, String>{
     'likers.titleLikes': 'Свиђања',
@@ -1977,6 +2182,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} особа је реаговало на ову поруку',
     '{count} people reacted to this message.other':
         '{count} особа је реаговало на ову поруку',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': 'Ова објава се свиђа {count} особа',
+    '{count} people liked this post.one': 'Ова објава се свиђа {count} особи',
+    '{count} people liked this post.two': 'Ова објава се свиђа {count} особе',
+    '{count} people liked this post.few': 'Ова објава се свиђа {count} особе',
+    '{count} people liked this post.many': 'Ова објава се свиђа {count} особа',
+    '{count} people liked this post.other': 'Ова објава се свиђа {count} особа',
   },
   'sv': <String, String>{
     'likers.titleLikes': 'Gilla-markeringar',
@@ -2083,6 +2295,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} personer reagerade på detta meddelande',
     '{count} people reacted to this message.other':
         '{count} personer reagerade på detta meddelande',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} personer gillade det här inlägget',
+    '{count} people liked this post.one':
+        '{count} person gillade det här inlägget',
+    '{count} people liked this post.two':
+        '{count} personer gillade det här inlägget',
+    '{count} people liked this post.few':
+        '{count} personer gillade det här inlägget',
+    '{count} people liked this post.many':
+        '{count} personer gillade det här inlägget',
+    '{count} people liked this post.other':
+        '{count} personer gillade det här inlägget',
   },
   'da': <String, String>{
     'likers.titleLikes': 'Synes godt om',
@@ -2193,6 +2418,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} personer reagerede på denne besked',
     '{count} people reacted to this message.other':
         '{count} personer reagerede på denne besked',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} personer synes godt om dette opslag',
+    '{count} people liked this post.one':
+        '{count} person synes godt om dette opslag',
+    '{count} people liked this post.two':
+        '{count} personer synes godt om dette opslag',
+    '{count} people liked this post.few':
+        '{count} personer synes godt om dette opslag',
+    '{count} people liked this post.many':
+        '{count} personer synes godt om dette opslag',
+    '{count} people liked this post.other':
+        '{count} personer synes godt om dette opslag',
   },
   'nb': <String, String>{
     'likers.titleLikes': 'Likerklikk',
@@ -2296,6 +2534,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} personer reagerte på denne meldingen',
     '{count} people reacted to this message.other':
         '{count} personer reagerte på denne meldingen',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} personer likte dette innlegget',
+    '{count} people liked this post.one':
+        '{count} person likte dette innlegget',
+    '{count} people liked this post.two':
+        '{count} personer likte dette innlegget',
+    '{count} people liked this post.few':
+        '{count} personer likte dette innlegget',
+    '{count} people liked this post.many':
+        '{count} personer likte dette innlegget',
+    '{count} people liked this post.other':
+        '{count} personer likte dette innlegget',
   },
   'fi': <String, String>{
     'likers.titleLikes': 'Tykkäykset',
@@ -2403,6 +2654,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} henkilöä reagoi tähän viestiin',
     '{count} people reacted to this message.other':
         '{count} henkilöä reagoi tähän viestiin',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} ihmistä tykkäsi tästä julkaisusta',
+    '{count} people liked this post.one':
+        '{count} ihminen tykkäsi tästä julkaisusta',
+    '{count} people liked this post.two':
+        '{count} ihmistä tykkäsi tästä julkaisusta',
+    '{count} people liked this post.few':
+        '{count} ihmistä tykkäsi tästä julkaisusta',
+    '{count} people liked this post.many':
+        '{count} ihmistä tykkäsi tästä julkaisusta',
+    '{count} people liked this post.other':
+        '{count} ihmistä tykkäsi tästä julkaisusta',
   },
   'lt': <String, String>{
     'likers.titleLikes': 'Patiktukai',
@@ -2510,6 +2774,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} žmogaus sureagavo į šią žinutę',
     '{count} people reacted to this message.other':
         '{count} žmonių sureagavo į šią žinutę',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': 'Šis įrašas patiko {count} žmonių',
+    '{count} people liked this post.one': 'Šis įrašas patiko {count} žmogui',
+    '{count} people liked this post.two': 'Šis įrašas patiko {count} žmonėms',
+    '{count} people liked this post.few': 'Šis įrašas patiko {count} žmonėms',
+    '{count} people liked this post.many': 'Šis įrašas patiko {count} žmogaus',
+    '{count} people liked this post.other': 'Šis įrašas patiko {count} žmonių',
   },
   'lv': <String, String>{
     'likers.titleLikes': 'Patīk atzīmes',
@@ -2618,6 +2889,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} cilvēki reaģēja uz šo ziņu',
     '{count} people reacted to this message.other':
         '{count} cilvēki reaģēja uz šo ziņu',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} cilvēku atzīmēja, ka šī ziņa patīk',
+    '{count} people liked this post.one':
+        '{count} cilvēks atzīmēja, ka šī ziņa patīk',
+    '{count} people liked this post.two':
+        '{count} cilvēki atzīmēja, ka šī ziņa patīk',
+    '{count} people liked this post.few':
+        '{count} cilvēki atzīmēja, ka šī ziņa patīk',
+    '{count} people liked this post.many':
+        '{count} cilvēki atzīmēja, ka šī ziņa patīk',
+    '{count} people liked this post.other':
+        '{count} cilvēki atzīmēja, ka šī ziņa patīk',
   },
   'et': <String, String>{
     'likers.titleLikes': 'Meeldimised',
@@ -2721,6 +3005,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} inimest reageerisid sellele sõnumile',
     '{count} people reacted to this message.other':
         '{count} inimest reageerisid sellele sõnumile',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        'See postitus meeldis {count} inimesele',
+    '{count} people liked this post.one':
+        'See postitus meeldis {count} inimesele',
+    '{count} people liked this post.two':
+        'See postitus meeldis {count} inimesele',
+    '{count} people liked this post.few':
+        'See postitus meeldis {count} inimesele',
+    '{count} people liked this post.many':
+        'See postitus meeldis {count} inimesele',
+    '{count} people liked this post.other':
+        'See postitus meeldis {count} inimesele',
   },
   'id': <String, String>{
     'likers.titleLikes': 'Suka',
@@ -2818,6 +3115,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} orang bereaksi pada pesan ini',
     '{count} people reacted to this message.other':
         '{count} orang bereaksi pada pesan ini',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} orang menyukai postingan ini',
+    '{count} people liked this post.one':
+        '{count} orang menyukai postingan ini',
+    '{count} people liked this post.two':
+        '{count} orang menyukai postingan ini',
+    '{count} people liked this post.few':
+        '{count} orang menyukai postingan ini',
+    '{count} people liked this post.many':
+        '{count} orang menyukai postingan ini',
+    '{count} people liked this post.other':
+        '{count} orang menyukai postingan ini',
   },
   'vi': <String, String>{
     'likers.titleLikes': 'Lượt thích',
@@ -2912,6 +3222,16 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} người đã bày tỏ cảm xúc với tin nhắn này',
     '{count} people reacted to this message.other':
         '{count} người đã bày tỏ cảm xúc với tin nhắn này',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} người đã thích bài đăng này',
+    '{count} people liked this post.one': '{count} người đã thích bài đăng này',
+    '{count} people liked this post.two': '{count} người đã thích bài đăng này',
+    '{count} people liked this post.few': '{count} người đã thích bài đăng này',
+    '{count} people liked this post.many':
+        '{count} người đã thích bài đăng này',
+    '{count} people liked this post.other':
+        '{count} người đã thích bài đăng này',
   },
   'zh_CN': <String, String>{
     'likers.titleLikes': '赞',
@@ -2985,6 +3305,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
     '{count} people reacted to this message.few': '{count} 人回应了这条消息',
     '{count} people reacted to this message.many': '{count} 人回应了这条消息',
     '{count} people reacted to this message.other': '{count} 人回应了这条消息',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': '{count} 人赞了这个帖子',
+    '{count} people liked this post.one': '{count} 人赞了这个帖子',
+    '{count} people liked this post.two': '{count} 人赞了这个帖子',
+    '{count} people liked this post.few': '{count} 人赞了这个帖子',
+    '{count} people liked this post.many': '{count} 人赞了这个帖子',
+    '{count} people liked this post.other': '{count} 人赞了这个帖子',
   },
   'zh_TW': <String, String>{
     'likers.titleLikes': '讚',
@@ -3058,6 +3385,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
     '{count} people reacted to this message.few': '{count} 人回應了這則訊息',
     '{count} people reacted to this message.many': '{count} 人回應了這則訊息',
     '{count} people reacted to this message.other': '{count} 人回應了這則訊息',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': '{count} 人對這則貼文按讚',
+    '{count} people liked this post.one': '{count} 人對這則貼文按讚',
+    '{count} people liked this post.two': '{count} 人對這則貼文按讚',
+    '{count} people liked this post.few': '{count} 人對這則貼文按讚',
+    '{count} people liked this post.many': '{count} 人對這則貼文按讚',
+    '{count} people liked this post.other': '{count} 人對這則貼文按讚',
   },
   'ja': <String, String>{
     'likers.titleLikes': 'いいね',
@@ -3137,6 +3471,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} 人がこのメッセージにリアクションしました',
     '{count} people reacted to this message.other':
         '{count} 人がこのメッセージにリアクションしました',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': '{count} 人がこの投稿にいいねしました',
+    '{count} people liked this post.one': '{count} 人がこの投稿にいいねしました',
+    '{count} people liked this post.two': '{count} 人がこの投稿にいいねしました',
+    '{count} people liked this post.few': '{count} 人がこの投稿にいいねしました',
+    '{count} people liked this post.many': '{count} 人がこの投稿にいいねしました',
+    '{count} people liked this post.other': '{count} 人がこの投稿にいいねしました',
   },
   'ko': <String, String>{
     'likers.titleLikes': '좋아요',
@@ -3210,6 +3551,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
     '{count} people reacted to this message.few': '{count}명이 이 메시지에 반응했습니다',
     '{count} people reacted to this message.many': '{count}명이 이 메시지에 반응했습니다',
     '{count} people reacted to this message.other': '{count}명이 이 메시지에 반응했습니다',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': '{count}명이 이 게시물을 좋아합니다',
+    '{count} people liked this post.one': '{count}명이 이 게시물을 좋아합니다',
+    '{count} people liked this post.two': '{count}명이 이 게시물을 좋아합니다',
+    '{count} people liked this post.few': '{count}명이 이 게시물을 좋아합니다',
+    '{count} people liked this post.many': '{count}명이 이 게시물을 좋아합니다',
+    '{count} people liked this post.other': '{count}명이 이 게시물을 좋아합니다',
   },
   'ar': <String, String>{
     'likers.titleLikes': 'الإعجابات',
@@ -3301,6 +3649,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
         'تفاعل {count} شخصًا مع هذه الرسالة',
     '{count} people reacted to this message.other':
         'تفاعل {count} شخص مع هذه الرسالة',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': 'أعجب هذا المنشور {count} شخص',
+    '{count} people liked this post.one': 'أعجب هذا المنشور {count} شخص',
+    '{count} people liked this post.two': 'أعجب هذا المنشور {count} شخصين',
+    '{count} people liked this post.few': 'أعجب هذا المنشور {count} أشخاص',
+    '{count} people liked this post.many': 'أعجب هذا المنشور {count} شخصًا',
+    '{count} people liked this post.other': 'أعجب هذا المنشور {count} شخص',
   },
   'th': <String, String>{
     'likers.titleLikes': 'ถูกใจ',
@@ -3386,6 +3741,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} คนแสดงรีแอคชันต่อข้อความนี้',
     '{count} people reacted to this message.other':
         '{count} คนแสดงรีแอคชันต่อข้อความนี้',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': '{count} คนถูกใจโพสต์นี้',
+    '{count} people liked this post.one': '{count} คนถูกใจโพสต์นี้',
+    '{count} people liked this post.two': '{count} คนถูกใจโพสต์นี้',
+    '{count} people liked this post.few': '{count} คนถูกใจโพสต์นี้',
+    '{count} people liked this post.many': '{count} คนถูกใจโพสต์นี้',
+    '{count} people liked this post.other': '{count} คนถูกใจโพสต์นี้',
   },
   'ms': <String, String>{
     'likers.titleLikes': 'Suka',
@@ -3480,6 +3842,16 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} orang bereaksi pada mesej ini',
     '{count} people reacted to this message.other':
         '{count} orang bereaksi pada mesej ini',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} orang menyukai hantaran ini',
+    '{count} people liked this post.one': '{count} orang menyukai hantaran ini',
+    '{count} people liked this post.two': '{count} orang menyukai hantaran ini',
+    '{count} people liked this post.few': '{count} orang menyukai hantaran ini',
+    '{count} people liked this post.many':
+        '{count} orang menyukai hantaran ini',
+    '{count} people liked this post.other':
+        '{count} orang menyukai hantaran ini',
   },
   'fil': <String, String>{
     'likers.titleLikes': 'Mga like',
@@ -3588,6 +3960,19 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} tao ang nag-react sa mensaheng ito',
     '{count} people reacted to this message.other':
         '{count} tao ang nag-react sa mensaheng ito',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        '{count} tao ang nag-like sa post na ito',
+    '{count} people liked this post.one':
+        '{count} tao ang nag-like sa post na ito',
+    '{count} people liked this post.two':
+        '{count} tao ang nag-like sa post na ito',
+    '{count} people liked this post.few':
+        '{count} tao ang nag-like sa post na ito',
+    '{count} people liked this post.many':
+        '{count} tao ang nag-like sa post na ito',
+    '{count} people liked this post.other':
+        '{count} tao ang nag-like sa post na ito',
   },
   'he': <String, String>{
     'likers.titleLikes': 'לייקים',
@@ -3682,6 +4067,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} אנשים הגיבו להודעה הזו',
     '{count} people reacted to this message.other':
         '{count} אנשים הגיבו להודעה הזו',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': '{count} אנשים אהבו את הפוסט הזה',
+    '{count} people liked this post.one': '{count} אדם אהב את הפוסט הזה',
+    '{count} people liked this post.two': '{count} אנשים אהבו את הפוסט הזה',
+    '{count} people liked this post.few': '{count} אנשים אהבו את הפוסט הזה',
+    '{count} people liked this post.many': '{count} אנשים אהבו את הפוסט הזה',
+    '{count} people liked this post.other': '{count} אנשים אהבו את הפוסט הזה',
   },
   'fa': <String, String>{
     'likers.titleLikes': 'پسندها',
@@ -3778,6 +4170,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} نفر به این پیام واکنش نشان دادند',
     '{count} people reacted to this message.other':
         '{count} نفر به این پیام واکنش نشان دادند',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': '{count} نفر این پست را پسندیدند',
+    '{count} people liked this post.one': '{count} نفر این پست را پسندیدند',
+    '{count} people liked this post.two': '{count} نفر این پست را پسندیدند',
+    '{count} people liked this post.few': '{count} نفر این پست را پسندیدند',
+    '{count} people liked this post.many': '{count} نفر این پست را پسندیدند',
+    '{count} people liked this post.other': '{count} نفر این پست را پسندیدند',
   },
   'sw': <String, String>{
     'likers.titleLikes': 'Vipendwa',
@@ -3872,6 +4271,18 @@ const vipLikersTranslations = <String, Map<String, String>>{
         'Watu {count} wamejibu ujumbe huu kwa hisia',
     '{count} people reacted to this message.other':
         'Watu {count} wamejibu ujumbe huu kwa hisia',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero':
+        'Watu {count} wamependa chapisho hili',
+    '{count} people liked this post.one': 'Mtu {count} amependa chapisho hili',
+    '{count} people liked this post.two':
+        'Watu {count} wamependa chapisho hili',
+    '{count} people liked this post.few':
+        'Watu {count} wamependa chapisho hili',
+    '{count} people liked this post.many':
+        'Watu {count} wamependa chapisho hili',
+    '{count} people liked this post.other':
+        'Watu {count} wamependa chapisho hili',
   },
   'hi': <String, String>{
     'likers.titleLikes': 'लाइक',
@@ -3973,6 +4384,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} लोगों ने इस संदेश पर प्रतिक्रिया दी',
     '{count} people reacted to this message.other':
         '{count} लोगों ने इस संदेश पर प्रतिक्रिया दी',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': '{count} लोगों ने यह पोस्ट लाइक की',
+    '{count} people liked this post.one': '{count} व्यक्ति ने यह पोस्ट लाइक की',
+    '{count} people liked this post.two': '{count} लोगों ने यह पोस्ट लाइक की',
+    '{count} people liked this post.few': '{count} लोगों ने यह पोस्ट लाइक की',
+    '{count} people liked this post.many': '{count} लोगों ने यह पोस्ट लाइक की',
+    '{count} people liked this post.other': '{count} लोगों ने यह पोस्ट लाइक की',
   },
   'bn': <String, String>{
     'likers.titleLikes': 'লাইক',
@@ -4071,6 +4489,13 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} জন এই মেসেজে প্রতিক্রিয়া জানিয়েছেন',
     '{count} people reacted to this message.other':
         '{count} জন এই মেসেজে প্রতিক্রিয়া জানিয়েছেন',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': '{count} জন এই পোস্টটি লাইক করেছেন',
+    '{count} people liked this post.one': '{count} জন এই পোস্টটি লাইক করেছেন',
+    '{count} people liked this post.two': '{count} জন এই পোস্টটি লাইক করেছেন',
+    '{count} people liked this post.few': '{count} জন এই পোস্টটি লাইক করেছেন',
+    '{count} people liked this post.many': '{count} জন এই পোস্টটি লাইক করেছেন',
+    '{count} people liked this post.other': '{count} জন এই পোস্টটি লাইক করেছেন',
   },
   'ur': <String, String>{
     'likers.titleLikes': 'لائکس',
@@ -4167,5 +4592,12 @@ const vipLikersTranslations = <String, Map<String, String>>{
         '{count} لوگوں نے اس پیغام پر ردعمل دیا',
     '{count} people reacted to this message.other':
         '{count} لوگوں نے اس پیغام پر ردعمل دیا',
+    // Premium Pages (ADR-233): the likers count line of a Page post.
+    '{count} people liked this post.zero': '{count} لوگوں نے یہ پوسٹ لائک کی',
+    '{count} people liked this post.one': '{count} شخص نے یہ پوسٹ لائک کی',
+    '{count} people liked this post.two': '{count} لوگوں نے یہ پوسٹ لائک کی',
+    '{count} people liked this post.few': '{count} لوگوں نے یہ پوسٹ لائک کی',
+    '{count} people liked this post.many': '{count} لوگوں نے یہ پوسٹ لائک کی',
+    '{count} people liked this post.other': '{count} لوگوں نے یہ پوسٹ لائک کی',
   },
 };

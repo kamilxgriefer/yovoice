@@ -80,8 +80,17 @@ class ServerLocalTabs extends StatelessWidget {
     required this.selectedIndex,
     required this.onSelected,
     this.colors,
+    this.scrollWhenTight = false,
     super.key,
   }) : assert(tabs.length > 0, 'Local tabs need a tab.');
+
+  /// Opt-in (the Page profile): at large text (≥ [largeTextScale]) a pill
+  /// label that would be ellipsized (320 px at 200 %) stays whole: the pill
+  /// takes its natural width and scrolls sideways instead.
+  final bool scrollWhenTight;
+
+  /// The text scale from which [scrollWhenTight] applies.
+  static const largeTextScale = 1.3;
 
   final List<ServerLocalTab> tabs;
   final int selectedIndex;
@@ -105,6 +114,26 @@ class ServerLocalTabs extends StatelessWidget {
       final Widget body;
       if (tabs.length <= 3) {
         final roomy = perTab >= iconThreshold;
+        if (scrollWhenTight &&
+            MediaQuery.textScalerOf(context).scale(1) >= largeTextScale &&
+            !_labelsFit(context, perTab)) {
+          return MediaQuery.withClampedTextScaling(
+            maxScaleFactor: maxTextScale,
+            child: SingleChildScrollView(
+              key: const ValueKey('server-local-tabs-scroll'),
+              scrollDirection: Axis.horizontal,
+              child: YoSegmentedPill(
+                fontSize: 12,
+                segments: [
+                  for (var index = 0; index < tabs.length; index++)
+                    _segment(tabs[index], false, index == selectedIndex),
+                ],
+                selectedIndex: selectedIndex,
+                onSelected: onSelected,
+              ),
+            ),
+          );
+        }
         body = YoSegmentedPill(
           width: double.infinity,
           fontSize: 12,
@@ -129,6 +158,32 @@ class ServerLocalTabs extends StatelessWidget {
       );
     },
   );
+
+  /// Whether every label fits one equal pill segment of [perTab] (12 px
+  /// w700 at the clamped text scale, 12 px side padding each way).
+  bool _labelsFit(BuildContext context, double perTab) {
+    if (!perTab.isFinite) return true;
+    final scaler = MediaQuery.textScalerOf(
+      context,
+    ).clamp(maxScaleFactor: maxTextScale);
+    for (final tab in tabs) {
+      final painter = TextPainter(
+        text: TextSpan(
+          text: tab.label,
+          style: DefaultTextStyle.of(context).style.merge(
+            const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          ),
+        ),
+        textScaler: scaler,
+        textDirection: Directionality.of(context),
+        maxLines: 1,
+      )..layout();
+      final need = painter.width + 24 + 2;
+      painter.dispose();
+      if (need > perTab) return false;
+    }
+    return true;
+  }
 
   static YoSegmentedPillSegment _segment(
     ServerLocalTab tab,

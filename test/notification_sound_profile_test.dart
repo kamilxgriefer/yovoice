@@ -20,6 +20,11 @@ void main() {
       NotificationType.reelComment: NotificationSoundProfile.social,
       NotificationType.serverRole: NotificationSoundProfile.social,
       NotificationType.serverEventReminder: NotificationSoundProfile.alert,
+      // ADR-233: a comment on your Page post is social, like one on your
+      // Moment; a moderation or lapse notice about your Page is an alert.
+      NotificationType.pagePostComment: NotificationSoundProfile.social,
+      NotificationType.pageModeration: NotificationSoundProfile.alert,
+      NotificationType.pageLapse: NotificationSoundProfile.alert,
       NotificationType.friendRequest: NotificationSoundProfile.social,
       NotificationType.friendAccepted: NotificationSoundProfile.social,
       NotificationType.follow: NotificationSoundProfile.social,

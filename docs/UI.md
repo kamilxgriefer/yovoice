@@ -1020,6 +1020,49 @@ states, the comment rows at 320 px) in the session scratchpad
 (`likers-c1` … `likers-c4`). **Not verified on a device, simulator or real
 browser.**
 
+## Premium Pages: composer A and post detail A (spec premium-pages §4.5, §12; source only)
+
+The owner approved composer A ("arkusz") and post detail A ("karta + wątek")
+from the R3 renders on 2026-09-28. Everything below is hidden until
+`appConfig/pagesV1` enables Pages.
+
+- **Composer (`page_composer.dart`).** Below 1100 px it is a bottom sheet on
+  the root navigator (it covers the dock), at most 640 wide from 600 px; from
+  1100 px it is a 640 px dialog with the Comments switch beside "Publish".
+  Kind is a `YoSegmentedPill` (Text · Photos · Voice). Photos show a review
+  stage (counter, size, "No location" badge), a thumbnail strip with 44 px
+  remove targets and an add tile ("3/10"), and a standing note that location
+  and camera data are removed before sending. Voice uses the Voice Moment
+  recorder, stops by itself at 1:00 with a banner, and previews the take
+  before publishing. The budget line appears only for the last three posts
+  of the day. Errors sit above the button with "Retry"; closing with a draft
+  asks first. No optimistic post: success returns the server's post and the
+  caller shows "Post published · View".
+- **Post detail (`page_post_detail_screen.dart`).** Always a pushed route with
+  its own Back row and "Post" title. On phones and tablets it goes on the root
+  navigator so the dock yields to the comment bar (render A); on desktop it is
+  pushed inside Treści's own navigator, so the rail and panel stay. Widths:
+  below 600 one column with a 16 px gutter; 600–999 one centred 640 column
+  with the comment bar spanning it; **from 1000 px the card (≤ 600) and a
+  360 px thread column sit side by side, centred, with the comment bar at the
+  foot of the thread column** (no render exists for this frame; it is the
+  owner's to confirm). Comment rows: avatar, name with rosette, "Author" chip
+  for the Page's own replies, age, and a 44 px ⋯ (report; delete for the
+  author or the Page owner). When comments are closed, one line says why
+  (turned off by the Page, or the Page is read-only) in place of the bar.
+- **Semantics (§4.5 table).** The card header is one merged node "{Page},
+  {kind}, {age}"; Like is a toggle "Like, {n} likes"; the likers entry is a
+  ≥ 44 px button "{n} likes, show who liked"; voice is "Voice post,
+  {duration}, play/pause" with the position as its value, never a ticking
+  live region under Reduce Motion; photos are "Photo {k} of {n}, {Page}" and
+  the "+N" tile "{N} more photos". All counts use CLDR plurals.
+
+Evidence: widget tests in `test/pages_posts_test.dart` and real-font harness
+renders of the real widgets (Dark; composer text/photos/voice at 390, 320 at
+200 %, 800 and 1440; detail at 390, 320 at 200 %, 800 and 1440) in the
+session scratchpad (`c4/shots`). **Not verified on a device, simulator or
+real browser.**
+
 ## The "Coming soon" pattern
 
 When a screen needs a feature with no real backend support yet:

@@ -1113,6 +1113,13 @@ void main() {
         'GIF: {title}',
         // A reaction tab's spoken label: an emoji and a number, no prose.
         '{emoji}: {count}',
+        // Premium Pages: placeholder-only joins (a Page card's name, kind
+        // and age; a moderation notice's action and reason) and the file
+        // size unit symbol carry no English prose.
+        '{action}: {reason}',
+        '{name}, {age}',
+        '{name}, {kind}, {age}',
+        '{size} MB',
       };
       const naturallyUnchangedPairs = <String>{
         // Established Malay and Filipino media-editor loanwords, not fallback.
@@ -1120,6 +1127,9 @@ void main() {
         'ms|Audio',
         'ms|Unit',
         'fil|Media',
+        // "min" is the standard minute abbreviation in Malay and Filipino.
+        'ms|{count} min',
+        'fil|{count} min',
         'fil|Audio',
         // Emoji is the established name of the medium in these languages.
         'ms|Emoji',

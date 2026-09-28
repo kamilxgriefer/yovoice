@@ -1154,6 +1154,8 @@ void main() {
         DesktopNavItem.chats,
         DesktopNavItem.notifications,
         DesktopNavItem.friends,
+        // Treści (Premium Pages): content slot 14, MainShell.contentSlot.
+        DesktopNavItem.content,
       };
       final railItems = DesktopNavItem.values.toSet()
         ..remove(DesktopNavItem.more);
@@ -1863,6 +1865,7 @@ class _FakeDesktopShellState extends State<_FakeDesktopShell> {
     'alerts',
     'moments',
     'servers',
+    'content',
   ];
 
   DesktopNavItem get _active => switch (_index) {
@@ -1873,6 +1876,7 @@ class _FakeDesktopShellState extends State<_FakeDesktopShell> {
     5 => DesktopNavItem.notifications,
     6 => DesktopNavItem.moments,
     7 => DesktopNavItem.servers,
+    8 => DesktopNavItem.content,
     _ => DesktopNavItem.home,
   };
 
@@ -1887,6 +1891,7 @@ class _FakeDesktopShellState extends State<_FakeDesktopShell> {
         DesktopNavItem.notifications => 5,
         DesktopNavItem.moments => 6,
         DesktopNavItem.servers => 7,
+        DesktopNavItem.content => 8,
         DesktopNavItem.more => _index,
       };
     });

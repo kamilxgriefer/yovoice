@@ -12,6 +12,9 @@ import 'package:yovoice/features/moments/presentation/screens/moment_comments_sc
 import 'package:yovoice/features/reels/presentation/screens/reel_link_destination_screen.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/features/pages/data/models/page_views.dart';
+import 'package:yovoice/features/pages/data/services/pages_availability.dart';
+import 'package:yovoice/features/pages/presentation/page_navigation.dart';
 import 'package:yovoice/features/servers/presentation/screens/server_invite_response_screen.dart';
 import 'package:yovoice/features/servers/presentation/screens/server_workspace_screen.dart';
 import 'package:yovoice/features/servers/presentation/screens/servers_screen.dart';
@@ -46,6 +49,12 @@ enum NotificationDestination {
 
   /// A Server, opened on the channel the event lives in.
   serverEvent,
+
+  /// A Premium Page post's detail, with its comments (ADR-233).
+  pagePost,
+
+  /// The recipient's own Page profile (a moderation or lapse notice).
+  ownPage,
   none,
 }
 
@@ -82,6 +91,9 @@ class NotificationRouter {
         NotificationType.serverEventReminder =>
           NotificationDestination.serverEvent,
         NotificationType.serverRole => NotificationDestination.club,
+        NotificationType.pagePostComment => NotificationDestination.pagePost,
+        NotificationType.pageModeration ||
+        NotificationType.pageLapse => NotificationDestination.ownPage,
         NotificationType.achievementUnlocked ||
         NotificationType.moderation ||
         NotificationType.system => NotificationDestination.none,
@@ -159,6 +171,10 @@ class NotificationRouter {
           }
         case NotificationDestination.serverEvent:
           await _openServer(navigator, targetId, channelId: resolvedSubId);
+        case NotificationDestination.pagePost:
+          await _openPagePost(navigator, targetId);
+        case NotificationDestination.ownPage:
+          await _openOwnPage(navigator);
         case NotificationDestination.none:
           // No dedicated destination yet — landing on the notification
           // center itself (where the tap originated) is enough for these.
@@ -193,6 +209,25 @@ class NotificationRouter {
       displayName: friend.displayName,
       photoUrl: friend.photoUrl,
     );
+  }
+
+  /// A comment on the recipient's Page post. Only while Pages are on for
+  /// this account (the kill switch hides every Page); the detail itself
+  /// shows "unavailable" for a post that is gone.
+  static Future<void> _openPagePost(
+    NavigatorState navigator,
+    String? postId,
+  ) async {
+    if (postId == null || !pagePostIdPattern.hasMatch(postId)) return;
+    if (!PagesAvailability.instance.enabled.value) return;
+    await navigator.push<void>(pagePostRoute(postId: postId));
+  }
+
+  static Future<void> _openOwnPage(NavigatorState navigator) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return;
+    if (!PagesAvailability.instance.enabled.value) return;
+    await navigator.push<void>(pageProfileRoute(pageId: uid));
   }
 
   static Future<void> _openFriendRequests(NavigatorState navigator) {

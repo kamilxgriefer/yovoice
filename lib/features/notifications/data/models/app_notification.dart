@@ -22,6 +22,13 @@ enum NotificationType {
   commentMention,
   serverEventReminder,
   serverRole,
+  // Premium Pages (ADR-233 §2.6, §2.8, §2.10), server-written: a comment on
+  // the recipient's Page post; the statement of reasons for a staff action
+  // on the recipient's Page, post or comment; the lapse notices (Day 0
+  // read-only, Day 23 hidden in 7 days).
+  pagePostComment,
+  pageModeration,
+  pageLapse,
   // Server-only: never in firestore.rules' client-creatable type list, so
   // only the Admin SDK (Cloud Functions) can ever produce one of these.
   achievementUnlocked,
@@ -51,6 +58,9 @@ class AppNotification {
     this.bellSuppressed = false,
     this.targetSubId,
     this.sourcePath,
+    this.moderationAction,
+    this.moderationReason,
+    this.lapsePhase,
   });
 
   final String id;
@@ -93,6 +103,26 @@ class AppNotification {
   /// one. The router uses it to tell a Moment comment from a Yeel comment
   /// without trusting anything the push payload carries.
   final String? sourcePath;
+
+  /// `pageModeration` rows: which action (`postRemoved`, `postHeld`,
+  /// `postRestored`, `commentRemoved`, `pageSuspended`,
+  /// `pageSuspensionLifted`) and the report reason key. Additive; the
+  /// English [targetLabel] stays the fallback.
+  final String? moderationAction;
+  final String? moderationReason;
+
+  /// `pageLapse` rows: `readOnly` (Day 0) or `hidingSoon` (Day 23).
+  final String? lapsePhase;
+
+  /// Rows YO Voice itself sends (no person behind them).
+  bool get isSystemNotice =>
+      actorId.isEmpty ||
+      actorId == systemActorId ||
+      type == NotificationType.pageModeration ||
+      type == NotificationType.pageLapse;
+
+  /// The actor id server notices carry (`report_contract.js` SYSTEM_ACTOR).
+  static const String systemActorId = 'yovoice-system';
 
   String get title {
     switch (type) {
@@ -153,6 +183,12 @@ class AppNotification {
         return targetLabel == null
             ? '$actorName promoted you in a server'
             : '$actorName promoted you in $targetLabel';
+      case NotificationType.pagePostComment:
+        return '$actorName commented on your Page post';
+      case NotificationType.pageModeration:
+        return targetLabel ?? 'A moderator took action on your Page';
+      case NotificationType.pageLapse:
+        return targetLabel ?? 'Your Page changed while YO Voice VIP is off';
       case NotificationType.achievementUnlocked:
         return targetLabel == null
             ? 'Achievement unlocked'
@@ -185,6 +221,12 @@ class AppNotification {
       bellSuppressed: data['bellSuppressed'] as bool? ?? false,
       targetSubId: data['targetSubId'] as String?,
       sourcePath: data['sourcePath'] as String?,
+      moderationAction: _optionalString(data['moderationAction']),
+      moderationReason: _optionalString(data['moderationReason']),
+      lapsePhase: _optionalString(data['lapsePhase']),
     );
   }
+
+  static String? _optionalString(Object? value) =>
+      value is String && value.isNotEmpty ? value : null;
 }

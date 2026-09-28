@@ -21,6 +21,7 @@ import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/pages/presentation/page_notice_copy.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
@@ -1153,6 +1154,9 @@ class _NotificationCard extends StatelessWidget {
     NotificationType.commentMention: Icons.alternate_email_rounded,
     NotificationType.serverEventReminder: Icons.event_available_rounded,
     NotificationType.serverRole: Icons.workspace_premium_rounded,
+    NotificationType.pagePostComment: Icons.mode_comment_rounded,
+    NotificationType.pageModeration: Icons.shield_rounded,
+    NotificationType.pageLapse: Icons.article_rounded,
     NotificationType.achievementUnlocked: Icons.emoji_events_rounded,
     NotificationType.moderation: Icons.shield_rounded,
     NotificationType.system: Icons.info_rounded,
@@ -1324,6 +1328,15 @@ class _NotificationCard extends StatelessWidget {
                 '{actor} awansuje Cię na serwerze',
                 values: {'actor': actor},
               ),
+      NotificationType.pagePostComment => copy.template(
+        '{actor} commented on your Page post',
+        '{actor} komentuje Twój post na stronie',
+        values: {'actor': actor},
+      ),
+      NotificationType.pageModeration => PageNoticeCopy(
+        copy,
+      ).moderation(notification),
+      NotificationType.pageLapse => PageNoticeCopy(copy).lapse(notification),
       NotificationType.achievementUnlocked =>
         hasLabel
             ? copy.template(
@@ -1355,8 +1368,10 @@ class _NotificationCard extends StatelessWidget {
     // Only a notice with no actor is YO Voice itself; a system row that
     // names a person keeps that person's avatar.
     final systemSender =
-        notification.type == NotificationType.system &&
-        notification.actorId.isEmpty;
+        (notification.type == NotificationType.system &&
+            notification.actorId.isEmpty) ||
+        notification.type == NotificationType.pageModeration ||
+        notification.type == NotificationType.pageLapse;
     // The system sender is the real logo, bare (refine-look §4): the type
     // badge would cut into the mark, and the logo already says who sent it.
     // The badge is decoration without semantics, so nothing is lost.

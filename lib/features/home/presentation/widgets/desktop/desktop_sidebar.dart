@@ -34,7 +34,8 @@ typedef _DesktopNavIconBuilder =
 ///    feed, never duplicated as a nav row.
 ///  * NAV: five rows in the accepted order — Start (Home), Serwery
 ///    (Servers), Czaty (Chats), Momenty (Moments) and, after the Create
-///    section, Więcej (More). Friends, Discover and Find creators moved
+///    section, Więcej (More). While Premium Pages are enabled a sixth row,
+///    Treści, sits between Czaty and Momenty ([showContent]). Friends, Discover and Find creators moved
 ///    into the More popover (kept, never deleted). The selected row gets a
 ///    violet wash with a lavender icon and a bright label.
 ///  * CREATE: a section label, the gradient "Create Server" primary CTA,
@@ -54,6 +55,10 @@ enum DesktopNavItem {
   /// The account's own places — the rail's second row, content slot 13.
   servers,
   moments,
+
+  /// Treści (Premium Pages, ADR-232): the row between Czaty and Momenty,
+  /// content slot 14. Rendered only while [DesktopSidebar.showContent].
+  content,
 
   /// `discover`, `findCreators` and `friends` no longer render as rail rows;
   /// they stay in the enum because the shell still maps their pushed
@@ -92,6 +97,7 @@ class DesktopSidebar extends StatelessWidget {
     this.capabilityService,
     this.tourItemKeys,
     this.tourCreateKey,
+    this.showContent = false,
     super.key,
   });
 
@@ -125,6 +131,11 @@ class DesktopSidebar extends StatelessWidget {
   /// MainShell supplies them only to the currently rendered production rail.
   final Map<DesktopNavItem, GlobalKey>? tourItemKeys;
   final GlobalKey? tourCreateKey;
+
+  /// Whether the Treści row exists. The shell passes true only while Premium
+  /// Pages are enabled for the signed-in account (`PagesAvailability`); the
+  /// rail is otherwise exactly the five-row rail. The rail is not scaled.
+  final bool showContent;
 
   static const double width = 264;
 
@@ -179,8 +190,13 @@ class DesktopSidebar extends StatelessWidget {
             railHeight != null && railHeight < compactCreateActionsBelow;
         final showTimezoneCard =
             textScale <= 1 || railHeight == null || railHeight >= 900;
+        // The Treści row costs one 52 px pitch. On a short rail (compact
+        // create actions) the two section labels yield for it, the same way
+        // they already yield to enlarged text, so the fixed menu still fits
+        // at the 620 px floor.
         final showSectionLabels =
-            textScale <= 1 || railHeight == null || railHeight >= 900;
+            (textScale <= 1 || railHeight == null || railHeight >= 900) &&
+            !(showContent && useCompactCreateActions);
         return Container(
           key: const ValueKey('desktop-sidebar-surface'),
           width: railWidth,
@@ -244,6 +260,15 @@ class DesktopSidebar extends StatelessWidget {
                         onTap: onSelect,
                       ),
                     ),
+                    if (showContent)
+                      _NavTile(
+                        item: DesktopNavItem.content,
+                        icon: Icons.article_outlined,
+                        activeIcon: Icons.article,
+                        label: copy.navigationContent,
+                        active: active == DesktopNavItem.content,
+                        onTap: onSelect,
+                      ),
                     _tourItemAnchor(
                       DesktopNavItem.moments,
                       _NavTile(

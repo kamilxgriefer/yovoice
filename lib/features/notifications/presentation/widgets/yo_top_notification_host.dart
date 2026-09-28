@@ -695,6 +695,7 @@ class _NotificationCard extends StatelessWidget {
     NotificationType.reply ||
     NotificationType.momentComment ||
     NotificationType.reelComment ||
+    NotificationType.pagePostComment ||
     NotificationType.commentMention => Icons.chat_bubble_outline_rounded,
     NotificationType.friendRequest ||
     NotificationType.friendAccepted ||
@@ -706,7 +707,9 @@ class _NotificationCard extends StatelessWidget {
     NotificationType.clubInviteAccepted ||
     NotificationType.serverRole => Icons.hub_outlined,
     NotificationType.serverEventReminder => Icons.event_available_outlined,
-    NotificationType.moderation => Icons.shield_outlined,
+    NotificationType.moderation ||
+    NotificationType.pageModeration => Icons.shield_outlined,
+    NotificationType.pageLapse => Icons.article_outlined,
     _ => Icons.notifications_none_rounded,
   };
 

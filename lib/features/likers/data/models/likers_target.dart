@@ -2,11 +2,13 @@ import 'package:flutter/foundation.dart';
 
 /// What a "See who liked" list is about (spec §5.0, ADR-230).
 ///
-/// One sealed family maps onto the three server-projected list callables:
+/// One sealed family maps onto the four server-projected list callables:
 /// Voice Moments and their comments go to `listVoiceMomentLikersV1`, Yeels
-/// and their comments to `listReelLikersV1`, and Server channel messages to
-/// `listServerChannelMessageReactorsV1`. The server is the only authority on
-/// who is listed; a target carries ids, never names or counts.
+/// and their comments to `listReelLikersV1`, Server channel messages to
+/// `listServerChannelMessageReactorsV1`, and Premium Page posts to
+/// `listPagePostLikersV1` (ADR-233, post likes only, D15). The server is the
+/// only authority on who is listed; a target carries ids, never names or
+/// counts.
 @immutable
 sealed class LikersTarget {
   const LikersTarget();
@@ -170,4 +172,28 @@ final class ServerMessageReactorsTarget extends LikersTarget {
     messageId,
     emoji,
   );
+}
+
+/// A Premium Page post (spec premium-pages §2.6): `{postId, cursor?}`. There
+/// is no comment target in v1 (D15).
+final class PagePostLikersTarget extends LikersTarget {
+  const PagePostLikersTarget(this.postId);
+
+  final String postId;
+
+  @override
+  String get callableName => 'listPagePostLikersV1';
+
+  @override
+  Map<String, Object?> payload({String? cursor}) => <String, Object?>{
+    'postId': postId,
+    'cursor': ?cursor,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is PagePostLikersTarget && other.postId == postId;
+
+  @override
+  int get hashCode => Object.hash(PagePostLikersTarget, postId);
 }

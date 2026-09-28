@@ -33,6 +33,12 @@ import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notif
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:yovoice/features/onboarding/data/guided_onboarding_progress.dart';
 import 'package:yovoice/features/onboarding/presentation/guided_onboarding_tour.dart';
+import 'package:yovoice/features/pages/data/page_links.dart';
+import 'package:yovoice/features/pages/data/services/pages_availability.dart';
+import 'package:yovoice/features/pages/presentation/page_navigation.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/features/pages/presentation/screens/content_screen.dart';
+import 'package:yovoice/features/pages/presentation/screens/page_profile_screen.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/permissions/presentation/permission_setup_sheet.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
@@ -162,6 +168,7 @@ class MainShell extends StatefulWidget {
     this.onboardingReadiness,
     this.permissionReadiness,
     this.initialUri,
+    this.pagesAvailability,
     super.key,
   });
 
@@ -193,7 +200,18 @@ class MainShell extends StatefulWidget {
   @visibleForTesting
   final Uri? initialUri;
 
+  /// Whether Premium Pages exist for this account. Production shares
+  /// [PagesAvailability.instance] with the Pages screens.
+  @visibleForTesting
+  final PagesAvailability? pagesAvailability;
+
   static const double desktopBreakpoint = 1100;
+
+  /// Stable content slot for Treści (Premium Pages, ADR-232). Appended after
+  /// Servers (13) so no existing slot renumbers. It is not a More
+  /// destination: the More sheet and popover never list it.
+  @visibleForTesting
+  static const int contentSlot = 14;
 
   /// Stable retained content slot for Friends. Chats routes here through the
   /// shell so the existing Friends screen and its state are reused.
@@ -201,24 +219,54 @@ class MainShell extends StatefulWidget {
   static const int friendsSlot = 2;
 
   /// Stable content identities are independent of the mobile dock's visual
-  /// order: Home, Servers (slot 13), Chats, Moments. Friends (2) and Discover
-  /// (3) remain retained hidden slots reached from Home and More;
-  /// desktop-only destinations return Home when a viewport switches to the
-  /// mobile shell.
+  /// order: Home, Servers (slot 13), Chats, Moments, and Treści (slot 14)
+  /// while Premium Pages are enabled. Friends (2) and Discover (3) remain
+  /// retained hidden slots reached from Home and More; desktop-only
+  /// destinations — and Treści while Pages are off — return Home when a
+  /// viewport switches to the mobile shell.
   @visibleForTesting
-  static int mobileIndexFor(int index) =>
-      const {0, 1, 2, 3, 5, 13}.contains(index) ? index : 0;
+  static int mobileIndexFor(int index, {bool contentEnabled = false}) =>
+      const {0, 1, 2, 3, 5, 13}.contains(index) ||
+          (contentEnabled && index == contentSlot)
+      ? index
+      : 0;
 
-  /// The dock's visual order: Start · Serwery · Czaty · Momenty · Więcej.
-  /// Everything without a dock slot (Friends, Discover, hosted destinations)
-  /// sorts with More, so a transition from it reads as coming from the end.
+  /// The dock's visual order: Start · Serwery · Czaty · Momenty · Więcej,
+  /// or Start · Serwery · Czaty · Treści · Momenty · Więcej while Pages are
+  /// enabled. Everything without a dock slot (Friends, Discover, hosted
+  /// destinations) sorts with More, so a transition from it reads as coming
+  /// from the end.
   @visibleForTesting
-  static int mobileNavigationOrder(int index) => switch (index) {
-    0 => 0,
-    13 => 1,
-    1 => 2,
-    5 => 3,
-    _ => 4,
+  static int mobileNavigationOrder(int index, {bool contentEnabled = false}) {
+    if (contentEnabled) {
+      return switch (index) {
+        0 => 0,
+        13 => 1,
+        1 => 2,
+        contentSlot => 3,
+        5 => 4,
+        _ => 5,
+      };
+    }
+    return switch (index) {
+      0 => 0,
+      13 => 1,
+      1 => 2,
+      5 => 3,
+      _ => 4,
+    };
+  }
+
+  /// The guided tour's dock anchors, keyed by visual slot: Chats, Moments
+  /// and More. Treści moves Momenty and Więcej one slot to the right, so the
+  /// tour anchors become {2, 4, 5} (spec premium-pages §4.1.4).
+  @visibleForTesting
+  static Map<GuidedOnboardingTarget, int> mobileTourDestinationSlots({
+    required bool contentEnabled,
+  }) => {
+    GuidedOnboardingTarget.chats: 2,
+    GuidedOnboardingTarget.moments: contentEnabled ? 4 : 3,
+    GuidedOnboardingTarget.more: contentEnabled ? 5 : 4,
   };
 
   /// Which rail row reads as active for a content slot. The five rail rows
@@ -232,8 +280,9 @@ class MainShell extends StatefulWidget {
     _MainShellState._serversSlot => DesktopNavItem.servers,
     _MainShellState._notificationsSlot => DesktopNavItem.notifications,
     // Before the `>= 5` arm: switch-expression arms are ordered, and
-    // `>= 5` would otherwise swallow the Moments slot.
+    // `>= 5` would otherwise swallow the Moments and Treści slots.
     _MainShellState._momentsSlot => DesktopNavItem.moments,
+    contentSlot => DesktopNavItem.content,
     2 || _MainShellState._discoverSlot => DesktopNavItem.more,
     >= 5 => DesktopNavItem.more,
     _ => DesktopNavItem.home,
@@ -367,6 +416,7 @@ class _MainShellState extends State<MainShell>
   static const int _notificationsSlot = 4;
   static const int _findCreatorsSlot = 12;
   static const int _serversSlot = 13;
+  static const int _contentSlot = MainShell.contentSlot;
 
   /// DESKTOP content slots beyond the three shared dock tabs. Every
   /// desktop destination — rail items AND everything chosen from the
@@ -377,7 +427,7 @@ class _MainShellState extends State<MainShell>
 
   /// The notifications FEED (the bell) is its own screen rather than a
   /// MoreDestination — Alerts (preferences) is the one in the popover.
-  static const int _slotCount = 14;
+  static const int _slotCount = 15;
 
   /// Slots are built on FIRST visit and then kept alive, so switching
   /// back is instant and scroll position survives — without mounting
@@ -391,6 +441,12 @@ class _MainShellState extends State<MainShell>
   /// screen subscribes to rather than a constructor argument.
   final ValueNotifier<bool> _momentsVisible = ValueNotifier<bool>(false);
   final ValueNotifier<bool> _homeVisible = ValueNotifier<bool>(true);
+
+  /// Treści keeps its own navigator (Find Pages, a Page, a post) inside the
+  /// retained slot. Only the VISIBLE destination may hold system Back, and a
+  /// re-tap on its dock slot or rail row pops it to the feed.
+  final ValueNotifier<bool> _contentVisible = ValueNotifier<bool>(false);
+  final ValueNotifier<int> _contentReselect = ValueNotifier<int>(0);
 
   /// The Servers slot holds a live media session once someone joins a voice
   /// channel, and it is retained exactly like every other slot — so moving
@@ -420,6 +476,14 @@ class _MainShellState extends State<MainShell>
     }
     if (index == _notificationsSlot) {
       return const NotificationsScreen(isRootTab: true);
+    }
+    if (index == _contentSlot) {
+      return ContentScreen(
+        isRootTab: true,
+        pendingPageLink: _pendingPageLink,
+        isVisible: _contentVisible,
+        reselect: _contentReselect,
+      );
     }
     if (index == _momentsSlot) {
       return MomentsScreen(
@@ -574,9 +638,35 @@ class _MainShellState extends State<MainShell>
   /// and its state, scroll position and listeners stay alive in the
   /// IndexedStack. The dock renders no capsule while it is showing,
   /// rather than lighting a slot that is not where you are.
-  static int _mobileIndexFor(int index) => MainShell.mobileIndexFor(index);
+  int _mobileIndexFor(int index) =>
+      MainShell.mobileIndexFor(index, contentEnabled: _contentEnabled);
 
   int get _mobileIndex => _mobileIndexFor(_selectedIndex);
+
+  /// Premium Pages presentation gate (fail closed): the Treści dock slot,
+  /// rail row and Page deep links exist only while this is true.
+  late final PagesAvailability _pagesAvailability;
+  bool _contentEnabled = false;
+
+  /// A validated `?page=` link handed to the Treści destination.
+  final ValueNotifier<PageLinkTarget?> _pendingPageLink =
+      ValueNotifier<PageLinkTarget?>(null);
+
+  void _handlePagesAvailability() {
+    final enabled = _pagesAvailability.enabled.value;
+    if (!mounted || enabled == _contentEnabled) return;
+    setState(() => _contentEnabled = enabled);
+    if (!enabled) {
+      _pendingPageLink.value = null;
+      if (_selectedIndex == _contentSlot) {
+        _mobileHistory.resetTo(0);
+        _onDestinationSelected(0, recordHistory: false);
+      } else if (!MainShell.usesDesktopLayout(MediaQuery.sizeOf(context))) {
+        // Drop Treści from Back history; the slot no longer exists.
+        _mobileHistory.resetTo(_mobileIndex);
+      }
+    }
+  }
 
   String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
 
@@ -592,6 +682,15 @@ class _MainShellState extends State<MainShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    _pagesAvailability = widget.pagesAvailability ?? PagesAvailability.instance;
+    _pagesAvailability.enabled.addListener(_handlePagesAvailability);
+    unawaited(_pagesAvailability.refresh(_currentUserId));
+    _contentEnabled =
+        _pagesAvailability.userId == _currentUserId &&
+        _pagesAvailability.enabled.value;
+    PagesShellBridge.host = _hostPage;
+    accountProfileRedirect = _redirectAccountProfile;
 
     _screens = <Widget>[
       const SizedBox.shrink(),
@@ -697,6 +796,8 @@ class _MainShellState extends State<MainShell>
       // The verification link is commonly opened in Mail or a browser. Check
       // immediately when YO Voice returns instead of waiting for the timer.
       unawaited(_checkVerification());
+      // A settled Pages answer is re-checked at most hourly.
+      unawaited(_pagesAvailability.refresh(_currentUserId));
     }
   }
 
@@ -948,13 +1049,21 @@ class _MainShellState extends State<MainShell>
       return;
     }
 
-    // An altered current/legacy Server contract fails closed. In particular,
-    // a malformed `server`/`club` link cannot smuggle in a second `room`
-    // destination and revive old routing through fallback parsing.
+    final pageTarget = parsePageLink(initialUri);
+    if (pageTarget != null) {
+      await _openInitialPageLink(pageTarget);
+      return;
+    }
+
+    // An altered current/legacy Server or Page contract fails closed. In
+    // particular, a malformed `server`/`club`/`page` link cannot smuggle in a
+    // second `room` destination and revive old routing through fallback
+    // parsing.
     final keys = initialUri.queryParametersAll.keys;
     if (keys.contains('server') ||
         keys.contains('channel') ||
-        keys.contains('club')) {
+        keys.contains('club') ||
+        carriesPageLinkParameters(initialUri)) {
       return;
     }
 
@@ -999,8 +1108,82 @@ class _MainShellState extends State<MainShell>
     }
   }
 
+  /// Premium Pages §4.3: an account whose public badge says "Page" opens
+  /// as its Page profile while Pages are on; everything else opens the
+  /// personal preview exactly as before.
+  Future<bool> _redirectAccountProfile(
+    BuildContext context, {
+    required String userId,
+    String? displayName,
+  }) => redirectToPageProfile(
+    context,
+    userId: userId,
+    displayName: displayName,
+    enabled: _contentEnabled,
+  );
+
+  /// A Page opened from outside Treści (a chat, a notification, a friend
+  /// list, a room): hosted over the shell like a More destination, with the
+  /// dock showing Treści selected on phones and the Treści rail row lit on
+  /// desktop; Back returns to where it was opened. Nothing under it is
+  /// popped, so a live room or a chat stays exactly where it was.
+  Future<void> _hostPage(
+    BuildContext context, {
+    required String pageId,
+    String? displayName,
+  }) async {
+    if (!mounted || !_contentEnabled) return;
+    final route = MaterialPageRoute<void>(
+      settings: RouteSettings(name: 'pages/page/$pageId'),
+      builder: (_) => MoreDestinationHost(
+        body: PageProfileScreen(pageId: pageId, displayName: displayName),
+        selectedIndex: _contentSlot,
+        unreadConversationCount: _unreadConversationCount,
+        unreadConversationCountListenable: _unreadConversationCountListenable,
+        unreadNotificationCount: _unreadNotificationCount,
+        unreadNotificationCountListenable: _unreadNotificationCountListenable,
+        activeDesktopItem: DesktopNavItem.content,
+        onDestinationSelected: _onDestinationSelected,
+        onVoicePressed: _openVoiceAction,
+        onMorePressed: _openMoreMenu,
+        onDesktopNavSelected: (item) => unawaited(_onDesktopNavSelected(item)),
+        onCreateRoom: () => unawaited(_openCreateServer()),
+        onCreateMoment: _openCreateMoment,
+        onOpenProfile: () => unawaited(_openProfile()),
+        onOpenProfileSettings: () => unawaited(_openProfileSettings()),
+        canForwardNavigation: _hostNavigationEpochIsCurrent,
+        contentEnabled: _contentEnabled,
+        contentEnabledListenable: _pagesAvailability.enabled,
+      ),
+    );
+    await _pushHostedDestination(route);
+  }
+
+  /// A Page link opens Treści only while Pages exist for this account; the
+  /// destination takes the validated target from there. With Pages off the
+  /// link opens nothing, exactly as if the feature did not exist.
+  Future<void> _openInitialPageLink(PageLinkTarget target) async {
+    final enabled = await _pagesAvailability
+        .refresh(_currentUserId)
+        .timeout(
+          const Duration(seconds: 8),
+          onTimeout: () => _pagesAvailability.enabled.value,
+        );
+    if (!mounted || !enabled || !_contentEnabled) return;
+    _pendingPageLink.value = target;
+    _onDestinationSelected(_contentSlot);
+  }
+
   @override
   void dispose() {
+    if (PagesShellBridge.host == _hostPage) PagesShellBridge.host = null;
+    if (accountProfileRedirect == _redirectAccountProfile) {
+      accountProfileRedirect = null;
+    }
+    _pagesAvailability.enabled.removeListener(_handlePagesAvailability);
+    _pendingPageLink.dispose();
+    _contentVisible.dispose();
+    _contentReselect.dispose();
     WidgetsBinding.instance.removeObserver(this);
     appRouteObserver.unsubscribe(this);
     _homeVisible.dispose();
@@ -1128,6 +1311,14 @@ class _MainShellState extends State<MainShell>
 
   void _onDestinationSelected(int index, {bool recordHistory = true}) {
     if (_selectedIndex == index) {
+      // Re-tapping Treści pops its own navigator to the feed, else reloads
+      // it (spec premium-pages §4.2, §4.3).
+      if (index == _contentSlot) _contentReselect.value++;
+      return;
+    }
+    // Treści has no destination while Pages are off (a stale history entry,
+    // a hosted route's dock built before the kill switch): stay put.
+    if (index == _contentSlot && !_contentEnabled) {
       return;
     }
 
@@ -1143,8 +1334,14 @@ class _MainShellState extends State<MainShell>
       _previousSelectedIndex = _selectedIndex;
       _tabDirection = desktop
           ? (index > _selectedIndex ? 1 : -1)
-          : (MainShell.mobileNavigationOrder(index) >
-                    MainShell.mobileNavigationOrder(_selectedIndex)
+          : (MainShell.mobileNavigationOrder(
+                      index,
+                      contentEnabled: _contentEnabled,
+                    ) >
+                    MainShell.mobileNavigationOrder(
+                      _selectedIndex,
+                      contentEnabled: _contentEnabled,
+                    )
                 ? 1
                 : -1);
       if (!desktop && Directionality.of(context) == TextDirection.rtl) {
@@ -1154,6 +1351,7 @@ class _MainShellState extends State<MainShell>
     });
     _momentsVisible.value = index == _momentsSlot;
     _homeVisible.value = index == 0;
+    _contentVisible.value = index == _contentSlot;
     // Leaving the Servers destination leaves the conversation. This is the
     // only path that changes `_selectedIndex`, so no rail item, dock cell,
     // More entry, mobile Back or responsive reset can move away without it.
@@ -1354,6 +1552,8 @@ class _MainShellState extends State<MainShell>
         onOpenProfile: () => unawaited(_openProfile()),
         onOpenProfileSettings: () => unawaited(_openProfileSettings()),
         canForwardNavigation: _hostNavigationEpochIsCurrent,
+        contentEnabled: _contentEnabled,
+        contentEnabledListenable: _pagesAvailability.enabled,
       ),
     );
     await _pushHostedDestination(route);
@@ -1422,6 +1622,8 @@ class _MainShellState extends State<MainShell>
         _onDestinationSelected(_serversSlot);
       case DesktopNavItem.moments:
         _onDestinationSelected(_momentsSlot);
+      case DesktopNavItem.content:
+        _onDestinationSelected(_contentSlot);
       case DesktopNavItem.discover:
         _onDestinationSelected(_discoverSlot);
       case DesktopNavItem.findCreators:
@@ -1522,6 +1724,8 @@ class _MainShellState extends State<MainShell>
         onOpenProfile: () => unawaited(_openProfile()),
         onOpenProfileSettings: () => unawaited(_openProfileSettings()),
         canForwardNavigation: _hostNavigationEpochIsCurrent,
+        contentEnabled: _contentEnabled,
+        contentEnabledListenable: _pagesAvailability.enabled,
       ),
     );
     await _pushHostedDestination(route);
@@ -1598,6 +1802,7 @@ class _MainShellState extends State<MainShell>
               },
               tourCreateKey: _onboardingAnchors[GuidedOnboardingTarget.create],
               active: _activeDesktopItem,
+              showContent: _contentEnabled,
               unreadConversationCount: _unreadConversationCount,
               unreadNotificationCount: _unreadNotificationCount,
               onSelect: (item) => unawaited(_onDesktopNavSelected(item)),
@@ -1704,13 +1909,15 @@ class _MainShellState extends State<MainShell>
             if (!_hostedDestinationActive) const RoomMiniBar(),
             YoFloatingNavigationDock(
               tourDestinationKeys: {
-                2: _onboardingAnchors[GuidedOnboardingTarget.chats]!,
-                3: _onboardingAnchors[GuidedOnboardingTarget.moments]!,
-                4: _onboardingAnchors[GuidedOnboardingTarget.more]!,
+                for (final entry in MainShell.mobileTourDestinationSlots(
+                  contentEnabled: _contentEnabled,
+                ).entries)
+                  entry.value: _onboardingAnchors[entry.key]!,
               },
               selectedTabIndex: _mobileIndex,
               roomsTabIndex: _serversSlot,
               momentsTabIndex: _momentsSlot,
+              contentTabIndex: _contentEnabled ? _contentSlot : null,
               unreadConversationCount: _unreadConversationCount,
               onDestinationSelected: _onDestinationSelected,
               onVoicePressed: _openVoiceAction,
@@ -1818,6 +2025,8 @@ class MoreDestinationHost extends StatefulWidget {
     this.onOpenProfile,
     this.onOpenProfileSettings,
     this.canForwardNavigation,
+    this.contentEnabled = false,
+    this.contentEnabledListenable,
     super.key,
   });
 
@@ -1842,6 +2051,13 @@ class MoreDestinationHost extends StatefulWidget {
   final VoidCallback? onOpenProfile;
   final VoidCallback? onOpenProfileSettings;
   final bool Function()? canForwardNavigation;
+
+  /// The shell's Premium Pages gate: while true the hosted dock has six
+  /// tabs (Treści at [MainShell.contentSlot]) and the hosted rail shows the
+  /// Treści row. The listenable keeps a long-lived hosted route in step
+  /// with the kill switch; [contentEnabled] is the value when it is absent.
+  final bool contentEnabled;
+  final ValueListenable<bool>? contentEnabledListenable;
 
   @override
   State<MoreDestinationHost> createState() => _MoreDestinationHostState();
@@ -1884,6 +2100,7 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
     final liveCounts = Listenable.merge(<Listenable>[
       ?widget.unreadConversationCountListenable,
       ?widget.unreadNotificationCountListenable,
+      ?widget.contentEnabledListenable,
     ]);
     return ListenableBuilder(
       listenable: liveCounts,
@@ -1895,6 +2112,8 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
         unreadNotificationCount:
             widget.unreadNotificationCountListenable?.value ??
             widget.unreadNotificationCount,
+        contentEnabled:
+            widget.contentEnabledListenable?.value ?? widget.contentEnabled,
       ),
     );
   }
@@ -1903,6 +2122,7 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
     BuildContext context, {
     required int unreadConversationCount,
     required int unreadNotificationCount,
+    required bool contentEnabled,
   }) {
     final viewport = MediaQuery.sizeOf(context);
     final isDesktop = MainShell.usesDesktopLayout(viewport);
@@ -1915,6 +2135,7 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
           children: [
             DesktopSidebar(
               active: widget.activeDesktopItem,
+              showContent: contentEnabled,
               unreadConversationCount: unreadConversationCount,
               unreadNotificationCount: unreadNotificationCount,
               onSelect: (item) =>
@@ -1956,6 +2177,7 @@ class _MoreDestinationHostState extends State<MoreDestinationHost> {
             selectedTabIndex: widget.selectedIndex,
             roomsTabIndex: _MainShellState._serversSlot,
             momentsTabIndex: _MainShellState._momentsSlot,
+            contentTabIndex: contentEnabled ? MainShell.contentSlot : null,
             unreadConversationCount: unreadConversationCount,
             onDestinationSelected: (index) =>
                 _popThen(() => widget.onDestinationSelected(index)),

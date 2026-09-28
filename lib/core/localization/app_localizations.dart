@@ -352,6 +352,12 @@ class AppLocalizations {
   String get navigationYourMoments =>
       contextualText('navigation.yourMoments', 'Moments', 'Momenty');
 
+  /// The Treści destination (Premium Pages, ADR-232): the six-tab dock's
+  /// fourth slot and the desktop rail row between Czaty and Momenty. A
+  /// context key, because "Content" means other things elsewhere.
+  String get navigationContent =>
+      contextualText('navigation.content', 'Content', 'Treści');
+
   /// Product destination name. Brand names stay invariant in every locale;
   /// "Voice Moment" and "Reel" remain the localized format names inside it.
   String get moments => 'YO Moments';
