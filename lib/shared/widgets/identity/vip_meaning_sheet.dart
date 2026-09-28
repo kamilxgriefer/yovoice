@@ -22,6 +22,9 @@ const double kVipMeaningSheetMaxWidth = 480;
 Future<void> showVipMeaningSheet(BuildContext context) {
   return showModalBottomSheet<void>(
     context: context,
+    // Headers inside Treści sit on its nested Navigator; the root navigator
+    // lets the sheet cover the dock like every other Pages sheet.
+    useRootNavigator: true,
     isScrollControlled: true,
     useSafeArea: true,
     backgroundColor: Colors.transparent,

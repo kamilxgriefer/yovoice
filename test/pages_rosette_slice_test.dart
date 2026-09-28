@@ -162,6 +162,45 @@ void main() {
       expect(find.byKey(VipMeaningSheet.surfaceKey), findsNothing);
     });
 
+    testWidgets('from a nested tab navigator the sheet opens on the root one', (
+      tester,
+    ) async {
+      // Treści hosts Page profiles on its own Navigator above the dock; the
+      // sheet must cover the dock rather than stop above it.
+      const dockKey = ValueKey<String>('dock');
+      await tester.pumpWidget(
+        likersHost(
+          Scaffold(
+            body: Navigator(
+              onGenerateRoute: (_) => MaterialPageRoute<void>(
+                builder: (_) => _header(name: 'Kawiarnia Ziarno'),
+              ),
+            ),
+            bottomNavigationBar: const SizedBox(key: dockKey, height: 72),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(_explainKey));
+      await tester.pumpAndSettle();
+
+      final sheet = find.byKey(VipMeaningSheet.surfaceKey);
+      expect(sheet, findsOneWidget);
+      final navigators = find.ancestor(
+        of: sheet,
+        matching: find.byType(Navigator),
+      );
+      expect(
+        navigators,
+        findsOneWidget,
+        reason: 'only the root navigator sits above the sheet',
+      );
+      expect(
+        tester.getRect(sheet).bottom,
+        greaterThan(tester.getRect(find.byKey(dockKey)).top),
+      );
+    });
+
     testWidgets('multi-line: the button sits over the inline mark', (
       tester,
     ) async {
