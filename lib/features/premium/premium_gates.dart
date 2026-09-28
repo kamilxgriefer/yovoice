@@ -5,25 +5,44 @@ import 'package:yovoice/features/premium/data/models/subscription_entitlements.d
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_upsell_sheet.dart';
 
-enum PremiumFeature { creatorAccount, creatorStudio, clubs }
+enum PremiumFeature {
+  creatorAccount,
+  creatorStudio,
+  clubs,
+
+  /// "See who liked" / "See who reacted" (ADR-230).
+  ///
+  /// [isEnabledBy] covers only the paid half (Premium identity or the
+  /// moderator preview). An owner-granted canonical `vipGrants/{uid}` also
+  /// unlocks this ONE capability: the single intentional exception to "a
+  /// cosmetic VIP grant alone never unlocks paid tools". That half is not
+  /// in [SubscriptionEntitlements], so `LikersAccessService` checks it
+  /// before this gate, and the list callables re-derive both halves on the
+  /// server.
+  seeWhoLiked,
+}
 
 extension PremiumFeatureAccess on PremiumFeature {
   bool isEnabledBy(SubscriptionEntitlements entitlements) => switch (this) {
     PremiumFeature.creatorAccount ||
     PremiumFeature.creatorStudio => entitlements.canUseCreator,
     PremiumFeature.clubs => entitlements.canUseClubs,
+    PremiumFeature.seeWhoLiked =>
+      entitlements.hasPremiumIdentity || entitlements.hasModeratorBenefits,
   };
 
   PremiumUpsellContext get upsellContext => switch (this) {
     PremiumFeature.creatorAccount => PremiumUpsellContext.creator,
     PremiumFeature.creatorStudio => PremiumUpsellContext.creatorStudio,
     PremiumFeature.clubs => PremiumUpsellContext.clubs,
+    PremiumFeature.seeWhoLiked => PremiumUpsellContext.seeWhoLiked,
   };
 
   String get label => switch (this) {
     PremiumFeature.creatorAccount => 'Creator',
     PremiumFeature.creatorStudio => 'Creator Studio',
     PremiumFeature.clubs => 'Server tools',
+    PremiumFeature.seeWhoLiked => 'See who liked',
   };
 
   String get lockedDescription => switch (this) {
@@ -32,6 +51,8 @@ extension PremiumFeatureAccess on PremiumFeature {
     PremiumFeature.creatorStudio =>
       'Activate Premium to use your creator dashboard and publishing tools.',
     PremiumFeature.clubs => 'Open Servers to manage your spaces and channels.',
+    PremiumFeature.seeWhoLiked =>
+      'With Premium you can see the people who liked a Voice Moment, a Yeel or a comment, or reacted to a Server message. Like counts stay visible to everyone.',
   };
 }
 
@@ -49,7 +70,9 @@ class PremiumGates {
 
   /// Gates a complete Premium destination or account capability. The trusted
   /// entitlement grants the feature and Premium profile appearance in one
-  /// server batch; a cosmetic VIP grant alone never unlocks paid tools.
+  /// server batch; a cosmetic VIP grant alone never unlocks paid tools
+  /// (except [PremiumFeature.seeWhoLiked], whose VIP half is checked by
+  /// `LikersAccessService` before this gate is reached).
   static Future<bool> ensureFeatureAccess(
     BuildContext context, {
     required PremiumFeature feature,

@@ -92,10 +92,7 @@ void main() {
     final pending = StreamController<List<Server>>();
     addTearDown(pending.close);
     final repository = _LegacyClubsRepository(pending.stream);
-    await _pump(
-      tester,
-      ServersScreen(repository: repository, isRootTab: true),
-    );
+    await _pump(tester, ServersScreen(repository: repository, isRootTab: true));
 
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(
@@ -119,10 +116,7 @@ void main() {
     final repository = _LegacyClubsRepository(
       Stream<List<Server>>.error(StateError('offline')),
     );
-    await _pump(
-      tester,
-      ServersScreen(repository: repository, isRootTab: true),
-    );
+    await _pump(tester, ServersScreen(repository: repository, isRootTab: true));
     await tester.pump();
 
     expect(find.byType(YoErrorState), findsOneWidget);
@@ -145,10 +139,7 @@ void main() {
     tester,
   ) async {
     final repository = _LegacyClubsRepository(Stream.value(const []));
-    await _pump(
-      tester,
-      ServersScreen(repository: repository, isRootTab: true),
-    );
+    await _pump(tester, ServersScreen(repository: repository, isRootTab: true));
     await tester.pump();
 
     expect(find.text('Serwery'), findsOneWidget);
@@ -201,10 +192,7 @@ void main() {
     final repository = _LegacyClubsRepository(
       Stream.value([_legacyClub('club-1', 'Nasz dom')]),
     );
-    await _pump(
-      tester,
-      ServersScreen(repository: repository, isRootTab: true),
-    );
+    await _pump(tester, ServersScreen(repository: repository, isRootTab: true));
     await tester.pump();
 
     await tester.tap(_create);

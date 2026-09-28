@@ -147,7 +147,13 @@ void main() {
       'at any width',
       (tester) async {
         addTearDown(() => tester.binding.setSurfaceSize(null));
-        const cases = [(320.0, 2.0), (390.0, 1.0), (768.0, 1.0), (1440.0, 1.0), (1920.0, 2.0)];
+        const cases = [
+          (320.0, 2.0),
+          (390.0, 1.0),
+          (768.0, 1.0),
+          (1440.0, 1.0),
+          (1920.0, 2.0),
+        ];
         for (final type in ServerType.values) {
           for (final (width, scale) in cases) {
             final repository = TestServerRepository()

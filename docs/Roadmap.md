@@ -31,6 +31,35 @@ yet.** Client-only.
   Verified by `test/yeels_create_ring_test.dart` and test-renderer frames;
   **not verified on a device, simulator or real browser.**
 
+**See who liked, comment likes and Hide my likes (ADR-230).** Status: client
+source on `vip/likers-client`, backend on its own branch against the same
+spec (`yovoice-evidence/2026-09-28/vip-likers/spec.md`), neither on `main`;
+nothing deployed; the lists stay off until `appConfig/likersV1` is enabled.
+
+- **Client (done in source):** the likers list (owner variant B: phone
+  draggable sheet, a fixed 520-wide panel from 600 px, Server reaction tabs,
+  paging, every empty/partial/error/unavailable state), the U1 Premium sheet
+  (no purchase button while billing is off), entry points on Moment detail,
+  cards, story viewer, Głos rows, the Yeel rail/footer/panel/⋯ sheet and the
+  Server message pill and actions sheet (variant A), comment hearts on Voice
+  Moment and Yeel threads behind a support probe (variant B), the VIP
+  rosette (`lib/shared/widgets/identity/yo_vip_rosette.dart`, used only in
+  the likers UI so far), Settings → Privacy → "Hide my likes", the Premium
+  benefit lines and the `seeWhoLiked` Premium gate.
+- **Languages:** every new string in all 43 languages, including CLDR plural
+  forms for the upsell's count line
+  (`lib/core/localization/translations/translations_vip_likers.dart`,
+  `AppLocalizations.pluralTemplate`). Machine-authored outside English and
+  Polish: a native-speaker read-through is still owed.
+- **Verified:** focused widget and contract tests per package and
+  `flutter analyze`; harness renders of the real widgets in Dark and Pearl at
+  390/800/1280 and 200 % text. **Not verified on a device, simulator or real
+  browser, and not against the real backend.**
+- **Before activation:** backend deploy (callables, rules, indexes), the
+  privacy-policy paragraph, the build carrying Hide my likes on iOS, Android
+  and web, then the switch (spec §8). The VIP rosette moves to a dedicated
+  `vipMark` field and goes app-wide in a later task.
+
 ## YO Voice 3.3.0 (38) — YO Moments: the Głos list (G4) and one-row Yeels (Y3) (ADR-228) — 2026-09-28
 
 **Status: on `main` as `3.3.0+38`; the release record (web deploy, store
@@ -3330,6 +3359,23 @@ Ordered by rough priority — re-prioritize freely, this isn't a queue.
   reaches testers.
 - **Future considerations**: Decide together with the iOS PiP render check
   (R-1 in [Bugs.md](Bugs.md)), because both need the same physical-device run.
+
+### 0y. Server reactions without a readable uid map — ADR-230 follow-up
+
+- **Status**: Not started. Target 3.5.0 (40) plus a minimum-version cutover.
+- **Description**: Server channel messages still carry a `reactions`
+  `{uid: emoji}` map that every channel reader can get. A modified client can
+  compare it with the "See who reacted" list and infer why a uid is missing,
+  and "Hide my likes" cannot remove anyone from it (the Settings subtitle
+  says so). The backend should dual-write `reactionCounts {emoji: int}`, a
+  caller's-own-reaction projection and a server-only reactor store; build 40
+  renders from the counts; the map is dropped once the minimum supported
+  build is 40 or later.
+- **Dependencies**: ADR-230 landed; builds 36–39 still render the pill from
+  the raw map, so the map cannot go before the cutover. Until then
+  `appConfig/likersV1.serverMessagesEnabled` can keep the Server list off
+  alone.
+- **Priority**: Medium — a recorded, accepted disclosure, not a regression.
 
 ### 0a. ~~Run the public-profile backfill~~ VERIFIED CONSISTENT (2026-08-18)
 

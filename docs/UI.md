@@ -945,6 +945,81 @@ the direct call screen, PiP or live ink from other members without ringing a
 real user or starting a production session, so those statements stay
 **UNVERIFIED**. The Accessibility review of these surfaces is still pending.
 
+## See who liked, comment hearts and the VIP rosette (ADR-230, source only)
+
+The owner chose these from rendered variants on 2026-09-28 (spec §13): list
+**B**, upsell **U1**, comment heart **B**, entry points **A**, rosette **B**.
+
+- **One flow, every surface.** `showLikers` (through `LikersLauncher`) is the
+  only way in. Viewers the pre-gate allows get the list; everyone else gets
+  the U1 sheet. Below 600 px it is a draggable bottom sheet (opens at 0.72,
+  0.4–0.95); from 600 px it is a fixed panel, min(640, 80 % of the height)
+  tall and at most 520 wide (`adaptiveModalConstraints`), never a stretched
+  phone sheet. Media hosts pause while it is open, focus returns to the
+  control that opened it, and only one flow can be open per Navigator.
+- **The list (B).** Title "Likes · N" / "Reactions · N". Server lists with
+  two or more distinct emoji add a tab strip, "All N" then one tab per emoji
+  ordered by count. Rows are at least 60 px: avatar, name with the rosette,
+  "You" for yourself, and a trailing small heart (`AppColors.secondary`) on
+  Voice/Yeel lists or the person's emoji on Server lists. Loading is six
+  static skeleton rows (no spinner, no ticker); paging loads at 80 % scroll
+  and via "Load more". Empty, partial ("Some people aren't shown."), error
+  (retry), unavailable and "coming soon" each have their own state with a
+  way out; the quiet footer points to Settings → Privacy. Arrow keys move
+  between rows and every state change is announced ("Reactions loaded" on a
+  Server list); the skeleton is a live region named "Loading". Each tab is
+  a focusable, selectable button with a tap action for screen readers, and
+  a row that opens a profile is a button with an "Open profile" hint.
+  Keyboard focus is a 2 px `palette.focus` ring on rows and on the tab chip
+  (`AppFinish.chipBorder(focused:)`), and tabs follow the high-contrast
+  chip edge.
+- **The upsell (U1).** The same sheet family: five anonymous blurred avatar
+  placeholders, a lock, the public count ("24 people liked this Moment", in
+  each language's plural form), the title "See who liked — a Premium
+  feature" and the body. While Premium cannot be bought it shows the honest
+  "not available to buy yet" line and one neutral Close — no purchase button,
+  no link. Only where checkout can complete (the web, with the server's
+  `checkoutAvailable`) does it offer "Explore Premium" and "Not now".
+- **Entry points (A).** A text control "label ›" (`LikersEntryButton`, 48 px
+  target) beside Top reactions on Moment detail; its label wraps instead of
+  ellipsizing at large text sizes, with the chevron beside the block. The
+  story viewer's count chip is never scaled below the reader's text size:
+  its actions take a row of their own when the cluster cannot fit. Wherever a heart and a
+  count sit together (Moment card, story viewer, Yeel rail) the heart only
+  toggles and the **count is its own target** that opens the list; with zero
+  likes there is no count control. Server messages open the list from the
+  reaction pill (with a quiet chevron) and from the actions sheet. Where a
+  surface has no room for a second target, a screen-reader action and the ⋯
+  menu carry the entry.
+- **Comment hearts (B).** The action line reads "Reply · ♡ 3" on one row
+  when it fits at the reader's text scale (Reply gives up its side padding
+  first), and otherwise breaks after "Reply" with the heart, count and
+  report flag kept together; the dot is drawn exactly while Reply and the
+  heart share a row. The heart's node carries the toggled state, its glyph
+  grows with the text up to 1.5×, and keyboard focus rings the heart and the
+  count in 2 px `palette.focus`. On Yeel rows the tile reaches into the list
+  gutter so the centred glyph lines up with the words while the whole 44 px
+  target stays tappable. The heart is
+  a 44 px target that only toggles (filled `Icons.favorite_rounded` in
+  `AppColors.secondary` when liked, one `AppMotion.release` pop, snapped
+  without decorative motion); the count is a separate button that opens the
+  list and, for viewers the pre-gate allows, reads "3 Who liked". No heart is
+  drawn until the server has proven it supports comment likes.
+- **VIP rosette (B).** `YoVipRosette` in
+  `lib/shared/widgets/identity/yo_vip_rosette.dart`: a 10-lobe rosette in
+  `AppColors.primary` on Pearl and the same colour lerped 12 % toward white
+  on Dark (no new hex), sized from the reader's text scale, spoken as "VIP".
+  `NameWithVipMark` keeps the mark visible when a one-line name ellipsizes.
+  It reads `PublicIdentityRepository.isVip` for now and is used only in the
+  likers UI; a later task moves it to a dedicated `vipMark` field and rolls
+  it out app-wide.
+
+Evidence is widget tests plus harness renders of the real widgets (Dark and
+Pearl, 390/800/1280, 200 % text, the list states, the upsell in both billing
+states, the comment rows at 320 px) in the session scratchpad
+(`likers-c1` … `likers-c4`). **Not verified on a device, simulator or real
+browser.**
+
 ## The "Coming soon" pattern
 
 When a screen needs a feature with no real backend support yet:

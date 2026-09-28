@@ -523,10 +523,7 @@ void main() {
     expect(statusNode.flagsCollection.isLiveRegion, isTrue);
     expect(statusNode.label, contains('Thanks, your report was sent.'));
     final done = find.byKey(const ValueKey('bug-report-done'));
-    expect(
-      FocusManager.instance.primaryFocus?.context,
-      isNotNull,
-    );
+    expect(FocusManager.instance.primaryFocus?.context, isNotNull);
     expect(
       find.ancestor(
         of: find.byWidgetPredicate(

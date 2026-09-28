@@ -461,6 +461,7 @@ final class _ControlledMomentService extends MomentService {
     String? commentCursor,
     int commentLimit = 7,
     int reactionLimit = 3,
+    bool includeCommentLikes = false,
   }) {
     final request = Completer<VoiceMomentViewV2>();
     requests.add(request);

@@ -74,22 +74,19 @@ void main() {
       },
     );
 
-    testWidgets(
-      '${themeCase.name}: the defaults reproduce the picker dot — '
-      '10 px, surfaceRaised halo 1.5',
-      (tester) async {
-        await pumpDot(
-          tester,
-          theme: themeCase.theme,
-          dot: const AvailabilityDot(status: PeopleStatus.online),
-        );
-        final size = tester.getSize(find.byType(AvailabilityDot));
-        expect(size, const Size(10, 10));
-        final border = decorationOf(tester).border! as Border;
-        expect(border.top.color, themeCase.palette.surfaceRaised);
-        expect(border.top.width, 1.5);
-      },
-    );
+    testWidgets('${themeCase.name}: the defaults reproduce the picker dot — '
+        '10 px, surfaceRaised halo 1.5', (tester) async {
+      await pumpDot(
+        tester,
+        theme: themeCase.theme,
+        dot: const AvailabilityDot(status: PeopleStatus.online),
+      );
+      final size = tester.getSize(find.byType(AvailabilityDot));
+      expect(size, const Size(10, 10));
+      final border = decorationOf(tester).border! as Border;
+      expect(border.top.color, themeCase.palette.surfaceRaised);
+      expect(border.top.width, 1.5);
+    });
 
     testWidgets(
       '${themeCase.name}: the caller owns the halo — its surface colour and '
@@ -105,7 +102,10 @@ void main() {
             borderWidth: 3,
           ),
         );
-        expect(tester.getSize(find.byType(AvailabilityDot)), const Size(16, 16));
+        expect(
+          tester.getSize(find.byType(AvailabilityDot)),
+          const Size(16, 16),
+        );
         final halo = decorationOf(tester).border! as Border;
         expect(halo.top.color, themeCase.palette.background);
         expect(halo.top.width, 3);
@@ -142,18 +142,17 @@ void main() {
     },
   );
 
-  testWidgets(
-    'a caller key passes through to exactly one element',
-    (tester) async {
-      await pumpDot(
-        tester,
-        theme: AppTheme.darkTheme,
-        dot: const AvailabilityDot(
-          key: ValueKey('presence'),
-          status: PeopleStatus.online,
-        ),
-      );
-      expect(find.byKey(const ValueKey('presence')), findsOneWidget);
-    },
-  );
+  testWidgets('a caller key passes through to exactly one element', (
+    tester,
+  ) async {
+    await pumpDot(
+      tester,
+      theme: AppTheme.darkTheme,
+      dot: const AvailabilityDot(
+        key: ValueKey('presence'),
+        status: PeopleStatus.online,
+      ),
+    );
+    expect(find.byKey(const ValueKey('presence')), findsOneWidget);
+  });
 }

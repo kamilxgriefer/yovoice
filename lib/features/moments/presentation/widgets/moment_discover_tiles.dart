@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/likers/presentation/likers_copy.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 
@@ -205,6 +206,7 @@ class MomentOverflowMenu extends StatelessWidget {
     this.icon = Icons.more_vert_rounded,
     this.iconColor,
     this.onOpenProfile,
+    this.onShowLikers,
     super.key,
   });
 
@@ -234,6 +236,11 @@ class MomentOverflowMenu extends StatelessWidget {
   /// longer its own target). Absent, the menu is unchanged.
   final VoidCallback? onOpenProfile;
 
+  /// "See who liked" (ADR-230) — offered only where the host passes it and
+  /// only on a published Moment that has likes. Absent, the menu is
+  /// unchanged.
+  final VoidCallback? onShowLikers;
+
   /// The menu's entries, for the button below and for a caller that opens
   /// the same menu at a position of its own ([showAt]).
   static List<PopupMenuEntry<String>> entries(
@@ -243,6 +250,7 @@ class MomentOverflowMenu extends StatelessWidget {
     required bool uploading,
     required String keyPrefix,
     bool profile = false,
+    bool likers = false,
   }) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
@@ -284,6 +292,27 @@ class MomentOverflowMenu extends StatelessWidget {
               Flexible(
                 child: Text(
                   copy.text('Details', 'Szczegóły'),
+                  style: TextStyle(color: palette.textPrimary),
+                ),
+              ),
+            ],
+          ),
+        ),
+      if (likers && !uploading && moment.likeCount > 0)
+        PopupMenuItem<String>(
+          key: ValueKey('$keyPrefix-likers-${moment.id}'),
+          value: 'likers',
+          child: Row(
+            children: [
+              Icon(
+                Icons.favorite_border_rounded,
+                size: 18,
+                color: palette.textSecondary,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  LikersCopy(copy).seeWhoLiked,
                   style: TextStyle(color: palette.textPrimary),
                 ),
               ),
@@ -337,8 +366,10 @@ class MomentOverflowMenu extends StatelessWidget {
     required VoidCallback onReport,
     required VoidCallback onDelete,
     VoidCallback? onOpenProfile,
+    VoidCallback? onShowLikers,
   }) {
     if (value == 'profile') onOpenProfile?.call();
+    if (value == 'likers') onShowLikers?.call();
     if (value == 'details') onOpenDetail();
     if (value == 'report') onReport();
     if (value == 'delete') onDelete();
@@ -357,6 +388,7 @@ class MomentOverflowMenu extends StatelessWidget {
     required VoidCallback onReport,
     required VoidCallback onDelete,
     VoidCallback? onOpenProfile,
+    VoidCallback? onShowLikers,
   }) async {
     final value = await showMenu<String>(
       context: context,
@@ -369,6 +401,7 @@ class MomentOverflowMenu extends StatelessWidget {
         uploading: uploading,
         keyPrefix: keyPrefix,
         profile: onOpenProfile != null,
+        likers: onShowLikers != null,
       ),
     );
     dispatch(
@@ -377,6 +410,7 @@ class MomentOverflowMenu extends StatelessWidget {
       onReport: onReport,
       onDelete: onDelete,
       onOpenProfile: onOpenProfile,
+      onShowLikers: onShowLikers,
     );
   }
 
@@ -400,6 +434,7 @@ class MomentOverflowMenu extends StatelessWidget {
         onReport: onReport,
         onDelete: onDelete,
         onOpenProfile: onOpenProfile,
+        onShowLikers: onShowLikers,
       ),
       itemBuilder: (context) => entries(
         context,
@@ -408,6 +443,7 @@ class MomentOverflowMenu extends StatelessWidget {
         uploading: uploading,
         keyPrefix: keyPrefix,
         profile: onOpenProfile != null,
+        likers: onShowLikers != null,
       ),
     );
   }

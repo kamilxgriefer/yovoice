@@ -817,11 +817,14 @@ void main() {
   testWidgets('a friend\'s presence in the sheet matches every other surface', (
     tester,
   ) async {
-    await _openPreviewLocalized(tester, presence: {
-      'uid': 'creator',
-      'isOnline': true,
-      'availability': 'available',
-    });
+    await _openPreviewLocalized(
+      tester,
+      presence: {
+        'uid': 'creator',
+        'isOnline': true,
+        'availability': 'available',
+      },
+    );
 
     expect(find.text('Dostępny'), findsOneWidget);
     expect(
@@ -834,11 +837,10 @@ void main() {
   testWidgets('a "be right back" friend is not flattened to online', (
     tester,
   ) async {
-    await _openPreviewLocalized(tester, presence: {
-      'uid': 'creator',
-      'isOnline': true,
-      'availability': 'away',
-    });
+    await _openPreviewLocalized(
+      tester,
+      presence: {'uid': 'creator', 'isOnline': true, 'availability': 'away'},
+    );
 
     expect(find.text('Zaraz wracam'), findsOneWidget);
   });
@@ -982,7 +984,8 @@ class _PresenceDeniedMessageService extends MessageService {
        );
 
   @override
-  Stream<ChatPresence> watchUserPresence(String userId) => Stream<ChatPresence>.error(
-    FirebaseException(plugin: 'cloud_firestore', code: 'permission-denied'),
-  );
+  Stream<ChatPresence> watchUserPresence(String userId) =>
+      Stream<ChatPresence>.error(
+        FirebaseException(plugin: 'cloud_firestore', code: 'permission-denied'),
+      );
 }

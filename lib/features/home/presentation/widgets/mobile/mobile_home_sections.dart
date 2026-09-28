@@ -12,6 +12,7 @@ import 'package:yovoice/features/moments/data/services/moment_views_service.dart
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
+import 'package:yovoice/features/premium/presentation/premium_benefit_icons.dart';
 import 'package:yovoice/features/premium/presentation/premium_localized_copy.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
@@ -917,11 +918,14 @@ class MobilePremiumCard extends StatelessWidget {
 
   final VoidCallback onCheckPlans;
 
-  static const _icons = [
-    (Icons.mic_rounded, Color(0xFFD3A5FF)),
-    (Icons.workspace_premium_rounded, Color(0xFFFFC24D)),
-    (Icons.auto_awesome_rounded, Color(0xFFE879F9)),
-  ];
+  /// The glyph tint by benefit, keyed on its title like the glyph.
+  static Color _tint(BuildContext context, String title) =>
+      switch (premiumBenefitKind(title)) {
+        PremiumBenefitKind.creator => const Color(0xFFD3A5FF),
+        PremiumBenefitKind.servers => const Color(0xFFFFC24D),
+        PremiumBenefitKind.presence => const Color(0xFFE879F9),
+        PremiumBenefitKind.other => Theme.of(context).colorScheme.primary,
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -937,11 +941,15 @@ class MobilePremiumCard extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          for (var i = 0; i < PremiumPlans.benefits.length; i++) ...[
+          for (final (i, benefit) in PremiumPlans.benefits.indexed) ...[
             if (i > 0) const SizedBox(height: 10),
             Row(
               children: [
-                Icon(_icons[i].$1, size: 20, color: _icons[i].$2),
+                Icon(
+                  premiumBenefitIcon(benefit.$1),
+                  size: 20,
+                  color: _tint(context, benefit.$1),
+                ),
                 const SizedBox(width: 11),
                 Expanded(
                   child: Column(
@@ -949,10 +957,7 @@ class MobilePremiumCard extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        localizedPremiumBenefit(
-                          copy,
-                          PremiumPlans.benefits[i],
-                        ).$1,
+                        localizedPremiumBenefit(copy, benefit).$1,
                         style: TextStyle(
                           color: palette.textPrimary,
                           fontSize: 13,
@@ -960,10 +965,7 @@ class MobilePremiumCard extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        localizedPremiumBenefit(
-                          copy,
-                          PremiumPlans.benefits[i],
-                        ).$2,
+                        localizedPremiumBenefit(copy, benefit).$2,
                         style: TextStyle(
                           color: palette.textSecondary,
                           fontSize: 11.5,

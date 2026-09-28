@@ -376,7 +376,10 @@ void main() {
   // (web) and this screen has no second-factor step. Before this the user got a
   // generic auth error and a dead end — the users who followed our own security
   // advice locked out of the affordance Google Play requires.
-  for (final code in const ['second-factor-required', 'multi-factor-auth-required']) {
+  for (final code in const [
+    'second-factor-required',
+    'multi-factor-auth-required',
+  ]) {
     testWidgets('a 2FA account is sent to the route that works ($code)', (
       tester,
     ) async {
@@ -397,14 +400,8 @@ void main() {
       );
       // It names the button that is actually on this screen, so the sentence is
       // an instruction rather than an apology.
-      expect(
-        find.textContaining('„Poproś nas o to e-mailem”'),
-        findsOneWidget,
-      );
-      expect(
-        find.text('Poproś nas o to e-mailem'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('„Poproś nas o to e-mailem”'), findsOneWidget);
+      expect(find.text('Poproś nas o to e-mailem'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('delete-account-confirm-dialog')),
         findsNothing,

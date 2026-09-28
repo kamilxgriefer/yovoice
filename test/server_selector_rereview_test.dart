@@ -251,11 +251,16 @@ void main() {
         ),
         size: const Size(768, 1800),
       );
-      expect(find.byKey(const ValueKey('server-create-resumed')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('server-create-resumed')),
+        findsOneWidget,
+      );
       expect(_nameEnabled(tester), isFalse);
       expect(
         tester
-            .widget<TextButton>(find.widgetWithText(TextButton, 'Zmień szablon'))
+            .widget<TextButton>(
+              find.widgetWithText(TextButton, 'Zmień szablon'),
+            )
             .onPressed,
         isNull,
       );
@@ -298,7 +303,9 @@ void main() {
       expect(tester.widget<FilledButton>(_submit).onPressed, isNull);
       expect(
         tester
-            .widget<TextButton>(find.widgetWithText(TextButton, 'Zmień szablon'))
+            .widget<TextButton>(
+              find.widgetWithText(TextButton, 'Zmień szablon'),
+            )
             .onPressed,
         isNull,
       );
@@ -433,7 +440,8 @@ void rereview2() {
       await tester.pumpAndSettle();
       final nameLocked = !_nameEnabled(tester);
       final friendsName = find.text('Nasza ekipa').evaluate().isNotEmpty;
-      final submitArmed = tester.widget<FilledButton>(_submit).onPressed != null;
+      final submitArmed =
+          tester.widget<FilledButton>(_submit).onPressed != null;
       final label = find
           .descendant(of: _submit, matching: find.byType(Text))
           .evaluate()

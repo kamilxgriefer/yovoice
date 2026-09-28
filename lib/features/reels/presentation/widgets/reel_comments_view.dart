@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -5,6 +7,13 @@ import 'package:flutter/services.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
+import 'package:yovoice/features/likers/data/models/comment_like.dart';
+import 'package:yovoice/features/likers/data/models/likers_target.dart';
+import 'package:yovoice/features/likers/data/services/likers_access_service.dart';
+import 'package:yovoice/features/likers/presentation/comment_likes_controller.dart';
+import 'package:yovoice/features/likers/presentation/likers_copy.dart';
+import 'package:yovoice/features/likers/presentation/likers_launcher.dart';
+import 'package:yovoice/features/likers/presentation/widgets/comment_like_controls.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/reply_playback_arbiter.dart';
@@ -107,11 +116,16 @@ class ReelCommentsView extends StatefulWidget {
     this.arbiter,
     this.voiceComposer,
     this.voicePlayerFactory,
+    this.likersLauncher = const LikersLauncher(),
     super.key,
   });
 
   final Reel reel;
   final ReelService service;
+
+  /// Opens "See who liked" from a comment's like count (ADR-230). The const
+  /// default runs the real flow; tests pass seams.
+  final LikersLauncher likersLauncher;
 
   /// Reports server-authoritative engagement back to the feed so the card,
   /// the wide panel and this thread always show the same counts.
@@ -215,6 +229,16 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
 
   int _generation = 0;
 
+  /// The comment hearts (owner variant B, ADR-230). Hearts appear only once
+  /// a flagged view answered with `commentLikes`.
+  late final CommentLikesController _commentLikes = CommentLikesController(
+    setLike: (commentId, {required bool liked}) =>
+        widget.service.setCommentLike(widget.reel.id, commentId, liked: liked),
+    watchCanSeeLikers: () =>
+        (widget.likersLauncher.access ?? LikersAccessService())
+            .watchCanSeeLikers(),
+  );
+
   List<ReelComment> get _comments => <ReelComment>[
     for (final page in _pages) ...page.comments,
   ];
@@ -233,7 +257,12 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
     // words; a recorder opens only on a deliberate tap, and a mini-player
     // allocates its decoder only on a deliberate play.
     widget.service.voiceCommentSupport.addListener(_onVoiceSupportChanged);
+    _commentLikes.addListener(_onCommentLikesChanged);
     _load(reset: true);
+  }
+
+  void _onCommentLikesChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -265,6 +294,9 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
   void dispose() {
     _generation++;
     widget.service.voiceCommentSupport.removeListener(_onVoiceSupportChanged);
+    _commentLikes
+      ..removeListener(_onCommentLikesChanged)
+      ..dispose();
     _composer
       ..removeListener(_onComposerChanged)
       ..dispose();
@@ -314,8 +346,10 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
         widget.reel.id,
         commentLimit: widget.commentLimit,
         commentCursor: cursor,
+        includeCommentLikes: true,
       );
       if (!_isCurrent(generation)) return;
+      _commentLikes.adopt(view.commentLikes, replace: reset);
       setState(() {
         _pages.add(_CommentPage(cursor: cursor, comments: view.comments));
         _nextCursor = view.nextCommentCursor;
@@ -508,8 +542,10 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
           widget.reel.id,
           commentLimit: widget.commentLimit,
           commentCursor: cursor,
+          includeCommentLikes: true,
         );
         if (!_isCurrent(generation)) return;
+        _commentLikes.adopt(view.commentLikes, replace: false);
         reloaded.add(_CommentPage(cursor: cursor, comments: view.comments));
         nextCursor = view.nextCommentCursor;
         widget.onReelUpdated(view.reel);
@@ -786,6 +822,25 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
     );
   }
 
+  Future<void> _toggleCommentLike(ReelComment comment) async {
+    final outcome = await _commentLikes.toggle(comment.id);
+    if (outcome != CommentLikeToggleOutcome.reverted || !mounted) return;
+    _announce(LikersCopy(AppLocalizations.of(context)).likeFailed);
+  }
+
+  void _openCommentLikers(ReelComment comment, FocusNode returnFocus) {
+    final state = _commentLikes.stateOf(comment.id);
+    if (state == null) return;
+    unawaited(
+      widget.likersLauncher.open(
+        context,
+        ReelCommentLikersTarget(widget.reel.id, comment.id),
+        totalCount: state.likeCount,
+        returnFocus: returnFocus,
+      ),
+    );
+  }
+
   void _announce(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -883,18 +938,32 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
     // A presentation hint, never an authority: `removeReelComment` checks the
     // Reel's author itself, before it even reads the comment.
     final viewerOwnsReel = viewerId != null && viewerId == widget.reel.authorId;
+    // The heart's glyph lines up with the comment text while its 44 px target
+    // reaches back into the gutter. The tiles start that much earlier and pad
+    // their words back, so the target lies INSIDE the tile's bounds, where a
+    // tap can reach it (a Transform past the tile's edge could not).
+    final inset = CommentLikeControls.glyphInset(context, dense: true);
+    final bleed = gutter < inset ? gutter : inset;
     return ListView.separated(
       key: const ValueKey<String>('reel-comment-thread'),
       shrinkWrap: true,
-      padding: EdgeInsets.fromLTRB(gutter, 4, gutter, gutter),
+      padding: EdgeInsetsDirectional.fromSTEB(
+        gutter - bleed,
+        4,
+        gutter,
+        gutter,
+      ),
       itemCount: comments.length + (_nextCursor == null ? 0 : 1),
       separatorBuilder: (_, _) => const SizedBox(height: 4),
       itemBuilder: (context, index) {
         if (index == comments.length) {
-          return _LoadMore(
-            loading: _loadingMore,
-            failed: _error != null,
-            onLoad: () => _load(reset: false),
+          return Padding(
+            padding: EdgeInsetsDirectional.only(start: bleed),
+            child: _LoadMore(
+              loading: _loadingMore,
+              failed: _error != null,
+              onLoad: () => _load(reset: false),
+            ),
           );
         }
         final comment = comments[index];
@@ -902,6 +971,7 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
         return _CommentTile(
           comment: comment,
           dense: gutter < 16,
+          bleed: bleed,
           arbiter: _arbiter,
           playerFactory: widget.voicePlayerFactory,
           // One comment-scoped grant per play, minted for THIS viewer and
@@ -927,6 +997,10 @@ class _ReelCommentsViewState extends State<ReelCommentsView> {
           // accountability traces and an author clearing their own comment
           // is not a moderation event.
           onRemove: !own && viewerOwnsReel ? () => _remove(comment) : null,
+          likeState: _commentLikes.stateOf(comment.id),
+          onToggleLike: () => unawaited(_toggleCommentLike(comment)),
+          onShowLikers: (focus) => _openCommentLikers(comment, focus),
+          showWhoLiked: _commentLikes.canSeeLikers,
         );
       },
     );
@@ -945,10 +1019,26 @@ class _CommentTile extends StatelessWidget {
     required this.arbiter,
     required this.resolveVoiceUri,
     this.playerFactory,
+    this.likeState,
+    this.onToggleLike,
+    this.onShowLikers,
+    this.showWhoLiked = false,
+    this.bleed = 0,
   });
 
   final ReelComment comment;
   final bool dense;
+
+  /// How far this tile reaches into the list's start gutter: the words are
+  /// padded back by it, the heart's target starts there.
+  final double bleed;
+
+  /// This comment's like count and the caller's like. Null: no heart (the
+  /// deployment has not proven comment likes, spec §5.6).
+  final CommentLikeState? likeState;
+  final VoidCallback? onToggleLike;
+  final ValueChanged<FocusNode>? onShowLikers;
+  final bool showWhoLiked;
 
   /// Keeps one voice comment from sounding over the Reel, or over another.
   final ReplyPlaybackArbiter arbiter;
@@ -974,6 +1064,7 @@ class _CommentTile extends StatelessWidget {
     final palette = context.appPalette;
     final theme = Theme.of(context);
     final timestamp = copy.relativeCompactTime(comment.createdAt.toLocal());
+    final likes = comment.id.isEmpty ? null : likeState;
     // The row's own name says WHAT it is. The player inside a voice row
     // carries its own button semantics ("Play voice reply from …"), so this
     // container must not also claim to be the comment's words.
@@ -1013,91 +1104,121 @@ class _CommentTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  Wrap(
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 8,
-                    children: <Widget>[
-                      Text(
-                        comment.authorName,
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          color: palette.textPrimary,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      Text(
-                        timestamp,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: palette.textTertiary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  if (comment.isVoice) ...<Widget>[
-                    // The board's own rendering: a play button, a waveform
-                    // and the real duration, in ONE row that is a single
-                    // 48-px target. The same widget the Voice thread uses —
-                    // not a second player that could drift from it.
-                    VoiceReplyMiniPlayer(
-                      key: ValueKey<String>('reel-voice-comment-${comment.id}'),
-                      commentId: comment.id,
-                      authorName: comment.authorName,
-                      durationSeconds: comment.durationSeconds ?? 0,
-                      resolveMediaUri: resolveVoiceUri,
-                      arbiter: arbiter,
-                      playerFactory: playerFactory,
-                    ),
-                    // A caption is optional on a voice comment: the content
-                    // is the recording. An empty one prints nothing rather
-                    // than an empty line.
-                    if (comment.text.trim().isNotEmpty) ...<Widget>[
-                      const SizedBox(height: 6),
-                      Text(
-                        comment.text,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: palette.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ] else
-                    Text(
-                      comment.text,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: palette.textSecondary,
-                      ),
-                    ),
-                  // The comment is deliberately still here. This says the
-                  // report was sent, not that anything was decided — the
-                  // reporter is not the person who decides.
-                  if (reported) ...<Widget>[
-                    const SizedBox(height: 6),
-                    Row(
-                      key: ValueKey<String>(
-                        'reel-comment-reported-${comment.id}',
-                      ),
+                  Padding(
+                    padding: EdgeInsetsDirectional.only(start: bleed),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        Icon(
-                          Icons.flag_rounded,
-                          size: 14,
-                          color: palette.warningForeground,
-                        ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            copy.text(
-                              'Reported — with our team',
-                              'Zgłoszone — u naszego zespołu',
+                        Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 8,
+                          children: <Widget>[
+                            Text(
+                              comment.authorName,
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                color: palette.textPrimary,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: palette.warningForeground,
-                              fontWeight: FontWeight.w700,
+                            Text(
+                              timestamp,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: palette.textTertiary,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        if (comment.isVoice) ...<Widget>[
+                          // The board's own rendering: a play button, a waveform
+                          // and the real duration, in ONE row that is a single
+                          // 48-px target. The same widget the Voice thread uses —
+                          // not a second player that could drift from it.
+                          VoiceReplyMiniPlayer(
+                            key: ValueKey<String>(
+                              'reel-voice-comment-${comment.id}',
+                            ),
+                            commentId: comment.id,
+                            authorName: comment.authorName,
+                            durationSeconds: comment.durationSeconds ?? 0,
+                            resolveMediaUri: resolveVoiceUri,
+                            arbiter: arbiter,
+                            playerFactory: playerFactory,
+                          ),
+                          // A caption is optional on a voice comment: the content
+                          // is the recording. An empty one prints nothing rather
+                          // than an empty line.
+                          if (comment.text.trim().isNotEmpty) ...<Widget>[
+                            const SizedBox(height: 6),
+                            Text(
+                              comment.text,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: palette.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ] else
+                          Text(
+                            comment.text,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: palette.textSecondary,
                             ),
                           ),
-                        ),
+                        // The comment is deliberately still here. This says the
+                        // report was sent, not that anything was decided — the
+                        // reporter is not the person who decides.
+                        if (reported) ...<Widget>[
+                          const SizedBox(height: 6),
+                          Row(
+                            key: ValueKey<String>(
+                              'reel-comment-reported-${comment.id}',
+                            ),
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Icon(
+                                Icons.flag_rounded,
+                                size: 14,
+                                color: palette.warningForeground,
+                              ),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  copy.text(
+                                    'Reported — with our team',
+                                    'Zgłoszone — u naszego zespołu',
+                                  ),
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: palette.warningForeground,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
-                  ],
+                  ),
+                  // Owner variant B (ADR-230): "♡ 3" under the words, as on
+                  // the Voice row but with no "Reply" before it. The one
+                  // trailing control stays the only one; while it spins the
+                  // heart is disabled, not removed. The tile's bleed puts the
+                  // centred glyph under the first letter of the words.
+                  if (likes != null)
+                    Padding(
+                      padding: EdgeInsets.only(top: dense ? 0 : 2),
+                      child: CommentLikeControls(
+                        commentId: comment.id,
+                        keyPrefix: 'reel-comment',
+                        state: likes,
+                        onToggle: busy ? null : onToggleLike,
+                        onShowLikers: onShowLikers,
+                        showWhoLiked: showWhoLiked,
+                        height: AppSizing.minimumTouchTarget,
+                        dense: true,
+                      ),
+                    ),
                 ],
               ),
             ),

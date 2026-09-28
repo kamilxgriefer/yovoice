@@ -201,7 +201,10 @@ void main() {
           tester.view.devicePixelRatio = 1;
           // A 200 % canvas gets the extra room a real device gets from its
           // own scrolling, so the dialogs below are captured whole.
-          tester.view.physicalSize = Size(width, scale > 1 ? height * 1.6 : height);
+          tester.view.physicalSize = Size(
+            width,
+            scale > 1 ? height * 1.6 : height,
+          );
           addTearDown(tester.view.resetPhysicalSize);
           addTearDown(tester.view.resetDevicePixelRatio);
 
@@ -230,7 +233,9 @@ void main() {
             find.byKey(const ValueKey('delete-account-retained')),
           );
           await tester.pumpAndSettle();
-          await tester.tap(find.byKey(const ValueKey('delete-account-retained')));
+          await tester.tap(
+            find.byKey(const ValueKey('delete-account-retained')),
+          );
           await tester.pumpAndSettle();
           await tester.ensureVisible(
             find.byKey(const ValueKey('delete-account-retained')),
@@ -254,7 +259,9 @@ void main() {
             find.byKey(const ValueKey('delete-account-primary')),
           );
           await tester.pumpAndSettle();
-          await tester.tap(find.byKey(const ValueKey('delete-account-primary')));
+          await tester.tap(
+            find.byKey(const ValueKey('delete-account-primary')),
+          );
           await tester.pumpAndSettle();
           await _shoot(tester, '$name-password');
 

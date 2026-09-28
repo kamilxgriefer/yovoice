@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 
+import 'package:yovoice/features/likers/data/models/comment_like.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
@@ -309,6 +310,17 @@ class ReelService {
   /// comments. Unknown is not "probably yes".
   bool get voiceCommentsSupported =>
       _voiceCommentSupport.value == ReelVoiceCommentSupport.supported;
+
+  /// What THIS service has learned about the deployed comment-like contract
+  /// (spec §5.6). Per instance for the same reason as
+  /// [_voiceCommentSupport]; learned by the same probe in [_viewCall].
+  final ValueNotifier<CommentLikeSupport> _commentLikeSupport =
+      ValueNotifier<CommentLikeSupport>(CommentLikeSupport.unknown);
+
+  /// Watchable, so a thread can show its hearts as soon as a flagged view
+  /// answers.
+  ValueListenable<CommentLikeSupport> get commentLikeSupport =>
+      _commentLikeSupport;
 
   /// Retry-stable request ids for the engagement callables, keyed by the exact
   /// intent they encode. A lost acknowledgement must replay to the identical
@@ -1194,6 +1206,70 @@ class ReelService {
     return result;
   });
 
+  /// Sets this viewer's like on one Yeel comment through
+  /// `setReelCommentLikeV1` (spec §3.5) and returns the server's
+  /// authoritative state.
+  ///
+  /// Retry-stable like [setLike]: the request id is keyed by the intent,
+  /// survives a failure so a retry of the SAME intent replays the same
+  /// operation, and is released for both directions once either completes,
+  /// or when the server proves the id can never succeed. Sending one
+  /// direction also drops the opposite direction's held id: after a like and
+  /// an unlike whose answers were both lost, the next like must not replay
+  /// the first like's stored result over the server's newer state.
+  Future<CommentLikeResult> setCommentLike(
+    String reelId,
+    String commentId, {
+    required bool liked,
+  }) => _withIdentity((identity) async {
+    final id = _requiredSafeId(reelId, 'reelId');
+    final comment = _requiredSafeId(commentId, 'commentId');
+    final key = 'commentLike:$id:$comment:$liked';
+    _engagementRequestIds.remove('commentLike:$id:$comment:${!liked}');
+    final stableRequestId = _engagementRequestIds.putIfAbsent(
+      key,
+      ReelPublishSession.newRequestId,
+    );
+    final response = await _engagementCall(
+      'setReelCommentLikeV1',
+      <String, Object?>{
+        'reelId': id,
+        'commentId': comment,
+        'liked': liked,
+        'requestId': stableRequestId,
+      },
+      retryStableKey: key,
+    );
+    identity.ensureCurrent();
+    final CommentLikeResult result;
+    try {
+      result = CommentLikeResult.parse(
+        response,
+        parentKey: 'reelId',
+        parentId: id,
+        commentId: comment,
+        liked: liked,
+      );
+    } on FormatException {
+      // Replaying this id would replay the same malformed answer. The call
+      // sets a desired state, so a fresh id can never double-count.
+      _engagementRequestIds.remove(key);
+      rethrow;
+    }
+    _engagementRequestIds
+      ..remove('commentLike:$id:$comment:true')
+      ..remove('commentLike:$id:$comment:false');
+    return result;
+  });
+
+  /// The retry-stable id currently held for one comment-like intent.
+  @visibleForTesting
+  String? debugCommentLikeRequestId(
+    String reelId,
+    String commentId, {
+    required bool liked,
+  }) => _engagementRequestIds['commentLike:$reelId:$commentId:$liked'];
+
   /// Posts one text comment on [reelId].
   ///
   /// [text] is trimmed here so the value hashed into the server's idempotency
@@ -1399,10 +1475,16 @@ class ReelService {
   });
 
   /// Loads one Reel with a page of its comment thread, oldest first.
+  ///
+  /// [includeCommentLikes] is for the thread surface that draws comment
+  /// hearts: it adds the probed `includeCommentLikes` flag (spec §3.6), and
+  /// the returned [ReelView.commentLikes] is non-null exactly when the
+  /// deployment answered it.
   Future<ReelView> loadView(
     String reelId, {
     int commentLimit = ReelView.maxCommentLimit,
     String? commentCursor,
+    bool includeCommentLikes = false,
   }) => _withIdentity((identity) async {
     final id = _requiredSafeId(reelId, 'reelId');
     if (commentLimit < 1 || commentLimit > ReelView.maxCommentLimit) {
@@ -1418,59 +1500,104 @@ class ReelService {
       'commentLimit': commentLimit,
       'commentCursor': commentCursor,
     };
-    final response = await _viewCall(unflagged);
+    final answer = await _viewCall(
+      unflagged,
+      commentLikes: includeCommentLikes,
+    );
     identity.ensureCurrent();
-    final view = ReelView.fromWire(response);
+    final view = ReelView.fromWire(
+      answer.response,
+      expectCommentLikes: answer.commentLikes,
+    );
     if (view.reel.id != id) {
       throw const FormatException('Malformed Reel view response.');
     }
     return view;
   });
 
-  /// Runs `getReelViewV2`, asking for voice comments while that is still
-  /// worth asking, and LEARNS the answer.
+  /// Runs `getReelViewV2`, asking for voice comments (and, when
+  /// [commentLikes], for comment likes) while that is still worth asking,
+  /// and LEARNS the answers.
   ///
   /// `requireExactInput` refuses an unknown key outright, so a backend that
-  /// predates voice comments answers `invalid-argument` to the flag. Rather
-  /// than depend on a deploy order nobody can enforce on installed builds,
-  /// that refusal is *verified*: the identical request is replayed without
-  /// the flag, and only if that succeeds — proving the flag and nothing else
-  /// was the problem — is the feature recorded as undeployed. A refusal for
-  /// the request's own reasons (a poisoned cursor, an out-of-range limit) is
-  /// reported and teaches nothing, so the next thread asks again.
+  /// predates a flag answers `invalid-argument` to it. Rather than depend on
+  /// a deploy order nobody can enforce on installed builds, that refusal is
+  /// *verified*: the request is replayed with the unproven flags dropped one
+  /// at a time (comment likes first, the newer contract, then voice
+  /// comments), and only a replay that succeeds records the dropped flags as
+  /// undeployed. A refusal for the request's own reasons (a poisoned cursor,
+  /// an out-of-range limit) fails every replay too, is reported as the
+  /// original error, and teaches nothing, so the next thread asks again.
   ///
-  /// Withholding is the server's own old-client protection: without the flag
-  /// it omits voice comments from the page, leaves `commentCount` alone and
-  /// still advances the cursor. So a client that never learns still shows a
-  /// correct, complete text thread.
-  Future<Map<Object?, Object?>> _viewCall(
-    Map<String, Object?> unflagged,
-  ) async {
-    if (_voiceCommentSupport.value == ReelVoiceCommentSupport.unsupported) {
-      return _engagementCall('getReelViewV2', unflagged);
-    }
-    try {
-      final response = await _engagementCall('getReelViewV2', <String, Object?>{
-        ...unflagged,
-        'commentTypes': const <String>['text', 'voice'],
-      });
-      _voiceCommentSupport.value = ReelVoiceCommentSupport.supported;
-      return response;
-    } on ReelEngagementException catch (error, stackTrace) {
-      if (error.reason != ReelEngagementFailure.invalid ||
-          _voiceCommentSupport.value == ReelVoiceCommentSupport.supported) {
-        rethrow;
-      }
-      Map<Object?, Object?>? recovered;
+  /// Withholding is the server's own old-client protection: without the
+  /// voice flag it omits voice comments from the page, leaves `commentCount`
+  /// alone and still advances the cursor; without the like flag the view is
+  /// byte-identical to earlier builds. So a client that never learns still
+  /// shows a correct, complete text thread, just without hearts.
+  ///
+  /// Returns the response and whether it was requested WITH comment likes,
+  /// which decides the exact shape [ReelView.fromWire] must accept.
+  Future<({Map<Object?, Object?> response, bool commentLikes})> _viewCall(
+    Map<String, Object?> unflagged, {
+    bool commentLikes = false,
+  }) async {
+    final voiceProven =
+        _voiceCommentSupport.value == ReelVoiceCommentSupport.supported;
+    final likesProven =
+        _commentLikeSupport.value == CommentLikeSupport.supported;
+    final voice =
+        _voiceCommentSupport.value != ReelVoiceCommentSupport.unsupported;
+    final likes =
+        commentLikes &&
+        _commentLikeSupport.value != CommentLikeSupport.unsupported;
+    final attempts = <({bool voice, bool likes})>[(voice: voice, likes: likes)];
+    if (likes && !likesProven) attempts.add((voice: voice, likes: false));
+    if (voice && !voiceProven) attempts.add((voice: false, likes: false));
+
+    Object? firstError;
+    StackTrace? firstStack;
+    for (final attempt in attempts) {
       try {
-        recovered = await _engagementCall('getReelViewV2', unflagged);
+        final response = await _engagementCall(
+          'getReelViewV2',
+          <String, Object?>{
+            ...unflagged,
+            if (attempt.voice) 'commentTypes': const <String>['text', 'voice'],
+            if (attempt.likes) 'includeCommentLikes': true,
+          },
+        );
+        if (attempt.voice) {
+          _voiceCommentSupport.value = ReelVoiceCommentSupport.supported;
+        } else if (voice) {
+          _voiceCommentSupport.value = ReelVoiceCommentSupport.unsupported;
+        }
+        if (attempt.likes) {
+          _commentLikeSupport.value = CommentLikeSupport.supported;
+        } else if (likes) {
+          _commentLikeSupport.value = CommentLikeSupport.unsupported;
+        }
+        return (response: response, commentLikes: attempt.likes);
+      } on ReelEngagementException catch (error, stackTrace) {
+        if (firstError == null) {
+          // Only an unproven flag can explain an `invalid-argument`; any
+          // other refusal, or one against proven flags, is the answer.
+          if (error.reason != ReelEngagementFailure.invalid ||
+              attempts.length == 1) {
+            rethrow;
+          }
+          firstError = error;
+          firstStack = stackTrace;
+          continue;
+        }
+        // A replay that fails for any reason teaches nothing; keep trying
+        // the narrower request only while the refusal could still be a flag.
+        if (error.reason != ReelEngagementFailure.invalid) break;
       } catch (_) {
-        recovered = null;
+        if (firstError == null) rethrow;
+        break;
       }
-      if (recovered == null) Error.throwWithStackTrace(error, stackTrace);
-      _voiceCommentSupport.value = ReelVoiceCommentSupport.unsupported;
-      return recovered;
     }
+    Error.throwWithStackTrace(firstError!, firstStack!);
   }
 
   // -------------------------------------------------------------------
@@ -1769,6 +1896,12 @@ class ReelService {
   @visibleForTesting
   void debugResetVoiceCommentSupport() =>
       _voiceCommentSupport.value = ReelVoiceCommentSupport.unknown;
+
+  /// Forgets what this service learned about the deployed comment-like
+  /// contract. Test-only, like [debugResetVoiceCommentSupport].
+  @visibleForTesting
+  void debugResetCommentLikeSupport() =>
+      _commentLikeSupport.value = CommentLikeSupport.unknown;
 
   /// Whether this process is still asking `listReelsV2` for inline grants.
   @visibleForTesting

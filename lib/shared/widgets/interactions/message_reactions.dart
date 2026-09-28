@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
 /// The six message reactions, in picker order: exactly the direct-message
 /// vocabulary (`ALLOWED_DIRECT_REACTIONS` in
@@ -36,25 +37,77 @@ String messageReactionSummary(Iterable<String> reactions) {
 /// sits in the thread rather than floating above it, so it carries a hairline
 /// and no shadow. Draws nothing when there is no reaction. Carries no copy;
 /// the emoji and counts are the content.
+///
+/// With [onTap] (a server channel, ADR-230 owner variant A) the pill is a
+/// control: it opens "See who reacted", announces [semanticLabel] and shows
+/// a quiet trailing chevron so it reads as one. Without it — every direct
+/// message — the pill is exactly the static summary it always was.
 class MessageReactionSummaryPill extends StatelessWidget {
-  const MessageReactionSummaryPill({required this.reactions, super.key});
+  const MessageReactionSummaryPill({
+    required this.reactions,
+    this.onTap,
+    this.semanticLabel,
+    this.focusNode,
+    super.key,
+  }) : assert(
+         onTap == null || semanticLabel != null,
+         'A tappable reaction pill needs a spoken label.',
+       );
 
   /// The stored `uid -> emoji` values of one message.
   final Iterable<String> reactions;
+
+  final VoidCallback? onTap;
+  final String? semanticLabel;
+
+  /// The tappable pill's focus node, for a host that returns focus to it.
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
     final summary = messageReactionSummary(reactions);
     if (summary.isEmpty) return const SizedBox.shrink();
     final palette = context.appPalette;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: palette.surfaceRaised,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: palette.border),
+    final open = onTap;
+    if (open == null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: palette.surfaceRaised,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: palette.border),
+        ),
+        child: Text(summary, style: const TextStyle(fontSize: 13)),
+      );
+    }
+    return AccessibleTapRegion(
+      onTap: open,
+      focusNode: focusNode,
+      semanticLabel: semanticLabel!,
+      borderRadius: 12,
+      minimumSize: const Size(44, 44),
+      child: Container(
+        padding: const EdgeInsetsDirectional.fromSTEB(8, 3, 4, 3),
+        decoration: BoxDecoration(
+          color: palette.surfaceRaised,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: palette.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(summary, style: const TextStyle(fontSize: 13)),
+            ),
+            const SizedBox(width: 2),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 16,
+              color: palette.textTertiary,
+            ),
+          ],
+        ),
       ),
-      child: Text(summary, style: const TextStyle(fontSize: 13)),
     );
   }
 }

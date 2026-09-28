@@ -178,12 +178,15 @@ void main() {
 
     final rows = find.byKey(const ValueKey('server-management-members'));
     expect(rows, findsOneWidget);
-    final avatars = find.descendant(of: rows, matching: find.byType(UserAvatar));
-    expect(avatars, findsNWidgets(2));
-    expect(
-      tester.widgetList<UserAvatar>(avatars).map((a) => a.userId),
-      ['owner', 'friend'],
+    final avatars = find.descendant(
+      of: rows,
+      matching: find.byType(UserAvatar),
     );
+    expect(avatars, findsNWidgets(2));
+    expect(tester.widgetList<UserAvatar>(avatars).map((a) => a.userId), [
+      'owner',
+      'friend',
+    ]);
     expect(
       find.descendant(of: rows, matching: find.byType(CircleAvatar)),
       findsNothing,

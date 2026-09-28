@@ -211,15 +211,17 @@ void main() {
         AppGradients.primaryAction(AppTheme.lightTheme.colorScheme).colors,
       );
       _expectHex(
-        AppGradients.voicePlayed(AppTheme.darkTheme.colorScheme, dark)
-            .colors
-            .first,
+        AppGradients.voicePlayed(
+          AppTheme.darkTheme.colorScheme,
+          dark,
+        ).colors.first,
         0xFFB082FA,
       );
       _expectHex(
-        AppGradients.voicePlayed(AppTheme.darkTheme.colorScheme, dark)
-            .colors
-            .last,
+        AppGradients.voicePlayed(
+          AppTheme.darkTheme.colorScheme,
+          dark,
+        ).colors.last,
         0xFFD46BFF,
       );
     });
@@ -457,7 +459,9 @@ void main() {
       );
       expect(pearlNeutral.side!.resolve({})!.color, pearl.hairlineControl);
       expect(
-        AppFinish.tonalNeutral(dark).side!.resolve({WidgetState.hovered})!.color,
+        AppFinish.tonalNeutral(
+          dark,
+        ).side!.resolve({WidgetState.hovered})!.color,
         dark.hairlineControl,
         reason: 'Dark keeps its fill-only hover',
       );
@@ -484,10 +488,7 @@ void main() {
       );
 
       final accent = AppFinish.tonalAccent(pearl);
-      expect(
-        accent.textStyle!.resolve({})!.fontWeight,
-        FontWeight.w700,
-      );
+      expect(accent.textStyle!.resolve({})!.fontWeight, FontWeight.w700);
       expect(
         accent.textStyle!.resolve({})!.fontFamily,
         AppTypography.fontFamily,

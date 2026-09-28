@@ -8,6 +8,9 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/likers/data/models/likers_target.dart';
+import 'package:yovoice/features/likers/presentation/likers_copy.dart';
+import 'package:yovoice/features/likers/presentation/likers_launcher.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -50,6 +53,7 @@ class MomentCard extends StatefulWidget {
     this.contentReportService,
     this.playerFactory,
     this.playDiscSize = defaultPlayDiscSize,
+    this.likersLauncher = const LikersLauncher(),
     super.key,
   });
 
@@ -104,6 +108,10 @@ class MomentCard extends StatefulWidget {
   /// Moment, W3: 52 / 48 compact) passes its own. The tap target never goes
   /// below 44.
   final double playDiscSize;
+
+  /// Opens "See who liked" from the like count (ADR-230, owner variant A).
+  /// The const default runs the real flow; tests pass seams.
+  final LikersLauncher likersLauncher;
 
   @override
   State<MomentCard> createState() => _MomentCardState();
@@ -182,6 +190,7 @@ class _MomentCardState extends State<MomentCard> {
   @override
   void dispose() {
     _created?.dispose();
+    _likersFocus.dispose();
     super.dispose();
   }
 
@@ -378,6 +387,20 @@ class _MomentCardState extends State<MomentCard> {
     return _copy.text('${days}d', days == 1 ? '1 dzień' : '$days dni');
   }
 
+  /// The count button, so closing the likers flow hands focus back to it.
+  final FocusNode _likersFocus = FocusNode(debugLabel: 'See who liked');
+
+  void _openLikers() {
+    unawaited(
+      widget.likersLauncher.open(
+        context,
+        VoiceMomentLikersTarget(widget.moment.id),
+        totalCount: _likeCount,
+        returnFocus: _likersFocus,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final moment = widget.moment;
@@ -521,6 +544,8 @@ class _MomentCardState extends State<MomentCard> {
                 likeCount: _likeCount,
                 feedService: widget.feedService,
                 onToggle: _likePending ? null : _toggleLike,
+                onShowLikers: moment.isDeleted ? null : _openLikers,
+                likersFocus: _likersFocus,
               ),
               const SizedBox(width: 6),
               TextButton.icon(
@@ -620,37 +645,83 @@ class _MomentCardState extends State<MomentCard> {
   }
 }
 
-/// The heart, as a REAL control.
+/// The card's like control.
 ///
 /// It previously rendered as an icon plus static text with no tap target:
 /// the screen displayed engagement it gave no way to create, while
 /// [HomeFeedService.toggleLike] / [HomeFeedService.watchLiked] and the
 /// `setMomentLike` callable worked and Home already used them.
+///
+/// Owner variant A (ADR-230): once there are likes, the heart and the count
+/// are two targets. The heart only toggles — same key, same spoken label —
+/// and the count beside it opens "See who liked" (`moment-card-likers`).
+/// With no likes the heart keeps its "Like" verb and there is no list to
+/// open, so there is no second target.
 class _LikeControl extends StatelessWidget {
   const _LikeControl({
     required this.liked,
     required this.likeCount,
     required this.feedService,
     required this.onToggle,
+    required this.onShowLikers,
+    required this.likersFocus,
   });
 
   final bool liked;
   final int likeCount;
   final HomeFeedService? feedService;
   final VoidCallback? onToggle;
+  final VoidCallback? onShowLikers;
+  final FocusNode likersFocus;
 
   @override
   Widget build(BuildContext context) {
     final service = feedService;
     final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
     // Zero reads as a verb, not a number — no invented social proof, and
     // no hiding the control either.
     final label = likeCount == 0 ? copy.text('Like', 'Lubię to') : '$likeCount';
+    final showLikers = onShowLikers;
+    final split = likeCount > 0 && showLikers != null;
 
-    return _LikeButton(
+    final heart = _LikeButton(
       liked: liked,
       label: label,
+      showLabel: !split,
       onTap: service == null ? null : onToggle,
+    );
+    if (!split) return heart;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        heart,
+        TextButton(
+          key: const ValueKey('moment-card-likers'),
+          focusNode: likersFocus,
+          onPressed: showLikers,
+          // Content hugs the heart so "♡ 24" still reads as one pair;
+          // the target stays 44 px.
+          style: TextButton.styleFrom(
+            padding: const EdgeInsetsDirectional.only(start: 2, end: 10),
+            minimumSize: const Size(44, 44),
+            alignment: AlignmentDirectional.centerStart,
+          ),
+          child: Semantics(
+            label: LikersCopy(copy).seeWhoLikedCount(likeCount),
+            excludeSemantics: true,
+            child: Text(
+              label,
+              maxLines: 1,
+              style: TextStyle(
+                color: palette.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -660,45 +731,62 @@ class _LikeButton extends StatelessWidget {
     required this.liked,
     required this.label,
     required this.onTap,
+    this.showLabel = true,
   });
 
   final bool liked;
+
+  /// Also the key's middle part, so the key stays what it always was
+  /// whether or not the count is drawn beside the heart.
   final String label;
+  final bool showLabel;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
+    final icon = Icon(
+      liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+      size: 17,
+      // Tint carries STATE, never meaning. The count label stays
+      // textSecondary: `secondary` on `background` is roughly 4:1,
+      // fine for a glyph and not for 12 pt text.
+      color: liked ? AppColors.secondary : palette.textSecondary,
+    );
     return Semantics(
       button: onTap != null,
       label: liked
           ? copy.text('Unlike this Moment', 'Usuń polubienie tego Momentu')
           : copy.text('Like this Moment', 'Polub ten Moment'),
-      child: TextButton.icon(
-        key: ValueKey('like-moment-$label-$liked'),
-        onPressed: onTap,
-        style: TextButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          minimumSize: const Size(0, 44),
-        ),
-        icon: Icon(
-          liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-          size: 17,
-          // Tint carries STATE, never meaning. The count label stays
-          // textSecondary: `secondary` on `background` is roughly 4:1,
-          // fine for a glyph and not for 12 pt text.
-          color: liked ? AppColors.secondary : palette.textSecondary,
-        ),
-        label: Text(
-          label,
-          style: TextStyle(
-            color: palette.textSecondary,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
+      child: showLabel
+          ? TextButton.icon(
+              key: ValueKey('like-moment-$label-$liked'),
+              onPressed: onTap,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                minimumSize: const Size(0, 44),
+              ),
+              icon: icon,
+              label: Text(
+                label,
+                style: TextStyle(
+                  color: palette.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            )
+          : TextButton(
+              key: ValueKey('like-moment-$label-$liked'),
+              onPressed: onTap,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsetsDirectional.only(start: 10, end: 4),
+                minimumSize: const Size(44, 44),
+                alignment: AlignmentDirectional.centerEnd,
+              ),
+              child: icon,
+            ),
     );
   }
 }

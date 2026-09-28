@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import 'package:yovoice/core/theme/app_palette.dart';
 
@@ -24,6 +25,8 @@ class AccessibleTapRegion extends StatefulWidget {
     this.focusRingInsets = EdgeInsets.zero,
     this.onFocusChange,
     this.paintsIndicators = true,
+    this.onLongPress,
+    this.customSemanticsActions,
     super.key,
   });
 
@@ -74,6 +77,17 @@ class AccessibleTapRegion extends StatefulWidget {
   /// edge would touch or crowd the shape it belongs to.
   final bool paintsIndicators;
 
+  /// An optional accelerator on a long press. Never the only path to an
+  /// action: whatever it opens must also be reachable by a visible control,
+  /// a menu or [customSemanticsActions]. Null leaves the region exactly as
+  /// it was without it.
+  final VoidCallback? onLongPress;
+
+  /// Extra actions a screen reader offers on this region's node (for
+  /// example "See who liked" on a like control). Null leaves the node
+  /// exactly as it was without them.
+  final Map<CustomSemanticsAction, VoidCallback>? customSemanticsActions;
+
   @override
   State<AccessibleTapRegion> createState() => _AccessibleTapRegionState();
 }
@@ -108,11 +122,13 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
       selected: widget.selected,
       label: widget.semanticLabel,
       onTap: widget.onTap,
+      customSemanticsActions: widget.customSemanticsActions,
       child: Material(
         type: MaterialType.transparency,
         child: InkWell(
           focusNode: widget.focusNode,
           onTap: widget.onTap,
+          onLongPress: widget.onLongPress,
           onHover: (value) {
             if (_hovered != value) setState(() => _hovered = value);
             widget.onHover?.call(value);

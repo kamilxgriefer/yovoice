@@ -1111,6 +1111,8 @@ void main() {
         'Video',
         // A medium acronym plus an untrusted title contains no English prose.
         'GIF: {title}',
+        // A reaction tab's spoken label: an emoji and a number, no prose.
+        '{emoji}: {count}',
       };
       const naturallyUnchangedPairs = <String>{
         // Established Malay and Filipino media-editor loanwords, not fallback.

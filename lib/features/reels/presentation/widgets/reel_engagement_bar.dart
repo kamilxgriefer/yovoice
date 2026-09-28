@@ -1,4 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
@@ -6,6 +9,8 @@ import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/features/likers/presentation/likers_copy.dart';
+import 'package:yovoice/features/likers/presentation/widgets/likers_entry_button.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 
@@ -58,6 +63,7 @@ class ReelEngagementBar extends StatelessWidget {
     this.railAlignment = WrapAlignment.end,
     this.railTrailing,
     this.railAdditional = const [],
+    this.onShowLikers,
     super.key,
   });
 
@@ -91,9 +97,28 @@ class ReelEngagementBar extends StatelessWidget {
   final Widget? railTrailing;
   final List<Widget> railAdditional;
 
+  /// Opens "See who liked" (ADR-230). Null — or no likes yet — means no
+  /// entry at all, and every variant then draws exactly what it always did.
+  ///
+  /// With likes: on the rail the count becomes its own target under (or
+  /// beside) the heart plate, owner variant A — the heart only toggles. The
+  /// panel adds a "Likes · N" entry under its pills. The footer keeps its
+  /// fused heart-and-count (its row is height-budgeted as one control run)
+  /// and, like the rail, offers the list as a screen-reader action on the
+  /// heart; its ⋯ sheet carries the visible item.
+  final VoidCallback? onShowLikers;
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
+    final likersCopy = LikersCopy(copy);
+    final showLikers = likeCount > 0 ? onShowLikers : null;
+    final likersActions = showLikers == null
+        ? null
+        : <CustomSemanticsAction, VoidCallback>{
+            CustomSemanticsAction(label: likersCopy.seeWhoLiked): showLikers,
+          };
+    final likersLabel = likersCopy.seeWhoLikedCount(likeCount);
     final likeAction = liked
         ? copy.text('Unlike', 'Cofnij polubienie')
         : copy.text('Like', 'Lubię to');
@@ -114,7 +139,7 @@ class ReelEngagementBar extends StatelessWidget {
     final commentLabel = '$commentAction. $commentTotal';
 
     if (variant == ReelEngagementBarVariant.panel) {
-      return Wrap(
+      final pills = Wrap(
         spacing: 8,
         runSpacing: 8,
         children: <Widget>[
@@ -142,6 +167,20 @@ class ReelEngagementBar extends StatelessWidget {
             selected: commentsOpen,
             highlighted: commentsOpen,
             onTap: onComments,
+          ),
+        ],
+      );
+      if (showLikers == null) return pills;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          pills,
+          LikersEntryButton(
+            key: const ValueKey<String>('reel-likers-action'),
+            label: likersCopy.likesCount(likeCount),
+            semanticLabel: likersLabel,
+            onPressed: showLikers,
           ),
         ],
       );
@@ -179,6 +218,7 @@ class ReelEngagementBar extends StatelessWidget {
             semanticLabel: likeLabel,
             selected: liked,
             onTap: likePending ? null : onLike,
+            customSemanticsActions: likersActions,
           ),
           ReelFooterAction(
             actionKey: const ValueKey<String>('reel-comments-action'),
@@ -198,8 +238,12 @@ class ReelEngagementBar extends StatelessWidget {
 
     final horizontal = railAxis == Axis.horizontal;
     final trailing = railTrailing;
-    List<Widget> actionsFor({required bool showCounts}) => <Widget>[
-      _RailAction(
+    // Owner variant A: the count is a target of its own. It exists only
+    // where a count is drawn at all — a horizontal rail too narrow for its
+    // totals keeps the plates, and the list stays one screen-reader action
+    // (and one ⋯ item) away.
+    Widget likeFor({required bool showCounts}) {
+      final heart = _RailAction(
         actionKey: const ValueKey<String>('reel-like-action'),
         icon: liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
         // Tint carries state, never meaning: the count keeps the readable
@@ -214,9 +258,30 @@ class ReelEngagementBar extends StatelessWidget {
         popOnSelect: true,
         busy: likePending,
         horizontal: horizontal,
-        showCount: showCounts,
+        showCount: showLikers == null && showCounts,
         onTap: onLike,
-      ),
+        customSemanticsActions: likersActions,
+      );
+      if (showLikers == null || !showCounts) return heart;
+      final count = _RailLikersCount(
+        value: reelCompactCount(likeCount),
+        semanticLabel: likersLabel,
+        horizontal: horizontal,
+        onTap: showLikers,
+      );
+      return horizontal
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[heart, count],
+            )
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[heart, count],
+            );
+    }
+
+    List<Widget> actionsFor({required bool showCounts}) => <Widget>[
+      likeFor(showCounts: showCounts),
       _RailAction(
         actionKey: const ValueKey<String>('reel-comments-action'),
         icon: Icons.mode_comment_outlined,
@@ -269,7 +334,9 @@ class ReelEngagementBar extends StatelessWidget {
         // height — which is the ledge board 08's S13 named, arrived at from
         // the rail instead of from the budget.
         final needed =
-            _labelledRailItemWidth(context, reelCompactCount(likeCount)) +
+            (showLikers == null
+                ? _labelledRailItemWidth(context, reelCompactCount(likeCount))
+                : _splitRailLikeWidth(context, reelCompactCount(likeCount))) +
             _labelledRailItemWidth(context, reelCompactCount(commentCount)) +
             plates * 48 +
             10 * (1 + plates);
@@ -294,6 +361,18 @@ class ReelEngagementBar extends StatelessWidget {
 /// everybody.
 double _labelledRailItemWidth(BuildContext context, String value) =>
     48 + 6 + _countWidth(context, value, _railCountStyle) + 8;
+
+/// The same item once its count is a target of its own (owner variant A):
+/// the 48 px heart plate, then the count's plate inside a target at least
+/// 44 px wide, then the trailing gap.
+double _splitRailLikeWidth(BuildContext context, String value) =>
+    48 +
+    math.max(
+      _RailLikersCount.minimumTarget,
+      _countWidth(context, value, _railCountStyle) +
+          _RailLikersCount.platePadding.horizontal,
+    ) +
+    8;
 
 /// The rail count's style, shared with the control that paints it so the
 /// measurement and the painting cannot drift apart, and the footer count's
@@ -334,11 +413,16 @@ class ReelFooterAction extends StatelessWidget {
     this.value,
     this.iconColor,
     this.selected,
+    this.customSemanticsActions,
     super.key,
   });
 
   final Key actionKey;
   final IconData icon;
+
+  /// Extra screen-reader actions on this control ("See who liked" on the
+  /// like). Null leaves the node as it always was.
+  final Map<CustomSemanticsAction, VoidCallback>? customSemanticsActions;
 
   /// Null for an action that counts nothing (share, ⋯).
   final String? value;
@@ -362,6 +446,7 @@ class ReelFooterAction extends StatelessWidget {
       semanticLabel: semanticLabel,
       tooltip: semanticLabel,
       selected: selected,
+      customSemanticsActions: customSemanticsActions,
       // The glyph already carries the state; a ring on top of it would be the
       // one asymmetric control in the row.
       selectedBorderColor: Colors.transparent,
@@ -417,6 +502,7 @@ class _RailAction extends StatefulWidget {
     required this.horizontal,
     required this.showCount,
     required this.onTap,
+    this.customSemanticsActions,
   });
 
   final Key actionKey;
@@ -430,10 +516,12 @@ class _RailAction extends StatefulWidget {
   final bool busy;
   final bool horizontal;
 
-  /// False only on a frame too narrow to place a total beside its plate. The
+  /// False on a frame too narrow to place a total beside its plate, and on
+  /// the like once its count is a target of its own (owner variant A). The
   /// number never disappears from the semantic label.
   final bool showCount;
   final VoidCallback? onTap;
+  final Map<CustomSemanticsAction, VoidCallback>? customSemanticsActions;
 
   @override
   State<_RailAction> createState() => _RailActionState();
@@ -528,6 +616,7 @@ class _RailActionState extends State<_RailAction>
         semanticLabel: widget.semanticLabel,
         tooltip: widget.semanticLabel,
         selected: widget.selected,
+        customSemanticsActions: widget.customSemanticsActions,
         // The state is drawn on the plate; the region keeps only the semantic
         // fact of being selected.
         selectedBorderColor: Colors.transparent,
@@ -535,7 +624,7 @@ class _RailActionState extends State<_RailAction>
         // through the count sitting at its bottom; the hover and focus rings
         // this radius shapes have to clear it.
         borderRadius: widget.horizontal ? 24 : 12,
-        minimumSize: widget.horizontal
+        minimumSize: widget.horizontal || !widget.showCount
             ? const Size(48, 48)
             : const Size(48, 68),
         // Artwork behind the rail can be any luminance, so the focus ring
@@ -556,10 +645,70 @@ class _RailActionState extends State<_RailAction>
                       ),
                     )
                   : plate
-            : Column(
+            : widget.showCount
+            ? Column(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[plate, const SizedBox(height: 4), count],
-              ),
+              )
+            : plate,
+      ),
+    );
+  }
+}
+
+/// The like count as its own target on the rail (owner variant A): the
+/// compact total on a small overlay plate, under the heart on a vertical
+/// rail and beside it on a horizontal one. It opens "See who liked"; the
+/// heart above it still only toggles.
+class _RailLikersCount extends StatelessWidget {
+  const _RailLikersCount({
+    required this.value,
+    required this.semanticLabel,
+    required this.horizontal,
+    required this.onTap,
+  });
+
+  static const double minimumTarget = 44;
+  static const EdgeInsets platePadding = EdgeInsets.symmetric(
+    horizontal: 8,
+    vertical: 3,
+  );
+
+  final String value;
+  final String semanticLabel;
+  final bool horizontal;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return AccessibleTapRegion(
+      key: const ValueKey<String>('reel-likers-action'),
+      onTap: onTap,
+      semanticLabel: semanticLabel,
+      tooltip: semanticLabel,
+      borderRadius: 12,
+      minimumSize: horizontal
+          ? const Size(minimumTarget, 48)
+          : const Size(48, minimumTarget),
+      // Artwork behind the rail can be any luminance, as for the plates.
+      focusContrastColor: Colors.black,
+      child: Container(
+        padding: platePadding,
+        decoration: BoxDecoration(
+          color: reelOverlayPlateColor,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        // The region's label already carries the exact count; the compact
+        // digits would be a second, action-less screen-reader stop.
+        child: ExcludeSemantics(
+          child: Text(
+            value,
+            maxLines: 1,
+            softWrap: false,
+            // The style the rail's width measurement lays out.
+            style: _railCountStyle.copyWith(color: Colors.white),
+          ),
+        ),
       ),
     );
   }

@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/likers/presentation/likers_copy.dart';
+import 'package:yovoice/features/likers/presentation/show_likers.dart'
+    show showLikersUpsell;
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
@@ -10,12 +13,26 @@ import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 /// reach for a Premium capability. One component, two voices, so the
 /// Creator and Club upsells can't drift apart. Never a dead button,
 /// never a generic "Coming soon".
-enum PremiumUpsellContext { creator, creatorStudio, clubs, clubCreation }
+enum PremiumUpsellContext {
+  creator,
+  creatorStudio,
+  clubs,
+  clubCreation,
+
+  /// "See who liked" (ADR-230). Opens the owner-chosen U1 sheet, which is
+  /// billing-aware: it offers "Explore Premium" only where a purchase can
+  /// complete and otherwise says honestly that Premium can't be bought yet.
+  seeWhoLiked,
+}
 
 Future<void> showPremiumUpsellSheet(
   BuildContext context, {
   required PremiumUpsellContext upsellContext,
 }) {
+  if (upsellContext == PremiumUpsellContext.seeWhoLiked) {
+    // No particular Moment, Yeel or message here, so no public count line.
+    return showLikersUpsell(context, null, totalCount: 0);
+  }
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -80,6 +97,13 @@ class _PremiumUpsellSheet extends StatelessWidget {
           'Create and manage your space from the Servers tab.',
           'Twórz swoją przestrzeń i zarządzaj nią w karcie Serwery.',
         ),
+      ),
+      // showPremiumUpsellSheet routes this context to the billing-aware U1
+      // sheet; the copy is kept identical here so the two can never differ.
+      PremiumUpsellContext.seeWhoLiked => (
+        Icons.favorite_rounded,
+        LikersCopy(copy).upsellTitle,
+        LikersCopy(copy).upsellBody,
       ),
     };
 

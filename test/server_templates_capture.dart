@@ -131,14 +131,13 @@ Future<void> _shoot(
 void main() {
   setUpAll(_loadRealFonts);
 
-  for (final (label, size, scale, light)
-      in <(String, Size, double, bool)>[
-        ('390x844', Size(390, 844), 1, false),
-        ('768x1024', Size(768, 1024), 1, false),
-        ('1440x900', Size(1440, 900), 1, false),
-        ('320x760-scale2', Size(320, 760), 2, false),
-        ('1440x900-pearl', Size(1440, 900), 1, true),
-      ]) {
+  for (final (label, size, scale, light) in <(String, Size, double, bool)>[
+    ('390x844', Size(390, 844), 1, false),
+    ('768x1024', Size(768, 1024), 1, false),
+    ('1440x900', Size(1440, 900), 1, false),
+    ('320x760-scale2', Size(320, 760), 2, false),
+    ('1440x900-pearl', Size(1440, 900), 1, true),
+  ]) {
     testWidgets('friends salon $label', (tester) async {
       final captureKey = GlobalKey();
       await _render(
@@ -158,7 +157,11 @@ void main() {
           connector: FakeServerMediaConnector(),
         ),
       );
-      await _shoot(tester, captureKey: captureKey, name: 'friends-salon-$label');
+      await _shoot(
+        tester,
+        captureKey: captureKey,
+        name: 'friends-salon-$label',
+      );
     });
 
     testWidgets('family board $label', (tester) async {

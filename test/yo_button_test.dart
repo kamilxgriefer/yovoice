@@ -21,11 +21,7 @@ void main() {
     await tester.pumpWidget(
       _host(
         const Locale('en'),
-        const YoButton(
-          label: 'Finishing…',
-          onPressed: null,
-          isLoading: true,
-        ),
+        const YoButton(label: 'Finishing…', onPressed: null, isLoading: true),
       ),
     );
     await tester.pump();
@@ -42,11 +38,7 @@ void main() {
     await tester.pumpWidget(
       _host(
         const Locale('pl'),
-        const YoButton(
-          label: 'Kończenie…',
-          onPressed: null,
-          isLoading: true,
-        ),
+        const YoButton(label: 'Kończenie…', onPressed: null, isLoading: true),
       ),
     );
     await tester.pump();

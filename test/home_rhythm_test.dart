@@ -45,9 +45,7 @@ import 'voice_moment_test_doubles.dart';
 /// sits where the owner saw it (1032 pt) under the real font.
 ///   flutter test test/home_rhythm_test.dart \
 ///     --dart-define=YO_CAPTURE_HOME_ARRANGEMENT=true
-const _captureArrangement = bool.fromEnvironment(
-  'YO_CAPTURE_HOME_ARRANGEMENT',
-);
+const _captureArrangement = bool.fromEnvironment('YO_CAPTURE_HOME_ARRANGEMENT');
 final _arrangementBoundary = GlobalKey();
 final _pageBoundary = GlobalKey();
 
@@ -475,97 +473,92 @@ void main() {
     // inside the straddle band wherever the active font puts it — the band is
     // three times the width of one Polish glyph at 200 % text, ~37 pt.
     for (final headerScale in HomeSectionHeaderScale.values) {
-      testWidgets(
-        '${headerScale.name}: every heading on a page picks the same '
-        'arrangement, whichever "View all" it declines',
-        (tester) async {
-          const copy = AppLocalizations(Locale('pl'));
-          final widths = <double>{
-            for (var w = 320.0; w <= 1456.0; w += 16) w,
-            430,
-            834,
-            1032,
-          }.toList()..sort();
-          tester.view.devicePixelRatio = 1;
-          addTearDown(tester.view.reset);
+      testWidgets('${headerScale.name}: every heading on a page picks the same '
+          'arrangement, whichever "View all" it declines', (tester) async {
+        const copy = AppLocalizations(Locale('pl'));
+        final widths = <double>{
+          for (var w = 320.0; w <= 1456.0; w += 16) w,
+          430,
+          834,
+          1032,
+        }.toList()..sort();
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
 
-          bool stackedIn(Key key) {
-            final header = find.byKey(key);
-            final title = tester.getRect(
-              find
-                  .descendant(of: header, matching: find.byType(Text))
-                  .first,
-            );
-            final action = tester.getRect(
-              find.descendant(of: header, matching: find.byType(TextButton)),
-            );
-            return action.top >= title.bottom - 0.5;
-          }
+        bool stackedIn(Key key) {
+          final header = find.byKey(key);
+          final title = tester.getRect(
+            find.descendant(of: header, matching: find.byType(Text)).first,
+          );
+          final action = tester.getRect(
+            find.descendant(of: header, matching: find.byType(TextButton)),
+          );
+          return action.top >= title.bottom - 0.5;
+        }
 
-          for (final width in widths) {
-            tester.view.physicalSize = Size(width, 2400);
-            await tester.pumpWidget(
-              app(
-                Align(
-                  alignment: Alignment.topLeft,
-                  child: SizedBox(
-                    width: width,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        HomeSectionHeader(
-                          key: const ValueKey('people'),
-                          title: copy.homeYourPeople,
-                          scale: headerScale,
-                          seeAllLabel: copy.homeSeeAllPeople,
-                          onSeeAll: () {},
-                        ),
-                        HomeSectionHeader(
-                          key: const ValueKey('servers'),
-                          title: copy.homeInYourServers,
-                          scale: headerScale,
-                          seeAllLabel: copy.homeSeeAll,
-                          onSeeAll: () {},
-                        ),
-                        HomeSectionHeader(
-                          key: const ValueKey('chats'),
-                          title: 'Ostatnie czaty',
-                          scale: headerScale,
-                          onSeeAll: () {},
-                        ),
-                      ],
-                    ),
+        for (final width in widths) {
+          tester.view.physicalSize = Size(width, 2400);
+          await tester.pumpWidget(
+            app(
+              Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                  width: width,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      HomeSectionHeader(
+                        key: const ValueKey('people'),
+                        title: copy.homeYourPeople,
+                        scale: headerScale,
+                        seeAllLabel: copy.homeSeeAllPeople,
+                        onSeeAll: () {},
+                      ),
+                      HomeSectionHeader(
+                        key: const ValueKey('servers'),
+                        title: copy.homeInYourServers,
+                        scale: headerScale,
+                        seeAllLabel: copy.homeSeeAll,
+                        onSeeAll: () {},
+                      ),
+                      HomeSectionHeader(
+                        key: const ValueKey('chats'),
+                        title: 'Ostatnie czaty',
+                        scale: headerScale,
+                        onSeeAll: () {},
+                      ),
+                    ],
                   ),
                 ),
-                size: Size(width, 2400),
-                textScale: 2,
-                locale: const Locale('pl'),
-                padding: EdgeInsets.zero,
               ),
-            );
-            await tester.pump();
-            final people = stackedIn(const ValueKey('people'));
-            expect(
-              stackedIn(const ValueKey('servers')),
-              people,
-              reason:
-                  '"Zobacz wszystkich" and "Zobacz wszystkie" arranged '
-                  'differently at ${width.toInt()} pt '
-                  '(${headerScale.name}, 200 % text)',
-            );
-            expect(
-              stackedIn(const ValueKey('chats')),
-              people,
-              reason:
-                  'the neutral "View all" arranged differently from the '
-                  'people heading at ${width.toInt()} pt '
-                  '(${headerScale.name}, 200 % text)',
-            );
-            expect(tester.takeException(), isNull);
-          }
-        },
-      );
+              size: Size(width, 2400),
+              textScale: 2,
+              locale: const Locale('pl'),
+              padding: EdgeInsets.zero,
+            ),
+          );
+          await tester.pump();
+          final people = stackedIn(const ValueKey('people'));
+          expect(
+            stackedIn(const ValueKey('servers')),
+            people,
+            reason:
+                '"Zobacz wszystkich" and "Zobacz wszystkie" arranged '
+                'differently at ${width.toInt()} pt '
+                '(${headerScale.name}, 200 % text)',
+          );
+          expect(
+            stackedIn(const ValueKey('chats')),
+            people,
+            reason:
+                'the neutral "View all" arranged differently from the '
+                'people heading at ${width.toInt()} pt '
+                '(${headerScale.name}, 200 % text)',
+          );
+          expect(tester.takeException(), isNull);
+        }
+      });
     }
 
     testWidgets(
@@ -603,10 +596,7 @@ void main() {
                       seeAllLabel: copy.homeSeeAll,
                       onSeeAll: () {},
                     ),
-                    HomeSectionHeader(
-                      title: 'Ostatnie czaty',
-                      onSeeAll: () {},
-                    ),
+                    HomeSectionHeader(title: 'Ostatnie czaty', onSeeAll: () {}),
                   ],
                 ),
               ),
@@ -709,7 +699,6 @@ void main() {
       });
     },
   );
-
 
   for (final width in const [320.0, 390.0, 430.0, 768.0]) {
     for (final textScale in const [1.0, 2.0]) {

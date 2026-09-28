@@ -27,6 +27,7 @@ import 'translations_current_release.dart';
 import 'translations_direct_call_refusals.dart';
 import 'translations_slavic_nordic.dart';
 import 'translations_startup.dart';
+import 'translations_vip_likers.dart';
 import 'translations_western.dart';
 import 'translations_yo_moments.dart';
 
@@ -235,6 +236,7 @@ const appTranslationKeys = <String>{
   ...serverDeletionTranslationKeys,
   ...profileMediaViewerTranslationKeys,
   ...notificationEngagementTranslationKeys,
+  ...vipLikersTranslationKeys,
 };
 
 const _retiredServerSurfaceTranslationKeys = <String>{
@@ -292,6 +294,7 @@ final appTranslations = <String, Map<String, String>>{
         ...serverDeletionTranslations[entry.key]!,
         ...profileMediaViewerTranslations[entry.key]!,
         ...notificationEngagementTranslations[entry.key]!,
+        ...vipLikersTranslations[entry.key]!,
         ...localizedExtendedLanguageNames[entry.key]!,
       }),
     ),

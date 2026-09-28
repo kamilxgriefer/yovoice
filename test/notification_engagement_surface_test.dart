@@ -101,31 +101,34 @@ void main() {
           });
     });
 
-    test('a row from an older writer still parses with no new fields', () async {
-      final firestore = FakeFirebaseFirestore();
-      await firestore
-          .collection('users')
-          .doc('reader')
-          .collection('notifications')
-          .doc('friendRequest_ada')
-          .set(<String, Object?>{
-            'type': 'friendRequest',
-            'actorId': 'ada',
-            'actorName': 'Ada',
-            'targetId': 'ada',
-            'isRead': false,
-          });
-      final doc = await firestore
-          .collection('users')
-          .doc('reader')
-          .collection('notifications')
-          .doc('friendRequest_ada')
-          .get();
-      final notification = AppNotification.fromFirestore(doc);
-      expect(notification.targetSubId, isNull);
-      expect(notification.sourcePath, isNull);
-      expect(notification.title, 'Ada sent you a friend request');
-    });
+    test(
+      'a row from an older writer still parses with no new fields',
+      () async {
+        final firestore = FakeFirebaseFirestore();
+        await firestore
+            .collection('users')
+            .doc('reader')
+            .collection('notifications')
+            .doc('friendRequest_ada')
+            .set(<String, Object?>{
+              'type': 'friendRequest',
+              'actorId': 'ada',
+              'actorName': 'Ada',
+              'targetId': 'ada',
+              'isRead': false,
+            });
+        final doc = await firestore
+            .collection('users')
+            .doc('reader')
+            .collection('notifications')
+            .doc('friendRequest_ada')
+            .get();
+        final notification = AppNotification.fromFirestore(doc);
+        expect(notification.targetSubId, isNull);
+        expect(notification.sourcePath, isNull);
+        expect(notification.title, 'Ada sent you a friend request');
+      },
+    );
 
     test('titles fall back gracefully when the label is missing', () {
       AppNotification row(NotificationType type, {String? label}) =>
@@ -185,27 +188,29 @@ void main() {
       );
     });
 
-    test('the composer resolves the ids a comment mentions, capped at five', () {
-      final directory = MentionDirectory(<MentionCandidate>[
-        MentionCandidate(userId: 'u1', displayName: 'Ada Lovelace'),
-        MentionCandidate(userId: 'u2', displayName: 'Nadia'),
-      ]);
-      expect(
-        mentionedUserIds('hi @Ada Lovelace and @Nadia', directory),
-        <String>['u1', 'u2'],
-      );
-      // A repeated mention is one recipient, and an unresolved name is not a
-      // mention at all.
-      expect(
-        mentionedUserIds('@Nadia @Nadia @Nobody', directory),
-        <String>['u2'],
-      );
-      expect(mentionedUserIds('no mentions here', directory), isEmpty);
-      expect(
-        mentionedUserIds('@Ada Lovelace @Nadia', directory, limit: 1),
-        <String>['u1'],
-      );
-    });
+    test(
+      'the composer resolves the ids a comment mentions, capped at five',
+      () {
+        final directory = MentionDirectory(<MentionCandidate>[
+          MentionCandidate(userId: 'u1', displayName: 'Ada Lovelace'),
+          MentionCandidate(userId: 'u2', displayName: 'Nadia'),
+        ]);
+        expect(
+          mentionedUserIds('hi @Ada Lovelace and @Nadia', directory),
+          <String>['u1', 'u2'],
+        );
+        // A repeated mention is one recipient, and an unresolved name is not a
+        // mention at all.
+        expect(mentionedUserIds('@Nadia @Nadia @Nobody', directory), <String>[
+          'u2',
+        ]);
+        expect(mentionedUserIds('no mentions here', directory), isEmpty);
+        expect(
+          mentionedUserIds('@Ada Lovelace @Nadia', directory, limit: 1),
+          <String>['u1'],
+        );
+      },
+    );
 
     testWidgets('the preferences screen shows the new group and writes every '
         'type its switch covers', (tester) async {
@@ -244,10 +249,7 @@ void main() {
       expect(find.text('Server events'), findsOneWidget);
       expect(find.text('Your server role'), findsOneWidget);
 
-      await tester.scrollUntilVisible(
-        find.text('Comments and mentions'),
-        200,
-      );
+      await tester.scrollUntilVisible(find.text('Comments and mentions'), 200);
       final row = find.ancestor(
         of: find.text('Comments and mentions'),
         matching: find.byType(Row),

@@ -740,11 +740,14 @@ void main() {
           for (final id in data.customSemanticsActionIds!)
             CustomSemanticsAction.getAction(id)!.label!,
         ];
+        // "See who liked" (ADR-230) joins them because m4 has likes; the
+        // meta line's count stays a span of this one label.
         expect(
           labels,
           unorderedEquals(<String>[
             'Like this Moment',
             'Reply with voice',
+            'See who liked',
             'More options',
           ]),
         );

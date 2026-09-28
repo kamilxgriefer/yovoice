@@ -250,7 +250,10 @@ void main() {
 
   for (final entry in _surfaces.entries) {
     for (final (width, height) in _viewports) {
-      for (final (themeLabel, light) in const [('dark', false), ('pearl', true)]) {
+      for (final (themeLabel, light) in const [
+        ('dark', false),
+        ('pearl', true),
+      ]) {
         for (final scale in const [1.0, 2.0]) {
           final name =
               '${entry.key}-${width.toInt()}x${height.toInt()}'

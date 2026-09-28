@@ -5,8 +5,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 
 import 'package:yovoice/core/security/ephemeral_media_access_registry.dart';
+import 'package:yovoice/features/likers/data/models/comment_like.dart';
 import 'package:yovoice/features/moments/data/models/moment_availability.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
@@ -18,6 +20,11 @@ export 'package:yovoice/features/moments/data/services/voice_moment_read_service
 typedef MomentMediaAccessInvoker =
     Future<Map<Object?, Object?>> Function(Map<String, Object?> request);
 
+/// Runs `setMomentCommentLikeV1` with the exact request and returns its raw
+/// response. Tests inject one; production calls Cloud Functions.
+typedef MomentCommentLikeInvoker =
+    Future<Object?> Function(Map<String, Object?> request);
+
 class MomentService {
   MomentService({
     FirebaseFirestore? firestore,
@@ -25,6 +32,7 @@ class MomentService {
     FirebaseStorage? storage,
     FirebaseFunctions? functions,
     MomentMediaAccessInvoker? mediaAccessInvoker,
+    MomentCommentLikeInvoker? commentLikeInvoker,
     VoiceMomentReadService? readService,
     this.callableTimeout = const Duration(seconds: 20),
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
@@ -32,6 +40,7 @@ class MomentService {
        _storage = storage ?? FirebaseStorage.instance,
        _functionsOverride = functions,
        _mediaAccessInvoker = mediaAccessInvoker,
+       _commentLikeInvoker = commentLikeInvoker,
        _readService =
            readService ??
            VoiceMomentReadService(
@@ -44,7 +53,26 @@ class MomentService {
   final FirebaseStorage _storage;
   final FirebaseFunctions? _functionsOverride;
   final MomentMediaAccessInvoker? _mediaAccessInvoker;
+  final MomentCommentLikeInvoker? _commentLikeInvoker;
   final VoiceMomentReadService _readService;
+
+  /// What THIS service has learned about the deployed comment-like contract
+  /// (spec §5.6), mirroring `ReelService.voiceCommentSupport`: per instance,
+  /// so one refusal never hides hearts in a surface that has not asked.
+  final ValueNotifier<CommentLikeSupport> _commentLikeSupport =
+      ValueNotifier<CommentLikeSupport>(CommentLikeSupport.unknown);
+
+  /// Watchable, so a thread can show its hearts as soon as a flagged view
+  /// answers.
+  ValueListenable<CommentLikeSupport> get commentLikeSupport =>
+      _commentLikeSupport;
+
+  /// Retry-stable request ids for `setMomentCommentLikeV1`, keyed by the
+  /// exact intent (Moment, comment, desired state). A lost acknowledgement
+  /// replays to the identical server result instead of counting twice; the
+  /// id is dropped once the toggle completes or the server proves it can
+  /// never succeed.
+  final Map<String, String> _commentLikeRequestIds = <String, String>{};
   final Duration callableTimeout;
   // Playback surfaces create short-lived MomentService instances. Keep the
   // bearer-grant cache process-wide so logout can invalidate every surface in
@@ -305,17 +333,136 @@ class MomentService {
     );
   }
 
+  /// Loads the v2 detail projection.
+  ///
+  /// [includeCommentLikes] is for surfaces that render the thread's hearts
+  /// (spec §3.6). It is *probed*: the flag is sent until the deployment has
+  /// answered, and a refusal is verified by replaying the identical request
+  /// without it. Only when that replay succeeds, proving the flag and
+  /// nothing else was the problem, is the feature recorded as
+  /// [CommentLikeSupport.unsupported] and the replay's view returned (its
+  /// [VoiceMomentViewV2.commentLikes] is null, so no heart is drawn). A
+  /// refusal for the request's own reasons (a poisoned cursor) is reported
+  /// and teaches nothing.
   Future<VoiceMomentViewV2> loadMomentView(
     String momentId, {
     String? commentCursor,
     int commentLimit = 7,
     int reactionLimit = 3,
-  }) => _readService.loadView(
-    momentId: momentId,
-    commentCursor: commentCursor,
-    commentLimit: commentLimit,
-    reactionLimit: reactionLimit,
-  );
+    bool includeCommentLikes = false,
+  }) async {
+    Future<VoiceMomentViewV2> read({required bool flagged}) =>
+        _readService.loadView(
+          momentId: momentId,
+          commentCursor: commentCursor,
+          commentLimit: commentLimit,
+          reactionLimit: reactionLimit,
+          includeCommentLikes: flagged,
+        );
+    if (!includeCommentLikes ||
+        _commentLikeSupport.value == CommentLikeSupport.unsupported) {
+      return read(flagged: false);
+    }
+    try {
+      final view = await read(flagged: true);
+      _commentLikeSupport.value = CommentLikeSupport.supported;
+      return view;
+    } on FirebaseFunctionsException catch (error, stackTrace) {
+      if (error.code != 'invalid-argument' ||
+          _commentLikeSupport.value == CommentLikeSupport.supported) {
+        rethrow;
+      }
+      VoiceMomentViewV2? recovered;
+      try {
+        recovered = await read(flagged: false);
+      } catch (_) {
+        recovered = null;
+      }
+      if (recovered == null) Error.throwWithStackTrace(error, stackTrace);
+      _commentLikeSupport.value = CommentLikeSupport.unsupported;
+      return recovered;
+    }
+  }
+
+  /// Sets the caller's like on one Voice Moment comment to [liked] through
+  /// `setMomentCommentLikeV1` (spec §3.4) and returns the server's
+  /// authoritative state, which a caller that toggled optimistically adopts
+  /// verbatim.
+  ///
+  /// The request id is retry-stable per intent: a failed attempt keeps it,
+  /// so trying the same intent again replays the same server operation. It
+  /// is released once either direction completes, or when the server
+  /// refuses the id itself (`invalid-argument`, `already-exists`), and
+  /// sending one direction drops the opposite direction's held id — so an
+  /// old id is never replayed after the opposite toggle, even when both
+  /// answers were lost.
+  Future<CommentLikeResult> setCommentLike(
+    String momentId,
+    String commentId, {
+    required bool liked,
+  }) async {
+    final key = 'commentLike:$momentId:$commentId:$liked';
+    _commentLikeRequestIds.remove('commentLike:$momentId:$commentId:${!liked}');
+    final requestId = _commentLikeRequestIds.putIfAbsent(key, _newRequestId);
+    final payload = <String, Object?>{
+      'momentId': momentId,
+      'commentId': commentId,
+      'liked': liked,
+      'requestId': requestId,
+    };
+    Object? response;
+    try {
+      final invoker = _commentLikeInvoker;
+      if (invoker != null) {
+        response = await invoker(payload);
+      } else {
+        final functions = _functions;
+        if (functions == null) {
+          throw StateError(
+            'Liking needs the YO Voice server right now and it could not be '
+            'reached. Try again in a moment.',
+          );
+        }
+        response =
+            (await functions
+                    .httpsCallable('setMomentCommentLikeV1')
+                    .call<Object?>(payload))
+                .data;
+      }
+    } on FirebaseFunctionsException catch (error) {
+      if (error.code == 'invalid-argument' || error.code == 'already-exists') {
+        _commentLikeRequestIds.remove(key);
+      }
+      rethrow;
+    }
+    final CommentLikeResult result;
+    try {
+      result = CommentLikeResult.parse(
+        response,
+        parentKey: 'momentId',
+        parentId: momentId,
+        commentId: commentId,
+        liked: liked,
+      );
+    } on FormatException {
+      // Replaying this id would replay the same malformed answer. The call
+      // sets a desired state, so a fresh id can never double-count.
+      _commentLikeRequestIds.remove(key);
+      rethrow;
+    }
+    _commentLikeRequestIds
+      ..remove('commentLike:$momentId:$commentId:true')
+      ..remove('commentLike:$momentId:$commentId:false');
+    return result;
+  }
+
+  /// The retry-stable id currently held for one toggle intent, if any.
+  @visibleForTesting
+  String? debugCommentLikeRequestId(
+    String momentId,
+    String commentId, {
+    required bool liked,
+  }) => _commentLikeRequestIds['commentLike:$momentId:$commentId:$liked'];
 
   /// Up to [limit] uids that liked this Moment, most recent first.
   ///

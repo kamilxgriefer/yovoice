@@ -270,10 +270,7 @@ void main() {
       await pumpServers(tester, _workspace(repository, channelId: 'questions'));
 
       for (var i = 2; i <= 6; i++) {
-        live.set(repository, [
-          ...live.current,
-          _question('q$i', minute: i),
-        ]);
+        live.set(repository, [...live.current, _question('q$i', minute: i)]);
         await tester.pump(const Duration(milliseconds: 100));
       }
       await _settleSeen(tester);
@@ -335,7 +332,10 @@ void main() {
     ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final repository = _repository();
-      await pumpServers(tester, _workspace(repository, channelId: 'discussion'));
+      await pumpServers(
+        tester,
+        _workspace(repository, channelId: 'discussion'),
+      );
       expect(_channelsDot, findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('server-open-channels')));
@@ -622,27 +622,26 @@ void main() {
   group('layout', () {
     for (final size in [const Size(320, 700), const Size(768, 1024)]) {
       for (final light in [false, true]) {
-        testWidgets(
-          '${size.width.toInt()} px at 200 percent '
-          '(${light ? 'Pearl' : 'Dark'}): the tab keeps its dot',
-          (tester) async {
-            addTearDown(() => tester.binding.setSurfaceSize(null));
-            await pumpServers(
-              tester,
-              _workspace(_repository()),
-              size: size,
-              textScale: 2,
-              light: light,
-            );
-            expect(_tabDot, findsOneWidget);
-            expect(tester.takeException(), isNull);
-            final tab = tester.getRect(
-              find.byKey(const ValueKey('server-tab-chat')),
-            );
-            final dot = tester.getRect(_tabDot);
-            expect(tab.contains(dot.center), isTrue);
-          },
-        );
+        testWidgets('${size.width.toInt()} px at 200 percent '
+            '(${light ? 'Pearl' : 'Dark'}): the tab keeps its dot', (
+          tester,
+        ) async {
+          addTearDown(() => tester.binding.setSurfaceSize(null));
+          await pumpServers(
+            tester,
+            _workspace(_repository()),
+            size: size,
+            textScale: 2,
+            light: light,
+          );
+          expect(_tabDot, findsOneWidget);
+          expect(tester.takeException(), isNull);
+          final tab = tester.getRect(
+            find.byKey(const ValueKey('server-tab-chat')),
+          );
+          final dot = tester.getRect(_tabDot);
+          expect(tab.contains(dot.center), isTrue);
+        });
       }
     }
   });

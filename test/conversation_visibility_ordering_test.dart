@@ -69,7 +69,9 @@ void main() {
       'mutedBy': <String>[],
       if (deletedBy.isNotEmpty) 'deletedBy': deletedBy,
       'lastMessage': lastMessage,
-      'lastMessageId': lastMessageSequence == 0 ? null : 'm$lastMessageSequence',
+      'lastMessageId': lastMessageSequence == 0
+          ? null
+          : 'm$lastMessageSequence',
       'lastMessageSequence': lastMessageSequence,
       'lastMessageType': 'text',
       'lastMessageSenderId': lastMessageSenderId,
@@ -81,48 +83,56 @@ void main() {
   Future<void> seed() async {
     final conversations = db.collection('conversations');
     // A real thread: one message two hours ago.
-    await conversations.doc('dm_writer').set(
-      root(
-        other: writer,
-        otherName: 'Writer',
-        createdAt: now.subtract(const Duration(hours: 5)),
-        updatedAt: now.subtract(const Duration(hours: 2)),
-        lastMessage: 'hello',
-        lastMessageSenderId: writer,
-        lastMessageSequence: 1,
-      ),
-    );
+    await conversations
+        .doc('dm_writer')
+        .set(
+          root(
+            other: writer,
+            otherName: 'Writer',
+            createdAt: now.subtract(const Duration(hours: 5)),
+            updatedAt: now.subtract(const Duration(hours: 2)),
+            lastMessage: 'hello',
+            lastMessageSenderId: writer,
+            lastMessageSequence: 1,
+          ),
+        );
     // Someone opened MY profile a moment ago and never wrote. Newest
     // `updatedAt` of all — this is the row the tester saw on top.
-    await conversations.doc('dm_lurker').set(
-      root(
-        other: lurker,
-        otherName: 'Lurker',
-        createdAt: now,
-        updatedAt: now,
-      ),
-    );
+    await conversations
+        .doc('dm_lurker')
+        .set(
+          root(
+            other: lurker,
+            otherName: 'Lurker',
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
     // A thread I will open myself below: created three hours ago, and its
     // root was touched just now WITHOUT a message.
-    await conversations.doc('dm_friend').set(
-      root(
-        other: friend,
-        otherName: 'Friend',
-        createdAt: now.subtract(const Duration(hours: 3)),
-        updatedAt: now,
-      ),
-    );
+    await conversations
+        .doc('dm_friend')
+        .set(
+          root(
+            other: friend,
+            otherName: 'Friend',
+            createdAt: now.subtract(const Duration(hours: 3)),
+            updatedAt: now,
+          ),
+        );
     // A pre-integrity root whose preview text is blank but which carries
     // committed messages (`lastMessageSequence`), four hours ago.
-    await conversations.doc('dm_legacy').set(
-      root(
-        other: legacy,
-        otherName: 'Legacy',
-        createdAt: now.subtract(const Duration(days: 2)),
-        updatedAt: now.subtract(const Duration(hours: 4)),
-        lastMessageSequence: 3,
-      ),
-    );
+    await conversations
+        .doc('dm_legacy')
+        .set(
+          root(
+            other: legacy,
+            otherName: 'Legacy',
+            createdAt: now.subtract(const Duration(days: 2)),
+            updatedAt: now.subtract(const Duration(hours: 4)),
+            lastMessageSequence: 3,
+          ),
+        );
   }
 
   List<String> ids(List<Conversation> conversations) =>
@@ -184,25 +194,27 @@ void main() {
       );
     });
 
-    test('an empty thread opened on the legacy client path is shown too',
-        () async {
-      // No Firebase app at all: `openOrCreateConversation` writes the root
-      // itself. That path must register the id exactly like the callable.
-      final service = MessageService(firestore: db, auth: auth());
-      addTearDown(service.dispose);
-      const newcomer = 'newcomer-uid';
+    test(
+      'an empty thread opened on the legacy client path is shown too',
+      () async {
+        // No Firebase app at all: `openOrCreateConversation` writes the root
+        // itself. That path must register the id exactly like the callable.
+        final service = MessageService(firestore: db, auth: auth());
+        addTearDown(service.dispose);
+        const newcomer = 'newcomer-uid';
 
-      final opened = await service.openOrCreateConversation(
-        otherUserId: newcomer,
-        otherDisplayName: 'Newcomer',
-        otherEmail: '',
-        otherPhotoUrl: '',
-      );
+        final opened = await service.openOrCreateConversation(
+          otherUserId: newcomer,
+          otherDisplayName: 'Newcomer',
+          otherEmail: '',
+          otherPhotoUrl: '',
+        );
 
-      final visible = await service.watchConversations().first;
-      expect(ids(visible), contains(opened));
-      expect(ids(visible), isNot(contains('dm_lurker')));
-    });
+        final visible = await service.watchConversations().first;
+        expect(ids(visible), contains(opened));
+        expect(ids(visible), isNot(contains('dm_lurker')));
+      },
+    );
 
     test('deleted-for-me and archived filters are unchanged', () async {
       await db.collection('conversations').doc('dm_writer').update({
@@ -303,8 +315,7 @@ void main() {
       );
     });
 
-    test('lastActivityAt is updatedAt with messages and createdAt without',
-        () {
+    test('lastActivityAt is updatedAt with messages and createdAt without', () {
       final created = now.subtract(const Duration(hours: 3));
       final empty = conversation(id: 'e', createdAt: created, updatedAt: now);
       final full = conversation(
@@ -347,46 +358,56 @@ void main() {
       expect(tied.map((c) => c.id), <String>['a', 'b', 'older']);
     });
 
-    test('fromFirestore reads lastMessageSequence and tolerates junk',
-        () async {
-      await db.collection('conversations').doc('junk').set(
-        root(
-          other: writer,
-          otherName: 'Writer',
-          createdAt: now,
-          updatedAt: now,
-        )..['lastMessageSequence'] = -4,
-      );
-      await db.collection('conversations').doc('missing').set(
-        root(
-          other: writer,
-          otherName: 'Writer',
-          createdAt: now,
-          updatedAt: now,
-        )..remove('lastMessageSequence'),
-      );
-      final junk = Conversation.fromFirestore(
-        await db.collection('conversations').doc('junk').get(),
-      );
-      final missing = Conversation.fromFirestore(
-        await db.collection('conversations').doc('missing').get(),
-      );
-      final legacyRoot = Conversation.fromFirestore(
-        await db.collection('conversations').doc('dm_legacy').get(),
-      );
-      expect(junk.lastMessageSequence, 0);
-      expect(missing.lastMessageSequence, 0);
-      expect(legacyRoot.lastMessageSequence, 3);
-      expect(
-        legacyRoot.withParticipantIdentity(
-          userId: legacy,
-          displayName: 'Renamed',
-          photoUrl: '',
-        ).lastMessageSequence,
-        3,
-      );
-      expect(legacyRoot.withUnreadCountFor(me, 2).lastMessageSequence, 3);
-    });
+    test(
+      'fromFirestore reads lastMessageSequence and tolerates junk',
+      () async {
+        await db
+            .collection('conversations')
+            .doc('junk')
+            .set(
+              root(
+                other: writer,
+                otherName: 'Writer',
+                createdAt: now,
+                updatedAt: now,
+              )..['lastMessageSequence'] = -4,
+            );
+        await db
+            .collection('conversations')
+            .doc('missing')
+            .set(
+              root(
+                other: writer,
+                otherName: 'Writer',
+                createdAt: now,
+                updatedAt: now,
+              )..remove('lastMessageSequence'),
+            );
+        final junk = Conversation.fromFirestore(
+          await db.collection('conversations').doc('junk').get(),
+        );
+        final missing = Conversation.fromFirestore(
+          await db.collection('conversations').doc('missing').get(),
+        );
+        final legacyRoot = Conversation.fromFirestore(
+          await db.collection('conversations').doc('dm_legacy').get(),
+        );
+        expect(junk.lastMessageSequence, 0);
+        expect(missing.lastMessageSequence, 0);
+        expect(legacyRoot.lastMessageSequence, 3);
+        expect(
+          legacyRoot
+              .withParticipantIdentity(
+                userId: legacy,
+                displayName: 'Renamed',
+                photoUrl: '',
+              )
+              .lastMessageSequence,
+          3,
+        );
+        expect(legacyRoot.withUnreadCountFor(me, 2).lastMessageSequence, 3);
+      },
+    );
   });
 }
 

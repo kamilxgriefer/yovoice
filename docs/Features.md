@@ -311,6 +311,52 @@ Store/Google Play purchase adapters and an IAP client are not configured.
 `verifyPurchase` therefore declines today; only the guarded
 `adminSetPremiumEntitlements` admin path can issue a working grant.
 
+**One exception (ADR-230, source only):** "See who liked" is unlocked by paid
+Premium, the staff preview above, **or** a canonical owner-granted
+`vipGrants/{uid}` document (exact keys, allowlisted source, `revoked:
+false`, a Timestamp or null expiry). The grant authorizes this capability
+only; every other paid capability still reads `entitlements/{uid}` alone.
+The client's check is a UX pre-gate; the list callables decide.
+
+## Likes: see who liked, comment likes, Hide my likes (ADR-230, source only)
+
+Client source is written (`lib/features/likers/`); the backend is built in
+parallel against the same spec. Nothing is deployed, and the lists stay off
+until an operator enables the server-only switch `appConfig/likersV1`.
+
+- **See who liked / See who reacted.** Premium, staff-preview and VIP viewers
+  open a list of the people who liked a Voice Moment, a Yeel, a Voice Moment
+  or Yeel comment, or reacted to a Server channel message. Every entry point
+  opens the same flow; everyone else gets an honest Premium sheet with the
+  public count and, while Premium cannot be bought, no purchase button.
+  Entry points: "See who liked ›" beside Top reactions on Moment detail; the
+  like count (a separate target from the heart) on Moment cards, the story
+  viewer and the Yeel rail; a Yeel's panel, footer action and ⋯ sheet; the
+  compact Głos row's ⋯ menu; a Server message's reaction pill and actions
+  sheet; and the count beside a comment's heart.
+- **The list.** Pages of 20 from the server, name with the VIP rosette,
+  "You" for yourself, a small heart (Voice/Yeel) or the person's emoji
+  (Server), reaction tabs on Server lists with two or more emoji, and a
+  "Some people aren't shown." footer when privacy filters hid anyone. Blocked
+  (either way), private or friends-only profiles you may not see, muted,
+  suspended or deleted accounts and people who hide their likes are never
+  listed. Counts never change.
+- **Comment likes.** Voice Moment and Yeel comments get a heart and count in
+  the action line ("Reply · ♡ 3"); VIP viewers also see "Who liked" there.
+  The hearts appear only after the server has shown it supports them (an
+  `includeCommentLikes` probe on the view calls); an older backend draws no
+  heart at all.
+- **Hide my likes.** Settings → Privacy → "Hide my likes" removes you from
+  every likers list YO Voice shows. It is written through
+  `setMyLikesHiddenV1` (never directly), is not behind the switch, and says
+  plainly that Server members still receive your reactions in channels you
+  share.
+- **Premium section.** "See who liked" is listed in the Premium benefit card,
+  checklist and included items.
+- **Languages.** Every string is translated in all 43 app languages
+  (`translations_vip_likers.dart`, `test/vip_likers_localization_test.dart`);
+  the upsell's count line uses each language's plural forms.
+
 ## Settings
 
 `lib/features/settings/` — Profile, Account, Privacy, Security,

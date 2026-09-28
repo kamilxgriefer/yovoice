@@ -279,10 +279,12 @@ void main() {
           count: 2,
         );
 
-        // `reelWire` publishes 12 likes and 3 comments.
+        // `reelWire` publishes 12 likes and 3 comments. Since ADR-230 (owner
+        // variant A) the like total is its own "See who liked" target beside
+        // the heart rather than part of it — still shown, still counted here.
         expect(
           find.descendant(
-            of: find.byKey(reelLikeKey),
+            of: find.byKey(const ValueKey<String>('reel-likers-action')),
             matching: find.text('12'),
           ),
           findsOneWidget,

@@ -16,6 +16,9 @@ import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/presentation/friend_request_error_copy.dart';
 import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
+import 'package:yovoice/features/likers/data/models/likers_target.dart';
+import 'package:yovoice/features/likers/presentation/likers_copy.dart';
+import 'package:yovoice/features/likers/presentation/likers_launcher.dart';
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
@@ -94,6 +97,7 @@ class ReelCard extends StatefulWidget {
     this.fillViewport = false,
     this.mediaTopInset = 0,
     this.now,
+    this.likersLauncher = const LikersLauncher(),
     super.key,
   });
 
@@ -181,6 +185,12 @@ class ReelCard extends StatefulWidget {
   final double mediaTopInset;
   @visibleForTesting
   final DateTime Function()? now;
+
+  /// Opens "See who liked" (ADR-230): from the rail's like count, the
+  /// footer's screen-reader action and the ⋯ sheet. The card's playback
+  /// already suspends while any route — the likers sheet included — stands
+  /// above it. The const default runs the real flow; tests pass seams.
+  final LikersLauncher likersLauncher;
 
   @override
   State<ReelCard> createState() => _ReelCardState();
@@ -311,6 +321,15 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                             }
                           },
                         ),
+                      if (includeActions && reel.likeCount > 0)
+                        ListTile(
+                          key: const ValueKey('reel-options-likers'),
+                          leading: const Icon(Icons.favorite_border_rounded),
+                          title: Text(LikersCopy(copy).seeWhoLiked),
+                          onTap: () {
+                            if (current()) Navigator.pop(context, 'likers');
+                          },
+                        ),
                       if (includeActions && widget.onReport != null)
                         ListTile(
                           leading: const Icon(Icons.flag_outlined),
@@ -340,6 +359,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
       );
       if (!current()) return;
       if (action == 'profile') _openAuthor();
+      if (action == 'likers') _openLikers();
       if (action == 'report') await widget.onReport?.call();
       if (action == 'delete') await widget.onDelete?.call();
     } finally {
@@ -347,6 +367,27 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
       _detailLifetimes.remove(lifetime);
       lifetime.dispose();
     }
+  }
+
+  /// "See who liked" for this Reel, once it has likes and a viewer.
+  VoidCallback? get _showLikers {
+    final reel = widget.reel;
+    if (reel.likeCount <= 0 || widget.service.currentUserId == null) {
+      return null;
+    }
+    return _openLikers;
+  }
+
+  void _openLikers() {
+    final reel = widget.reel;
+    if (!mounted || !reel.availability.isAvailableAt(_now)) return;
+    unawaited(
+      widget.likersLauncher.open(
+        context,
+        ReelLikersTarget(reel.id),
+        totalCount: reel.likeCount,
+      ),
+    );
   }
 
   EdgeInsets _frameCompositionInsets() =>
@@ -891,6 +932,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                 showSound:
                     widget.reel.backingAudio != null ||
                     widget.reel.composition.audioAttribution.isNotEmpty,
+                splitLikers: _showLikers != null,
               );
               final overlaySafeInsets = geometry.compositionInsets(
                 context,
@@ -965,6 +1007,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                             onDelete: widget.onDelete,
                             onReport: widget.onReport,
                             onLike: widget.onLike,
+                            onShowLikers: _showLikers,
                             onComments: widget.onComments,
                             onShare: _share,
                             likePending: widget.likePending,
@@ -1150,6 +1193,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                           setState(() => _captionExpanded = !_captionExpanded),
                       onOpenAuthor: _openAuthor,
                       onLike: widget.onLike,
+                      onShowLikers: _showLikers,
                       onComments: widget.onComments,
                       onShare: _share,
                       onMore: () => _openDetails(includeActions: true),
@@ -1553,6 +1597,7 @@ class ReelStageFooterBar extends StatelessWidget {
     this.friendRelationshipStore,
     this.viewerUid,
     this.onLike,
+    this.onShowLikers,
     this.onComments,
     super.key,
   });
@@ -1569,6 +1614,10 @@ class ReelStageFooterBar extends StatelessWidget {
   final bool likePending;
   final bool commentsOpen;
   final VoidCallback? onLike;
+
+  /// "See who liked" as the like's screen-reader action (ADR-230); the
+  /// visible entry is the ⋯ sheet's item.
+  final VoidCallback? onShowLikers;
   final VoidCallback? onComments;
 
   static const double minimumHeight = 88;
@@ -1678,6 +1727,7 @@ class ReelStageFooterBar extends StatelessWidget {
         onTap: onMore,
       ),
       onLike: onLike,
+      onShowLikers: onShowLikers,
       onComments: onComments,
     );
 
@@ -2734,13 +2784,20 @@ class _ImmersiveOverlayGeometry {
     required double mediaHeight,
     required bool showIdentity,
     required bool showSound,
+    bool splitLikers = false,
   }) {
     final scale = MediaQuery.textScalerOf(context).scale(1);
     final micro = mediaHeight < 330 || width < 158 * scale;
     // The two counted controls grow vertically with accessible text. Keep a
     // little more room between the mute button and the rail before choosing a
     // column at x2, otherwise their hit targets overlap around 360 px high.
-    final horizontalActions = mediaHeight < 360 + math.max(0, scale - 1) * 32;
+    // The like's own count target ("See who liked", ADR-230) replaces its
+    // ~20 px caption with a 44 px target, so the column is that much taller.
+    final horizontalActions =
+        mediaHeight <
+        360 +
+            math.max(0, scale - 1) * 32 +
+            (splitLikers ? _splitLikersExtra : 0);
     final compact =
         micro ||
         mediaHeight < 520 + math.max(0, scale - 1) * 100 ||
@@ -2768,6 +2825,9 @@ class _ImmersiveOverlayGeometry {
       textScale: scale,
     );
   }
+
+  /// What the like's separate count target adds to the vertical rail.
+  static const double _splitLikersExtra = 24;
 
   final double width;
   final double mediaHeight;
@@ -2851,6 +2911,7 @@ class _OverlayFooter extends StatelessWidget {
     this.onDelete,
     this.onReport,
     this.onLike,
+    this.onShowLikers,
     this.onComments,
   });
 
@@ -2883,6 +2944,9 @@ class _OverlayFooter extends StatelessWidget {
   final Future<void> Function()? onDelete;
   final Future<void> Function()? onReport;
   final VoidCallback? onLike;
+
+  /// "See who liked" from the rail's separate like count (owner variant A).
+  final VoidCallback? onShowLikers;
   final VoidCallback? onComments;
   final Future<void> Function() onShare;
 
@@ -2990,6 +3054,7 @@ class _OverlayFooter extends StatelessWidget {
       ],
       railTrailing: _ReelOverflowButton(onTap: onMore),
       onLike: onLike,
+      onShowLikers: onShowLikers,
       onComments: onComments,
     );
 

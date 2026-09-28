@@ -16,6 +16,13 @@ import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/likers/data/models/comment_like.dart';
+import 'package:yovoice/features/likers/data/models/likers_target.dart';
+import 'package:yovoice/features/likers/data/services/likers_access_service.dart';
+import 'package:yovoice/features/likers/presentation/comment_likes_controller.dart';
+import 'package:yovoice/features/likers/presentation/likers_copy.dart';
+import 'package:yovoice/features/likers/presentation/likers_launcher.dart';
+import 'package:yovoice/features/likers/presentation/widgets/likers_entry_button.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
@@ -99,6 +106,7 @@ class MomentDetailScreen extends StatefulWidget {
     this.playerFactory,
     this.expiryClock,
     this.expiryTimerFactory,
+    this.likersLauncher = const LikersLauncher(),
     super.key,
   });
 
@@ -129,6 +137,10 @@ class MomentDetailScreen extends StatefulWidget {
 
   @visibleForTesting
   final MomentExpiryTimerFactory? expiryTimerFactory;
+
+  /// Opens "See who liked" from the Top reactions entry (ADR-230). The
+  /// const default runs the real flow; tests pass seams.
+  final LikersLauncher likersLauncher;
 
   @override
   State<MomentDetailScreen> createState() => _MomentDetailScreenState();
@@ -223,6 +235,64 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   bool _sending = false;
 
   AppLocalizations get _copy => AppLocalizations.of(context);
+
+  /// The "See who liked" entry, so closing the likers flow hands keyboard
+  /// focus back to the control that opened it.
+  final FocusNode _likersEntryFocus = FocusNode(debugLabel: 'See who liked');
+
+  void _openLikers() {
+    unawaited(
+      widget.likersLauncher.open(
+        context,
+        VoiceMomentLikersTarget(_moment.id),
+        totalCount: _moment.likeCount,
+        returnFocus: _likersEntryFocus,
+      ),
+    );
+  }
+
+  /// The thread's comment hearts (owner variant B, ADR-230). Hearts appear
+  /// only once a flagged view answered with `commentLikes`.
+  late final CommentLikesController _commentLikes = CommentLikesController(
+    setLike: (commentId, {required bool liked}) {
+      final service = _moments;
+      if (service == null) {
+        return Future<CommentLikeResult>.error(
+          StateError('Comment likes are unavailable.'),
+        );
+      }
+      return service.setCommentLike(_moment.id, commentId, liked: liked);
+    },
+    watchCanSeeLikers: () =>
+        (widget.likersLauncher.access ?? LikersAccessService())
+            .watchCanSeeLikers(),
+  );
+
+  Future<void> _toggleCommentLike(MomentComment comment) async {
+    final outcome = await _commentLikes.toggle(comment.id);
+    if (outcome != CommentLikeToggleOutcome.reverted || !mounted) return;
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(LikersCopy(_copy).likeFailed),
+        ),
+      );
+  }
+
+  void _openCommentLikers(MomentComment comment, FocusNode returnFocus) {
+    final state = _commentLikes.stateOf(comment.id);
+    if (state == null) return;
+    unawaited(
+      widget.likersLauncher.open(
+        context,
+        VoiceMomentCommentLikersTarget(_moment.id, comment.id),
+        totalCount: state.likeCount,
+        returnFocus: returnFocus,
+      ),
+    );
+  }
 
   String get _uid {
     try {
@@ -329,9 +399,13 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     final requestGeneration = ++_viewLoadGeneration;
     final momentId = _moment.id;
     try {
-      final view = await service.loadMomentView(momentId);
+      final view = await service.loadMomentView(
+        momentId,
+        includeCommentLikes: true,
+      );
       if (!mounted || requestGeneration != _viewLoadGeneration) return;
       final expired = !view.moment.isActiveAt(_effectiveNow());
+      _commentLikes.adopt(view.commentLikes, replace: true);
       setState(() {
         _missing = false;
         _moment = view.moment;
@@ -374,8 +448,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
       final view = await service.loadMomentView(
         _moment.id,
         commentCursor: cursor,
+        includeCommentLikes: true,
       );
       if (!mounted || generation != _viewLoadGeneration) return;
+      _commentLikes.adopt(view.commentLikes, replace: false);
       final byId = <String, MomentComment>{
         for (final comment in _comments ?? const <MomentComment>[])
           comment.id: comment,
@@ -422,6 +498,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
     _expiry.schedule(const <VoiceMoment>[]);
     _stopPlaybackForGone(notify: false);
+    _commentLikes.clear();
     setState(() {
       _missing = true;
       _comments = null;
@@ -471,6 +548,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
           mentionFriendsStream: widget.mentionFriendsStream,
           expiryClock: widget.expiryClock,
           expiryTimerFactory: widget.expiryTimerFactory,
+          likersLauncher: widget.likersLauncher,
         ),
       ),
     );
@@ -478,6 +556,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
 
   @override
   void dispose() {
+    _likersEntryFocus.dispose();
+    _commentLikes.dispose();
     _viewLoadGeneration += 1;
     _playEpoch += 1;
     WidgetsBinding.instance.removeObserver(this);
@@ -1727,21 +1807,43 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
     }
   }
 
-  /// The likers' avatar row from the server-owned v2 projection. Absent while
-  /// loading, absent when nobody has liked, absent when no identity could be
-  /// safely projected — never a spinner, never an invented face.
+  /// The likers' avatar row from the server-owned v2 projection, with the
+  /// owner-chosen (variant A) "See who liked ›" beside it. Absent while
+  /// loading and when nobody has liked — never a spinner, never an invented
+  /// face. When likes exist but no identity could be projected (every liker
+  /// hidden), a "Likes · N ›" entry stands in for the row so the list (or,
+  /// for a viewer without access, the Premium upsell) stays reachable.
   Widget _reactionsSection() {
     final reactions = _reactions;
     final likeCount = _moment.likeCount;
     if (reactions == null || likeCount <= 0) return const SizedBox.shrink();
     final copy = _copy;
+    final likersCopy = LikersCopy(copy);
     return FutureBuilder<List<MomentReactor>>(
       future: reactions,
       builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const SizedBox.shrink();
+        }
         final palette = context.appPalette;
         final reactors = snapshot.data ?? const <MomentReactor>[];
-        if (reactors.isEmpty) return const SizedBox.shrink();
+        if (reactors.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.only(top: AppRhythm.tight),
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: LikersEntryButton(
+                key: const ValueKey('moment-detail-likers'),
+                focusNode: _likersEntryFocus,
+                label: likersCopy.likesCount(likeCount),
+                semanticLabel: likersCopy.seeWhoLikedCount(likeCount),
+                onPressed: _openLikers,
+              ),
+            ),
+          );
+        }
         final remainder = likeCount - reactors.length;
+        final names = reactors.map((reactor) => reactor.displayName).join(', ');
         return Padding(
           padding: const EdgeInsets.only(top: AppRhythm.title),
           child: Column(
@@ -1753,49 +1855,67 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
                   color: palette.textPrimary,
                 ),
               ),
-              const SizedBox(height: AppRhythm.tight),
-              Row(
-                key: const ValueKey('moment-detail-reactions'),
+              const SizedBox(height: AppRhythm.hairline),
+              // The entry sits beside the faces while it fits and takes a
+              // line of its own when it does not (a narrow phone at a large
+              // text size), instead of squeezing the faces or clipping.
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                runSpacing: AppRhythm.hairline,
                 children: [
-                  for (final reactor in reactors)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: Tooltip(
-                        message: reactor.displayName,
-                        child: UserAvatar(
-                          radius: 15,
-                          userId: reactor.uid,
-                          photoUrl: reactor.photoUrl,
-                          displayName: reactor.displayName,
-                          finish: UserAvatarFinish.brand,
+                  Row(
+                    key: const ValueKey('moment-detail-reactions'),
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final reactor in reactors)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Tooltip(
+                            message: reactor.displayName,
+                            child: UserAvatar(
+                              radius: 15,
+                              userId: reactor.uid,
+                              photoUrl: reactor.photoUrl,
+                              displayName: reactor.displayName,
+                              finish: UserAvatarFinish.brand,
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                  if (remainder > 0)
-                    Container(
-                      // Content-sized, not a fixed circle: "+409" is a
-                      // real value here and must widen the pill instead
-                      // of wrapping and clipping inside 30 px.
-                      constraints: const BoxConstraints(
-                        minWidth: 30,
-                        minHeight: 30,
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        borderRadius: AppRadius.pill,
-                        color: palette.surfaceRaised,
-                        border: Border.all(color: palette.hairline),
-                      ),
-                      child: Text(
-                        '+$remainder',
-                        maxLines: 1,
-                        style: AppTypography.labelSmall.copyWith(
-                          color: palette.textSecondary,
-                          fontWeight: FontWeight.w700,
+                      if (remainder > 0)
+                        Container(
+                          // Content-sized, not a fixed circle: "+409" is a
+                          // real value here and must widen the pill instead
+                          // of wrapping and clipping inside 30 px.
+                          constraints: const BoxConstraints(
+                            minWidth: 30,
+                            minHeight: 30,
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            borderRadius: AppRadius.pill,
+                            color: palette.surfaceRaised,
+                            border: Border.all(color: palette.hairline),
+                          ),
+                          child: Text(
+                            '+$remainder',
+                            maxLines: 1,
+                            style: AppTypography.labelSmall.copyWith(
+                              color: palette.textSecondary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
+                    ],
+                  ),
+                  LikersEntryButton(
+                    key: const ValueKey('moment-detail-likers'),
+                    focusNode: _likersEntryFocus,
+                    label: likersCopy.seeWhoLiked,
+                    semanticLabel: likersCopy.likedByOpen(names, remainder),
+                    onPressed: _openLikers,
+                  ),
                 ],
               ),
             ],
@@ -1876,24 +1996,35 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
         ),
       );
     }
-    return MomentConversationThread(
-      momentId: _moment.id,
-      comments: _comments!,
-      commentCount: _moment.commentCount,
-      currentUserId: _uid,
-      mentions: _readDirectory(),
-      arbiter: _arbiter,
-      resolveReplyMedia: (commentId) =>
-          service.resolveMediaUri(momentId: _moment.id, commentId: commentId),
-      onReplyTo: _gone ? null : _prefillReply,
-      onReport: (comment) => unawaited(_reportComment(comment)),
-      onLoadMore: _commentsTruncated
-          ? () => unawaited(_loadMoreComments())
-          : null,
-      loadingMore: _loadingMore,
-      onCompose: _gone ? null : _composerFocus.requestFocus,
-      onOpenFullThread: () => unawaited(_openAllComments()),
-      playerFactory: widget.playerFactory,
+    return ListenableBuilder(
+      listenable: _commentLikes,
+      builder: (context, _) => MomentConversationThread(
+        momentId: _moment.id,
+        comments: _comments!,
+        commentCount: _moment.commentCount,
+        currentUserId: _uid,
+        mentions: _readDirectory(),
+        arbiter: _arbiter,
+        resolveReplyMedia: (commentId) =>
+            service.resolveMediaUri(momentId: _moment.id, commentId: commentId),
+        onReplyTo: _gone ? null : _prefillReply,
+        onReport: (comment) => unawaited(_reportComment(comment)),
+        onLoadMore: _commentsTruncated
+            ? () => unawaited(_loadMoreComments())
+            : null,
+        loadingMore: _loadingMore,
+        onCompose: _gone ? null : _composerFocus.requestFocus,
+        onOpenFullThread: () => unawaited(_openAllComments()),
+        // A gone Moment's thread stays readable, but nothing new can be
+        // recorded on it: its hearts are drawn disabled.
+        likeStateOf: _commentLikes.stateOf,
+        onToggleLike: _gone
+            ? null
+            : (comment) => unawaited(_toggleCommentLike(comment)),
+        onShowLikers: _gone ? null : _openCommentLikers,
+        showWhoLiked: _commentLikes.canSeeLikers,
+        playerFactory: widget.playerFactory,
+      ),
     );
   }
 

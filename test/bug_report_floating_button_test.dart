@@ -221,7 +221,8 @@ void main() {
     expect(
       overlap.width > 0 && overlap.height > 0,
       isTrue,
-      reason: 'the scenario needs the button under the banner: '
+      reason:
+          'the scenario needs the button under the banner: '
           'card $card, button ${tester.getRect(_button)}',
     );
     await tester.tapAt(overlap.center);

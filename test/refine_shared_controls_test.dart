@@ -743,10 +743,7 @@ void main() {
             mainAxisSize: MainAxisSize.min,
             children: [
               TextButton(onPressed: () {}, child: const Text('Przed')),
-              YoSearchField(
-                controller: controller,
-                onClear: () => cleared++,
-              ),
+              YoSearchField(controller: controller, onClear: () => cleared++),
               TextButton(onPressed: () {}, child: const Text('Po')),
             ],
           ),
@@ -763,16 +760,12 @@ void main() {
         of: find.byIcon(Icons.close_rounded),
         matching: find.byType(IconButton),
       );
-      expect(
-        FocusManager.instance.primaryFocus?.context,
-        isNotNull,
-      );
+      expect(FocusManager.instance.primaryFocus?.context, isNotNull);
       expect(
         find.descendant(
           of: clear,
           matching: find.byElementPredicate(
-            (element) =>
-                element == FocusManager.instance.primaryFocus?.context,
+            (element) => element == FocusManager.instance.primaryFocus?.context,
           ),
         ),
         findsOneWidget,
@@ -794,8 +787,7 @@ void main() {
         find.descendant(
           of: find.widgetWithText(TextButton, 'Po'),
           matching: find.byElementPredicate(
-            (element) =>
-                element == FocusManager.instance.primaryFocus?.context,
+            (element) => element == FocusManager.instance.primaryFocus?.context,
           ),
         ),
         findsOneWidget,

@@ -210,10 +210,7 @@ void main() {
       );
       expect(
         conversationPreview(
-          conversation(
-            lastMessage: 'Message deleted?',
-            senderId: otherUserId,
-          ),
+          conversation(lastMessage: 'Message deleted?', senderId: otherUserId),
           currentUserId,
           polish,
         ),

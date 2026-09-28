@@ -52,7 +52,10 @@ void main() {
 
         for (final seen in [false, true]) {
           final gradient = MomentStoryTile.ringGradient(context, seen: seen);
-          expect(gradient.colors, MomentStoryTile.ringColors(context, seen: seen));
+          expect(
+            gradient.colors,
+            MomentStoryTile.ringColors(context, seen: seen),
+          );
           expect(
             gradient.begin,
             AppGradients.primary.begin,
@@ -102,36 +105,34 @@ void main() {
       );
       expect(MomentSeenAvatar.defaultRingWidth, 2);
       expect(MomentSeenAvatar.defaultRingInset, 1.5);
-      expect(
-        tester.widget<Opacity>(find.byType(Opacity).first).opacity,
-        1,
-      );
+      expect(tester.widget<Opacity>(find.byType(Opacity).first).opacity, 1);
     },
   );
 
-  testWidgets('a heard MomentSeenAvatar is the quiet ring and a dimmed avatar', (
-    tester,
-  ) async {
-    const ringKey = ValueKey('ring-under-test');
-    await tester.pumpWidget(
-      _host(
-        const MomentSeenAvatar(
-          seen: true,
-          diameter: 56,
-          ringKey: ringKey,
-          displayName: 'Ola',
+  testWidgets(
+    'a heard MomentSeenAvatar is the quiet ring and a dimmed avatar',
+    (tester) async {
+      const ringKey = ValueKey('ring-under-test');
+      await tester.pumpWidget(
+        _host(
+          const MomentSeenAvatar(
+            seen: true,
+            diameter: 56,
+            ringKey: ringKey,
+            displayName: 'Ola',
+          ),
         ),
-      ),
-    );
-    final context = tester.element(find.byType(MomentSeenAvatar));
-    final gradient = _gradientUnder(tester, ringKey);
-    expect(gradient, MomentStoryTile.ringGradient(context, seen: true));
-    expect(gradient.colors.first, gradient.colors.last);
-    expect(
-      tester.widget<Opacity>(find.byType(Opacity).first).opacity,
-      lessThan(1),
-    );
-  });
+      );
+      final context = tester.element(find.byType(MomentSeenAvatar));
+      final gradient = _gradientUnder(tester, ringKey);
+      expect(gradient, MomentStoryTile.ringGradient(context, seen: true));
+      expect(gradient.colors.first, gradient.colors.last);
+      expect(
+        tester.widget<Opacity>(find.byType(Opacity).first).opacity,
+        lessThan(1),
+      );
+    },
+  );
 
   testWidgets(
     'the discover library still resolves MomentSeenAvatar, as the same class',
